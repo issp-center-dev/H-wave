@@ -1348,10 +1348,6 @@ class TestFLEXSpinSymmetry(unittest.TestCase):
                 err_msg="Sigma_↑↑ != Sigma_↓↓ in full spin-orbital space")
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
     """RPA and FLEX must restore the SAME public array attributes after a
     solve, and must keep SEPARATE profiling identities while doing so.
@@ -1394,6 +1390,7 @@ class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
         """
         import hwave.solver.rpa as rpa_mod
         import hwave.solver.flex as flex_mod
+        from unittest import mock
 
         for solver_cls in (rpa_mod.RPA, flex_mod.FLEX):
             with self.subTest(solver=solver_cls.__name__):
@@ -1410,9 +1407,18 @@ class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
                             "solve bypassed the shared restore helper and "
                             "called _solve_impl directly")
 
-                got = solver_cls.solve(_Recorder(), "green", "out")
+                obj = _Recorder()
+                # The stand-in replaces the real helper, so ANY call to
+                # backend.restore_host_attrs during solve can only come
+                # from a restore inlined in solve itself -- delegation
+                # must be the ONLY restoration path, not merely one of
+                # them.
+                with mock.patch.object(
+                        rpa_mod._bk, "restore_host_attrs") as restore:
+                    got = solver_cls.solve(obj, "green", "out")
                 self.assertIs(got, sentinel)
                 self.assertEqual(calls, [("green", "out")])
+                restore.assert_not_called()
 
     def test_each_solver_keeps_its_own_profiling_identity(self):
         import hwave.solver.rpa as rpa_mod
@@ -1429,6 +1435,42 @@ class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
             flex_mod.FLEX.solve.__module__ + "." + flex_mod.FLEX.solve.__name__,
             "hwave.solver.flex.solve")
 
+    def test_the_shared_helper_restores_on_return_and_on_exception(self):
+        """Execute the REAL helper. The routing test above drives a
+        stand-in, so nothing in the gating runner would otherwise notice
+        the helper losing its ``finally`` -- the very discipline issue
+        #63 exists for: a mid-solve failure must still leave the public
+        attributes host-backed before the exception propagates.
+        """
+        import hwave.solver.rpa as rpa_mod
+        from unittest import mock
+
+        helper = rpa_mod.RPA._solve_restoring_host_attrs
+        attrs = rpa_mod.RPA._HOST_RESTORED_ATTRS
+
+        class _Impl:
+            _HOST_RESTORED_ATTRS = attrs
+
+            def __init__(self, boom):
+                self.boom = boom
+
+            def _solve_impl(self, green_info, path):
+                if self.boom:
+                    raise RuntimeError("mid-solve failure")
+                return "result"
+
+        obj = _Impl(boom=False)
+        with mock.patch.object(rpa_mod._bk, "restore_host_attrs") as restore:
+            got = helper(obj, "green", "out")
+        self.assertEqual(got, "result")
+        restore.assert_called_once_with(obj, attrs)
+
+        obj = _Impl(boom=True)
+        with mock.patch.object(rpa_mod._bk, "restore_host_attrs") as restore:
+            with self.assertRaises(RuntimeError):
+                helper(obj, "green", "out")
+        restore.assert_called_once_with(obj, attrs)
+
     def test_the_shared_helper_is_not_itself_profiled(self):
         # A profiled helper would add a second measurement per solve and
         # double-count the wrapped time in the report.
@@ -1438,3 +1480,7 @@ class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
         self.assertFalse(
             hasattr(helper, "__wrapped__"),
             "the shared restore helper must not carry @do_profile")
+
+
+if __name__ == '__main__':
+    unittest.main()
