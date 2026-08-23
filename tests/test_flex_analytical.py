@@ -1350,3 +1350,91 @@ class TestFLEXSpinSymmetry(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
+    """RPA and FLEX must restore the SAME public array attributes after a
+    solve, and must keep SEPARATE profiling identities while doing so.
+
+    Both solvers wrap ``_solve_impl`` in the same host-restore discipline
+    (issue #63: a mid-solve GPU error must not leave device arrays on a
+    reused solver object). That discipline used to be written out twice,
+    once per solver, with the attribute list repeated -- so an attribute
+    added to one restore set and not the other would have reintroduced
+    the leak on the solver that was missed, with nothing to catch it.
+
+    The two ``solve`` methods nevertheless stay separate: each carries
+    its own docstring, and ``@do_profile`` keys the performance report on
+    ``func.__module__ + '.' + func.__name__``, so collapsing them into
+    one inherited method would pool FLEX's timings into
+    ``hwave.solver.rpa.solve``. These assertions pin both halves.
+    """
+
+    def test_both_solvers_share_one_restore_list(self):
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        self.assertIs(rpa_mod.RPA._solve_restoring_host_attrs,
+                      flex_mod.FLEX._solve_restoring_host_attrs)
+        self.assertIs(rpa_mod.RPA._HOST_RESTORED_ATTRS,
+                      flex_mod.FLEX._HOST_RESTORED_ATTRS)
+        self.assertEqual(
+            rpa_mod.RPA._HOST_RESTORED_ATTRS,
+            ("H0_eigenvalue", "H0_eigenvector", "green0", "green0_tail"))
+
+    def test_both_solve_methods_route_through_the_shared_helper(self):
+        """The sharing above is only worth anything if ``solve`` actually
+        CALLS the helper. Asserting that the helper is shared does not
+        establish that: a solver that inlines its own try/finally with
+        its own attribute list still inherits the shared helper, so the
+        identity checks above pass while the leak they exist to prevent
+        is back. Drive each ``solve`` unbound over a recording stand-in
+        -- its whole body is the delegation, so no real solver is
+        needed -- and require the delegation to happen.
+        """
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        for solver_cls in (rpa_mod.RPA, flex_mod.FLEX):
+            with self.subTest(solver=solver_cls.__name__):
+                calls = []
+                sentinel = object()
+
+                class _Recorder:
+                    def _solve_restoring_host_attrs(self, green_info, path):
+                        calls.append((green_info, path))
+                        return sentinel
+
+                    def _solve_impl(self, green_info, path):
+                        raise AssertionError(
+                            "solve bypassed the shared restore helper and "
+                            "called _solve_impl directly")
+
+                got = solver_cls.solve(_Recorder(), "green", "out")
+                self.assertIs(got, sentinel)
+                self.assertEqual(calls, [("green", "out")])
+
+    def test_each_solver_keeps_its_own_profiling_identity(self):
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        # do_profile records under module + qualified name, so the two
+        # solve methods must remain distinct function objects living in
+        # their own modules.
+        self.assertIsNot(rpa_mod.RPA.solve, flex_mod.FLEX.solve)
+        self.assertEqual(
+            rpa_mod.RPA.solve.__module__ + "." + rpa_mod.RPA.solve.__name__,
+            "hwave.solver.rpa.solve")
+        self.assertEqual(
+            flex_mod.FLEX.solve.__module__ + "." + flex_mod.FLEX.solve.__name__,
+            "hwave.solver.flex.solve")
+
+    def test_the_shared_helper_is_not_itself_profiled(self):
+        # A profiled helper would add a second measurement per solve and
+        # double-count the wrapped time in the report.
+        import hwave.solver.rpa as rpa_mod
+
+        helper = rpa_mod.RPA._solve_restoring_host_attrs
+        self.assertFalse(
+            hasattr(helper, "__wrapped__"),
+            "the shared restore helper must not carry @do_profile")
