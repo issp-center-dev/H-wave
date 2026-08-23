@@ -224,6 +224,11 @@ class FLEX(RPA):
                     "solver.")
             self._flex_general = True
         elif scheme == "reduced":
+            if getattr(self.ham_info, "enable_spin_orbital", False):
+                raise ValueError(
+                    "calc_scheme='reduced' FLEX does not support "
+                    "enable_spin_orbital; deferred to the generalized FLEX "
+                    "solver.")
             self._flex_general = False
         else:
             if getattr(self, "calc_type", "ring") == "ring+ladder":
@@ -299,6 +304,40 @@ class FLEX(RPA):
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
+
+    def _check_reduced_rejects_spinful(self):
+        """Reject ``self.spin_mode == 'spinful'`` under
+        ``calc_scheme='reduced'`` (``self._flex_general`` False) at SOLVE
+        time.
+
+        Split out as its own method (rather than inlined in
+        ``_solve_impl``) so a unit test can pin this exact check by
+        constructing the semantic state directly (setting
+        ``_flex_general``/``spin_mode`` on a bare instance) instead of
+        driving a full solve.
+
+        This complements the CONSTRUCTOR-time
+        ``enable_spin_orbital=True`` guard in ``_init_flex_param``, but is
+        NOT merely defense-in-depth for an otherwise-unreachable state:
+        ``self.spin_mode`` is determined here from H0(k)'s block
+        structure by ``_calc_epsilon_k``, which is driven not only by
+        ``enable_spin_orbital`` but also by the PUBLIC ``trans_mod`` /
+        ``green_init`` inputs (``RPA.read_init``) -- a spin-mixing
+        ``trans_mod`` reaches ``spin_mode == 'spinful'`` here even with
+        ``enable_spin_orbital=False`` (see
+        ``tests/test_rpa_flex_equivalence_table.py``'s
+        ``TestReducedSpinfulGuard.test_public_trans_mod_route_reaches_spinful_and_is_rejected``).
+        The reduced scheme projects the interaction onto its
+        density-diagonal part (``_inflate_chi0q_and_ham``); that
+        projection has never been validated against a genuinely
+        spin-mixing H0, so this rejects rather than silently computing
+        unvalidated physics. spin-free and spin-diag are unaffected.
+        """
+        if (not self._flex_general) and self.spin_mode == "spinful":
+            raise ValueError(
+                "calc_scheme='reduced' FLEX does not support "
+                "spin_mode='spinful'; spin-free and spin-diag are "
+                "supported. Deferred to the generalized FLEX solver.")
 
     def read_init(self, info_inputfile):
         """Read initial configs, plus the FLEX-specific ``sigma_init``.
@@ -431,6 +470,8 @@ class FLEX(RPA):
                 "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
                 "only, got '{}'. spin-diag/spinful are deferred to the "
                 "generalized FLEX solver.".format(self.spin_mode))
+
+        self._check_reduced_rejects_spinful()
 
         if self.use_ir:
             self._ir_setup(beta)

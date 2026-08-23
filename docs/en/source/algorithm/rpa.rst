@@ -13,6 +13,12 @@ the RPA method enables to infer the ordered phase that emerges from the second-o
 H-wave implements RPA method using Matsubara frequency, and allows to compare with the dynamical
 observables measured in the experiments by analytical continuation.
 
+.. seealso::
+
+   :doc:`rpa_flex_equivalence` records, for a set of small reference
+   inputs, which configurations the RPA solver and the one-shot FLEX
+   solver each accept, and how closely the two agree where both run.
+
 In the following, the algorithm is described.
 In the RPA mode of H-wave, the Hamiltonian given below will be considered:
 
