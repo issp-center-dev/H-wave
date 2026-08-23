@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>7.4. RPA and FLEX: support and equivalence &#8212; H-wave Users Guide 1.1-dev documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
+    <script src="../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="8. FAQ" href="../faq/faq-index.html" />
+    <link rel="prev" title="7.3. Linearized Eliashberg equation" href="eliashberg.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="rpa-and-flex-support-and-equivalence">
+<span id="rpa-flex-equivalence"></span><h1><span class="section-number">7.4. </span>RPA and FLEX: support and equivalence<a class="headerlink" href="#rpa-and-flex-support-and-equivalence" title="Link to this heading">¶</a></h1>
+<p>H-wave computes the susceptibilities of a given model along two
+routes: the RPA solver and the one-shot (first-iteration) FLEX
+solver. Where the two routes describe the same approximation they
+are expected to produce the same arrays, and this page records, for
+a fixed set of small reference inputs, which configurations each
+solver accepts and how closely the two agree where both run.</p>
+<p>The comparison is one of IMPLEMENTATION, not of physics: a row
+stating that the two solvers agree says that the two code paths
+produce the same numbers on that input, not that either result is a
+better description of the material. Likewise, a configuration
+marked as rejected is one the solver refuses to run today; the
+entry records the behaviour, not a statement about whether the
+quantity is meaningful.</p>
+<p>Every claim on this page is checked by
+<code class="docutils literal notranslate"><span class="pre">tests/test_rpa_flex_equivalence_table.py</span></code>, which runs both
+solvers on each input listed below and asserts the recorded
+outcome. The page itself is generated from the same records, so it
+cannot drift away from what the tests assert.</p>
+<section id="status-of-these-records">
+<h2><span class="section-number">7.4.1. </span>Status of these records<a class="headerlink" href="#status-of-these-records" title="Link to this heading">¶</a></h2>
+<p>The tolerances below are <strong>confirmed</strong>: they were reproduced on the
+project’s continuous-integration runners at source revision
+<code class="docutils literal notranslate"><span class="pre">8144bf3f9e9539bad4759a2fbd1b24f52f7bef33</span></code> (workflow run
+<code class="docutils literal notranslate"><span class="pre">32204319966</span> <span class="pre">attempt</span> <span class="pre">1</span></code>), and hold as of that revision. The notes
+below record where each residual was originally measured.</p>
+</section>
+<section id="how-to-read-the-table">
+<h2><span class="section-number">7.4.2. </span>How to read the table<a class="headerlink" href="#how-to-read-the-table" title="Link to this heading">¶</a></h2>
+<p>The <em>RPA</em> and <em>FLEX</em> columns give each solver’s outcome on the
+input, and the <em>Relationship</em> column summarises the pair:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></dt><dd><p>Both solvers run and every compared array agrees to the recorded
+tolerance.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">DIVERGES(&lt;issue&gt;)</span></code></dt><dd><p>Both solvers run, but at least one compared array differs by more
+than the agreement policy allows. The difference is bounded and
+pinned by the tests, and the named issue tracks unifying the two
+implementations.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">AUTO-RESOLVES(&lt;scheme&gt;)</span></code></dt><dd><p>The input leaves <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>, and both solvers
+resolve it to the named scheme. These rows check the resolution
+only; no susceptibility is computed.</p>
+</dd>
+<dt>The remaining labels</dt><dd><p>No comparison is possible, because at least one solver does not
+run the input: <code class="docutils literal notranslate"><span class="pre">BOTH-REJECT</span></code>, <code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code>,
+<code class="docutils literal notranslate"><span class="pre">RPA-REJECT·FLEX-SUPPORTED</span></code>, <code class="docutils literal notranslate"><span class="pre">RPA-ONLY</span></code>, <code class="docutils literal notranslate"><span class="pre">FLEX-ONLY</span></code>,
+<code class="docutils literal notranslate"><span class="pre">RPA-REJECT</span></code> and <code class="docutils literal notranslate"><span class="pre">FLEX-REJECT</span></code>, naming the side that does
+not. The next section says what happens instead.</p>
+</dd>
+</dl>
+</section>
+<section id="support-matrix">
+<h2><span class="section-number">7.4.3. </span>Support matrix<a class="headerlink" href="#support-matrix" title="Link to this heading">¶</a></h2>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 20.0%" />
+<col style="width: 10.0%" />
+<col style="width: 9.0%" />
+<col style="width: 8.0%" />
+<col style="width: 8.0%" />
+<col style="width: 19.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Configuration</p></th>
+<th class="head"><p>Interactions</p></th>
+<th class="head"><p>Scheme</p></th>
+<th class="head"><p>Spin mode</p></th>
+<th class="head"><p>RPA</p></th>
+<th class="head"><p>FLEX</p></th>
+<th class="head"><p>Relationship</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto.density.resolution</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">AUTO-RESOLVES(reduced)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">auto.exchange.resolution</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">AUTO-RESOLVES(general)</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">auto.pairhop.resolution</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">auto</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">AUTO-RESOLVES(general)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q_init.reuse</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>not applicable</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">RPA-ONLY</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter.conditioning.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.subshape</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombintra_literalkey.reject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>rejected</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BOTH-REJECT</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_exchange.flexreject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.coefftail.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.subshape.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombintra.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_exchange.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_full_kanamori.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_hund.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_ising.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_pairhop.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_pairlift.fixedmu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_u_v_hund.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.offsite_coulombinter.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombinter.spindiag.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-diag</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombinter.spinfree.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombintra.spindiag.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-diag</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombintra.spinfree.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_exchange.reject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>rejected</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BOTH-REJECT</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_hund.spinfree.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_ising.spinfree.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_pairhop.reject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>rejected</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BOTH-REJECT</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_pairlift.spinfree.mu</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ringladder.general.onsite_coulombintra</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spin-free</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">so.general.construction.reject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
+<td><p>spinful</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">so.reduced.construction.reject</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (on-site)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code></p></td>
+<td><p>spinful</p></td>
+<td><p>supported</p></td>
+<td><p>rejected</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="configurations-one-solver-does-not-run">
+<h2><span class="section-number">7.4.4. </span>Configurations one solver does not run<a class="headerlink" href="#configurations-one-solver-does-not-run" title="Link to this heading">¶</a></h2>
+<p>For these inputs the two solvers cannot be compared. The entries
+record what the unsupported side does instead.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">chi0q_init.reuse</span></code></dt><dd><ul class="simple">
+<li><p>FLEX: nothing to compare – accepted; no corresponding option semantics (flex.py:408) – FLEX starts every SCF loop from zero self-energy and recomputes chi0q from the dressed Green’s function each iteration (flex.py:446-451’s own docstring), so a chi0q_init entry loaded by the inherited RPA read_init is never consumed. Measured: supplying a chi0q_init DELIBERATELY PERTURBED to twice the value FLEX itself computes leaves every one of FLEX’s output arrays bitwise unchanged.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'CoulombInter'</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.subshape</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">sublattice</span> <span class="pre">folding</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombintra_literalkey.reject</span></code></dt><dd><ul class="simple">
+<li><p>RPA refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">documented</span> <span class="pre">operator</span> <span class="pre">is</span> <span class="pre">on-site</span> <span class="pre">and</span> <span class="pre">same-orbital</span></code>.</p></li>
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">documented</span> <span class="pre">operator</span> <span class="pre">is</span> <span class="pre">on-site</span> <span class="pre">and</span> <span class="pre">same-orbital</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_exchange.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Exchange'</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Hund'</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Ising'</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'PairHop'</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_exchange.reject</span></code></dt><dd><ul class="simple">
+<li><p>RPA refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">has</span> <span class="pre">no</span> <span class="pre">density-diagonal</span> <span class="pre">content</span></code>.</p></li>
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">has</span> <span class="pre">no</span> <span class="pre">density-diagonal</span> <span class="pre">content</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_pairhop.reject</span></code></dt><dd><ul class="simple">
+<li><p>RPA refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">has</span> <span class="pre">no</span> <span class="pre">density-diagonal</span> <span class="pre">content</span></code>.</p></li>
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">has</span> <span class="pre">no</span> <span class="pre">density-diagonal</span> <span class="pre">content</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">ringladder.general.onsite_coulombintra</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">so.general.construction.reject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">so.reduced.construction.reject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="recorded-agreement">
+<h2><span class="section-number">7.4.5. </span>Recorded agreement<a class="headerlink" href="#recorded-agreement" title="Link to this heading">¶</a></h2>
+<p>Arrays are compared elementwise on complex values: the two results
+count as agreeing when <code class="docutils literal notranslate"><span class="pre">|a</span> <span class="pre">-</span> <span class="pre">b|</span> <span class="pre">&lt;=</span> <span class="pre">atol</span></code> holds for every element,
+with no relative term. <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> is the bare susceptibility and
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code> the interacting one; the comparator names the mapping
+applied before the comparison, which reconciles the two solvers’
+storage layouts (<code class="docutils literal notranslate"><span class="pre">identity</span></code> when both already store the same
+shape).</p>
+<p>Each entry also carries the measurement note recorded with the
+tolerance – the machines, the source revision and the observed
+differences it was derived from. Those notes are maintenance
+records rather than user guidance.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter.conditioning.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-11</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 6.432e-13; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 6.432e-13. Resulting atol 1.0e-11 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-10</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 3.307e-12; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 3.373e-12. Resulting atol 1.0e-10 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-13</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 4.885e-15; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 4.899e-15. Resulting atol 1.0e-13 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-12</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 2.021e-14; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 2.026e-14. Resulting atol 1.0e-12 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.coefftail.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.388e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.388e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.subshape.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.665e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.715e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.943e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombintra.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 2.498e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.943e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_exchange.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_full_kanamori.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 2.498e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.943e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_hund.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_ising.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_pairhop.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.715e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_pairlift.fixedmu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_u_v_hund.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 3.053e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 2.776e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.offsite_coulombinter.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-13</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 4.885e-15; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 4.899e-15. Resulting atol 1.0e-13 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-12</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 3.553e-14; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 3.561e-14. Resulting atol 1.0e-12 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombinter.spindiag.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.527e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.388e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombinter.spinfree.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombintra.spindiag.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 4.164e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 4.719e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombintra.spinfree.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 3.886e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 3.053e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_hund.spinfree.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.110e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_ising.spinfree.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.249e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 1.249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_pairlift.spinfree.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">reduced_blocks</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: measured on two development machines at commit b922a1c13b85: macOS arm64 (macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13, numpy 1.26.4, scipy 1.17.1) max|diff| 1.110e-16; Linux x86_64 (Linux-5.4.0-216-generic-x86_64-with-glibc2.31, Python 3.11.15, numpy 1.26.4, scipy 1.13.1) max|diff| 9.714e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-10).</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="related-tests">
+<h2><span class="section-number">7.4.6. </span>Related tests<a class="headerlink" href="#related-tests" title="Link to this heading">¶</a></h2>
+<p>A maintenance index of tests elsewhere in the suite that cover the
+same ground, each with the note recorded alongside it. They are
+listed for orientation only: the claims on this page are
+established by <code class="docutils literal notranslate"><span class="pre">tests/test_rpa_flex_equivalence_table.py</span></code> alone.</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site CoulombInter with a != b (inter-orbital) under calc_scheme=’general’.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_one_orbital_offsite_v_matches_the_rpa_ring_exactly</span></code>: The same fixture (tests/rpa/input’s coulombinter.dat, filling=0.75) element-complete equal between RPA and FLEX for off-site same-orbital CoulombInter.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_exchange.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Exchange under calc_scheme=’general’.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Hund under calc_scheme=’general’.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Ising under calc_scheme=’general’.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: tests/test_flex_offsite_general.py’s general rejection-classes coverage (this exact PairHop case is not one of its enumerated subTest rows – the module’s docstring names off-site PairHop as rejected for the same non-local-pair reason as Exchange; linked for the surrounding module context, not a per-type pin).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.offsite_coulombinter.mu</span></code></dt><dd><ul class="simple">
+<li><p>RPA – <code class="docutils literal notranslate"><span class="pre">tests.test_rpa_flex_oneshot_equivalence::TestReducedOneShot::test_matrix_cells</span></code>: An existing one-shot comparison over this same fixture and filling pins the chiq uu-ud/uu+ud block equivalence under calc_scheme=’reduced’.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombinter.spindiag.mu</span></code></dt><dd><ul class="simple">
+<li><p>RPA – <code class="docutils literal notranslate"><span class="pre">tests.test_rpa_flex_equivalence_table::TestReducedSpinDiagAcceptance::test_reduced_rpa_also_solves_with_extern</span></code>: RPA accepts the Extern/Zeeman spin-diagonal route (the tests/equivalence_input/spin fixture) under calc_scheme=’reduced’.</p></li>
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_rpa_flex_equivalence_table::TestReducedSpinDiagAcceptance::test_reduced_flex_solves_with_extern_coulombinter</span></code>: FLEX accepts the Extern/Zeeman spin-diagonal route (the tests/equivalence_input/spin fixture) under calc_scheme=’reduced’ with CoulombInter.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_coulombintra.spindiag.mu</span></code></dt><dd><ul class="simple">
+<li><p>RPA – <code class="docutils literal notranslate"><span class="pre">tests.test_rpa_flex_equivalence_table::TestReducedSpinDiagAcceptance::test_reduced_rpa_also_solves_with_extern</span></code>: RPA accepts the Extern/Zeeman spin-diagonal route (the tests/equivalence_input/spin fixture) under calc_scheme=’reduced’.</p></li>
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_rpa_flex_equivalence_table::TestReducedSpinDiagAcceptance::test_reduced_flex_solves_with_extern_coulombintra</span></code>: FLEX accepts the Extern/Zeeman spin-diagonal route (the tests/equivalence_input/spin fixture) under calc_scheme=’reduced’ – the recorded expectation for this row is that both solvers accept it.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">ringladder.general.onsite_coulombintra</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_spinful_transverse_ed::TestSpinfulVertexExchangeOptOutRingLadderRejection::test_ring_ladder_rejects_the_opt_out_combination</span></code>: The transverse ring+ladder pipeline’s own rejection contract (a companion instance to FLEX’s blanket calc_type=’ring+ladder’ rejection).</p></li>
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_bond_transverse_w::TestGateW1OnsiteReduction::test_collapsed_output_matches_plain_chiq_pm_at_omega_zero</span></code>: RPA’s ring+ladder transverse channel resolves correctly on the collapsed (non-bond) path – the capability FLEX does not implement.</p></li>
+</ul>
+</dd>
+</dl>
+</section>
+<section id="scope">
+<h2><span class="section-number">7.4.7. </span>Scope<a class="headerlink" href="#scope" title="Link to this heading">¶</a></h2>
+<p>The table certifies the inputs it lists and nothing beyond them.
+All of them are deliberately small, so that the whole set runs as
+part of the ordinary test suite:</p>
+<ul class="simple">
+<li><p>Lattices <code class="docutils literal notranslate"><span class="pre">2x1x1</span></code>, <code class="docutils literal notranslate"><span class="pre">4x4x1</span></code> with sublattices <code class="docutils literal notranslate"><span class="pre">1x1x1</span></code>, <code class="docutils literal notranslate"><span class="pre">2x1x1</span></code>.</p></li>
+<li><p>Temperatures <code class="docutils literal notranslate"><span class="pre">0.2</span></code>, <code class="docutils literal notranslate"><span class="pre">2.0</span></code>.</p></li>
+<li><p>Matsubara frequency counts <code class="docutils literal notranslate"><span class="pre">8</span></code>, <code class="docutils literal notranslate"><span class="pre">32</span></code>, <code class="docutils literal notranslate"><span class="pre">256</span></code>.</p></li>
+<li><p>Diagram selections <code class="docutils literal notranslate"><span class="pre">ring</span></code>, <code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code>.</p></li>
+<li><p>Calculation schemes <code class="docutils literal notranslate"><span class="pre">general</span></code>, <code class="docutils literal notranslate"><span class="pre">reduced</span></code>.</p></li>
+<li><p>Both a fixed chemical potential and a fixed electron count.</p></li>
+</ul>
+<p>Agreement measured on inputs of this size does not by itself
+establish agreement on a production-sized model, and the tolerances
+are the measured round-off levels of these inputs, not general
+accuracy guarantees.</p>
+<section id="accelerated-backends">
+<h3>Accelerated backends<a class="headerlink" href="#accelerated-backends" title="Link to this heading">¶</a></h3>
+<p>The table makes no statement about the GPU backends: every input is
+run on the CPU backend of both solvers. That the GPU backend
+reproduces the CPU one is a separate, per-solver property, covered
+by <code class="docutils literal notranslate"><span class="pre">tests/test_gpu_backend.py</span></code>, <code class="docutils literal notranslate"><span class="pre">tests/test_rpa_gpu.py</span></code>,
+<code class="docutils literal notranslate"><span class="pre">tests/test_flex_gpu.py</span></code> and <code class="docutils literal notranslate"><span class="pre">tests/test_sc_gpu.py</span></code>.</p>
+</section>
+<section id="flex-only-numerical-representations">
+<h3>FLEX-only numerical representations<a class="headerlink" href="#flex-only-numerical-representations" title="Link to this heading">¶</a></h3>
+<p>The intermediate-representation (IR) route has no counterpart on
+the RPA side, so it cannot appear as a row here: comparing the IR
+route with the dense one is a comparison of FLEX with itself. That
+comparison is covered by <code class="docutils literal notranslate"><span class="pre">tests/test_flex_ir.py</span></code> and
+<code class="docutils literal notranslate"><span class="pre">tests/test_flex_ir_general.py</span></code>.</p>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<p class="logo">
+  <a href="../index.html">
+    <img class="logo" src="../_static/Hwave_logo.png" alt="Logo" />
+    
+  </a>
+</p>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. What is H-wave?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../howtouse/ho-index.html">2. Basic usage</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. Coordinate-space UHF (UHFr)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. Wave-number space UHF (UHFk)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. Random Phase Approximation (RPA)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../flex/flex-index.html">6. Fluctuation Exchange Approximation (FLEX)</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="al-index.html">7. Algorithms</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="uhf.html">7.1. Unrestricted Hartree-Fock method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="rpa.html">7.2. Random Phase Approximation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="eliashberg.html">7.3. Linearized Eliashberg equation</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">7.4. RPA and FLEX: support and equivalence</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#status-of-these-records">7.4.1. Status of these records</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#how-to-read-the-table">7.4.2. How to read the table</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#support-matrix">7.4.3. Support matrix</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#configurations-one-solver-does-not-run">7.4.4. Configurations one solver does not run</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#recorded-agreement">7.4.5. Recorded agreement</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#related-tests">7.4.6. Related tests</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#scope">7.4.7. Scope</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../faq/faq-index.html">8. FAQ</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">9. Acknowledgments</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/app-index.html">10. Appendix</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+  <li><a href="al-index.html"><span class="section-number">7. </span>Algorithms</a><ul>
+      <li>Previous: <a href="eliashberg.html" title="previous chapter"><span class="section-number">7.3. </span>Linearized Eliashberg equation</a></li>
+      <li>Next: <a href="../faq/faq-index.html" title="next chapter"><span class="section-number">8. </span>FAQ</a></li>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022-, The University of Tokyo.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.0.4</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="../_sources/algorithm/rpa_flex_equivalence.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

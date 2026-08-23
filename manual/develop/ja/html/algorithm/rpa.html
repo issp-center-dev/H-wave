@@ -40,6 +40,15 @@
 <p>乱雑位相近似(RPA)では相互作用のない状態を出発点に、電子相関効果による一体の演算子の揺らぎの応答を検出します。
 UHF近似ではあらかじめ初期配置を予想しておく必要があるのに対して、RPA法では2次転移により生じる秩序相を推定することが可能です。
 H-waveでは松原振動数を利用したRPA法を実装しており、解析接続によって実験で観測される動的な物理量との比較も行うことが可能です。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>RPAソルバーと1回反復のFLEXソルバーについて、どの設定がそれぞれで
+実行可能か、また両者が実行できる場合にどの程度一致するかを、小規模な
+参照入力に対してまとめた対応表があります。この表は日本語版には未収録
+のため、英語版マニュアルの
+<a class="reference external" href="../../../en/html/algorithm/rpa_flex_equivalence.html">RPA and FLEX: support and equivalence</a>
+を参照してください。</p>
+</div>
 <p>以下、アルゴリズムについて掲載します。
 H-waveのRPAモードでは以下のHamiltonianを取り扱います。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-0">
