@@ -13,6 +13,13 @@ hermiticity check.
 
 The fix excludes the spin-block entries from the hermiticity check, matching
 _make_ham_trans dropping them from the Hamiltonian the check guards.
+
+fold.reshape_interaction had the worse variant of the same defect: its
+normal-mode fold (a + norb_phys_orig * cellidx) relabeled spin-block indices
+onto genuine sublattice orbitals, so the entries survived _make_ham_trans's
+index guard and corrupted H(k) with spurious inter-orbital hoppings instead of
+being dropped.  The fold now skips them too (warning once, since the solvers'
+own spin-block warning can no longer fire for folded tables).
 """
 import os
 import shutil
@@ -100,6 +107,33 @@ class TestUHFkSpinBlockTransfer(unittest.TestCase):
                     "UHFk init raised {!r}".format(e))
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def test_spin_block_entry_not_folded_into_hamiltonian(self):
+        # spin-block hops at R=+-1 fold (with the physical stride) onto the
+        # folded-orbital indices of neighboring cells, so they used to survive
+        # _make_ham_trans's index guard and enter H(k) as spurious
+        # inter-orbital hoppings; the correct H(k) keeps only the orbital
+        # block: -1 * identity at every k
+        d = tempfile.mkdtemp(prefix="uhfk_spinblock_fold_ham_")
+        try:
+            _write_soi_format_chain(
+                d, ["   1    0    0    2    2  0.700000  0.0\n",
+                    "  -1    0    0    2    2  0.700000  0.0\n"])
+            solver = _build_solver(d, [6, 1, 1], subshape=[3, 1, 1])
+            for orbvec in (ov for (_, ov) in solver.param_ham["Transfer"]):
+                self.assertTrue(
+                    all(0 <= o < solver.norb for o in orbvec),
+                    "folded Transfer must not carry spin-block indices: "
+                    "{}".format(orbvec))
+            solver._make_ham_trans()
+            np.testing.assert_allclose(
+                solver.ham_trans,
+                np.broadcast_to(-np.eye(solver.nd), solver.ham_trans.shape),
+                atol=1e-12,
+                err_msg="spin-block Transfer entries must not fold into H(k)")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()
