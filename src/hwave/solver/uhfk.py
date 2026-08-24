@@ -756,10 +756,18 @@ class UHFk(solver_base):
 
         if "Transfer" in self.param_ham:
             nx,ny,nz = self.param_mod.get("CellShape")
-            norb = self.norb
+            # this check runs before the sublattice reshape, so Transfer still
+            # carries the original-geometry orbital indices
+            norb = self.norb_orig
 
             tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
+                if orbvec[0] >= norb or orbvec[1] >= norb:
+                    # spin-block entries of a spin-orbital-format file in
+                    # normal mode; _make_ham_trans drops them (with a
+                    # warning), so they are not part of the Hamiltonian this
+                    # check guards
+                    continue
                 tab_r[(*irvec, *orbvec)] += v
 
             t = np.conjugate(
