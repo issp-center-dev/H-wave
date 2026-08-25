@@ -57,6 +57,11 @@ class TestReadNpyHeaderShape(unittest.TestCase):
         # so cannot tell a utf-8 reader from a latin-1 one.
         dt = np.dtype([("温度", "c16"), ("μ", "f8")])
         path = _member(np.zeros((12, 3), dtype=dt))
+        # Assert numpy really emitted 3.0: if its version-selection rule
+        # ever changes, this test would otherwise slip onto the delegated
+        # 1.0/2.0 path and keep passing while covering nothing.
+        with zipfile.ZipFile(path) as z, z.open("k.npy") as f:
+            self.assertEqual(tuple(np.lib.format.read_magic(f)), (3, 0))
         with zipfile.ZipFile(path) as z, z.open("k.npy") as f:
             shape = npy_header.read_npy_header_shape(f)
         self.assertEqual(shape, (12, 3))
@@ -99,6 +104,71 @@ class TestReadNpyHeaderShape(unittest.TestCase):
             "'shape': ('a', 2)}")
         with self.assertRaises(ValueError):
             npy_header.read_npy_header_shape(io.BytesIO(raw))
+
+    def test_rejects_a_truncated_length_field(self):
+        raw = _npy_bytes(
+            (3, 0),
+            "{'descr': '<c16', 'fortran_order': False, 'shape': (4,)}")
+        with self.assertRaises(ValueError):
+            npy_header.read_npy_header_shape(io.BytesIO(raw[:12]))
+
+    def test_refuses_a_huge_declared_length_without_reading_the_body(self):
+        """The length is four attacker-supplied bytes, so it must be
+        checked BEFORE the body read -- a probe exists precisely to avoid
+        reading data, and must not be talked into allocating 4 GiB."""
+
+        class _Recorder(io.BytesIO):
+            def __init__(self, data):
+                super().__init__(data)
+                self.requested = []
+
+            def read(self, n=-1):
+                self.requested.append(n)
+                return super().read(n)
+
+        raw = (b"\x93NUMPY" + bytes((3, 0))
+               + (0xFFFFFFFF).to_bytes(4, "little"))
+        fh = _Recorder(raw)
+        with self.assertRaises(ValueError):
+            npy_header.read_npy_header_shape(fh)
+        self.assertNotIn(0xFFFFFFFF, fh.requested)
+        self.assertTrue(all(n <= npy_header._MAX_HEADER_LEN
+                            for n in fh.requested if isinstance(n, int)
+                            and n > 0))
+
+    def test_rejects_headers_np_load_rejects(self):
+        """Every malformed shape below is one np.load refuses. The probe
+        must refuse it too: reporting a shape for a file the loader will
+        reject is the defect this parser exists to remove."""
+        cases = {
+            "not a dict": "[1, 2, 3]",
+            "missing descr":
+                "{'fortran_order': False, 'shape': (4,)}",
+            "missing fortran_order": "{'descr': '<c16', 'shape': (4,)}",
+            "extra key": ("{'descr': '<c16', 'fortran_order': False, "
+                          "'shape': (4,), 'extra': 1}"),
+            "fortran_order not bool": ("{'descr': '<c16', "
+                                       "'fortran_order': 0, 'shape': (4,)}"),
+            "invalid descr": ("{'descr': 'not-a-dtype', "
+                              "'fortran_order': False, 'shape': (4,)}"),
+            "negative dimension": ("{'descr': '<c16', "
+                                   "'fortran_order': False, "
+                                   "'shape': (-4,)}"),
+            "bool dimension": ("{'descr': '<c16', 'fortran_order': False, "
+                               "'shape': (True,)}"),
+        }
+        for name, header_text in cases.items():
+            with self.subTest(case=name):
+                raw = _npy_bytes((3, 0), header_text)
+                with self.assertRaises(ValueError):
+                    npy_header.read_npy_header_shape(io.BytesIO(raw))
+                # ... and confirm np.load agrees this file is unusable.
+                d = tempfile.mkdtemp(prefix="npy_header_bad_")
+                path = os.path.join(d, "a.npy")
+                with open(path, "wb") as f:
+                    f.write(raw + b"\x00" * 128)
+                with self.assertRaises(Exception):
+                    np.load(path)
 
     def test_unknown_future_version_raises_the_documented_exception(self):
         raw = b"\x93NUMPY" + bytes((9, 9)) + b"\x00" * 4

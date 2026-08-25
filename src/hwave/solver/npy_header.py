@@ -50,14 +50,36 @@ _READERS = {
 _LOCAL_VERSIONS = ((3, 0),)
 
 
+#: Upper bound on a 3.0 header's declared length, matching the limit
+#: numpy's own public readers apply. The length is four attacker-supplied
+#: bytes, so it is checked BEFORE the body is read: without this a
+#: crafted member could make a probe -- whose entire purpose is to avoid
+#: reading data -- allocate up to 4 GiB and hand it to the literal
+#: parser.
+_MAX_HEADER_LEN = 10000
+
+#: The keys an NPY header dict must carry, exactly (numpy rejects both
+#: missing and extra keys).
+_REQUIRED_KEYS = frozenset(("descr", "fortran_order", "shape"))
+
+
 def _read_header_3_0(fh):
     """Parse a version-3.0 header and return its ``shape``.
 
     Follows the NPY specification: a 4-byte little-endian length, then
-    that many bytes of utf-8 holding a Python literal dict. Anything that
-    does not match -- a short read, invalid utf-8, a non-dict, a missing
-    or non-integer shape -- raises ``ValueError``, which both callers
-    already handle as "this header is unusable".
+    that many bytes of utf-8 holding a Python literal dict.
+
+    The validation deliberately mirrors what ``np.load`` itself enforces
+    -- exactly the three required keys, a boolean ``fortran_order``, a
+    dtype descriptor numpy accepts, and a shape of non-negative plain
+    integers. A probe that accepted more than the loader does would
+    reintroduce the defect this parser exists to remove: reporting a
+    shape for a file that cannot then be loaded, turning a clear load
+    error into a wrong frequency count or an unrelated preflight
+    failure.
+
+    Every rejection raises ``ValueError``, which both callers already
+    handle as "this header is unusable".
     """
     import ast
 
@@ -65,6 +87,10 @@ def _read_header_3_0(fh):
     if len(raw_len) != 4:
         raise ValueError("truncated NPY 3.0 header length field")
     header_len = int.from_bytes(raw_len, "little")
+    if header_len > _MAX_HEADER_LEN:
+        raise ValueError(
+            "NPY 3.0 header declares {} bytes, above the {}-byte limit; "
+            "refusing to read it".format(header_len, _MAX_HEADER_LEN))
     raw = fh.read(header_len)
     if len(raw) != header_len:
         raise ValueError("truncated NPY 3.0 header")
@@ -75,23 +101,34 @@ def _read_header_3_0(fh):
             "NPY 3.0 header is not valid utf-8: {}".format(exc))
     try:
         header = ast.literal_eval(text.strip())
-    except (ValueError, SyntaxError) as exc:
+    except (ValueError, SyntaxError, MemoryError, RecursionError) as exc:
         raise ValueError(
             "NPY 3.0 header is not a Python literal: {}".format(exc))
     if not isinstance(header, dict):
         raise ValueError(
             "NPY 3.0 header is {}, expected a dict".format(
                 type(header).__name__))
+    if _REQUIRED_KEYS != set(header):
+        raise ValueError(
+            "NPY 3.0 header keys are {}, expected exactly {}".format(
+                sorted(header), sorted(_REQUIRED_KEYS)))
+    if not isinstance(header["fortran_order"], bool):
+        raise ValueError(
+            "NPY 3.0 header fortran_order is not a bool: {!r}".format(
+                header["fortran_order"]))
     try:
-        shape = header["shape"]
-    except KeyError:
-        raise ValueError("NPY 3.0 header has no 'shape' entry")
+        np.lib.format.descr_to_dtype(header["descr"])
+    except Exception as exc:
+        raise ValueError(
+            "NPY 3.0 header descr is not a valid dtype descriptor: "
+            "{!r} ({})".format(header["descr"], exc))
+    shape = header["shape"]
     if (not isinstance(shape, tuple)
             or not all(isinstance(n, int) and not isinstance(n, bool)
-                       for n in shape)):
+                       and n >= 0 for n in shape)):
         raise ValueError(
-            "NPY 3.0 header shape is not a tuple of integers: "
-            "{!r}".format(shape))
+            "NPY 3.0 header shape is not a tuple of non-negative "
+            "integers: {!r}".format(shape))
     return shape
 
 
