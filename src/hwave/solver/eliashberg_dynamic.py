@@ -276,15 +276,15 @@ def _npz_freq_size(path, keys, axis):
     """
     import zipfile
 
-    from numpy.lib import format as _npformat
+    from hwave.solver import npy_header as _npy_header
 
     # Best-effort header probe. This is a pure optimization/safety pre-check --
     # the loader below is the authoritative path -- so ANY failure returns None
     # and lets the loader raise the existing, clearer error. The broad catch is
     # deliberate: besides unreadable/malformed/truncated files and a missing
-    # axis, it also covers the numpy.lib.format internals used here being
-    # renamed/removed in a future numpy (AttributeError), which must degrade
-    # gracefully rather than crash.
+    # axis, it also covers a future NPY header version the shared reader in
+    # hwave.solver.npy_header does not know, which must degrade gracefully
+    # rather than crash.
     try:
         with zipfile.ZipFile(path) as z:
             names = set(z.namelist())
@@ -292,10 +292,7 @@ def _npz_freq_size(path, keys, axis):
                 member = key + ".npy"
                 if member in names:
                     with z.open(member) as f:
-                        version = _npformat.read_magic(f)
-                        _npformat._check_version(version)
-                        shape, _fortran, _dtype = _npformat._read_array_header(
-                            f, version)
+                        shape = _npy_header.read_npy_header_shape(f)
                     return int(shape[axis])
     except Exception:
         return None
