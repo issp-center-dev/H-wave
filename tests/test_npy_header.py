@@ -106,11 +106,16 @@ class TestReadNpyHeaderShape(unittest.TestCase):
             npy_header.read_npy_header_shape(io.BytesIO(raw))
 
     def test_rejects_a_truncated_length_field(self):
+        # A 3.0 preamble is 12 bytes (6 magic + 2 version + 4 length), so
+        # raw[:12] keeps the length field intact and would only re-test
+        # the empty-body path the previous test covers. Cut inside the
+        # length field itself.
         raw = _npy_bytes(
             (3, 0),
             "{'descr': '<c16', 'fortran_order': False, 'shape': (4,)}")
-        with self.assertRaises(ValueError):
-            npy_header.read_npy_header_shape(io.BytesIO(raw[:12]))
+        with self.assertRaises(ValueError) as cm:
+            npy_header.read_npy_header_shape(io.BytesIO(raw[:11]))
+        self.assertIn("length field", str(cm.exception))
 
     def test_refuses_a_huge_declared_length_without_reading_the_body(self):
         """The length is four attacker-supplied bytes, so it must be
@@ -167,8 +172,65 @@ class TestReadNpyHeaderShape(unittest.TestCase):
                 path = os.path.join(d, "a.npy")
                 with open(path, "wb") as f:
                     f.write(raw + b"\x00" * 128)
-                with self.assertRaises(Exception):
+                with self.assertRaises((ValueError, TypeError)):
                     np.load(path)
+
+    def test_accepts_a_multibyte_header_numpy_accepts(self):
+        """Version 3.0 exists FOR names outside latin-1, so the size
+        limit must bound the DECODED length as numpy's does. A header of
+        a few thousand CJK characters exceeds 10,000 BYTES while staying
+        well under 10,000 characters; np.load reads it, so this must
+        too -- a byte-based limit would reject exactly the files this
+        version was introduced to carry."""
+        dt = np.dtype([("温" * 4000, "c16")])
+        path = _member(np.zeros((3,), dtype=dt))
+        with zipfile.ZipFile(path) as z, z.open("k.npy") as f:
+            f.read(8)                      # past magic + version
+            byte_len = int.from_bytes(f.read(4), "little")
+            char_len = len(f.read(byte_len).decode("utf-8"))
+        self.assertGreater(byte_len, npy_header._MAX_HEADER_CHARS)
+        self.assertLessEqual(char_len, npy_header._MAX_HEADER_CHARS)
+        with zipfile.ZipFile(path) as z, z.open("k.npy") as f:
+            self.assertEqual(npy_header.read_npy_header_shape(f), (3,))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(np.load(path)["k"].shape, (3,))
+
+    def test_decoded_length_limit_is_the_boundary(self):
+        """At the limit the header is read; one character over, refused
+        -- the same boundary numpy draws."""
+        for extra, should_raise in ((0, False), (1, True)):
+            with self.subTest(over_by=extra):
+                base = "{'descr': '<c16', 'fortran_order': False, "
+                tail = "'shape': (4,)}"
+                pad = npy_header._MAX_HEADER_CHARS - len(base) - len(tail)
+                text = base + " " * (pad + extra) + tail
+                self.assertEqual(
+                    len(text), npy_header._MAX_HEADER_CHARS + extra)
+                # Build the stream directly: _npy_bytes pads to a 64-byte
+                # boundary, which would push the decoded length past the
+                # value under test.
+                hb = text.encode("utf-8")
+                raw = (b"\x93NUMPY" + bytes((3, 0))
+                       + len(hb).to_bytes(4, "little") + hb)
+                fh = io.BytesIO(raw)
+                if should_raise:
+                    with self.assertRaises(ValueError):
+                        npy_header.read_npy_header_shape(fh)
+                else:
+                    self.assertEqual(
+                        npy_header.read_npy_header_shape(fh), (4,))
+
+    def test_rejects_mixed_key_types_without_leaking_typeerror(self):
+        """sc's probe catches only OSError/ValueError, so a header whose
+        keys cannot be ordered against each other must still come back
+        as ValueError rather than escaping as TypeError."""
+        raw = _npy_bytes(
+            (3, 0),
+            "{'descr': '<c16', 'fortran_order': False, "
+            "'shape': (4,), 0: 'x'}")
+        with self.assertRaises(ValueError):
+            npy_header.read_npy_header_shape(io.BytesIO(raw))
 
     def test_unknown_future_version_raises_the_documented_exception(self):
         raw = b"\x93NUMPY" + bytes((9, 9)) + b"\x00" * 4

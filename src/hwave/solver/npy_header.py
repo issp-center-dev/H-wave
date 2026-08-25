@@ -50,13 +50,22 @@ _READERS = {
 _LOCAL_VERSIONS = ((3, 0),)
 
 
-#: Upper bound on a 3.0 header's declared length, matching the limit
-#: numpy's own public readers apply. The length is four attacker-supplied
-#: bytes, so it is checked BEFORE the body is read: without this a
-#: crafted member could make a probe -- whose entire purpose is to avoid
-#: reading data -- allocate up to 4 GiB and hand it to the literal
-#: parser.
-_MAX_HEADER_LEN = 10000
+#: Upper bound on a header's DECODED length, the same limit and the same
+#: quantity numpy applies (its ``max_header_size`` bounds the decoded
+#: string, not the encoded bytes).
+_MAX_HEADER_CHARS = 10000
+
+#: Upper bound on the DECLARED byte length, used only to refuse an
+#: absurd read before it happens. The declared length is four bytes
+#: taken from the file, so without this a crafted member could make a
+#: probe -- whose entire purpose is to avoid reading data -- allocate up
+#: to 4 GiB and hand it to the literal parser. It is deliberately the
+#: widest encoding of the character limit (utf-8 uses at most 4 bytes
+#: per character) rather than the character limit itself: version 3.0
+#: exists FOR field names outside latin-1, and a header of 10,000 CJK
+#: characters is ~30,000 bytes yet perfectly loadable, so a byte-based
+#: limit at 10,000 would reject files np.load accepts.
+_MAX_HEADER_LEN = 4 * _MAX_HEADER_CHARS
 
 #: The keys an NPY header dict must carry, exactly (numpy rejects both
 #: missing and extra keys).
@@ -78,8 +87,9 @@ def _read_header_3_0(fh):
     error into a wrong frequency count or an unrelated preflight
     failure.
 
-    Every rejection raises ``ValueError``, which both callers already
-    handle as "this header is unusable".
+    Every rejection raises ``ValueError`` -- including for headers whose
+    keys cannot be ordered against each other -- which both callers
+    already handle as "this header is unusable".
     """
     import ast
 
@@ -99,6 +109,10 @@ def _read_header_3_0(fh):
     except UnicodeDecodeError as exc:
         raise ValueError(
             "NPY 3.0 header is not valid utf-8: {}".format(exc))
+    if len(text) > _MAX_HEADER_CHARS:
+        raise ValueError(
+            "NPY 3.0 header is {} characters, above the {}-character "
+            "limit".format(len(text), _MAX_HEADER_CHARS))
     try:
         header = ast.literal_eval(text.strip())
     except (ValueError, SyntaxError, MemoryError, RecursionError) as exc:
@@ -109,9 +123,13 @@ def _read_header_3_0(fh):
             "NPY 3.0 header is {}, expected a dict".format(
                 type(header).__name__))
     if _REQUIRED_KEYS != set(header):
+        # Sort by repr: a header may carry keys of mixed types, and
+        # plain sorted() would raise TypeError out of this function --
+        # which sc's probe does not catch, so it would escape instead of
+        # deferring to the authoritative loader.
         raise ValueError(
             "NPY 3.0 header keys are {}, expected exactly {}".format(
-                sorted(header), sorted(_REQUIRED_KEYS)))
+                sorted(map(repr, header)), sorted(_REQUIRED_KEYS)))
     if not isinstance(header["fortran_order"], bool):
         raise ValueError(
             "NPY 3.0 header fortran_order is not a bool: {!r}".format(
