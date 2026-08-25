@@ -67,7 +67,17 @@ def _resolve(mod_name, cls_name, meth_name):
 def _discovered_heavy_ids():
     """``"module.Class.method"`` for every collected test carrying the
     ``@heavy`` marker, found by walking the discovered suite."""
-    suite = unittest.defaultTestLoader.discover("tests", pattern="test_*.py")
+    loader = unittest.TestLoader()
+    suite = loader.discover("tests", pattern="test_*.py")
+    # A module that fails to import is reported by the loader as a
+    # synthetic _FailedTest rather than raising. Walking past those would
+    # let this consistency check compare against a SUBSET of the suite
+    # and still look healthy -- the registry could name a test in a
+    # module that no longer imports and nothing here would notice.
+    if getattr(loader, "errors", None):
+        raise AssertionError(
+            "unittest discovery reported errors, so the discovered set is "
+            "incomplete: {}".format(loader.errors))
     found = set()
     stack = [suite]
     while stack:
@@ -78,6 +88,11 @@ def _discovered_heavy_ids():
         if not isinstance(item, unittest.TestCase):
             continue
         cls = type(item)
+        if cls.__name__ == "_FailedTest" or cls.__module__ == (
+                "unittest.loader"):
+            raise AssertionError(
+                "unittest discovery produced a failed-import placeholder "
+                "({}); the discovered set is incomplete".format(item))
         name = getattr(item, "_testMethodName", None)
         if name is None:
             continue
@@ -98,6 +113,22 @@ def _discovered_heavy_ids():
 
 class TestHeavyRegistryConsistency(unittest.TestCase):
     """The registry and the decorated code must agree, both directions."""
+
+    def test_registry_and_discovery_are_both_non_empty(self):
+        """Guard the degenerate case the comparisons cannot see.
+
+        Every check below compares two sets. If HEAVY_TESTS were emptied
+        AND all the decorators removed, both sides would be empty, every
+        comparison would pass, and the fast/full split would silently
+        cease to exist while CI stayed green.
+        """
+        self.assertTrue(
+            heavy_tests.HEAVY_TESTS,
+            "HEAVY_TESTS is empty: the fast/full split would be a no-op")
+        self.assertTrue(
+            _discovered_heavy_ids(),
+            "no @heavy test was discovered: the fast/full split would be "
+            "a no-op")
 
     def test_registry_is_well_formed(self):
         """Rows are 4-tuples of non-empty strings, unique, and sorted."""
@@ -165,9 +196,84 @@ class TestHeavyRegistryConsistency(unittest.TestCase):
             "listed in HEAVY_TESTS but not discovered as a @heavy test by "
             "`unittest discover -s tests`: {}".format(undiscovered))
 
+    def _skip_states_under(self, env_value):
+        """Every registered test's skip state, as decided in a CHILD
+        process whose environment is set explicitly.
+
+        The skip is baked in by ``skipUnless`` when the module is
+        imported, so one process can only ever observe ONE of the two
+        shapes -- whichever its own environment produced. Reading the
+        ambient value and asserting against it (what this test used to
+        do) means that under ``HWAVE_FULL_TESTS=1`` the assertion
+        degenerates to "nothing is skipped", which a decorator that never
+        skips at all also satisfies. Both shapes are therefore driven
+        deliberately, from here.
+        """
+        import json
+        import os
+        import subprocess
+        import sys
+
+        probe = (
+            "import json, sys\n"
+            "sys.path.insert(0, {tests!r})\n"
+            "sys.path.insert(0, {root!r})\n"
+            "import heavy_tests as h\n"
+            "import importlib\n"
+            "out = {{}}\n"
+            "for mod, cls, meth, _r in h.HEAVY_TESTS:\n"
+            "    m = importlib.import_module(mod)\n"
+            "    f = getattr(getattr(m, cls), meth)\n"
+            "    out['%s.%s.%s' % (mod, cls, meth)] = [\n"
+            "        bool(getattr(f, '__unittest_skip__', False)),\n"
+            "        getattr(f, '__unittest_skip_why__', None)]\n"
+            "print(json.dumps(out))\n"
+        ).format(tests=os.path.dirname(os.path.abspath(__file__)),
+                 root=os.path.dirname(
+                     os.path.dirname(os.path.abspath(__file__))))
+
+        env = dict(os.environ)
+        env.pop(heavy_tests.FULL_SUITE_ENV, None)
+        if env_value is not None:
+            env[heavy_tests.FULL_SUITE_ENV] = env_value
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        proc = subprocess.run(
+            [sys.executable, "-c", probe], env=env,
+            capture_output=True, text=True,
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        self.assertEqual(
+            proc.returncode, 0,
+            "probe failed with {}={!r}:\n{}".format(
+                heavy_tests.FULL_SUITE_ENV, env_value, proc.stderr))
+        states = json.loads(proc.stdout)
+        self.assertTrue(states, "probe reported no registered tests")
+        return states
+
+    def test_every_registered_test_is_skipped_when_the_flag_is_unset(self):
+        for test_id, (skipped, why) in sorted(
+                self._skip_states_under(None).items()):
+            with self.subTest(test=test_id):
+                self.assertTrue(
+                    skipped,
+                    "{} runs in the fast gate although the registry lists "
+                    "it as heavy".format(test_id))
+                # And the skip must be the one this registry installed,
+                # not an unrelated skipUnless on the same method.
+                self.assertEqual(why, heavy_tests.SKIP_REASON, test_id)
+
+    def test_no_registered_test_is_skipped_when_the_flag_is_set(self):
+        for test_id, (skipped, _why) in sorted(
+                self._skip_states_under("1").items()):
+            with self.subTest(test=test_id):
+                self.assertFalse(
+                    skipped,
+                    "{} stays skipped even with the full-suite flag set, "
+                    "so the full job would not run it".format(test_id))
+
     def test_registered_tests_are_skipped_in_the_fast_gate(self):
-        """With ``HWAVE_FULL_TESTS`` unset, every entry must be skipped;
-        with it set, none of them may be."""
+        """The in-process view, kept as a cheap cross-check of whichever
+        shape THIS process was started in; the two tests above drive both
+        shapes deliberately."""
         full = heavy_tests.full_suite_enabled()
         wrong = []
         for mod, cls, meth, _reason in heavy_tests.HEAVY_TESTS:
