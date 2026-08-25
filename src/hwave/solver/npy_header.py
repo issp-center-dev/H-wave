@@ -9,15 +9,22 @@ not merely on the newer header versions the fallback existed for. The
 dispatch lives here once so the two sites cannot answer the question
 differently.
 
-Only the PUBLIC ``numpy.lib.format`` surface is used. numpy exposes a
-reader per header version (``read_array_header_1_0``,
-``read_array_header_2_0``) but has never published one for version 3.0,
-even though it writes 3.0 whenever a dtype carries field names outside
-latin-1. Version 3.0's header is byte-compatible with 2.0 -- both prefix
-the header dict with a 4-byte little-endian length, and they differ only
-in the encoding of that dict (utf-8 vs latin-1), which numpy's own reader
-decodes leniently. Reading a 3.0 header with the 2.0 reader is therefore
-correct, and is what numpy's removed private dispatcher did internally.
+No private numpy API is used. numpy publishes a reader per header
+version (``read_array_header_1_0``, ``read_array_header_2_0``) but has
+never published one for version 3.0, even though it writes 3.0 whenever
+a dtype carries field names outside latin-1.
+
+Version 3.0 is NOT delegated to the 2.0 reader. The two share the
+4-byte little-endian header length, but the 2.0 reader decodes the
+header dict as latin-1 and applies numpy's Python-2 compatibility
+filtering -- so a malformed 3.0 header carrying Python-2 long literals
+(``'shape': (1L, 24L)``) is ACCEPTED by it and returns a shape, while
+``np.load`` rejects the same file. Both callers here treat a readable
+header as licence to skip or precede the authoritative load, so
+accepting what the loader will reject turns a clear load error into a
+wrong frequency count or an unrelated preflight failure. Version 3.0 is
+therefore parsed here directly from the format specification: strict
+utf-8, a literal dict, and a shape of plain integers.
 """
 
 import numpy as np
@@ -32,13 +39,60 @@ class UnsupportedNpyHeaderVersion(Exception):
     """
 
 
-#: Header versions handled, mapped to the public reader that parses them.
-#: 3.0 is read with the 2.0 reader (see the module docstring).
+#: Header versions delegated to numpy's own published readers.
 _READERS = {
     (1, 0): "read_array_header_1_0",
     (2, 0): "read_array_header_2_0",
-    (3, 0): "read_array_header_2_0",
 }
+
+#: Header versions parsed here (see the module docstring for why 3.0 is
+#: not delegated).
+_LOCAL_VERSIONS = ((3, 0),)
+
+
+def _read_header_3_0(fh):
+    """Parse a version-3.0 header and return its ``shape``.
+
+    Follows the NPY specification: a 4-byte little-endian length, then
+    that many bytes of utf-8 holding a Python literal dict. Anything that
+    does not match -- a short read, invalid utf-8, a non-dict, a missing
+    or non-integer shape -- raises ``ValueError``, which both callers
+    already handle as "this header is unusable".
+    """
+    import ast
+
+    raw_len = fh.read(4)
+    if len(raw_len) != 4:
+        raise ValueError("truncated NPY 3.0 header length field")
+    header_len = int.from_bytes(raw_len, "little")
+    raw = fh.read(header_len)
+    if len(raw) != header_len:
+        raise ValueError("truncated NPY 3.0 header")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            "NPY 3.0 header is not valid utf-8: {}".format(exc))
+    try:
+        header = ast.literal_eval(text.strip())
+    except (ValueError, SyntaxError) as exc:
+        raise ValueError(
+            "NPY 3.0 header is not a Python literal: {}".format(exc))
+    if not isinstance(header, dict):
+        raise ValueError(
+            "NPY 3.0 header is {}, expected a dict".format(
+                type(header).__name__))
+    try:
+        shape = header["shape"]
+    except KeyError:
+        raise ValueError("NPY 3.0 header has no 'shape' entry")
+    if (not isinstance(shape, tuple)
+            or not all(isinstance(n, int) and not isinstance(n, bool)
+                       for n in shape)):
+        raise ValueError(
+            "NPY 3.0 header shape is not a tuple of integers: "
+            "{!r}".format(shape))
+    return shape
 
 
 def read_npy_header_shape(fh):
@@ -62,12 +116,14 @@ def read_npy_header_shape(fh):
     UnsupportedNpyHeaderVersion
         If the header version is not one this module knows how to read.
     """
-    version = np.lib.format.read_magic(fh)
-    reader_name = _READERS.get(tuple(version))
+    version = tuple(np.lib.format.read_magic(fh))
+    if version in _LOCAL_VERSIONS:
+        return _read_header_3_0(fh)
+    reader_name = _READERS.get(version)
     if reader_name is None:
         raise UnsupportedNpyHeaderVersion(
             "no reader available for NPY format version {!r}".format(
-                tuple(version)))
+                version))
     reader = getattr(np.lib.format, reader_name, None)
     if reader is None:
         # The public surface itself changed under us.
