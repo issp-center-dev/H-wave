@@ -1620,7 +1620,8 @@ class RPA:
     def solve(self, green_info, path_to_output):
         """Solve the RPA equation, restoring host-backed public state.
 
-        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        Thin wrapper around :meth:`_solve_restoring_host_attrs` that
+        guarantees the solver's
         public array attributes (``H0_eigenvalue``/``H0_eigenvector`` and the
         stored ``green0``/``green0_tail``) are NumPy-backed after the call --
         on normal completion AND after a GPU-path exception. Under GPU
@@ -1628,12 +1629,30 @@ class RPA:
         ``finally`` a mid-solve error would leave a reused or inspected solver
         object holding device arrays (issue #63).
         """
+        return self._solve_restoring_host_attrs(green_info, path_to_output)
+
+    #: The public array attributes a solve must leave NumPy-backed. Both
+    #: solvers restore exactly these, so the list lives here once: an
+    #: attribute added to one solver's restore set but not the other's
+    #: would reintroduce issue #63 on the solver that was missed.
+    _HOST_RESTORED_ATTRS = ("H0_eigenvalue", "H0_eigenvector",
+                            "green0", "green0_tail")
+
+    def _solve_restoring_host_attrs(self, green_info, path_to_output):
+        """Run ``_solve_impl`` and restore the public array attributes.
+
+        The body shared by ``RPA.solve`` and ``FLEX.solve``. Those remain
+        separate methods rather than one inherited method because each
+        carries its own docstring and, through ``@do_profile``, its own
+        entry in the performance report (``hwave.solver.rpa.solve`` vs
+        ``hwave.solver.flex.solve``); merging them would silently pool
+        the two solvers' timings. This helper is deliberately NOT
+        profiled, so delegating to it adds no second measurement.
+        """
         try:
             return self._solve_impl(green_info, path_to_output)
         finally:
-            _bk.restore_host_attrs(
-                self, ("H0_eigenvalue", "H0_eigenvector",
-                       "green0", "green0_tail"))
+            _bk.restore_host_attrs(self, self._HOST_RESTORED_ATTRS)
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the RPA equation to calculate susceptibility.
