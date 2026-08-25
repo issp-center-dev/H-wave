@@ -195,14 +195,30 @@ class TestG2TailGuards(unittest.TestCase):
 
     def test_beta_limit_error_text_distinguishes_the_values(self):
         """One ULP above the limit must not print as 'beta = 1e+75
-        exceeds ... <= 1e+75' -- reprs differ."""
+        exceeds ... <= 1e+75' -- reprs differ.
+
+        The message reports the NORMALISED beta: ``_calc_g2`` converts its
+        input with ``_finite_positive_float64`` before formatting, so a
+        ``numpy`` scalar argument is reported as the plain Python float it
+        was converted to. Compare against that same conversion rather than
+        against ``repr`` of the raw argument: since numpy 2.0 a scalar's
+        repr carries its type (``np.float64(1e+75)``), so asserting the
+        raw repr would test numpy's display convention instead of this
+        message's ability to distinguish the two values.
+        """
         green = _green(_model(Nx=2, Ny=2), 10.0, 4)
         just_over = np.nextafter(sc._G2_BETA_MAX, np.inf)
         with self.assertRaises(ValueError) as cm:
             _calc_g2(green, just_over)
         msg = str(cm.exception)
-        self.assertIn(repr(just_over), msg)
-        self.assertNotEqual(repr(just_over), repr(sc._G2_BETA_MAX))
+        self.assertIn(repr(float(just_over)), msg)
+        self.assertNotEqual(repr(float(just_over)),
+                            repr(float(sc._G2_BETA_MAX)))
+        # The normalisation is a property of the message, so pin it: the
+        # plain repr is a SUBSTRING of the numpy one, so the assertion
+        # above alone passes either way and would let a user-facing
+        # message start leaking numpy's scalar type wrapper unnoticed.
+        self.assertNotIn("np.float64", msg)
 
     def test_invalid_or_unsafe_beta_is_rejected(self):
         """Non-finite/non-positive/complex/vector beta and the overflow
