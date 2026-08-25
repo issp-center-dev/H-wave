@@ -416,7 +416,8 @@ class FLEX(RPA):
     def solve(self, green_info, path_to_output):
         """Solve the FLEX equations, restoring host-backed public state.
 
-        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        Thin wrapper around :meth:`_solve_restoring_host_attrs` that
+        guarantees the solver's
         public array attributes (``H0_eigenvalue``/``H0_eigenvector``, and the
         stored ``green0``/``green0_tail``) are NumPy-backed after the call --
         on normal completion AND after a GPU-path exception. Under GPU
@@ -424,12 +425,7 @@ class FLEX(RPA):
         ``finally`` a mid-solve error would leave a reused or inspected solver
         object holding device arrays (issue #63).
         """
-        try:
-            return self._solve_impl(green_info, path_to_output)
-        finally:
-            _bk.restore_host_attrs(
-                self, ("H0_eigenvalue", "H0_eigenvector",
-                       "green0", "green0_tail"))
+        return self._solve_restoring_host_attrs(green_info, path_to_output)
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
