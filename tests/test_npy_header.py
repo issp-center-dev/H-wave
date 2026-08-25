@@ -196,6 +196,31 @@ class TestReadNpyHeaderShape(unittest.TestCase):
             warnings.simplefilter("ignore")
             self.assertEqual(np.load(path)["k"].shape, (3,))
 
+    def test_accepts_a_four_byte_per_character_header_near_the_byte_bound(self):
+        """The pre-read byte bound is 4x the character limit because utf-8
+        spends at most four bytes per code point. Astral-plane names hit
+        that worst case, so a header near 40,000 bytes but under 10,000
+        characters must still be read -- a bound trimmed to, say, 30,000
+        would reject a file np.load loads, and the ~12,000-byte CJK case
+        above would not notice."""
+        name = "\U0001F300" * 9000            # 4 bytes each
+        text = ("{'descr': [('" + name + "', '<c16')], "
+                "'fortran_order': False, 'shape': (2,)}")
+        hb = text.encode("utf-8")
+        self.assertLessEqual(len(text), npy_header._MAX_HEADER_CHARS)
+        self.assertGreater(len(hb), 3 * npy_header._MAX_HEADER_CHARS)
+        raw = (b"\x93NUMPY" + bytes((3, 0))
+               + len(hb).to_bytes(4, "little") + hb)
+        self.assertEqual(
+            npy_header.read_npy_header_shape(io.BytesIO(raw)), (2,))
+        d = tempfile.mkdtemp(prefix="npy_header_astral_")
+        path = os.path.join(d, "a.npy")
+        with open(path, "wb") as f:
+            f.write(raw + b"\x00" * (16 * 2))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(np.load(path).shape, (2,))
+
     def test_decoded_length_limit_is_the_boundary(self):
         """At the limit the header is read; one character over, refused
         -- the same boundary numpy draws."""
@@ -220,6 +245,18 @@ class TestReadNpyHeaderShape(unittest.TestCase):
                 else:
                     self.assertEqual(
                         npy_header.read_npy_header_shape(fh), (4,))
+                # Lock the boundary to numpy's, not merely to itself: a
+                # limit that drifted off by one would still look
+                # self-consistent here without this.
+                d = tempfile.mkdtemp(prefix="npy_header_bound_")
+                path = os.path.join(d, "a.npy")
+                with open(path, "wb") as f:
+                    f.write(raw + b"\x00" * (16 * 4))
+                if should_raise:
+                    with self.assertRaises(ValueError):
+                        np.load(path)
+                else:
+                    self.assertEqual(np.load(path).shape, (4,))
 
     def test_rejects_mixed_key_types_without_leaking_typeerror(self):
         """sc's probe catches only OSError/ValueError, so a header whose
