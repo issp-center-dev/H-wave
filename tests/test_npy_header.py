@@ -141,39 +141,66 @@ class TestReadNpyHeaderShape(unittest.TestCase):
                             for n in fh.requested if isinstance(n, int)
                             and n > 0))
 
+    #: Malformed headers numpy rejects in its HEADER validation, so the
+    #: two parsers can be required to agree on them across versions.
+    _REJECTED_BY_NUMPYS_HEADER_CHECK = {
+        "not a dict": "[1, 2, 3]",
+        "missing descr": "{'fortran_order': False, 'shape': (4,)}",
+        "missing fortran_order": "{'descr': '<c16', 'shape': (4,)}",
+        "extra key": ("{'descr': '<c16', 'fortran_order': False, "
+                      "'shape': (4,), 'extra': 1}"),
+        "fortran_order not bool": ("{'descr': '<c16', 'fortran_order': 0, "
+                                   "'shape': (4,)}"),
+        "invalid descr": ("{'descr': 'not-a-dtype', "
+                          "'fortran_order': False, 'shape': (4,)}"),
+    }
+
+    #: Headers this parser rejects MORE strictly than numpy's header
+    #: check does. numpy tests dimensions with isinstance(x, int) only,
+    #: which admits a negative value and -- since bool subclasses int --
+    #: True; np.load then fails later, while READING THE DATA, in a way
+    #: that depends on how much payload follows and on the numpy
+    #: version. So no agreement with np.load is asserted for these: an
+    #: earlier version of this test did assert it and passed locally
+    #: while failing on every CI runner.
+    _REJECTED_MORE_STRICTLY_THAN_NUMPY = {
+        "negative dimension": ("{'descr': '<c16', 'fortran_order': False, "
+                               "'shape': (-4,)}"),
+        "bool dimension": ("{'descr': '<c16', 'fortran_order': False, "
+                           "'shape': (True,)}"),
+    }
+
     def test_rejects_headers_np_load_rejects(self):
-        """Every malformed shape below is one np.load refuses. The probe
-        must refuse it too: reporting a shape for a file the loader will
-        reject is the defect this parser exists to remove."""
-        cases = {
-            "not a dict": "[1, 2, 3]",
-            "missing descr":
-                "{'fortran_order': False, 'shape': (4,)}",
-            "missing fortran_order": "{'descr': '<c16', 'shape': (4,)}",
-            "extra key": ("{'descr': '<c16', 'fortran_order': False, "
-                          "'shape': (4,), 'extra': 1}"),
-            "fortran_order not bool": ("{'descr': '<c16', "
-                                       "'fortran_order': 0, 'shape': (4,)}"),
-            "invalid descr": ("{'descr': 'not-a-dtype', "
-                              "'fortran_order': False, 'shape': (4,)}"),
-            "negative dimension": ("{'descr': '<c16', "
-                                   "'fortran_order': False, "
-                                   "'shape': (-4,)}"),
-            "bool dimension": ("{'descr': '<c16', 'fortran_order': False, "
-                               "'shape': (True,)}"),
-        }
-        for name, header_text in cases.items():
+        """Refusing what the loader refuses is the point of this parser:
+        reporting a shape for a file that cannot be loaded would turn a
+        clear load error into a wrong frequency count or an unrelated
+        preflight failure."""
+        for name, header_text in self._REJECTED_BY_NUMPYS_HEADER_CHECK.items():
             with self.subTest(case=name):
                 raw = _npy_bytes((3, 0), header_text)
                 with self.assertRaises(ValueError):
                     npy_header.read_npy_header_shape(io.BytesIO(raw))
-                # ... and confirm np.load agrees this file is unusable.
                 d = tempfile.mkdtemp(prefix="npy_header_bad_")
                 path = os.path.join(d, "a.npy")
                 with open(path, "wb") as f:
                     f.write(raw + b"\x00" * 128)
                 with self.assertRaises((ValueError, TypeError)):
                     np.load(path)
+
+    def test_rejects_dimensions_that_are_not_real_array_sizes(self):
+        """Deliberately stricter than numpy's header check.
+
+        Both callers use the returned shape as a SIZE -- a frequency
+        count, a memory budget -- so a negative or boolean dimension
+        would be arithmetic on a value that is not an array size.
+        Refusing it early is safe: the caller falls back to the
+        authoritative loader, which raises the real error.
+        """
+        for name, header_text in self._REJECTED_MORE_STRICTLY_THAN_NUMPY.items():
+            with self.subTest(case=name):
+                raw = _npy_bytes((3, 0), header_text)
+                with self.assertRaises(ValueError):
+                    npy_header.read_npy_header_shape(io.BytesIO(raw))
 
     def test_accepts_a_multibyte_header_numpy_accepts(self):
         """Version 3.0 exists FOR names outside latin-1, so the size
