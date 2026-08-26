@@ -100,6 +100,7 @@ class TestReducedIsExactWhenFlavourIsConserved(_SchemeComparison):
     CASES = {
         "CoulombInter": {"CoulombInter": "onsite_inter.dat"},
         "Hund": {"Hund": "hund_onsite.dat"},
+        "Ising": {"Ising": "hund_onsite.dat"},
     }
 
     def test_orbital_diagonal_transfer_gives_exact_agreement(self):
@@ -119,23 +120,47 @@ class TestReducedIsExactWhenFlavourIsConserved(_SchemeComparison):
     def test_folding_alone_does_not_break_the_agreement(self):
         """Folding mixes SUBLATTICE labels but preserves the original
         orbital flavour, so the discarded unequal-flavour sector stays
-        unreachable. (The folded chi0 itself is NOT density-pair block
-        diagonal in the supercell index -- a folded one-orbital chain has
-        G[0,1] != 0 and hence a nonzero P*chi0*Q -- so the exactness comes
-        from flavour conservation, not from any closure of the supercell
-        density subspace.)
+        unreachable and reduced stays exact.
+
+        The fold DIRECTION decides whether this test means anything.
+        ``_DIAGONAL_TRANSFER`` hops along +-y only, so folding along x
+        leaves the two sublattice copies dynamically disconnected and
+        every cross-sublattice Green element zero (measured: 0.0 for an x
+        fold against 4.6e-02 for a y fold). The agreement would then
+        follow from the folded density subspace closing after all --
+        exactly the explanation this test exists to rule out. Folding
+        along y makes those elements nonzero, so the supercell density
+        subspace is genuinely NOT closed and the exactness can only come
+        from flavour conservation. That precondition is asserted, not
+        assumed.
         """
         interactions = {"CoulombInter": "onsite_inter.dat"}
-        _, general = self._solve("general", interactions, False,
-                                 subshape=(2, 1, 1))
+        solver, general = self._solve("general", interactions, False,
+                                      subshape=(1, 2, 1))
         _, reduced = self._solve("reduced", interactions, False,
-                                 subshape=(2, 1, 1))
+                                 subshape=(1, 2, 1))
+
+        g0 = np.asarray(solver.green0)
+        norb = solver.norb
+        offdiag = max(
+            float(np.max(np.abs(g0[..., a, b])))
+            for a in range(norb) for b in range(norb) if a != b)
+        self.assertGreater(
+            offdiag, 1e-6,
+            "this fold left the sublattices disconnected, so the test "
+            "cannot distinguish flavour conservation from closure of the "
+            "supercell density subspace")
+
         projected = _project_density_pairs(general)
-        self.assertTrue(
-            np.array_equal(projected, reduced),
+        diff = float(np.max(np.abs(projected - reduced)))
+        # Round-off, not bit-identity: folding changes the array shapes
+        # and so the summation order. Measured 1.7e-18 -- thirteen orders
+        # below the 2.3e-04 STRUCTURAL departure hybridisation produces,
+        # which is the distinction this bound must make.
+        self.assertLess(
+            diff, 1e-12,
             "folding an orbital-diagonal transfer should not break "
-            "reduced's exactness; max|diff| = {}".format(
-                float(np.max(np.abs(projected - reduced)))))
+            "reduced's exactness; max|diff| = {}".format(diff))
 
 
 class TestReducedIsApproximateUnderHybridisation(_SchemeComparison):
@@ -147,9 +172,13 @@ class TestReducedIsApproximateUnderHybridisation(_SchemeComparison):
     that the effect is structural -- not a bound on its size.
     """
 
+    #: Measured RELATIVE departure: max|proj(general) - reduced| over
+    #: max|reduced|. Relative because that is how the finding is stated
+    #: and it does not move under an overall rescaling of the fixture.
     CASES = {
-        "CoulombInter": ({"CoulombInter": "onsite_inter.dat"}, 2.6e-05),
-        "Hund": ({"Hund": "hund_onsite.dat"}, 3.8e-05),
+        "CoulombInter": ({"CoulombInter": "onsite_inter.dat"}, 2.2572e-04),
+        "Hund": ({"Hund": "hund_onsite.dat"}, 3.2763e-04),
+        "Ising": ({"Ising": "hund_onsite.dat"}, 3.1681e-04),
     }
 
     def test_inter_orbital_hopping_makes_the_schemes_differ(self):
@@ -157,18 +186,24 @@ class TestReducedIsApproximateUnderHybridisation(_SchemeComparison):
             with self.subTest(interaction=name):
                 _, general = self._solve("general", interactions, True)
                 _, reduced = self._solve("reduced", interactions, True)
-                diff = float(np.max(np.abs(
-                    _project_density_pairs(general) - reduced)))
+                scale = float(np.max(np.abs(reduced)))
+                self.assertGreater(scale, 0.0)
+                relative = float(np.max(np.abs(
+                    _project_density_pairs(general) - reduced))) / scale
                 self.assertGreater(
-                    diff, 1e-8,
+                    relative, 1e-8,
                     "the schemes are expected to DIFFER here: reduced "
                     "discards the cross-family vertex content that "
                     "hybridisation makes reachable")
-                # Loose bracket around the recorded value: this pins the
-                # effect's scale without turning a tolerance drift into a
-                # false alarm.
-                self.assertLess(diff, 10.0 * recorded)
-                self.assertGreater(diff, 0.1 * recorded)
+                # Pin the SIZE, not merely the sign: a changed vertex
+                # coefficient or normalisation moves this by a factor,
+                # which a decade-wide bracket would wave through. 5% sits
+                # far above the run-to-run floor (~1e-14, issue #85) and
+                # far below any coefficient-scale regression.
+                self.assertAlmostEqual(
+                    relative / recorded, 1.0, delta=0.05,
+                    msg="{}: relative departure {:.4e} is not the "
+                        "recorded {:.4e}".format(name, relative, recorded))
 
 
 class TestAutoCurrentlySelectsTheApproximation(_SchemeComparison):
@@ -183,11 +218,15 @@ class TestAutoCurrentlySelectsTheApproximation(_SchemeComparison):
     deferred to its own design round; update this test when that lands.
     """
 
-    def test_auto_picks_reduced_for_a_hybridised_coulombinter_model(self):
-        solver, chiq = self._solve(
-            "auto", {"CoulombInter": "onsite_inter.dat"}, True)
-        self.assertEqual(solver.calc_scheme, "reduced")
-        self.assertEqual(chiq.ndim, 4)
+    def test_auto_picks_reduced_for_hybridised_models(self):
+        for name, interactions in (
+                ("CoulombInter", {"CoulombInter": "onsite_inter.dat"}),
+                ("Hund", {"Hund": "hund_onsite.dat"}),
+                ("Ising", {"Ising": "hund_onsite.dat"})):
+            with self.subTest(interaction=name):
+                solver, chiq = self._solve("auto", interactions, True)
+                self.assertEqual(solver.calc_scheme, "reduced")
+                self.assertEqual(chiq.ndim, 4)
 
 
 if __name__ == "__main__":
