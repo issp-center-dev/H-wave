@@ -178,9 +178,9 @@ class TestAutoCurrentlySelectsTheApproximation(_SchemeComparison):
     ``auto`` forces ``general`` only for Exchange and PairHop, which carry
     no density-family content at all. For CoulombInter/Hund/Ising it picks
     ``reduced`` regardless of hybridisation -- i.e. exactly the case the
-    class above shows is approximate. Correcting this changes chiq from
-    four axes to six for affected inputs, so it is deferred to its own
-    design round; update this test when that lands.
+    class above shows is approximate. That is issue #167: correcting it
+    changes chiq from four axes to six for affected inputs, so it is
+    deferred to its own design round; update this test when that lands.
     """
 
     def test_auto_picks_reduced_for_a_hybridised_coulombinter_model(self):
