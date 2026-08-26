@@ -1986,7 +1986,19 @@ class FLEX(RPA):
                         "CoulombIntra or CoulombInter")
                 from hwave.qlmsio import wan90
                 intra, inter = wan90.split_coulomb(tbl_dict["Coulomb"])
-                out = {k: v for k, v in tbl_dict.items() if k != "Coulomb"}
+                # Rebuild through .copy(), which preserves the container's
+                # CLASS. A dict comprehension here returned a plain dict
+                # and so dropped the reader's CaseInsensitiveDict: the
+                # reader stores each table under the spelling the USER
+                # wrote (read_input_k.QLMSkInput), so every lookup below
+                # -- the off-site guard AND _build_interaction_k -- then
+                # missed a non-canonically-spelled type and silently
+                # dropped that interaction. Measured before the fix: with
+                # an aggregate Coulomb declaration, 'hund' produced chiq_s
+                # identical to omitting Hund entirely, while 'Hund'
+                # differed from it by 4.7e-2.
+                out = tbl_dict.copy()
+                del out["Coulomb"]
                 out["CoulombIntra"] = intra
                 out["CoulombInter"] = inter
                 return out
@@ -2013,6 +2025,11 @@ class FLEX(RPA):
                         "table canonicalizes displacements and can hide "
                         "off-site entries).")
             scan_ham = _normalized(scan_ham)
+            # PairLift is deliberately absent: hwave.solver.vertex_table
+            # gives it NO particle-hole S/C content, so an off-site
+            # PairLift declaration contributes exactly zero here and the
+            # answer is right without a guard. Listing it would reject a
+            # configuration that computes correctly.
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
                 if itype not in scan_ham:

@@ -356,5 +356,98 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                             "%s must be finite" % key)
 
 
+
+
+class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
+    """An interaction declared with a non-canonical key must still be
+    applied when the aggregate ``Coulomb`` input is used.
+
+    FLEX's general path normalises the aggregate ``Coulomb`` table into
+    ``CoulombIntra``/``CoulombInter`` before scanning it. That rebuild used
+    a dict comprehension, which returned a plain dict and so discarded the
+    reader's ``CaseInsensitiveDict``. The reader stores every table under
+    the spelling the USER wrote, so afterwards a ``hund`` key was invisible
+    to both the off-site guard and the interaction builder and the term was
+    dropped with no error, no warning, and a plausible-looking result.
+
+    The comparison below would pass vacuously if the interaction were
+    dropped in BOTH runs, so it also requires the term to CHANGE the
+    result: canonical-vs-absent must differ.
+    """
+
+    def _run(self, hund_key, with_hund=True, hund_file="hund_onsite.dat"):
+        import shutil
+        import tempfile
+
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        src = "tests/rpa/input_2orb"
+        d = tempfile.mkdtemp(prefix="flex_keycase_")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        for f in ("geom.dat", "transfer.dat"):
+            shutil.copy(os.path.join(src, f), d)
+        # Aggregate Coulomb: r=0 orbital-diagonal entries only, so
+        # split_coulomb sends all of it to CoulombIntra.
+        with open(os.path.join(d, "coulomb.dat"), "w") as f:
+            f.write("aggregate Coulomb\n2\n1\n 1\n"
+                    "   0    0    0    1    1   4.000000000000"
+                    "   0.000000000000\n"
+                    "   0    0    0    2    2   4.000000000000"
+                    "   0.000000000000\n")
+        shutil.copy(os.path.join(src, hund_file), d)
+
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "Coulomb": "coulomb.dat"}
+        if with_hund:
+            inter[hund_key] = hund_file
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1],
+               "SubShape": [1, 1, 1], "Nmat": 16,
+               "IterationMax": 1, "Mix": 1.0, "EPS": 1}
+        solver = flex_mod.FLEX(
+            io.get_param("ham"), {},
+            {"mode": "FLEX", "param": par, "enable_spin_orbital": False,
+             "calc_scheme": "general"})
+        green_info = io.get_param("green")
+        out = tempfile.mkdtemp(prefix="flex_keycase_out_")
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        solver.solve(green_info, out)
+        return np.asarray(green_info["chiq_s"])
+
+    def test_non_canonical_key_is_applied_like_the_canonical_one(self):
+        absent = self._run("Hund", with_hund=False)
+        canonical = self._run("Hund")
+        lowercase = self._run("hund")
+
+        # Non-vacuity first: the term must actually do something, or the
+        # equality below would hold simply because it is dropped twice.
+        self.assertGreater(
+            float(np.max(np.abs(canonical - absent))), 1e-6,
+            "the fixture's Hund term has no effect, so this test could "
+            "not tell an applied interaction from a dropped one")
+
+        self.assertTrue(
+            np.array_equal(lowercase, canonical),
+            "a lowercase 'hund' key gives a different result from 'Hund' "
+            "when the aggregate Coulomb input is used: max|diff| = {}"
+            .format(float(np.max(np.abs(lowercase - canonical)))))
+
+    def test_non_canonical_key_still_reaches_the_offsite_guard(self):
+        """The same container loss hid entries from the off-site GUARD as
+        well as from the interaction builder, and an unsupported off-site
+        declaration that the guard cannot see completes silently instead
+        of raising. The test above exercises the builder (its Hund term is
+        on-site); this one exercises the guard.
+        """
+        with self.assertRaises(ValueError) as cm:
+            self._run("Hund", hund_file="offsite_hund.dat")
+        self.assertIn("off-site", str(cm.exception))
+
+        with self.assertRaises(ValueError) as cm:
+            self._run("hund", hund_file="offsite_hund.dat")
+        self.assertIn("off-site", str(cm.exception))
+
 if __name__ == "__main__":
     unittest.main()
