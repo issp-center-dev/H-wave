@@ -356,8 +356,6 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                             "%s must be finite" % key)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
@@ -377,7 +375,7 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
     result: canonical-vs-absent must differ.
     """
 
-    def _run(self, hund_key, with_hund=True):
+    def _run(self, hund_key, with_hund=True, hund_file="hund_onsite.dat"):
         import shutil
         import tempfile
 
@@ -386,6 +384,7 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
 
         src = "tests/rpa/input_2orb"
         d = tempfile.mkdtemp(prefix="flex_keycase_")
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         for f in ("geom.dat", "transfer.dat"):
             shutil.copy(os.path.join(src, f), d)
         # Aggregate Coulomb: r=0 orbital-diagonal entries only, so
@@ -396,12 +395,12 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
                     "   0.000000000000\n"
                     "   0    0    0    2    2   4.000000000000"
                     "   0.000000000000\n")
-        shutil.copy(os.path.join(src, "hund_onsite.dat"), d)
+        shutil.copy(os.path.join(src, hund_file), d)
 
         inter = {"path_to_input": d, "Geometry": "geom.dat",
                  "Transfer": "transfer.dat", "Coulomb": "coulomb.dat"}
         if with_hund:
-            inter[hund_key] = "hund_onsite.dat"
+            inter[hund_key] = hund_file
         io = read_input_k.QLMSkInput(
             {"path_to_input": d, "interaction": inter})
         par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1],
@@ -412,7 +411,9 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
             {"mode": "FLEX", "param": par, "enable_spin_orbital": False,
              "calc_scheme": "general"})
         green_info = io.get_param("green")
-        solver.solve(green_info, tempfile.mkdtemp(prefix="flex_keycase_out_"))
+        out = tempfile.mkdtemp(prefix="flex_keycase_out_")
+        self.addCleanup(shutil.rmtree, out, ignore_errors=True)
+        solver.solve(green_info, out)
         return np.asarray(green_info["chiq_s"])
 
     def test_non_canonical_key_is_applied_like_the_canonical_one(self):
@@ -432,3 +433,21 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
             "a lowercase 'hund' key gives a different result from 'Hund' "
             "when the aggregate Coulomb input is used: max|diff| = {}"
             .format(float(np.max(np.abs(lowercase - canonical)))))
+
+    def test_non_canonical_key_still_reaches_the_offsite_guard(self):
+        """The same container loss hid entries from the off-site GUARD as
+        well as from the interaction builder, and an unsupported off-site
+        declaration that the guard cannot see completes silently instead
+        of raising. The test above exercises the builder (its Hund term is
+        on-site); this one exercises the guard.
+        """
+        with self.assertRaises(ValueError) as cm:
+            self._run("Hund", hund_file="offsite_hund.dat")
+        self.assertIn("off-site", str(cm.exception))
+
+        with self.assertRaises(ValueError) as cm:
+            self._run("hund", hund_file="offsite_hund.dat")
+        self.assertIn("off-site", str(cm.exception))
+
+if __name__ == "__main__":
+    unittest.main()
