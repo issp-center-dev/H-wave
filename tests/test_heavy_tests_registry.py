@@ -64,6 +64,22 @@ def _resolve(mod_name, cls_name, meth_name):
     return meth, None
 
 
+def _effective_skip(mod_name, cls_name, meth_name):
+    """unittest's effective skip decision for one test: the CLASS's
+    ``__unittest_skip__`` wins, then the method's. Reading the method
+    alone misses a class-level ``@unittest.skip``, which empties every
+    test in the class from whichever job was supposed to run it."""
+    import importlib
+
+    m = importlib.import_module("tests." + mod_name)
+    klass = getattr(m, cls_name)
+    func = getattr(klass, meth_name)
+    if getattr(klass, "__unittest_skip__", False):
+        return True, getattr(klass, "__unittest_skip_why__", None)
+    return (bool(getattr(func, "__unittest_skip__", False)),
+            getattr(func, "__unittest_skip_why__", None))
+
+
 def _discovered_heavy_ids():
     """``"module.Class.method"`` for every collected test carrying the
     ``@heavy`` marker, found by walking the discovered suite."""
@@ -221,12 +237,22 @@ class TestHeavyRegistryConsistency(unittest.TestCase):
             "import heavy_tests as h\n"
             "import importlib\n"
             "out = {{}}\n"
+            "def effective_skip(klass, func):\n"
+            "    # unittest skips when EITHER the class or the method\n"
+            "    # carries __unittest_skip__; checking the method alone\n"
+            "    # would let a class-level skip silently empty the FULL\n"
+            "    # job while every assertion here stayed green.\n"
+            "    if getattr(klass, '__unittest_skip__', False):\n"
+            "        return True, getattr(klass, '__unittest_skip_why__',\n"
+            "                             None)\n"
+            "    return (bool(getattr(func, '__unittest_skip__', False)),\n"
+            "            getattr(func, '__unittest_skip_why__', None))\n"
             "for mod, cls, meth, _r in h.HEAVY_TESTS:\n"
             "    m = importlib.import_module(mod)\n"
-            "    f = getattr(getattr(m, cls), meth)\n"
-            "    out['%s.%s.%s' % (mod, cls, meth)] = [\n"
-            "        bool(getattr(f, '__unittest_skip__', False)),\n"
-            "        getattr(f, '__unittest_skip_why__', None)]\n"
+            "    klass = getattr(m, cls)\n"
+            "    f = getattr(klass, meth)\n"
+            "    sk, why = effective_skip(klass, f)\n"
+            "    out['%s.%s.%s' % (mod, cls, meth)] = [sk, why]\n"
             "print(json.dumps(out))\n"
         ).format(tests=os.path.dirname(os.path.abspath(__file__)),
                  root=os.path.dirname(
@@ -280,7 +306,7 @@ class TestHeavyRegistryConsistency(unittest.TestCase):
             obj, why = _resolve(mod, cls, meth)
             if why is not None:
                 continue  # reported by test_every_registry_entry_resolves
-            skipped = bool(getattr(obj, "__unittest_skip__", False))
+            skipped, _ = _effective_skip(mod, cls, meth)
             if skipped == full:
                 wrong.append("{}.{}.{} (skipped={})".format(
                     mod, cls, meth, skipped))
@@ -298,8 +324,9 @@ class TestHeavyRegistryConsistency(unittest.TestCase):
                 obj, why = _resolve(mod, cls, meth)
                 if why is not None:
                     continue
+                _, eff_why = _effective_skip(mod, cls, meth)
                 self.assertEqual(
-                    getattr(obj, "__unittest_skip_why__", None),
+                    eff_why,
                     heavy_tests.SKIP_REASON,
                     "{}.{}.{} is skipped for a reason other than the heavy "
                     "gate".format(mod, cls, meth))
@@ -317,6 +344,18 @@ class TestHeavyRegistryConsistency(unittest.TestCase):
                     "{}.{}.{} is a DOCUMENTED fast-gate exception (see the "
                     "heavy_tests module docstring) but carries @heavy".format(
                         mod, cls, meth))
+                continue
+            # Absence of @heavy is not enough: these four exist to pin
+            # production ROUTING in every fast run, so ANY effective
+            # unittest skip -- an unrelated @skip on the method, or one
+            # on the CLASS, which skips every method in it -- removes
+            # exactly the coverage the exception was carved out for.
+            skipped, why_skip = _effective_skip(mod, cls, meth)
+            if skipped:
+                problems.append(
+                    "{}.{}.{} is a fast-gate exception but unittest will "
+                    "SKIP it (reason: {!r}) -- the routing pin would not "
+                    "run in the fast gate".format(mod, cls, meth, why_skip))
         self.assertEqual(
             problems, [],
             "fast-gate exception list is out of sync:\n  "
