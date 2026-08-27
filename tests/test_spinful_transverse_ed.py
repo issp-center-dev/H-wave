@@ -53,6 +53,7 @@ from tests.test_bond_transverse_ed import (CAMPAIGN_V1, _hf_h1_from_terms_at,
                                             _terms_ising_hund,
                                             _terms_pairlift_offsite,
                                             _w0_direction_set_sv_gate)
+from tests.heavy_tests import heavy
 
 
 def _h1_with_spin_orbit(fx, t_so):
@@ -1651,20 +1652,24 @@ class TestTask4GranuleCampaign(unittest.TestCase):
                               "task4/norb1/CoulombIntra")
         self.assertEqual(rec["status"], "PASS", rec)
 
+    @heavy
     def test_norb2_coulombinter(self):
         rec = _s4_adjudicate("norb2", "CoulombInter",
                               "task4/norb2/CoulombInter")
         self.assertEqual(rec["status"], "PASS", rec)
 
+    @heavy
     def test_norb2_exchange(self):
         rec = _s4_adjudicate("norb2", "Exchange", "task4/norb2/Exchange")
         self.assertEqual(rec["status"], "PASS", rec)
 
+    @heavy
     def test_norb2_pairhop_complex(self):
         rec = _s4_adjudicate("norb2", "PairHop", "task4/norb2/PairHop",
                               phase=_S4_2_PAIRHOP_PHASE)
         self.assertEqual(rec["status"], "PASS", rec)
 
+    @heavy
     def test_norb2_hund(self):
         rec = _s4_adjudicate("norb2", "Hund", "task4/norb2/Hund")
         self.assertEqual(
@@ -1673,6 +1678,7 @@ class TestTask4GranuleCampaign(unittest.TestCase):
             "Sz-breaking t_so fixture (record={})".format(
                 rec["status"], rec))
 
+    @heavy
     def test_norb2_pairlift(self):
         rec = _s4_adjudicate("norb2", "PairLift", "task4/norb2/PairLift")
         self.assertEqual(
@@ -1793,12 +1799,14 @@ class TestTask4TsoZeroControl(unittest.TestCase):
                 "kind={} nmat={}: production derivative is not "
                 "bit-identical to 0.0".format(kind, nmat))
 
+    @heavy
     def test_hund_returns_to_pass_zero_at_tso_zero(self):
         rec = _s4_tso0_adjudicate("Hund", "task4/control/tso0/Hund")
         self.assertEqual(rec["status"], "PASS-ZERO", rec)
         self.assertEqual(rec["delta_nmat"], 0.0, rec)
         self._assert_derivative_bit_identical_zero("Hund")
 
+    @heavy
     def test_pairlift_returns_to_pass_zero_at_tso_zero(self):
         rec = _s4_tso0_adjudicate("PairLift", "task4/control/tso0/PairLift")
         self.assertEqual(rec["status"], "PASS-ZERO", rec)
@@ -1854,6 +1862,7 @@ class TestTask4SVDSensitivityGate(unittest.TestCase):
     multi-direction rank test.
     """
 
+    @heavy
     def test_norb2_active_types_direction_set(self):
         records = {
             "CoulombInter": _s4_adjudicate(
@@ -1878,6 +1887,7 @@ class TestTask4SVDSensitivityGate(unittest.TestCase):
             "below 100*delta_rich_max={:.3e}".format(
                 gate["sigma_min"], 100.0 * gate["delta_rich_max"]))
 
+    @heavy
     def test_norb2_tso_mediated_direction_set(self):
         records = {
             "Hund": _s4_adjudicate("norb2", "Hund", "task4/sv/norb2/Hund"),

@@ -20,6 +20,7 @@ from tests.approx_util import assert_approx_array
 from hwave.solver import green as green_mod
 from hwave.solver import bubble as bubble_mod
 from hwave.solver.bond_channels import resolve_interactions
+from tests.heavy_tests import heavy
 
 
 def _tiny_eig(nvol=4, p=2, seed=7):
@@ -1991,6 +1992,7 @@ class TestIrBondOracle(unittest.TestCase):
             n0 += self.CHUNK
         return 2.0 * total.real
 
+    @heavy
     def test_matches_direct_lehmann_sum(self):
         from hwave.solver import bubble as bubble_mod
         from hwave.solver.bond_channels import ResolvedInteractionSet
