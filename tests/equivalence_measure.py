@@ -46,7 +46,7 @@ reduction (``extract_bundle`` raising ``KeyError``/``ValueError``/
 record all produce an
 ``{"error": <message>, ...}`` line (never silently dropped) and set the
 process's exit code to 1 -- but processing CONTINUES to the next cell/
-checkpoint first (best-effort telemetry: one broken cell must not hide
+metric first (best-effort telemetry: one broken cell must not hide
 every other cell's timing/residual data from the CI artifact).
 
 Reuses ``tests.test_rpa_flex_equivalence_table``'s own builders
@@ -78,7 +78,7 @@ import numpy as np
 import scipy
 
 from tests.equivalence_cells import CELLS, COMPARATORS, Diverges, Equiv
-from tests.equivalence_freeze_check import DIAGNOSTIC_METRICS
+from tests.equivalence_freeze_check import DIAGNOSTIC_FIXTURES, DIAGNOSTIC_METRICS
 from tests.test_rpa_flex_equivalence_table import (
     _DIAGNOSTIC_BENIGN_FIXTURE,
     _DIAGNOSTIC_FC_FIXTURE,
@@ -229,12 +229,26 @@ def _measure_cell(cell) -> bool:
 
 def _measure_diagnostics() -> bool:
     """Run the mu/Green divergence diagnostic on all three fixtures;
-    emit one named scalar record per metric (11 x 3 = 33 lines)."""
+    emit one named scalar record per metric (11 x 3 = 33 lines).
+
+    The fixture axis is driven by ``DIAGNOSTIC_FIXTURES`` (zipped
+    against the three fixture objects, in the same order) so both axes
+    -- fixtures and metrics -- flow from the same authority
+    (``tests.equivalence_freeze_check``) the completeness validator
+    checks against downstream. A ``DIAGNOSTIC_METRICS`` entry the
+    ``_diagnostic_residuals`` output does not actually carry (a
+    producer/consumer key-name drift) is a structural problem, not an
+    uncaught crash: it produces its own ``{"error": ...}`` record and
+    ``ok = False``, and measurement CONTINUES to the next metric/
+    fixture -- consistent with this module's fail-closed-but-keep-going
+    contract (module docstring above).
+    """
 
     ok = True
-    for fixture_name, fixture in (("benign", _DIAGNOSTIC_BENIGN_FIXTURE),
-                                   ("fc", _DIAGNOSTIC_FC_FIXTURE),
-                                   ("geev", _DIAGNOSTIC_GEEV_FIXTURE)):
+    fixture_objects = (
+        _DIAGNOSTIC_BENIGN_FIXTURE, _DIAGNOSTIC_FC_FIXTURE, _DIAGNOSTIC_GEEV_FIXTURE,
+    )
+    for fixture_name, fixture in zip(DIAGNOSTIC_FIXTURES, fixture_objects):
         try:
             values = _diagnostic_residuals(fixture)
         except Exception as exc:
@@ -243,6 +257,16 @@ def _measure_diagnostics() -> bool:
             ok = False
             continue
         for metric in DIAGNOSTIC_METRICS:
+            if metric not in values:
+                _emit({
+                    "error": "metric {!r} missing from _diagnostic_residuals "
+                              "output".format(metric),
+                    "phase": "diagnostic",
+                    "fixture": fixture_name,
+                    "metric": metric,
+                })
+                ok = False
+                continue
             ok &= _emit({
                 "diagnostic": metric,
                 "fixture": fixture_name,

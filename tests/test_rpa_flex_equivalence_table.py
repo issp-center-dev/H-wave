@@ -53,6 +53,7 @@ from tests.equivalence_cells import (
     scalar_residual,
     validate_registry,
 )
+from tests.equivalence_freeze_check import DIAGNOSTIC_FIXTURES, DIAGNOSTIC_METRICS
 
 logger = logging.getLogger("qlms").getChild("test_equivalence_table")
 
@@ -3118,44 +3119,15 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 #     ``_calc_dressed_green`` never returns one.
 #
 # NORMALIZATION: every residual here is a SCALAR (mu) or a raw elementwise
-# max-|diff| (Green/chi0q) -- NOT a ``COMPARATORS`` entry (no bundle
-# mapping; ``scalar_residual``/``assert_scalar_within`` for the two mu
-# checkpoints, and ``_assert_max_diff_within`` below -- a local helper
-# mirroring ``Comparator.assert_within``'s max-|diff|+index diagnostic --
-# for the three array checkpoints).
+# max-|diff| (Green/chi0q, reduced to a single float via ``np.max(np.abs(...))``
+# at the point of measurement) -- NOT a ``COMPARATORS`` entry (no bundle
+# mapping). Every checkpoint's gate is therefore a plain float-vs-ceiling
+# comparison: ``assert_scalar_within`` for the two mu checkpoints (1-2),
+# ``unittest.TestCase.assertLessEqual`` (with a ``_diagnostic_gate_message``
+# failure message -- CURRENT measured value, pointer to
+# tests/equivalence_calibration_log.md) for the rest (3-7). See
+# ``TestMuGreenDivergenceDiagnostic`` below for the gate itself.
 # ---------------------------------------------------------------------------
-
-
-def _assert_max_diff_within(a, b, atol, label):
-    """The array-checkpoint counterpart of ``assert_scalar_within``:
-    mirrors ``Comparator.assert_within``'s policy (exact shape then
-    all-finite first, elementwise complex ``abs(a-b)``, the failure
-    message reports both the max-|diff| VALUE and its INDEX) without
-    requiring an ``OutputBundle`` -- the diagnostic compares raw
-    Green/chi0q arrays straight off the solver internals, never through
-    ``extract_bundle``.
-    """
-
-    a = np.asarray(a)
-    b = np.asarray(b)
-    if a.shape != b.shape:
-        raise AssertionError(
-            "{}: shape mismatch {!r} vs {!r}".format(label, a.shape, b.shape)
-        )
-    if not np.all(np.isfinite(a)):
-        raise AssertionError("{}: the first array contains non-finite values".format(label))
-    if not np.all(np.isfinite(b)):
-        raise AssertionError("{}: the second array contains non-finite values".format(label))
-    diff = np.abs(a - b)
-    idx = tuple(int(i) for i in np.unravel_index(int(np.argmax(diff)), diff.shape))
-    max_diff = float(diff[idx])
-    if max_diff > atol:
-        raise AssertionError(
-            "{}: max |diff| = {!r} at index {!r} exceeds atol {!r} (CURRENT "
-            "measured value, not a frozen number -- see "
-            "tests/equivalence_calibration_log.md for the calibration "
-            "history)".format(label, max_diff, idx, atol)
-        )
 
 
 def _diagnostic_residuals(fixture, solver_factory=build_solver):
@@ -3167,7 +3139,7 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
     docstring above the call-signature contract this function
     implements). Returns a dict with the raw checkpoint values (so
     callers can build rich, dynamic failure messages via
-    ``assert_scalar_within``/``_assert_max_diff_within``) AND the
+    ``assert_scalar_within``/``_diagnostic_gate_message``) AND the
     eleven named scalar residuals (``"assertion1"``..``"assertion5"``
     for checkpoints 1-5, plus checkpoint 6's
     ``"counter_cross_at_mu_rpa"``/``"counter_cross_at_mu_flex"``/
@@ -3330,10 +3302,13 @@ _DIAGNOSTIC_GEEV_FIXTURE = GEEV_DIAGNOSTIC_FIXTURE
 
 
 def _diagnostic_gate_message(label, value, ceiling):
-    """The plain-``assertLessEqual`` checkpoints' failure-message style,
-    mirroring ``_assert_max_diff_within``'s: the CURRENT measured
-    value (never a frozen number) plus a pointer to the calibration
-    log's history.
+    """The failure-message builder for every plain
+    ``unittest.TestCase.assertLessEqual`` checkpoint (3-7): every
+    checkpoint 3-7 residual is already reduced to a single float (via
+    ``np.max(np.abs(...))`` where applicable) at the point of
+    measurement in ``_diagnostic_residuals``, so the message reports
+    the CURRENT measured value (never a frozen number) plus a pointer
+    to the calibration log's history -- no array/index to report.
     """
 
     return (
@@ -3355,7 +3330,7 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
     AND the geev code path. The amplification RATIO criterion itself
     (>= 10x, benign vs FC) is ``TestConditioningAmplification`` below;
     see this module's own section docstring (above
-    ``_assert_max_diff_within``) for the full adapter contract, exact
+    ``_diagnostic_residuals``) for the full adapter contract, exact
     call signatures, and Step-5 issue (#160).
 
     Seven SEPARATE, independently-discoverable test methods (one per
@@ -3372,10 +3347,23 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # The fixture-name axis is driven by ``DIAGNOSTIC_FIXTURES`` (the
+        # same authority the completeness validator in
+        # ``tests.equivalence_freeze_check`` checks against), zipped
+        # against the three fixture objects in the identical order.
+        # ``_diagnostic_residuals`` also returns the raw Green/chi0q
+        # arrays it computed each checkpoint from (needed to build the
+        # scalar residuals, not needed after that) -- only the FLOAT
+        # scalar entries are retained here, so ``cls.FIXTURES`` holds a
+        # handful of floats per fixture for the class's lifetime, not
+        # three fixtures' worth of Green/chi0q arrays.
+        fixture_objects = (
+            _DIAGNOSTIC_BENIGN_FIXTURE, _DIAGNOSTIC_FC_FIXTURE, _DIAGNOSTIC_GEEV_FIXTURE,
+        )
         cls.FIXTURES = {
-            "benign": _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE),
-            "fc": _diagnostic_residuals(_DIAGNOSTIC_FC_FIXTURE),
-            "geev": _diagnostic_residuals(_DIAGNOSTIC_GEEV_FIXTURE),
+            name: {k: v for k, v in _diagnostic_residuals(fixture).items()
+                   if isinstance(v, float)}
+            for name, fixture in zip(DIAGNOSTIC_FIXTURES, fixture_objects)
         }
 
     def _gate(self, metric, key):
@@ -3468,6 +3456,26 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
                             values[metric], POLICY_CEILINGS["green_dyson"],
                         ),
                     )
+
+    def test_8_every_diagnostic_metric_is_present_in_every_fixture(self):
+        # Pins the producer/consumer key contract: every name
+        # ``DIAGNOSTIC_METRICS`` (``tests.equivalence_freeze_check``,
+        # the same authority ``equivalence_measure``'s per-scalar
+        # emission and the completeness validator both read) must
+        # actually be a key ``_diagnostic_residuals`` returns. A drift
+        # here would otherwise surface only as an uncaught ``KeyError``
+        # deep inside ``equivalence_measure`` during a live calibration
+        # run; catching it here costs nothing extra, reusing the
+        # values ``setUpClass`` already computed.
+        for name in self.FIXTURES:
+            with self.subTest(fixture=name):
+                self.assertTrue(
+                    set(DIAGNOSTIC_METRICS) <= set(self.FIXTURES[name]),
+                    "DIAGNOSTIC_METRICS {!r} is not a subset of the "
+                    "_diagnostic_residuals keys {!r} for fixture {!r}".format(
+                        sorted(DIAGNOSTIC_METRICS), sorted(self.FIXTURES[name]), name
+                    ),
+                )
 
 
 class TestConditioningAmplification(unittest.TestCase):
