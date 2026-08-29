@@ -52,7 +52,21 @@ DIAGNOSTIC_METRICS: Tuple[str, ...] = (
 )
 DIAGNOSTIC_FIXTURES: Tuple[str, ...] = ("benign", "fc", "geev")
 
-# Global Constraints: the conditioning amplification threshold.
+# Global Constraints: the conditioning amplification threshold. LEGACY:
+# this threshold and the two reducers below it (``paired_amplification_
+# ratios``, ``assert_amplification_holds``) predate #160.
+# ``assertion2`` -- the seam they were built to watch -- collapsed to a
+# round-off residual once #160's ``RPA._find_mu`` fix removed the
+# root-finder artifact that used to amplify it, so the >=10x
+# amplification claim they check is retired: cell 38's live
+# conditioning obligation is now ``TestConditioningTransferGain`` (a
+# deterministic perturbation transfer-gain experiment, not part of
+# this diagnostic-sample pipeline at all). Neither reducer is called by
+# ``build_report``/``main`` as a gate -- ``build_report`` only prints
+# ``paired_amplification_ratios``' informational ratio (see below) --
+# so nothing here can fail a freeze on the retired claim; both are kept
+# only for their own historical-record/regression-detection value and
+# their direct unit coverage in ``tests/test_equivalence_freeze_check.py``.
 AMPLIFICATION_THRESHOLD = 10.0
 
 
@@ -520,14 +534,19 @@ def unittest_gate_seconds(samples: Sequence[Sample]) -> float:
 def paired_amplification_ratios(samples: Sequence[Sample], metric: str,
                                  benign_fixture: str = "benign",
                                  fc_fixture: str = "fc") -> Dict[str, float]:
-    """The conditioning amplification reducer, per Global Constraints:
-    per runner, ``MIN(FC invocations) / MAX(benign invocations)`` with
+    """LEGACY (see the ``AMPLIFICATION_THRESHOLD`` comment above): the
+    conditioning amplification reducer, per Global Constraints: per
+    runner, ``MIN(FC invocations) / MAX(benign invocations)`` with
     ``max(denominator, 1e-15)``. Returns one ratio per runner that
     reported BOTH fixtures for this ``metric`` (a ``DIAGNOSTIC_METRICS``
     name, e.g. ``"assertion2"``); a runner reporting only one side is
     silently omitted here (``assert_amplification_holds`` below is what
     enforces "every runner must clear the bar" and will catch a runner
-    with no ratio at all as a missing-runner error).
+    with no ratio at all as a missing-runner error). Purely
+    informational post-#160 on ``"assertion2"`` -- that seam now sits
+    at round-off on both fixtures, so the ratio no longer measures a
+    live amplification effect; ``build_report`` prints it but nothing
+    asserts a threshold against it.
     """
 
     fc_vals: Dict[str, List[float]] = defaultdict(list)
@@ -556,9 +575,15 @@ def paired_amplification_ratios(samples: Sequence[Sample], metric: str,
 def assert_amplification_holds(ratios: Dict[str, float],
                                 threshold: float = AMPLIFICATION_THRESHOLD,
                                 expected_runners: Sequence[str] = GATING_RUNNERS) -> None:
-    """Global Constraints: ">=10x threshold must hold on EVERY
-    runner". Raises ``ValueError`` naming every runner that either
-    never reported a ratio or fell below the threshold.
+    """LEGACY (see the ``AMPLIFICATION_THRESHOLD`` comment above):
+    Global Constraints' original ">=10x threshold must hold on EVERY
+    runner" check. Raises ``ValueError`` naming every runner that
+    either never reported a ratio or fell below the threshold. Not
+    called by ``build_report``/``main`` -- retained for its own unit
+    coverage (``tests/test_equivalence_freeze_check.py``) and for
+    historical/manual amplification-ratio analysis only; the live
+    conditioning gate post-#160 is ``TestConditioningTransferGain``,
+    outside this module's diagnostic-sample pipeline entirely.
     """
 
     problems = []
@@ -616,7 +641,11 @@ def build_report(samples: Sequence[Sample], expected_source_sha: str,
     lines.append("  {:.3f}s".format(unittest_gate_seconds(samples)))
 
     lines.append("")
-    lines.append("Conditioning amplification (assertion2), per runner:")
+    lines.append(
+        "Conditioning amplification (assertion2, informational/legacy "
+        "-- retired post-#160, not a gate; the live conditioning "
+        "obligation is TestConditioningTransferGain), per runner:"
+    )
     for runner, ratio in sorted(
         paired_amplification_ratios(samples, metric="assertion2").items()
     ):

@@ -33,11 +33,14 @@ Hard constraints (binding on every future edit to this file):
 registry holds 37 cells total). Cell 38 is an ordinary ``Equiv``
 comparison row like any other, and its coverage obligation only checks
 that its ``cell_id`` is present. What makes it the CONDITIONING row is
-measured elsewhere: ``TestConditioningAmplification`` (in the test
-module) drives the mu/Green divergence diagnostic over cell 38's fixture
-and a benign one and requires the amplification, and cell 38's own notes
-record why that separation exists. ``COVERAGE_OBLIGATIONS`` holds every
-named coverage predicate, cell 38's included.
+measured elsewhere: ``TestConditioningTransferGain`` (in the test
+module) runs a deterministic perturbation transfer-gain experiment over
+cell 38's fixture and a benign one and requires the FC/benign contrast,
+and cell 38's own notes record why that separation exists. This
+replaces the retired amplification-ratio criterion
+(``TestConditioningAmplification``), which gated a root-finder artifact
+the #160 mu/Green-seam fix removed. ``COVERAGE_OBLIGATIONS`` holds
+every named coverage predicate, cell 38's included.
 
 Registry docstring maintenance checklist:
 ``tests/equivalence_benchmark.md`` records ONE per-cell timing row per
@@ -386,6 +389,22 @@ POLICY_CEILINGS: dict = {
     "mu_number_residual": 1e-15,
     # provisional (dev) -- finalized by the CI calibration, see calibration log
     "green_dyson": 1e-14,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    # Transfer-gain experiment (TestConditioningTransferGain, cell 38):
+    # measured on the macOS arm64 development machine, 2026-08-29 --
+    # benign gain 1.7551392977877, FC gain 1277.6858808294378 (ratio
+    # ~728x, linear across eps 1e-6..1e-10). Upper ceiling on the FC
+    # gain: 10**ceil(log10(10 * gain_fc_measured)).
+    "chiq_gain": 1e5,
+    # Lower band on the FC gain: largest power of ten <=
+    # gain_fc_measured / 10.
+    "chiq_gain_fc_min": 1e2,
+    # Upper ceiling on the propagated (rpa-Green-built vs
+    # flex-Sigma=0-Green-built) chiq difference, measured across both
+    # the benign and FC fixtures (worst measured: 7.376256836354663e-14
+    # on the FC fixture; benign measured 2.2204481854326364e-16):
+    # 1e-15 if worst==0 else max(1e-15, 10**ceil(log10(10 * worst))).
+    "chiq_propagated": 1e-12,
 }
 
 # The calibration provenance record: which source revision the recorded
@@ -2024,20 +2043,44 @@ _CELL_38_CONDITIONING_MU = Cell(
         "is kept -- the shoulder check above is what verified it, and "
         "no re-selection was needed (the single logged attempt is in "
         "tests/equivalence_calibration_log.md). "
-        "AMPLIFICATION (owned by TestConditioningAmplification, not this "
-        "row): the mu/Green divergence diagnostic run in ISOLATION "
-        "(Sigma=0, no solve()) on this fixture vs the benign cell 8 "
-        "fixture shows >=10x amplification on the mu-seam residual "
-        "(assertion 2) at the very first candidate T=0.2 -- no halve-T "
-        "re-choice needed (single logged calibration attempt). "
+        "TRANSFER GAIN (owned by TestConditioningTransferGain, not this "
+        "row): a deterministic perturbation transfer-gain experiment -- "
+        "gain = max|chiq(chi0 + eps*E) - chiq(chi0)| / eps, with E a "
+        "one-hot real perturbation at the IN-TEST argmax-cond (freq, "
+        "k) direction of cond_2(1 + chi0 W) -- run independently on "
+        "this fixture and the benign cell 8 fixture requires a >=10x "
+        "FC/benign gain contrast. The argmax-cond direction currently "
+        "lands at the ZERO-BOSONIC-FREQUENCY slot, k index 10, on both "
+        "fixtures (cond 3.6249143215242605 benign, 70.48956521627714 "
+        "FC). Measured gains on the macOS arm64 development machine "
+        "(2026-08-29): benign 1.7551392977877, FC 1277.6858808294378 "
+        "-- a ~728x (727.9683626478662) ratio, linear across eps "
+        "1e-6..1e-10. THIS REPLACES the retired amplification-ratio "
+        "criterion (TestConditioningAmplification: >=10x on at least "
+        "one of assertions 2/4/5 of the mu/Green divergence diagnostic "
+        "run in isolation): that criterion gated a root-finder "
+        "artifact in RPA._find_mu that the #160 fix removed --  "
+        "assertion 2's residual, the seam that had carried the old "
+        "test, collapsed to round-off post-fix, so the amplification "
+        "claim went dead and a deterministic, solver-agnostic "
+        "replacement was substituted instead of recalibrating a dead "
+        "seam. The propagated (rpa-Green-built vs "
+        "flex-Sigma=0-Green-built) chiq difference the same test class "
+        "checks is bounded by an ABSOLUTE ceiling only "
+        "(chiq_propagated, 1e-12) -- deliberately NO relative gate "
+        "against max|chiq|, even though max|chiq| is not small on this "
+        "fixture (measured FC 4.53148448207494, i.e. >= 3.9): a "
+        "relative version would only be looser than the absolute "
+        "ceiling already in force, so none was added. "
         "THIS ROW's own (chi0q, chiq) comparison instead uses the FULL "
         "one-shot solve() pipeline, which is NOT the same computation "
         "the diagnostic isolates: FLEX's post-mix stored mu (after one "
         "SCF iteration re-solves mu against its own iteration-1 "
         "self-energy, flex.py:741-743) differs from the diagnostic's "
         "isolated Sigma=0 mu, so a close full-pipeline chi0q/chiq match "
-        "here does not contradict the diagnostic's amplified seam-level "
-        "residuals in isolation -- exactly the OutputBundle-documented "
+        "here does not contradict the diagnostic's own isolated "
+        "Sigma=0 seam-level residuals (round-off post-#160) -- exactly "
+        "the OutputBundle-documented "
         "reason mu is never a per-cell observable. Measured on the "
         "macOS arm64 development machine: chi0q max|diff| = 0.0 "
         "(bit-identical) and chiq max|diff| = 3.3066883022456364e-12, "
@@ -2174,6 +2217,16 @@ def _obligation_full_kanamori_row_exists(cells) -> bool:
 
 
 def _obligation_conditioning_row_exists(cells) -> bool:
+    """Cell 38 (the G6 conditioning row) is present. What makes it the
+    conditioning row is measured by ``TestConditioningTransferGain`` (a
+    deterministic perturbation transfer-gain experiment over this
+    fixture and a benign one), not by this predicate -- this predicate
+    only checks the row's ``cell_id`` is in the registry. Formerly
+    worded around "amplification ratio"
+    (``TestConditioningAmplification``); that criterion was retired
+    when the #160 fix removed the root-finder artifact it gated, and
+    the wording here now matches the transfer-gain replacement."""
+
     return "general.ring.offsite_coulombinter.conditioning.mu" in _cell_ids(cells)
 
 

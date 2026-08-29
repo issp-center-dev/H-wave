@@ -457,6 +457,9 @@ class TestRegistrySchema(unittest.TestCase):
                 "counter_cross_geev": 1e-15,
                 "mu_number_residual": 1e-15,
                 "green_dyson": 1e-14,
+                "chiq_gain": 1e5,
+                "chiq_gain_fc_min": 1e2,
+                "chiq_propagated": 1e-12,
             },
         )
 
@@ -3042,10 +3045,10 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestMuGreenDivergenceDiagnostic + TestConditioningAmplification:
+# TestMuGreenDivergenceDiagnostic + TestConditioningTransferGain:
 # the mu/Green implementation-seam diagnostic -- the audit's top finding
 # made permanently visible as a gating apparatus, plus cell 38's
-# amplification obligation. Tracking issue: #160 (any future Diverges
+# transfer-gain obligation. Tracking issue: #160 (any future Diverges
 # classification arising from this diagnostic would reference it; none
 # does today -- both fixtures exercised here stay well inside their
 # ceilings).
@@ -3145,9 +3148,11 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
     ``"counter_cross_at_mu_rpa"``/``"counter_cross_at_mu_flex"``/
     ``"number_residual_rpa"``/``"number_residual_flex"`` and
     checkpoint 7's ``"dyson_residual_eigenbasis"``/
-    ``"dyson_residual_inv"``, all ``float``) for the amplification
-    ratio (``TestConditioningAmplification``) and the per-metric gate
-    (``TestMuGreenDivergenceDiagnostic``).
+    ``"dyson_residual_inv"``, all ``float``) for the per-metric gate
+    (``TestMuGreenDivergenceDiagnostic``). ``TestConditioningTransferGain``
+    (cell 38's conditioning obligation) does NOT consume this function --
+    it rebuilds its own chi0/vertex directly from ``build_solver`` (see
+    its own docstring).
     """
 
     with ExitStack() as stack:
@@ -3327,9 +3332,10 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
     apparatus itself stays inside its ``*_diag``/``chi0q_mu``/
     ``counter_cross_*``/``mu_number_residual``/``green_dyson``
     ceilings under ordinary conditions, the amplified FC conditioning,
-    AND the geev code path. The amplification RATIO criterion itself
-    (>= 10x, benign vs FC) is ``TestConditioningAmplification`` below;
-    see this module's own section docstring (above
+    AND the geev code path. Cell 38's conditioning obligation itself
+    (a deterministic perturbation transfer-gain experiment, >= 10x
+    contrast between benign and FC) is ``TestConditioningTransferGain``
+    below; see this module's own section docstring (above
     ``_diagnostic_residuals``) for the full adapter contract, exact
     call signatures, and Step-5 issue (#160).
 
@@ -3478,76 +3484,134 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
                 )
 
 
-class TestConditioningAmplification(unittest.TestCase):
-    """Cell 38's amplification obligation: the SAME diagnostic
-    apparatus (``_diagnostic_residuals``),
-    run independently on the benign fixture (cell 8's) and the FC
-    conditioning fixture (cell 38's), must show >= 10x amplification on
-    AT LEAST ONE of the three seam residuals -- assertion 2 (the mu
-    seam), assertion 4 (the composed seam), assertion 5 (downstream
-    chi0q).
+def _inflate_spinfree_general(chi0, norb):
+    """rpa.py:2085-2100 spin-free general inflation, verbatim semantics
+    (squeezing the leading spin-free nblock=1 axis first)."""
+    chi0 = np.asarray(chi0)
+    if chi0.ndim == 7 and chi0.shape[0] == 1:
+        chi0 = chi0[0]
+    nfreq, nvol = chi0.shape[0], chi0.shape[1]
+    nd = 2 * norb
+    spin_tensor = np.zeros((2, 2, 2, 2), dtype=np.int32)
+    spin_tensor[0, 0, 0, 0] = 1
+    spin_tensor[1, 1, 1, 1] = 1
+    return np.einsum(
+        "lkabcd,stuv->lksatbucvd",
+        chi0.reshape(nfreq, nvol, norb, norb, norb, norb),
+        spin_tensor).reshape(nfreq, nvol, nd, nd, nd, nd)
 
-    WHAT THE CRITERION ACTUALLY MEASURES. The ratio is taken over
-    ``max(benign, 1e-15)`` so that an exactly-zero benign residual
-    cannot divide by zero. On assertion 2 -- the seam that carries this
-    test today -- the benign residual IS exactly zero, so for that seam
-    the ">= 10x amplification" test degenerates into an ABSOLUTE
-    threshold: "the FC residual is at least 1e-14". That is the
-    statement being checked there, and it is the one to read the
-    measured numbers against; it happens to be a strictly stronger
-    demand than a ratio against any benign residual that had been
-    merely small rather than zero. The ratio form still applies as
-    written on assertions 4 and 5, whose benign residuals are nonzero.
 
-    MONOTONICITY DERIVATION (why halving T is the calibration lever):
-    reducing T sharpens the Fermi step (``RPA._find_mu``'s
-    ``_fermi`` / ``FLEX._fermi_occupation``) against a near-degenerate
-    H0 eigenvalue cluster. On the FC fixture's actual CellShape=(4,4,1)
-    16-k-point mesh, H0's eigenvalues are
-    ``[-3,-2,-2,-2,-2,-1,-1,-1,-1,1,1,2,2,2,2,5]``; filling=0.5 (one-spin
-    target 8 of 16 states) pins the Fermi level EXACTLY inside the
-    4-fold-degenerate eps=-1.0 cluster -- a coarse-mesh analogue of a van
-    Hove shoulder (a finer 64x64 mesh on the same dispersion shows the
-    true DOS peak near eps~-0.93, consistent with this cluster; see cell
-    38's notes in equivalence_cells.py). dN/dmu grows as T shrinks near
-    a near-degenerate manifold, so the two INDEPENDENT mu-root-finders
-    (RPA's scipy bisect+Newton on the non-interacting Fermi count vs
-    FLEX's safeguarded-Newton eigenvalue root on Sigma=0,
-    ``_find_mu_dressed``) settle at their own numerical fixed points
-    inside an increasingly narrow-but-nonzero window -- amplifying their
-    disagreement as T shrinks. This predicts assertion 2's residual
-    grows monotonically as T is halved; measured on the macOS arm64
-    development machine (diagnostic-only -- not gated here) at
-    T=0.2/0.1/0.05 on this fixture: 1.070e-12 -> 1.514e-12 ->
-    1.687e-12, confirming the trend.
+def _ring_vertex(rpa_obj):
+    from hwave.solver.rpa import _to_bubble_pair_convention
+    ham = np.asarray(rpa_obj.ham_info.ham_inter_q)
+    fierz = getattr(rpa_obj.ham_info, "ham_fierz_q", None)
+    if fierz is not None:
+        ham = ham + np.asarray(fierz)
+    return _to_bubble_pair_convention(ham)
 
-    T=0.2, the first temperature tried, already clears the >=10x bar on
-    assertion 2 ALONE by roughly three orders of magnitude, so no
-    halve-T re-choice was needed -- the single logged attempt is in
-    ``tests/equivalence_calibration_log.md``.
-    """
+
+def _perturbation_target(chi0_infl, ham_long):
+    """Deterministic worst-conditioned (freq, k): _solve_rpa's OWN
+    flattening (rpa.py:3908-3913); tie-break = lexicographically first
+    0-based (freq_idx, k_idx) with cond >= max_cond * (1 - 1e-9)."""
+    nfreq, nvol = chi0_infl.shape[0], chi0_infl.shape[1]
+    ndx = int(np.prod(chi0_infl.shape[2:2 + (chi0_infl.ndim - 2) // 2]))
+    A = (np.eye(ndx, dtype=np.complex128)
+         + np.matmul(chi0_infl.reshape(nfreq, nvol, ndx, ndx),
+                     ham_long.reshape(nvol, ndx, ndx)[np.newaxis]))
+    sv = np.linalg.svd(A, compute_uv=False)
+    cond = sv[..., 0] / sv[..., -1]
+    if not np.all(np.isfinite(cond)):
+        raise AssertionError("non-finite resolvent condition number")
+    max_cond = float(np.max(cond))
+    tied = np.argwhere(cond >= max_cond * (1.0 - 1e-9))
+    l0, kstar = (int(tied[0][0]), int(tied[0][1]))
+    return l0, kstar, float(cond[l0, kstar])
+
+
+def _transfer_gain(rpa_obj, chi0_infl, ham_long, eps=1e-8):
+    """gain = max|chiq(chi0 + eps E) - chiq(chi0)| / eps with E one-hot
+    (REAL scalar) at (l0*, k*, 0,0,0,0). Inputs are copied; _solve_rpa
+    is verified read-only, the copies keep that an implementation
+    detail."""
+    l0, kstar, cond = _perturbation_target(chi0_infl, ham_long)
+    base = np.asarray(rpa_obj._solve_rpa(chi0_infl.copy(), ham_long))
+    pert = chi0_infl.copy()
+    pert[l0, kstar, 0, 0, 0, 0] += eps
+    sol = np.asarray(rpa_obj._solve_rpa(pert, ham_long))
+    return float(np.max(np.abs(sol - base)) / eps), l0, kstar, cond
+
+
+class TestConditioningTransferGain(unittest.TestCase):
+    """Cell 38's conditioning obligation, replacing the retired
+    amplification-ratio test (which gated the root-finder artifact the
+    #160 fix removed). Deterministic perturbation transfer gain,
+    measured before being made contractual: benign 1.7551, FC 1277.7,
+    ratio ~728x, linear across eps 1e-6..1e-10; argmax-cond at the
+    zero-bosonic-frequency slot, k index 10, cond 3.62 / 70.5
+    (macOS arm64 dev measurement, 2026-08-28; see the calibration log).
+    A coordinate-direction gain under-samples the true worst direction
+    by construction -- it is a documented-direction regression
+    observable chosen for determinism (the singular-vector alternative
+    is LAPACK-dependent)."""
 
     @classmethod
     def setUpClass(cls):
-        cls.benign = _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE)
-        cls.fc = _diagnostic_residuals(_DIAGNOSTIC_FC_FIXTURE)
+        cls.data = {}
+        for name, fixture in (("benign", _DIAGNOSTIC_BENIGN_FIXTURE),
+                              ("fc", _DIAGNOSTIC_FC_FIXTURE)):
+            with ExitStack() as stack:
+                rpa_obj, green, _ = build_solver(fixture, "rpa", stack)
+                flex_obj, fgreen, _ = build_solver(fixture, "flex", stack)
+                rpa_obj._calc_epsilon_k(green)
+                flex_obj._calc_epsilon_k(fgreen)
+                beta = 1.0 / fixture.T
+                ncond = (rpa_obj.Ncond / 2
+                         if rpa_obj.spin_mode == "spin-free"
+                         else rpa_obj.Ncond)
+                _d, mu = rpa_obj._find_mu(ncond, rpa_obj.T)
+                g_rpa, tail = rpa_obj._calc_green(beta, mu)
+                nblock, nvol, nd = flex_obj.H0_eigenvalue.shape
+                sigma_zero = np.zeros(
+                    (nblock, flex_obj.nmat, nvol, nd, nd),
+                    dtype=np.complex128)
+                g_flex = flex_obj._calc_dressed_green(beta, mu, sigma_zero)
+                chi0_r = _inflate_spinfree_general(
+                    rpa_obj._calc_chi0q(g_rpa, tail, beta), rpa_obj.norb)
+                chi0_f = _inflate_spinfree_general(
+                    rpa_obj._calc_chi0q(g_flex, np.zeros_like(g_flex),
+                                        beta), rpa_obj.norb)
+                ham_long = _ring_vertex(rpa_obj)
+                gain, l0, kstar, cond = _transfer_gain(
+                    rpa_obj, chi0_r, ham_long)
+                chiq_r = np.asarray(rpa_obj._solve_rpa(chi0_r.copy(),
+                                                       ham_long))
+                chiq_f = np.asarray(rpa_obj._solve_rpa(chi0_f.copy(),
+                                                       ham_long))
+                cls.data[name] = {
+                    "gain": gain, "l0": l0, "kstar": kstar, "cond": cond,
+                    "chiq_propagated": float(np.max(np.abs(chiq_r - chiq_f))),
+                }
 
-    def test_at_least_one_seam_amplifies_at_least_tenfold(self):
-        benign = self.benign
-        fc = self.fc
-        keys = ("assertion2", "assertion4", "assertion5")
-        ratios = {key: fc[key] / max(benign[key], 1e-15) for key in keys}
-        self.assertTrue(
-            any(ratio >= 10.0 for ratio in ratios.values()),
-            "conditioning amplification criterion (cell 38, group G6) "
-            "failed: none of the seam residuals amplified >= 10x "
-            "from the benign fixture to FC -- CURRENT measured ratios "
-            "{!r} (benign residuals {!r}, FC residuals {!r})".format(
-                ratios,
-                {key: benign[key] for key in keys},
-                {key: fc[key] for key in keys},
-            ),
-        )
+    def test_fc_gain_exceeds_benign_tenfold(self):
+        self.assertGreaterEqual(
+            self.data["fc"]["gain"], 10.0 * self.data["benign"]["gain"],
+            "conditioning transfer-gain contrast lost: {!r}".format(self.data))
+
+    def test_fc_gain_is_inside_the_measured_band(self):
+        gain = self.data["fc"]["gain"]
+        self.assertGreaterEqual(gain, POLICY_CEILINGS["chiq_gain_fc_min"],
+                                repr(self.data["fc"]))
+        self.assertLessEqual(gain, POLICY_CEILINGS["chiq_gain"],
+                             repr(self.data["fc"]))
+
+    def test_propagated_builder_difference_is_bounded(self):
+        for name in ("benign", "fc"):
+            with self.subTest(fixture=name):
+                self.assertLessEqual(
+                    self.data[name]["chiq_propagated"],
+                    POLICY_CEILINGS["chiq_propagated"],
+                    repr(self.data[name]))
 
 
 # ---------------------------------------------------------------------------
