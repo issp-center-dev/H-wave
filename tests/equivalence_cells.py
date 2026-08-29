@@ -380,7 +380,11 @@ class Cell:
 # the corresponding measured residual; ceiling = 1e-15 if worst==0
 # else max(1e-15, 10**ceil(log10(10 * worst))) -- except
 # chiq_gain_fc_min, whose rule is the MIN/floor variant (see its own
-# comment below).
+# comment below), and chiq_gain/chiq_propagated, which are measured on
+# the dev machine only and frozen via CI GATE-PASSAGE evidence rather
+# than a raw cross-runner MAX (their own comments below explain why:
+# the transfer-gain experiment lives in the unittest module, not the
+# equivalence_measure runner this MAX/MIN rule aggregates).
 POLICY_CEILINGS: dict = {
     # worst (Event 5) 1.765081e-16 (assertion2, geev fixture, dev
     # machine) -- unchanged from its prior dev-only value.
@@ -2224,8 +2228,9 @@ _CELL_38_CONDITIONING_MU = Cell(
         "measured on the macOS arm64 development machine, chi0q "
         "max|diff| = 5.551275218863831e-17 and chiq max|diff| = "
         "7.294815206161733e-14 (the worst across the four gating CI "
-        "runners was smaller on both: 5.551319785776992e-17 chi0q, "
-        "6.843858684819496e-14 chiq); both far inside their mu-coupled "
+        "runners: 5.551319785776992e-17 chi0q -- slightly LARGER than "
+        "the dev value -- and 6.843858684819496e-14 chiq, smaller than "
+        "the dev value); both far inside their mu-coupled "
         "ceilings. Wall time on the "
         "same machine: rpa solve() "
         "~0.15s + flex solve() ~0.01s (~0.16s combined) -- negligible "

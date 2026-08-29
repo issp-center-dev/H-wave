@@ -390,11 +390,10 @@ at the time; they are not amended.
     3.12.14, numpy 1.26.4, scipy 1.17.1
 
 **Objective:** this branch's `RPA._find_mu` fix (the mu/Green-seam fix
-Task 3 landed) drives the mu root-finder to round-off. Task 3's own
-before/after evidence files, `.superpowers/sdd/2026-08-29-mu-green-seam-160/m1_before.json`
-(red, pre-fix) and `m1_after.json` (green, post-fix), record the same
-mu-seam diagnostic (`measure: "M1"`) on the FC-family fixtures at
-descending T; the seam collapses cleanly:
+Task 3 landed) drives the mu root-finder to round-off. Task 3's
+before/after mu-seam record (transcribed below -- the same mu-seam
+diagnostic, `measure: "M1"`, on the FC-family fixtures at descending
+T) shows the seam collapsing cleanly:
 
 | fixture | T | `dmu` before (red) | `dmu` after (green) |
 |---|---|---|---|
@@ -461,13 +460,17 @@ ten `<= min_measured_fc_gain / 10`); see its own row below.
 
 **WARNING carried from review, confirmed here:** `counter_cross_*` and
 `mu_number_residual` measure exactly 0.0 on the dev machine, both
-stages, every fixture -- the identity is structural at Sigma=0. One CI
-sample (assertion 2, benign, Python 3.9 or a sibling runner) DID show a
-single nonzero value, 6.427495e-17, consistent with OpenBLAS single-ULP
-noise on an O(N) quantity -- exactly the possibility flagged before this
-run. It does not touch `counter_cross_*`/`mu_number_residual`
-themselves (those stayed exactly 0.0 everywhere), only `mu_diag`
-(already dominated by the geev fixture's 1.765081e-16 either way).
+stages, every fixture -- the identity is structural at Sigma=0. CI DID
+show a nonzero value on this one checkpoint (assertion 2, benign
+fixture): exactly 6.42749509214523e-17 on Python 3.9 (all 3
+invocations) and Python 3.12 (all 3 invocations), while Python 3.10
+and Python 3.11 measured exactly 0.0 (all 3 invocations each) --
+consistent with OpenBLAS single-ULP noise on an O(N) quantity that
+happens to round differently on some interpreter builds, exactly the
+possibility flagged before this run. It does not touch
+`counter_cross_*`/`mu_number_residual` themselves (those stayed
+exactly 0.0 everywhere, all 4 runners), only `mu_diag` (already
+dominated by the geev fixture's 1.765081e-16 either way).
 
 **Stage 1 -- per-key derived ceilings:**
 
@@ -518,39 +521,40 @@ run standalone, 2026-08-30) to confirm nothing drifted since Event 4:
 Every `(cell, chi0q|chiq)` pair whose registry entry maps to the
 `chi0q_mu`/`chiq_mu` ceiling keys (every mu-coupled comparison cell
 except the fixed-mu `_fixedmu` group, which uses `chi0q_fixed`/
-`chiq_fixed` and is out of scope), dev-machine MAX vs. the CI-runner
-MAX over all 12 measurement samples:
+`chiq_fixed` and is out of scope), dev-machine MAX (primary residual)
+vs. the CI-runner MAX over all 12 measurement samples (secondary
+residual), in the canonical 7-column shape:
 
-| cell_id | observable | dev-machine MAX | CI-runner MAX (4x3) |
-|---|---|---|---|
-| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chi0q | 5.551275e-17 | 5.551320e-17 |
-| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chiq | **7.294815e-14** | 6.843859e-14 |
-| `general.ring.offsite_coulombinter_sameorb.mu` | chi0q | 5.551921e-17 | 4.167915e-17 |
-| `general.ring.offsite_coulombinter_sameorb.mu` | chiq | 2.220865e-16 | 1.944572e-16 |
-| `general.ring.onsite_coulombinter.coefftail.mu` | chi0q | 1.110223e-16 | 1.110245e-16 |
-| `general.ring.onsite_coulombinter.coefftail.mu` | chiq | 1.387779e-16 | 1.387795e-16 |
-| `general.ring.onsite_coulombinter.subshape.mu` | chi0q | **1.387794e-16** | 9.714795e-17 |
-| `general.ring.onsite_coulombinter.subshape.mu` | chiq | 1.665345e-16 | 1.110254e-16 |
-| `general.ring.onsite_full_kanamori.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `general.ring.onsite_full_kanamori.mu` | chiq | 2.498003e-16 | 2.498006e-16 |
-| `general.ring.onsite_u_v_hund.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `general.ring.onsite_u_v_hund.mu` | chiq | 2.498004e-16 | 2.775562e-16 |
-| `reduced.ring.offsite_coulombinter.mu` | chi0q | 5.551921e-17 | 4.167915e-17 |
-| `reduced.ring.offsite_coulombinter.mu` | chiq | 3.609021e-16 | 3.333702e-16 |
-| `reduced.ring.onsite_coulombinter.spindiag.mu` | chi0q | 1.249090e-16 | 1.249428e-16 |
-| `reduced.ring.onsite_coulombinter.spindiag.mu` | chiq | 1.526687e-16 | 1.387822e-16 |
-| `reduced.ring.onsite_coulombinter.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `reduced.ring.onsite_coulombinter.spinfree.mu` | chiq | 1.110225e-16 | 1.387780e-16 |
-| `reduced.ring.onsite_coulombintra.spindiag.mu` | chi0q | 1.249090e-16 | 1.249428e-16 |
-| `reduced.ring.onsite_coulombintra.spindiag.mu` | chiq | 3.886063e-16 | 4.718469e-16 |
-| `reduced.ring.onsite_coulombintra.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `reduced.ring.onsite_coulombintra.spinfree.mu` | chiq | 3.885783e-16 | 3.608233e-16 |
-| `reduced.ring.onsite_hund.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `reduced.ring.onsite_hund.spinfree.mu` | chiq | 9.714480e-17 | 1.110230e-16 |
-| `reduced.ring.onsite_ising.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `reduced.ring.onsite_ising.spinfree.mu` | chiq | 9.714461e-17 | 1.249006e-16 |
-| `reduced.ring.onsite_pairlift.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 |
-| `reduced.ring.onsite_pairlift.spinfree.mu` | chiq | 9.714461e-17 | 9.714477e-17 |
+| cell_id/checkpoint | observable | dev-machine MAX (primary) | CI-runner MAX 4x3 (secondary) | derived value (worst) | decision | reason |
+|---|---|---|---|---|---|---|
+| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chi0q | 5.551275e-17 | 5.551320e-17 | 5.551320e-17 | recalibrate | stale pre-#160 literal would raise `_candidate_atol` against the tightened ceiling; see the per-cell recalibration table below |
+| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chiq | **7.294815e-14** | 6.843859e-14 | **7.294815e-14** | recalibrate | worst value feeding `chiq_mu` below; stale literal recalibrated (see below) |
+| `general.ring.offsite_coulombinter_sameorb.mu` | chi0q | 5.551921e-17 | 4.167915e-17 | 5.551921e-17 | recalibrate | stale pre-#160 literal recalibrated (see below) |
+| `general.ring.offsite_coulombinter_sameorb.mu` | chiq | 2.220865e-16 | 1.944572e-16 | 2.220865e-16 | recalibrate | stale pre-#160 literal recalibrated (see below) |
+| `general.ring.onsite_coulombinter.coefftail.mu` | chi0q | 1.110223e-16 | 1.110245e-16 | 1.110245e-16 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_coulombinter.coefftail.mu` | chiq | 1.387779e-16 | 1.387795e-16 | 1.387795e-16 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_coulombinter.subshape.mu` | chi0q | **1.387794e-16** | 9.714795e-17 | **1.387794e-16** | accept | worst per-cell value feeding `chi0q_mu` below (before the assertion5 diagnostic is folded in); existing literal atol already covers it |
+| `general.ring.onsite_coulombinter.subshape.mu` | chiq | 1.665345e-16 | 1.110254e-16 | 1.665345e-16 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_full_kanamori.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_full_kanamori.mu` | chiq | 2.498003e-16 | 2.498006e-16 | 2.498006e-16 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_u_v_hund.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `general.ring.onsite_u_v_hund.mu` | chiq | 2.498004e-16 | 2.775562e-16 | 2.775562e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.offsite_coulombinter.mu` | chi0q | 5.551921e-17 | 4.167915e-17 | 5.551921e-17 | recalibrate | stale pre-#160 literal recalibrated (see below) |
+| `reduced.ring.offsite_coulombinter.mu` | chiq | 3.609021e-16 | 3.333702e-16 | 3.609021e-16 | recalibrate | stale pre-#160 literal recalibrated (see below) |
+| `reduced.ring.onsite_coulombinter.spindiag.mu` | chi0q | 1.249090e-16 | 1.249428e-16 | 1.249428e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombinter.spindiag.mu` | chiq | 1.526687e-16 | 1.387822e-16 | 1.526687e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombinter.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombinter.spinfree.mu` | chiq | 1.110225e-16 | 1.387780e-16 | 1.387780e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombintra.spindiag.mu` | chi0q | 1.249090e-16 | 1.249428e-16 | 1.249428e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombintra.spindiag.mu` | chiq | 3.886063e-16 | 4.718469e-16 | 4.718469e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombintra.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_coulombintra.spinfree.mu` | chiq | 3.885783e-16 | 3.608233e-16 | 3.885783e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_hund.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_hund.spinfree.mu` | chiq | 9.714480e-17 | 1.110230e-16 | 1.110230e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_ising.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_ising.spinfree.mu` | chiq | 9.714461e-17 | 1.249006e-16 | 1.249006e-16 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_pairlift.spinfree.mu` | chi0q | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
+| `reduced.ring.onsite_pairlift.spinfree.mu` | chiq | 9.714461e-17 | 9.714477e-17 | 9.714477e-17 | accept | existing literal atol already covers this residual |
 
 `chi0q_mu`'s overall worst also includes the Stage-1 diagnostic
 checkpoint (assertion 5, which is directly gated against `chi0q_mu`):
@@ -581,20 +585,27 @@ machine, CI-runner MAX} instead of {macOS, Linux dev machine}):
 
 | cell_id | observable | old literal (pre-#160, Event 2) | new literal (dev, CI-MAX) | old atol | new atol | resists tightening? |
 |---|---|---|---|---|---|---|
-| `general.ring.offsite_coulombinter_sameorb.mu` | chi0q | 4.884981379996393e-15 / 4.898859387959854e-15 | 5.551921408376704e-17 / 4.1679153779129384e-17 | 1e-13 | **1e-15** | no |
+| `general.ring.offsite_coulombinter_sameorb.mu` | chi0q | 4.884981379996393e-15 / 4.898859387959854e-15 | 5.551921408376704e-17 / 4.1679153779129384e-17 | 1e-13 | **1e-14** | no (lands exactly on the new `chi0q_mu` ceiling -- `_candidate_atol` floors the raw residual at 1e-15 BEFORE the 10x multiply, since 5.55e-17 < 1e-15: floored 1e-15 -> x10 -> 1e-14) |
 | `general.ring.offsite_coulombinter_sameorb.mu` | chiq | 2.0206059344954128e-14 / 2.0261571408243727e-14 | 2.220864572139768e-16 / 1.944571711743353e-16 | 1e-12 | **1e-14** | no |
-| `reduced.ring.offsite_coulombinter.mu` | chi0q | 4.884981379996393e-15 / 4.898859387959854e-15 | 5.551921408376704e-17 / 4.1679153779129384e-17 | 1e-13 | **1e-15** | no |
+| `reduced.ring.offsite_coulombinter.mu` | chi0q | 4.884981379996393e-15 / 4.898859387959854e-15 | 5.551921408376704e-17 / 4.1679153779129384e-17 | 1e-13 | **1e-14** | no (same 1e-15 pre-multiply floor as the sameorb cell above) |
 | `reduced.ring.offsite_coulombinter.mu` | chiq | 3.552713730991191e-14 / 3.5610405641548485e-14 | 3.6090211750999277e-16 / 3.3337017449116085e-16 | 1e-12 | **1e-14** | no |
-| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chi0q | 6.431799537609854e-13 / 6.432077093507842e-13 | 5.551275218863831e-17 / 5.551319785776992e-17 | 1e-11 | **1e-15** | no |
+| `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chi0q | 6.431799537609854e-13 / 6.432077093507842e-13 | 5.551275218863831e-17 / 5.551319785776992e-17 | 1e-11 | **1e-14** | no (same 1e-15 pre-multiply floor) |
 | `general.ring.offsite_coulombinter.conditioning.mu` (cell 38) | chiq | 3.3066883022456364e-12 / 3.373345155219826e-12 | 7.294815206161733e-14 / 6.843858684819496e-14 | 1e-10 (== old ceiling) | **1e-12** (== new ceiling) | **no** -- lands exactly on the new `chiq_mu` ceiling, same "conditioning cell is the tightest" pattern Events 2/3 recorded against the old ceiling |
 
 No cell in the registry resisted tightening (no cell's bound needed
 its CEILING to hold it down after recalibration); all three
-recalibrated cells' new bounds land comfortably under the new
-ceilings, except cell 38's chiq, which lands exactly on
+recalibrated cells' new chiq bounds land comfortably under the new
+`chiq_mu` ceiling, except cell 38's chiq, which lands exactly on
 `chiq_mu`=1e-12 by construction (it is the deliberately-chosen
-worst-case conditioning cell). `chi0q_fixed`/`chiq_fixed` stay 1e-12
-unchanged (out of scope; no fixed-mu cell's residual moved).
+worst-case conditioning cell). All three recalibrated cells' new chi0q
+bounds land EXACTLY ON the new `chi0q_mu`=1e-14 ceiling (permitted
+equality, not a margin-insufficient case) -- the same pattern already
+acknowledged above for cell 8's existing chi0q literal, and for the
+same reason: each cell's raw chi0q residual (5.2-5.6e-17) is below the
+1e-15 floor `_candidate_atol` applies before the 10x multiply, so
+every one of them bounds to the same `10 * 1e-15 = 1e-14`.
+`chi0q_fixed`/`chiq_fixed` stay 1e-12 unchanged (out of scope; no
+fixed-mu cell's residual moved).
 
 ### Summary: every `POLICY_CEILINGS` key, before -> after this Event
 
