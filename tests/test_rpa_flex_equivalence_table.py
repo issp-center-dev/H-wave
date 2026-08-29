@@ -3331,8 +3331,9 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
     non-Hermitian-eigensolver fixture) -- proving the diagnostic
     apparatus itself stays inside its ``*_diag``/``chi0q_mu``/
     ``counter_cross_*``/``mu_number_residual``/``green_dyson``
-    ceilings under ordinary conditions, the amplified FC conditioning,
-    AND the geev code path. Cell 38's conditioning obligation itself
+    ceilings under ordinary conditions, the FC fixture's own isolated
+    Sigma=0 seam-level residuals (round-off post-#160), AND the geev
+    code path. Cell 38's conditioning obligation itself
     (a deterministic perturbation transfer-gain experiment, >= 10x
     contrast between benign and FC) is ``TestConditioningTransferGain``
     below; see this module's own section docstring (above
@@ -3531,9 +3532,14 @@ def _perturbation_target(chi0_infl, ham_long):
 
 def _transfer_gain(rpa_obj, chi0_infl, ham_long, eps=1e-8):
     """gain = max|chiq(chi0 + eps E) - chiq(chi0)| / eps with E one-hot
-    (REAL scalar) at (l0*, k*, 0,0,0,0). Inputs are copied; _solve_rpa
-    is verified read-only, the copies keep that an implementation
-    detail."""
+    (REAL scalar) at (l0*, k*, 0,0,0,0). The chi0 input is explicitly
+    copied; ham_long is passed as-is (_solve_rpa is verified read-only
+    on both). The perturbed slot (l0*, k*, 0,0,0,0) must be a
+    STRUCTURALLY NONZERO entry of the inflated chi0 -- _solve_rpa
+    re-detects block structure from the combined chi0+ham sparsity
+    pattern, so perturbing a structural zero would measure a code-path
+    change (a new nonzero block appearing) rather than a sensitivity of
+    the existing solve."""
     l0, kstar, cond = _perturbation_target(chi0_infl, ham_long)
     base = np.asarray(rpa_obj._solve_rpa(chi0_infl.copy(), ham_long))
     pert = chi0_infl.copy()
@@ -3547,13 +3553,20 @@ class TestConditioningTransferGain(unittest.TestCase):
     amplification-ratio test (which gated the root-finder artifact the
     #160 fix removed). Deterministic perturbation transfer gain,
     measured before being made contractual: benign 1.7551, FC 1277.7,
-    ratio ~728x, linear across eps 1e-6..1e-10; argmax-cond at the
-    zero-bosonic-frequency slot, k index 10, cond 3.62 / 70.5
-    (macOS arm64 dev measurement, 2026-08-28; see the calibration log).
-    A coordinate-direction gain under-samples the true worst direction
-    by construction -- it is a documented-direction regression
-    observable chosen for determinism (the singular-vector alternative
-    is LAPACK-dependent)."""
+    ratio ~728x, linear across eps 1e-6..1e-10. k index 10 on both
+    fixtures, but the argmax-cond bosonic-frequency slot differs:
+    benign's argmax-cond IS the zero-bosonic-frequency slot (l0=16,
+    cond 3.62); FC's argmax-cond is NOT Omega=0 -- FC's zero slot
+    (l0=128) is cond 1.97, ~35x better conditioned than the chosen
+    direction. FC's argmax is the first nonzero bosonic frequency, the
+    +-Omega_1 tied pair {l0=127, l0=129} (cond 70.4896 both, ~1.9e-12
+    relative tie); the lexicographic tie-break selects l0=127 (cond
+    70.5). (macOS arm64 dev measurement, 2026-08-28, reconfirmed
+    on-branch 2026-08-29; see the calibration log.) A coordinate-
+    direction gain under-samples the true worst direction by
+    construction -- it is a documented-direction regression observable
+    chosen for determinism (the singular-vector alternative is
+    LAPACK-dependent)."""
 
     @classmethod
     def setUpClass(cls):

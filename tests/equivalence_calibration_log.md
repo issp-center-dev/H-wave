@@ -280,3 +280,65 @@ Residual columns are the MIN and MAX of the four runner-local MAXima.
 
 - `module_total_seconds` (MAX of 3 invocations, per runner): Python 3.9 0.668, 3.10 0.840, 3.11 0.966, 3.12 0.986
 - `unittest_module_process_seconds` (1 sample per runner): Python 3.9 0.983, 3.10 1.022, 3.11 1.112, 3.12 1.466 -- MAX **1.466 s** against the 120 s freeze-time budget, roughly 82x under it.
+
+---
+
+## Event 4 -- conditioning transfer-gain experiment (cell 38, replacing the retired amplification-ratio criterion)
+
+- **Date:** 2026-08-29
+- **Commit (dev-provisional, NOT the frozen PROVENANCE revision --
+  see the note below):** 6c973db32287d6e9f22aedd791352b24d8e0e9a0 (the
+  working tree these measurements were taken against; see the commit
+  this file ships in for the exact source SHA once committed, per the
+  same convention Event 1 uses). Deliberately NOT recorded with the
+  bare `- **Commit:**` label Events 1-3 use: this section is a
+  development-machine measurement appended AFTER Event 3's freeze, and
+  `TestBenchmarkRegistryTie.test_frozen_provenance_matches_the_
+  calibration_log_commit` reads the file's LAST bare `- **Commit:**`
+  line as the calibration log's authoritative frozen revision -- that
+  must keep pointing at Event 3's `8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`
+  until a future freeze supersedes it.
+- **Stage:** development machine (provisional)
+- **Runner:** macOS-26.5.2-arm64-arm-64bit-Mach-O, Python 3.13.13,
+  numpy 2.4.6, scipy 1.17.1
+
+**Objective:** `RPA._find_mu` was driven to a round-off particle-number
+residual (a preceding commit on this branch), which collapses
+diagnostic assertion 2 -- the seam Events 1-3's `>= 10x` amplification
+criterion carried -- to ~0 on both the benign and FC fixtures. That
+criterion is RETIRED as of this commit: it gated a root-finder
+artifact the fix removed, and Events 1-3's amplification narratives
+above are historical (accurate at the time, describing a seam that no
+longer amplifies). Cell 38's conditioning obligation is replaced by a
+deterministic perturbation transfer-gain experiment
+(`TestConditioningTransferGain`): `gain = max|chiq(chi0 + eps*E) -
+chiq(chi0)| / eps`, with `E` a one-hot real perturbation at the
+in-test argmax-cond (freq, k) direction of `cond_2(1 + chi0 W)`, run
+independently on the benign and FC fixtures and requiring a `>= 10x`
+FC/benign gain contrast.
+
+| cell_id / checkpoint | observable | benign value (cell 8, T=2.0) | FC value (T=0.2) | derived value | decision | reason |
+|---|---|---|---|---|---|---|
+| `TestConditioningTransferGain` argmax-cond direction | (l0, k, cond) | (16, 10, 3.6249143215242605) -- benign's argmax IS the zero-bosonic-frequency slot | (127, 10, 70.48956521627714), tied with (129, 10, 70.48956521614214) at ~1.9e-12 relative -- FC's argmax is NOT Omega=0 (FC's zero slot, l0=128, is cond 1.9718478092582121, ~35x better conditioned); lexicographic tie-break selects l0=127 | -- | accept | reconfirms the argmax-cond direction the test's own `_perturbation_target` selects, on-branch |
+| `TestConditioningTransferGain` transfer gain | gain (max\|d chiq\| / eps) | 1.7551392977877 @ (16, 10) | 1277.6858808294378 @ (127, 10) | ratio = **727.9683626478662x** (~728x) | accept | clears the `>= 10x` FC/benign contrast bar by ~73x; linear across eps 1e-6..1e-10 |
+| `TestConditioningTransferGain` propagated builder difference | chiq (max\|rpa-built - flex-built\|) | 2.2204481854326364e-16 | 7.376256836354663e-14 | worst = 7.376256836354663e-14 | accept | far inside the derived `chiq_propagated` ceiling below |
+
+**Derived provisional `POLICY_CEILINGS` keys** (all marked `# provisional (dev) -- finalized by the CI calibration, see calibration log` in `tests/equivalence_cells.py`):
+
+- `chiq_gain` = `10**ceil(log10(10 * 1277.6858808294378))` = **1e5** (upper ceiling on the FC gain).
+- `chiq_gain_fc_min` = largest power of ten `<= 1277.6858808294378 / 10` = **1e2** (lower band on the FC gain).
+- `chiq_propagated` = `max(1e-15, 10**ceil(log10(10 * 7.376256836354663e-14)))` = **1e-12** (upper ceiling on the worst measured propagated rpa-vs-flex chiq builder difference across both fixtures).
+
+**Decision:** ACCEPT the transfer-gain experiment and its three derived
+provisional keys as measured, on this development machine, on the
+commit above. Not yet a CI freeze -- these are dev-provisional values
+pending the four-gating-runner calibration pass (the same pattern
+Events 1-2 preceded Event 3's freeze).
+
+**Note on Events 1-3:** the `>= 10x` amplification criterion those
+events measured and froze (assertion 2, the mu seam) is RETIRED by
+this commit -- the root-finder artifact it depended on was removed by
+the preceding `RPA._find_mu` fix, so assertion 2 now sits at round-off
+on both fixtures and the amplification claim no longer holds. Events
+1-3's narratives remain accurate historical records of what was true
+at the time; they are not amended.
