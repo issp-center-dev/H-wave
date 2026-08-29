@@ -448,9 +448,9 @@ class TestRegistrySchema(unittest.TestCase):
             dict(POLICY_CEILINGS),
             {
                 "mu_diag": 1e-14,
-                "green_diag": 1e-10,
-                "chi0q_mu": 1e-10,
-                "chiq_mu": 1e-10,
+                "green_diag": 1e-14,
+                "chi0q_mu": 1e-14,
+                "chiq_mu": 1e-12,
                 "chi0q_fixed": 1e-12,
                 "chiq_fixed": 1e-12,
                 "counter_cross_nd_le2": 1e-15,
