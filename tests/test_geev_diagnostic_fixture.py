@@ -46,9 +46,15 @@ class TestGeevDiagnosticFixtureQualification(unittest.TestCase):
         nblock, nvol, nd, _ = H0.shape
         blocks = self.rpa._find_block_diagonal(
             H0.reshape(nblock * nvol, nd, nd))
+        # _find_block_diagonal returns None when no finer block
+        # structure exists (single block) -- that is the passing case.
         if blocks is not None:
             self.assertEqual(len(blocks), 1)
             self.assertEqual(sorted(blocks[0]), list(range(nd)))
+        self.assertTrue(
+            blocks is None
+            or (len(blocks) == 1 and sorted(blocks[0]) == list(range(nd))),
+            "H0 has finer block structure: {!r}".format(blocks))
 
     def test_plateau_free_at_both_roots(self):
         fx = GEEV_DIAGNOSTIC_FIXTURE

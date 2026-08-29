@@ -3055,6 +3055,16 @@ class RPA:
         # diagonalize H0(k) with optional block decomposition
         nblock_spin = H0.shape[0]
         nd_block = H0.shape[-1]
+
+        # Authoritative assembled H0(k), retained for the mu/Green seam
+        # diagnostic (#160): an owning, non-writeable copy so checkpoint
+        # 7 gates against the pre-diagonalization array, never an
+        # eigen-reconstruction. _calc_epsilon_k is the sole assembly
+        # point; nothing else rebinds or mutates this attribute.
+        H0_stored = np.ascontiguousarray(H0, dtype=np.complex128).copy()
+        H0_stored.flags.writeable = False
+        self.H0_k = H0_stored
+
         blocks = self._find_block_diagonal(H0.reshape(nblock_spin * nvol, nd_block, nd_block))
 
         if blocks is not None and len(blocks) > 1:
