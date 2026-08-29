@@ -2040,6 +2040,32 @@ _CELL_38_CONDITIONING_MU = Cell(
     ),
 )
 
+# ---------------------------------------------------------------------------
+# GEEV_DIAGNOSTIC_FIXTURE: the third mu/Green-diagnostic fixture (spec
+# 2026-08-28-mu-green-seam-160, Change 2d). 3 orbitals with on-site
+# inter-orbital hybridization -> nd_block = 3, so FLEX's
+# _matsubara_number_operator takes the LAPACK geev path that the two
+# nd<=2 diagnostic fixtures never exercise. NOT a table row: it runs
+# checkpoints 1-7 only (tests/test_geev_diagnostic_fixture.py holds its
+# qualification gates: geev path, single H0 block, dN/dmu >= 1).
+# ---------------------------------------------------------------------------
+
+GEEV_DIAGNOSTIC_FIXTURE = FixtureSpec(
+    input_dir="tests/equivalence_input/orb3",
+    interactions={"CoulombIntra": "coulombintra.dat"},
+    T=0.5,
+    mu=None,
+    filling=0.5,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=64,
+    extra_params={},
+    calc_type="ring",
+    requested_scheme="general",
+    enable_spin_orbital=False,
+    extern=None,
+)
+
 CELLS: tuple = (
     _BOOTSTRAP_CELL_1,
     _CELL_2_ONSITE_COULOMBINTER_FIXEDMU,
