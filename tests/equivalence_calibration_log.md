@@ -652,3 +652,36 @@ does not reopen, aside from the three cells recalibrated above (their
 own `ObservableSpec.provenance` strings carry this Event's own
 commit/run identity directly, so nothing about them is left
 unattributed).
+
+### Addendum: the gate margin with the Newton polish disabled
+
+Recorded by the merge-gate review measurement, 2026-08-30, as part of
+this branch's final review. The question addressed: how much margin
+does the `RPA._find_mu` Newton polish step actually buy over the
+underlying `brentq` bracket search, and how much of the gate's
+sensitivity comes from the polish versus from `brentq` itself?
+
+Two comparisons were made against the diagnostic and comparison
+checkpoints this Event calibrated above:
+
+- **Polish disabled, `brentq` alone (`xtol=1e-14`), on every fixture
+  in the diagnostic suite:** every checkpoint stays green except one --
+  `number_residual_rpa` (the `mu_number_residual` metric) on the FC
+  fixture measures 1.776e-15 against its 1e-15 ceiling, a single-ULP
+  overshoot at the O(8) target for that residual. `mu_diag` and both
+  `counter_cross_*` metrics, and every other fixture's
+  `number_residual_rpa`, remain green with the polish off.
+- **The full pre-branch regression (the state this Event's bisect
+  identified as broken, i.e. before the mu/Green-seam fix landed) is
+  still caught decisively either way:** assertion 2's mu-seam residual
+  measures 1.07e-12 against the `mu_diag` ceiling of 1e-14 -- two
+  decades of margin, unaffected by whether the polish step runs.
+
+So the gate distinguishes two different things at two different
+scales: brentq-vs-pre-branch-regression is a two-decade margin (the
+polish is not what catches that), while polish-vs-brentq-alone is a
+single-ULP margin on one metric on one fixture. The Newton polish
+step's own contribution to the gate is real but narrow -- it is the
+difference between `number_residual_rpa` passing and failing by one
+ULP on the FC fixture, not the difference between catching or missing
+the regression this Event's fix addresses.

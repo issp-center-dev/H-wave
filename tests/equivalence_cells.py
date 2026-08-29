@@ -500,6 +500,15 @@ PROVENANCE: dict = {
 # pthread_create fails) -- pinning every BLAS/OMP thread-count env var to
 # 1 before invoking the interpreter eliminates it (verified: 3/3 clean
 # runs afterward, 0/3 before).
+#
+# UPDATE (2026-08-30, Event 5 calibration, this branch): the paragraph
+# above describes the ORIGINAL Event-2/Event-3 freeze only. Event 5
+# re-derived every policy ceiling in this module and recalibrated three
+# cells' chi0q/chiq bounds -- so "nothing here had to be re-measured" no
+# longer holds as a whole-module statement. See
+# ``_measured_equiv_recalibrated`` below for the recalibrated cells and
+# ``tests/equivalence_calibration_log.md`` Event 5 for the full record of
+# what changed and why.
 # ---------------------------------------------------------------------------
 
 _CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"

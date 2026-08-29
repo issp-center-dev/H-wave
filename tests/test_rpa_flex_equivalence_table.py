@@ -3102,7 +3102,7 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 #     shared code path) while representing the identical physical
 #     quantity G0(k, iwn).
 #
-#   RPA._calc_green(beta, mu) -> (green, green_tail)           (rpa.py:3114)
+#   RPA._calc_green(beta, mu) -> (green, green_tail)           (rpa.py:3202)
 #     Eigenbasis construction: green_mod.build_green(ew, ev, mu, beta,
 #     nmat, coeff_tail, want_full=False) -- reconstructs G0 via the H0
 #     spectral decomposition (V diag(1/(iwn+mu-ew)) V^H), never forming
@@ -3112,7 +3112,7 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 #     0 -- ``green_tail``/the FLEX-side zero tail below are therefore
 #     genuinely equal, not merely shape-compatible placeholders).
 #
-#   RPA._calc_chi0q(green_kw, green0_tail, beta) -> chi0q       (rpa.py:3158)
+#   RPA._calc_chi0q(green_kw, green0_tail, beta) -> chi0q       (rpa.py:3246)
 #     The SHARED bubble kernel (flex.py never overrides it -- FLEX
 #     inherits this exact bound method). Called here on ``rpa_obj`` for
 #     BOTH assertion-3 Green arrays, making the "shared kernel" claim
@@ -3486,7 +3486,7 @@ class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
 
 
 def _inflate_spinfree_general(chi0, norb):
-    """rpa.py:2085-2100 spin-free general inflation, verbatim semantics
+    """rpa.py:2137-2152 spin-free general inflation, verbatim semantics
     (squeezing the leading spin-free nblock=1 axis first)."""
     chi0 = np.asarray(chi0)
     if chi0.ndim == 7 and chi0.shape[0] == 1:
@@ -3513,7 +3513,7 @@ def _ring_vertex(rpa_obj):
 
 def _perturbation_target(chi0_infl, ham_long):
     """Deterministic worst-conditioned (freq, k): _solve_rpa's OWN
-    flattening (rpa.py:3908-3913); tie-break = lexicographically first
+    flattening (rpa.py:3979-3982); tie-break = lexicographically first
     0-based (freq_idx, k_idx) with cond >= max_cond * (1 - 1e-9)."""
     nfreq, nvol = chi0_infl.shape[0], chi0_infl.shape[1]
     ndx = int(np.prod(chi0_infl.shape[2:2 + (chi0_infl.ndim - 2) // 2]))
@@ -3541,6 +3541,11 @@ def _transfer_gain(rpa_obj, chi0_infl, ham_long, eps=1e-8):
     change (a new nonzero block appearing) rather than a sensitivity of
     the existing solve."""
     l0, kstar, cond = _perturbation_target(chi0_infl, ham_long)
+    if chi0_infl[l0, kstar, 0, 0, 0, 0] == 0:
+        raise AssertionError(
+            "perturbation slot is structurally zero -- this would measure "
+            "a code-path change (a new nonzero block appearing), not a "
+            "sensitivity of the existing solve")
     base = np.asarray(rpa_obj._solve_rpa(chi0_infl.copy(), ham_long))
     pert = chi0_infl.copy()
     pert[l0, kstar, 0, 0, 0, 0] += eps

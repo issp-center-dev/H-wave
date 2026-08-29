@@ -462,6 +462,10 @@ def _to_bubble_pair_convention(ham):
 
 
 def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
+    # Mask arithmetic must stay identical to _find_mu's internal _fermi
+    # closure below (both implement the same overflow-guarded Fermi
+    # function) and to flex.py's FLEX._fermi_occupation (~flex.py:1239),
+    # which mirrors the same mask for the dressed-Green mu search.
     """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
     Fermi factor, minus ``target`` -- the exact counter ``_find_mu``
     root-finds (a PLAIN sum: no k normalization, no spin factor; the
@@ -3163,6 +3167,9 @@ class RPA:
             return _delta_n_and_deriv(mu)[0]
 
         def _fermi(t, mu, ev_):
+            # Must stay arithmetically identical to _masked_fermi_delta_n's
+            # mask above and to flex.py's FLEX._fermi_occupation
+            # (~flex.py:1239), which mirrors the same overflow guard.
             w_ = (ev_ - mu) / t
             mask_ = w_ < ene_cutoff
             w1_ = np.where(mask_, w_, 0.0)
