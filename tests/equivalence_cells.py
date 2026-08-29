@@ -371,12 +371,21 @@ class Cell:
 
 # The Global-Constraints values, verbatim.
 POLICY_CEILINGS: dict = {
-    "mu_diag": 1e-10,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    "mu_diag": 1e-14,
     "green_diag": 1e-10,
     "chi0q_mu": 1e-10,
     "chiq_mu": 1e-10,
     "chi0q_fixed": 1e-12,
     "chiq_fixed": 1e-12,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    "counter_cross_nd_le2": 1e-15,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    "counter_cross_geev": 1e-15,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    "mu_number_residual": 1e-15,
+    # provisional (dev) -- finalized by the CI calibration, see calibration log
+    "green_dyson": 1e-14,
 }
 
 # The calibration provenance record: which source revision the recorded

@@ -446,14 +446,26 @@ class TestRegistrySchema(unittest.TestCase):
         self.assertEqual(
             dict(POLICY_CEILINGS),
             {
-                "mu_diag": 1e-10,
+                "mu_diag": 1e-14,
                 "green_diag": 1e-10,
                 "chi0q_mu": 1e-10,
                 "chiq_mu": 1e-10,
                 "chi0q_fixed": 1e-12,
                 "chiq_fixed": 1e-12,
+                "counter_cross_nd_le2": 1e-15,
+                "counter_cross_geev": 1e-15,
+                "mu_number_residual": 1e-15,
+                "green_dyson": 1e-14,
             },
         )
+
+    def test_no_preexisting_key_uses_the_min_suffix(self):
+        # The *_min suffix (added by the gain experiment) dispatches a
+        # >= assertion; it must never capture an existing upper bound.
+        uppers = [k for k in POLICY_CEILINGS if not k.endswith("_min")]
+        self.assertEqual(sorted(uppers), sorted(
+            k for k in POLICY_CEILINGS
+            if k != "chiq_gain_fc_min"))
 
     def test_provenance_record_is_schema_valid_and_status_consistent(self):
         # The registry exposes no PROVENANCE validator of its own
@@ -3057,13 +3069,13 @@ class TestReducedSpinfulGuard(unittest.TestCase):
 # ``_find_mu``/``_calc_green``/``_calc_chi0q`` first; this docstring
 # records the findings):
 #
-#   RPA._find_mu(Ncond, T) -> (dist, mu)                     (rpa.py:3065)
+#   RPA._find_mu(Ncond, T) -> (dist, mu)                     (rpa.py:3146)
 #     Ncond is the ONE-SPIN target: halved from ``self.Ncond`` when
 #     ``spin_mode == "spin-free"`` (rpa.py:1837-1841), used AS-IS
 #     otherwise. Pre-state: only needs ``self.H0_eigenvalue`` (set by
 #     ``_calc_epsilon_k``) and ``self.ene_cutoff``.
 #
-#   FLEX._find_mu_dressed(sigma, beta, Ncond) -> mu           (flex.py:1489)
+#   FLEX._find_mu_dressed(sigma, beta, Ncond) -> mu           (flex.py:1485)
 #     ``sigma`` shape (nblock, nmat, nvol, nd, nd), dtype complex128 --
 #     the FULL self-energy array ``_calc_dressed_green`` consumes
 #     (flex.py:1148-1149). ``Ncond`` uses the SAME one-spin-target
@@ -3147,17 +3159,23 @@ def _assert_max_diff_within(a, b, atol, label):
 
 
 def _diagnostic_residuals(fixture, solver_factory=build_solver):
-    """Run the ORDERED five-assertion mu/Green divergence diagnostic on
-    ONE fixture and return every checkpoint value + residual.
+    """Run the ORDERED seven-checkpoint mu/Green divergence diagnostic
+    on ONE fixture and return every checkpoint value + residual.
 
     Both solvers are constructed (never solved) from ``fixture``, then
     ``_calc_epsilon_k`` is invoked directly on each (see the module
     docstring above the call-signature contract this function
     implements). Returns a dict with the raw checkpoint values (so
     callers can build rich, dynamic failure messages via
-    ``assert_scalar_within``/``_assert_max_diff_within``) AND the five
-    named scalar residuals (``"assertion1"``..``"assertion5"``, all
-    ``float``) for the amplification ratio (``TestConditioningAmplification``).
+    ``assert_scalar_within``/``_assert_max_diff_within``) AND the
+    eleven named scalar residuals (``"assertion1"``..``"assertion5"``
+    for checkpoints 1-5, plus checkpoint 6's
+    ``"counter_cross_at_mu_rpa"``/``"counter_cross_at_mu_flex"``/
+    ``"number_residual_rpa"``/``"number_residual_flex"`` and
+    checkpoint 7's ``"dyson_residual_eigenbasis"``/
+    ``"dyson_residual_inv"``, all ``float``) for the amplification
+    ratio (``TestConditioningAmplification``) and the per-metric gate
+    (``TestMuGreenDivergenceDiagnostic``).
     """
 
     with ExitStack() as stack:
@@ -3230,6 +3248,44 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
             np.asarray(chi0q_from_rpa_green) - np.asarray(chi0q_from_flex_green)
         )))
 
+        # ---- checkpoint 6: cross-counter residuals (spec Change 2) ----
+        # Two invariants, four scalars: counter identity |N_fermi -
+        # N_mats| at both roots; root quality |N(own root) - target|.
+        from hwave.solver.rpa import _masked_fermi_delta_n
+        lam, ew_flex = flex_obj._matsubara_number_operator(sigma_zero, beta)
+
+        def _n_fermi(mu):
+            n, _dn = _masked_fermi_delta_n(
+                rpa_obj.H0_eigenvalue, rpa_obj.T, mu, 0.0,
+                rpa_obj.ene_cutoff)
+            return n
+
+        def _n_mats(mu):
+            return flex_obj._number_from_eigs(lam, ew_flex, mu, beta)
+
+        counter_cross_at_mu_rpa = abs(_n_fermi(mu_rpa) - _n_mats(mu_rpa))
+        counter_cross_at_mu_flex = abs(
+            _n_fermi(mu_flex_dressed_zero) - _n_mats(mu_flex_dressed_zero))
+        number_residual_rpa = abs(_n_fermi(mu_rpa) - ncond_rpa)
+        number_residual_flex = abs(
+            _n_mats(mu_flex_dressed_zero) - ncond_flex)
+
+        # ---- checkpoint 7: Dyson forward residuals (spec Change 2) ----
+        # M = (iwn + mu_rpa) I - H0_k, H0_k the AUTHORITATIVE stored
+        # assembly (never an eigen-reconstruction); elementwise
+        # max|M G - I| over all (block, freq, k, i, j).
+        H0_k = np.asarray(rpa_obj.H0_k)
+        nd_loc = H0_k.shape[-1]
+        iomega = flex_obj._freq_omegas(beta, np)
+        eye = np.eye(nd_loc, dtype=np.complex128)
+        M = ((1j * iomega + mu_rpa)[np.newaxis, :, np.newaxis,
+                                    np.newaxis, np.newaxis] * eye
+             - H0_k[:, np.newaxis, :, :, :])
+        dyson_residual_eigenbasis = float(np.max(np.abs(
+            np.matmul(M, np.asarray(green_rpa_at_shared_mu)) - eye)))
+        dyson_residual_inv = float(np.max(np.abs(
+            np.matmul(M, np.asarray(green_flex_at_shared_mu)) - eye)))
+
     return {
         "mu_rpa": mu_rpa,
         "mu_flex_instance": mu_flex_instance,
@@ -3245,6 +3301,12 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
         "assertion3": assertion3,
         "assertion4": assertion4,
         "assertion5": assertion5,
+        "counter_cross_at_mu_rpa": float(counter_cross_at_mu_rpa),
+        "counter_cross_at_mu_flex": float(counter_cross_at_mu_flex),
+        "number_residual_rpa": float(number_residual_rpa),
+        "number_residual_flex": float(number_residual_flex),
+        "dyson_residual_eigenbasis": dyson_residual_eigenbasis,
+        "dyson_residual_inv": dyson_residual_inv,
     }
 
 
@@ -3259,61 +3321,153 @@ _DIAGNOSTIC_FC_FIXTURE = next(
     c for c in CELLS if c.cell_id == "general.ring.offsite_coulombinter.conditioning.mu"
 ).fixture
 
+# The third mu/Green-diagnostic fixture (spec 2026-08-28-mu-green-
+# seam-160): the 3-orbital GEEV fixture exercising the nd>=3
+# non-Hermitian-eigensolver path (`_eigvals_small`'s LAPACK ``geev``
+# branch), qualified in tests/test_geev_diagnostic_fixture.py.
+from tests.equivalence_cells import GEEV_DIAGNOSTIC_FIXTURE
+_DIAGNOSTIC_GEEV_FIXTURE = GEEV_DIAGNOSTIC_FIXTURE
+
+
+def _diagnostic_gate_message(label, value, ceiling):
+    """The plain-``assertLessEqual`` checkpoints' failure-message style,
+    mirroring ``_assert_max_diff_within``'s: the CURRENT measured
+    value (never a frozen number) plus a pointer to the calibration
+    log's history.
+    """
+
+    return (
+        "{}: measured value {!r} exceeds ceiling {!r} (CURRENT measured "
+        "value, not a frozen number -- see "
+        "tests/equivalence_calibration_log.md for the calibration "
+        "history)".format(label, value, ceiling)
+    )
+
 
 class TestMuGreenDivergenceDiagnostic(unittest.TestCase):
-    """The five ORDERED assertions of the mu/Green divergence
-    diagnostic, run on the BENIGN fixture (cell 8's) -- proving the
-    diagnostic apparatus itself stays inside its ``*_diag``/``chi0q_mu``
-    ceilings under ordinary conditions. The amplified (FC) case is
-    ``TestConditioningAmplification`` below; see this module's own
-    section docstring (above ``_assert_max_diff_within``) for the full
-    adapter contract, exact call signatures, and Step-5 issue (#160).
+    """The seven ORDERED checkpoints of the mu/Green divergence
+    diagnostic, run on all three fixtures (benign = cell 8's, FC =
+    cell 38's conditioning fixture, geev = the 3-orbital nd>=3
+    non-Hermitian-eigensolver fixture) -- proving the diagnostic
+    apparatus itself stays inside its ``*_diag``/``chi0q_mu``/
+    ``counter_cross_*``/``mu_number_residual``/``green_dyson``
+    ceilings under ordinary conditions, the amplified FC conditioning,
+    AND the geev code path. The amplification RATIO criterion itself
+    (>= 10x, benign vs FC) is ``TestConditioningAmplification`` below;
+    see this module's own section docstring (above
+    ``_assert_max_diff_within``) for the full adapter contract, exact
+    call signatures, and Step-5 issue (#160).
 
-    Five SEPARATE, independently-discoverable test methods (one per
-    assertion) sharing ONE diagnostic run via ``setUpClass`` -- the
+    Seven SEPARATE, independently-discoverable test methods (one per
+    checkpoint), each looping ``subTest`` over the three fixtures,
+    sharing ONE diagnostic run per fixture via ``setUpClass`` -- the
     apparatus is deterministic and side-effect-free per call, so
-    computing it once and asserting five times is equivalent to five
-    independent runs, without repeating the (cheap but non-trivial)
-    solver construction five times.
+    computing each fixture's values once and asserting seven times is
+    equivalent to seven independent runs, without repeating the
+    (cheap but non-trivial) solver construction seven times per
+    fixture.
     """
+
+    FIXTURES = None  # populated in setUpClass
 
     @classmethod
     def setUpClass(cls):
-        cls.values = _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE)
+        cls.FIXTURES = {
+            "benign": _diagnostic_residuals(_DIAGNOSTIC_BENIGN_FIXTURE),
+            "fc": _diagnostic_residuals(_DIAGNOSTIC_FC_FIXTURE),
+            "geev": _diagnostic_residuals(_DIAGNOSTIC_GEEV_FIXTURE),
+        }
+
+    def _gate(self, metric, key):
+        for name, values in self.FIXTURES.items():
+            with self.subTest(fixture=name, metric=metric):
+                assert_scalar_within(
+                    values[metric], 0.0, POLICY_CEILINGS[key])
 
     def test_1_shared_mu_identity_control(self):
-        v = self.values
-        assert_scalar_within(v["mu_rpa"], v["mu_flex_instance"], POLICY_CEILINGS["mu_diag"])
+        self._gate("assertion1", "mu_diag")
 
     def test_2_the_mu_seam(self):
-        v = self.values
-        assert_scalar_within(
-            v["mu_rpa"], v["mu_flex_dressed_zero"], POLICY_CEILINGS["mu_diag"]
-        )
+        self._gate("assertion2", "mu_diag")
 
     def test_3_green_builder_seam_bare(self):
-        v = self.values
-        _assert_max_diff_within(
-            v["green_rpa_at_shared_mu"], v["green_flex_at_shared_mu"],
-            POLICY_CEILINGS["green_diag"],
-            "assertion 3 (Green-builder seam, bare, at the shared mu)",
-        )
+        for name, values in self.FIXTURES.items():
+            with self.subTest(fixture=name):
+                self.assertLessEqual(
+                    values["assertion3"], POLICY_CEILINGS["green_diag"],
+                    _diagnostic_gate_message(
+                        "assertion 3 (Green-builder seam, bare, at the "
+                        "shared mu, fixture={!r})".format(name),
+                        values["assertion3"], POLICY_CEILINGS["green_diag"],
+                    ),
+                )
 
     def test_4_composed_seam_dressed_zero_sigma(self):
-        v = self.values
-        _assert_max_diff_within(
-            v["green_rpa_at_dressed_zero_mu"], v["green_flex_at_dressed_zero_mu"],
-            POLICY_CEILINGS["green_diag"],
-            "assertion 4 (composed seam, at _find_mu_dressed's Sigma=0 mu)",
-        )
+        for name, values in self.FIXTURES.items():
+            with self.subTest(fixture=name):
+                self.assertLessEqual(
+                    values["assertion4"], POLICY_CEILINGS["green_diag"],
+                    _diagnostic_gate_message(
+                        "assertion 4 (composed seam, at "
+                        "_find_mu_dressed's Sigma=0 mu, "
+                        "fixture={!r})".format(name),
+                        values["assertion4"], POLICY_CEILINGS["green_diag"],
+                    ),
+                )
 
     def test_5_downstream_chi0q(self):
-        v = self.values
-        _assert_max_diff_within(
-            v["chi0q_from_rpa_green"], v["chi0q_from_flex_green"],
-            POLICY_CEILINGS["chi0q_mu"],
-            "assertion 5 (downstream chi0q from assertion 3's two Greens)",
-        )
+        for name, values in self.FIXTURES.items():
+            with self.subTest(fixture=name):
+                self.assertLessEqual(
+                    values["assertion5"], POLICY_CEILINGS["chi0q_mu"],
+                    _diagnostic_gate_message(
+                        "assertion 5 (downstream chi0q from assertion "
+                        "3's two Greens, fixture={!r})".format(name),
+                        values["assertion5"], POLICY_CEILINGS["chi0q_mu"],
+                    ),
+                )
+
+    def test_6_cross_counter_and_root_quality(self):
+        for name, values in self.FIXTURES.items():
+            cross_key = ("counter_cross_geev" if name == "geev"
+                         else "counter_cross_nd_le2")
+            for metric in ("counter_cross_at_mu_rpa",
+                           "counter_cross_at_mu_flex"):
+                with self.subTest(fixture=name, metric=metric):
+                    self.assertLessEqual(
+                        values[metric], POLICY_CEILINGS[cross_key],
+                        _diagnostic_gate_message(
+                            "checkpoint 6 ({}, fixture={!r})".format(
+                                metric, name),
+                            values[metric], POLICY_CEILINGS[cross_key],
+                        ),
+                    )
+            for metric in ("number_residual_rpa", "number_residual_flex"):
+                with self.subTest(fixture=name, metric=metric):
+                    self.assertLessEqual(
+                        values[metric],
+                        POLICY_CEILINGS["mu_number_residual"],
+                        _diagnostic_gate_message(
+                            "checkpoint 6 ({}, fixture={!r})".format(
+                                metric, name),
+                            values[metric],
+                            POLICY_CEILINGS["mu_number_residual"],
+                        ),
+                    )
+
+    def test_7_dyson_forward_residuals(self):
+        for name, values in self.FIXTURES.items():
+            for metric in ("dyson_residual_eigenbasis",
+                           "dyson_residual_inv"):
+                with self.subTest(fixture=name, metric=metric):
+                    self.assertLessEqual(
+                        values[metric], POLICY_CEILINGS["green_dyson"],
+                        _diagnostic_gate_message(
+                            "checkpoint 7 ({}, fixture={!r})".format(
+                                metric, name),
+                            values[metric], POLICY_CEILINGS["green_dyson"],
+                        ),
+                    )
 
 
 class TestConditioningAmplification(unittest.TestCase):

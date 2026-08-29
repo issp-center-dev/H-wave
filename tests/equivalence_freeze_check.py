@@ -41,10 +41,16 @@ from tests.equivalence_cells import CELLS, Diverges, Equiv
 # ``Sample.runner`` label set and to size the multiplicity checks.
 GATING_RUNNERS: Tuple[str, ...] = ("3.9", "3.10", "3.11", "3.12")
 
-# The diagnostic apparatus records 5 checkpoints x 2 fixtures = 10
-# lines per measurement sample.
-DIAGNOSTIC_CHECKPOINTS: Tuple[int, ...] = (1, 2, 3, 4, 5)
-DIAGNOSTIC_FIXTURES: Tuple[str, ...] = ("benign", "fc")
+# The diagnostic apparatus records one named scalar per metric per
+# fixture: 11 metrics x 3 fixtures = 33 records per measurement sample
+# (spec 2026-08-28-mu-green-seam-160: every scalar is its OWN record).
+DIAGNOSTIC_METRICS: Tuple[str, ...] = (
+    "assertion1", "assertion2", "assertion3", "assertion4", "assertion5",
+    "counter_cross_at_mu_rpa", "counter_cross_at_mu_flex",
+    "number_residual_rpa", "number_residual_flex",
+    "dyson_residual_eigenbasis", "dyson_residual_inv",
+)
+DIAGNOSTIC_FIXTURES: Tuple[str, ...] = ("benign", "fc", "geev")
 
 # Global Constraints: the conditioning amplification threshold.
 AMPLIFICATION_THRESHOLD = 10.0
@@ -176,7 +182,7 @@ def _diverging_pairs(cells: Sequence) -> set:
 
 
 def _diagnostic_pairs() -> set:
-    return {(c, f) for c in DIAGNOSTIC_CHECKPOINTS for f in DIAGNOSTIC_FIXTURES}
+    return {(m, f) for m in DIAGNOSTIC_METRICS for f in DIAGNOSTIC_FIXTURES}
 
 
 # ---------------------------------------------------------------------------
@@ -363,23 +369,35 @@ def validate_samples(samples: Sequence[Sample], expected_source_sha: str,
                 )
             )
 
-        diag_pairs = {
+        diag_records = [
             (rec["diagnostic"], rec["fixture"]) for rec in s.records
             if "diagnostic" in rec and "error" not in rec
-        }
+        ]
+        diag_counts = Counter(diag_records)
+        for pair, count in diag_counts.items():
+            if count > 1:
+                errors.append(
+                    "measurement sample (runner={!r}, invocation={}): "
+                    "duplicate diagnostic record for (metric, fixture) "
+                    "{!r} appears {} times".format(
+                        s.runner, s.invocation, pair, count
+                    )
+                )
+        diag_pairs = set(diag_counts)
         missing_diag = expected_diag_pairs - diag_pairs
         extra_diag = diag_pairs - expected_diag_pairs
         if missing_diag:
             errors.append(
                 "measurement sample (runner={!r}, invocation={}): missing "
-                "diagnostic checkpoint(s) {!r}".format(
+                "diagnostic checkpoint(s) (metric, fixture) {!r}".format(
                     s.runner, s.invocation, sorted(missing_diag)
                 )
             )
         if extra_diag:
             errors.append(
                 "measurement sample (runner={!r}, invocation={}): "
-                "unexpected diagnostic checkpoint(s) {!r}".format(
+                "unexpected diagnostic checkpoint(s) (metric, fixture) "
+                "{!r}".format(
                     s.runner, s.invocation, sorted(extra_diag)
                 )
             )
@@ -499,16 +517,17 @@ def unittest_gate_seconds(samples: Sequence[Sample]) -> float:
     return max(values)
 
 
-def paired_amplification_ratios(samples: Sequence[Sample], checkpoint: int,
+def paired_amplification_ratios(samples: Sequence[Sample], metric: str,
                                  benign_fixture: str = "benign",
                                  fc_fixture: str = "fc") -> Dict[str, float]:
     """The conditioning amplification reducer, per Global Constraints:
     per runner, ``MIN(FC invocations) / MAX(benign invocations)`` with
     ``max(denominator, 1e-15)``. Returns one ratio per runner that
-    reported BOTH fixtures for this checkpoint; a runner reporting only
-    one side is silently omitted here (``assert_amplification_holds``
-    below is what enforces "every runner must clear the bar" and will
-    catch a runner with no ratio at all as a missing-runner error).
+    reported BOTH fixtures for this ``metric`` (a ``DIAGNOSTIC_METRICS``
+    name, e.g. ``"assertion2"``); a runner reporting only one side is
+    silently omitted here (``assert_amplification_holds`` below is what
+    enforces "every runner must clear the bar" and will catch a runner
+    with no ratio at all as a missing-runner error).
     """
 
     fc_vals: Dict[str, List[float]] = defaultdict(list)
@@ -517,7 +536,7 @@ def paired_amplification_ratios(samples: Sequence[Sample], checkpoint: int,
         if s.kind != "measurement":
             continue
         for rec in s.records:
-            if rec.get("diagnostic") != checkpoint or "error" in rec:
+            if rec.get("diagnostic") != metric or "error" in rec:
                 continue
             if rec.get("fixture") == fc_fixture:
                 fc_vals[s.runner].append(rec["residual"])
@@ -597,8 +616,10 @@ def build_report(samples: Sequence[Sample], expected_source_sha: str,
     lines.append("  {:.3f}s".format(unittest_gate_seconds(samples)))
 
     lines.append("")
-    lines.append("Conditioning amplification (assertion 2), per runner:")
-    for runner, ratio in sorted(paired_amplification_ratios(samples, checkpoint=2).items()):
+    lines.append("Conditioning amplification (assertion2), per runner:")
+    for runner, ratio in sorted(
+        paired_amplification_ratios(samples, metric="assertion2").items()
+    ):
         lines.append("  {}: {:.3g}x".format(runner, ratio))
 
     return "\n".join(lines)
