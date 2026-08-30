@@ -1237,7 +1237,11 @@ class FLEX(RPA):
 
     @staticmethod
     def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
-        """Fermi function with the same overflow guard as RPA._find_mu."""
+        """Fermi function with the same overflow guard as RPA._find_mu.
+        Must stay arithmetically identical to rpa.py's module-level
+        _masked_fermi_delta_n and to _find_mu's internal _fermi closure
+        (both in src/hwave/solver/rpa.py) -- three copies of the same
+        masked Fermi factor."""
         xp = _bk.array_module_of(ev)
         w = (ev - mu) / t
         mask = w < ene_cutoff

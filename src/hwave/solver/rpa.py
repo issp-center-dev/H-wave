@@ -461,6 +461,62 @@ def _to_bubble_pair_convention(ham):
     return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
 
 
+def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
+    # Mask arithmetic must stay identical to _find_mu's internal _fermi
+    # closure below (both implement the same overflow-guarded Fermi
+    # function) and to flex.py's FLEX._fermi_occupation (~flex.py:1239),
+    # which mirrors the same mask for the dressed-Green mu search.
+    """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
+    Fermi factor, minus ``target`` -- the exact counter ``_find_mu``
+    root-finds (a PLAIN sum: no k normalization, no spin factor; the
+    caller pre-halves the target for spin-free) -- and its exact
+    analytic derivative sum f(1-f)/T under the IDENTICAL mask. At the
+    mask boundary the neglected derivative term is O(exp(-ene_cutoff)),
+    far below every tolerance in use (#160 spec, Change 1).
+    """
+    x = (w - mu) / T
+    mask = x < ene_cutoff
+    x1 = np.where(mask, x, 0.0)
+    f = np.where(mask, 1.0 / (1.0 + np.exp(x1)), 0.0)
+    n = float(np.sum(f).real) - target
+    dn = float(np.sum(f * (1.0 - f)).real / T)
+    return n, dn
+
+
+def _polish_mu_root(delta_n_and_deriv, mu_root, bracket=None, max_iter=3):
+    """Transactional Newton polish of a mu root (#160 spec, Change 1).
+
+    Accepts a candidate ONLY on a strictly smaller finite residual, so
+    it can never return a worse root than ``mu_root``. Guards: zero/
+    non-finite derivative, non-finite candidate, non-finite candidate
+    residual, optional bracket clipping, ``max_iter`` rounds. Module
+    level (not a closure) so the guard branches are unit-testable with
+    synthetic counters.
+    """
+    best_mu = float(mu_root)
+    n, dn = delta_n_and_deriv(best_mu)
+    best_r = abs(n)
+    if not np.isfinite(best_r):
+        return best_mu
+    for _ in range(max_iter):
+        if best_r == 0.0:
+            break
+        if not (np.isfinite(dn) and dn > 0.0):
+            break
+        cand = best_mu - n / dn
+        if not np.isfinite(cand):
+            break
+        if bracket is not None:
+            cand = min(max(cand, bracket[0]), bracket[1])
+        n_c, dn_c = delta_n_and_deriv(cand)
+        r = abs(n_c)
+        if np.isfinite(r) and r < best_r:
+            best_mu, best_r, n, dn = cand, r, n_c, dn_c
+        else:
+            break
+    return best_mu
+
+
 def _enforce_tail_endpoint(meta, source):
     """Endpoint-convention gate on NORMALIZED chi0q provenance.
 
@@ -3055,6 +3111,16 @@ class RPA:
         # diagonalize H0(k) with optional block decomposition
         nblock_spin = H0.shape[0]
         nd_block = H0.shape[-1]
+
+        # Authoritative assembled H0(k), retained for the mu/Green seam
+        # diagnostic (#160): an owning, non-writeable copy so checkpoint
+        # 7 gates against the pre-diagonalization array, never an
+        # eigen-reconstruction. _calc_epsilon_k is the sole assembly
+        # point; nothing else rebinds or mutates this attribute.
+        H0_stored = np.ascontiguousarray(H0, dtype=np.complex128).copy()
+        H0_stored.flags.writeable = False
+        self.H0_k = H0_stored
+
         blocks = self._find_block_diagonal(H0.reshape(nblock_spin * nvol, nd_block, nd_block))
 
         if blocks is not None and len(blocks) > 1:
@@ -3088,40 +3154,50 @@ class RPA:
 
         # load eigenvalues (eigenvectors not needed thanks to unitarity)
         w = self.H0_eigenvalue
-        # fetch parameters
         ene_cutoff = self.ene_cutoff
 
         ev = np.sort(w.flatten())
         occupied_number = Ncond
 
-        def _fermi(t, mu, ev):
-            w_ = (ev - mu) / t
-            mask_ = w_ < ene_cutoff
-            w1_ = np.where( mask_, w_, 0.0 )
-            v1_ = 1.0 / (1.0 + np.exp(w1_))
-            v_ = np.where( mask_, v1_, 0.0 )
-            return v_
+        def _delta_n_and_deriv(mu):
+            return _masked_fermi_delta_n(w, T, mu, occupied_number,
+                                         ene_cutoff)
 
-        # Exploit unitarity of eigenvectors:
-        # Tr[V† diag(f) V] = sum_l f(ε_l)
-        # This eliminates the O(nd²) einsum per iteration.
         def _calc_delta_n(mu):
-            ff = _fermi(T, mu, w)
-            return np.sum(ff).real - occupied_number
+            return _delta_n_and_deriv(mu)[0]
+
+        def _fermi(t, mu, ev_):
+            # Must stay arithmetically identical to _masked_fermi_delta_n's
+            # mask above and to flex.py's FLEX._fermi_occupation
+            # (~flex.py:1239), which mirrors the same overflow guard.
+            w_ = (ev_ - mu) / t
+            mask_ = w_ < ene_cutoff
+            w1_ = np.where(mask_, w_, 0.0)
+            v1_ = 1.0 / (1.0 + np.exp(w1_))
+            return np.where(mask_, v1_, 0.0)
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
-        if (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0:
-            logger.debug("RPA._find_mu: try bisection")
-            mu, r = optimize.bisect(_calc_delta_n, ev[0], ev[-1], full_output=True, disp=False)
+        bracketed = (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0
+        if bracketed:
+            logger.debug("RPA._find_mu: try brentq")
+            mu, r = optimize.brentq(_calc_delta_n, ev[0], ev[-1],
+                                    xtol=1e-14, full_output=True,
+                                    disp=False)
             is_converged = r.converged
         if not is_converged:
             logger.debug("RPA._find_mu: try newton")
             mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
             is_converged = r.converged
+            bracketed = False
         if not is_converged:
             logger.error("RPA._find_mu: not converged. abort")
             sys.exit(1)
+
+        # Transactional Newton polish (#160): drives the particle-number
+        # residual toward round-off; never returns a worse root.
+        mu = _polish_mu_root(_delta_n_and_deriv, mu,
+                             bracket=(ev[0], ev[-1]) if bracketed else None)
 
         logger.info("RPA._find_mu: mu = {}".format(mu))
 

@@ -7,7 +7,7 @@ table. It produces the calibration artifacts
 construction-only rows, and the two multirun exceptions all included,
 via the SAME executor (``tests.test_rpa_flex_equivalence_table._run_side``)
 ``run_cell`` itself dispatches through), then runs the mu/Green
-divergence diagnostic (``_diagnostic_residuals``) on both its
+divergence diagnostic (``_diagnostic_residuals``) on all three of its
 fixtures. It prints one JSON object per line (never a JSON array -- so
 a partial/interrupted run's already-printed lines stay individually
 parseable) to stdout:
@@ -17,9 +17,11 @@ parseable) to stdout:
   * one ``{"cell": <cell_id>, "observable": <name>, "residual": <float>}``
     line per (comparison-cell, observable) -- only for cells whose
     ``comparison`` is not ``None`` (``Equiv`` or ``Diverges``);
-  * one ``{"diagnostic": 1..5, "fixture": "benign"|"fc", "residual":
-    <float>}`` line per diagnostic checkpoint per fixture (10 lines
-    total: 5 checkpoints x 2 fixtures);
+  * one ``{"diagnostic": <metric name>, "fixture":
+    "benign"|"fc"|"geev", "residual": <float>}`` line per diagnostic
+    metric per fixture (33 lines total: 11 named metrics --
+    ``tests.equivalence_freeze_check.DIAGNOSTIC_METRICS`` -- x 3
+    fixtures, every scalar its own named record);
   * a final ``{"module_total_seconds": <float>, "source_sha": <str>,
     "runner": {"platform": ..., "python": ..., "numpy": ..., "scipy":
     ...}}`` line.
@@ -44,13 +46,14 @@ reduction (``extract_bundle`` raising ``KeyError``/``ValueError``/
 record all produce an
 ``{"error": <message>, ...}`` line (never silently dropped) and set the
 process's exit code to 1 -- but processing CONTINUES to the next cell/
-checkpoint first (best-effort telemetry: one broken cell must not hide
+metric first (best-effort telemetry: one broken cell must not hide
 every other cell's timing/residual data from the CI artifact).
 
 Reuses ``tests.test_rpa_flex_equivalence_table``'s own builders
 (``build_solver``, ``_run_side``, ``extract_bundle``, ``COMPARATORS``)
 and the mu/Green divergence diagnostic (``_diagnostic_residuals``,
-``_DIAGNOSTIC_BENIGN_FIXTURE``, ``_DIAGNOSTIC_FC_FIXTURE``) -- it does
+``_DIAGNOSTIC_BENIGN_FIXTURE``, ``_DIAGNOSTIC_FC_FIXTURE``,
+``_DIAGNOSTIC_GEEV_FIXTURE``) -- it does
 not reimplement any solver-construction or comparison logic. Every
 solver construction happens inside a fresh ``contextlib.ExitStack`` per
 cell (mirroring ``run_cell``'s own lifetime contract: a fresh temp
@@ -75,9 +78,11 @@ import numpy as np
 import scipy
 
 from tests.equivalence_cells import CELLS, COMPARATORS, Diverges, Equiv
+from tests.equivalence_freeze_check import DIAGNOSTIC_FIXTURES, DIAGNOSTIC_METRICS
 from tests.test_rpa_flex_equivalence_table import (
     _DIAGNOSTIC_BENIGN_FIXTURE,
     _DIAGNOSTIC_FC_FIXTURE,
+    _DIAGNOSTIC_GEEV_FIXTURE,
     _cell_chi0q_atol,
     _diagnostic_residuals,
     _run_side,
@@ -223,24 +228,49 @@ def _measure_cell(cell) -> bool:
 
 
 def _measure_diagnostics() -> bool:
-    """Run the mu/Green divergence diagnostic on both its fixtures;
-    emit 5 checkpoint lines per fixture (10 total)."""
+    """Run the mu/Green divergence diagnostic on all three fixtures;
+    emit one named scalar record per metric (11 x 3 = 33 lines).
+
+    The fixture axis is driven by ``DIAGNOSTIC_FIXTURES`` (zipped
+    against the three fixture objects, in the same order) so both axes
+    -- fixtures and metrics -- flow from the same authority
+    (``tests.equivalence_freeze_check``) the completeness validator
+    checks against downstream. A ``DIAGNOSTIC_METRICS`` entry the
+    ``_diagnostic_residuals`` output does not actually carry (a
+    producer/consumer key-name drift) is a structural problem, not an
+    uncaught crash: it produces its own ``{"error": ...}`` record and
+    ``ok = False``, and measurement CONTINUES to the next metric/
+    fixture -- consistent with this module's fail-closed-but-keep-going
+    contract (module docstring above).
+    """
 
     ok = True
-    for fixture_name, fixture in (("benign", _DIAGNOSTIC_BENIGN_FIXTURE),
-                                   ("fc", _DIAGNOSTIC_FC_FIXTURE)):
+    fixture_objects = (
+        _DIAGNOSTIC_BENIGN_FIXTURE, _DIAGNOSTIC_FC_FIXTURE, _DIAGNOSTIC_GEEV_FIXTURE,
+    )
+    for fixture_name, fixture in zip(DIAGNOSTIC_FIXTURES, fixture_objects):
         try:
             values = _diagnostic_residuals(fixture)
         except Exception as exc:
-            _emit({"error": str(exc), "phase": "diagnostic", "fixture": fixture_name})
+            _emit({"error": str(exc), "phase": "diagnostic",
+                   "fixture": fixture_name})
             ok = False
             continue
-        for checkpoint in range(1, 6):
-            residual = values["assertion{}".format(checkpoint)]
+        for metric in DIAGNOSTIC_METRICS:
+            if metric not in values:
+                _emit({
+                    "error": "metric {!r} missing from _diagnostic_residuals "
+                              "output".format(metric),
+                    "phase": "diagnostic",
+                    "fixture": fixture_name,
+                    "metric": metric,
+                })
+                ok = False
+                continue
             ok &= _emit({
-                "diagnostic": checkpoint,
+                "diagnostic": metric,
                 "fixture": fixture_name,
-                "residual": float(residual),
+                "residual": float(values[metric]),
             })
     return ok
 
