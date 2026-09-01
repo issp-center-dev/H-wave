@@ -1405,7 +1405,13 @@ class RPA:
         types = _scheme.declared_types(self._scheme_source_tables())
         conserved, cause = _scheme.flavour_conserved(
             self._scheme_source_tables(),
-            norb_phys=self.ham_info.norb,
+            # PRE-fold table => PRE-fold limit. norb_phys is the Extern
+            # index_limit, and _make_ham_trans applies its own norb to the
+            # FOLDED table; feeding the folded count (norb_orig * subvol)
+            # to the unfolded table would admit the over-declared
+            # spin-block rows that _make_ham_trans discards. norb_orig
+            # equals norb when there is no sublattice.
+            norb_phys=self.ham_info.norb_orig,
             coeff_extern=self.ext,
             trans_mod_present=bool(trans_mod_present),
             green_init_present=bool(green_init_present))
@@ -1491,7 +1497,7 @@ class RPA:
         """INFO-log (and return) the scheme-resolved principal-array size.
         Advisory: there is no CPU-side refusal for scheme-sized arrays
         (the GPU advisories reuse this estimate)."""
-        nd = self.nd if hasattr(self, "nd") else self.ham_info.norb * self.ns
+        nd = self.nd
         est = _scheme.estimate_chi_bytes(self.calc_scheme, self.nmat,
                                          self.lattice.nvol, nd)
         logger.info("{}: calc_scheme='{}' principal chi array ~{:.3f} GB "

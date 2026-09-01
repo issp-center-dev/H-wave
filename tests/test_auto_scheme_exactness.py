@@ -43,6 +43,49 @@ _DIAG_EXTERN = """Extern, orbital-diagonal
 """
 
 
+#: A 1-orbital chain, for the sublattice-folding case: SubShape (2,1,1)
+#: makes the POST-fold orbital count 2 while the PRE-FOLD physical count
+#: stays 1, so the two candidate index limits disagree.
+_CHAIN_GEOM = """  1.000000000000   0.000000000000   0.000000000000
+  0.000000000000   1.000000000000   0.000000000000
+  0.000000000000   0.000000000000   1.000000000000
+1
+    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00
+"""
+
+_CHAIN_TRANSFER = """Transfer, 1-orbital chain
+1
+2
+ 1 1
+   1    0    0    1    1  -1.0 0.0
+  -1    0    0    1    1  -1.0 0.0
+"""
+
+#: same-orbital nearest-neighbour V: a CONDITIONAL type, so the decision
+#: turns on the flavour predicate rather than on general_only.
+_CHAIN_COULOMBINTER = """CoulombInter, off-site same-orbital
+1
+2
+ 1 1
+   1    0    0    1    1  0.3 0.0
+  -1    0    0    1    1  0.3 0.0
+"""
+
+#: Extern declared in the spin-block-extended layout (num_wann = 2 =
+#: 2 * norb_phys): index 2 is the SPIN block, which _make_ham_trans
+#: discards ("skip spin dependence"). Judged with the pre-fold physical
+#: count (1) these rows are out of range; judged with the post-fold count
+#: (2) they look like an inter-orbital field and promote spuriously.
+_CHAIN_SPIN_BLOCK_EXTERN = """Extern, spin-block extended
+2
+1
+ 1
+   0    0    0    1    1  0.25 0.0
+   0    0    0    1    2  0.20 0.0
+   0    0    0    2    1  0.20 0.0
+"""
+
+
 def _project_density_pairs(chiq_general):
     return np.einsum("kqaabb->kqab", chiq_general)
 
@@ -191,6 +234,45 @@ class TestRPAAutoResolution(_Case):
                          "auto:mixed:trans_mod")
         self.assertEqual(solver.preview_scheme({"green_init": object()})[1],
                          "auto:mixed:green_init")
+
+    def test_folded_extern_spin_block_rows_do_not_promote(self):
+        """The Extern off-diagonal scan reads the PRE-FOLD table, so its
+        index limit must be the PRE-FOLD physical orbital count.
+
+        A 1-orbital chain folded onto a 2-cell supercell has post-fold
+        norb == 2, so a post-fold limit would admit the spin-block rows
+        (file index 2) that ``_make_ham_trans`` discards, and a
+        flavour-conserving model would be promoted to 'general'.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+        d = self._dir()
+        for name, body in (("geom.dat", _CHAIN_GEOM),
+                           ("transfer.dat", _CHAIN_TRANSFER),
+                           ("coulombinter.dat", _CHAIN_COULOMBINTER),
+                           ("extern.dat", _CHAIN_SPIN_BLOCK_EXTERN)):
+            with open(os.path.join(d, name), "w") as f:
+                f.write(body)
+        idict = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat",
+                 "Extern": "extern.dat"}
+        reader = read_input_k.QLMSkInput({"path_to_input": d,
+                                          "interaction": idict})
+        info_mode = {"mode": "RPA",
+                     "param": {"T": 2.0, "filling": 0.5,
+                               "CellShape": [4, 1, 1], "SubShape": [2, 1, 1],
+                               "Nmat": 16, "coeff_extern": 0.5},
+                     "enable_spin_orbital": False,
+                     "calc_scheme": "auto", "calc_type": "ring"}
+        solver = rpa_mod.RPA(reader.get_param("ham"), {}, info_mode)
+        # the fixture is only meaningful while the two candidate limits
+        # differ: post-fold norb == 2, pre-fold physical norb == 1
+        self.assertTrue(solver.lattice.has_sublattice)
+        self.assertEqual((solver.ham_info.norb, solver.ham_info.norb_orig),
+                         (2, 1))
+        self.assertEqual(solver.preview_scheme(),
+                         ("reduced", "auto:exact:folded_diagonal"))
 
     def test_show_params_prints_deferred_marker(self):
         solver, _ = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
