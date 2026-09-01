@@ -1342,6 +1342,20 @@ def _load_chi0q(input_dict, norb=None):
     return chi0q, static_index
 
 
+def _auto_chi0q_tensor_scheme(files):
+    """hwave_sc's ``chi0q_tensor = "auto"`` rule, behaviour-frozen at its
+    1.0.x semantics: ``general`` when an inter-orbital interaction file is
+    declared, else ``reduced``. Case-insensitive over the declared keys;
+    an unknown key is IGNORED (fail-closed discovery is deliberately NOT
+    adopted here -- recorded follow-up)."""
+    from requests.structures import CaseInsensitiveDict
+    files = CaseInsensitiveDict(files or {})
+    has_interorbital = any(k in files for k in
+                           ["Hund", "Exchange", "CoulombInter",
+                            "Ising", "PairHop", "Coulomb"])
+    return "general" if has_interorbital else "reduced"
+
+
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
                          precomputed_mu=None):
     """Compute chi0q internally using H-wave's RPA module.
@@ -1389,24 +1403,7 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     # Determine calc_scheme from chi0q_tensor option
     if chi0q_tensor == "auto":
-        # Use "general" when inter-orbital interactions are present,
-        # because their S/C matrices have off-diagonal elements that
-        # couple to chi0q off-diagonal components.
-        # With CoulombIntra only, S is block-diagonal and reduced is exact.
-        # CaseInsensitiveDict, like _read_interaction_files (round-5
-        # review): an exact-case check classified a 'coulombinter' run as
-        # reduced, silently omitting the very components the comment
-        # above says inter-orbital interactions require. 'Coulomb' counts
-        # too -- its split can produce a CoulombInter part.
-        from requests.structures import CaseInsensitiveDict
-        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
-        has_interorbital = any(k in files for k in
-                              ["Hund", "Exchange", "CoulombInter",
-                               "Ising", "PairHop", "Coulomb"])
-        if has_interorbital:
-            calc_scheme = "general"
-        else:
-            calc_scheme = "reduced"
+        calc_scheme = _auto_chi0q_tensor_scheme(info_inputfile.get("interaction", {}))
     elif chi0q_tensor == "general":
         calc_scheme = "general"
     else:
