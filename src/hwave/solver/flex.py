@@ -157,6 +157,24 @@ class _AndersonMixer:
         return (x + self.mix * r).reshape(shape)
 
 
+def _scheme_stamp(solver):
+    # #167: describes THIS run (never inside _freq_meta, which passes
+    # through the INPUT file's provenance). Plain str -> <U. FLEX's
+    # save_results is a distinct function from RPA's; this module-level
+    # helper mirrors RPA's closure semantics without importing it.
+    # getattr: tests drive save_results on __new__-built stubs (mirrors
+    # rpa.py's fallback -- a stub without calc_scheme stamps "unknown"
+    # rather than raising AttributeError).
+    scheme = getattr(solver, "calc_scheme", "unknown")
+    return {
+        "calc_scheme": str(scheme),
+        "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
+                                             scheme)),
+        "scheme_resolution": str(getattr(solver, "_scheme_resolution", None)
+                                 or "explicit"),
+    }
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -2802,7 +2820,8 @@ class FLEX(RPA):
                      # hwave_sc _load_chi0q) accept the file in SO mode.
                      index_convention="spin_block",
                      **tail_meta,
-                     **_freq_meta("B"))
+                     **_freq_meta("B"),
+                     **_scheme_stamp(self))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -2828,7 +2847,8 @@ class FLEX(RPA):
                            # Fourier-sign provenance (issue #133): q labels
                            # follow the documented e^{+iqR} convention
                            momentum_convention=MOMENTUM_CONVENTION,
-                           **_freq_meta("B"))
+                           **_freq_meta("B"),
+                           **_scheme_stamp(self))
         if self._flex_general:
             # Self-describing index-order marker for the ORBITAL-PAIR files
             # only: their axes are the pairs (a,c) and (b,d), stored in that
@@ -2871,6 +2891,8 @@ class FLEX(RPA):
         # Save self-energy
         if "sigma" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
+            # #167: no scheme stamp here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
                      wavevector_unit=self.kvec,
@@ -2883,6 +2905,8 @@ class FLEX(RPA):
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
+            # #167: no scheme stamp here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
             green_extra = {}
             if ir_native:
                 # native-only provenance key (the densified green.npz key

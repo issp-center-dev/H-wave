@@ -693,5 +693,59 @@ class TestFLEXAutoResolution(_Case):
         self.assertEqual(solver._scheme_resolution, "auto:no_discarded_content")
 
 
+class TestSchemeStamp(_Case):
+    STAMP = ("calc_scheme", "calc_scheme_requested", "scheme_resolution")
+
+    def _saved(self, mode, scheme, hybridised, outputs):
+        solver, green_info, out = self._solve(scheme, {"CoulombInter": "onsite_inter.dat"},
+                                              hybridised, mode=mode)
+        info_out = {"path_to_output": out}
+        info_out.update(outputs)
+        solver.save_results(info_out, green_info)
+        return out
+
+    def test_rpa_writers_stamp_plain_unicode(self):
+        from hwave.solver import scheme as sch
+        out = self._saved("RPA", "auto", True, {"chiq": "chiq", "chi0q": "chi0q"})
+        for name, expect in (("chiq.npz", ("general", "auto", "auto:mixed:transfer")),
+                             ("chi0q.npz", ("general", "auto", "auto:mixed:transfer"))):
+            with np.load(os.path.join(out, name), allow_pickle=False) as z:
+                for key, val in zip(self.STAMP, expect):
+                    self.assertIn(key, z.files, name)
+                    self.assertEqual(z[key].dtype.kind, "U", (name, key))
+                    self.assertEqual(z[key].item(), val, (name, key))
+                self.assertIn(z["scheme_resolution"].item(), sch.RESOLUTION_TOKENS)
+
+    def test_explicit_runs_stamp_explicit(self):
+        out = self._saved("RPA", "reduced", False, {"chiq": "chiq"})
+        with np.load(os.path.join(out, "chiq.npz"), allow_pickle=False) as z:
+            self.assertEqual((z["calc_scheme"].item(), z["calc_scheme_requested"].item(),
+                              z["scheme_resolution"].item()), ("reduced", "reduced", "explicit"))
+
+    def test_flex_writers_stamp(self):
+        out = self._saved("FLEX", "auto", False, {"chi0q": "chi0q", "chiq_s": "chiq_s", "chiq_c": "chiq_c"})
+        for name in ("chi0q.npz", "chiq_s.npz", "chiq_c.npz"):
+            with np.load(os.path.join(out, name), allow_pickle=False) as z:
+                self.assertEqual(z["scheme_resolution"].item(), "auto:flex_forcing", name)
+                self.assertEqual(z["calc_scheme"].item(), "general", name)
+
+    def test_stamped_chi0q_round_trips_through_the_rpa_reader(self):
+        out = self._saved("RPA", "general", True, {"chi0q": "chi0q"})
+        solver, green_info = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
+        green_info.update(solver.read_init({"path_to_input": out, "chi0q_init": "chi0q.npz"}))
+        solver.solve(green_info, self._dir())
+        self.assertEqual(np.asarray(green_info["chiq"]).ndim, 6)
+
+    def test_stamp_less_pre_2_0_file_is_still_accepted(self):
+        out = self._saved("RPA", "general", True, {"chi0q": "chi0q"})
+        path = os.path.join(out, "chi0q.npz")
+        with np.load(path, allow_pickle=False) as z:
+            legacy = {k: z[k] for k in z.files if k not in self.STAMP}
+        np.savez(path, **legacy)
+        solver, green_info = self._build("general", {"CoulombInter": "onsite_inter.dat"}, True)
+        green_info.update(solver.read_init({"path_to_input": out, "chi0q_init": "chi0q.npz"}))
+        solver.solve(green_info, self._dir())
+
+
 if __name__ == "__main__":
     unittest.main()

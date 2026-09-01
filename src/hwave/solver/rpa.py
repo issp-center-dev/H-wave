@@ -2471,6 +2471,22 @@ class RPA:
                 kwargs["tail_endpoint"] = init_meta["tail_endpoint"]
             return kwargs
 
+        def _scheme_stamp():
+            # #167: describes THIS run (never inside _freq_meta_kwargs, which
+            # passes through the INPUT file's provenance). Plain str -> <U.
+            # getattr: tests drive save_results on __new__-built stubs
+            # (some pre-#167 fixtures in tests/test_rpa_output.py omit
+            # calc_scheme entirely; fall back to "unknown" rather than
+            # raising AttributeError on those pre-existing tests).
+            scheme = getattr(self, "calc_scheme", "unknown")
+            return {
+                "calc_scheme": str(scheme),
+                "calc_scheme_requested": str(getattr(self, "calc_scheme_requested",
+                                                     scheme)),
+                "scheme_resolution": str(getattr(self, "_scheme_resolution", None)
+                                         or "explicit"),
+            }
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
@@ -2484,6 +2500,7 @@ class RPA:
                     index_convention = "spin_block",
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
+                    **_scheme_stamp(),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -2532,6 +2549,7 @@ class RPA:
                 index_convention = "spin_block",
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
+                **_scheme_stamp(),
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
