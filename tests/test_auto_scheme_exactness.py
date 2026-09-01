@@ -672,6 +672,20 @@ class TestFLEXAutoResolution(_Case):
         for key in ("chiq_s", "chiq_c"):
             self.assertTrue(np.array_equal(np.asarray(gi_auto[key]), np.asarray(gi_gen[key])), key)
 
+    def test_unsupported_scheme_name_still_raises_the_actionable_valueerror(self):
+        """The step-0 restructuring must not turn an unsupported scheme
+        name into an AssertionError. 'AUTO' is the sharp case: the
+        inherited _set_scheme compares case-SENSITIVELY, so it never routes
+        a mis-cased request through the auto path, and FLEX must report it
+        the way it always did."""
+        for name in ("bogus", "AUTO"):
+            with self.subTest(calc_scheme=name):
+                with self.assertRaises(ValueError) as cm:
+                    self._build(name, {"CoulombIntra": "coulombintra.dat"},
+                                False, mode="FLEX")
+                self.assertIn("FLEX requires calc_scheme='reduced' or "
+                              "'general'", str(cm.exception))
+
     def test_read_init_and_solve_are_no_ops_for_the_resolved_state(self):
         solver, green_info = self._build("auto", {"CoulombIntra": "coulombintra.dat"}, True, mode="FLEX")
         green_info.update(solver.read_init({}))
