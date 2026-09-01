@@ -614,5 +614,70 @@ class TestExplicitReducedDiagnostic(_Case):
                     trans_mod_present=True, green_init_present=False)
 
 
+class TestFLEXAutoResolution(_Case):
+    """FLEX's auto rule is H0-INDEPENDENT and decided in the constructor
+    (#167): general iff any declared type carries FLEX-forcing vertex
+    content, because the dressed Green function can hybridise during the
+    SCF iteration no matter how diagonal H0(k) starts out."""
+
+    def test_onsite_coulombinter_diagonal_h0_promotes_h0_independent(self):
+        # the FLEX rule is H0-independent: diagonal transfer, still general
+        solver, _ = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, False, mode="FLEX")
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("general", "auto:flex_forcing"))
+        self.assertIs(solver.enable_reduced, False)
+        self.assertTrue(solver._flex_general)
+
+    def test_coulombintra_only_keeps_reduced(self):
+        solver, _ = self._build("auto", {"CoulombIntra": "coulombintra.dat"}, True, mode="FLEX")
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("reduced", "auto:no_discarded_content"))
+
+    def test_pairlift_only_keeps_reduced_with_inertness_warning(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            solver, _ = self._build("auto", {"PairLift": "pairlift"}, True, mode="FLEX")
+        self.assertEqual(solver.calc_scheme, "reduced")
+        self.assertTrue(any("PairLift" in m and "exactly zero" in m for m in cm.output),
+                        cm.output)
+
+    def test_ring_ladder_rejected_before_resolution(self):
+        with self.assertRaisesRegex(ValueError, r"ring\+ladder"):
+            self._build("auto", {"CoulombIntra": "coulombintra.dat"}, False,
+                        mode="FLEX", calc_type="ring+ladder")
+
+    def test_explicit_reduced_with_forcing_type_warns_at_construction(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            self._build("reduced", {"CoulombInter": "onsite_inter.dat"}, False, mode="FLEX")
+        hits = [m for m in cm.output if "regardless of the transfer structure" in m]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertIn("CoulombInter", hits[0])
+
+    def test_explicit_reduced_never_emits_the_rpa_input_dependent_diagnostic(self):
+        """FLEX warns ONCE, at construction, unconditionally of H0; RPA's
+        H0-conditional diagnostic (whose text cites 'RPA instability' and
+        RPA fixture figures) must not also fire on a FLEX solver. Both
+        module loggers are captured via their common parent."""
+        with self.assertLogs("hwave.solver", level="WARNING") as cm:
+            solver, green_info = self._build(
+                "reduced", {"CoulombInter": "onsite_inter.dat"}, True, mode="FLEX")
+            green_info.update(solver.read_init({}))
+            solver.solve(green_info, self._dir())
+        hits = [m for m in cm.output if "regardless of the transfer structure" in m]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertFalse([m for m in cm.output if "INPUT-DEPENDENT" in m], cm.output)
+
+    def test_promoted_auto_equals_explicit_general_one_shot(self):
+        _, gi_auto, _ = self._solve("auto", {"CoulombInter": "onsite_inter.dat"}, True, mode="FLEX")
+        _, gi_gen, _ = self._solve("general", {"CoulombInter": "onsite_inter.dat"}, True, mode="FLEX")
+        for key in ("chiq_s", "chiq_c"):
+            self.assertTrue(np.array_equal(np.asarray(gi_auto[key]), np.asarray(gi_gen[key])), key)
+
+    def test_read_init_and_solve_are_no_ops_for_the_resolved_state(self):
+        solver, green_info = self._build("auto", {"CoulombIntra": "coulombintra.dat"}, True, mode="FLEX")
+        green_info.update(solver.read_init({}))
+        solver.solve(green_info, self._dir())
+        self.assertEqual(solver._scheme_resolution, "auto:no_discarded_content")
+
+
 if __name__ == "__main__":
     unittest.main()
