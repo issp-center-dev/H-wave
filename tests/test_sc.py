@@ -2557,6 +2557,38 @@ class TestChi0qInternal(unittest.TestCase):
             npt.assert_allclose(chi0q_calc, chi0q_loaded, atol=1e-15,
                                 err_msg="Loaded chi0q should exactly match computed chi0q")
 
+    def test_chi0q_stamped_scheme_metadata_round_trips(self):
+        """A FLEX-style stamped chi0q.npz (#167: calc_scheme /
+        calc_scheme_requested / scheme_resolution, plain str) must load
+        unchanged through the Eliashberg loader -- _load_chi0q does not
+        enumerate npz keys strictly, so the extra stamp keys must not be
+        rejected."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_dir, output_dir = self._create_test_files(tmpdir)
+            input_dict = self._make_input_dict(input_dir, output_dir,
+                                                T=0.1, nmat=32, filling=0.5)
+
+            chi0q_calc = _calc_chi0q_internal(input_dict)
+
+            # Hand-build the npz the way a FLEX auto->general run stamps
+            # it, adding the three #167 stamp keys as plain str.
+            chi0q_file = os.path.join(output_dir, "chi0q.npz")
+            np.savez(chi0q_file, chi0q=chi0q_calc,
+                     momentum_convention="e_plus_ikR",
+                     calc_scheme="general",
+                     calc_scheme_requested="auto",
+                     scheme_resolution="auto:flex_forcing")
+
+            from hwave.sc import _load_chi0q
+            chi0q_loaded, static_index = _load_chi0q(input_dict)
+            self.assertIsNone(static_index,
+                              "metadata-less file: the caller slices the "
+                              "center of its actual frequency axis")
+
+            npt.assert_allclose(chi0q_calc, chi0q_loaded, atol=1e-15,
+                                err_msg="Loaded chi0q should exactly match computed chi0q")
+
 
 class TestChi0q4Index(unittest.TestCase):
     """Test 4-index (general) chi0q computation and vertex calculation."""
