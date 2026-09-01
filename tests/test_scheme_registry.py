@@ -138,5 +138,120 @@ class TestLegacyRuleAndTokens(unittest.TestCase):
             "auto:mixed:green_init", "auto:flex_forcing"}))
 
 
+class TestFlavourConserved(unittest.TestCase):
+    def _t(self, transfer, extern=None):
+        t = CaseInsensitiveDict()
+        t["Transfer"] = transfer
+        if extern is not None:
+            t["extern"] = extern
+        return t
+
+    def _call(self, tables, **kw):
+        from hwave.solver import scheme
+        args = dict(norb_phys=2, coeff_extern=0.0,
+                    trans_mod_present=False, green_init_present=False)
+        args.update(kw)
+        return scheme.flavour_conserved(tables, **args)
+
+    def test_diagonal_transfer_is_conserved(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0, ((1, 0, 0), (1, 1)): 0.5,
+                     ((0, 0, 0), (0, 1)): 0.0})   # explicit zero does not promote
+        self.assertEqual(self._call(t), (True, "diagonal_transfer"))
+
+    def test_any_nonzero_offdiagonal_promotes_no_tolerance(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0, ((2, 0, 0), (0, 1)): 1e-300})
+        self.assertEqual(self._call(t), (False, "transfer"))
+
+    def test_non_finite_transfer_raises(self):
+        t = self._t({((0, 0, 0), (0, 0)): float("nan")})
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            self._call(t)
+
+    def test_extern_promotes_only_when_active(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0},
+                    extern={((0, 0, 0), (0, 1)): 0.2})
+        self.assertEqual(self._call(t, coeff_extern=0.0), (True, "diagonal_transfer"))
+        self.assertEqual(self._call(t, coeff_extern=0.3), (False, "extern"))
+
+    def test_extern_spin_block_entries_are_ignored(self):
+        # indices >= norb_phys never enter H0 (rpa._make_ham_trans skips them)
+        t = self._t({((0, 0, 0), (0, 0)): -1.0},
+                    extern={((0, 0, 0), (2, 3)): 0.2, ((0, 0, 0), (0, 0)): 0.1})
+        self.assertEqual(self._call(t, coeff_extern=1.0), (True, "diagonal_transfer"))
+
+    def test_non_finite_coeff_extern_raises(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0}, extern={((0, 0, 0), (0, 0)): 0.1})
+        with self.assertRaisesRegex(ValueError, "coeff_extern"):
+            self._call(t, coeff_extern=float("inf"))
+
+    def test_precedence_is_fixed(self):
+        t = self._t({((0, 0, 0), (0, 1)): 0.3},        # transfer mixes
+                    extern={((0, 0, 0), (0, 1)): 0.2})  # extern mixes
+        self.assertEqual(self._call(t, coeff_extern=1.0), (False, "transfer"))
+        self.assertEqual(self._call(t, coeff_extern=1.0, green_init_present=True),
+                         (False, "green_init"))
+        self.assertEqual(self._call(t, coeff_extern=1.0, green_init_present=True,
+                                    trans_mod_present=True), (False, "trans_mod"))
+
+    def test_spin_orbital_combined_index(self):
+        # combined index 2*orb+spin: (0,1) is a spin flip on orbital 0
+        t = self._t({((0, 0, 0), (0, 0)): -1.0, ((0, 0, 0), (0, 1)): 0.1})
+        self.assertEqual(self._call(t, norb_phys=1), (False, "transfer"))
+        t = self._t({((0, 0, 0), (0, 0)): -1.0, ((0, 0, 0), (1, 1)): -1.0})
+        self.assertEqual(self._call(t, norb_phys=1), (True, "diagonal_transfer"))
+
+
+class TestResolvers(unittest.TestCase):
+    def _rpa(self, types, calc_type="ring", conserved=True, cause="diagonal_transfer",
+             has_sublattice=False):
+        from hwave.solver import scheme
+        return scheme.resolve_rpa(frozenset(types), calc_type, conserved=conserved,
+                                  cause=cause, has_sublattice=has_sublattice)
+
+    def test_rpa_decision_order(self):
+        self.assertEqual(self._rpa({"CoulombIntra"}, calc_type="ring+ladder"),
+                         ("general", "auto:ring_ladder"))
+        self.assertEqual(self._rpa({"Exchange", "CoulombInter"}),
+                         ("general", "auto:general_only"))
+        self.assertEqual(self._rpa({"CoulombInter"}),
+                         ("reduced", "auto:exact:diagonal_transfer"))
+        self.assertEqual(self._rpa({"Hund"}, has_sublattice=True),
+                         ("reduced", "auto:exact:folded_diagonal"))
+        self.assertEqual(self._rpa({"Ising"}, conserved=False, cause="transfer"),
+                         ("general", "auto:mixed:transfer"))
+        self.assertEqual(self._rpa({"PairLift"}, conserved=False, cause="extern"),
+                         ("general", "auto:mixed:extern"))
+        self.assertEqual(self._rpa({"CoulombIntra"}, conserved=False, cause="transfer"),
+                         ("reduced", "auto:no_discarded_content"))
+        self.assertEqual(self._rpa(set()), ("reduced", "auto:no_discarded_content"))
+
+    def test_every_rpa_token_is_in_the_vocabulary(self):
+        from hwave.solver import scheme
+        seen = set()
+        for types in ({"Exchange"}, {"CoulombInter"}, {"CoulombIntra"}, set()):
+            for ct in ("ring", "ring+ladder"):
+                for cons, cause in ((True, "diagonal_transfer"), (False, "transfer"),
+                                    (False, "extern"), (False, "trans_mod"),
+                                    (False, "green_init")):
+                    for sub in (False, True):
+                        seen.add(self._rpa(types, ct, cons, cause, sub)[1])
+        self.assertTrue(seen <= scheme.RESOLUTION_TOKENS, seen - scheme.RESOLUTION_TOKENS)
+
+    def test_flex_rule(self):
+        from hwave.solver import scheme
+        self.assertEqual(scheme.resolve_flex({"CoulombInter"}), ("general", "auto:flex_forcing"))
+        self.assertEqual(scheme.resolve_flex({"Coulomb"}), ("general", "auto:flex_forcing"))
+        self.assertEqual(scheme.resolve_flex({"CoulombIntra"}), ("reduced", "auto:no_discarded_content"))
+        self.assertEqual(scheme.resolve_flex({"PairLift"}), ("reduced", "auto:no_discarded_content"))
+        self.assertEqual(scheme.resolve_flex(set()), ("reduced", "auto:no_discarded_content"))
+
+    def test_estimate_chi_bytes(self):
+        from hwave.solver import scheme
+        self.assertEqual(scheme.estimate_chi_bytes("reduced", 16, 4, 3), 16 * 4 * 9 * 16)
+        self.assertEqual(scheme.estimate_chi_bytes("general", 16, 4, 3), 16 * 4 * 81 * 16)
+        with self.assertRaises(ValueError):
+            scheme.estimate_chi_bytes("auto", 16, 4, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

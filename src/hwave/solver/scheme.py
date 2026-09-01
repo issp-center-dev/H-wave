@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import math
 from types import MappingProxyType
-from typing import FrozenSet, Iterable, Mapping, NamedTuple, Tuple
+from typing import FrozenSet, Mapping, NamedTuple
 
 
 class Capability(NamedTuple):
@@ -156,3 +156,98 @@ RESOLUTION_TOKENS = frozenset({
     "auto:mixed:green_init",
     "auto:flex_forcing",
 })
+
+CAUSE_PRECEDENCE = ("trans_mod", "green_init", "transfer", "extern")
+
+
+def _find_key(tables, lower_name):
+    for key in tables.keys():
+        if str(key).lower() == lower_name:
+            return key
+    return None
+
+
+def _has_nonzero_offdiagonal(tables, lower_name, *, index_limit=None):
+    """True iff the section ``lower_name`` holds a nonzero entry with
+    ``a != b``. Entries are judged individually (no cancellation credit);
+    non-finite raises; with ``index_limit`` entries carrying an index
+    >= index_limit are ignored (the consumer never reads them)."""
+    key = _find_key(tables, lower_name)
+    if key is None:
+        return False
+    found = False
+    for (irvec, orbvec), v in (tables[key] or {}).items():
+        c = complex(v)
+        if not (math.isfinite(c.real) and math.isfinite(c.imag)):
+            raise ValueError(
+                "{}: non-finite entry {!r} at irvec={}, orbvec={}".format(
+                    key, v, tuple(irvec), tuple(orbvec)))
+        a, b = int(orbvec[0]), int(orbvec[1])
+        if index_limit is not None and (a >= index_limit or b >= index_limit):
+            continue
+        if c != 0 and a != b:
+            found = True
+    return found
+
+
+def flavour_conserved(tables, *, norb_phys, coeff_extern,
+                      trans_mod_present, green_init_present):
+    """Pre-fold structural flavour-conservation predicate (RPA).
+
+    Returns ``(True, "diagonal_transfer")`` when the effective one-body
+    Hamiltonian conserves the declared flavour, else ``(False, cause)`` with
+    ``cause`` from :data:`CAUSE_PRECEDENCE` (first match wins; the
+    precedence is fixed and tested). ``tables`` must be the PRE-FOLD
+    container. In enable_spin_orbital mode the Transfer indices are the
+    combined ``2*orb+spin`` index, so ``a == b`` is generalized-flavour
+    conservation (a spin flip promotes). Extern entries with an index
+    >= ``norb_phys`` are ignored, mirroring ``_make_ham_trans``.
+    """
+    if not math.isfinite(float(coeff_extern)):
+        raise ValueError("coeff_extern is non-finite: {!r}".format(coeff_extern))
+    mixing = {
+        "trans_mod": bool(trans_mod_present),
+        "green_init": bool(green_init_present),
+        "transfer": _has_nonzero_offdiagonal(tables, "transfer"),
+        "extern": (float(coeff_extern) != 0.0
+                   and _has_nonzero_offdiagonal(tables, "extern",
+                                                index_limit=int(norb_phys))),
+    }
+    for cause in CAUSE_PRECEDENCE:
+        if mixing[cause]:
+            return False, cause
+    return True, "diagonal_transfer"
+
+
+def resolve_rpa(types, calc_type, *, conserved, cause, has_sublattice):
+    """RPA auto decision (deterministic precedence). ``types`` canonical."""
+    if calc_type == "ring+ladder":
+        return "general", "auto:ring_ladder"
+    modes = {CAPABILITIES[t].rpa_mode for t in types}
+    if "general_only" in modes:
+        return "general", "auto:general_only"
+    if "conditional" in modes:
+        if conserved:
+            return "reduced", ("auto:exact:folded_diagonal" if has_sublattice
+                               else "auto:exact:diagonal_transfer")
+        return "general", "auto:mixed:" + cause
+    return "reduced", "auto:no_discarded_content"
+
+
+def resolve_flex(types):
+    """FLEX auto decision: general iff any declared type has flex_forcing."""
+    if any(CAPABILITIES[t].flex_forcing for t in types):
+        return "general", "auto:flex_forcing"
+    return "reduced", "auto:no_discarded_content"
+
+
+def estimate_chi_bytes(scheme, nmat, nvol, nd):
+    """Size of the principal chi array for ``scheme``: complex128 over
+    (nmat, nvol, nd^2) for reduced, (nmat, nvol, nd^4) for general."""
+    if scheme == "reduced":
+        rank = int(nd) ** 2
+    elif scheme == "general":
+        rank = int(nd) ** 4
+    else:
+        raise ValueError("estimate_chi_bytes: unresolved scheme {!r}".format(scheme))
+    return int(nmat) * int(nvol) * rank * 16
