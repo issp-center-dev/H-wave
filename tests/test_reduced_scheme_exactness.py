@@ -16,12 +16,12 @@ from a density-pair observable. It fails once the flavours hybridise.
 
 These tests record that boundary as it stands today. They compare the two
 schemes DIRECTLY (both requested explicitly), so they say nothing about
-which scheme ``auto`` picks -- that is pinned separately below, because
-``auto`` currently selects ``reduced`` for exactly the hybridised
-multi-orbital case where it is NOT exact. Changing that is a behavioural
-and output-shape change deferred to its own design round; these tests are
-the honest record of the present state, and a deliberate prompt to update
-them when it happens.
+which scheme ``auto`` picks -- that is pinned separately below. As of #167,
+``auto`` promotes to ``general`` for exactly the hybridised multi-orbital
+case where ``reduced`` is NOT exact, so the pin below now records the
+CORRECTED behaviour: ``auto`` is exact for the declared input, and the
+1.0.x ``reduced``-regardless-of-hybridisation behaviour is available only
+by explicit request.
 """
 
 import os
@@ -206,27 +206,21 @@ class TestReducedIsApproximateUnderHybridisation(_SchemeComparison):
                         "recorded {:.4e}".format(name, relative, recorded))
 
 
-class TestAutoCurrentlySelectsTheApproximation(_SchemeComparison):
-    """The present behaviour of ``calc_scheme='auto'``, pinned so that
-    changing it is a deliberate act.
+class TestAutoSelectsTheExactScheme(_SchemeComparison):
+    """``calc_scheme='auto'`` is exact for the declared input (#167): for
+    the hybridised multi-orbital case -- where the class above shows
+    ``reduced`` is approximate -- it promotes to ``general``. The 1.0.x
+    behaviour (``reduced`` here) is available only by explicit request."""
 
-    ``auto`` forces ``general`` only for Exchange and PairHop, which carry
-    no density-family content at all. For CoulombInter/Hund/Ising it picks
-    ``reduced`` regardless of hybridisation -- i.e. exactly the case the
-    class above shows is approximate. That is issue #167: correcting it
-    changes chiq from four axes to six for affected inputs, so it is
-    deferred to its own design round; update this test when that lands.
-    """
-
-    def test_auto_picks_reduced_for_hybridised_models(self):
+    def test_auto_picks_general_for_hybridised_models(self):
         for name, interactions in (
                 ("CoulombInter", {"CoulombInter": "onsite_inter.dat"}),
                 ("Hund", {"Hund": "hund_onsite.dat"}),
                 ("Ising", {"Ising": "hund_onsite.dat"})):
             with self.subTest(interaction=name):
                 solver, chiq = self._solve("auto", interactions, True)
-                self.assertEqual(solver.calc_scheme, "reduced")
-                self.assertEqual(chiq.ndim, 4)
+                self.assertEqual(solver.calc_scheme, "general")
+                self.assertEqual(chiq.ndim, 6)
 
 
 if __name__ == "__main__":

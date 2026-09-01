@@ -309,5 +309,65 @@ class TestRPALegacyWarning(_Case):
         self.assertTrue(any("auto:exact:diagonal_transfer" in m for m in cm.output))
 
 
+class TestAutoIsExact(_Case):
+    """The contract, numerically: what auto returns equals the explicit
+    exact scheme on the same input (bitwise where the regression suite
+    already measures bit-identity; tolerance fallback per
+    tests/equivalence_cells._candidate_atol is a recorded calibration event)."""
+
+    CASES = (("CoulombInter", "onsite_inter.dat"),
+             ("Hund", "hund_onsite.dat"),
+             ("Ising", "hund_onsite.dat"))
+
+    def test_retained_reduced_equals_the_general_density_projection(self):
+        for key, fname in self.CASES:
+            with self.subTest(interaction=key):
+                _, gi_auto, _ = self._solve("auto", {key: fname}, False)
+                _, gi_gen, _ = self._solve("general", {key: fname}, False)
+                auto = np.asarray(gi_auto["chiq"])
+                self.assertEqual(auto.ndim, 4)
+                projected = _project_density_pairs(np.asarray(gi_gen["chiq"]))
+                self.assertTrue(np.array_equal(projected, auto),
+                                "max|diff| = {}".format(
+                                    float(np.max(np.abs(projected - auto)))))
+
+    def test_promoted_auto_equals_explicit_general_bitwise(self):
+        for key, fname in self.CASES:
+            with self.subTest(interaction=key):
+                _, gi_auto, _ = self._solve("auto", {key: fname}, True)
+                _, gi_gen, _ = self._solve("general", {key: fname}, True)
+                self.assertTrue(np.array_equal(np.asarray(gi_auto["chiq"]),
+                                               np.asarray(gi_gen["chiq"])))
+
+    def test_folded_diagonal_reduced_equals_general_projection(self):
+        _, gi_auto, _ = self._solve("auto", {"CoulombInter": "onsite_inter.dat"},
+                                    False, subshape=(1, 2, 1))
+        _, gi_gen, _ = self._solve("general", {"CoulombInter": "onsite_inter.dat"},
+                                   False, subshape=(1, 2, 1))
+        auto = np.asarray(gi_auto["chiq"])
+        self.assertEqual(auto.ndim, 4)
+        diff = float(np.max(np.abs(_project_density_pairs(np.asarray(gi_gen["chiq"])) - auto)))
+        # folding changes summation order: round-off, not bit-identity
+        # (measured 1.7e-18 in tests/test_reduced_scheme_exactness.py)
+        self.assertLess(diff, 1e-12, diff)
+
+    def test_pairlift_both_sides_of_the_conditional(self):
+        # hybridised -> general (conditional + mixed); diagonal -> reduced AND
+        # the reduced result equals the general density projection (records
+        # the previously unmeasured type)
+        solver, gi, _ = self._solve("auto", {"PairLift": "pairlift"}, True)
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("general", "auto:mixed:transfer"))
+        _, gi_auto, _ = self._solve("auto", {"PairLift": "pairlift"}, False)
+        _, gi_gen, _ = self._solve("general", {"PairLift": "pairlift"}, False)
+        auto = np.asarray(gi_auto["chiq"])
+        self.assertEqual(auto.ndim, 4)
+        projected = _project_density_pairs(np.asarray(gi_gen["chiq"]))
+        diff = float(np.max(np.abs(projected - auto)))
+        self.assertTrue(np.array_equal(projected, auto),
+                        "PairLift diagonal: reduced vs general projection max|diff| = {}"
+                        .format(diff))
+
+
 if __name__ == "__main__":
     unittest.main()
