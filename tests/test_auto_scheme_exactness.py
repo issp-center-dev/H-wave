@@ -355,6 +355,11 @@ class TestAutoIsExact(_Case):
         # hybridised -> general (conditional + mixed); diagonal -> reduced AND
         # the reduced result equals the general density projection (records
         # the previously unmeasured type)
+        # Measured outcome: the diagonal-branch agreement is TRIVIALLY exact
+        # (diff 0.0) because PairLift's particle-hole vertex carries no
+        # content that reaches the density-pair sector in the spin-free ring
+        # (see PAIRLIFT_INERT_WARNING in rpa.py); the row records that fact
+        # and the hybridised branch's routing.
         solver, gi, _ = self._solve("auto", {"PairLift": "pairlift"}, True)
         self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
                          ("general", "auto:mixed:transfer"))
@@ -367,6 +372,192 @@ class TestAutoIsExact(_Case):
         self.assertTrue(np.array_equal(projected, auto),
                         "PairLift diagonal: reduced vs general projection max|diff| = {}"
                         .format(diff))
+
+
+class TestReusePathAndFingerprint(_Case):
+    """chi0q-reuse (file and in-memory), resolution/read ordering, and the
+    fingerprint guard that catches a stale auto-resolved solver being fed a
+    different input (#167)."""
+
+    def _write_chi0q(self, scheme, hybridised):
+        # RPA.save_results(info_outputfile, green_info) reads
+        # info_outputfile["path_to_output"] (rpa.py:2387); np.savez appends .npz
+        solver, green_info, out = self._solve(scheme, {"CoulombInter": "onsite_inter.dat"},
+                                              hybridised)
+        solver.save_results({"path_to_output": out, "chi0q": "chi0q"}, green_info)
+        path = os.path.join(out, "chi0q.npz")
+        self.assertTrue(os.path.isfile(path), os.listdir(out))
+        return path
+
+    def test_four_axis_chi0q_with_promoting_input_is_rejected_with_remediation(self):
+        path = self._write_chi0q("reduced", True)
+        solver, _ = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
+        with self.assertRaisesRegex(ValueError, "auto:mixed:transfer.*rank-6.*calc_scheme = 'reduced'"):
+            solver.read_init({"path_to_input": os.path.dirname(path),
+                              "chi0q_init": os.path.basename(path)})
+
+    def test_six_axis_chi0q_with_promoting_input_is_accepted(self):
+        path = self._write_chi0q("general", True)
+        solver, green_info = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
+        info = solver.read_init({"path_to_input": os.path.dirname(path),
+                                 "chi0q_init": os.path.basename(path)})
+        self.assertEqual(solver._scheme_resolution, "auto:mixed:transfer")
+        green_info.update(info)
+        solver.solve(green_info, self._dir())
+        self.assertEqual(np.asarray(green_info["chiq"]).ndim, 6)
+
+    def test_resolution_happens_before_the_chi0q_load(self):
+        path = self._write_chi0q("general", True)
+        solver, _ = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
+        order = []
+        real_resolve, real_read = solver._resolve_auto_scheme, solver._read_chi0q
+
+        def spy_resolve(**kw):
+            order.append("resolve"); return real_resolve(**kw)
+
+        def spy_read(fn):
+            order.append("read"); return real_read(fn)
+        solver._resolve_auto_scheme, solver._read_chi0q = spy_resolve, spy_read
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
+            solver.read_init({"path_to_input": os.path.dirname(path),
+                              "chi0q_init": os.path.basename(path)})
+        self.assertEqual(order[:2], ["resolve", "read"])
+        msgs = cm.output
+        i_est = next(i for i, m in enumerate(msgs) if "chi0q_init load" in m)
+        i_read = next(i for i, m in enumerate(msgs) if "read_chi0q" in m)
+        self.assertLess(i_est, i_read, "estimate must be logged before the load")
+
+    def test_both_entry_orders_agree(self):
+        # read_init first, then solve
+        solver_a, gi_a = self._build("auto", {"Hund": "hund_onsite.dat"}, True)
+        gi_a.update(solver_a.read_init({}))
+        solver_a.solve(gi_a, self._dir())
+        # solve directly
+        solver_b, gi_b = self._build("auto", {"Hund": "hund_onsite.dat"}, True)
+        solver_b.solve(gi_b, self._dir())
+        self.assertEqual((solver_a.calc_scheme, solver_a._scheme_resolution),
+                         (solver_b.calc_scheme, solver_b._scheme_resolution))
+        self.assertTrue(np.array_equal(np.asarray(gi_a["chiq"]), np.asarray(gi_b["chiq"])))
+
+    def test_stale_fingerprint_raises(self):
+        solver, green_info = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
+        solver.read_init({})                       # resolves: no late inputs
+        self.assertEqual(solver._scheme_resolution, "auto:exact:diagonal_transfer")
+        H = np.asarray(solver.ham_info.ham_trans_q)          # (nvol, norb, norb)
+        nvol, norb = H.shape[0], H.shape[1]
+        trans_mod = np.einsum("kab,st->ksatb", H, np.eye(2)).reshape(nvol, 2 * norb, 2 * norb)
+        green_info["trans_mod"] = trans_mod
+        with self.assertRaisesRegex(ValueError, "resolved to 'reduced'"):
+            solver.solve(green_info, self._dir())
+
+    def test_trans_mod_promotes_via_public_solve(self):
+        solver, green_info = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
+        H = np.asarray(solver.ham_info.ham_trans_q)
+        nvol, norb = H.shape[0], H.shape[1]
+        green_info["trans_mod"] = np.einsum("kab,st->ksatb", H, np.eye(2)).reshape(
+            nvol, 2 * norb, 2 * norb)
+        solver.solve(green_info, self._dir())
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("general", "auto:mixed:trans_mod"))
+
+    def test_spin_orbital_flip_promotes_and_diagonal_keeps_reduced(self):
+        # SO geometry: norb (spin-orbital) = 4 for the 2-orbital model; the
+        # combined-index-diagonal transfer is the physical one duplicated
+        # per spin; a spin flip is an off-diagonal (1,2) entry
+        d = self._dir()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1 0 0\n0 1 0\n0 0 1\n4\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n")
+        diag = ("Transfer SO diag\n4\n2\n 1 1\n" +
+                "".join("   0 {r} 0 {i} {i} 1.0 0.0\n".format(r=r, i=i)
+                        for r in (1, -1) for i in (1, 2, 3, 4)))
+        flip = diag + "   0 0 0 1 2 0.1 0.0\n   0 0 0 2 1 0.1 0.0\n"
+        inter = "CoulombInter\n2\n1\n 1\n   0 0 0 1 2 0.5 0.0\n   0 0 0 2 1 0.5 0.0\n"
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+        for body, expect in ((diag, "auto:exact:diagonal_transfer"),
+                             (flip, "auto:mixed:transfer")):
+            with open(os.path.join(d, "transfer.dat"), "w") as f:
+                f.write(body)
+            with open(os.path.join(d, "inter.dat"), "w") as f:
+                f.write(inter)
+            reader = read_input_k.QLMSkInput({"path_to_input": d, "interaction": {
+                "path_to_input": d, "Geometry": "geom.dat",
+                "Transfer": "transfer.dat", "CoulombInter": "inter.dat"}})
+            solver = rpa_mod.RPA(reader.get_param("ham"), {}, {
+                "mode": "RPA", "enable_spin_orbital": True, "calc_scheme": "auto",
+                "calc_type": "ring",
+                "param": {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1],
+                          # explicit: rpa.py's own default is SubShape ==
+                          # CellShape (full folding to a single supercell,
+                          # not "no folding"); every other fixture in this
+                          # file goes through _Case._build, which sets
+                          # SubShape=[1,1,1] by default (test-premise fix,
+                          # #167 task 6).
+                          "SubShape": [1, 1, 1], "Nmat": 16}})
+            self.assertEqual(solver.preview_scheme()[1], expect, body)
+
+
+class TestAtomicity(_Case):
+    """A raise in any phase of _resolve_auto_scheme leaves the solver in the
+    AUTO-UNRESOLVED state (never a half-committed one), and a subsequent
+    retry with valid inputs still succeeds (#167)."""
+
+    def _assert_unresolved(self, solver):
+        self.assertEqual(solver.calc_scheme, "auto")
+        self.assertIsNone(solver.enable_reduced)
+        self.assertIsNone(solver._scheme_resolution)
+        self.assertIsNone(solver._scheme_fingerprint)
+
+    def test_each_failure_phase_leaves_auto_unresolved_and_retry_succeeds(self):
+        from hwave.solver import scheme as sch
+        from unittest import mock
+        solver, green_info = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
+        phases = {
+            "discovery": ("declared_types", ValueError("injected discovery")),
+            "predicate": ("flavour_conserved", ValueError("injected predicate")),
+            "validation": ("resolve_rpa", lambda *a, **k: ("bogus", "auto:bogus")),
+        }
+        for name, (target, effect) in phases.items():
+            with self.subTest(phase=name):
+                kw = {"side_effect": effect} if isinstance(effect, Exception) else {"side_effect": effect}
+                with mock.patch.object(sch, target, **kw):
+                    with self.assertRaises((ValueError, AssertionError)):
+                        solver._resolve_auto_scheme(trans_mod_present=False,
+                                                    green_init_present=False)
+                self._assert_unresolved(solver)
+        # fingerprint phase: make frozenset construction fail
+        with mock.patch.object(sch, "declared_types", return_value=None):
+            with self.assertRaises(Exception):
+                solver._resolve_auto_scheme(trans_mod_present=False, green_init_present=False)
+        self._assert_unresolved(solver)
+        # retry
+        solver._resolve_auto_scheme(trans_mod_present=False, green_init_present=False)
+        self.assertEqual(solver._scheme_resolution, "auto:exact:diagonal_transfer")
+
+    def test_emission_failure_never_propagates(self):
+        from unittest import mock
+        solver, _ = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
+        with mock.patch.object(solver, "_emit_auto_resolution_messages",
+                               side_effect=RuntimeError("boom")):
+            solver._resolve_auto_scheme(trans_mod_present=False, green_init_present=False)
+        self.assertEqual(solver._scheme_resolution, "auto:exact:diagonal_transfer")
+
+    def test_unknown_declared_type_fails_closed_via_public_path(self):
+        solver, green_info = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
+        # inject a foreign table into the reader container (reader-bypass)
+        solver.ham_info.param_ham["Kondo"] = {((0, 0, 0), (0, 0)): 1.0}
+        with self.assertRaisesRegex(ValueError, "no capability entry for interaction 'Kondo'"):
+            solver.solve(green_info, self._dir())
+        self._assert_unresolved(solver)
+
+    def test_all_zero_table_is_undeclared_and_non_finite_raises(self):
+        solver, _ = self._build("auto", {"Hund": "hund_onsite.dat"}, True)
+        solver.ham_info.param_ham["Exchange"] = {((0, 0, 0), (0, 1)): 0.0}
+        self.assertEqual(solver.preview_scheme()[1], "auto:mixed:transfer")  # not general_only
+        for bad in (float("nan"), float("inf")):
+            solver.ham_info.param_ham["Exchange"] = {((0, 0, 0), (0, 1)): bad}
+            with self.assertRaisesRegex(ValueError, "non-finite"):
+                solver.preview_scheme()
 
 
 if __name__ == "__main__":
