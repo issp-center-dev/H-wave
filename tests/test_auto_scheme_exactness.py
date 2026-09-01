@@ -525,9 +525,18 @@ class TestAtomicity(_Case):
                         solver._resolve_auto_scheme(trans_mod_present=False,
                                                     green_init_present=False)
                 self._assert_unresolved(solver)
-        # fingerprint phase: make frozenset construction fail
-        with mock.patch.object(sch, "declared_types", return_value=None):
-            with self.assertRaises(Exception):
+        # fingerprint phase: _decide_auto_scheme returns a well-formed
+        # (chosen, token) pair -- so the deferred-validation assertions on
+        # chosen/token would pass -- but a non-iterable `types`. The
+        # fingerprint line (fingerprint = (frozenset(types), ...)) sits
+        # BEFORE those validation assertions in _resolve_auto_scheme, so
+        # frozenset(42) raises TypeError exactly there, never reaching
+        # validation.
+        with mock.patch.object(solver, "_decide_auto_scheme",
+                               return_value=("reduced",
+                                             "auto:exact:diagonal_transfer",
+                                             42, True)):
+            with self.assertRaises(TypeError):
                 solver._resolve_auto_scheme(trans_mod_present=False, green_init_present=False)
         self._assert_unresolved(solver)
         # retry
