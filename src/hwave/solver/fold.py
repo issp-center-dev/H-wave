@@ -53,7 +53,7 @@ def reshape_geometry(geom, subshape):
 
 
 def reshape_interaction(ham, subshape, shape, norb_so_orig, norb_phys_orig,
-                        enable_spin_orbital):
+                        enable_spin_orbital, *, drop_spin_block=False):
     """Fold an R-space table onto the sublattice (supercell) basis.
 
     Parameters
@@ -70,6 +70,14 @@ def reshape_interaction(ham, subshape, shape, norb_so_orig, norb_phys_orig,
     norb_phys_orig : int
         Physical orbital count of the original cell (equals norb_so_orig
         when spin-orbital mode is off).
+    drop_spin_block : bool, keyword-only
+        True for ONE-BODY tables (Transfer, Extern) read in normal mode from
+        a spin-orbital-format file: entries with an orbital index >=
+        norb_phys_orig are the spin block, which the solvers ignore with a
+        warning, so the fold drops them (once, with the same warning).
+        False (default) for two-body tables, whose indices are physical in
+        every mode: such an entry there is invalid input and raises
+        ValueError instead of being dropped.
     enable_spin_orbital : bool
         True when THIS table uses spin-orbital indices (the Transfer in SO
         mode).  Two-body interaction tables always use physical orbital
@@ -113,10 +121,22 @@ def reshape_interaction(ham, subshape, shape, norb_so_orig, norb_phys_orig,
 
         if not enable_spin_orbital and (alpha >= norb_phys_orig
                                         or beta >= norb_phys_orig):
-            # Spin-block entries of a spin-orbital-format table read with
-            # enable_spin_orbital=False: the solvers drop such terms from
-            # H(k), and folding them with the physical stride would relabel
-            # them onto genuine sublattice orbitals.
+            if not drop_spin_block:
+                # two-body tables are physical-indexed in every mode, so
+                # this is invalid input, not an ignorable spin term; fail
+                # closed rather than fold it (the unfolded consumers
+                # raise on it too)
+                raise ValueError(
+                    "interaction table has orbital index {} >= norb ({}) "
+                    "at irvec={}: two-body interaction tables use physical "
+                    "orbital indices in every mode, so this entry is "
+                    "invalid input (it is not a spin-dependent term that "
+                    "could be ignored).".format(
+                        tuple(orbvec), norb_phys_orig, tuple(irvec)))
+            # Spin-block entries of a spin-orbital-format one-body table
+            # read with enable_spin_orbital=False: the solvers drop such
+            # terms from H(k), and folding them with the physical stride
+            # would relabel them onto genuine sublattice orbitals.
             has_spin_dep = True
             continue
 

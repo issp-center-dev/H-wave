@@ -135,5 +135,186 @@ class TestUHFkSpinBlockTransfer(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def _count_ignore_warnings(records):
+    return sum(1 for r in records if "These terms are ignored" in r.getMessage())
+
+
+class TestSpinBlockIgnoreWarningCount(unittest.TestCase):
+    """The ignore-warning is emitted exactly once per run in every geometry.
+
+    Without a fold it comes from _make_ham_trans; with one (including the
+    default SubShape = CellShape) it comes from the fold, and _make_ham_trans
+    then sees no spin-block entry, so it must not fire a second time.
+    """
+
+    def _count(self, cellshape, subshape):
+        d = tempfile.mkdtemp(prefix="uhfk_spinblock_warn_")
+        try:
+            _write_soi_format_chain(
+                d, ["   1    0    0    2    2  0.700000  0.0\n",
+                    "  -1    0    0    2    2  0.700000  0.0\n"])
+            with self.assertLogs("qlms", level="WARNING") as cm:
+                solver = _build_solver(d, cellshape, subshape=subshape)
+                solver._make_ham_trans()
+            return _count_ignore_warnings(cm.records)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_no_fold_warns_once(self):
+        # CellShape must exceed twice the hopping range (_check_cellsize)
+        self.assertEqual(self._count([4, 1, 1], [1, 1, 1]), 1)
+
+    def test_default_subshape_warns_once(self):
+        self.assertEqual(self._count([3, 1, 1], None), 1)
+
+    def test_proper_subshape_warns_once(self):
+        self.assertEqual(self._count([6, 1, 1], [3, 1, 1]), 1)
+
+
+class TestFoldSpinBlockDropIsOneBodyOnly(unittest.TestCase):
+    """Only one-body tables (Transfer, Extern) may carry a droppable spin block.
+
+    Two-body tables use physical orbital indices in every mode, so an index
+    >= norb_phys_orig there is invalid input, never an ignorable spin term.
+    The fold must fail closed on it instead of dropping it with the (wrong)
+    advice to enable spin-orbital mode -- before this guard, a folded RPA run
+    with such an entry completed with that warning, where the unfolded run
+    (and the pre-fix code) crashed.
+    """
+
+    def _fold(self, ham, *, norb_so_orig, norb_phys_orig, drop_spin_block,
+              enable_spin_orbital=False):
+        from hwave.solver import fold
+        return fold.reshape_interaction(
+            ham, (2, 1, 1), (2, 1, 1),
+            norb_so_orig=norb_so_orig, norb_phys_orig=norb_phys_orig,
+            enable_spin_orbital=enable_spin_orbital,
+            drop_spin_block=drop_spin_block)
+
+    def test_two_body_out_of_range_index_raises_normal_mode(self):
+        ham = {((1, 0, 0), (1, 1)): 0.3, ((-1, 0, 0), (1, 1)): 0.3}
+        with self.assertRaisesRegex(ValueError, "orbital index"):
+            self._fold(ham, norb_so_orig=1, norb_phys_orig=1,
+                       drop_spin_block=False)
+
+    def test_two_body_out_of_range_index_raises_spin_orbital_mode(self):
+        # SO mode: geometry norb is 2 (spin-orbital), one physical orbital;
+        # two-body tables are still physical-indexed, so index 1 is invalid
+        ham = {((1, 0, 0), (1, 1)): 0.3, ((-1, 0, 0), (1, 1)): 0.3}
+        with self.assertRaisesRegex(ValueError, "orbital index"):
+            self._fold(ham, norb_so_orig=2, norb_phys_orig=1,
+                       drop_spin_block=False)
+
+    def test_two_body_highest_valid_index_is_retained(self):
+        ham = {((1, 0, 0), (1, 1)): 0.3, ((-1, 0, 0), (1, 1)): 0.3}
+        for norb_so_orig in (2, 4):   # normal mode / SO mode geometry
+            out = self._fold(ham, norb_so_orig=norb_so_orig, norb_phys_orig=2,
+                             drop_spin_block=False)
+            self.assertTrue(
+                np.isclose(sum(out.values()), 2 * sum(ham.values())),
+                "a valid highest physical index must survive the fold "
+                "(norb_so_orig={})".format(norb_so_orig))
+
+    def test_one_body_spin_block_is_dropped_with_one_warning(self):
+        ham = {((0, 0, 0), (0, 0)): -1.0,
+               ((1, 0, 0), (1, 1)): 0.7, ((-1, 0, 0), (1, 1)): 0.7}
+        with self.assertLogs("qlms", level="WARNING") as cm:
+            out = self._fold(ham, norb_so_orig=1, norb_phys_orig=1,
+                             drop_spin_block=True)
+        self.assertEqual(_count_ignore_warnings(cm.records), 1)
+        # the onsite term folds onto the two sublattice orbitals (0 and 1);
+        # nothing from the spin block (index 1 in the ORIGINAL basis, which
+        # the physical stride would have relabeled onto folded index 1 as
+        # well) may leak in: total weight is exactly the folded onsite term
+        self.assertTrue(all(o in (0, 1) for (_, ov) in out for o in ov))
+        self.assertTrue(np.isclose(sum(out.values()), -2.0),
+                        "spin-block hops leaked into the folded table: "
+                        "{}".format(out))
+
+
+def _write_rpa_chain(d, coul_orb):
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1 0 0\n0 1 0\n0 0 1\n1\n0 0 0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("t\n1\n2\n 1 1\n 1 0 0 1 1 -1.0 0.0\n-1 0 0 1 1 -1.0 0.0\n")
+    with open(os.path.join(d, "coulombinter.dat"), "w") as f:
+        f.write("V\n1\n2\n 1 1\n")
+        f.write(" 1 0 0 {o} {o} 0.3 0.0\n-1 0 0 {o} {o} 0.3 0.0\n".format(
+            o=coul_orb))
+
+
+class TestRPAFoldRejectsOutOfRangeTwoBodyIndex(unittest.TestCase):
+    """Public RPA path: a folded run must not silently drop an invalid
+    CoulombInter orbital index (the unfolded run crashes on it)."""
+
+    def _build(self, coul_orb, subshape):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_module
+        d = tempfile.mkdtemp(prefix="rpa_spinblock_")
+        try:
+            _write_rpa_chain(d, coul_orb)
+            info_input = {'path_to_input': d, 'interaction': {
+                'path_to_input': d, 'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat',
+                'CoulombInter': 'coulombinter.dat'}}
+            info_mode = {'mode': 'RPA', 'calc_scheme': 'reduced', 'param': {
+                'T': 0.5, 'Ncond': 1, 'CellShape': [4, 1, 1],
+                'SubShape': subshape, 'Nmat': 16}}
+            read_io = read_input_k.QLMSkInput(info_input)
+            return rpa_module.RPA(read_io.get_param("ham"),
+                                  {"print_level": 0, "print_step": 100},
+                                  info_mode)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_out_of_range_index_under_fold_raises(self):
+        with self.assertRaisesRegex(ValueError, "orbital index"):
+            self._build(2, [2, 1, 1])
+
+    def test_valid_index_under_fold_constructs(self):
+        solver = self._build(1, [2, 1, 1])
+        self.assertIn("CoulombInter", solver.ham_info.param_ham)
+
+
+class TestRPAFoldDropsExternSpinBlock(unittest.TestCase):
+    """Extern is one-body: a spin-block entry in a folded RPA run is dropped
+    with the single ignore-warning, and the physical entry survives."""
+
+    def test_extern_spin_block_dropped_physical_kept(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_module
+        d = tempfile.mkdtemp(prefix="rpa_extern_spinblock_")
+        try:
+            _write_rpa_chain(d, 1)
+            with open(os.path.join(d, "extern.dat"), "w") as f:
+                f.write("h\n2\n1\n 1\n")
+                f.write(" 0 0 0 1 1 0.25 0.0\n")     # physical onsite field
+                f.write(" 0 0 0 2 2 0.90 0.0\n")     # spin block -> dropped
+            info_input = {'path_to_input': d, 'interaction': {
+                'path_to_input': d, 'Geometry': 'geom.dat',
+                'Transfer': 'transfer.dat', 'Extern': 'extern.dat'}}
+            # explicit scheme: with no two-body term the chi0q-only path
+            # requires one (calc_scheme is a top-level [mode] key)
+            info_mode = {'mode': 'RPA', 'calc_scheme': 'reduced', 'param': {
+                'T': 0.5, 'Ncond': 1, 'CellShape': [4, 1, 1],
+                'SubShape': [2, 1, 1], 'Nmat': 16, 'coeff_extern': 1.0}}
+            read_io = read_input_k.QLMSkInput(info_input)
+            with self.assertLogs("qlms", level="WARNING") as cm:
+                solver = rpa_module.RPA(
+                    read_io.get_param("ham"),
+                    {"print_level": 0, "print_step": 100}, info_mode)
+            self.assertEqual(_count_ignore_warnings(cm.records), 1)
+            ext = solver.ham_info.param_ham["Extern"]
+            self.assertTrue(all(o in (0, 1) for (_, ov) in ext for o in ov),
+                            "folded Extern must carry only sublattice-orbital "
+                            "indices: {}".format(ext))
+            # the physical onsite field appears once per sublattice cell
+            self.assertTrue(np.isclose(sum(ext.values()), 2 * 0.25),
+                            "spin-block Extern entry leaked into the fold: "
+                            "{}".format(ext))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

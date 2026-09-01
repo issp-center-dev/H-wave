@@ -729,10 +729,17 @@ class Interaction:
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
                 elif type.lower() == "transfer":
-                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
+                    tbl = self._reshape_interaction(
+                        self.param_ham[type], self.enable_spin_orbital,
+                        drop_spin_block=True)
                     self.param_ham[type] = tbl
                 else:
-                    tbl = self._reshape_interaction(self.param_ham[type], False)
+                    # Extern is one-body (physical-indexed in every mode;
+                    # _make_ham_trans skips its spin block like Transfer's);
+                    # two-body tables must not carry a spin block at all
+                    tbl = self._reshape_interaction(
+                        self.param_ham[type], False,
+                        drop_spin_block=(type.lower() == "extern"))
                     self.param_ham[type] = tbl
         pass
 
@@ -740,7 +747,8 @@ class Interaction:
         logger.debug(">>> Interaction._reshape_geometry")
         return fold.reshape_geometry(geom, self.lattice.subshape)
 
-    def _reshape_interaction(self, ham, enable_spin_orbital):
+    def _reshape_interaction(self, ham, enable_spin_orbital,
+                             drop_spin_block=False):
         logger.debug(">>> Interaction._reshape_interaction")
 
         # In SO mode, geom norb is the spin-orbital count; two-body
@@ -754,7 +762,8 @@ class Interaction:
             ham, self.lattice.subshape, self.lattice.shape,
             norb_so_orig=geom_norb_orig,
             norb_phys_orig=norb_phys_orig,
-            enable_spin_orbital=enable_spin_orbital)
+            enable_spin_orbital=enable_spin_orbital,
+            drop_spin_block=drop_spin_block)
 
     def _export_interaction(self, type, file_name):
         logger.debug(">>> Interaction._export_interaction")

@@ -349,7 +349,8 @@ class UHFk(solver_base):
         return fold.reshape_geometry(geom, self.subshape)
 
     @do_profile
-    def _reshape_interaction(self, ham, enable_spin_orbital):
+    def _reshape_interaction(self, ham, enable_spin_orbital,
+                             drop_spin_block=False):
         """Reshape interaction terms for sublattice.
 
         Parameters
@@ -358,6 +359,8 @@ class UHFk(solver_base):
             Original interaction terms
         enable_spin_orbital : bool
             Whether THIS table uses spin-orbital indices (Transfer in SO mode)
+        drop_spin_block : bool
+            True for one-body tables only (see fold.reshape_interaction)
 
         Returns
         -------
@@ -368,7 +371,8 @@ class UHFk(solver_base):
             ham, self.subshape, self.shape,
             norb_so_orig=self.param_ham_orig["Geometry"]["norb"],
             norb_phys_orig=self.norb_phys_orig,
-            enable_spin_orbital=enable_spin_orbital)
+            enable_spin_orbital=enable_spin_orbital,
+            drop_spin_block=drop_spin_block)
 
     @do_profile
     def _reshape_green(self, green):
@@ -562,7 +566,9 @@ class UHFk(solver_base):
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
                 elif type in ["Transfer"]:
-                    tbl = self._reshape_interaction(self.param_ham[type], self.enable_spin_orbital)
+                    tbl = self._reshape_interaction(
+                        self.param_ham[type], self.enable_spin_orbital,
+                        drop_spin_block=True)
                     self.param_ham[type] = tbl
                 else:
                     tbl = self._reshape_interaction(self.param_ham[type], False)
