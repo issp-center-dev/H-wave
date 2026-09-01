@@ -1344,16 +1344,17 @@ def _load_chi0q(input_dict, norb=None):
 
 def _auto_chi0q_tensor_scheme(files):
     """hwave_sc's ``chi0q_tensor = "auto"`` rule, behaviour-frozen at its
-    1.0.x semantics: ``general`` when an inter-orbital interaction file is
-    declared, else ``reduced``. Case-insensitive over the declared keys;
-    an unknown key is IGNORED (fail-closed discovery is deliberately NOT
-    adopted here -- recorded follow-up)."""
-    from requests.structures import CaseInsensitiveDict
-    files = CaseInsensitiveDict(files or {})
-    has_interorbital = any(k in files for k in
-                           ["Hund", "Exchange", "CoulombInter",
-                            "Ising", "PairHop", "Coulomb"])
-    return "general" if has_interorbital else "reduced"
+    1.0.x semantics via ``scheme.CAPABILITIES[...].sc_legacy_forcing``
+    (True for CoulombInter/Hund/Ising/Exchange/PairHop/Coulomb; False for
+    CoulombIntra/PairLift). Case-insensitive; an unknown key is IGNORED
+    (fail-closed discovery is deliberately NOT adopted here -- recorded
+    follow-up). Pinned by tests/test_sc_auto_scheme_freeze.py."""
+    from hwave.solver.scheme import CAPABILITIES, canonical_name
+    for k in (files or {}):
+        canon = canonical_name(k)
+        if canon is not None and CAPABILITIES[canon].sc_legacy_forcing:
+            return "general"
+    return "reduced"
 
 
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
@@ -2219,6 +2220,10 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Simple mode: tuple (Pc_q, Ps_q), each shape (norb, norb, Nx, Ny, Nz).
         General mode: Vs_q, shape (norb, norb, norb, norb, Nx, Ny, Nz).
     """
+    # NOTE (#167): this list is the Eliashberg-side vertex-layout choice and
+    # is deliberately NOT derived from scheme.CAPABILITIES -- it differs
+    # from the chi0q_tensor='auto' rule (no CoulombInter/Coulomb) and is
+    # behaviour-frozen. Unifying it is a recorded follow-up decision.
     has_interorbital_vertex = any(k in inter_k for k in
                                   ["Hund", "Exchange", "Ising", "PairHop"])
     chi0q_is_4index = (chi0q.ndim == 8)
