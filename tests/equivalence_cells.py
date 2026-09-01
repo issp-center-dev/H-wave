@@ -33,11 +33,14 @@ Hard constraints (binding on every future edit to this file):
 registry holds 37 cells total). Cell 38 is an ordinary ``Equiv``
 comparison row like any other, and its coverage obligation only checks
 that its ``cell_id`` is present. What makes it the CONDITIONING row is
-measured elsewhere: ``TestConditioningAmplification`` (in the test
-module) drives the mu/Green divergence diagnostic over cell 38's fixture
-and a benign one and requires the amplification, and cell 38's own notes
-record why that separation exists. ``COVERAGE_OBLIGATIONS`` holds every
-named coverage predicate, cell 38's included.
+measured elsewhere: ``TestConditioningTransferGain`` (in the test
+module) runs a deterministic perturbation transfer-gain experiment over
+cell 38's fixture and a benign one and requires the FC/benign contrast,
+and cell 38's own notes record why that separation exists. This
+replaces the retired amplification-ratio criterion
+(``TestConditioningAmplification``), which gated a root-finder artifact
+the #160 mu/Green-seam fix removed. ``COVERAGE_OBLIGATIONS`` holds
+every named coverage predicate, cell 38's included.
 
 Registry docstring maintenance checklist:
 ``tests/equivalence_benchmark.md`` records ONE per-cell timing row per
@@ -369,14 +372,87 @@ class Cell:
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-# The Global-Constraints values, verbatim.
+# The Global-Constraints values, verbatim. Frozen by the CI calibration
+# recorded in tests/equivalence_calibration_log.md's Event 5 (dev
+# machine + all four gating CI runners, workflow run 33278664447
+# attempt 1 -- see that Event for the full per-key derivation). Every
+# entry below is worst = MAX over {dev machine, all 4 CI runners} of
+# the corresponding measured residual; ceiling = 1e-15 if worst==0
+# else max(1e-15, 10**ceil(log10(10 * worst))) -- except
+# chiq_gain_fc_min, whose rule is the MIN/floor variant (see its own
+# comment below), and chiq_gain/chiq_propagated, which are measured on
+# the dev machine only and frozen via CI GATE-PASSAGE evidence rather
+# than a raw cross-runner MAX (their own comments below explain why:
+# the transfer-gain experiment lives in the unittest module, not the
+# equivalence_measure runner this MAX/MIN rule aggregates).
 POLICY_CEILINGS: dict = {
-    "mu_diag": 1e-10,
-    "green_diag": 1e-10,
-    "chi0q_mu": 1e-10,
-    "chiq_mu": 1e-10,
+    # worst (Event 5) 1.765081e-16 (assertion2, geev fixture, dev
+    # machine) -- unchanged from its prior dev-only value.
+    "mu_diag": 1e-14,
+    # worst (Event 5) 4.518280e-16 (assertion4, geev fixture, CI
+    # Python 3.10) -- tightened from 1e-10 (the stage-1 diagnostic
+    # checkpoints 3/4 now measured; see calibration log Event 5).
+    "green_diag": 1e-14,
+    # worst (Event 5) 2.498237e-16 -- the larger of the diagnostic's
+    # assertion5 checkpoint (geev fixture, dev machine) and the worst
+    # mu-coupled per-cell chi0q residual (1.387794e-16, cell
+    # "...subshape.mu", dev machine) -- tightened from 1e-10.
+    "chi0q_mu": 1e-14,
+    # worst (Event 5) 7.294815e-14 -- the worst mu-coupled per-cell
+    # chiq residual (cell 38, the conditioning row, dev machine; the
+    # CI-runner MAX for the same cell/observable was smaller,
+    # 6.843859e-14) -- tightened from 1e-10. Three cells' per-cell
+    # atol literals were recalibrated alongside this tightening (see
+    # _measured_equiv_recalibrated below and calibration log Event 5):
+    # their original two-development-machine literals predated the
+    # #160 mu/Green-seam fix and no longer reflected the fixed
+    # residual, which would have made this tighter ceiling
+    # margin-insufficient for them.
+    "chiq_mu": 1e-12,
     "chi0q_fixed": 1e-12,
     "chiq_fixed": 1e-12,
+    # worst (Event 5) 0.0 on both dev and all 4 CI runners -- the
+    # identity is structural at Sigma=0, so the ceiling floors at
+    # 1e-15 (the worst==0 branch of the derivation rule).
+    "counter_cross_nd_le2": 1e-15,
+    # worst (Event 5) 0.0 on both dev and all 4 CI runners -- same
+    # floor as counter_cross_nd_le2.
+    "counter_cross_geev": 1e-15,
+    # worst (Event 5) 0.0 on both dev and all 4 CI runners -- same
+    # floor.
+    "mu_number_residual": 1e-15,
+    # worst (Event 5) 9.930137e-16 (dyson_residual_inv, geev fixture,
+    # dev machine) -- unchanged from its prior dev-only value.
+    "green_dyson": 1e-14,
+    # Transfer-gain experiment (TestConditioningTransferGain, cell 38):
+    # frozen at its dev-provisional value. The calibration workflow
+    # only runs equivalence_measure + a timed unittest invocation, and
+    # this experiment lives in the unittest module, not the
+    # measurement runner, so no raw CI measurement of the gain exists
+    # yet -- the CI evidence for this freeze is GATE-PASSAGE: all four
+    # gating runners (Python 3.9-3.12, workflow run 33278664447
+    # attempt 1) ran tests.test_rpa_flex_equivalence_table green at
+    # exactly these provisional values, including
+    # TestConditioningTransferGain. A raw-measurement CI record for
+    # the gain is deferred to a future calibration pass (calibration
+    # log Event 5). Re-measured on the dev machine for this freeze,
+    # 2026-08-29/30: benign gain 1.7551392977877, FC gain
+    # 1277.6858808294378 (ratio ~728x, linear across eps 1e-6..1e-10) --
+    # bit-identical to the prior dev-provisional measurement (Event 4).
+    # Upper ceiling on the FC gain: 10**ceil(log10(10 *
+    # gain_fc_measured)).
+    "chiq_gain": 1e5,
+    # Lower band on the FC gain: largest power of ten <=
+    # gain_fc_measured / 10.
+    "chiq_gain_fc_min": 1e2,
+    # Upper ceiling on the propagated (rpa-Green-built vs
+    # flex-Sigma=0-Green-built) chiq difference, measured across both
+    # the benign and FC fixtures (worst measured: 7.376256836354663e-14
+    # on the FC fixture; benign measured 2.2204481854326364e-16, both
+    # bit-identical to Event 4's dev measurement): 1e-15 if worst==0
+    # else max(1e-15, 10**ceil(log10(10 * worst))). Same gate-passage
+    # freeze rationale as chiq_gain/chiq_gain_fc_min above.
+    "chiq_propagated": 1e-12,
 }
 
 # The calibration provenance record: which source revision the recorded
@@ -424,6 +500,15 @@ PROVENANCE: dict = {
 # pthread_create fails) -- pinning every BLAS/OMP thread-count env var to
 # 1 before invoking the interpreter eliminates it (verified: 3/3 clean
 # runs afterward, 0/3 before).
+#
+# UPDATE (2026-08-30, Event 5 calibration, this branch): the paragraph
+# above describes the ORIGINAL Event-2/Event-3 freeze only. Event 5
+# re-derived every policy ceiling in this module and recalibrated three
+# cells' chi0q/chiq bounds -- so "nothing here had to be re-measured" no
+# longer holds as a whole-module statement. See
+# ``_measured_equiv_recalibrated`` below for the recalibrated cells and
+# ``tests/equivalence_calibration_log.md`` Event 5 for the full record of
+# what changed and why.
 # ---------------------------------------------------------------------------
 
 _CANDIDATE_SOURCE_SHA = "b922a1c13b85b2d319bc65ee8c45183dc6ab2a47"
@@ -550,6 +635,79 @@ def _measured_equiv(
                 comparator=chiq_comparator,
                 atol=chiq_atol,
                 provenance=_prov(chiq_macos, chiq_linux, chiq_atol, chiq_ceiling),
+            ),
+        }
+    )
+
+
+def _measured_equiv_recalibrated(
+    label: str,
+    chi0q_ceiling_key: str,
+    chi0q_dev: float,
+    chi0q_ci_max: float,
+    chiq_comparator: str,
+    chiq_ceiling_key: str,
+    chiq_dev: float,
+    chiq_ci_max: float,
+) -> "Equiv":
+    """Task 7 (#160 CI ceiling freeze, calibration log Event 5)
+    recalibration variant of ``_measured_equiv``, for the handful of
+    cells whose measured residual dropped by orders of magnitude once
+    the mu/Green-seam fix landed. Their ORIGINAL macOS/Linux literals
+    (still the ones ``_measured_equiv`` reads for every OTHER cell)
+    predate that fix and no longer reflect this cell's actual
+    residual; left unchanged, they would make ``_candidate_atol``
+    raise once the Event-5-tightened ``chi0q_mu``/``chiq_mu`` ceilings
+    no longer have the old, stale residual's margin.
+
+    Same bound rule as ``_measured_equiv`` (``_candidate_atol``: 10x
+    the larger of the two measured residuals, floored at 1e-15,
+    rounded up to a power of ten, capped at the mapped ceiling) but
+    measured over {the current dev machine, the four gating CI
+    runners} rather than the original {macOS, Linux} development-
+    machine pair -- ``chi0q_dev``/``chiq_dev`` is this cell's residual
+    on the macOS arm64 dev machine (Python 3.13.13, numpy 2.4.6, scipy
+    1.17.1) at the commit this freeze measured; ``chi0q_ci_max``/
+    ``chiq_ci_max`` is the MAX over all 12 CI measurement samples
+    (ubuntu-latest x Python 3.9-3.12, 3 invocations each, workflow run
+    33278664447 attempt 1). ``label`` names the cell, for the
+    provenance string only.
+    """
+
+    def _prov(dev_residual, ci_residual, atol, ceiling):
+        return (
+            "RECALIBRATED for the #160 mu/Green-seam fix (calibration "
+            "log Event 5, cell {}): measured on the macOS arm64 "
+            "development machine (Python 3.13.13, numpy 2.4.6, scipy "
+            "1.17.1) max|diff| {:.6e}; MAX over the four gating CI "
+            "runners (ubuntu-latest x Python 3.9-3.12, workflow run "
+            "33278664447 attempt 1) max|diff| {:.6e}. Resulting atol "
+            "{:.1e} (10x the larger residual, floored at 1e-15, "
+            "rounded up to a power of ten; policy ceiling {:.1e}). "
+            "Supersedes this cell's original two-development-machine "
+            "literal, which dated from before the #160 fix and no "
+            "longer reflected this cell's actual (much smaller) "
+            "post-fix residual.".format(
+                label, dev_residual, ci_residual, atol, ceiling
+            )
+        )
+
+    chi0q_ceiling = POLICY_CEILINGS[chi0q_ceiling_key]
+    chiq_ceiling = POLICY_CEILINGS[chiq_ceiling_key]
+    chi0q_atol = _candidate_atol(chi0q_dev, chi0q_ci_max, chi0q_ceiling)
+    chiq_atol = _candidate_atol(chiq_dev, chiq_ci_max, chiq_ceiling)
+
+    return Equiv(
+        observables={
+            "chi0q": ObservableSpec(
+                comparator="identity",
+                atol=chi0q_atol,
+                provenance=_prov(chi0q_dev, chi0q_ci_max, chi0q_atol, chi0q_ceiling),
+            ),
+            "chiq": ObservableSpec(
+                comparator=chiq_comparator,
+                atol=chiq_atol,
+                provenance=_prov(chiq_dev, chiq_ci_max, chiq_atol, chiq_ceiling),
             ),
         }
     )
@@ -1337,9 +1495,10 @@ _CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU = Cell(
             ),
         ),
     ),
-    comparison=_measured_equiv(
-        "chi0q_mu", 4.884981379996393e-15, 4.898859387959854e-15,
-        "general_from_flex_channels", "chiq_mu", 2.0206059344954128e-14, 2.0261571408243727e-14,
+    comparison=_measured_equiv_recalibrated(
+        "general.ring.offsite_coulombinter_sameorb.mu",
+        "chi0q_mu", 5.551921408376704e-17, 4.1679153779129384e-17,
+        "general_from_flex_channels", "chiq_mu", 2.220864572139768e-16, 1.944571711743353e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
@@ -1348,7 +1507,10 @@ _CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU = Cell(
         "(a==b), R=+-x/+-y bonds, V=1.0; filling=0.75. The audit's "
         "exact-match case: FLEX's general path is measured equal to "
         "the RPA ring for this entry class (flex.py:1947-1970's own "
-        "documented rationale)."
+        "documented rationale). RECALIBRATED for Event 5 (#160 "
+        "mu/Green-seam fix): this row's chi0q/chiq residuals dropped "
+        "~2 orders of magnitude from their Event-1-era literals; see "
+        "_measured_equiv_recalibrated's call for this cell."
     ),
 )
 
@@ -1382,9 +1544,10 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
         ),
     ),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
-    comparison=_measured_equiv(
-        "chi0q_mu", 4.884981379996393e-15, 4.898859387959854e-15,
-        "reduced_blocks", "chiq_mu", 3.552713730991191e-14, 3.5610405641548485e-14,
+    comparison=_measured_equiv_recalibrated(
+        "reduced.ring.offsite_coulombinter.mu",
+        "chi0q_mu", 5.551921408376704e-17, 4.1679153779129384e-17,
+        "reduced_blocks", "chiq_mu", 3.6090211750999277e-16, 3.3337017449116085e-16,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
@@ -1393,7 +1556,11 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
         "suite's TestReducedOneShot case (a) "
         "('tests/rpa/input', CoulombInter only, filling=0.75, norb=1), "
         "which only ever compared chiq. See cell 10's notes for the "
-        "chi0q block-extraction finding this cell adds on top."
+        "chi0q block-extraction finding this cell adds on top. "
+        "RECALIBRATED for Event 5 (#160 mu/Green-seam fix): this "
+        "row's chi0q/chiq residuals dropped ~2 orders of magnitude "
+        "from their Event-1-era literals; see "
+        "_measured_equiv_recalibrated's call for this cell."
     ),
 )
 
@@ -1985,9 +2152,10 @@ _CELL_38_CONDITIONING_MU = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
-    comparison=_measured_equiv(
-        "chi0q_mu", 6.431799537609854e-13, 6.432077093507842e-13,
-        "general_from_flex_channels", "chiq_mu", 3.3066883022456364e-12, 3.373345155219826e-12,
+    comparison=_measured_equiv_recalibrated(
+        "general.ring.offsite_coulombinter.conditioning.mu",
+        "chi0q_mu", 5.551275218863831e-17, 5.551319785776992e-17,
+        "general_from_flex_channels", "chiq_mu", 7.294815206161733e-14, 6.843858684819496e-14,
     ),
     required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
@@ -2015,29 +2183,95 @@ _CELL_38_CONDITIONING_MU = Cell(
         "is kept -- the shoulder check above is what verified it, and "
         "no re-selection was needed (the single logged attempt is in "
         "tests/equivalence_calibration_log.md). "
-        "AMPLIFICATION (owned by TestConditioningAmplification, not this "
-        "row): the mu/Green divergence diagnostic run in ISOLATION "
-        "(Sigma=0, no solve()) on this fixture vs the benign cell 8 "
-        "fixture shows >=10x amplification on the mu-seam residual "
-        "(assertion 2) at the very first candidate T=0.2 -- no halve-T "
-        "re-choice needed (single logged calibration attempt). "
+        "TRANSFER GAIN (owned by TestConditioningTransferGain, not this "
+        "row): a deterministic perturbation transfer-gain experiment -- "
+        "gain = max|chiq(chi0 + eps*E) - chiq(chi0)| / eps, with E a "
+        "one-hot real perturbation at the IN-TEST argmax-cond (freq, "
+        "k) direction of cond_2(1 + chi0 W) -- run independently on "
+        "this fixture and the benign cell 8 fixture requires a >=10x "
+        "FC/benign gain contrast. k index 10 on both fixtures, but the "
+        "bosonic-frequency slot differs: benign's argmax-cond IS the "
+        "ZERO-BOSONIC-FREQUENCY slot (l0=16, cond 3.6249143215242605); "
+        "FC's argmax-cond is NOT Omega=0 -- FC's zero slot (l0=128) is "
+        "cond 1.9718478092582121, ~35x BETTER conditioned than the "
+        "chosen direction. FC's argmax is the FIRST NONZERO bosonic "
+        "frequency, the +-Omega_1 tied pair {l0=127, l0=129} (cond "
+        "70.48956521627714 / 70.48956521614214, a ~1.9e-12 relative "
+        "tie); the lexicographic tie-break (this module's own "
+        "_perturbation_target) selects l0=127. Measured gains, "
+        "2026-08-28 (dev probe), reconfirmed on-branch 2026-08-29: "
+        "benign 1.7551392977877 @ (l0=16, k=10), FC 1277.6858808294378 "
+        "@ (l0=127, k=10) -- a ~728x (727.9683626478662) ratio, linear "
+        "across eps 1e-6..1e-10. THIS REPLACES the retired "
+        "amplification-ratio "
+        "criterion (TestConditioningAmplification: >=10x on at least "
+        "one of assertions 2/4/5 of the mu/Green divergence diagnostic "
+        "run in isolation): that criterion gated a root-finder "
+        "artifact in RPA._find_mu that the #160 fix removed --  "
+        "assertion 2's residual, the seam that had carried the old "
+        "test, collapsed to round-off post-fix, so the amplification "
+        "claim went dead and a deterministic, solver-agnostic "
+        "replacement was substituted instead of recalibrating a dead "
+        "seam. The propagated (rpa-Green-built vs "
+        "flex-Sigma=0-Green-built) chiq difference the same test class "
+        "checks is bounded by an ABSOLUTE ceiling only "
+        "(chiq_propagated, 1e-12) -- deliberately NO relative gate "
+        "against max|chiq|, even though max|chiq| is not small on this "
+        "fixture (measured FC 4.53148448207494, i.e. >= 3.9): a "
+        "relative version would only be looser than the absolute "
+        "ceiling already in force, so none was added. "
         "THIS ROW's own (chi0q, chiq) comparison instead uses the FULL "
         "one-shot solve() pipeline, which is NOT the same computation "
         "the diagnostic isolates: FLEX's post-mix stored mu (after one "
         "SCF iteration re-solves mu against its own iteration-1 "
         "self-energy, flex.py:741-743) differs from the diagnostic's "
         "isolated Sigma=0 mu, so a close full-pipeline chi0q/chiq match "
-        "here does not contradict the diagnostic's amplified seam-level "
-        "residuals in isolation -- exactly the OutputBundle-documented "
-        "reason mu is never a per-cell observable. Measured on the "
-        "macOS arm64 development machine: chi0q max|diff| = 0.0 "
-        "(bit-identical) and chiq max|diff| = 3.3066883022456364e-12, "
-        "both far inside their mu-coupled ceilings. Wall time on the "
+        "here does not contradict the diagnostic's own isolated "
+        "Sigma=0 seam-level residuals (round-off post-#160) -- exactly "
+        "the OutputBundle-documented "
+        "reason mu is never a per-cell observable. RECALIBRATED for "
+        "Event 5 (the #160 mu/Green-seam fix dropped this row's own "
+        "chi0q/chiq residuals by several orders of magnitude from "
+        "their original Event-1-era values, 0.0/3.3066883022456364e-12 "
+        "-- see _measured_equiv_recalibrated's call for this cell): "
+        "measured on the macOS arm64 development machine, chi0q "
+        "max|diff| = 5.551275218863831e-17 and chiq max|diff| = "
+        "7.294815206161733e-14 (the worst across the four gating CI "
+        "runners: 5.551319785776992e-17 chi0q -- slightly LARGER than "
+        "the dev value -- and 6.843858684819496e-14 chiq, smaller than "
+        "the dev value); both far inside their mu-coupled "
+        "ceilings. Wall time on the "
         "same machine: rpa solve() "
         "~0.15s + flex solve() ~0.01s (~0.16s combined) -- negligible "
         "despite Nmat=256, because this fixture is 1-orbital/16-k-point "
         "(nd=1); no CI-budget threat from this cell."
     ),
+)
+
+# ---------------------------------------------------------------------------
+# GEEV_DIAGNOSTIC_FIXTURE: the third mu/Green-diagnostic fixture (spec
+# 2026-08-28-mu-green-seam-160, Change 2d). 3 orbitals with on-site
+# inter-orbital hybridization -> nd_block = 3, so FLEX's
+# _matsubara_number_operator takes the LAPACK geev path that the two
+# nd<=2 diagnostic fixtures never exercise. NOT a table row: it runs
+# checkpoints 1-7 only (tests/test_geev_diagnostic_fixture.py holds its
+# qualification gates: geev path, single H0 block, dN/dmu >= 1).
+# ---------------------------------------------------------------------------
+
+GEEV_DIAGNOSTIC_FIXTURE = FixtureSpec(
+    input_dir="tests/equivalence_input/orb3",
+    interactions={"CoulombIntra": "coulombintra.dat"},
+    T=0.5,
+    mu=None,
+    filling=0.5,
+    CellShape=(4, 4, 1),
+    SubShape=(1, 1, 1),
+    Nmat=64,
+    extra_params={},
+    calc_type="ring",
+    requested_scheme="general",
+    enable_spin_orbital=False,
+    extern=None,
 )
 
 CELLS: tuple = (
@@ -2139,6 +2373,16 @@ def _obligation_full_kanamori_row_exists(cells) -> bool:
 
 
 def _obligation_conditioning_row_exists(cells) -> bool:
+    """Cell 38 (the G6 conditioning row) is present. What makes it the
+    conditioning row is measured by ``TestConditioningTransferGain`` (a
+    deterministic perturbation transfer-gain experiment over this
+    fixture and a benign one), not by this predicate -- this predicate
+    only checks the row's ``cell_id`` is in the registry. Formerly
+    worded around "amplification ratio"
+    (``TestConditioningAmplification``); that criterion was retired
+    when the #160 fix removed the root-finder artifact it gated, and
+    the wording here now matches the transfer-gain replacement."""
+
     return "general.ring.offsite_coulombinter.conditioning.mu" in _cell_ids(cells)
 
 

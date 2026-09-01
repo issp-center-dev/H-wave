@@ -416,7 +416,8 @@ class FLEX(RPA):
     def solve(self, green_info, path_to_output):
         """Solve the FLEX equations, restoring host-backed public state.
 
-        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        Thin wrapper around :meth:`_solve_restoring_host_attrs` that
+        guarantees the solver's
         public array attributes (``H0_eigenvalue``/``H0_eigenvector``, and the
         stored ``green0``/``green0_tail``) are NumPy-backed after the call --
         on normal completion AND after a GPU-path exception. Under GPU
@@ -424,12 +425,7 @@ class FLEX(RPA):
         ``finally`` a mid-solve error would leave a reused or inspected solver
         object holding device arrays (issue #63).
         """
-        try:
-            return self._solve_impl(green_info, path_to_output)
-        finally:
-            _bk.restore_host_attrs(
-                self, ("H0_eigenvalue", "H0_eigenvector",
-                       "green0", "green0_tail"))
+        return self._solve_restoring_host_attrs(green_info, path_to_output)
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -1241,7 +1237,11 @@ class FLEX(RPA):
 
     @staticmethod
     def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
-        """Fermi function with the same overflow guard as RPA._find_mu."""
+        """Fermi function with the same overflow guard as RPA._find_mu.
+        Must stay arithmetically identical to rpa.py's module-level
+        _masked_fermi_delta_n and to _find_mu's internal _fermi closure
+        (both in src/hwave/solver/rpa.py) -- three copies of the same
+        masked Fermi factor."""
         xp = _bk.array_module_of(ev)
         w = (ev - mu) / t
         mask = w < ene_cutoff
@@ -1990,7 +1990,19 @@ class FLEX(RPA):
                         "CoulombIntra or CoulombInter")
                 from hwave.qlmsio import wan90
                 intra, inter = wan90.split_coulomb(tbl_dict["Coulomb"])
-                out = {k: v for k, v in tbl_dict.items() if k != "Coulomb"}
+                # Rebuild through .copy(), which preserves the container's
+                # CLASS. A dict comprehension here returned a plain dict
+                # and so dropped the reader's CaseInsensitiveDict: the
+                # reader stores each table under the spelling the USER
+                # wrote (read_input_k.QLMSkInput), so every lookup below
+                # -- the off-site guard AND _build_interaction_k -- then
+                # missed a non-canonically-spelled type and silently
+                # dropped that interaction. Measured before the fix: with
+                # an aggregate Coulomb declaration, 'hund' produced chiq_s
+                # identical to omitting Hund entirely, while 'Hund'
+                # differed from it by 4.7e-2.
+                out = tbl_dict.copy()
+                del out["Coulomb"]
                 out["CoulombIntra"] = intra
                 out["CoulombInter"] = inter
                 return out
@@ -2017,6 +2029,11 @@ class FLEX(RPA):
                         "table canonicalizes displacements and can hide "
                         "off-site entries).")
             scan_ham = _normalized(scan_ham)
+            # PairLift is deliberately absent: hwave.solver.vertex_table
+            # gives it NO particle-hole S/C content, so an off-site
+            # PairLift declaration contributes exactly zero here and the
+            # answer is right without a guard. Listing it would reject a
+            # configuration that computes correctly.
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising"):
                 if itype not in scan_ham:

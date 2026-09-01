@@ -51,6 +51,7 @@ from hwave.solver import rpa as rpa_mod
 from hwave.solver.vertex_table import ring_spin_table
 from tests import ed_oracle_util
 from tests.approx_util import assert_approx_array
+from tests.heavy_tests import heavy
 
 # Richardson finite-difference step, the #151/campaign-wide standard
 # (tests/test_bond_vs_ed_oracle.py's CAMPAIGN_V1) -- reused verbatim so
@@ -1643,6 +1644,7 @@ class TestW0Granules(unittest.TestCase):
     PASS).
     """
 
+    @heavy
     def test_granule_a_multiorbital_offsite_exchange(self):
         """(a) L=3, norb=2, off-site Exchange at R=1 with a != b (a=0,
         b=1) and a genuinely complex J -- the norb=1 Exchange granule
@@ -2414,6 +2416,7 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
             "task6/pairlift_control_dense")
         self.assertEqual(rec["status"], "PASS-ZERO", rec)
 
+    @heavy
     def test_granule_multiorbital_offsite_coulombinter_regression(self):
         """THE REGRESSION PIN (spec, "Cross family", 2026-08-16 amendment;
         this module's own coordinator-adjudicated finding): the orbital
@@ -2481,6 +2484,7 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
                 rec["status"], rec["delta_rich"], rec["tol"],
                 rec["max_signal"], rec["failures"][:5]))
 
+    @heavy
     def test_granule_multiorbital_offsite_exchange_both_orientations(self):
         """The multi-orbital off-site Exchange granule (spec, "ED
         granules": "a MULTI-ORBITAL OFF-SITE EXCHANGE granule (norb=2,

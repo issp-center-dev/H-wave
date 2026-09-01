@@ -29,6 +29,7 @@ from tests.equivalence_cells import (
     Status,
 )
 from tests.equivalence_freeze_check import (
+    DIAGNOSTIC_METRICS,
     GATING_RUNNERS,
     Sample,
     assert_amplification_holds,
@@ -106,9 +107,9 @@ FAKE_CELLS = (_EQUIV_CELL, _DIVERGES_CELL)
 
 def _diag_records(residual=1e-16):
     return [
-        {"diagnostic": checkpoint, "fixture": fixture, "residual": residual}
-        for checkpoint in range(1, 6)
-        for fixture in ("benign", "fc")
+        {"diagnostic": metric, "fixture": fixture, "residual": residual}
+        for metric in DIAGNOSTIC_METRICS
+        for fixture in ("benign", "fc", "geev")
     ]
 
 
@@ -224,11 +225,23 @@ class TestValidateSamplesCompleteness(unittest.TestCase):
         broken = samples[0]
         pruned_records = tuple(
             r for r in broken.records
-            if not (r.get("diagnostic") == 3 and r.get("fixture") == "fc")
+            if not (r.get("diagnostic") == "assertion3" and r.get("fixture") == "fc")
         )
         samples[0] = Sample(runner=broken.runner, invocation=broken.invocation, kind=broken.kind, records=pruned_records)
         errors = validate_samples(samples, SOURCE_SHA, FAKE_CELLS)
         self.assertTrue(any("missing diagnostic checkpoint" in e for e in errors))
+
+    def test_duplicate_diagnostic_record_reported(self):
+        samples = _good_sample_set()
+        broken = samples[0]
+        dupe_record = next(
+            r for r in broken.records
+            if r.get("diagnostic") == "assertion3" and r.get("fixture") == "fc"
+        )
+        bumped_records = broken.records + (dupe_record,)
+        samples[0] = Sample(runner=broken.runner, invocation=broken.invocation, kind=broken.kind, records=bumped_records)
+        errors = validate_samples(samples, SOURCE_SHA, FAKE_CELLS)
+        self.assertTrue(any("duplicate diagnostic record" in e for e in errors))
 
 
 class TestValidateSamplesUniqueness(unittest.TestCase):
@@ -414,8 +427,8 @@ class TestPairedAmplificationRatio(unittest.TestCase):
         for runner in GATING_RUNNERS:
             for n, (fc_val, benign_val) in enumerate(zip(per_runner_fc[runner], per_runner_benign[runner]), start=1):
                 records = [
-                    {"diagnostic": 2, "fixture": "fc", "residual": fc_val},
-                    {"diagnostic": 2, "fixture": "benign", "residual": benign_val},
+                    {"diagnostic": "assertion2", "fixture": "fc", "residual": fc_val},
+                    {"diagnostic": "assertion2", "fixture": "benign", "residual": benign_val},
                 ]
                 samples.append(Sample(runner=runner, invocation=n, kind="measurement", records=tuple(records)))
         return samples
@@ -424,7 +437,7 @@ class TestPairedAmplificationRatio(unittest.TestCase):
         per_runner_fc = {r: [1.0e-11, 2.0e-11, 3.0e-11] for r in GATING_RUNNERS}
         per_runner_benign = {r: [1.0e-13, 2.0e-13, 5.0e-13] for r in GATING_RUNNERS}
         samples = self._samples_with_diag(per_runner_fc, per_runner_benign)
-        ratios = paired_amplification_ratios(samples, checkpoint=2)
+        ratios = paired_amplification_ratios(samples, metric="assertion2")
         for runner in GATING_RUNNERS:
             expected = 1.0e-11 / max(5.0e-13, 1e-15)  # MIN(fc) / MAX(benign)
             self.assertAlmostEqual(ratios[runner], expected)
@@ -433,7 +446,7 @@ class TestPairedAmplificationRatio(unittest.TestCase):
         per_runner_fc = {r: [1.0e-11] for r in GATING_RUNNERS}
         per_runner_benign = {r: [0.0] for r in GATING_RUNNERS}
         samples = self._samples_with_diag(per_runner_fc, per_runner_benign)
-        ratios = paired_amplification_ratios(samples, checkpoint=2)
+        ratios = paired_amplification_ratios(samples, metric="assertion2")
         for runner in GATING_RUNNERS:
             self.assertAlmostEqual(ratios[runner], 1.0e-11 / 1e-15)
 

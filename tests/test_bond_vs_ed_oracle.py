@@ -52,6 +52,7 @@ from hwave.solver.bond_channels import (
 )
 from tests import ed_oracle_util
 from tests.approx_util import ApproxTestCase, assert_approx_array
+from tests.heavy_tests import heavy
 
 
 V1 = 0.02      # base coupling used throughout the campaign for calibration
@@ -2392,9 +2393,11 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
         self.assertGreater(diff_s_raw, 0.5 * max_signal_s)
         self.assertGreater(diff_t_raw, 0.5 * max_signal_t)
 
+    @heavy
     def test_g_plus(self):
         self._check(1)
 
+    @heavy
     def test_g_minus(self):
         self._check(-1)
 
@@ -3246,11 +3249,13 @@ class TestCaseM(unittest.TestCase):
     def test_pp_g_minus(self):
         self._check_pp("g-")
 
+    @heavy
     def test_joint_ray_ph_1_1(self):
         _joint_ray_superposition_check_case_m(
             self, [("g+", 1.0), ("g-", 1.0)], _terms_ray_case_m,
             "caseM-ph-g+g-(1,1)")
 
+    @heavy
     def test_joint_ray_pp_1_1(self):
         _pp_joint_ray_superposition_check_case_m(
             self, [("g+", 1.0), ("g-", 1.0)], _terms_ray_case_m,

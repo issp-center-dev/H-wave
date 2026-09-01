@@ -68,6 +68,7 @@ import numpy as np
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
 from tests import ed_oracle_util
+from tests.heavy_tests import heavy
 
 
 LX, NORB, NS = 2, 2, 2
@@ -460,6 +461,7 @@ class TestRPAGeneralVsED(unittest.TestCase):
     SHARED = {"CoulombIntra": 64, "CoulombInter": 128, "Exchange": 64,
               "PairHop": 64, "PairHopComplex": 64}
 
+    @heavy
     def test_first_order(self):
         for kind, phase in self.CASES:
             with self.subTest(type=kind):

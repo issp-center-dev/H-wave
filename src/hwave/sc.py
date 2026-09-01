@@ -23,6 +23,7 @@ import numpy as np
 from hwave.solver.vertex_table import sc_coefficients
 from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_k
+from hwave.solver import npy_header as _npy_header
 from numpy.fft import fftn, ifftn
 from scipy.optimize import bisect
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
@@ -3614,25 +3615,12 @@ def _read_npy_header_shape(fh):
     silently giving up.
 
     Raises :class:`_UnsupportedNpyHeaderVersion` if the version is genuinely
-    unknown even to that internal dispatcher.
+    unknown to :mod:`hwave.solver.npy_header`.
     """
-    version = np.lib.format.read_magic(fh)
-    reader = getattr(
-        np.lib.format, "read_array_header_{}_{}".format(*version), None)
-    if reader is not None:
-        shape, _, _ = reader(fh)
-        return shape
-    generic = getattr(np.lib.format, "_read_array_header", None)
-    if generic is None:
-        raise _UnsupportedNpyHeaderVersion(
-            "numpy.lib.format has no header reader for NPY format version "
-            "{!r}".format(version))
     try:
-        shape, _, _ = generic(fh, version)
-    except ValueError as exc:
-        raise _UnsupportedNpyHeaderVersion(
-            "cannot parse NPY header version {!r}: {}".format(version, exc))
-    return shape
+        return _npy_header.read_npy_header_shape(fh)
+    except _npy_header.UnsupportedNpyHeaderVersion as exc:
+        raise _UnsupportedNpyHeaderVersion(str(exc))
 
 
 def _peek_green_npz_nfreq(green_path, label="Green"):
