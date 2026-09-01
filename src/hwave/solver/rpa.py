@@ -1493,6 +1493,33 @@ class RPA:
             logger.info("auto mode for calc_scheme: set to {} ({})".format(
                 self.calc_scheme, token))
 
+    def _emit_reduced_exactness_diagnostic(self, *, trans_mod_present, green_init_present):
+        """Explicit calc_scheme='reduced' (#167 §5): warn ONCE when a
+        conditional type is declared and flavour is not conserved."""
+        if self.calc_scheme_requested != "reduced" or self._reduced_diag_emitted:
+            return
+        self._reduced_diag_emitted = True
+        types = _scheme.declared_types(self._scheme_source_tables())
+        conditional = sorted(t for t in types
+                             if _scheme.CAPABILITIES[t].rpa_mode == "conditional")
+        if not conditional:
+            return
+        conserved, cause = _scheme.flavour_conserved(
+            self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
+            coeff_extern=self.ext, trans_mod_present=trans_mod_present,
+            green_init_present=green_init_present)
+        if conserved:
+            return
+        logger.warning(
+            "calc_scheme='reduced' with {} is an APPROXIMATION for this input: "
+            "the one-body Hamiltonian mixes orbital flavour ({}), so the "
+            "discarded cross-family vertex sectors are reachable. The error "
+            "is INPUT-DEPENDENT and unbounded near an RPA instability "
+            "(measured 2.3e-4 / 3.3e-4 / 3.2e-4 relative for "
+            "CoulombInter/Hund/Ising on the reference fixture -- see the "
+            "manual). calc_scheme='general' or 'auto' is exact.".format(
+                ", ".join(conditional), cause))
+
     def _log_scheme_memory_estimate(self, label):
         """INFO-log (and return) the scheme-resolved principal-array size.
         Advisory: there is no CPU-side refusal for scheme-sized arrays
@@ -1872,6 +1899,9 @@ class RPA:
         # #167: resolve calc_scheme='auto' before anything scheme-shaped is
         # touched (in-memory chi0q validation below reads calc_scheme)
         self._resolve_auto_scheme(
+            trans_mod_present="trans_mod" in green_info,
+            green_init_present="green_init" in green_info)
+        self._emit_reduced_exactness_diagnostic(
             trans_mod_present="trans_mod" in green_info,
             green_init_present="green_init" in green_info)
 
@@ -2582,6 +2612,9 @@ class RPA:
         # they equal the eventual green_info presence (qlms.py merges the
         # returned dict into green_info).
         self._resolve_auto_scheme(
+            trans_mod_present="trans_mod" in info_inputfile.keys(),
+            green_init_present="green_init" in info_inputfile.keys())
+        self._emit_reduced_exactness_diagnostic(
             trans_mod_present="trans_mod" in info_inputfile.keys(),
             green_init_present="green_init" in info_inputfile.keys())
         info = {}

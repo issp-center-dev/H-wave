@@ -569,5 +569,23 @@ class TestAtomicity(_Case):
                 solver.preview_scheme()
 
 
+class TestExplicitReducedDiagnostic(_Case):
+    def test_one_warning_when_reduced_is_an_approximation(self):
+        solver, green_info = self._build("reduced", {"CoulombInter": "onsite_inter.dat"}, True)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            green_info.update(solver.read_init({}))
+            solver.solve(green_info, self._dir())
+        hits = [m for m in cm.output if "INPUT-DEPENDENT" in m]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertIn("CoulombInter", hits[0])
+        self.assertIn("2.3e-4 / 3.3e-4 / 3.2e-4", hits[0])
+
+    def test_no_warning_when_reduced_is_exact(self):
+        solver, green_info = self._build("reduced", {"CoulombInter": "onsite_inter.dat"}, False)
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
+            solver.solve(green_info, self._dir())
+        self.assertFalse([m for m in cm.output if "INPUT-DEPENDENT" in m], cm.output)
+
+
 if __name__ == "__main__":
     unittest.main()
