@@ -1498,7 +1498,6 @@ class RPA:
         conditional type is declared and flavour is not conserved."""
         if self.calc_scheme_requested != "reduced" or self._reduced_diag_emitted:
             return
-        self._reduced_diag_emitted = True
         types = _scheme.declared_types(self._scheme_source_tables())
         conditional = sorted(t for t in types
                              if _scheme.CAPABILITIES[t].rpa_mode == "conditional")
@@ -1510,6 +1509,11 @@ class RPA:
             green_init_present=green_init_present)
         if conserved:
             return
+        # arm the dedup only now: a no-op evaluation (no conditional type, or
+        # flavour still conserved) must stay re-evaluable at the other call
+        # point, since the presence flags can diverge between read_init and
+        # _solve_impl (#167 review finding).
+        self._reduced_diag_emitted = True
         logger.warning(
             "calc_scheme='reduced' with {} is an APPROXIMATION for this input: "
             "the one-body Hamiltonian mixes orbital flavour ({}), so the "

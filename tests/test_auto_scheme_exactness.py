@@ -586,6 +586,33 @@ class TestExplicitReducedDiagnostic(_Case):
             solver.solve(green_info, self._dir())
         self.assertFalse([m for m in cm.output if "INPUT-DEPENDENT" in m], cm.output)
 
+    def test_dedup_flag_stays_disarmed_across_a_conserved_no_op_call(self):
+        # read_init on a diagonal (flavour-conserving) transfer: conditional
+        # type (Hund) declared, but conserved -- no warning, and the dedup
+        # flag must NOT be armed by this no-op (#167 review finding).
+        solver, green_info = self._build("reduced", {"Hund": "hund_onsite.dat"}, False)
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
+            green_info.update(solver.read_init({}))
+        self.assertFalse([m for m in cm.output if "INPUT-DEPENDENT" in m], cm.output)
+        # now diverge the presence flags at the OTHER call point: a trans_mod
+        # that mixes flavour (built exactly as
+        # TestReusePathAndFingerprint.test_trans_mod_promotes_via_public_solve)
+        H = np.asarray(solver.ham_info.ham_trans_q)
+        nvol, norb = H.shape[0], H.shape[1]
+        green_info["trans_mod"] = np.einsum("kab,st->ksatb", H, np.eye(2)).reshape(
+            nvol, 2 * norb, 2 * norb)
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            solver.solve(green_info, self._dir())
+        hits = [m for m in cm.output if "INPUT-DEPENDENT" in m]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertIn("trans_mod", hits[0])
+        # dedup: once armed (by the actual emission above), a further
+        # warning-triggering evaluation emits nothing at all.
+        with self.assertRaises(AssertionError):
+            with self.assertLogs("hwave.solver.rpa", level="WARNING"):
+                solver._emit_reduced_exactness_diagnostic(
+                    trans_mod_present=True, green_init_present=False)
+
 
 if __name__ == "__main__":
     unittest.main()
