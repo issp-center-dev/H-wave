@@ -1919,25 +1919,26 @@ _CELL_30_AUTO_DENSITY_RESOLUTION = Cell(
         interactions={"CoulombInter": "onsite_inter.dat"},
         **dict(_E2_GENERAL_MU_KWARGS, requested_scheme="auto"),
     ),
-    resolved_scheme="reduced",
+    resolved_scheme="general",
     expected_spin_mode="spin-free",
     rpa=SolverProof(
         status=Status.SUPPORTED,
-        steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),),
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
     ),
     flex=SolverProof(
         status=Status.SUPPORTED,
-        steps=(ExecuteConstruct(expected_resolved_scheme="reduced"),),
+        steps=(ExecuteConstruct(expected_resolved_scheme="general"),),
     ),
     comparison=None,
     required_observables=(),
     interaction_class="onsite",
     notes=(
-        "E2 onsite_inter.dat (CoulombInter only), calc_scheme='auto'. "
-        "VERIFIED: rpa.py:1285-1289 -- density-diagonal-only content "
-        "(no Exchange/PairHop, calc_type='ring') resolves to "
-        "'reduced'; both RPA and FLEX (which inherits _set_scheme) "
-        "resolve identically. Construction-only: no solve."
+        "E2 onsite_inter.dat (CoulombInter only) on the HYBRIDISED E2 "
+        "transfer, calc_scheme='auto'. #167: RPA promotes to 'general' "
+        "(token auto:mixed:transfer -- the inter-orbital hopping makes "
+        "the discarded cross sector reachable); FLEX promotes "
+        "unconditionally of H0 (auto:flex_forcing). Construction-only: "
+        "no solve."
     ),
 )
 

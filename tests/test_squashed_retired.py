@@ -87,7 +87,7 @@ class TestAutoNeverResolvesToSquashed(unittest.TestCase):
         import hwave.solver.rpa as rpa_mod
         info = _mode('RPA')
         info['calc_scheme'] = 'auto'
-        return rpa_mod.RPA(ham, {}, info).calc_scheme
+        return rpa_mod.RPA(ham, {}, info).preview_scheme()[0]
 
     def test_density_only_resolves_to_reduced(self):
         self.assertEqual(self._scheme_for(_ham()), 'reduced')
@@ -103,7 +103,7 @@ class TestAutoNeverResolvesToSquashed(unittest.TestCase):
         info = _mode('RPA')
         info['calc_scheme'] = 'auto'
         info['calc_type'] = 'ring+ladder'
-        self.assertEqual(rpa_mod.RPA(_ham(), {}, info).calc_scheme,
+        self.assertEqual(rpa_mod.RPA(_ham(), {}, info).preview_scheme()[0],
                          'general')
 
 
