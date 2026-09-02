@@ -42,6 +42,20 @@ _DIAG_EXTERN = """Extern, orbital-diagonal
    0    0    0    2    2 -0.30 0.0
 """
 
+#: the AGGREGATE ``Coulomb`` reader key: on-site orbital-DIAGONAL rows (the
+#: intra part) and on-site orbital-OFF-diagonal rows (the inter part) in one
+#: file.  The k-space reader keeps it under the single key 'Coulomb', so the
+#: resolver judges it through scheme.py's own 'Coulomb' capability entry.
+_AGGREGATE_COULOMB = """Coulomb, aggregate (on-site intra + on-site inter)
+2
+1
+ 1
+   0    0    0    1    1  4.0 0.0
+   0    0    0    2    2  4.0 0.0
+   0    0    0    1    2  1.0 0.0
+   0    0    0    2    1  1.0 0.0
+"""
+
 #: off-site INTER-orbital V: the entry class FLEX's general path rejects
 #: (a != b off-site is not representable by its q-only vertex), while the
 #: reduced path has always accepted it.
@@ -125,6 +139,7 @@ class _Case(unittest.TestCase):
               "offdiag_extern": _OFFDIAG_EXTERN,
               "diag_extern": _DIAG_EXTERN,
               "offsite_interorb": _OFFSITE_INTERORB_COULOMBINTER,
+              "aggregate_coulomb": _AGGREGATE_COULOMB,
               # tests/rpa/input_2orb has no Exchange/PairLift file: on-site,
               # Hermitian-closed inter-orbital bodies (physical indices 1<->2)
               "exchange": "Exchange\n2\n1\n 1\n   0 0 0 1 2 0.2 0.0\n   0 0 0 2 1 0.2 0.0\n",
@@ -223,6 +238,29 @@ class TestRPAAutoResolution(_Case):
                 self.assertEqual(solver.calc_scheme, "general")
                 self.assertEqual(solver._scheme_resolution, "auto:mixed:transfer")
                 self.assertEqual(np.asarray(green_info["chiq"]).ndim, 6)
+
+    def test_aggregate_coulomb_key_promotes_through_the_public_entry(self):
+        """The aggregate ``Coulomb`` key decides like the split declarations.
+
+        ``Coulomb`` is a CONDITIONAL, cross-carrying capability, and the
+        k-space reader does NOT split it into CoulombIntra/CoulombInter --
+        it reaches the resolver under its own key, so the aggregate entry
+        of the registry is what is exercised here. The intra rows alone
+        would never promote; the inter rows make the decision
+        H0-dependent, exactly as a separately declared CoulombInter does.
+        """
+        solver, _ = self._build("auto", {"Coulomb": "aggregate_coulomb"}, True)
+        # non-vacuity: the aggregate really arrived under the single key,
+        # carrying BOTH the diagonal and the off-diagonal rows
+        tbl = solver.ham_info.param_ham["Coulomb"]
+        self.assertNotIn("CoulombInter", solver.ham_info.param_ham)
+        self.assertTrue(any(a == b for _, (a, b) in tbl.keys()), tbl)
+        self.assertTrue(any(a != b for _, (a, b) in tbl.keys()), tbl)
+        self.assertEqual(solver.preview_scheme(),
+                         ("general", "auto:mixed:transfer"))
+        solver, _ = self._build("auto", {"Coulomb": "aggregate_coulomb"}, False)
+        self.assertEqual(solver.preview_scheme(),
+                         ("reduced", "auto:exact:diagonal_transfer"))
 
     def test_folded_diagonal_chain_keeps_reduced(self):
         solver, green_info, _ = self._solve("auto", {"CoulombInter": "onsite_inter.dat"},
