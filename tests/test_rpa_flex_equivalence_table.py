@@ -1878,11 +1878,17 @@ def _is_construction_only(cell) -> bool:
 
 
 def _assert_resolved_scheme(cell, solver_kind, solver_obj) -> None:
-    if solver_obj.calc_scheme != cell.resolved_scheme:
+    # #167: RPA resolves 'auto' at read_init/solve; a construction-only
+    # proof reads the pure preview (identical to the later commit -- tested
+    # in tests/test_auto_scheme_exactness.py). FLEX resolves in its constructor.
+    resolved = solver_obj.calc_scheme
+    if resolved == "auto":
+        resolved = solver_obj.preview_scheme()[0]
+    if resolved != cell.resolved_scheme:
         raise AssertionError(
             "cell {!r} {}: constructed calc_scheme {!r} != "
             "Cell.resolved_scheme {!r}".format(
-                cell.cell_id, solver_kind, solver_obj.calc_scheme, cell.resolved_scheme
+                cell.cell_id, solver_kind, resolved, cell.resolved_scheme
             )
         )
 

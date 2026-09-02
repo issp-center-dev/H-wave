@@ -74,7 +74,11 @@ Parameters
 
   - ``reduced``: Generalized orbitals combining spins and orbitals are considered. The components of the susceptibility matrix with :math:`\alpha=\alpha^\prime` and :math:`\beta=\beta^\prime` are considered. The size of the matrix turns to :math:`N_\text{orb}^2 N_\text{spin}^2 N_k N_\omega`. For the two-body interaction terms, only CoulombIntra, CoulombInter, Ising and Hund are allowed. 
 
-  - ``auto``: scheme is automatically chosen according to the specifications of interaction terms. This option is not available when only ``chi0q`` is to be calculated.
+  - ``auto``: the scheme is chosen so that the result is **exact for the declared input**, preferring ``reduced`` where exactness is provable ("conservative exact"). ``reduced`` is kept only when every declared interaction is density-only, or when the one-body Hamiltonian (``Transfer``, an active ``Extern``, ``trans_mod`` / ``green_init``) conserves the orbital flavour so the discarded cross-family vertex sectors are unreachable; otherwise ``general`` is selected. ``ring+ladder``, ``Exchange`` and ``PairHop`` always select ``general``. This option is not available when only ``chi0q`` is to be calculated. The decision is recorded in every output file as ``scheme_resolution`` (see the ``chiq`` output page for the token list).
+
+  .. note::
+
+     **Version 2.0 / 1.0.x:** in 1.0.x ``auto`` selected ``reduced`` for CoulombInter/Hund/Ising regardless of orbital hybridisation, which is an approximation for hybridised multi-orbital models (measured 2.3e-4 / 3.3e-4 / 3.2e-4 relative on the reference 2-orbital fixture; unbounded near an RPA instability). Since 2.0 such inputs are promoted to ``general`` and a warning names the reason and the cost (``chiq`` becomes rank-6; memory/solve cost grow from :math:`O(N_d^2)/O(N_d^3)` to :math:`O(N_d^4)/O(N_d^6)` per :math:`(q,\omega)`). **Migration:** (1) to keep the 1.0.x behaviour for an existing post-processor, request ``calc_scheme = "reduced"`` explicitly -- the solver then warns once that the result is an approximation for that input; (2) to adapt a 4-axis density-channel reader to the rank-6 layout, take the density-pair slots ``chiq[:, :, a, a, b, b]`` (``numpy.einsum("kqaabb->kqab", chiq)``), which reproduces the 4-axis array exactly when ``reduced`` was exact. ``auto`` is resolved when the calculation starts (``read_init``/``solve``), not at construction; ``RPA.preview_scheme()`` returns the decision without running.
 
 - ``calc_type`` (default value is ``"ring"``)
 

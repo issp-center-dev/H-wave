@@ -28,11 +28,22 @@ from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
 from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
+from hwave.solver import scheme as _scheme
 from . import backend as _bk
 from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
+
+
+#: Emitted whenever a PairLift declaration is solved: its particle-hole
+#: vertex is exactly zero, so no scheme carries it into the
+#: susceptibility. Defined once here and reused by every site that
+#: reports it (RPA explicit-reduced, RPA auto resolution, FLEX).
+PAIRLIFT_INERT_WARNING = (
+    "PairLift's particle-hole vertex is exactly zero (adjudicated "
+    "against exact diagonalization), so it has no effect on the "
+    "susceptibility channels in any scheme.")
 
 
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
@@ -641,6 +652,8 @@ class Lattice:
         self.shape = (nx, ny, nz)
         self.nvol = nvol
 
+        # #167 invariant: never mutated after construction (scheme resolution input).
+
     def _show_params(self):
         logger.info("Lattice parameters:")
         logger.info("    CellShape       = {}".format(self.cellshape))
@@ -693,6 +706,8 @@ class Interaction:
         # create hamiltonian
         self._make_ham_trans()
         self._make_ham_inter()
+
+        # #167 invariant: never mutated after construction (scheme resolution input).
 
         pass
 
@@ -1318,8 +1333,8 @@ class RPA:
 
     def _set_scheme(self, info_mode):
         # handle calc_scheme: must be called after setting up interactions
-
-        self.calc_scheme = info_mode.get("calc_scheme", "auto")
+        self.calc_scheme_requested = str(info_mode.get("calc_scheme", "auto"))
+        self.calc_scheme = self.calc_scheme_requested
 
         # calc_type: "ring" (default) or "ring+ladder"
         self.calc_type = info_mode.get("calc_type", "ring")
@@ -1327,32 +1342,27 @@ class RPA:
             logger.error("calc_type must be 'ring' or 'ring+ladder', got '{}'".format(self.calc_type))
             sys.exit(1)
 
-        # auto choose
+        # #167 resolution state (see _resolve_auto_scheme)
+        self._scheme_resolution = None
+        self._scheme_fingerprint = None
+        self._reduced_diag_emitted = False
+
+        # calc chiq if interaction term exists; otherwise chi0q-only mode
+        self.calc_chiq = self.ham_info.has_interaction()
+
         if self.calc_scheme == "auto":
             if not self.ham_info.has_interaction():
                 logger.error("calc_scheme must be specified for chi0q-only mode.")
                 sys.exit(1)
-            else:
-                if self.calc_type == "ring+ladder":
-                    # ladder diagrams require general scheme (full rank-4 tensor)
-                    self.calc_scheme = "general"
-                    logger.info("auto mode for calc_scheme: set to general (ring+ladder)")
-                elif any(self.param_ham.get(t)
-                         for t in ("Exchange", "PairHop")):
-                    # Exchange and PairHop carry NO density-diagonal vertex
-                    # content: only the general scheme represents them. The
-                    # historical auto choice silently dropped them
-                    # entirely (#107).
-                    self.calc_scheme = "general"
-                    logger.info(
-                        "auto mode for calc_scheme: set to general "
-                        "(Exchange/PairHop have no density-diagonal vertex)")
-                else:
-                    # PairLift alone does not need the general scheme: its
-                    # particle-hole vertex is exactly zero everywhere.
-                    self.calc_scheme = "reduced"
-                    logger.info("auto mode for calc_scheme: set to reduced")
+            # AUTO-UNRESOLVED: the decision depends on late-arriving inputs
+            # (trans_mod / green_init), so it is taken atomically at the top
+            # of read_init / _solve_impl (#167). enable_reduced is a defined
+            # sentinel: any accidental boolean use fails loudly.
+            self.enable_reduced = None
+            return
 
+        # EXPLICIT: validated here exactly as before (#107 policy).
+        #
         # consistency check. The reduced scheme solves with the
         # density-diagonal part of the interaction, and the adjudicated
         # particle-hole vertex of Exchange and PairHop has NO
@@ -1380,21 +1390,193 @@ class RPA:
                     "interactions.)".format(
                         self.calc_scheme, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
-                logger.warning(
-                    "PairLift's particle-hole vertex is exactly zero "
-                    "(adjudicated against exact diagonalization), so it "
-                    "has no effect on the susceptibility channels in any "
-                    "scheme.")
+                logger.warning(PAIRLIFT_INERT_WARNING)
         if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
             logger.error("calc_type='ring+ladder' requires calc_scheme='general' or 'auto'.")
             sys.exit(1)
 
-        # calc chiq if interaction term exists; otherwise chi0q-only mode
-        self.calc_chiq = self.ham_info.has_interaction()
-
         # chi0q in reduced mode if calc_scheme is reduced
         self.enable_reduced = self.calc_scheme.lower() == "reduced"
-        
+        self._scheme_resolution = "explicit"
+
+    # ----------------------------------------------------------------- #167
+    def _scheme_source_tables(self):
+        """The PRE-FOLD table container (folding mixes sublattice labels
+        while preserving physical flavour, so the folded table must never
+        be judged)."""
+        if getattr(self.lattice, "has_sublattice", False):
+            return self.ham_info.param_ham_orig
+        return self.ham_info.param_ham
+
+    def _decide_auto_scheme(self, *, trans_mod_present, green_init_present):
+        """Pure decision: (scheme, token, types, conserved). Raises on
+        unknown types / non-finite tables; mutates nothing."""
+        types = _scheme.declared_types(self._scheme_source_tables())
+        conserved, cause = _scheme.flavour_conserved(
+            self._scheme_source_tables(),
+            # PRE-fold table => PRE-fold limit. norb_phys is the Extern
+            # index_limit, and _make_ham_trans applies its own norb to the
+            # FOLDED table; feeding the folded count (norb_orig * subvol)
+            # to the unfolded table would admit the over-declared
+            # spin-block rows that _make_ham_trans discards. norb_orig
+            # equals norb when there is no sublattice.
+            norb_phys=self.ham_info.norb_orig,
+            coeff_extern=self.ext,
+            trans_mod_present=bool(trans_mod_present),
+            green_init_present=bool(green_init_present),
+            enable_spin_orbital=self.ham_info.enable_spin_orbital)
+        chosen, token = _scheme.resolve_rpa(
+            types, self.calc_type, conserved=conserved, cause=cause,
+            has_sublattice=bool(getattr(self.lattice, "has_sublattice", False)))
+        return chosen, token, types, conserved
+
+    def preview_scheme(self, green_info=None):
+        """(scheme, token) the resolver will commit, WITHOUT committing.
+
+        ``green_info=None`` means "assume neither trans_mod nor green_init
+        will be supplied"; the preview is final exactly when the eventual
+        solve/read_init call carries the same trans_mod/green_init
+        presence (every other input is construction-immutable).
+        """
+        if self._scheme_resolution == "explicit":
+            return self.calc_scheme, "explicit"
+        if self._scheme_resolution is not None:
+            return self.calc_scheme, self._scheme_resolution
+        gi = green_info or {}
+        chosen, token, _, _ = self._decide_auto_scheme(
+            trans_mod_present="trans_mod" in gi, green_init_present="green_init" in gi)
+        return chosen, token
+
+    def _resolve_auto_scheme(self, *, trans_mod_present, green_init_present):
+        """Resolve calc_scheme='auto' atomically (#167).
+
+        States: EXPLICIT (no-op) / AUTO-UNRESOLVED (decide + commit) /
+        AUTO-RESOLVED (equal fingerprint -> no-op; different -> ValueError).
+        A raise in any phase before the commit leaves the object unchanged.
+        """
+        if self._scheme_resolution is not None and self._scheme_fingerprint is None:
+            return  # explicit, or resolved without late inputs (FLEX)
+        chosen, token, types, _ = self._decide_auto_scheme(
+            trans_mod_present=trans_mod_present, green_init_present=green_init_present)
+        fingerprint = (frozenset(types), bool(trans_mod_present), bool(green_init_present))
+        if self._scheme_resolution is not None:
+            if fingerprint != self._scheme_fingerprint:
+                raise ValueError(
+                    "calc_scheme='auto' was resolved to '{}' ({}) for a different "
+                    "input (declared types / trans_mod / green_init presence "
+                    "changed since). Construct a new solver for the new input."
+                    .format(self.calc_scheme, self._scheme_resolution))
+            # The fingerprint covers the declared types and the late-input
+            # presence flags; the decision ALSO reads inputs the spec declares
+            # construction-immutable (coeff_extern, the transfer/extern
+            # structure). Comparing the recomputed verdict closes that gap: a
+            # mutation of such an input is a contract violation, and must not
+            # silently leave the solver on the stale scheme.
+            if (chosen, token) != (self.calc_scheme, self._scheme_resolution):
+                raise ValueError(
+                    "calc_scheme='auto' was resolved to ('{}', '{}') but the same "
+                    "input now resolves to ('{}', '{}'): a construction-immutable "
+                    "decision input (e.g. coeff_extern, or a Transfer/Extern "
+                    "table) was mutated after resolution. Construct a new solver "
+                    "for the new input."
+                    .format(self.calc_scheme, self._scheme_resolution,
+                            chosen, token))
+            return
+        # deferred validation (assertions only; warnings are post-commit)
+        if chosen not in ("reduced", "general") or token not in _scheme.RESOLUTION_TOKENS:
+            raise AssertionError("resolver produced ({!r}, {!r})".format(chosen, token))
+        if self.calc_type == "ring+ladder" and chosen != "general":
+            raise AssertionError("ring+ladder must resolve to general")
+        # atomic commit
+        self.calc_scheme = chosen
+        self.enable_reduced = (chosen == "reduced")
+        self._scheme_resolution = token
+        self._scheme_fingerprint = fingerprint
+        # best-effort side effects
+        try:
+            self._emit_auto_resolution_messages(types, token)
+        except Exception as exc:  # never let an emission failure surface
+            logger.error("scheme resolution logging failed: {!r}".format(exc))
+
+    def _emit_auto_resolution_messages(self, types, token):
+        est = self._log_scheme_memory_estimate("auto-resolved calc_scheme")
+        if self.calc_scheme == "reduced" and "PairLift" in types:
+            logger.warning(PAIRLIFT_INERT_WARNING)
+        legacy = _scheme.legacy_1_0_resolution(types, self.calc_type)
+        if self.calc_scheme != legacy:
+            logger.warning(
+                "calc_scheme='auto' resolved to '{}' ({}); H-wave 1.0.x resolved "
+                "this input to '{}'. Reason: the declared input ({}) is not exact "
+                "under '{}'. chiq output becomes rank-6; memory/solve cost grow "
+                "from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per (q, freq) "
+                "(estimated principal array {:.3f} GB). To keep the 1.0.x "
+                "behaviour request calc_scheme = 'reduced' explicitly (a "
+                "documented approximation).".format(
+                    self.calc_scheme, token, legacy, ", ".join(sorted(types)),
+                    legacy, est / 1e9))
+        else:
+            logger.info("auto mode for calc_scheme: set to {} ({})".format(
+                self.calc_scheme, token))
+
+    def _emit_reduced_exactness_diagnostic(self, *, trans_mod_present, green_init_present):
+        """Explicit calc_scheme='reduced' (#167 §5): warn ONCE when a
+        conditional type is declared and flavour is not conserved.
+
+        ADVISORY ONLY. Discovery (`declared_types`) and the predicate are
+        fail-closed because the AUTO path *decides* on their verdict; here
+        there is nothing to decide -- the user named the scheme, and the
+        computation must stay exactly the 1.0.x one. So an input this
+        machinery cannot judge (an unknown table reaching a direct
+        public-constructor Hamiltonian, a non-finite entry) SKIPS the
+        diagnostic at debug level instead of failing a run that 1.0.x
+        completed.
+        """
+        if self.calc_scheme_requested != "reduced" or self._reduced_diag_emitted:
+            return
+        try:
+            types = _scheme.declared_types(self._scheme_source_tables())
+            conditional = sorted(t for t in types
+                                 if _scheme.CAPABILITIES[t].rpa_mode == "conditional")
+            if not conditional:
+                return
+            conserved, cause = _scheme.flavour_conserved(
+                self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
+                coeff_extern=self.ext, trans_mod_present=trans_mod_present,
+                green_init_present=green_init_present,
+                enable_spin_orbital=self.ham_info.enable_spin_orbital)
+        except ValueError as exc:
+            logger.debug("reduced-exactness diagnostic skipped: %s", exc)
+            return
+        if conserved:
+            return
+        # arm the dedup only now: a no-op evaluation (no conditional type, or
+        # flavour still conserved) must stay re-evaluable at the other call
+        # point, since the presence flags can diverge between read_init and
+        # _solve_impl (#167 review finding).
+        self._reduced_diag_emitted = True
+        logger.warning(
+            "calc_scheme='reduced' with {} is an APPROXIMATION for this input: "
+            "the one-body Hamiltonian mixes orbital flavour ({}), so the "
+            "discarded cross-family vertex sectors are reachable. The error "
+            "is INPUT-DEPENDENT and unbounded near an RPA instability "
+            "(measured 2.3e-4 / 3.3e-4 / 3.2e-4 relative for "
+            "CoulombInter/Hund/Ising on the reference fixture -- see the "
+            "manual). calc_scheme='general' or 'auto' is exact.".format(
+                ", ".join(conditional), cause))
+
+    def _log_scheme_memory_estimate(self, label):
+        """INFO-log (and return) the scheme-resolved principal-array size.
+        Advisory: there is no CPU-side refusal for scheme-sized arrays
+        (the GPU advisories reuse this estimate)."""
+        nd = self.nd
+        est = _scheme.estimate_chi_bytes(self.calc_scheme, self.nmat,
+                                         self.lattice.nvol, nd)
+        logger.info("{}: calc_scheme='{}' principal chi array ~{:.3f} GB "
+                    "(Nmat={}, Nvol={}, nd={})".format(
+                        label, self.calc_scheme, est / 1e9, self.nmat,
+                        self.lattice.nvol, nd))
+        return est
+
     def _init_param(self):
         logger.debug(">>> RPA._init_param")
 
@@ -1441,6 +1623,7 @@ class RPA:
             raise ValueError(
                 "[mode.param] coeff_tail must be finite, got {}".format(_ct))
         self.coeff_tail = _ct
+        # #167 invariant: never mutated after construction (scheme resolution input).
         self.ext = self.param_mod.get("coeff_extern", 0.0)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
@@ -1675,7 +1858,9 @@ class RPA:
         logger.info("    freq_range      = {}".format(self.freq_range))
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
-        logger.info("    calc_scheme     = {}".format(self.calc_scheme))
+        logger.info("    calc_scheme     = {}".format(
+            "auto (resolved at read_init/solve)"
+            if self._scheme_resolution is None else self.calc_scheme))
         logger.info("    calc_type       = {}".format(self.calc_type))
         logger.info("    transverse_bond_channels = {}".format(
             self.transverse_bond_channels))
@@ -1754,6 +1939,15 @@ class RPA:
         green_info.pop("chiq_pm", None)
         green_info.pop("chiq_pm_bond_static", None)
         green_info.pop("chiq_pm_static", None)
+
+        # #167: resolve calc_scheme='auto' before anything scheme-shaped is
+        # touched (in-memory chi0q validation below reads calc_scheme)
+        self._resolve_auto_scheme(
+            trans_mod_present="trans_mod" in green_info,
+            green_init_present="green_init" in green_info)
+        self._emit_reduced_exactness_diagnostic(
+            trans_mod_present="trans_mod" in green_info,
+            green_init_present="green_init" in green_info)
 
         beta = 1.0/self.T
 
@@ -1912,7 +2106,10 @@ class RPA:
                 # Advisory only (CuPy raises OutOfMemoryError on the actual
                 # allocation).
                 _bk.warn_if_device_memory_short(
-                    2 * chi0q.nbytes, logger,
+                    2 * max(chi0q.nbytes,
+                            self._log_scheme_memory_estimate(
+                                "GPU transfer (supplied chi0q)")),
+                    logger,
                     label="the RPA chiq solve (supplied chi0q)")
                 chi0q = xp.asarray(chi0q)
         else:
@@ -1931,15 +2128,16 @@ class RPA:
                 logger.info("RPA: GPU backend active (CuPy); moving H0 "
                             "eigenpairs to the device.")
                 # VRAM preflight: the largest resident device tensor is the
-                # inflated chi0q / chiq, ~ Nmat*Nvol*nd^4 complex128 in the full
-                # (rank-4 orbital) channel; the chiq solve holds a same-sized
-                # workspace. This nd^4 figure is an upper bound for the reduced
-                # (rank-2) scheme and a rough order-of-magnitude
-                # estimate otherwise -- advisory only (CuPy raises
-                # OutOfMemoryError on the actual allocation).
+                # inflated chi0q / chiq; the chiq solve holds a same-sized
+                # workspace. The bound is SCHEME-RESOLVED (#167):
+                # Nmat*Nvol*nd^4 complex128 for the general (rank-4 orbital)
+                # channel, Nmat*Nvol*nd^2 for the reduced (rank-2) one --
+                # advisory only (CuPy raises OutOfMemoryError on the actual
+                # allocation).
                 # H0_eigenvector shape = (nblock, Nvol, nd, nd).
                 nd0 = self.H0_eigenvector.shape[-1]
-                chi_bytes = self.nmat * self.lattice.nvol * (nd0 ** 4) * 16
+                chi_bytes = _scheme.estimate_chi_bytes(
+                    self.calc_scheme, self.nmat, self.lattice.nvol, nd0)
                 _bk.warn_if_device_memory_short(
                     2 * chi_bytes, logger, label="the RPA chi0q/chiq solve")
                 self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
@@ -2313,6 +2511,29 @@ class RPA:
                 kwargs["tail_endpoint"] = init_meta["tail_endpoint"]
             return kwargs
 
+        def _scheme_stamp():
+            # #167: describes THIS run (never inside _freq_meta_kwargs, which
+            # passes through the INPUT file's provenance). Plain str -> <U.
+            # getattr: tests drive save_results on __new__-built stubs
+            # (some pre-#167 fixtures in tests/test_rpa_output.py omit
+            # calc_scheme entirely; fall back to "unknown" rather than
+            # raising AttributeError on those pre-existing tests).
+            scheme = getattr(self, "calc_scheme", "unknown")
+            # _scheme_resolution is None exactly in the AUTO-UNRESOLVED state,
+            # which is NOT an explicit request: a completed pipeline run never
+            # persists "unresolved" (resolution precedes solve); it appears
+            # only for direct-API saves before resolution -- deliberately NOT
+            # in RESOLUTION_TOKENS. A stub missing the attribute entirely
+            # (pre-#167 __new__ fixtures) keeps the "explicit" default.
+            res = getattr(self, "_scheme_resolution", "explicit")
+            res = "unresolved" if res is None else res
+            return {
+                "calc_scheme": str(scheme),
+                "calc_scheme_requested": str(getattr(self, "calc_scheme_requested",
+                                                     scheme)),
+                "scheme_resolution": str(res),
+            }
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
@@ -2326,6 +2547,7 @@ class RPA:
                     index_convention = "spin_block",
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
+                    **_scheme_stamp(),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -2374,6 +2596,7 @@ class RPA:
                 index_convention = "spin_block",
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
+                **_scheme_stamp(),
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
@@ -2453,12 +2676,23 @@ class RPA:
     @do_profile
     def read_init(self, info_inputfile):
         logger.info("RPA read initial configs")
+        # #167: resolve BEFORE _read_chi0q materialises the array. The two
+        # presence flags are read_init's own branch conditions below, so
+        # they equal the eventual green_info presence (qlms.py merges the
+        # returned dict into green_info).
+        self._resolve_auto_scheme(
+            trans_mod_present="trans_mod" in info_inputfile.keys(),
+            green_init_present="green_init" in info_inputfile.keys())
+        self._emit_reduced_exactness_diagnostic(
+            trans_mod_present="trans_mod" in info_inputfile.keys(),
+            green_init_present="green_init" in info_inputfile.keys())
         info = {}
 
         path_to_input = info_inputfile.get("path_to_input", "")
 
         if "chi0q_init" in info_inputfile.keys():
             file_name = os.path.join(path_to_input, info_inputfile["chi0q_init"])
+            self._log_scheme_memory_estimate("chi0q_init load")
             info["chi0q"] = self._read_chi0q(file_name)
 
         if "trans_mod" in info_inputfile.keys():
@@ -2549,9 +2783,16 @@ class RPA:
 
                 self.spin_mode = "spin-diag"
             else:
+                hint = ""
+                if len(chi0q.shape) == 4 and str(self._scheme_resolution).startswith("auto:"):
+                    hint = (" calc_scheme='auto' resolved to 'general' ({}) for this "
+                            "input, but the supplied chi0q has the 4-axis reduced "
+                            "layout. Supply a rank-6 chi0q, or request "
+                            "calc_scheme = 'reduced' explicitly to accept the "
+                            "documented approximation.".format(self._scheme_resolution))
                 raise ValueError(
                     "chi0q from {}: unexpected shape for general scheme: "
-                    "{}".format(source, chi0q.shape))
+                    "{}.{}".format(source, chi0q.shape, hint))
 
         elif self.calc_scheme == "reduced":
             # reduced: shape = (nmat,nvol,nd,nd) where nd = norb or norb*nspin
@@ -3048,6 +3289,7 @@ class RPA:
         nvol = self.lattice.nvol
 
         # Find transfer term H0(k)
+        # adding a one-body term here requires extending scheme.flavour_conserved (#167)
         if "trans_mod" in green_info:
             logger.debug("calc_epsilon_k: use trans_mod")
             H0 = green_info['trans_mod']

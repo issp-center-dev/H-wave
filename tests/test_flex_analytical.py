@@ -1125,7 +1125,7 @@ class TestFLEXSchemeGuards(unittest.TestCase):
                               'SubShape': [1, 1, 1], 'Nmat': 4},
                     'enable_spin_orbital': False,
                     'calc_scheme': 'auto', 'calc_type': 'ring'}
-            return rpa_mod.RPA(param_ham, {}, info).calc_scheme
+            return rpa_mod.RPA(param_ham, {}, info).preview_scheme()[0]
 
         entries = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
         self.assertEqual(make({'PairHop': entries}), 'general')

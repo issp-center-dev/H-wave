@@ -1342,6 +1342,21 @@ def _load_chi0q(input_dict, norb=None):
     return chi0q, static_index
 
 
+def _auto_chi0q_tensor_scheme(files):
+    """hwave_sc's ``chi0q_tensor = "auto"`` rule, behaviour-frozen at its
+    1.0.x semantics via ``scheme.CAPABILITIES[...].sc_legacy_forcing``
+    (True for CoulombInter/Hund/Ising/Exchange/PairHop/Coulomb; False for
+    CoulombIntra/PairLift). Case-insensitive; an unknown key is IGNORED
+    (fail-closed discovery is deliberately NOT adopted here -- recorded
+    follow-up). Pinned by tests/test_sc_auto_scheme_freeze.py."""
+    from hwave.solver.scheme import CAPABILITIES, canonical_name
+    for k in (files or {}):
+        canon = canonical_name(k)
+        if canon is not None and CAPABILITIES[canon].sc_legacy_forcing:
+            return "general"
+    return "reduced"
+
+
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
                          precomputed_mu=None):
     """Compute chi0q internally using H-wave's RPA module.
@@ -1389,24 +1404,7 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     # Determine calc_scheme from chi0q_tensor option
     if chi0q_tensor == "auto":
-        # Use "general" when inter-orbital interactions are present,
-        # because their S/C matrices have off-diagonal elements that
-        # couple to chi0q off-diagonal components.
-        # With CoulombIntra only, S is block-diagonal and reduced is exact.
-        # CaseInsensitiveDict, like _read_interaction_files (round-5
-        # review): an exact-case check classified a 'coulombinter' run as
-        # reduced, silently omitting the very components the comment
-        # above says inter-orbital interactions require. 'Coulomb' counts
-        # too -- its split can produce a CoulombInter part.
-        from requests.structures import CaseInsensitiveDict
-        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
-        has_interorbital = any(k in files for k in
-                              ["Hund", "Exchange", "CoulombInter",
-                               "Ising", "PairHop", "Coulomb"])
-        if has_interorbital:
-            calc_scheme = "general"
-        else:
-            calc_scheme = "reduced"
+        calc_scheme = _auto_chi0q_tensor_scheme(info_inputfile.get("interaction", {}))
     elif chi0q_tensor == "general":
         calc_scheme = "general"
     else:
@@ -2222,6 +2220,10 @@ def _compute_vertices(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Simple mode: tuple (Pc_q, Ps_q), each shape (norb, norb, Nx, Ny, Nz).
         General mode: Vs_q, shape (norb, norb, norb, norb, Nx, Ny, Nz).
     """
+    # NOTE (#167): this list is the Eliashberg-side vertex-layout choice and
+    # is deliberately NOT derived from scheme.CAPABILITIES -- it differs
+    # from the chi0q_tensor='auto' rule (no CoulombInter/Coulomb) and is
+    # behaviour-frozen. Unifying it is a recorded follow-up decision.
     has_interorbital_vertex = any(k in inter_k for k in
                                   ["Hund", "Exchange", "Ising", "PairHop"])
     chi0q_is_4index = (chi0q.ndim == 8)

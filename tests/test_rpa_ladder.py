@@ -319,7 +319,7 @@ class TestRPALadder(unittest.TestCase):
                     "expected the scheme-gate error, got: {}".format(
                         logcm.output))
         # auto resolves to general; general constructs normally
-        self.assertEqual(_construct("auto").calc_scheme, "general")
+        self.assertEqual(_construct("auto").preview_scheme()[0], "general")
         self.assertEqual(_construct("general").calc_scheme, "general")
 
         # Every normally reached transverse call carries the bubble RANK

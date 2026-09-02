@@ -84,11 +84,11 @@ Support matrix
      - Relationship
    * - ``auto.density.resolution``
      - ``CoulombInter`` (on-site)
-     - ``auto`` -> ``reduced``
+     - ``auto`` -> ``general``
      - spin-free
      - supported
      - supported
-     - ``AUTO-RESOLVES(reduced)``
+     - ``AUTO-RESOLVES(general)``
    * - ``auto.exchange.resolution``
      - ``Exchange`` (on-site)
      - ``auto`` -> ``general``

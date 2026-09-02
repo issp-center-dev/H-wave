@@ -32,7 +32,8 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
-from .rpa import RPA, Lattice, Interaction, MOMENTUM_CONVENTION
+from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
+                  PAIRLIFT_INERT_WARNING)
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
@@ -156,6 +157,52 @@ class _AndersonMixer:
         return (x + self.mix * r).reshape(shape)
 
 
+def _auto_general_remediation(solver):
+    """#167: the 2.0 default calc_scheme='auto' promotes every declared
+    cross-carrying interaction to 'general', so a general-ONLY rejection can
+    now stop a configuration that H-wave 1.0.x (== explicit 'reduced') ran
+    without complaint. When that is how the run got here, name the
+    resolution that chose 'general' and the one-line way back; an explicit
+    'general' request was the user's own choice, so it gets no such hint.
+    Mirrors the 4-axis chi0q remediation hint in rpa.py.
+    """
+    token = getattr(solver, "_scheme_resolution", None)
+    if not str(token).startswith("auto:"):
+        return ""
+    return (" calc_scheme='auto' resolved to 'general' ({}) because a "
+            "cross-carrying interaction is declared; to run this "
+            "configuration as in H-wave 1.0.x request calc_scheme = "
+            "'reduced' explicitly (a documented approximation)."
+            .format(token))
+
+
+def _scheme_stamp(solver):
+    # #167: describes THIS run (never inside _freq_meta, which passes
+    # through the INPUT file's provenance). Plain str -> <U. FLEX's
+    # save_results is a distinct function from RPA's; this module-level
+    # helper mirrors RPA's closure semantics without importing it.
+    # getattr: tests drive save_results on __new__-built stubs (mirrors
+    # rpa.py's fallback -- a stub without calc_scheme stamps "unknown"
+    # rather than raising AttributeError).
+    scheme = getattr(solver, "calc_scheme", "unknown")
+    # _scheme_resolution is None exactly in the AUTO-UNRESOLVED state, which
+    # is NOT an explicit request: a completed pipeline run never persists
+    # "unresolved" (resolution precedes solve); it appears only for
+    # direct-API saves before resolution -- deliberately NOT in
+    # RESOLUTION_TOKENS. A stub missing the attribute entirely keeps the
+    # "explicit" default. (FLEX resolves auto in its constructor, so the None
+    # branch is unreachable through the FLEX pipeline; the two stamps are kept
+    # identical so neither can drift into the mislabel.)
+    res = getattr(solver, "_scheme_resolution", "explicit")
+    res = "unresolved" if res is None else res
+    return {
+        "calc_scheme": str(scheme),
+        "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
+                                             scheme)),
+        "scheme_resolution": str(res),
+    }
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -199,6 +246,40 @@ class FLEX(RPA):
         """Initialize FLEX-specific parameters."""
         logger.debug(">>> FLEX._init_flex_param")
 
+        # #167: FLEX has no transverse channel, so ring+ladder is invalid
+        # for every scheme that reaches FLEX's own logic -- rejected here as
+        # step 0, before any scheme logic runs.
+        #
+        # Note this guard is not the only stop, and deliberately not the
+        # first one: an EXPLICIT non-general scheme with
+        # calc_type='ring+ladder' is already rejected upstream by the
+        # inherited RPA _set_scheme ("calc_type='ring+ladder' requires
+        # calc_scheme='general' or 'auto'", logger.error + sys.exit(1)), so
+        # explicit reduced never gets here. That precedence is 1.0.x
+        # behaviour and is preserved on purpose (pinned by
+        # tests/test_auto_scheme_exactness.py::TestFLEXAutoResolution::
+        # test_explicit_reduced_ring_ladder_is_stopped_by_the_inherited_gate).
+        # What this step-0 guard covers is the rest: 'auto' (which 1.0.x
+        # resolved to general and which would otherwise reach the ring-only
+        # general path) and an explicit 'general'.
+        if getattr(self, "calc_type", "ring") == "ring+ladder":
+            msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                   "transverse ladder channel); FLEX general is ring-only. "
+                   "Use the default calc_type='ring' with "
+                   "calc_scheme='general'.")
+            logger.error(msg)
+            raise ValueError(msg)
+
+        # #167: 'auto' is resolved HERE, at construction -- FLEX's rule reads
+        # only the declared interaction types, never H0(k), so there are no
+        # late-arriving inputs to wait for (contrast RPA, whose predicate
+        # depends on trans_mod / green_init and so resolves at
+        # read_init/solve).
+        if self.calc_scheme_requested == "auto":
+            self._resolve_flex_auto_scheme()
+        else:
+            self._emit_flex_reduced_diagnostic()
+
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
         # interaction via the density-density diagonal ('kaabb->kab') on the
         # reduced path.  The 'general' scheme selects the paramagnetic
@@ -207,16 +288,7 @@ class FLEX(RPA):
         scheme = self.calc_scheme.lower()
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
-            # RPA *ring* (bubble) series with the full rank-4 vertex. The
-            # transverse *ladder* channel (calc_type='ring+ladder') is not part
-            # of this path, so reject it even though it forces scheme='general'.
-            if getattr(self, "calc_type", "ring") == "ring+ladder":
-                msg = ("FLEX does not support calc_type='ring+ladder' (the "
-                       "transverse ladder channel); FLEX general is ring-only. "
-                       "Use the default calc_type='ring' with "
-                       "calc_scheme='general'.")
-                logger.error(msg)
-                raise ValueError(msg)
+            # RPA *ring* (bubble) series with the full rank-4 vertex.
             if getattr(self.ham_info, "enable_spin_orbital", False):
                 raise ValueError(
                     "calc_scheme='general' FLEX (v1) does not support "
@@ -231,13 +303,17 @@ class FLEX(RPA):
                     "solver.")
             self._flex_general = False
         else:
-            if getattr(self, "calc_type", "ring") == "ring+ladder":
-                msg = ("FLEX does not support calc_type='ring+ladder' (the "
-                       "transverse ladder channel); use the default 'ring' "
-                       "with calc_scheme='reduced'/'general'.")
-            else:
-                msg = ("FLEX requires calc_scheme='reduced' or 'general', "
-                       "got '{}'.".format(self.calc_scheme))
+            # ring+ladder was already rejected as step 0 above, and 'auto'
+            # was resolved there too: only a genuinely unsupported scheme
+            # name can reach here. The assertion is on the REQUESTED string
+            # (the one FLEX's resolver keys off), so a mis-cased 'AUTO' --
+            # which the inherited _set_scheme also treats as an explicit,
+            # unsupported name -- still reaches the actionable ValueError
+            # below instead of an AssertionError.
+            assert self.calc_scheme_requested != "auto", \
+                "auto must be resolved above"
+            msg = ("FLEX requires calc_scheme='reduced' or 'general', "
+                   "got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
         # Exchange/PairHop under reduced are rejected by the
@@ -304,6 +380,95 @@ class FLEX(RPA):
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
+        # The inherited _show_params ran before FLEX resolved 'auto', so it
+        # printed the deferred marker; restate the settled value and the
+        # token that produced it (#167).
+        logger.info("    calc_scheme     = {} ({})".format(
+            self.calc_scheme, self._scheme_resolution))
+
+    def _resolve_flex_auto_scheme(self):
+        """Constructor-time FLEX auto resolution (#167): general iff any
+        declared type has flex_forcing.
+
+        FLEX's rule is H0-INDEPENDENT -- the dressed Green function can
+        hybridise during the SCF iteration however diagonal H0(k) starts
+        out -- so the decision reads only the declared interaction types and
+        can be taken here, at construction. Atomic; no fingerprint is
+        recorded (there are no late-arriving inputs to re-check), which also
+        makes the inherited RPA resolver a no-op at read_init/solve.
+        """
+        from hwave.solver import scheme as _scheme
+        types = _scheme.declared_types(self._scheme_source_tables())
+        chosen, token = _scheme.resolve_flex(types)
+        assert token in _scheme.RESOLUTION_TOKENS
+        # commit
+        self.calc_scheme = chosen
+        self.enable_reduced = (chosen == "reduced")
+        self._scheme_resolution = token
+        self._scheme_fingerprint = None
+        # side effects (best-effort: a logging failure must never sink a
+        # committed, valid resolution)
+        try:
+            if chosen == "reduced" and "PairLift" in types:
+                logger.warning(PAIRLIFT_INERT_WARNING)
+            legacy = _scheme.legacy_1_0_resolution(types, self.calc_type)
+            est = self._log_scheme_memory_estimate(
+                "auto-resolved calc_scheme (FLEX)")
+            if chosen != legacy:
+                logger.warning(
+                    "FLEX calc_scheme='auto' resolved to '{}' ({}); H-wave 1.0.x "
+                    "resolved this input to '{}'. Reason: {} carry cross-family "
+                    "vertex content and the dressed Green function can hybridise "
+                    "during iteration. chiq output becomes rank-6; memory/solve "
+                    "cost grow from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per "
+                    "(q, freq) (estimated principal array {:.3f} GB). To keep the "
+                    "1.0.x behaviour request calc_scheme = 'reduced' explicitly "
+                    "(a documented approximation).".format(
+                        chosen, token, legacy,
+                        ", ".join(sorted(t for t in types
+                                         if _scheme.CAPABILITIES[t].flex_forcing)),
+                        est / 1e9))
+            else:
+                logger.info("auto mode for calc_scheme: set to {} ({})".format(
+                    chosen, token))
+        except Exception as exc:
+            logger.error("scheme resolution logging failed: {!r}".format(exc))
+
+    def _emit_flex_reduced_diagnostic(self):
+        """Explicit reduced + a flex_forcing type: an approximation
+        UNCONDITIONAL of H0 (#167 §5). Emitted once, at construction.
+
+        ADVISORY ONLY (as RPA's counterpart): fail-closed discovery belongs
+        to the AUTO path, which decides on its verdict. Here the user named
+        the scheme, so an input the registry cannot judge skips the
+        diagnostic at debug level rather than failing a construction that
+        1.0.x completed.
+        """
+        from hwave.solver import scheme as _scheme
+        if self.calc_scheme_requested != "reduced":
+            return
+        try:
+            types = _scheme.declared_types(self._scheme_source_tables())
+        except ValueError as exc:
+            logger.debug("reduced-exactness diagnostic skipped: %s", exc)
+            return
+        forcing = sorted(t for t in types
+                         if _scheme.CAPABILITIES[t].flex_forcing)
+        if forcing:
+            logger.warning(
+                "calc_scheme='reduced' with {} is an approximation in FLEX "
+                "regardless of the transfer structure (the dressed Green "
+                "function can hybridise during iteration). calc_scheme="
+                "'general' or 'auto' carries the full vertex.".format(
+                    ", ".join(forcing)))
+
+    def _emit_reduced_exactness_diagnostic(self, *, trans_mod_present,
+                                           green_init_present):
+        # RPA's explicit-reduced diagnostic is H0-CONDITIONAL and its text
+        # cites RPA instabilities and RPA fixture figures; neither applies
+        # to FLEX, which warns at construction, unconditionally of H0
+        # (_emit_flex_reduced_diagnostic).
+        return
 
     def _check_reduced_rejects_spinful(self):
         """Reject ``self.spin_mode == 'spinful'`` under
@@ -465,7 +630,8 @@ class FLEX(RPA):
             raise ValueError(
                 "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
                 "only, got '{}'. spin-diag/spinful are deferred to the "
-                "generalized FLEX solver.".format(self.spin_mode))
+                "generalized FLEX solver.{}".format(
+                    self.spin_mode, _auto_general_remediation(self)))
 
         self._check_reduced_rejects_spinful()
 
@@ -2054,10 +2220,11 @@ class FLEX(RPA):
                             "class the general path is measured equal to "
                             "the RPA ring; other off-site classes are not "
                             "representable by a q-only vertex or carry "
-                            "unadjudicated vertex content.".format(
+                            "unadjudicated vertex content.{}".format(
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", with sublattice folding" if has_fold
-                                else ""))
+                                else "",
+                                _auto_general_remediation(self)))
                     # (Reader-bypassing internal tables only: file input
                     # rejects one-sided declarations since #93.)
                     # One-sided TABLES are fine: BOTH solvers reduce
@@ -2707,7 +2874,8 @@ class FLEX(RPA):
                      # hwave_sc _load_chi0q) accept the file in SO mode.
                      index_convention="spin_block",
                      **tail_meta,
-                     **_freq_meta("B"))
+                     **_freq_meta("B"),
+                     **_scheme_stamp(self))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -2733,7 +2901,8 @@ class FLEX(RPA):
                            # Fourier-sign provenance (issue #133): q labels
                            # follow the documented e^{+iqR} convention
                            momentum_convention=MOMENTUM_CONVENTION,
-                           **_freq_meta("B"))
+                           **_freq_meta("B"),
+                           **_scheme_stamp(self))
         if self._flex_general:
             # Self-describing index-order marker for the ORBITAL-PAIR files
             # only: their axes are the pairs (a,c) and (b,d), stored in that
@@ -2776,6 +2945,8 @@ class FLEX(RPA):
         # Save self-energy
         if "sigma" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
+            # #167: no scheme stamp here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
                      wavevector_unit=self.kvec,
@@ -2788,6 +2959,8 @@ class FLEX(RPA):
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
+            # #167: no scheme stamp here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
             green_extra = {}
             if ir_native:
                 # native-only provenance key (the densified green.npz key
