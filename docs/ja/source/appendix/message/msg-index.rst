@@ -3,7 +3,7 @@
 
 - ``mode is not defined in [mode].``
 
-  **説明 :** パラメータファイルの ``[mode]``\ セクションに ``mode``\ パラメータが指定されていない。
+  **説明 :** パラメータファイルの\ ``[mode]``\ セクションに\ ``mode``\ パラメータが指定されていない。
 
   **モード :** main
 
@@ -33,7 +33,7 @@
 
 - ``initial and initial_uhf can not be specified simultaneously.``
 
-  **説明 :** ``initial`` と ``initial_uhf``\ は同時に指定できない
+  **説明 :** ``initial``\ と\ ``initial_uhf``\ は同時に指定できない
 
   **モード :** UHFk (read_input_k)
 
@@ -57,7 +57,7 @@
 
 - ``mode.param.2Sz must be even(odd) when Ncond is even(odd).``
 
-  **説明 :**  パラメータ ``2Sz`` と ``Ncond``\ の偶奇が一致していない
+  **説明 :**  パラメータ\ ``2Sz``\ と\ ``Ncond``\ の偶奇が一致していない
 
   **モード :** solver base
 
@@ -111,7 +111,7 @@
 
 - ``Lattice initialization failed: 'CellShape' not found.``
 
-  **説明 :** [mode.param] に ``CellShape``\ が指定されていない
+  **説明 :** [mode.param] に\ ``CellShape``\ が指定されていない
 
   **モード :** RPA
 
@@ -141,13 +141,13 @@
 
 - ``T must be greater than or equal to zero: T=`` *T*
 
-  **説明 :** ``T`` に 0以上の値が指定されていない
+  **説明 :** ``T``\ に 0以上の値が指定されていない
 
   **モード :** RPA
 
 - ``both mu and Ncond or filling are specified``
 
-  **説明 :** ``mu``\ と ``Ncond``\ または ``filling``\ が同時に指定されている
+  **説明 :** ``mu``\ と\ ``Ncond``\ または\ ``filling``\ が同時に指定されている
 
   **モード :** RPA
 
@@ -177,7 +177,7 @@
 
 - ``none of mu, Ncond, nor filling is specified``
 
-  **説明 :** ``mu``\ または ``Ncond``, ``filling``\ のいずれも指定されていない
+  **説明 :** ``mu``\ または\ ``Ncond``, ``filling``\ のいずれも指定されていない
 
   **モード :** RPA
 
@@ -201,7 +201,7 @@
 
 - ``mode is not defined in [mode].``
 
-  **説明 :** ``[mode]`` に mode パラメータが指定されていない
+  **説明 :** ``[mode]``\ に mode パラメータが指定されていない
 
   **モード :** RPA
 
@@ -213,7 +213,7 @@
 
 - ``initial green function in coord space requires geometry.dat``
 
-  **説明 :** 実空間でのグリーン関数の読み込みは ``geometry.dat``\ を同時に指定する必要がある
+  **説明 :** 実空間でのグリーン関数の読み込みは\ ``geometry.dat``\ を同時に指定する必要がある
 
   **モード :** UHFk
 
@@ -225,7 +225,7 @@
 
 - ``Ncond or Nelec is missing. abort``
 
-  **説明 :** ``Ncond``\ または ``Nelec``\ パラメータが指定されていない
+  **説明 :** ``Ncond``\ または\ ``Nelec``\ パラメータが指定されていない
 
   **モード :** UHFk
 
@@ -243,7 +243,7 @@
 
 - ``_save_greenone: onebodyg_uhf and geometry_uhf are required``
 
-  **説明 :** ``onebodyg_uhf`` と ``geometry_uhf``\ が指定されていない
+  **説明 :** ``onebodyg_uhf``\ と\ ``geometry_uhf``\ が指定されていない
 
   **モード :** UHFk
 
@@ -261,13 +261,13 @@
 
 - ``OneBodyG is required to output green function.``
 
-  **説明 :** グリーン関数の出力のための ``OneBodyG``\ の指定がない
+  **説明 :** グリーン関数の出力のための\ ``OneBodyG``\ の指定がない
 
   **モード :** UHFr
 
 - ``hermite check failed for Initial``
 
-  **説明 :** ``Initial`` が Hermite でない
+  **説明 :** ``Initial``\ が Hermite でない
 
   **モード :** UHFr
 
@@ -315,13 +315,13 @@
 
 - ``mode.`` *key* ``in mode section is incorrect:`` *values*
 
-  **説明 :** ``[mode]``\ セクションの ``mode``\ パラメータの値が不正
+  **説明 :** ``[mode]``\ セクションの\ ``mode``\ パラメータの値が不正
 
   **モード :** solver base [warning]
 
 - ``mode.`` *key* ``is not defined.``
 
-  **説明 :** ``[mode]``\ セクションに ``mode``\ パラメータが指定されていない
+  **説明 :** ``[mode]``\ セクションに\ ``mode``\ パラメータが指定されていない
 
   **モード :** solver base [warning]
 
@@ -345,19 +345,19 @@
 
 - ``FATAL: 2Sz=`` *value* ``. 2Sz should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}`\ の計算で ``2Sz``\ は偶数でなければならない
+  **説明 :** :math:`f_{ij}`\ の計算で\ ``2Sz``\ は偶数でなければならない
 
   **モード :** UHFr [warning]
 
 - ``FATAL: Ne=`` *value* ``. Ne should be even for calculating fij``
 
-  **説明 :** :math:`f_{ij}`\ の計算で ``Ne``\ は偶数でなければならない
+  **説明 :** :math:`f_{ij}`\ の計算で\ ``Ne``\ は偶数でなければならない
 
   **モード :** UHFr [warning]
 
 - ``NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future``
 
-  **説明 :** :math:`f_{ij}`\ の計算で ``Sz`` が 0以外の偶数の場合は未サポート
+  **説明 :** :math:`f_{ij}`\ の計算で\ ``Sz``\ が 0以外の偶数の場合は未サポート
 
   **モード :** UHFr [warning]
 
@@ -377,7 +377,7 @@
 - ``dynamic Eliashberg grid mismatch: nmat differs``
 
   **説明 :** FLEX 出力ファイル（``chiq_s.npz`` / ``chiq_c.npz`` / ``green.npz``\ ）に
-  保存された松原振動数の数（``Nmat``\ ）が、現在の計算の ``[mode.param] Nmat``\ と
-  異なる。一致する ``Nmat`` で FLEX 出力を再生成するか、``Nmat``\ を保存値に合わせること。
+  保存された松原振動数の数（``Nmat``\ ）が、現在の計算の\ ``[mode.param] Nmat``\ と
+  異なる。一致する\ ``Nmat``\ で FLEX 出力を再生成するか、``Nmat``\ を保存値に合わせること。
 
   **モード :** RPA (hwave_sc, dynamic Eliashberg) [error]

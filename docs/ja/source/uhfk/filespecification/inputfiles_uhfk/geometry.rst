@@ -41,15 +41,15 @@
    **形式 :** float型
 
    **説明 :**
-   基本格子ベクトル :math:`\vec{a}_1, \vec{a}_2, \vec{a}_3`\ を指定します。
+   基本格子ベクトル\ :math:`\vec{a}_1, \vec{a}_2, \vec{a}_3`\ を指定します。
 
 -  ``[Norbit]``
 
    **形式 :** int型
 
    **説明 :**
-   ユニットセル内の軌道の数 :math:`N_\text{orbit}`\ を指定します。
-   スピン軌道モード（``enable_spin_orbital = true``\ ）では、``Norbit``\ はスピン軌道の数（= 2 × 物理軌道数 = Wannier90 の ``num_wann``\ ）であり、偶数でなければなりません。
+   ユニットセル内の軌道の数\ :math:`N_\text{orbit}`\ を指定します。
+   スピン軌道モード（``enable_spin_orbital = true``\ ）では、``Norbit``\ はスピン軌道の数（= 2 × 物理軌道数 = Wannier90 の\ ``num_wann``\ ）であり、偶数でなければなりません。
 
 
 -  ``[vx_i]``, ``[vy_i]``, ``[vz_i]``
@@ -57,7 +57,7 @@
    **形式 :** float型
 
    **説明 :**
-   各軌道のWannier center :math:`\vec{v}_i` を fractional coordinate 表記で指定します。
+   各軌道のWannier center :math:`\vec{v}_i`\ を fractional coordinate 表記で指定します。
 
 使用ルール
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
