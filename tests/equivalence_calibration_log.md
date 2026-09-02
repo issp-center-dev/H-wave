@@ -685,3 +685,76 @@ step's own contribution to the gate is real but narrow -- it is the
 difference between `number_residual_rpa` passing and failing by one
 ULP on the FC fixture, not the difference between catching or missing
 the regression this Event's fix addresses.
+
+## Event 6 -- refreeze of `counter_cross_geev` and `mu_number_residual` (the Event-5 bitwise-zero floor broke on a CI runner update)
+
+- **Date:** 2026-09-02
+- **Commit (dev+CI measured, NOT the frozen PROVENANCE revision --
+  same labeling rule as Events 4/5; the file's LAST bare
+  `- **Commit:**` line must keep pointing at Event 3's
+  `8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`, because this Event does
+  NOT re-measure the original 42-cell candidate-atol table):**
+  d4beb952858e51c9da3be7b9726b47802902e9af (develop, the #170 merge).
+- **Trigger:** `TestMuGreenDivergenceDiagnostic.
+  test_6_cross_counter_and_root_quality` failed on GitHub-hosted
+  runners with `counter_cross_at_mu_flex` = `number_residual_flex` =
+  3.552713678800501e-15 (geev fixture) against the 1e-15 ceilings --
+  on develop's own d4beb952 push runs (calibrate 3.11 gate,
+  test-full 3.12) and on an unrelated PR's fast gate (3.9). The value
+  is exactly 2^-48 = 16 ULP of an O(1) particle count. Event 5 froze
+  these two keys at the worst==0 floor because all five calibration
+  machines measured bitwise 0.0; that tie between two DIFFERENT
+  counter expressions was a build coincidence (same BLAS reduction
+  order), and a runner-image update broke it, amplified through the
+  non-normal (LAPACK geev) eigenvector conditioning this fixture
+  deliberately exercises. Not a physics or seam regression: every
+  other diagnostic checkpoint stayed inside its Event-5 family.
+- **Stage 1 (dev machine):** macOS-26.5.2-arm64-arm-64bit-Mach-O,
+  Python 3.13.13, numpy 2.4.6, scipy 1.17.1, BLAS/LAPACK = Accelerate.
+  THREE `python -m tests.equivalence_measure` invocations
+  (`calib-dev-{1,2,3}.json`), 0 `"error"` records, `source_sha` ==
+  d4beb952858e51c9da3be7b9726b47802902e9af on all three.
+  `counter_cross_at_mu_{rpa,flex}` and `number_residual_{rpa,flex}`
+  measured exactly 0.0 on every fixture in all three runs -- the
+  Accelerate build keeps the bitwise tie.
+- **Stage 2 (the four gating continuous-integration runners):**
+  `ubuntu-latest` (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39) x
+  Python 3.9.25/3.10.21/3.11.16/3.12.14, numpy 1.26.4,
+  scipy 1.13.1/1.15.3/1.17.1/1.17.1,
+  `.github/workflows/equivalence-calibration.yml`, **workflow run
+  33579367730, attempt 1** (workflow_dispatch at d4beb952). All 12
+  measurement artifacts + 4 unittest-timing artifacts present;
+  `tests.equivalence_freeze_check` on the downloaded set:
+  `VALIDATION OK (12 measurement + 4 unittest samples, source_sha
+  d4beb952858e51c9da3be7b9726b47802902e9af)`. The `calibrate (3.12)`
+  job's own unittest step failed -- on exactly the two checkpoints
+  this Event refreezes (the measurement steps run under
+  `if: always()` and completed).
+- **Derivation rule (Event 5's):** worst = MAX over {dev machine, all
+  4 CI runners x 3 invocations}; ceiling = `1e-15 if worst == 0 else
+  max(1e-15, 10**ceil(log10(10 * worst)))`.
+
+| cell_id/checkpoint | observable | primary residual | secondary residual | derived value | decision | reason |
+|---|---|---|---|---|---|---|
+| counter_cross_at_mu_rpa (`counter_cross_nd_le2`) | benign/fc | 0.0 (dev MAX) | 0.0 (CI MAX) | 1e-15 | keep | structural zero everywhere, worst==0 floor unchanged |
+| counter_cross_at_mu_rpa (`counter_cross_geev`) | geev | 0.0 (dev MAX) | 0.0 (CI MAX) | -- | accept | rpa-side counter stays bitwise tied on every runner |
+| counter_cross_at_mu_flex (`counter_cross_nd_le2`) | benign/fc | 0.0 (dev MAX) | 0.0 (CI MAX) | -- | accept | structural zero |
+| counter_cross_at_mu_flex (`counter_cross_geev`) | geev | 0.0 (dev MAX) | **3.552714e-15** (CI MAX, Python 3.12, all 3 invocations) | **1e-13** | refreeze | 10**ceil(log10(10 * 3.552714e-15)) = 1e-13; 2^-48 reduction-order noise through geev conditioning |
+| number_residual_rpa (`mu_number_residual`) | benign/fc/geev | 0.0 (dev MAX) | 0.0 (CI MAX) | -- | accept | structural zero on all fixtures |
+| number_residual_flex (`mu_number_residual`) | geev | 0.0 (dev MAX) | **3.552714e-15** (CI MAX, Python 3.12) | **1e-13** | refreeze | one shared key over rpa+flex and all fixtures; the worst governs; same rule and mechanism as `counter_cross_geev` |
+
+Every OTHER diagnostic checkpoint stayed inside its Event-5 family on
+this run (worst movers, all within existing ceilings:
+assertion3/geev 4.475452e-16 vs `mu_diag` 1e-14;
+dyson_residual_eigenbasis/benign 9.992071e-16 vs `green_dyson` 1e-14;
+per-cell comparison residuals all <= 2.776e-16 vs their frozen atols).
+No other key is re-derived by this Event. `counter_cross_nd_le2`
+remains at the worst==0 floor 1e-15: the symmetric (nd<=2) path keeps
+the bitwise tie on every runner, consistent with the geev-conditioning
+explanation of the breach.
+
+WATCH carried forward: the two refrozen keys now hold ~28x margin over
+the measured worst. If a future runner pool measures >1e-14 here, the
+next recalibration should consider an ULP-distance metric (the
+invariant "the two counters agree to a few tens of ULP through geev
+conditioning" is platform-stable; an absolute epsilon is not).
