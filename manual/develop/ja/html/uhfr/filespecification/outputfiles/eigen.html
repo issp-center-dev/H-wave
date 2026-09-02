@@ -37,12 +37,12 @@
   <section id="eigen">
 <span id="subsec-eigen-dat"></span><h1>eigen<a class="headerlink" href="#eigen" title="Link to this heading">¶</a></h1>
 <p>収束したハミルトニアンの固有値、固有ベクトルをnpz形式で出力します。
-ファイルは環境設定ファイルの <code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクション <code class="docutils literal notranslate"><span class="pre">eigen</span></code>で指定された文字列 (以下、 <code class="docutils literal notranslate"><span class="pre">eigen_str</span></code> ) を用いて、
+ファイルは環境設定ファイルの<code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクション<code class="docutils literal notranslate"><span class="pre">eigen</span></code>で指定された文字列 (以下、<code class="docutils literal notranslate"><span class="pre">eigen_str</span></code> ) を用いて、
 <code class="docutils literal notranslate"><span class="pre">{key}_eigen_str.npz</span></code>という名前で出力されます。
-ここで、 <code class="docutils literal notranslate"><span class="pre">{key}</span></code>は</p>
+ここで、<code class="docutils literal notranslate"><span class="pre">{key}</span></code>は</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: <code class="docutils literal notranslate"><span class="pre">sz-free</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">spin-up</span></code> , <code class="docutils literal notranslate"><span class="pre">spin-down</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: <code class="docutils literal notranslate"><span class="pre">sz-free</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">spin-up</span></code> , <code class="docutils literal notranslate"><span class="pre">spin-down</span></code></p></li>
 </ul>
 <p>となります ( <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合には2つのファイルが書き出されます)。
 以下、データを読み込む例となります。</p>
@@ -52,17 +52,17 @@
 <span class="n">eigenvector</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"eigenvector"</span><span class="p">]</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>には固有値が低い順に格納されます。 <code class="docutils literal notranslate"><span class="pre">N</span></code>を全サイト数とした場合、</p>
+<p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>には固有値が低い順に格納されます。<code class="docutils literal notranslate"><span class="pre">N</span></code>を全サイト数とした場合、</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: 2 <code class="docutils literal notranslate"><span class="pre">N</span></code>個</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">N</span></code>個</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: 2 <code class="docutils literal notranslate"><span class="pre">N</span></code>個</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">N</span></code>個</p></li>
 </ul>
 <p>の固有値が出力されます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">eigenvector</span></code>には対応する固有ベクトルが格納されます。
-第1列目のindexは  <code class="docutils literal notranslate"><span class="pre">n_site</span></code>をサイトのindex、 <code class="docutils literal notranslate"><span class="pre">n_spin</span></code>をスピンのindex(upの場合に0, downの場合に1)として、</p>
+第1列目のindexは  <code class="docutils literal notranslate"><span class="pre">n_site</span></code>をサイトのindex、<code class="docutils literal notranslate"><span class="pre">n_spin</span></code>をスピンのindex(upの場合に0, downの場合に1)として、</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: <code class="docutils literal notranslate"><span class="pre">n_site</span></code> + <code class="docutils literal notranslate"><span class="pre">n_spin</span></code> * <code class="docutils literal notranslate"><span class="pre">N</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">n_site</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定しない場合: <code class="docutils literal notranslate"><span class="pre">n_site</span></code> + <code class="docutils literal notranslate"><span class="pre">n_spin</span></code> * <code class="docutils literal notranslate"><span class="pre">N</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">Sz</span></code>を指定した場合: <code class="docutils literal notranslate"><span class="pre">n_site</span></code></p></li>
 </ul>
 <p>に対応し、第2列目のindexは固有値のindexに対応します。</p>
 </section>

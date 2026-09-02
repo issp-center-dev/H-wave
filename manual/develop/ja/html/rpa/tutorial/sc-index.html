@@ -39,14 +39,14 @@
 <h1><span class="section-number">5.2. </span>チュートリアル: Eliashberg方程式ソルバー<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h1>
 <p>本チュートリアルでは、H-waveに含まれる線形化Eliashberg方程式ソルバー
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の使い方を説明します。
-このツールは、RPAソルバーで計算した裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>
+このツールは、RPAソルバーで計算した裸感受率<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>
 を用いて線形化Eliashberg方程式を解き、超伝導不安定性を解析します。</p>
-<p>サンプルファイルは <code class="docutils literal notranslate"><span class="pre">docs/ja/source/rpa/sample_sc</span></code>ディレクトリにあります。</p>
+<p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/rpa/sample_sc</span></code>ディレクトリにあります。</p>
 <section id="id1">
 <h2><span class="section-number">5.2.1. </span>計算の流れ<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
 <p>計算は2つのステップで行います:</p>
 <ol class="arabic simple">
-<li><p><strong>RPA計算</strong> (<code class="docutils literal notranslate"><span class="pre">hwave</span></code>): 裸感受率 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算し、
+<li><p><strong>RPA計算</strong> (<code class="docutils literal notranslate"><span class="pre">hwave</span></code>): 裸感受率<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算し、
 <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>に保存します。</p></li>
 <li><p><strong>Eliashberg方程式ソルバー</strong> (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>): <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>を読み込み、
 グリーン関数を再構成し、RPA頂点を計算した後、
@@ -64,9 +64,9 @@
   + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
   + \sum_{i,\alpha\neq\beta} V_{\alpha\beta}\,
     n_{i\alpha} n_{i\beta}\]</div>
-<p>ここで、オンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 0.4\)</span>、
-軌道間クーロン相互作用 <span class="math notranslate nohighlight">\(V\)</span>を使用します。</p>
-<p>このサンプルは有機導体 <span class="math notranslate nohighlight">\(\beta\)</span>-(meso-DMBEDT-TTF)<span class="math notranslate nohighlight">\(_2\)</span>PF<span class="math notranslate nohighlight">\(_6\)</span>
+<p>ここで、オンサイトクーロン斥力<span class="math notranslate nohighlight">\(U = 0.4\)</span>、
+軌道間クーロン相互作用<span class="math notranslate nohighlight">\(V\)</span>を使用します。</p>
+<p>このサンプルは有機導体<span class="math notranslate nohighlight">\(\beta\)</span>-(meso-DMBEDT-TTF)<span class="math notranslate nohighlight">\(_2\)</span>PF<span class="math notranslate nohighlight">\(_6\)</span>
 の伝導層モデルに基づいており、
 トランスファー積分は拡張ヒュッケル法による計算値を使用しています。 <a class="footnote-reference brackets" href="#id7" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a></p>
 </section>
@@ -74,13 +74,13 @@
 <h2><span class="section-number">5.2.3. </span>理論<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
 <section id="id5">
 <h3>超伝導感受率<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
-<p>RPA電荷感受率 <span class="math notranslate nohighlight">\(\hat{X}^c\)</span>およびスピン感受率 <span class="math notranslate nohighlight">\(\hat{X}^s\)</span>は
+<p>RPA電荷感受率<span class="math notranslate nohighlight">\(\hat{X}^c\)</span>およびスピン感受率<span class="math notranslate nohighlight">\(\hat{X}^s\)</span>は
 以下のように与えられます:</p>
 <div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-1">
 <span class="eqno">(5.2)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-1" title="Link to this equation">¶</a></span>\[\hat{X}^c = (\hat{I} + \hat{X}^{(0)} (\hat{U} + 2\hat{V}))^{-1} \hat{X}^{(0)}\]</div>
 <div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-2">
 <span class="eqno">(5.3)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-2" title="Link to this equation">¶</a></span>\[\hat{X}^s = (\hat{I} - \hat{X}^{(0)} \hat{U})^{-1} \hat{X}^{(0)}\]</div>
-<p>ここで <span class="math notranslate nohighlight">\(\hat{X}^{(0)}\)</span>は裸感受率、
+<p>ここで<span class="math notranslate nohighlight">\(\hat{X}^{(0)}\)</span>は裸感受率、
 <span class="math notranslate nohighlight">\(\hat{U}\)</span>はオンサイト相互作用行列、
 <span class="math notranslate nohighlight">\(\hat{V}\)</span>はサイト間相互作用行列です。</p>
 </section>
@@ -107,7 +107,7 @@ G^{(0)}_{\beta\beta'}(-\mathbf{k}', -i\varepsilon_{n'})
 <p><span class="math notranslate nohighlight">\(\lambda_S = 1\)</span> (<span class="math notranslate nohighlight">\(\lambda_T = 1\)</span>) が超伝導転移点に対応します。
 <span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span>（正の固有値）のとき常伝導状態は超伝導に対して不安定です。
 負の固有値は符号反転ギャップに対応しますが、
-自己無撞着条件 <span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span>を満たさないため
+自己無撞着条件<span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span>を満たさないため
 超伝導不安定性を示しません。</p>
 <p>Eliashberg方程式の数値解法として、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>では自己無撞着べき乗反復法
 （固有値が最大のモードに収束）とArnoldi法による固有値解析を実装しています。</p>
@@ -126,7 +126,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <h2><span class="section-number">5.2.4. </span>入力ファイルの準備<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h2>
 <section id="id9">
 <h3>パラメータファイル<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h3>
-<p>TOML形式のパラメータファイル <code class="docutils literal notranslate"><span class="pre">input.toml</span></code>を作成します:</p>
+<p>TOML形式のパラメータファイル<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>を作成します:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
   print_level = 1
 
@@ -194,7 +194,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <p>Eliashberg方程式ソルバーの設定です。主なパラメータ:</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (自己無撞着べき乗法)、
-<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi固有値解析)、または <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi固有値解析)、または<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>はRPA出力ファイルから
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を読み込みます。
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は内部で計算します。
@@ -202,23 +202,23 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 （<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>に必須）。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> は <strong>この</strong> 入力ファイルの <code class="docutils literal notranslate"><span class="pre">mode.param</span></code>の設定で
+<p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は <strong>この</strong> 入力ファイルの<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>の設定で
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を再計算します。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>の結果と比較可能に
 するには、chi0q ファイルを生成した計算とこれらの設定を一致させる必要が
-あります。特に <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>（Matsubara 高周波数裾補正）は中程度の
-<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>において <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> を <span class="math notranslate nohighlight">\(O(1)\)</span>で変えます。
-デフォルトの <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0.0</span></code>（補正なし）は収束が悪い場合があり、
-実用的な RPA/FLEX 計算では通常 <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>を用います。
+あります。特に<code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>（Matsubara 高周波数裾補正）は中程度の
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>において<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を<span class="math notranslate nohighlight">\(O(1)\)</span>で変えます。
+デフォルトの<code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0.0</span></code>（補正なし）は収束が悪い場合があり、
+実用的な RPA/FLEX 計算では通常<code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>を用います。
 chi0q ファイルには生成時の値が記録されており、読み込み時に設定と
-食い違う場合は <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が警告を出します。</p>
+食い違う場合は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が警告を出します。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
 <p><strong>修正前の</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <strong>FLEX計算の出力を使う場合。</strong>
 このパスは軌道ペアを転置したバブルから自己エネルギーを構成していたため、
-多軌道模型では <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>の軌道非対角成分が誤って
+多軌道模型では<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>の軌道非対角成分が誤って
 います。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>が読む感受率は影響を受けないので問題
-ありませんが、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> は FLEX の <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を取るため対象です。
+ありませんが、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>は FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を取るため対象です。
 修正済みのビルドで再生成してください。1軌道の計算および
 <code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>スキームは影響を受けません。
 <a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-general-transpose-fix-ja"><span class="std std-ref">移行に関する警告</span></a>を参照して
@@ -228,36 +228,36 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: ペアリング頂点の振動数の扱い。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>（デフォルト）は
 ボゾン振動数ゼロでペアリング頂点を評価する静的近似（Nakano--Kuroki 式(9)）で、
 振動数依存性のないギャップを与えます。<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>は、振動数依存のペアリング
-頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>とギャップ <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>
+頂点<span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>とギャップ<span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>
 を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>が必要です
-（下記の <a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
+（下記の<a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
 <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>)、
 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>)、
 <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>などが利用可能です。
 有効な形状因子の一覧は
-<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s_ext&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;s_ext_2d&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;s&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;s_ext&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;s_ext_2d&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code>、
 <code class="docutils literal notranslate"><span class="pre">&quot;d_y2z2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_y - \cos k_z\)</span>) 、
-<code class="docutils literal notranslate"><span class="pre">&quot;d_xy&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_xz&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_z2&quot;</span></code>、
-<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>です。
-準2次元セル <code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">Ny,</span> <span class="pre">Nz]</span></code>（<span class="math notranslate nohighlight">\(k_x = 0\)</span>）では、
-<span class="math notranslate nohighlight">\(\sin k_x\)</span>を含む形状因子（<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_xy&quot;</span></code> 、 <code class="docutils literal notranslate"><span class="pre">&quot;d_xz&quot;</span></code>）は
-恒等的に消えるため無効です。三重項には <code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code>を、面内 <span class="math notranslate nohighlight">\(d\)</span>波
-には <span class="math notranslate nohighlight">\((\pi,0)\)</span> と <span class="math notranslate nohighlight">\((0,\pi)\)</span>でノードを持つ <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code>ではなく、
-同点で逆符号のアンチノードを持つ <code class="docutils literal notranslate"><span class="pre">&quot;d_y2z2&quot;</span></code>を用いてください。</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;d_xy&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_xz&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_z2&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>です。
+準2次元セル<code class="docutils literal notranslate"><span class="pre">CellShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">Ny,</span> <span class="pre">Nz]</span></code>（<span class="math notranslate nohighlight">\(k_x = 0\)</span>）では、
+<span class="math notranslate nohighlight">\(\sin k_x\)</span>を含む形状因子（<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_xy&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;d_xz&quot;</span></code>）は
+恒等的に消えるため無効です。三重項には<code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code>を、面内<span class="math notranslate nohighlight">\(d\)</span>波
+には<span class="math notranslate nohighlight">\((\pi,0)\)</span>と<span class="math notranslate nohighlight">\((0,\pi)\)</span>でノードを持つ<code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code>ではなく、
+同点で逆符号のアンチノードを持つ<code class="docutils literal notranslate"><span class="pre">&quot;d_y2z2&quot;</span></code>を用いてください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: 自己無撞着反復の最大回数。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: 混合パラメータ（0: 混合なし、1: 古い解を完全保持）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: ギャップ関数の収束条件。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: 固有値モードで計算する固有値の数。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>（デフォルト）、 <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>、
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>（デフォルト）、<code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>、
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: ペアバブル <span class="math notranslate nohighlight">\(G^{(2)}\)</span>に解析的な松原 tail 補正を適用
-します（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code>、バージョン 2.0 以降）。素朴な打ち切り和は主要な
-単位行列 tail を取りこぼし（ <span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>の誤差）、わずかに
-不定符号になり得るため、小さい <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>では報告される固有値に偽の虚部が
+<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: ペアバブル<span class="math notranslate nohighlight">\(G^{(2)}\)</span>に解析的な松原 tail 補正を適用
+します（デフォルト<code class="docutils literal notranslate"><span class="pre">true</span></code>、バージョン 2.0 以降）。素朴な打ち切り和は主要な
+単位行列 tail を取りこぼし（<span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>の誤差）、わずかに
+不定符号になり得るため、小さい<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>では報告される固有値に偽の虚部が
 混入します。この補正は漸近的です。保持される最大周波数が関連するエネル
 ギースケールを超えるときに有効で、窓端でグリーン関数が tail から大きく
 外れている場合はソルバーが警告します（その領域では過補正になり得て、
@@ -267,61 +267,61 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 ターゲットとの距離の変化が正当に起こり得ます（これは補正された物理で
 あり、ソルバーの欠陥ではありません）。<code class="docutils literal notranslate"><span class="pre">false</span></code>は補正導入前の結果を
 再現します。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>（shift-invert 系の <code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>のみ）: shift-invert
-ソルバの実数ターゲット <span class="math notranslate nohighlight">\(\sigma\)</span> 。 <span class="math notranslate nohighlight">\(\sigma\)</span>近傍の固有値が先に
-求まります。素の <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>では無視されます（警告あり）。arnoldi では
-代わりに <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を使ってください。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> （ <code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>のときのみ有効）:
-正の数値または <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>。ARPACK の既定の選択 （ <code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>）は
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>（shift-invert 系の<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>のみ）: shift-invert
+ソルバの実数ターゲット<span class="math notranslate nohighlight">\(\sigma\)</span>。<span class="math notranslate nohighlight">\(\sigma\)</span>近傍の固有値が先に
+求まります。素の<code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>では無視されます（警告あり）。arnoldi では
+代わりに<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を使ってください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>（<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>のときのみ有効）:
+正の数値または<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>。ARPACK の既定の選択 （<code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>）は
 <em>絶対値</em> 最大の固有値を返すため、超伝導不安定性から遠い場合、小さな正
 （引力的）の主固有値が、より大きな負（斥力的）の固有値に隠れて取りこぼされ、
-報告される主固有値が負（非物理的）になることがあります。 <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
-を指定すると、シフトした演算子 <span class="math notranslate nohighlight">\(A + \sigma I\)</span>に対して <em>実部</em> 最大の
-固有値（ <code class="docutils literal notranslate"><span class="pre">which='LR'</span></code> ； <span class="math notranslate nohighlight">\(T_c\)</span> で <span class="math notranslate nohighlight">\(\lambda \to 1\)</span>となる物理的な
+報告される主固有値が負（非物理的）になることがあります。<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
+を指定すると、シフトした演算子<span class="math notranslate nohighlight">\(A + \sigma I\)</span>に対して <em>実部</em> 最大の
+固有値（<code class="docutils literal notranslate"><span class="pre">which='LR'</span></code>；<span class="math notranslate nohighlight">\(T_c\)</span>で<span class="math notranslate nohighlight">\(\lambda \to 1\)</span>となる物理的な
 SC固有値）を求めます。シフトは内部で差し引かれるので、受け取る／保存される
-固有値はシフト前の正しい値です。 <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>はスペクトル半径から
+固有値はシフト前の正しい値です。<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>はスペクトル半径から
 <span class="math notranslate nohighlight">\(\sigma\)</span>を自動設定します。明示的に指定する場合は、最も負の固有値の
-<em>絶対値</em> より大きい正の <span class="math notranslate nohighlight">\(\sigma\)</span>を与えます（ <span class="math notranslate nohighlight">\(A + \sigma I\)</span>の
+<em>絶対値</em> より大きい正の<span class="math notranslate nohighlight">\(\sigma\)</span>を与えます（<span class="math notranslate nohighlight">\(A + \sigma I\)</span>の
 スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
-弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>
+弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>
 （shift-invert のターゲット）とは別物である点に注意してください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code>でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
-実行します。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> と <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> の <strong>両方</strong> に
-対応します（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
+実行します。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>の <strong>両方</strong> に
+対応します（デフォルト<code class="docutils literal notranslate"><span class="pre">false</span></code>）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
 反復・部分空間反復・shift-invert）は常にホストで実行されます（CuPy に一般の
 非エルミート固有値ソルバーが無いため）。反復ごとにデバイスへ渡るのはギャップ
 ベクトルのみです。使用可能な CuPy/CUDA デバイスが無い場合は警告を出して CPU に
-フォールバックします（下記の <a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a>を参照）。GPU
-実行時は <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>は無視されます。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code>にすると <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>を厳格化し、CuPy/CUDA が
+フォールバックします（下記の<a class="reference internal" href="#sc-dynamic-gpu"><span class="std std-ref">GPU実行の節</span></a>を参照）。GPU
+実行時は<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>は無視されます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code>にすると<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>を厳格化し、CuPy/CUDA が
 使えない場合に静かに CPU へフォールバックせずエラーで停止します
-（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）。動的 Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>に設定）
-および FLEX・RPA ソルバー（<code class="docutils literal notranslate"><span class="pre">gpu</span></code>フラグと同じく <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>に設定）で
+（デフォルト<code class="docutils literal notranslate"><span class="pre">false</span></code>）。動的 Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>に設定）
+および FLEX・RPA ソルバー（<code class="docutils literal notranslate"><span class="pre">gpu</span></code>フラグと同じく<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>に設定）で
 有効です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>: 動的モードの空間 FFT のワーカースレッド数
-（デフォルト <code class="docutils literal notranslate"><span class="pre">1</span></code> = 従来どおりの直列 numpy。<code class="docutils literal notranslate"><span class="pre">-1</span></code>で全コア。
+（デフォルト<code class="docutils literal notranslate"><span class="pre">1</span></code> = 従来どおりの直列 numpy。<code class="docutils literal notranslate"><span class="pre">-1</span></code>で全コア。
 GPU 実行時は無視されます）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>: 動的モードの松原軸の表現。デフォルトは <code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code>
+<li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>: 動的モードの松原軸の表現。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code>
 （従来どおり）。<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>を指定すると sparse-ir による中間表現基底を
-使用します（下記の <a class="reference internal" href="#sc-dynamic-ir"><span class="std std-ref">IR基底の節</span></a>を参照）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR基底の打ち切り精度 <span class="math notranslate nohighlight">\(\varepsilon\)</span>。デフォルトは 1e-8。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: IR基底の実周波数バンド幅 <span class="math notranslate nohighlight">\(\omega_{\max}\)</span>。省略時は
-分散のスペクトル範囲 <span class="math notranslate nohighlight">\(\max|\varepsilon_k-\mu|\)</span>と相互作用スケールから
+使用します（下記の<a class="reference internal" href="#sc-dynamic-ir"><span class="std std-ref">IR基底の節</span></a>を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: IR基底の打ち切り精度<span class="math notranslate nohighlight">\(\varepsilon\)</span>。デフォルトは 1e-8。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: IR基底の実周波数バンド幅<span class="math notranslate nohighlight">\(\omega_{\max}\)</span>。省略時は
+分散のスペクトル範囲<span class="math notranslate nohighlight">\(\max|\varepsilon_k-\mu|\)</span>と相互作用スケールから
 自動推定します（推定できない場合は明示指定を求めるエラーになります）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>。デフォルトは <code class="docutils literal notranslate"><span class="pre">false</span></code>。
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>。デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。
 スピン・電荷感受率が静的支配的な場合（サンプリング窓内でほぼ振動数に依存せず
-大きい、すなわち臨界近傍）、IR圧縮が <span class="math notranslate nohighlight">\(O(\beta/N_\mathrm{mat})\)</span>の
+大きい、すなわち臨界近傍）、IR圧縮が<span class="math notranslate nohighlight">\(O(\beta/N_\mathrm{mat})\)</span>の
 <span class="math notranslate nohighlight">\(\delta(\tau)\)</span>アーティファクトとして破棄する振動数非依存成分が
 物理的な重みを持ち、破棄すると最大固有値が誤ります。破棄成分がデータスケールを
 超える場合はソルバーが停止します。<code class="docutils literal notranslate"><span class="pre">true</span></code>にすると停止せず静的成分を保持します
-（あるいは <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>を下げる、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やす）。</p></li>
+（あるいは<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>を下げる、FLEX の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やす）。</p></li>
 </ul>
 </section>
 </section>
 <section id="id11">
 <h3>相互作用定義ファイル<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h3>
 <p>相互作用定義ファイルはWannier90形式で記述し、
-RPAソルバーと共通です。詳細は <a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a>を参照してください。</p>
+RPAソルバーと共通です。詳細は<a class="reference internal" href="../filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">環境設定ファイル</span></a>を参照してください。</p>
 <p><code class="docutils literal notranslate"><span class="pre">Geometry</span></code> (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>  1.000000000000   0.000000000000   0.000000000000
   0.000000000000   1.000000000000   0.000000000000
@@ -361,7 +361,7 @@ RPAソルバーと共通です。詳細は <a class="reference internal" href=".
    0    0    0    2    2   0.400000000000   0.000000000000
 </pre></div>
 </div>
-<p>各軌道のオンサイトクーロン斥力 <span class="math notranslate nohighlight">\(U = 0.4\)</span>。</p>
+<p>各軌道のオンサイトクーロン斥力<span class="math notranslate nohighlight">\(U = 0.4\)</span>。</p>
 <p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>CoulombInter in wannier90-like format for uhfk
 2
@@ -390,7 +390,7 @@ RPAソルバーと共通です。詳細は <a class="reference internal" href=".
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code>が生成されます。
+<p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">output/chiq.npz</span></code>が生成されます。
 32 x 32メッシュの場合、数秒で完了します。</p>
 </section>
 <section id="id12">
@@ -401,10 +401,10 @@ RPAソルバーと共通です。詳細は <a class="reference internal" href=".
 </div>
 <p>ソルバーは以下の処理を行います:</p>
 <ol class="arabic simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code>から <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を読み込みます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">output/chi0q.npz</span></code>から<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を読み込みます。</p></li>
 <li><p>相互作用ファイルを読み込み、ハミルトニアンを構築します。</p></li>
-<li><p>非相互作用グリーン関数 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>を構成します。</p></li>
-<li><p>RPA電荷・スピン頂点 <span class="math notranslate nohighlight">\(V_c(\mathbf{q})\)</span>、
+<li><p>非相互作用グリーン関数<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>を構成します。</p></li>
+<li><p>RPA電荷・スピン頂点<span class="math notranslate nohighlight">\(V_c(\mathbf{q})\)</span>、
 <span class="math notranslate nohighlight">\(V_s(\mathbf{q})\)</span>を計算します。</p></li>
 <li><p>線形化Eliashberg方程式を自己無撞着反復法および/または
 固有値解析で解きます。</p></li>
@@ -433,7 +433,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 ...
 </pre></div>
 </div>
-<p>正の固有値 <span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span>は、その温度で超伝導不安定性が
+<p>正の固有値<span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span>は、その温度で超伝導不安定性が
 存在することを示します。負の固有値は符号反転ギャップに対応しますが、
 超伝導不安定性は示しません。</p>
 <p>固有対は <strong>チャネルのパリティ</strong>（一重項=偶、三重項=奇）を持つものが
@@ -441,7 +441,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 一致します。<code class="docutils literal notranslate"><span class="pre">[opposite-parity</span> <span class="pre">sector]</span></code>のタグが付いた固有値は逆パリティの
 セクターに属し、そのスピンチャネルではパウリ原理により禁止され、物理的な
 不安定性を表しません（下記のパリティに関する注記を参照）。
-<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の末尾列 <code class="docutils literal notranslate"><span class="pre">match</span></code>がこれを記録します（<code class="docutils literal notranslate"><span class="pre">1</span></code> = チャネルのパリティ
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の末尾列<code class="docutils literal notranslate"><span class="pre">match</span></code>がこれを記録します（<code class="docutils literal notranslate"><span class="pre">1</span></code> = チャネルのパリティ
 セクター、<code class="docutils literal notranslate"><span class="pre">0</span></code> = 逆パリティセクター）。</p>
 </section>
 <section id="id13">
@@ -449,7 +449,7 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <section id="id14">
 <h3>ギャップ関数<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h3>
 <p>以下の図は、自己無撞着反復から得られた
-ギャップ関数 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
+ギャップ関数<span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
 <figure class="align-center" id="id33">
@@ -457,8 +457,8 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 </a>
 <figcaption>
 <p><span class="caption-number">図 5.3 </span><span class="caption-text">一重項ギャップ関数のk空間分布。
-左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
-右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
+左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
+右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
 軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id33" title="Link to this image">¶</a></p>
 </figcaption>
@@ -469,9 +469,9 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 </a>
 <figcaption>
 <p><span class="caption-number">図 5.4 </span><span class="caption-text">三重項ギャップ関数のk空間分布。
-左: 軌道内成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
-右: 軌道間成分 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
-ギャップは <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>（および軌道の入れ替え）に対して
+左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
+右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
+ギャップは<span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>（および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
 軌道間成分が再び大きい。</span><a class="headerlink" href="#id34" title="Link to this image">¶</a></p>
 </figcaption>
@@ -484,8 +484,8 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
-<p><span class="caption-number">図 5.5 </span><span class="caption-text">線形化Eliashberg方程式の正の固有値スペクトル <span class="math notranslate nohighlight">\(\lambda\)</span>。
-赤破線は <span class="math notranslate nohighlight">\(\lambda = 1\)</span>（超伝導不安定性の判定基準）を示す。
+<p><span class="caption-number">図 5.5 </span><span class="caption-text">線形化Eliashberg方程式の正の固有値スペクトル<span class="math notranslate nohighlight">\(\lambda\)</span>。
+赤破線は<span class="math notranslate nohighlight">\(\lambda = 1\)</span>（超伝導不安定性の判定基準）を示す。
 塗りつぶしマーカーは <strong>物理的</strong> な固有値（ギャップがチャネルのパリティ
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
@@ -494,17 +494,17 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
-図には超伝導不安定性の判定基準 <span class="math notranslate nohighlight">\(\lambda = 1\)</span>に関連する
+図には超伝導不安定性の判定基準<span class="math notranslate nohighlight">\(\lambda = 1\)</span>に関連する
 正の固有値のみを示しています。
 一重項チャネルの主要な <strong>物理的</strong>（偶パリティ）固有値は
 <span class="math notranslate nohighlight">\(\lambda_S \approx 0.96 &lt; 1\)</span>で、自己無撞着反復法の結果と一致し、
 この温度で一重項SC不安定性は存在しません。</p>
 <p>三重項チャネルの主要な <strong>物理的</strong>（奇パリティ）固有値は
 <span class="math notranslate nohighlight">\(\lambda_T \approx 0.97 &lt; 1\)</span>です。三重項の計算に現れる
-<span class="math notranslate nohighlight">\(1.58\)</span> や <span class="math notranslate nohighlight">\(1.09\)</span>付近の大きな値は偶パリティの spurious モードであり、
+<span class="math notranslate nohighlight">\(1.58\)</span>や<span class="math notranslate nohighlight">\(1.09\)</span>付近の大きな値は偶パリティの spurious モードであり、
 三重項不安定性では <strong>ありません</strong>。2つの物理的チャネルは非常に近く
-（ <span class="math notranslate nohighlight">\(\lambda_T \gtrsim \lambda_S\)</span>）、この温度が一重項・三重項の
-クロスオーバー近傍にあることを示します。実際の転移（ <span class="math notranslate nohighlight">\(\lambda = 1\)</span>）は
+（<span class="math notranslate nohighlight">\(\lambda_T \gtrsim \lambda_S\)</span>）、この温度が一重項・三重項の
+クロスオーバー近傍にあることを示します。実際の転移（<span class="math notranslate nohighlight">\(\lambda = 1\)</span>）は
 より低温で到達します。</p>
 </section>
 <section id="id16">
@@ -517,15 +517,15 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 </section>
 <section id="id17">
 <h2><span class="section-number">5.2.8. </span>出力ファイル<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h2>
-<p>ソルバーは <code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに以下のファイルを出力します。</p>
+<p>ソルバーは<code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに以下のファイルを出力します。</p>
 <section id="gap-dat">
 <h3><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code><a class="headerlink" href="#gap-dat" title="Link to this heading">¶</a></h3>
-<p>収束したギャップ関数 <span class="math notranslate nohighlight">\(\Delta_{\alpha\beta}(\mathbf{k})\)</span>
+<p>収束したギャップ関数<span class="math notranslate nohighlight">\(\Delta_{\alpha\beta}(\mathbf{k})\)</span>
 のk空間表示。各行の形式:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>kx  ky  kz  Re(Δ_00)  Im(Δ_00)  Re(Δ_01)  Im(Δ_01)  Re(Δ_10)  Im(Δ_10)  Re(Δ_11)  Im(Δ_11)
 </pre></div>
 </div>
-<p>ここで <span class="math notranslate nohighlight">\(\alpha, \beta\)</span>は軌道インデックスです。</p>
+<p>ここで<span class="math notranslate nohighlight">\(\alpha, \beta\)</span>は軌道インデックスです。</p>
 </section>
 <section id="eigenvalue-dat">
 <h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
@@ -539,15 +539,15 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
    ...
 </pre></div>
 </div>
-<p>末尾の <code class="docutils literal notranslate"><span class="pre">match</span></code>列は、固有ベクトルがチャネルのパリティを持つ（物理的な
-一重項／三重項ギャップ）とき <code class="docutils literal notranslate"><span class="pre">1</span></code>、逆パリティの spurious モードのとき <code class="docutils literal notranslate"><span class="pre">0</span></code>です
+<p>末尾の<code class="docutils literal notranslate"><span class="pre">match</span></code>列は、固有ベクトルがチャネルのパリティを持つ（物理的な
+一重項／三重項ギャップ）とき<code class="docutils literal notranslate"><span class="pre">1</span></code>、逆パリティの spurious モードのとき<code class="docutils literal notranslate"><span class="pre">0</span></code>です
 （上記のパリティに関する注記を参照）。この列を持たない旧形式の出力もそのまま
 読み込めます。</p>
 </section>
 </section>
 <section id="id18">
 <h2><span class="section-number">5.2.9. </span>物理的解釈<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h2>
-<p>線形化Eliashberg方程式の最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>は
+<p>線形化Eliashberg方程式の最大固有値<span class="math notranslate nohighlight">\(\lambda\)</span>は
 超伝導の発生を判定します:</p>
 <ul class="simple">
 <li><p><span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span>: 常伝導状態は超伝導に対して不安定です。
@@ -555,13 +555,13 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <li><p><span class="math notranslate nohighlight">\(\lambda &lt; 1\)</span>（全ての正の固有値について）:
 その温度では常伝導状態が安定です。</p></li>
 </ul>
-<p>負の固有値は、多軌道系における <span class="math notranslate nohighlight">\(s_\pm\)</span>波のような
+<p>負の固有値は、多軌道系における<span class="math notranslate nohighlight">\(s_\pm\)</span>波のような
 符号反転ペアリング対称性に対応しますが、
-自己無撞着条件 <span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span> は <span class="math notranslate nohighlight">\(\lambda = 1\)</span>
-（ <span class="math notranslate nohighlight">\(\lambda = -1\)</span>ではない）を要求するため、
+自己無撞着条件<span class="math notranslate nohighlight">\(\Delta = K\Delta\)</span>は<span class="math notranslate nohighlight">\(\lambda = 1\)</span>
+（<span class="math notranslate nohighlight">\(\lambda = -1\)</span>ではない）を要求するため、
 負の固有値はその大きさによらず超伝導不安定性を <strong>示しません</strong> 。</p>
-<p>温度を変化させて最大の正の固有値が <span class="math notranslate nohighlight">\(\lambda = 1\)</span>となる点を
-求めることで、超伝導転移温度 <span class="math notranslate nohighlight">\(T_c\)</span>を決定できます。</p>
+<p>温度を変化させて最大の正の固有値が<span class="math notranslate nohighlight">\(\lambda = 1\)</span>となる点を
+求めることで、超伝導転移温度<span class="math notranslate nohighlight">\(T_c\)</span>を決定できます。</p>
 <p>本チュートリアルでは、<span class="math notranslate nohighlight">\(T = 0.1\)</span>で両方の物理的チャネルが不安定性の
 しきい値のわずか下にあり、<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>（一重項・偶）、
 <span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span>（三重項・奇）です。両者はほぼ縮退しており、
@@ -569,47 +569,47 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>パリティとパウリ原理。</strong>
-クーパー対は2電子の交換（スピン交換・軌道交換・ <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>
+クーパー対は2電子の交換（スピン交換・軌道交換・<span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>
 の同時操作）に対して反対称でなければなりません。（偶周波数の）ギャップ
 <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>では、これが空間パリティ
 <span class="math notranslate nohighlight">\(P:\ \Sigma_{\alpha\beta}(\mathbf{k}) \to \Sigma_{\beta\alpha}(-\mathbf{k})\)</span>
-を固定します。スピン一重項ギャップは <strong>偶</strong>（ <span class="math notranslate nohighlight">\(P = +1\)</span>）、スピン三重項
-ギャップは <strong>奇</strong>（ <span class="math notranslate nohighlight">\(P = -1\)</span>）です。Eliashbergカーネルはギャップ全空間に
+を固定します。スピン一重項ギャップは <strong>偶</strong>（<span class="math notranslate nohighlight">\(P = +1\)</span>）、スピン三重項
+ギャップは <strong>奇</strong>（<span class="math notranslate nohighlight">\(P = -1\)</span>）です。Eliashbergカーネルはギャップ全空間に
 作用し片方のパリティに制限されないため、各チャネルのカーネルは逆パリティの
 固有ベクトルも持ちます。これらはそのスピンチャネルでは物理的意味を持たない
 数学的解です（例えば三重項カーネルの偶パリティ固有値は全対称な対状態に相当し、
-パウリ原理で禁止されます）。そのため <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は各反復をチャネルのパリティ
-セクターへ射影し、固有値解析は各モードを物理的（ <code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">1</span></code>）か spurious
-（ <code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">0</span></code>）かでラベル付けします。三重項の計算に現れる
+パウリ原理で禁止されます）。そのため<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は各反復をチャネルのパリティ
+セクターへ射影し、固有値解析は各モードを物理的（<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">1</span></code>）か spurious
+（<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">0</span></code>）かでラベル付けします。三重項の計算に現れる
 <span class="math notranslate nohighlight">\(\lambda \approx 1.58,\ 1.09\)</span>という大きな値はこのような spurious な
 偶パリティモードであり、三重項不安定性では <strong>ありません</strong> 。</p>
 </div>
 <section id="id19">
 <h3>一重項と三重項の比較<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
-<p>入力ファイルの <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> を <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>に変更することで、
+<p>入力ファイルの<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>を<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>に変更することで、
 一重項と三重項のチャネルを比較できます。
-三重項チャネルに切り替える際は、<code class="docutils literal notranslate"><span class="pre">init_gap</span></code> も <code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>のような
+三重項チャネルに切り替える際は、<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>も<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>のような
 奇パリティ（三重項）の初期ギャップに設定してください（同梱の
 <code class="docutils literal notranslate"><span class="pre">input_triplet.toml</span></code>はそのように設定済みです）。既定の
 <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;cos&quot;</span></code>は偶パリティ（一重項）の初期ギャップであり、
 ソルバーはパリティの異なる初期ギャップをエラーとして拒否するようになりました
-（非物理的なセクターへ収束するのを防ぐため）。あるいは <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>を
+（非物理的なセクターへ収束するのを防ぐため）。あるいは<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>を
 省略すれば、ソルバーがチャネルのパリティを自動選択します。
-同じパラメータで <span class="math notranslate nohighlight">\(T = 0.1\)</span>の場合、主要な物理的固有値は
-<span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span>（三重項）と <span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>
+同じパラメータで<span class="math notranslate nohighlight">\(T = 0.1\)</span>の場合、主要な物理的固有値は
+<span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span>（三重項）と<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>
 （一重項）で、ともに1未満、三重項がわずかに先行します。これは本サンプルが
 文献 <a class="footnote-reference brackets" href="#id7" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> の一重項・三重項クロスオーバー近傍にあることを示します。
 同文献では、<span class="math notranslate nohighlight">\(T &gt; 0.05\)</span>で三重項SC状態が一重項SC状態と競合し、低温
 (<span class="math notranslate nohighlight">\(T &lt; 0.05\)</span>) ではスピンゆらぎの増大により一重項SC転移が支配的になることが
-報告されています。実際の転移（ <span class="math notranslate nohighlight">\(\lambda = 1\)</span>）は低温で到達します。</p>
+報告されています。実際の転移（<span class="math notranslate nohighlight">\(\lambda = 1\)</span>）は低温で到達します。</p>
 </section>
 </section>
 <section id="sc-dynamic-frequency">
 <span id="id21"></span><h2><span class="section-number">5.2.10. </span>動的（振動数依存）Eliashberg方程式<a class="headerlink" href="#sc-dynamic-frequency" title="Link to this heading">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は既定では <strong>静的近似</strong> で Eliashberg 方程式を解きます。すなわち
 ペアリング頂点をボゾン松原振動数ゼロで評価し（Nakano--Kuroki 式(9) の静的近似）、
-ギャップ <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k})\)</span>は振動数依存性を持ちません。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
-セクションで <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>と設定すると、代わりに <strong>振動数に完全に
+ギャップ<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k})\)</span>は振動数依存性を持ちません。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
+セクションで<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>と設定すると、代わりに <strong>振動数に完全に
 依存する</strong> 線形化 Eliashberg 方程式</p>
 <div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-6">
 <span class="eqno">(5.7)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-6" title="Link to this equation">¶</a></span>\[\lambda\, \phi_{\alpha\beta}(\mathbf{k}, i\omega_n)
@@ -617,8 +617,8 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
   V_{\alpha\beta}(\mathbf{k}-\mathbf{k}', i\omega_n - i\omega_{n'})\,
   [G G](\mathbf{k}', i\omega_{n'})\,
   \phi(\mathbf{k}', i\omega_{n'}),\]</div>
-<p>を解きます。ここではギャップ <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>のフェルミオン
-松原軸全体と、振動数依存のペアリング頂点 <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>を保持
+<p>を解きます。ここではギャップ<span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>のフェルミオン
+松原軸全体と、振動数依存のペアリング頂点<span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>を保持
 します。頂点は（静的な係数ではなく）虚時間の積として作用するため、カーネルは
 異なる松原振動数どうしを結合します。</p>
 <section id="flex">
@@ -628,18 +628,18 @@ hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
 Eliashberg ステップが読み込むディレクトリへ以下を書き出す FLEX 計算
 （<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>）を実行してください:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> と <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> -- <strong>全</strong> ボゾン松原軸（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>個の全振動数）
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> -- <strong>全</strong> ボゾン松原軸（<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>個の全振動数）
 上のスピン・電荷感受率、および</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> -- <strong>dressed</strong> グリーン関数
 <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>（これからペアバブルを構成します）。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>FLEX の感受率ファイルには <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>タグ（reduced スキームは
-<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>、general full-vertex スキームは <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>）が付与されており、
+<p>FLEX の感受率ファイルには<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>タグ（reduced スキームは
+<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>、general full-vertex スキームは<code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>）が付与されており、
 Eliashberg ローダーはこれを用いて軌道レイアウトを解釈します。<strong>2軌道系</strong>（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>）では reduced のスピン軌道次元と orbital-pair 次元が一致
-（ともに <code class="docutils literal notranslate"><span class="pre">4</span></code>）するため、両者の区別はこのタグに依存します。本修正以前の H-wave
-は形状のみからレイアウトを推定し、<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code> の reduced (kuroki) chi を
+（ともに<code class="docutils literal notranslate"><span class="pre">4</span></code>）するため、両者の区別はこのタグに依存します。本修正以前の H-wave
+は形状のみからレイアウトを推定し、<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>の reduced (kuroki) chi を
 orbital-pair と誤認して pairing vertex を壊していました。該当する計算の Eliashberg
 固有値・ギャップ関数は本バージョンで<strong>修正されます（したがって変化します）</strong>。
 1軌道系および general (myo) の結果は影響を受けません。</p>
@@ -648,15 +648,15 @@ orbital-pair と誤認して pairing vertex を壊していました。該当す
 <p class="admonition-title">警告</p>
 <p><strong>多軌道の reduced スキーム FLEX を用いた計算結果は変化する可能性があります。</strong>
 reduced (kuroki) 感受率の行列添字は<em>密度対</em>であり、保存されている
-<span class="math notranslate nohighlight">\(X[a,b]\)</span> は <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>です。以前のバージョンはこれを
-<span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span> の orbital-pair 空間へ
+<span class="math notranslate nohighlight">\(X[a,b]\)</span>は<span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>です。以前のバージョンはこれを
+<span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>の orbital-pair 空間へ
 <span class="math notranslate nohighlight">\(\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]\)</span>として埋め込んでいました。
 この置き方では、pairing vertex <span class="math notranslate nohighlight">\(S \chi S\)</span>が実際に参照する軌道間の密度結合
 <span class="math notranslate nohighlight">\(\chi_{(0,0),(1,1)}\)</span>が失われ、さらに reduced スキームが計算していない
-軌道対の位置に <span class="math notranslate nohighlight">\(X\)</span>が散布されます。本バージョンでは正しく
+軌道対の位置に<span class="math notranslate nohighlight">\(X\)</span>が散布されます。本バージョンでは正しく
 <span class="math notranslate nohighlight">\(\text{out}[(a,a),(b,b)] = X[a,b]\)</span>（他の成分はすべてゼロ）と
 埋め込みます。</p>
-<p>したがって、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> の FLEX を用いた
+<p>したがって、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>の FLEX を用いた
 <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;=</span> <span class="pre">2</span></code>の計算では、<strong>static・dynamic の双方</strong>で
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>の結果が変化します。要因は独立に2つあり、軌道間の
 密度成分がゼロでも安全とは限りません---旧来の置き方は
@@ -666,8 +666,8 @@ reduced (kuroki) 感受率の行列添字は<em>密度対</em>であり、保存
 保存済みの固有値・ギャップ関数は再計算が必要とお考えください。1軌道系（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）は
 両者の埋め込みが一致するためビット単位で不変であり、general (myo) の結果も
 同様に不変です。本修正により、<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの reduced 計算は、
-<strong>同一の</strong> <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> <strong>の物理</strong>（FLEX を <code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0</span></code>、
-<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">1</span></code>とした場合）に対して <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>および
+<strong>同一の</strong> <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> <strong>の物理</strong>（FLEX を<code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">=</span> <span class="pre">0</span></code>、
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">1</span></code>とした場合）に対して<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>および
 general スキームの結果と厳密に一致するようになります（修正前は一致しません
 でした）。これは pairing vertex についてのみの言明です。自己無撞着に
 解いた場合の両スキームが交換可能であることまでは意味しません---その場合は
@@ -680,39 +680,39 @@ general スキームの結果と厳密に一致するようになります（修
 H-wave が書き出すファイルは常に整合したタグを持つため、これは手編集または
 外部生成の感受率ファイルにのみ影響します。</p>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数で、かつ FLEX 出力と <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>の値とで一致していなければ
-なりません。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>なしで <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>を指定した
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数で、かつ FLEX 出力と<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>の値とで一致していなければ
+なりません。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>なしで<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>を指定した
 場合、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が奇数の場合、あるいは dressed <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>が無い場合、ソルバーは
 黙って別の処理へフォールバックせず、説明的なエラーで停止します。FLEX 出力
-ディレクトリは <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>で指定でき（既定は
-<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>ディレクトリ）、個々のファイル名は <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>の
+ディレクトリは<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>で指定でき（既定は
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>ディレクトリ）、個々のファイル名は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>の
 <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_green</span></code>で上書きできます。</p>
 </section>
 <section id="id22">
 <h3>出力<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h3>
-<p>動的モードは <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>（最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>）に加えて、
+<p>動的モードは<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>（最大固有値<span class="math notranslate nohighlight">\(\lambda\)</span>）に加えて、
 以下を書き出します:</p>
 <dl class="simple">
 <dt><code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></dt><dd><p>振動数分解されたギャップ全体とそのメタデータ。キー:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">gap</span></code>: 形状 <code class="docutils literal notranslate"><span class="pre">(norb,</span> <span class="pre">norb,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz,</span> <span class="pre">Nmat)</span></code>の複素配列 --
+<li><p><code class="docutils literal notranslate"><span class="pre">gap</span></code>: 形状<code class="docutils literal notranslate"><span class="pre">(norb,</span> <span class="pre">norb,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz,</span> <span class="pre">Nmat)</span></code>の複素配列 --
 <span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n)\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">iomega</span></code>: 中心化されたフェルミオン松原振動数
 <span class="math notranslate nohighlight">\(\omega_n = (2n + 1 - N_{\mathrm{mat}})\pi T\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">T</span></code>: 温度。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: 最大固有値 <span class="math notranslate nohighlight">\(\lambda\)</span>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: 最大固有値<span class="math notranslate nohighlight">\(\lambda\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">axis_order</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;(orb1,</span> <span class="pre">orb2,</span> <span class="pre">kx,</span> <span class="pre">ky,</span> <span class="pre">kz,</span> <span class="pre">iomega)&quot;</span></code>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">normalization</span></code>: ゲージ規約 -- ギャップは全成分について L2 規格化され、
 最大絶対値の成分が実正になるよう回転されます。これにより保存されるギャップは
 実行ごと・線形代数バックエンドごとに再現可能です。</p></li>
 </ul>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>最小の正の松原振動数（インデックス <code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>）におけるギャップの単一振動数
-スライス。列の並びは静的な <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と同じ（<code class="docutils literal notranslate"><span class="pre">kx</span> <span class="pre">ky</span> <span class="pre">kz</span></code>の後に軌道対ごとの
-<code class="docutils literal notranslate"><span class="pre">Re</span></code>/<code class="docutils literal notranslate"><span class="pre">Im</span></code>）です。先頭行は <code class="docutils literal notranslate"><span class="pre">#</span></code>で始まるヘッダで、<code class="docutils literal notranslate"><span class="pre">frequency=dynamic</span></code>と
-スライスのインデックス・その <span class="math notranslate nohighlight">\(\omega_n\)</span>を記録します。</p>
+<dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>最小の正の松原振動数（インデックス<code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>）におけるギャップの単一振動数
+スライス。列の並びは静的な<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と同じ（<code class="docutils literal notranslate"><span class="pre">kx</span> <span class="pre">ky</span> <span class="pre">kz</span></code>の後に軌道対ごとの
+<code class="docutils literal notranslate"><span class="pre">Re</span></code>/<code class="docutils literal notranslate"><span class="pre">Im</span></code>）です。先頭行は<code class="docutils literal notranslate"><span class="pre">#</span></code>で始まるヘッダで、<code class="docutils literal notranslate"><span class="pre">frequency=dynamic</span></code>と
+スライスのインデックス・その<span class="math notranslate nohighlight">\(\omega_n\)</span>を記録します。</p>
 </dd>
 </dl>
 </section>
@@ -725,10 +725,10 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 ――従来型の偶振動数解と奇振動数解の両方を許容――、<code class="docutils literal notranslate"><span class="pre">triplet</span></code>では奇）。Arnoldi
 の固有対はチャネルパリティのモードが先頭に来るよう並べ替えられ、
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の固有値表には静的出力と同じ末尾列
-<code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code>が付きます（指定セクターで <code class="docutils literal notranslate"><span class="pre">1</span></code>、反対セクターで
-<code class="docutils literal notranslate"><span class="pre">0</span></code>）。計算した <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>個の固有対のいずれも指定セクターに無い
+<code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code>が付きます（指定セクターで<code class="docutils literal notranslate"><span class="pre">1</span></code>、反対セクターで
+<code class="docutils literal notranslate"><span class="pre">0</span></code>）。計算した<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>個の固有対のいずれも指定セクターに無い
 場合は、警告を出して生の先頭固有対にフォールバックします。その際は
-<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>を増やすか <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>を確認してください。べき乗反復
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>を増やすか<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>を確認してください。べき乗反復
 （<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>）でも、カーネルがパリティと可換な（中心対称な）
 系では各反復ベクトルをチャネルセクターへ射影します。可換でない場合は警告を出して
 射影を無効化し、射影なしの反復を用います。</p>
@@ -746,13 +746,13 @@ V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
     + \tfrac{1}{2}(\hat C - \hat S),\end{split}\]</div>
 <p>であり、いずれもスピン（<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>）・電荷
 （<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>）感受率について線形です（係数と裸の項が異なるだけ）。
-したがってこの分解はどちらの <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>にも適用できます。
+したがってこの分解はどちらの<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>にも適用できます。
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションの2つの任意のブール値により、頂点を構成する前に
 一方のチャネルを 0 にでき、ペアリング強度をスピン／電荷ゆらぎに切り分けられます。</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code>（既定 <code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span> を 0 にする。
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code>（既定<code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm c}\)</span>を 0 にする。
 頂点はスピンゆらぎ項＋裸の項を保持（スピンチャネル）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code>（既定 <code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span> を 0 にする。
+<li><p><code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code>（既定<code class="docutils literal notranslate"><span class="pre">false</span></code>）：<span class="math notranslate nohighlight">\(\chi_{\mathrm s}\)</span>を 0 にする。
 頂点は電荷ゆらぎ項＋裸の項を保持（電荷チャネル）。</p></li>
 </ul>
 <div class="admonition note">
@@ -768,13 +768,13 @@ V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
 </pre></div>
 </div>
 <p>0 にするのは動的感受率関数だけであり、裸の項に含まれる静的相互作用行列
-<span class="math notranslate nohighlight">\(\hat S\)</span> と <span class="math notranslate nohighlight">\(\hat C\)</span>は変更しません。
-両方を <code class="docutils literal notranslate"><span class="pre">true</span></code>にすると瞬間的な裸の頂点のみが残ります。いずれも既定で off の
+<span class="math notranslate nohighlight">\(\hat S\)</span>と<span class="math notranslate nohighlight">\(\hat C\)</span>は変更しません。
+両方を<code class="docutils literal notranslate"><span class="pre">true</span></code>にすると瞬間的な裸の頂点のみが残ります。いずれも既定で off の
 ため通常の計算には影響せず、チャネルを 0 にすると警告が出ます。これらは
 <strong>診断用</strong> です：瞬間的な裸の項は常に保持され、線形化ギャップ固有値問題は
 頂点について非線形なので、別々に 0 にした計算の固有値は<strong>加法的ではありません</strong>（一般に
 <span class="math notranslate nohighlight">\(\lambda_{\mathrm s} + \lambda_{\mathrm c} \neq \lambda_{\mathrm{full}}\)</span>）。
-有効なフラグは <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に記録
+有効なフラグは<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に記録
 されます。通常の本計算では両方を off にしてください。</p>
 </section>
 <section id="seed-eigenvector">
@@ -786,21 +786,21 @@ V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">seed_eigenvector</span></code>に近傍の計算（例：1つ上の温度）が出力した
 <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>を指定します。その gap が ARPACK の開始ベクトルとして使われ、
 <strong>かつ</strong> 最大に重なる固有対を「最大の固有値」でなく選択します。温度を段階的に下げ、
-各計算に直前の <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>を与えれば、同じ対称性（例：d波）を連続的に追跡
-できます。種は計算と同じ <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> と <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でなければならず（不一致は即エラー）、
-continuation スイープでは <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を固定してください。IR経路では種の gap は IR ノード
-へ自動で再フィットされます。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">sigma_shift</span></code> は shift-invert の狙い値を明示
+各計算に直前の<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>を与えれば、同じ対称性（例：d波）を連続的に追跡
+できます。種は計算と同じ<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>と<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でなければならず（不一致は即エラー）、
+continuation スイープでは<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を固定してください。IR経路では種の gap は IR ノード
+へ自動で再フィットされます。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">sigma_shift</span></code>は shift-invert の狙い値を明示
 指定します（未指定なら予備 Arnoldi から推定）。<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>をブランチ近傍に置き
 <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>と併用するのが、隠れた／複素化する固有値を解決する最も堅牢な方法です。</p>
 </section>
 <section id="hwave-tsweep">
 <h3>温度継続計算（<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>）<a class="headerlink" href="#hwave-tsweep" title="Link to this heading">¶</a></h3>
-<p>上記のように <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> と <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>を温度掃引で手動でつなぐには、
-温度ごとに <code class="docutils literal notranslate"><span class="pre">hwave</span></code>/<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を実行し直し、各ステップの出力を次のステップの
+<p>上記のように<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>を温度掃引で手動でつなぐには、
+温度ごとに<code class="docutils literal notranslate"><span class="pre">hwave</span></code>/<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を実行し直し、各ステップの出力を次のステップの
 入力へ手作業で配線する必要があります。<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>コマンド（<code class="docutils literal notranslate"><span class="pre">hwave</span></code>・
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と同様にパッケージに同梱されています）はこれを自動化します。1つの
-ベース TOML（単一の FLEX+Eliashberg 計算で使う <code class="docutils literal notranslate"><span class="pre">[mode]</span></code>/<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>/
-<code class="docutils literal notranslate"><span class="pre">[file]</span></code>/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>の設定そのもの）に <code class="docutils literal notranslate"><span class="pre">[continuation]</span></code>セクションを
+ベース TOML（単一の FLEX+Eliashberg 計算で使う<code class="docutils literal notranslate"><span class="pre">[mode]</span></code>/<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>/
+<code class="docutils literal notranslate"><span class="pre">[file]</span></code>/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>の設定そのもの）に<code class="docutils literal notranslate"><span class="pre">[continuation]</span></code>セクションを
 加えて渡すと、降順の温度ラダーに沿って FLEX（および、無効化していなければ
 Eliashberg ソルバー）を実行します。各段では、直前の段の収束した自己エネルギーを
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>としてこの段の FLEX へ（ウォームスタート）、直前の段の動的ギャップを
@@ -808,7 +808,7 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
 ウォームスタートの連鎖全体を自動化することで、各温度点をコールドスタートして
 （毎回異なる準安定解に落ち着く恐れを抱えながら）計算するのではなく、1つの物理的
 ブランチを低温まで滑らかに追跡できます。</p>
-<p>段の間で変化させるのは <code class="docutils literal notranslate"><span class="pre">mode.param.T</span></code>のみです。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>、
+<p>段の間で変化させるのは<code class="docutils literal notranslate"><span class="pre">mode.param.T</span></code>のみです。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>、
 その他の形状を決定するフィールドはラダー全体で固定されます。これにより、各段の
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>／<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>ファイルが次の段と形状互換になります。</p>
 <section id="continuation">
@@ -832,24 +832,24 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
 <li><p><code class="docutils literal notranslate"><span class="pre">temperatures</span></code>: 明示的な温度のリスト。与えた順に実行されます。存在する場合、
 <code class="docutils literal notranslate"><span class="pre">T_start</span></code>/<code class="docutils literal notranslate"><span class="pre">T_stop</span></code>/<code class="docutils literal notranslate"><span class="pre">num</span></code>より優先されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">T_start</span></code> / <code class="docutils literal notranslate"><span class="pre">T_stop</span></code> / <code class="docutils literal notranslate"><span class="pre">num</span></code> / <code class="docutils literal notranslate"><span class="pre">spacing</span></code>: <code class="docutils literal notranslate"><span class="pre">temperatures</span></code>が無い場合に
-ラダーを生成するために使われます。<code class="docutils literal notranslate"><span class="pre">T_start</span></code> と <code class="docutils literal notranslate"><span class="pre">T_stop</span></code>の間に <code class="docutils literal notranslate"><span class="pre">num</span></code>個の
-点を生成し、<code class="docutils literal notranslate"><span class="pre">spacing</span></code> は <code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code>（デフォルト）または <code class="docutils literal notranslate"><span class="pre">&quot;log&quot;</span></code>です。
-<code class="docutils literal notranslate"><span class="pre">temperatures</span></code> と <code class="docutils literal notranslate"><span class="pre">T_start</span></code>/<code class="docutils literal notranslate"><span class="pre">T_stop</span></code>/<code class="docutils literal notranslate"><span class="pre">num</span></code>の三つ組のどちらも与えない場合は
+ラダーを生成するために使われます。<code class="docutils literal notranslate"><span class="pre">T_start</span></code>と<code class="docutils literal notranslate"><span class="pre">T_stop</span></code>の間に<code class="docutils literal notranslate"><span class="pre">num</span></code>個の
+点を生成し、<code class="docutils literal notranslate"><span class="pre">spacing</span></code>は<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code>（デフォルト）または<code class="docutils literal notranslate"><span class="pre">&quot;log&quot;</span></code>です。
+<code class="docutils literal notranslate"><span class="pre">temperatures</span></code>と<code class="docutils literal notranslate"><span class="pre">T_start</span></code>/<code class="docutils literal notranslate"><span class="pre">T_stop</span></code>/<code class="docutils literal notranslate"><span class="pre">num</span></code>の三つ組のどちらも与えない場合は
 pre-flight エラーになります。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">output_dir</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">&quot;tsweep&quot;</span></code>）: 掃引全体の親ディレクトリ。温度 <code class="docutils literal notranslate"><span class="pre">T</span></code>の
-段 <code class="docutils literal notranslate"><span class="pre">idx</span></code> は <code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;idx&gt;_T&lt;T&gt;/output/</span></code>に出力されます（<code class="docutils literal notranslate"><span class="pre">idx</span></code>は3桁
-ゼロ埋め、<code class="docutils literal notranslate"><span class="pre">T</span></code> は <code class="docutils literal notranslate"><span class="pre">%g</span></code>形式）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">run_eliashberg</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段で Eliashberg ソルバーも実行します。
-これにはベース TOML に <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションが必要で、無い場合は pre-flight
+<li><p><code class="docutils literal notranslate"><span class="pre">output_dir</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">&quot;tsweep&quot;</span></code>）: 掃引全体の親ディレクトリ。温度<code class="docutils literal notranslate"><span class="pre">T</span></code>の
+段<code class="docutils literal notranslate"><span class="pre">idx</span></code>は<code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;idx&gt;_T&lt;T&gt;/output/</span></code>に出力されます（<code class="docutils literal notranslate"><span class="pre">idx</span></code>は3桁
+ゼロ埋め、<code class="docutils literal notranslate"><span class="pre">T</span></code>は<code class="docutils literal notranslate"><span class="pre">%g</span></code>形式）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">run_eliashberg</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段で Eliashberg ソルバーも実行します。
+これにはベース TOML に<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションが必要で、無い場合は pre-flight
 が欠けているセクション名を挙げてエラーになります。<code class="docutils literal notranslate"><span class="pre">false</span></code>にすると
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>のみを連鎖させる FLEX 専用の掃引になります。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">warm_start</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段の収束した自己エネルギーを次の段の
+<li><p><code class="docutils literal notranslate"><span class="pre">warm_start</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段の収束した自己エネルギーを次の段の
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>として連鎖させます。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">seed_gap</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段のギャップを次の段の
+<li><p><code class="docutils literal notranslate"><span class="pre">seed_gap</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">true</span></code>）: 各段のギャップを次の段の
 <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>として連鎖させます。これは動的 Eliashberg ソルバー
 （<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）でのみ有効です。<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>
 自体が動的モード専用のため、静的ラダーでは効果を持ちません。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">summary_file</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">&quot;lambda_vs_T.dat&quot;</span></code>）: <code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;summary_file&gt;</span></code>
+<li><p><code class="docutils literal notranslate"><span class="pre">summary_file</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">&quot;lambda_vs_T.dat&quot;</span></code>）: <code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;summary_file&gt;</span></code>
 に書き出されるサマリー表のファイル名。</p></li>
 </ul>
 </section>
@@ -862,22 +862,22 @@ pre-flight エラーになります。</p></li>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">--dry-run</span></code>: 温度ラダー、各段の出力ディレクトリ、配線される
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>/<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>のパスを解決して表示するだけで、どちらの
-ソルバーも呼び出しません。長い掃引を実行する前に <code class="docutils literal notranslate"><span class="pre">[continuation]</span></code>の設定を
+ソルバーも呼び出しません。長い掃引を実行する前に<code class="docutils literal notranslate"><span class="pre">[continuation]</span></code>の設定を
 検証するのに使います。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">--keep-going</span></code>: デフォルトでは、ソルバーがエラーを送出した段で掃引は停止します
 （壊れた段はそれ以降のすべての種を汚染するため。部分的なサマリーは書き出されます）。
 <code class="docutils literal notranslate"><span class="pre">--keep-going</span></code>を指定すると、代わりに次の段をコールドスタートし、それが成功すれば
 以降の段への種として再び使われます。これは <em>1プロセス内でのエラー継続</em> であって、
 プロセス自体が中断された後の再開ではありません。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">--resume</span></code>（または <code class="docutils literal notranslate"><span class="pre">[continuation]</span> <span class="pre">resume</span> <span class="pre">=</span> <span class="pre">true</span></code>）: <em>ジョブレベルの再開</em>。
+<li><p><code class="docutils literal notranslate"><span class="pre">--resume</span></code>（または<code class="docutils literal notranslate"><span class="pre">[continuation]</span> <span class="pre">resume</span> <span class="pre">=</span> <span class="pre">true</span></code>）: <em>ジョブレベルの再開</em>。
 resume 付きで掃引を再実行すると、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は既に完了して種として使える段の
-連続する先頭部分を読み飛ばし、最初の未完了段から――直前の有効な段の <code class="docutils literal notranslate"><span class="pre">sigma</span></code>と
+連続する先頭部分を読み飛ばし、最初の未完了段から――直前の有効な段の<code class="docutils literal notranslate"><span class="pre">sigma</span></code>と
 動的ギャップを種として――あたかも掃引が止まらなかったかのように再開します。
 ウォールクロック／スケジューラによる kill、クラッシュ、手動中断の後に使います。</p>
 <p>段が「完了」と見なされるのは、記録されたサマリー行が error でなく、<strong>かつ</strong>
 ディスク上の出力が実際に存在して解析可能な場合だけです（途中まで書かれた／壊れた
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>は検出され、その段とそれ以降の段は再計算されます）。resume は
-小さなマニフェスト（初回実行時に書かれる <code class="docutils literal notranslate"><span class="pre">tsweep_manifest.json</span></code>。解決済みラダーと、
+小さなマニフェスト（初回実行時に書かれる<code class="docutils literal notranslate"><span class="pre">tsweep_manifest.json</span></code>。解決済みラダーと、
 形状・物理設定=<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>/<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>/<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>/<code class="docutils literal notranslate"><span class="pre">filling</span></code>/<code class="docutils literal notranslate"><span class="pre">Ncond</span></code>/相互作用
 ファイル/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> frequency・pairing のフィンガープリントを記録）で保護されます。
 異なるラダーや設定に対して resume すると、非互換な結果を混ぜずに <strong>即時停止</strong> します。
@@ -894,7 +894,7 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 </section>
 <section id="id26">
 <h4>サマリーファイル<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h4>
-<p>各実行は <code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;summary_file&gt;</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">tsweep/lambda_vs_T.dat</span></code>）
+<p>各実行は<code class="docutils literal notranslate"><span class="pre">&lt;output_dir&gt;/&lt;summary_file&gt;</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">tsweep/lambda_vs_T.dat</span></code>）
 に段ごとに1行を書き出します:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># idx  T  status  error_stage  Re_lambda  Im_lambda  parity_match  flex_converged  flex_iter
 0 0.02   ok    none 0.845000 0.000000 1 1 18
@@ -907,18 +907,18 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">ok</span></code> -- FLEX が収束し、<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span></code>が有効な場合はこの段の
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>から先頭固有対が読み取れた。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">not_converged</span></code> -- FLEX が <code class="docutils literal notranslate"><span class="pre">EPS</span></code>を満たさないまま <code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>に
+<li><p><code class="docutils literal notranslate"><span class="pre">not_converged</span></code> -- FLEX が<code class="docutils literal notranslate"><span class="pre">EPS</span></code>を満たさないまま<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>に
 達したが、使用可能な自己エネルギー（Eliashberg を実行した場合はギャップも）は
 書き出された。このような段も次の段の種として利用できます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">error</span></code> -- ソルバーが例外を送出した、または（<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span></code>の場合）
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>が存在しないか解析できなかった場合。<code class="docutils literal notranslate"><span class="pre">error_stage</span></code>に
-どちらのソルバーで失敗したか（<code class="docutils literal notranslate"><span class="pre">flex</span></code>または <code class="docutils literal notranslate"><span class="pre">eliashberg</span></code>）が記録されます。</p></li>
+どちらのソルバーで失敗したか（<code class="docutils literal notranslate"><span class="pre">flex</span></code>または<code class="docutils literal notranslate"><span class="pre">eliashberg</span></code>）が記録されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">dry</span></code> -- <code class="docutils literal notranslate"><span class="pre">--dry-run</span></code>によって生成された行。ソルバーは呼び出されていません。</p></li>
 </ul>
 <p>浮動小数点値が欠けている場合（Eliashberg を実行しなかった、または失敗した場合の
-<code class="docutils literal notranslate"><span class="pre">Re_lambda</span></code>/<code class="docutils literal notranslate"><span class="pre">Im_lambda</span></code>）は <code class="docutils literal notranslate"><span class="pre">nan</span></code>と表示され、整数フィールドが欠けている場合
-（<code class="docutils literal notranslate"><span class="pre">parity_match</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_converged</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_iter</span></code>）は <code class="docutils literal notranslate"><span class="pre">-1</span></code>と表示されます。
-<code class="docutils literal notranslate"><span class="pre">error_stage</span></code> は <code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">=</span> <span class="pre">error</span></code>でない限り <code class="docutils literal notranslate"><span class="pre">none</span></code>です。</p>
+<code class="docutils literal notranslate"><span class="pre">Re_lambda</span></code>/<code class="docutils literal notranslate"><span class="pre">Im_lambda</span></code>）は<code class="docutils literal notranslate"><span class="pre">nan</span></code>と表示され、整数フィールドが欠けている場合
+（<code class="docutils literal notranslate"><span class="pre">parity_match</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_converged</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_iter</span></code>）は<code class="docutils literal notranslate"><span class="pre">-1</span></code>と表示されます。
+<code class="docutils literal notranslate"><span class="pre">error_stage</span></code>は<code class="docutils literal notranslate"><span class="pre">status</span> <span class="pre">=</span> <span class="pre">error</span></code>でない限り<code class="docutils literal notranslate"><span class="pre">none</span></code>です。</p>
 </section>
 <section id="id27">
 <h4>設定例<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h4>
@@ -965,12 +965,12 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>この例が</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code><strong>を明示する理由。</strong>
-バージョン 2.0 以降、既定は <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>であり、<code class="docutils literal notranslate"><span class="pre">auto</span></code>は
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（および <code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、集約された
-<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）を <code class="docutils literal notranslate"><span class="pre">general</span></code>へ昇格させます。<code class="docutils literal notranslate"><span class="pre">general</span></code>の FLEX 経路が
-受理するオフサイト項は同一軌道の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（副格子折り畳みなし）に
-限られるため、このワークフローが用いる一般のオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>は
-既定のままでは <strong>拒否されます</strong>。実行は <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で停止し、
+バージョン 2.0 以降、既定は<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>であり、<code class="docutils literal notranslate"><span class="pre">auto</span></code>は
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（および<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、集約された
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）を<code class="docutils literal notranslate"><span class="pre">general</span></code>へ昇格させます。<code class="docutils literal notranslate"><span class="pre">general</span></code>の FLEX 経路が
+受理するオフサイト項は同一軌道の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（副格子折り畳みなし）に
+限られるため、このワークフローが用いる一般のオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>は
+既定のままでは <strong>拒否されます</strong>。実行は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で停止し、
 <code class="docutils literal notranslate"><span class="pre">auto</span></code>による解決結果と以下の対処が示されます。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>を明示的に
 要求することでこのワークフローは実行でき、これは H-wave 1.0.x が
 この入力に対して行っていた挙動と同じです:</p>
@@ -984,10 +984,10 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <a class="reference internal" href="#sc-supported-inter"><span class="std std-ref">対応する相互作用</span></a>に記載の近似に関する警告が
 <strong>出力されます</strong>。いずれも想定内であり設定の誤りではありません。
 相互作用が上記のオフサイト制限の範囲に収まり、かつ軌道間チャネルも
-dress したい場合は、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>の行を削除する（または <code class="docutils literal notranslate"><span class="pre">general</span></code>を
+dress したい場合は、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>の行を削除する（または<code class="docutils literal notranslate"><span class="pre">general</span></code>を
 指定する）ことをご検討ください。</p>
 </div>
-<p>この例では <span class="math notranslate nohighlight">\(T = 0.02\)</span>から <span class="math notranslate nohighlight">\(T = 0.005\)</span>まで、対数間隔の6段を
+<p>この例では<span class="math notranslate nohighlight">\(T = 0.02\)</span>から<span class="math notranslate nohighlight">\(T = 0.005\)</span>まで、対数間隔の6段を
 降順に計算します。各段で FLEX と動的 Eliashberg を実行し、<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と
 <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>の両方を連鎖させ、<code class="docutils literal notranslate"><span class="pre">tsweep/lambda_vs_T.dat</span></code> --
 <span class="math notranslate nohighlight">\(\lambda(T)\)</span>の表を書き出します。先頭の物理固有値が1を横切る点から
@@ -1003,8 +1003,8 @@ k メッシュ・松原振動数の数に対して急速に大きくなります
 ピーク必要量を見積もり、上限を超える場合は停止します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>
 で上限を明示的に指定でき（<code class="docutils literal notranslate"><span class="pre">0</span></code>でガードを無効化）、指定しない場合は利用可能な
 RAM の一部が上限に使われます。この見積もりは、設定値だけを信頼せず、ディスク上のファイルヘッダ
-（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>）から保存された <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
-（松原振動数軸）を読み取ります。そのため、ファイルに保存された <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が設定と
+（<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>）から保存された<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+（松原振動数軸）を読み取ります。そのため、ファイルに保存された<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が設定と
 異なる場合は、ロード途中で OOM で落ちるのではなく、確保前に事前に拒否されます
 （k メッシュと軌道数は設定から取得し、その不一致はローダーの reshape エラーとして
 現れます）。</p>
@@ -1013,33 +1013,33 @@ RAM の一部が上限に使われます。この見積もりは、設定値だ�
 <h3>性能に関する注意<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h3>
 <p>固有値ソルブはカーネルの繰り返し適用が支配的です。2つの最適化でこれを軽く
 保ちます：頂点の虚時間変換（カーネルで最も重いステップ）を matvec ごとではなく
-一度だけ事前計算し、空間 FFT を <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>で並列化します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+一度だけ事前計算し、空間 FFT を<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>で並列化します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
 <span class="pre">fft_workers</span></code> は FFT のワーカースレッド数を指定します：<code class="docutils literal notranslate"><span class="pre">1</span></code>（デフォルト）は
 従来どおりの直列 numpy、<code class="docutils literal notranslate"><span class="pre">-1</span></code>は全コアを使用します。既存の計算を変えないよう
 オプトインです。複数の動的計算を同時に走らせる場合は、CPU の過剰割当てを避ける
 ため小さめの値（例：<code class="docutils literal notranslate"><span class="pre">OMP_NUM_THREADS</span></code>に合わせる）に設定してください。両者を合わせ
-て <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">=</span> <span class="pre">1024</span></code>、<code class="docutils literal notranslate"><span class="pre">N_{mat}</span> <span class="pre">=</span> <span class="pre">1024</span></code>でおよそ 4 倍の高速化になります。
-GPU 実行（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>）では FFT は GPU 上で走るため <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>は無視されます。</p>
+て<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">=</span> <span class="pre">1024</span></code>、<code class="docutils literal notranslate"><span class="pre">N_{mat}</span> <span class="pre">=</span> <span class="pre">1024</span></code>でおよそ 4 倍の高速化になります。
+GPU 実行（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>）では FFT は GPU 上で走るため<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>は無視されます。</p>
 </section>
 <section id="ir-sparse-ir">
 <span id="sc-dynamic-ir"></span><h3>IR基底（sparse-ir）による松原軸の圧縮<a class="headerlink" href="#ir-sparse-ir" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を指定すると、動的モードの松原軸を一様グリッド
 （<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>点）から中間表現（IR）基底のスパースサンプリング点（典型的には
 50〜100点、低温ほど圧縮率が向上）へ置き換えます。オプションの
-<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> パッケージが必要です
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a>パッケージが必要です
 （<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>）。カーネル・固有値反復・パリティ選別はすべて
 スパースノード上で実行され、メモリと周波数軸の計算量が
-<span class="math notranslate nohighlight">\(N_{\mathrm{mat}}/L\)</span>倍（20〜40×）削減されます。なお <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の
-役割は従来どおりです：前段の FLEX 計算は引き続き一様 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>グリッドで
+<span class="math notranslate nohighlight">\(N_{\mathrm{mat}}/L\)</span>倍（20〜40×）削減されます。なお<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の
+役割は従来どおりです：前段の FLEX 計算は引き続き一様<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>グリッドで
 出力し（その収束は必要）、下記の出力もそのグリッドへ密評価されます。IR が
-圧縮するのは動的ソルバーの<strong>内部</strong>周波数軸で、そのノード数は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>では
-なく <span class="math notranslate nohighlight">\(\beta\,\omega_{\max}\)</span> と <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>で決まります。GPU 実行
+圧縮するのは動的ソルバーの<strong>内部</strong>周波数軸で、そのノード数は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>では
+なく<span class="math notranslate nohighlight">\(\beta\,\omega_{\max}\)</span>と<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>で決まります。GPU 実行
 （<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>、CuPy が必要）とも併用でき、<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>は従来どおり
 CPU の空間 FFT にのみ作用します。</p>
 <p>出力（<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>）は従来どおり一様グリッドへ密評価
 して書き出されるため、下流の解析はそのまま動作します（npz には
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>などの由来メタデータが追加されます）。</p>
-<p>FLEX 側が <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>かつ
+<p>FLEX 側が<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>かつ
 <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">false</span></code>（IRネイティブ出力、<code class="docutils literal notranslate"><span class="pre">.npz</span></code>内の
 <code class="docutils literal notranslate"><span class="pre">frequency_grid</span> <span class="pre">=</span> <span class="pre">&quot;sparse_ir_nodes&quot;</span></code>キーで識別可能）の場合、動的ソルバーは
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>でそのファイルを直接読み込みます。ノード集合が
@@ -1047,7 +1047,7 @@ CPU の空間 FFT にのみ作用します。</p>
 リフィットします（残差をログ出力）。温度は FLEX 実行と一致している必要が
 あります（感受率は物理入力のため、不一致はエラーです）。
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>のままIRネイティブ入力を渡すと明示エラーに
-なります。本ソルバーを <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>に切り替えるか、FLEX を
+なります。本ソルバーを<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>に切り替えるか、FLEX を
 <code class="docutils literal notranslate"><span class="pre">write_densified</span> <span class="pre">=</span> <span class="pre">true</span></code>で再実行してください。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
@@ -1059,44 +1059,44 @@ CPU の空間 FFT にのみ作用します。</p>
 それは離散化アーティファクトではあり得ないため、黙って結果を壊す
 代わりにエラーで停止します（対処法はエラーメッセージにも表示:
 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>を自動推定に戻す/<code class="docutils literal notranslate"><span class="pre">3×(バンド幅+最大相互作用)</span></code>程度に
-設定する、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やす、真に静的な成分なら
+設定する、FLEX の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やす、真に静的な成分なら
 <code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>で保持する、または
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>に戻す）。一様パスとの固有値の差は
-この入力データ品質程度（分散ベースの自動 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>での小規模
+この入力データ品質程度（分散ベースの自動<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>での小規模
 フィクスチャ実測: <code class="docutils literal notranslate"><span class="pre">Nmat=128</span></code>で約1.5×10⁻²、<code class="docutils literal notranslate"><span class="pre">Nmat=512</span></code>で約
 4×10⁻³。フィクスチャ固有の値であり一般保証ではありません）に
-なります。両者は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やすと同じ連続極限に収束します。
-本番計算ではモデルごとに一度、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を上げる（または同じ
-<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> で uniform と IR を比較する）ことで先頭固有値の変化が
+なります。両者は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を増やすと同じ連続極限に収束します。
+本番計算ではモデルごとに一度、FLEX の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を上げる（または同じ
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>で uniform と IR を比較する）ことで先頭固有値の変化が
 許容範囲か確認してください。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
 <p>1.0.x で計算した動的IRの結果は、ペアリング頂点にν非依存成分を
-持つモデル——特にオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
-を含む系——では誤りです（オンサイト <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの模型は
+持つモデル——特にオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+を含む系——では誤りです（オンサイト<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの模型は
 裸頂点項が厳密に相殺するため影響なし）。該当する計算は再実行して
 ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
-変更ではありません）。また自動 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>推定は分散ベースに変わり、
+変更ではありません）。また自動<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>推定は分散ベースに変わり、
 現実的な多ホッピング模型では大幅に小さい（正しい）値になります。</p>
 </div>
 </section>
 <section id="gpu-cupy">
 <span id="sc-dynamic-gpu"></span><h3>GPU実行（CuPy）<a class="headerlink" href="#gpu-cupy" title="Link to this heading">¶</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションで <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>と設定すると、動的モードの
+<p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>セクションで<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>と設定すると、動的モードの
 カーネル適用（固有値ソルバーの matvec）を GPU 上で実行します。2つの大きな
-不変テンソル（ペアバブル <span class="math notranslate nohighlight">\([GG]\)</span>とペアリング頂点）を反復開始前に一度だけ
+不変テンソル（ペアバブル<span class="math notranslate nohighlight">\([GG]\)</span>とペアリング頂点）を反復開始前に一度だけ
 GPU へ転送して常駐させ、各反復ではギャップベクトルのみを転送します。結果は
 CPU 実行と数値的に同一（倍精度の丸め誤差の範囲内）です。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>のみに適用されます。静的ソルバーは CPU 専用のため、
-<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（または省略時。既定は静的）で <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>を設定
-すると、フラグを黙って無視せず <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で即時停止します。</p></li>
-<li><p><a class="reference external" href="https://cupy.dev/">CuPy</a> がインストールされ CUDA デバイスが利用可能で
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（または省略時。既定は静的）で<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>を設定
+すると、フラグを黙って無視せず<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で即時停止します。</p></li>
+<li><p><a class="reference external" href="https://cupy.dev/">CuPy</a>がインストールされ CUDA デバイスが利用可能で
 ある必要があります。CuPy が無い・デバイスが見つからない場合は、警告を出して
 自動的に CPU（numpy）実行へフォールバックします（結果は同一で、速度のみ
 低下します）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>（デフォルト <code class="docutils literal notranslate"><span class="pre">false</span></code>）にすると、この暗黙の CPU
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">false</span></code>）にすると、この暗黙の CPU
 フォールバックをハードエラーに変えます。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定したのに利用可能
 な CuPy/CUDA バックエンドが無い場合、静かに CPU 実行へ移らずエラーで停止する
 ため、短い GPU ジョブが長大な CPU ジョブに化けるのをスケジューラ段階で防げます。
@@ -1109,7 +1109,7 @@ OutOfMemory エラーで停止します）。</p></li>
 <span class="math notranslate nohighlight">\(2 \times 16\, N_{\mathrm{orb}}^4\, N_k\, N_{\mathrm{mat}}\)</span>バイト＋
 作業領域です。不足する場合は CuPy が明示的な OutOfMemory エラーで停止します。</p></li>
 <li><p>参考値: <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}=2\)</span>, <span class="math notranslate nohighlight">\(64\times 64\)</span> k メッシュ,
-<span class="math notranslate nohighlight">\(N_{\mathrm{mat}}=2048\)</span> で matvec あたり CPU 比 16 倍程度
+<span class="math notranslate nohighlight">\(N_{\mathrm{mat}}=2048\)</span>で matvec あたり CPU 比 16 倍程度
 （NVIDIA RTX 6000 Ada、GPU メモリ約 5 GB 使用）。</p></li>
 </ul>
 </section>
@@ -1128,55 +1128,55 @@ OutOfMemory エラーで停止します）。</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
 相互作用が存在する場合、ソルバーは自動的に
-一般化 <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列定式化
+一般化<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列定式化
 （Kuroki et al., PRB 79, 224511）を使用し、
 4インデックスの頂点構造で計算します。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>reduced スキームの FLEX を</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> <strong>で読む場合の注意。</strong>
 reduced（<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>）の FLEX 計算は
-密度‐密度成分 <span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>しか保存しません。<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>
-のみであれば <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列はこの密度対ブロックに完全に収まるため、
+密度‐密度成分<span class="math notranslate nohighlight">\(\chi_{(a,a),(b,b)}\)</span>しか保存しません。<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>
+のみであれば<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列はこの密度対ブロックに完全に収まるため、
 reduced 経路は厳密です。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>は
-<span class="math notranslate nohighlight">\(a \neq b\)</span>の非密度ブロック <span class="math notranslate nohighlight">\(S/C[(a,b),(a,b)]\)</span>にも重みを
+<span class="math notranslate nohighlight">\(a \neq b\)</span>の非密度ブロック<span class="math notranslate nohighlight">\(S/C[(a,b),(a,b)]\)</span>にも重みを
 持ちますが、そこでは reduced 計算が感受率をまったく求めていません。
 これらのチャネルは pairing vertex に
 <strong>裸のまま</strong>（<span class="math notranslate nohighlight">\(\tfrac{1}{2}(S+C)\)</span>の項のみ）入るため、<span class="math notranslate nohighlight">\(\lambda\)</span>
 は近似値になり、ソルバーは該当する項名を挙げて警告を出力します。
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度対角の頂点内容を <strong>一切持たない</strong> ため
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度対角の頂点内容を <strong>一切持たない</strong> ため
 （dress される成分が存在しない）、reduced な感受率との組み合わせは
 <strong>拒否されます</strong>（そのような実行を生成しない FLEX/RPA 側のスキーム
 ポリシーとも整合します）。</p>
 <p>これはローダーではなく保存データ側の制約であり、Eliashberg 側では修復できません。
-完全な頂点を得るには <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>（orbital-pair 感受率を
-すべて保存します）で FLEX を再実行してください。なお <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>
+完全な頂点を得るには<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>（orbital-pair 感受率を
+すべて保存します）で FLEX を再実行してください。なお<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>
 は回避策になりません---読み込む chi0q 自体が general（4インデックス）でない限り、
 reduced の2インデックス chi0q にはまったく同じ非密度成分が欠けています。
 1軌道系には非密度の軌道対添字が存在しないため影響ありません。</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><strong>Eliashberg ステップは常磁性を前提とします。</strong> Kuroki の <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>
+<p><strong>Eliashberg ステップは常磁性を前提とします。</strong> Kuroki の<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>
 行列はスピン添字を持たないため、reduced の FLEX 感受率は上向きスピンブロック
 だけを取り出して消費されます。常磁性ランではこれは厳密です（捨てられる部分が
 冗長、すなわち下向きブロックが上向きと一致し交差ブロックがゼロ）。一方、
-スピン偏極したラン---<code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は自動判定されるため <code class="docutils literal notranslate"><span class="pre">Extern</span></code>場と
+スピン偏極したラン---<code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は自動判定されるため<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場と
 <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>があれば該当します---では一般にこれが成り立ちません。
 ソルバーはランを分類するのではなく<strong>保存データそのもの</strong>を検査します
-（ファイルに <code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は記録されていません）。冗長でない成分は必ず
+（ファイルに<code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は記録されていません）。冗長でない成分は必ず
 報告され、保持ブロックに対して倍精度の数百 ulp を超える場合は、スピン分解
 した問題を近似しない固有値を返す代わりに<strong>実行を拒否します</strong>。
 下向き・交差ブロックが恒等的にゼロなファイルは、消費するブロックだけを
 埋めた旧来のレイアウトなのか完全に偏極したセクターなのか区別できないため、
 前者であることが宣言されない限り拒否されます。宣言はファイル自身
 （<code class="docutils literal notranslate"><span class="pre">chi_spin_blocks</span> <span class="pre">=</span> <span class="pre">&quot;up_only&quot;</span></code>）でも、この検査より前に書かれ
-タグを持ちえないファイル向けに <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">accept_up_block_only</span> <span class="pre">=</span> <span class="pre">true</span></code>
+タグを持ちえないファイル向けに<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">accept_up_block_only</span> <span class="pre">=</span> <span class="pre">true</span></code>
 を設定することでも行えます。宣言どおり本当に旧来の up-only レイアウト
 （両ブロックに同じ常磁性データを持つはずだったファイル）であれば結果は
 厳密です。実際に偏極したデータに対してオーバーライドを使った場合、得られる
 固有値はスピン分解した問題に対する制御された近似ではありません。</p>
 <p>同じ設定は <strong>dressed Green 関数</strong> のローダにも効きます。スピンブロックの
-内容が実際に異なる <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は通常拒否されます（pair bubble は
+内容が実際に異なる<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は通常拒否されます（pair bubble は
 上向きブロックのみから構成されるため、捨てられるブロックは実在の物理
 です）が、<code class="docutils literal notranslate"><span class="pre">accept_up_block_only</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は警告を出して続行します。
 上記の旧来レイアウトの場合と異なり、こちらは <strong>制御されていない近似</strong>
@@ -1206,8 +1206,8 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <tbody>
 <tr class="row-even"><td><p>2体項の距離</p></td>
 <td><p>オンサイト・<strong>オフサイト</strong>両方</p></td>
-<td><p>オンサイト。オフサイトは同一軌道 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>のみ</p></td>
-<td><p>それ以外のオフサイト項は general で <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>
+<td><p>オンサイト。オフサイトは同一軌道<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>のみ</p></td>
+<td><p>それ以外のオフサイト項は general で<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>
 （副格子折り畳み時はオフサイト対応も無効）</p></td>
 </tr>
 <tr class="row-odd"><td><p>スピン構造</p></td>
@@ -1222,7 +1222,7 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 「スピン構造の取り扱い」参照</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
-<td><p>密度‐密度成分のみ <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
+<td><p>密度‐密度成分のみ<code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
 <td><p>orbital-pair 全体</p></td>
 <td><p>--</p></td>
 </tr>
@@ -1243,11 +1243,11 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 </thead>
 <tbody>
 <tr class="row-even"><td><p>RPA</p></td>
-<td><p>すべての <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>のみ。<code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>を追加し <code class="docutils literal notranslate"><span class="pre">chiq</span></code>は変更しない</p></td>
+<td><p>すべての<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>のみ。<code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>を追加し<code class="docutils literal notranslate"><span class="pre">chiq</span></code>は変更しない</p></td>
 </tr>
 <tr class="row-odd"><td><p>FLEX</p></td>
-<td><p>すべての <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
+<td><p>すべての<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code></p></td>
 <td><p><strong>どのスキームでも非対応</strong></p></td>
 </tr>
 </tbody>
@@ -1255,7 +1255,7 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <p>常磁性系では、横成分チャネルを別に持たなくても感受率としての情報は失われません。
 SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FLEX の有効相互作用の
 <code class="docutils literal notranslate"><span class="pre">3/2</span> <span class="pre">*</span> <span class="pre">chi_s</span></code>という係数が縦1・横2のスピン3成分をちょうど数えているためです。
-（RPA で <code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code>を走らせること自体は無償ではなく---<code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>を追加で
+（RPA で<code class="docutils literal notranslate"><span class="pre">ring+ladder</span></code>を走らせること自体は無償ではなく---<code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>を追加で
 解いて保存します---常磁性では情報が増えない、という意味です。）ラダーチャネルが
 別物になるのは、スピンが分裂したときだけです。</p>
 <p>Eliashberg 頂点に入る相互作用</p>
@@ -1284,39 +1284,39 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 </tr>
 </tbody>
 </table>
-<p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子‐正孔頂点に <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">0</span></code>しか寄与しないため、どの経路でも
+<p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子‐正孔頂点に<code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">0</span></code>しか寄与しないため、どの経路でも
 無効です（警告のうえ無視されます）。</p>
 </section>
 <section id="id32">
 <h2><span class="section-number">5.2.13. </span>スピン構造の取り扱い<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h2>
 <p>Eliashberg の pairing vertex は<strong>常磁性を前提</strong>としています。Kuroki の
-<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列は <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>サイズでスピン添字を持たず、
+<span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列は<span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>サイズでスピン添字を持たず、
 一重項/三重項への分解自体がスピン回転対称性を仮定しています。したがって
 スピン偏極系・スピン混成系での挙動は、設定で変えられる類のものではありません。</p>
-<p>以下の <code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は<strong>入力パラメータではありません</strong>---TOML にそのような
+<p>以下の<code class="docutils literal notranslate"><span class="pre">spin_mode</span></code>は<strong>入力パラメータではありません</strong>---TOML にそのような
 キーは存在しません。ハミルトニアンから内部的に決定されます（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>
 モードでは transfer 項がスピン非対角ブロックを持つかどうか、それ以外では外場の
-有無から判定されます）。また <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>とは<strong>独立</strong>です---<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>
+有無から判定されます）。また<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>とは<strong>独立</strong>です---<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>
 が選ぶのは軌道テンソルの階数であってスピン構造ではありません。両者の唯一の関係は、
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> の FLEX が <code class="docutils literal notranslate"><span class="pre">spin-free</span></code>のみを受け付け、他の2つを
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の FLEX が<code class="docutils literal notranslate"><span class="pre">spin-free</span></code>のみを受け付け、他の2つを
 明示的に拒否する、という制約です。</p>
 <ul class="simple">
 <li><p><strong>常磁性</strong>（<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-free&quot;</span></code>）--- 完全にサポートされます。
 reduced の FLEX 感受率は2つのスピンブロックをビット単位で同一に保存し、
 交差ブロックはゼロなので、上向きブロックのみを使うことは厳密です。</p></li>
 <li><p><strong>スピン混成を伴わない偏極</strong>（<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>。たとえば
-<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場と <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>）--- <strong>拒否されます。</strong> 埋め込みで残るのは
+<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場と<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>）--- <strong>拒否されます。</strong> 埋め込みで残るのは
 上向きブロックのみであり、得られる固有値はスピン分解した問題を近似しません。
-数値を返さずに例外を送出します。（保持ブロックに対して <code class="docutils literal notranslate"><span class="pre">256</span> <span class="pre">*</span> <span class="pre">eps</span></code>、
-およそ <code class="docutils literal notranslate"><span class="pre">6e-14</span></code>の相対量を下回る成分は
+数値を返さずに例外を送出します。（保持ブロックに対して<code class="docutils literal notranslate"><span class="pre">256</span> <span class="pre">*</span> <span class="pre">eps</span></code>、
+およそ<code class="docutils literal notranslate"><span class="pre">6e-14</span></code>の相対量を下回る成分は
 丸め誤差として報告のうえ通過させるので、バックエンド由来の丸めの非対称で
 常磁性ランが止まることはありません。）</p></li>
 <li><p><strong>スピン軌道表現</strong>（<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>。
 ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
 スピン自由な模型もこの表現で書けます）--- <strong>サポートされていません。</strong>
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は静的・動的の両エントリで設定を明示的なエラーとして即座に
-拒否し、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> は FLEX rung の実行前に preflight で拒否します
-（バージョン 2.0 以降）。このガード導入前は、内部で <span class="math notranslate nohighlight">\(\chi_0\)</span>を
+拒否し、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に preflight で拒否します
+（バージョン 2.0 以降）。このガード導入前は、内部で<span class="math notranslate nohighlight">\(\chi_0\)</span>を
 計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
 出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
 FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
@@ -1325,18 +1325,18 @@ FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出�
 </ul>
 <p>いずれの偏極ケースに対応するにも、<span class="math notranslate nohighlight">\(S_z\)</span>で分解した pairing vertex
 （スピン軌道相互作用の場合はさらにスピン行列としてのギャップ関数）と、
-reduced スキームが保存していない横成分感受率 <span class="math notranslate nohighlight">\(\chi^{+-}\)</span>が必要になります。
+reduced スキームが保存していない横成分感受率<span class="math notranslate nohighlight">\(\chi^{+-}\)</span>が必要になります。
 設定変更ではなく機能追加の範疇です。</p>
 </section>
 <section id="tips">
 <h2><span class="section-number">5.2.14. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
-<li><p>大規模系では <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と設定すると、
+<li><p>大規模系では<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と設定すると、
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を内部計算し、
 大きなファイルの読み込みを回避できます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>固有値法は少数の主要固有値を求めるのに最速です。
-縮退した固有値がある場合は <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>がより堅牢です。</p></li>
-<li><p>反復法では異なる <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>対称性を使用して、
+縮退した固有値がある場合は<code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>がより堅牢です。</p></li>
+<li><p>反復法では異なる<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>対称性を使用して、
 特定のペアリングチャネルを狙うことができます。
 固有値法は全ての主要対称性を自動的に見つけます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span> <span class="pre">=</span> <span class="pre">&quot;triplet&quot;</span></code>オプションで、

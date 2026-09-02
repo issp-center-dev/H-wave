@@ -47,21 +47,21 @@
 <li><p>requests モジュール</p></li>
 <li><p>tomli モジュール</p></li>
 <li><p>cupy モジュール（任意。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>によるGPU実行にのみ必要です
-— RPA/FLEX は <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>、動的 Eliashberg ソルバーは
+— RPA/FLEX は<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>、動的 Eliashberg ソルバーは
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>で指定。CUDAバージョンに合ったビルド済みwheel
-（CUDA 12.x なら <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）の利用を推奨します。詳細は
+（CUDA 12.x なら<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）の利用を推奨します。詳細は
 <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPyインストールガイド</a>
 を参照してください。CuPyが無い場合、<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は警告を出して
 CPU実行にフォールバックします。）</p></li>
 <li><p>sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>および FLEX ソルバーの
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>にのみ必要です。
-<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>でインストールできます。未導入で <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>でインストールできます。未導入で<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>
 を指定した場合はインストール手順つきの明示エラーになります。）</p></li>
 </ul>
-<p>なお、H-waveのUHFk、RPA、FLEXモードでは <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> をFFT計算に利用しています。
-RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの <code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>
-パラメータで並列FFTワーカーを指定した場合は <a class="reference external" href="https://docs.scipy.org/doc/scipy/reference/fft.html">scipy.fft</a> に、
+<p>なお、H-waveのUHFk、RPA、FLEXモードでは<a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a>をFFT計算に利用しています。
+RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>
+パラメータで並列FFTワーカーを指定した場合は<a class="reference external" href="https://docs.scipy.org/doc/scipy/reference/fft.html">scipy.fft</a>に、
 GPU実行時は cuFFT に切り替わります。</p>
 </div></blockquote>
 </li>
@@ -148,7 +148,7 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 <ol class="arabic">
 <li><p>入力ファイルの作成</p>
 <p>最初にH-wave用の入力ファイルを作成します。計算条件や入出力ファイル・ディレクトリなどの指定と、Hamiltonianの定義ファイルなどを作成する必要があります。
-後者は、<a class="reference external" href="https://github.com/issp-center-dev/StdFace">StdFaceライブラリ</a> の利用が便利です。
+後者は、<a class="reference external" href="https://github.com/issp-center-dev/StdFace">StdFaceライブラリ</a>の利用が便利です。
 各ファイルの簡単な紹介はチュートリアルの章に記載されています。
 詳細についてはファイルフォーマットの章を参照してください。</p>
 </li>
@@ -163,7 +163,7 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 </div>
 <p>計算終了後、計算結果が出力ディレクトリに出力されます。
 出力ファイルの詳細については、ファイルフォーマットの章を参照してください。</p>
-<p>また、本パッケージには後処理ツール <code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>（状態密度）および
+<p>また、本パッケージには後処理ツール<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>（状態密度）および
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。</p>
 </li>
 </ol>

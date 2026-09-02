@@ -5,8 +5,8 @@
 Initial指定ファイル
 ~~~~~~~~~~~~~~~~~~~~
 
-グリーン関数 :math:`G_{ij\sigma_1\sigma_2}\equiv \langle c_{i\sigma_1}^\dagger c_{j\sigma_2}\rangle`\ の初期値を与えます。
-ファイル形式は出力ファイルの ``green``\ ファイルと同じです。
+グリーン関数\ :math:`G_{ij\sigma_1\sigma_2}\equiv \langle c_{i\sigma_1}^\dagger c_{j\sigma_2}\rangle`\ の初期値を与えます。
+ファイル形式は出力ファイルの\ ``green``\ ファイルと同じです。
 なお、値を指定しないグリーン関数の要素には0が入ります。
 以下にファイル例を記載します。
 

@@ -17,7 +17,7 @@ RPA用入力ファイル
     RPAのハミルトニアンを電子系の表式により指定します。
     具体的には、キーワードで指定する各相互作用のタイプについて、ハミルトニアンの係数をデータとして与えます。
 
-    :math:`{\mathcal H}\Phi` や mVMC のExpert Mode入力に相当する以下のキーワードを指定できます。
+    :math:`{\mathcal H}\Phi`\ や mVMC のExpert Mode入力に相当する以下のキーワードを指定できます。
 
     **Transfer**:
       :math:`c_{i\sigma_1}^{\dagger}c^{\phantom{\dagger}}_{j\sigma_2}`\ で表される一体項を指定します。

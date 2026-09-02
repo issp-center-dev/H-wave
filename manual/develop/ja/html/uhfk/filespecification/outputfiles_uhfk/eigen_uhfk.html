@@ -38,7 +38,7 @@
   <section id="eigen">
 <span id="subsec-eigen-uhfk-dat"></span><h1>eigen<a class="headerlink" href="#eigen" title="Link to this heading">¶</a></h1>
 <p>収束したハミルトニアンの固有値、固有ベクトルをnpz形式で出力します。
-ファイル名は、環境設定ファイルの <code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクション <code class="docutils literal notranslate"><span class="pre">eigen</span></code>で指定された文字列 (以下、 <code class="docutils literal notranslate"><span class="pre">eigen_str</span></code> ) を用いて、 <code class="docutils literal notranslate"><span class="pre">eigen_str.npz</span></code>という名前で出力されます。</p>
+ファイル名は、環境設定ファイルの<code class="docutils literal notranslate"><span class="pre">file.output</span></code>セクション<code class="docutils literal notranslate"><span class="pre">eigen</span></code>で指定された文字列 (以下、<code class="docutils literal notranslate"><span class="pre">eigen_str</span></code> ) を用いて、<code class="docutils literal notranslate"><span class="pre">eigen_str.npz</span></code>という名前で出力されます。</p>
 <p>以下、データを読み込む例となります。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"eigen_str.npz"</span><span class="p">)</span>
@@ -49,22 +49,22 @@
 <span class="n">wavevector_index</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">"wavevector_index"</span><span class="p">]</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>には波数ごとの固有値 <span class="math notranslate nohighlight">\(\lambda_l(\vec{k})\)</span>が格納されます。
+<p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>には波数ごとの固有値<span class="math notranslate nohighlight">\(\lambda_l(\vec{k})\)</span>が格納されます。
 副格子を指定している場合は、副格子を単位とした値になります。
-データ形式は numpy ndarray で、データの並びは <code class="docutils literal notranslate"><span class="pre">eigenvalue[k][l]</span></code>です。
-<code class="docutils literal notranslate"><span class="pre">k</span></code>は波数ベクトル <span class="math notranslate nohighlight">\(\vec{k}\)</span>を一次元化したインデックス、
+データ形式は numpy ndarray で、データの並びは<code class="docutils literal notranslate"><span class="pre">eigenvalue[k][l]</span></code>です。
+<code class="docutils literal notranslate"><span class="pre">k</span></code>は波数ベクトル<span class="math notranslate nohighlight">\(\vec{k}\)</span>を一次元化したインデックス、
 <code class="docutils literal notranslate"><span class="pre">l</span></code>はセル内の固有値のインデックスです。
-Sz固定の場合は、固有値のインデックスは軌道部分 <code class="docutils literal notranslate"><span class="pre">l'</span></code>とスピン <code class="docutils literal notranslate"><span class="pre">s</span></code> (up-spin は 0, down-spin は 1)
-に対して <code class="docutils literal notranslate"><span class="pre">l'</span> <span class="pre">+</span> <span class="pre">Norb</span> <span class="pre">*</span> <span class="pre">s</span></code>となります。 <code class="docutils literal notranslate"><span class="pre">Norb</span></code>はセル内の軌道数です。</p>
+Sz固定の場合は、固有値のインデックスは軌道部分<code class="docutils literal notranslate"><span class="pre">l'</span></code>とスピン<code class="docutils literal notranslate"><span class="pre">s</span></code> (up-spin は 0, down-spin は 1)
+に対して<code class="docutils literal notranslate"><span class="pre">l'</span> <span class="pre">+</span> <span class="pre">Norb</span> <span class="pre">*</span> <span class="pre">s</span></code>となります。<code class="docutils literal notranslate"><span class="pre">Norb</span></code>はセル内の軌道数です。</p>
 <p><code class="docutils literal notranslate"><span class="pre">eigenvector</span></code>には対応する固有ベクトルが格納されます。
-データ形式は numpy ndarray で、データの並びは <code class="docutils literal notranslate"><span class="pre">eigenvector[k][j][l]</span></code>です。
+データ形式は numpy ndarray で、データの並びは<code class="docutils literal notranslate"><span class="pre">eigenvector[k][j][l]</span></code>です。
 <code class="docutils literal notranslate"><span class="pre">k</span></code>, <code class="docutils literal notranslate"><span class="pre">l</span></code>は対応する波数および固有値のインデックス、
 <code class="docutils literal notranslate"><span class="pre">j</span></code>はセル内の軌道・スピンのインデックスです。</p>
 <p>ファイルには波数の情報も出力されます。
-<code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code>には逆格子ベクトル <span class="math notranslate nohighlight">\(\vec{b}_i\)</span>を用いて
+<code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code>には逆格子ベクトル<span class="math notranslate nohighlight">\(\vec{b}_i\)</span>を用いて
 <span class="math notranslate nohighlight">\(2\pi\vec{b}_i/N_i\)</span>で表される単位波数ベクトルが格納されます。
 <code class="docutils literal notranslate"><span class="pre">wavevector_index</span></code>には波数のインデックスと1次元化したインデックスとの対応が格納されます。
-インデックス <code class="docutils literal notranslate"><span class="pre">k</span></code>に対応する波数ベクトルは以下で求められます。</p>
+インデックス<code class="docutils literal notranslate"><span class="pre">k</span></code>に対応する波数ベクトルは以下で求められます。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">k_vec</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">wavevector_index</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="n">wavevector_unit</span><span class="p">)</span>
 </pre></div>
 </div>
