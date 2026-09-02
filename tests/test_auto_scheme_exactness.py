@@ -837,6 +837,29 @@ class TestFLEXAutoResolution(_Case):
         self.assertTrue(any("reduced-exactness diagnostic skipped" in m
                             for m in cm.output), cm.output)
 
+    def test_non_finite_table_never_breaks_an_explicit_reduced_construction(self):
+        """The non-finite counterpart of the test above, pinning the same
+        try/except from the other fail-closed branch.
+
+        The reader has rejected non-finite input files since #130, so a
+        directly constructed Hamiltonian is the honest route for a NaN to
+        reach the diagnostic. Hund is a flex_forcing type, so without the
+        skip the discovery would raise here instead of warning.
+        """
+        with self.assertLogs("hwave.solver.flex", level="DEBUG") as cm:
+            solver, _ = self._build(
+                "reduced", {"CoulombInter": "onsite_inter.dat"}, False,
+                mode="FLEX",
+                inject_tables={"Hund": {((0, 0, 0), (0, 0)): float("nan")}})
+        self.assertEqual(solver.calc_scheme, "reduced")
+        self.assertEqual(solver._scheme_resolution, "explicit")
+        self.assertTrue(any("reduced-exactness diagnostic skipped" in m
+                            for m in cm.output), cm.output)
+        # skipped BEFORE the emission, not after it
+        self.assertFalse([m for m in cm.output
+                          if "regardless of the transfer structure" in m],
+                         cm.output)
+
 
 class TestSchemeStamp(_Case):
     STAMP = ("calc_scheme", "calc_scheme_requested", "scheme_resolution")
