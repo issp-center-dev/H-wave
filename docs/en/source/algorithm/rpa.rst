@@ -520,19 +520,35 @@ input failing this is rejected. The transverse pair
 off-site term, so such a term's vertex is not a function of :math:`q` alone
 and cannot be represented. In practice this rejects off-site
 ``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
-``PairLift`` are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
-rejected earlier, at read time (as of version 2.0: declaration files must be
-Hermitian-closed); an inter-site pair that folds into the supercell under
-``SubShape`` becomes an intra-cell orbital pair and is representable. The
-longitudinal (``ring``) channel is unaffected.
+``PairLift`` are accepted because their transverse vertex vanishes. Note that
+a set of declarations whose members cancel or disagree is rejected earlier, at
+read time (as of version 2.0: declaration files must be Hermitian-closed); and,
+for the interaction types governed by this :math:`q`-independence check, an
+inter-site pair that folds into the supercell under ``SubShape`` becomes an
+intra-cell orbital pair and is representable. ``PairHop`` is the exception: its
+locality is judged on the ORIGINAL (pre-fold) declarations, so an off-site
+``PairHop`` is discarded -- or, under the bond-resolved transverse channel,
+rejected -- even when ``SubShape`` folds it onto an intra-cell orbital pair
+(see the warning below). The longitudinal (``ring``) channel is unaffected.
 
 .. warning::
 
-   Off-site ``PairHop`` entries are silently discarded when the interaction is
-   read, before this check runs, so they are neither rejected nor included.
-   Do not rely on off-site ``PairHop`` in any RPA calculation. A DIAGONAL
-   PairHop entry (equal orbitals) denotes the density term
-   :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
+   Off-site ``PairHop`` entries are **not represented**, and this is a
+   **permanent** restriction rather than a missing feature: an off-site
+   ``PairHop``'s transverse contribution is a pair-hopping bilinear lying
+   outside the particle-hole channel space
+   :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` that the transverse
+   channel dresses, so representing it would require an enlarged bilinear
+   basis. In the standard calculation such entries are discarded when the
+   interaction is read, before this check runs, so they are neither rejected
+   nor included; a warning naming every discarded declaration is written to
+   the log. Do not rely on off-site ``PairHop`` in any RPA calculation. Under
+   the experimental bond-resolved transverse channel
+   (``transverse_bond_channels = true``) an off-site ``PairHop`` declaration
+   is **rejected with an error** instead, so that no silently incomplete
+   transverse result is produced. On-site ``PairHop`` is fully supported in
+   both cases. A DIAGONAL PairHop entry (equal orbitals) denotes the density
+   term :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
    with coefficient :math:`P` rather than :math:`2P`, consistently in both the
    longitudinal and transverse channels. Validation of such degenerate entries
    is tracked separately.
