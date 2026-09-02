@@ -260,7 +260,13 @@ def resolve_flex(types):
 
 def estimate_chi_bytes(scheme, nmat, nvol, nd):
     """Size of the principal chi array for ``scheme``: complex128 over
-    (nmat, nvol, nd^2) for reduced, (nmat, nvol, nd^4) for general."""
+    (nmat, nvol, nd^2) for reduced, (nmat, nvol, nd^4) for general.
+
+    The name is matched case-insensitively: this is a pre-flight size
+    estimate (the GPU path calls it before allocating), so an odd-cased but
+    otherwise valid explicit request must size rather than crash. Anything
+    that is not a RESOLVED scheme still raises."""
+    scheme = str(scheme).lower()
     if scheme == "reduced":
         rank = int(nd) ** 2
     elif scheme == "general":

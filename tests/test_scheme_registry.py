@@ -282,8 +282,18 @@ class TestResolvers(unittest.TestCase):
         from hwave.solver import scheme
         self.assertEqual(scheme.estimate_chi_bytes("reduced", 16, 4, 3), 16 * 4 * 9 * 16)
         self.assertEqual(scheme.estimate_chi_bytes("general", 16, 4, 3), 16 * 4 * 81 * 16)
-        with self.assertRaises(ValueError):
-            scheme.estimate_chi_bytes("auto", 16, 4, 3)
+        # case-tolerant: an odd-cased explicit scheme must size, not crash
+        # (this is a GPU-path pre-flight estimate; raising there would be a
+        # new crash class for a request the solver itself accepts)
+        self.assertEqual(scheme.estimate_chi_bytes("Reduced", 16, 4, 3),
+                         16 * 4 * 9 * 16)
+        self.assertEqual(scheme.estimate_chi_bytes("GENERAL", 16, 4, 3),
+                         16 * 4 * 81 * 16)
+        # ... but anything that is not a resolved scheme still raises
+        for bad in ("auto", "AUTO", "bogus", None):
+            with self.subTest(scheme=bad):
+                with self.assertRaises(ValueError):
+                    scheme.estimate_chi_bytes(bad, 16, 4, 3)
 
 
 if __name__ == "__main__":

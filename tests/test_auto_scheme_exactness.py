@@ -651,7 +651,7 @@ class TestAtomicity(_Case):
         }
         for name, (target, effect) in phases.items():
             with self.subTest(phase=name):
-                kw = {"side_effect": effect} if isinstance(effect, Exception) else {"side_effect": effect}
+                kw = {"side_effect": effect}
                 with mock.patch.object(sch, target, **kw):
                     with self.assertRaises((ValueError, AssertionError)):
                         solver._resolve_auto_scheme(trans_mod_present=False,
