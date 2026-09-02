@@ -109,7 +109,8 @@ class _Case(unittest.TestCase):
 
     def _build(self, scheme, interactions, hybridised, *, mode="RPA",
                subshape=(1, 1, 1), calc_type="ring", extern=None,
-               coeff_extern=0.0, enable_spin_orbital=False, extra_param=None):
+               coeff_extern=0.0, enable_spin_orbital=False, extra_param=None,
+               inject_tables=None):
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as rpa_mod
         import hwave.solver.flex as flex_mod
@@ -142,11 +143,17 @@ class _Case(unittest.TestCase):
         info_mode = {"mode": mode, "param": par,
                      "enable_spin_orbital": enable_spin_orbital,
                      "calc_scheme": scheme, "calc_type": calc_type}
+        ham = reader.get_param("ham")
+        # reader-bypass injection BEFORE construction: FLEX's explicit-reduced
+        # diagnostic runs in the constructor, so a post-construction injection
+        # could never reach it.
+        for tname, tbl in (inject_tables or {}).items():
+            ham[tname] = tbl
         if mode == "FLEX":
             par.update({"IterationMax": 1, "Mix": 1.0})
-            solver = flex_mod.FLEX(reader.get_param("ham"), {}, info_mode)
+            solver = flex_mod.FLEX(ham, {}, info_mode)
         else:
-            solver = rpa_mod.RPA(reader.get_param("ham"), {}, info_mode)
+            solver = rpa_mod.RPA(ham, {}, info_mode)
         return solver, reader.get_param("green")
 
     def _solve(self, scheme, interactions, hybridised, **kw):
@@ -613,6 +620,37 @@ class TestExplicitReducedDiagnostic(_Case):
                 solver._emit_reduced_exactness_diagnostic(
                     trans_mod_present=True, green_init_present=False)
 
+    # ---------------------------------------------------------------- #167
+    # The explicit-scheme diagnostics are ADVISORY: an explicit reduced run
+    # must compute exactly what 1.0.x computed, so a diagnostic that cannot
+    # judge the input is skipped (debug), never raised. Fail-closed discovery
+    # is kept for the AUTO path, which is where the decision is made.
+    def test_unknown_table_never_breaks_an_explicit_reduced_solve(self):
+        solver, green_info = self._build("reduced", {"Hund": "hund_onsite.dat"}, True)
+        solver.ham_info.param_ham["Kondo"] = {((0, 0, 0), (0, 0)): 1.0}
+        with self.assertLogs("hwave.solver.rpa", level="DEBUG") as cm:
+            solver.solve(green_info, self._dir())
+        self.assertEqual(solver.calc_scheme, "reduced")
+        self.assertEqual(np.asarray(green_info["chiq"]).ndim, 4)
+        self.assertTrue(any("reduced-exactness diagnostic skipped" in m
+                            for m in cm.output), cm.output)
+
+    def test_non_finite_table_never_breaks_an_explicit_reduced_solve(self):
+        # The reader rejects non-finite input files since #130, so injecting
+        # into the already-built table is the honest reproduction of a
+        # non-finite entry reaching the diagnostic. The interaction arrays were
+        # built at construction, so the SOLVE numerics are unaffected here; the
+        # point of the test is only that no ValueError escapes.
+        solver, green_info = self._build("reduced", {"Hund": "hund_onsite.dat"}, True)
+        key = sorted(solver.ham_info.param_ham["Hund"].keys())[0]
+        solver.ham_info.param_ham["Hund"][key] = float("nan")
+        with self.assertLogs("hwave.solver.rpa", level="DEBUG") as cm:
+            solver.solve(green_info, self._dir())
+        self.assertEqual(solver.calc_scheme, "reduced")
+        self.assertIn("chiq", green_info)
+        self.assertTrue(any("reduced-exactness diagnostic skipped" in m
+                            for m in cm.output), cm.output)
+
 
 class TestFLEXAutoResolution(_Case):
     """FLEX's auto rule is H0-INDEPENDENT and decided in the constructor
@@ -691,6 +729,20 @@ class TestFLEXAutoResolution(_Case):
         green_info.update(solver.read_init({}))
         solver.solve(green_info, self._dir())
         self.assertEqual(solver._scheme_resolution, "auto:no_discarded_content")
+
+    def test_unknown_table_never_breaks_an_explicit_reduced_construction(self):
+        """FLEX's explicit-reduced diagnostic runs at construction; an input
+        it cannot judge must be skipped, not raised (the computation itself
+        stays the 1.0.x one)."""
+        with self.assertLogs("hwave.solver.flex", level="DEBUG") as cm:
+            solver, _ = self._build(
+                "reduced", {"CoulombInter": "onsite_inter.dat"}, False,
+                mode="FLEX",
+                inject_tables={"Kondo": {((0, 0, 0), (0, 0)): 1.0}})
+        self.assertEqual(solver.calc_scheme, "reduced")
+        self.assertEqual(solver._scheme_resolution, "explicit")
+        self.assertTrue(any("reduced-exactness diagnostic skipped" in m
+                            for m in cm.output), cm.output)
 
 
 class TestSchemeStamp(_Case):

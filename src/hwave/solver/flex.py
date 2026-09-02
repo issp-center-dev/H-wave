@@ -395,11 +395,22 @@ class FLEX(RPA):
 
     def _emit_flex_reduced_diagnostic(self):
         """Explicit reduced + a flex_forcing type: an approximation
-        UNCONDITIONAL of H0 (#167 §5). Emitted once, at construction."""
+        UNCONDITIONAL of H0 (#167 §5). Emitted once, at construction.
+
+        ADVISORY ONLY (as RPA's counterpart): fail-closed discovery belongs
+        to the AUTO path, which decides on its verdict. Here the user named
+        the scheme, so an input the registry cannot judge skips the
+        diagnostic at debug level rather than failing a construction that
+        1.0.x completed.
+        """
         from hwave.solver import scheme as _scheme
         if self.calc_scheme_requested != "reduced":
             return
-        types = _scheme.declared_types(self._scheme_source_tables())
+        try:
+            types = _scheme.declared_types(self._scheme_source_tables())
+        except ValueError as exc:
+            logger.debug("reduced-exactness diagnostic skipped: %s", exc)
+            return
         forcing = sorted(t for t in types
                          if _scheme.CAPABILITIES[t].flex_forcing)
         if forcing:

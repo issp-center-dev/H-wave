@@ -1495,18 +1495,32 @@ class RPA:
 
     def _emit_reduced_exactness_diagnostic(self, *, trans_mod_present, green_init_present):
         """Explicit calc_scheme='reduced' (#167 §5): warn ONCE when a
-        conditional type is declared and flavour is not conserved."""
+        conditional type is declared and flavour is not conserved.
+
+        ADVISORY ONLY. Discovery (`declared_types`) and the predicate are
+        fail-closed because the AUTO path *decides* on their verdict; here
+        there is nothing to decide -- the user named the scheme, and the
+        computation must stay exactly the 1.0.x one. So an input this
+        machinery cannot judge (an unknown table reaching a direct
+        public-constructor Hamiltonian, a non-finite entry) SKIPS the
+        diagnostic at debug level instead of failing a run that 1.0.x
+        completed.
+        """
         if self.calc_scheme_requested != "reduced" or self._reduced_diag_emitted:
             return
-        types = _scheme.declared_types(self._scheme_source_tables())
-        conditional = sorted(t for t in types
-                             if _scheme.CAPABILITIES[t].rpa_mode == "conditional")
-        if not conditional:
+        try:
+            types = _scheme.declared_types(self._scheme_source_tables())
+            conditional = sorted(t for t in types
+                                 if _scheme.CAPABILITIES[t].rpa_mode == "conditional")
+            if not conditional:
+                return
+            conserved, cause = _scheme.flavour_conserved(
+                self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
+                coeff_extern=self.ext, trans_mod_present=trans_mod_present,
+                green_init_present=green_init_present)
+        except ValueError as exc:
+            logger.debug("reduced-exactness diagnostic skipped: %s", exc)
             return
-        conserved, cause = _scheme.flavour_conserved(
-            self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
-            coeff_extern=self.ext, trans_mod_present=trans_mod_present,
-            green_init_present=green_init_present)
         if conserved:
             return
         # arm the dedup only now: a no-op evaluation (no conditional type, or
