@@ -325,7 +325,12 @@ class TestExchangeTensorStructure(unittest.TestCase):
     it at all"; issue #174 falsified that premise (the npz routes reach
     the spinful solve with the flag off), so it is now a pin on the
     SOLVE instead -- see
-    ``test_non_spinful_solve_does_not_consume_exchange``."""
+    ``test_non_spinful_solve_does_not_consume_exchange``.
+
+    The tensor is materialized lazily, so the pins below call
+    ``ham_info.spinful_exchange()`` explicitly rather than reading the
+    ``ham_spinful_exchange`` cache, which construction alone leaves at
+    ``None`` for every mode."""
 
     LX = 4
 
@@ -374,7 +379,7 @@ class TestExchangeTensorStructure(unittest.TestCase):
         folded interaction itself must remain)."""
         solver = self._solver(True, (2, 1, 1), "CoulombInter",
                               [(1, 0, 0, 0.3), (-1, 0, 0, 0.3)])
-        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertIsNone(solver.ham_info.spinful_exchange())
         self.assertTrue(np.any(np.abs(solver.ham_info.ham_inter_q) > 1e-12))
 
     def test_cell_aliased_offsite_is_not_crossed(self):
@@ -384,7 +389,7 @@ class TestExchangeTensorStructure(unittest.TestCase):
         solver = self._solver(True, (1, 1, 1), "CoulombInter",
                               [(self.LX, 0, 0, 0.3),
                                (-self.LX, 0, 0, 0.3)])
-        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertIsNone(solver.ham_info.spinful_exchange())
 
     def test_non_spinful_solve_does_not_consume_exchange(self):
         """RESTATED for issue #174 (was
@@ -406,17 +411,21 @@ class TestExchangeTensorStructure(unittest.TestCase):
 
         WHAT REPLACES IT. The invariant is about the SOLVE, not the
         build: only the ``spin_mode == 'spinful'`` branch of
-        ``RPA._solve_impl`` reads ``ham_spinful_exchange``; the
-        ``spin-free`` and ``spin-diag`` branches take ``_fierz_long()``
-        unconditionally. So a NON-SPINFUL run's ``chiq`` is bitwise
-        independent of whether the crossing exists -- pinned here by
-        toggling ``spinful_vertex_exchange``, which is exactly the
-        switch that selects between consuming the crossing and taking
-        the ``_fierz_long()`` fallback, i.e. the pre-fix code path.
-        (The strongest available assertion: the crossing tensor itself
-        is not observable from a non-spinful solve, so equality of the
-        OUTPUT under the only switch that could expose it is what the
-        code supports.)
+        ``RPA._solve_impl`` reads the crossing; the ``spin-free`` and
+        ``spin-diag`` branches take ``_fierz_long()`` unconditionally.
+        Since the crossing is materialized lazily by
+        ``Interaction.spinful_exchange()`` (the round-2 review's memory
+        fix -- the tensor is (ns*norb)^4 complex128, 1.6 GB at norb=50,
+        so it must not be pinned by solves that never read it), "does
+        not consume" is now DIRECTLY observable: a non-spinful solve
+        leaves the ``ham_spinful_exchange`` cache at ``None``.
+
+        Pinned here in three ways: the output ``chiq`` is bitwise
+        independent of ``spinful_vertex_exchange`` (the switch that
+        selects between consuming the crossing and taking the
+        ``_fierz_long()`` fallback); the cache is still ``None`` after
+        the solve; and an explicit ``spinful_exchange()`` call does
+        produce a tensor, so its absence is laziness, not emptiness.
         """
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -442,9 +451,12 @@ class TestExchangeTensorStructure(unittest.TestCase):
         self.assertNotEqual(s_on.spin_mode, "spinful")
         np.testing.assert_array_equal(np.asarray(g_on["chiq"]),
                                       np.asarray(g_off["chiq"]))
-        # ... and the crossing IS built now, unlike under the old premise
-        self.assertIsNotNone(
-            getattr(s_on.ham_info, "ham_spinful_exchange", None))
+        # the solve never touched the crossing: the cache is untouched
+        self.assertIsNone(s_on.ham_info.ham_spinful_exchange)
+        self.assertFalse(s_on.ham_info._spinful_exchange_built)
+        # ... and that is laziness, not emptiness -- this input DOES
+        # source a crossing, as an explicit materialization shows
+        self.assertIsNotNone(s_on.ham_info.spinful_exchange())
 
     def test_aggregate_coulomb_mixed_sources_onsite_only(self):
         """The aggregate Coulomb input (split into intra + inter parts)
@@ -457,8 +469,8 @@ class TestExchangeTensorStructure(unittest.TestCase):
         onsite = [(0, 0, 0, 0.3)]
         s_mixed = self._solver(True, (2, 1, 1), "Coulomb", mixed)
         s_onsite = self._solver(True, (2, 1, 1), "Coulomb", onsite)
-        Xm = s_mixed.ham_info.ham_spinful_exchange
-        Xo = s_onsite.ham_info.ham_spinful_exchange
+        Xm = s_mixed.ham_info.spinful_exchange()
+        Xo = s_onsite.ham_info.spinful_exchange()
         self.assertIsNotNone(Xm)
         np.testing.assert_array_equal(Xm, Xo)
         # the folded off-site direct part must survive in ham_inter_q
@@ -480,8 +492,8 @@ class TestExchangeTensorStructure(unittest.TestCase):
                                norb_phys=2)
         s_onsite = self._solver(True, (2, 1, 1), "PairHop", onsite,
                                 norb_phys=2)
-        Xm = s_mixed.ham_info.ham_spinful_exchange
-        Xo = s_onsite.ham_info.ham_spinful_exchange
+        Xm = s_mixed.ham_info.spinful_exchange()
+        Xo = s_onsite.ham_info.spinful_exchange()
         self.assertIsNotNone(Xm)
         np.testing.assert_array_equal(Xm, Xo)
         # the complex phase must survive into the crossing
@@ -497,7 +509,7 @@ class TestExchangeTensorStructure(unittest.TestCase):
                 solver = self._solver(
                     True, (1, 1, 1), tname,
                     [(0, a, b, v) for (a, b, v) in ents], norb_phys=2)
-                X = solver.ham_info.ham_spinful_exchange
+                X = solver.ham_info.spinful_exchange()
                 self.assertIsNotNone(X)
                 nd = X.shape[0]
                 proj = project_density_pairs(

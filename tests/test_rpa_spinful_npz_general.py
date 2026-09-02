@@ -28,6 +28,15 @@ The reduced scheme is unaffected (the crossing has no density-diagonal
 content); that half is recorded in ``tests/test_rpa_spinful_npz_reduced.py``
 (issue #161).
 
+The crossing is materialized LAZILY by ``Interaction.spinful_exchange()``
+(round-2 review): the dense tensor is (ns*norb)^4 complex128 -- about
+1.6 GB at norb = 50 -- and ``ham_spinful_exchange`` keeps a transposed
+view of it, so building it in the constructor would pin that allocation
+for every solver instance, including the spin-free and spin-diag solves
+that never read it. The contract these tests pin is therefore: absent
+after CONSTRUCTION in every mode; present after a SPINFUL solve; still
+absent after a non-spinful solve.
+
 Tests must run from the repository root.
 """
 
@@ -257,7 +266,9 @@ class TestSpinfulNpzGeneralVertex(unittest.TestCase):
         # physical divergence (1.7e-02) rather than a None tensor.
         np.testing.assert_array_equal(np.asarray(gA["chiq"]),
                                       np.asarray(gB["chiq"]))
-        # and the crossing itself must exist, identically, on BOTH routes
+        # the spinful solve MATERIALIZED the crossing on both routes --
+        # reading the cache attribute (not calling the builder) is what
+        # makes this a pin on consumption, and it must be identical
         self.assertIsNotNone(sA.ham_info.ham_spinful_exchange)
         self.assertIsNotNone(sB.ham_info.ham_spinful_exchange)
         np.testing.assert_array_equal(
@@ -317,6 +328,24 @@ class TestSpinfulNpzGeneralVertex(unittest.TestCase):
         self.assertEqual(sB.calc_scheme, "general")
         self.assertEqual(sB._scheme_resolution, "auto:mixed:trans_mod")
         self._assert_routes_agree(sA, gA, sB, gB)
+    def test_auto_scheme_on_green_init_route_matches_spin_orbital(self):
+        """The ``green_init`` analogue of the previous test: ``auto``
+        resolves to ``general`` via ``auto:mixed:green_init``.
+
+        PairLift is what makes this fixture spinful at all -- its ring
+        spin table has the spin-off-diagonal slots the green_init Fock
+        term needs to produce a spin-MIXING H0 -- and it is also a
+        conditional type, so it drives the promotion too."""
+        inter = {"CoulombIntra": "coulombintra.dat",
+                 "PairLift": "pairlift.dat"}
+        sA, gA = run_route(self.d, so=True, interactions=inter,
+                           transfer=TRANSFER_INDEP, green_init=GREEN_INIT)
+        sB, gB = run_route(self.d, so=False, interactions=inter,
+                           transfer=TRANSFER_INDEP, green_init=GREEN_INIT,
+                           calc_scheme="auto")
+        self.assertEqual(sB.calc_scheme, "general")
+        self.assertEqual(sB._scheme_resolution, "auto:mixed:green_init")
+        self._assert_routes_agree(sA, gA, sB, gB)
 
 
 class TestNonSpinfulRunsUnchanged(unittest.TestCase):
@@ -350,8 +379,11 @@ class TestNonSpinfulRunsUnchanged(unittest.TestCase):
         self.assertEqual(s_on.spin_mode, "spin-free")
         np.testing.assert_array_equal(np.asarray(g_on["chiq"]),
                                       np.asarray(g_off["chiq"]))
-        # the tensor IS built now (the falsified premise of the old pin)
-        self.assertIsNotNone(s_on.ham_info.ham_spinful_exchange)
+        # the solve never materialized the crossing
+        self.assertIsNone(s_on.ham_info.ham_spinful_exchange)
+        self.assertFalse(s_on.ham_info._spinful_exchange_built)
+        # ... though this input does source one, on demand
+        self.assertIsNotNone(s_on.ham_info.spinful_exchange())
 
     def test_spin_diag_general_run_is_bitwise_independent_of_exchange(self):
         """Same for a spin-DIAGONAL H0 supplied through ``trans_mod``
@@ -372,7 +404,86 @@ class TestNonSpinfulRunsUnchanged(unittest.TestCase):
         self.assertEqual(s_on.spin_mode, "spin-diag")
         np.testing.assert_array_equal(np.asarray(g_on["chiq"]),
                                       np.asarray(g_off["chiq"]))
-        self.assertIsNotNone(s_on.ham_info.ham_spinful_exchange)
+        self.assertIsNone(s_on.ham_info.ham_spinful_exchange)
+        self.assertFalse(s_on.ham_info._spinful_exchange_built)
+        self.assertIsNotNone(s_on.ham_info.spinful_exchange())
+
+
+class TestExchangeIsNotMaterializedEagerly(unittest.TestCase):
+    """Memory regression pin (issue #174 round-2 review).
+
+    The crossing accumulator is ``(ns*norb)^4`` complex128, and
+    ``ham_spinful_exchange`` holds a transposed VIEW of it, so the base
+    allocation stays alive as long as the attribute does. Building it in
+    the constructor would add about 1.6 GB at ``norb = 50`` -- roughly
+    doubling the interaction-tensor footprint of a one-cell calculation
+    and able to turn a previously working non-spinful input into an OOM.
+
+    ``norb = 12`` here: ``(2*12)^4 * 16 B`` is about 5.3 MB, large enough
+    that eager construction is a real cost and cheap enough for the fast
+    gate. The pin asserts the named cache, which is non-fragile: it is
+    the only reference the solver keeps to that allocation.
+    """
+
+    NORB_BIG = 12
+    LX = 4
+
+    def _build(self, d):
+        nd = 2 * self.NORB_BIG
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n%d\n"
+                    % self.NORB_BIG)
+            for _ in range(self.NORB_BIG):
+                f.write("0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n%d\n2\n1 1\n" % self.NORB_BIG)
+            for a in range(1, self.NORB_BIG + 1):
+                f.write(" 1 0 0 %d %d -0.500000 0.0\n" % (a, a))
+                f.write("-1 0 0 %d %d -0.500000 0.0\n" % (a, a))
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("hdr\n%d\n1\n1\n" % self.NORB_BIG)
+            for a in range(1, self.NORB_BIG + 1):
+                f.write(" 0 0 0 %d %d 1.000000 0.0\n" % (a, a))
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombIntra": "coulombintra.dat"}
+        info_mode = {"mode": "RPA",
+                     "param": {"T": T, "filling": FILLING,
+                               "CellShape": [self.LX, 1, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 8},
+                     "enable_spin_orbital": False,
+                     "calc_scheme": "general"}
+        rio = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        solver = solver_rpa.RPA(rio.get_param("ham"), {}, info_mode)
+        return solver, rio, nd
+
+    def test_cache_is_empty_after_construction_and_after_spin_free_solve(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        solver, rio, nd = self._build(d)
+
+        # after CONSTRUCTION: nothing dense is held
+        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertFalse(solver.ham_info._spinful_exchange_built)
+
+        out = os.path.join(d, "out")
+        os.makedirs(out, exist_ok=True)
+        green = rio.get_param("green")
+        solver.solve(green, out)
+
+        # after a SPIN-FREE solve: still nothing
+        self.assertEqual(solver.spin_mode, "spin-free")
+        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertFalse(solver.ham_info._spinful_exchange_built)
+
+        # and the tensor this input would have allocated is the big one,
+        # so the pin above is measuring something real
+        X = solver.ham_info.spinful_exchange()
+        self.assertIsNotNone(X)
+        self.assertEqual(np.asarray(X).shape, (nd, nd, nd, nd))
+        self.assertGreater(np.asarray(X).nbytes, 5_000_000)
 
 
 if __name__ == "__main__":

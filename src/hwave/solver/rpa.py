@@ -669,6 +669,15 @@ class Interaction:
     """
     Construct Hamiltonian from input
     """
+
+    # Cache slot for the lazily materialized spinful exchange crossing
+    # (#174): None until `spinful_exchange()` is first called, and None
+    # afterwards too when no on-site declaration sources a crossing.
+    # Class-level so a stub built without _make_ham_inter still reads it.
+    ham_spinful_exchange = None
+    _spinful_exchange_built = False
+    _onsite_direct_calls = ()
+
     def __init__(self, lattice, param_ham, info_mode):
         logger.debug(">>> Interaction.__init__")
 
@@ -1064,49 +1073,36 @@ class Interaction:
         # represent (round-1 review; the same trap the Fierz builder
         # documents).
         #
-        # Built for EVERY run (issue #174). It used to be gated on
-        # `enable_spin_orbital`, on the premise that "no other mode
-        # consumes it" -- that premise is false: `RPA._calc_epsilon_k`
-        # takes the spin-orbital branch UNCONDITIONALLY for the
-        # `trans_mod` / `green_init` npz routes, so a spin-mixing H0
-        # supplied through an npz reaches `spin_mode == 'spinful'` with
-        # `enable_spin_orbital = False`, and the gate left that solve
-        # falling back to the pre-#137 ring-only vertex with no warning
-        # (measured 1.7e-02, 12.2% relative in chiq, confined to the
-        # spin-flip pair slots; calc_scheme='auto' promotes INTO the
-        # path since #167). Building it unconditionally cannot move a
-        # non-spinful result: only the `spin_mode == 'spinful'` branch
-        # of the solve reads `ham_spinful_exchange`, while `spin-free`
-        # and `spin-diag` take `_fierz_long()` regardless.
-        onsite_r = np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+        # NOT accumulated here (issue #174 round-2 review). The dense
+        # accumulator is (ns*norb)^4 complex128 -- 1.6 GB at norb = 50 --
+        # and `ham_spinful_exchange` keeps a transposed VIEW of it, so
+        # building it eagerly would pin that allocation for the lifetime
+        # of EVERY solver instance, including the spin-free and spin-diag
+        # solves that never read it. Instead the call sites below RECORD
+        # what would have been accumulated (a handful of sparse
+        # declaration tables), and `spinful_exchange()` replays the
+        # recording on first demand -- which happens only inside the
+        # `spin_mode == 'spinful'` solve branch.
+        #
+        # The gate this replaced was `enable_spin_orbital`, on the premise
+        # that "no other mode consumes it". That premise is false:
+        # `RPA._calc_epsilon_k` takes the spin-orbital branch
+        # UNCONDITIONALLY for the `trans_mod` / `green_init` npz routes, so
+        # a spin-mixing H0 supplied through an npz reaches
+        # `spin_mode == 'spinful'` with `enable_spin_orbital = False`, and
+        # the gate left that solve falling back to the pre-#137 ring-only
+        # vertex with no warning (measured 1.7e-02, 12.2% relative in
+        # chiq, confined to the spin-flip pair slots; calc_scheme='auto'
+        # promotes INTO the path since #167). Demand-driven materialization
+        # removes the asymmetry entirely: whoever consumes it gets it.
+        self._onsite_direct_calls = []
+        self.ham_spinful_exchange = None
+        self._spinful_exchange_built = False
 
         def _append_onsite_direct(type, tbl=None, pairhop=False):
-            has_sub = getattr(self.lattice, "has_sublattice", False)
-            if tbl is None:
-                if has_sub:
-                    tbl = self.param_ham_orig.get(type, {})
-                else:
-                    tbl = self.param_ham.get(type, {})
-            filtered = {}
-            for (irvec, orbvec), v in tbl.items():
-                if tuple(irvec) == (0, 0, 0):
-                    filtered[(irvec, orbvec)] = v
-            if not filtered:
-                return
-            if has_sub:
-                filtered = self._reshape_interaction(filtered, False)
-            filtered = _symmetrised(type, filtered)
-            spins = spin_table[type]
-            for (irvec, orbvec), v in filtered.items():
-                if tuple(irvec) != (0, 0, 0):
-                    continue
-                a, b = orbvec
-                for spinvec, w in spins.items():
-                    s1, s2, s3, s4 = spinvec
-                    # same slot layouts as the ham_r builders above
-                    orb = ((s4, b, s3, a, s1, a, s2, b) if pairhop
-                           else (s4, b, s3, b, s1, a, s2, a))
-                    onsite_r[orb] += v * w
+            # record only; see Interaction._accumulate_onsite_direct for
+            # the accumulation this defers (moved there verbatim)
+            self._onsite_direct_calls.append((type, tbl, pairhop))
 
         def _append_inter_cross(type, tbl=None):
             # Longitudinal cross-slot (Fierz) content, adjudicated against
@@ -1272,29 +1268,101 @@ class Interaction:
         else:
             self.ham_fierz_q = None
 
-        # Spinful exchange content (issue #137). The spinful general solve
-        # resums chi = [1 - chi0 W]^-1 chi0 with ONE vertex tensor; the
-        # physically complete first order is the ANTISYMMETRIZED bare
-        # particle-hole vertex Gamma = D + X, where X is the crossed
-        # (exchange) wiring of the same interaction. Re-pairing the on-site
-        # two-body term
-        #     W^{b b' a a'} c^+_a c_a' c^+_b' c_b
-        #       = - W^{b b' a a'} c^+_a c_b c^+_b' c_a' + (one-body)
-        # shows the crossed wiring is the direct wiring of the coefficient
-        # tensor with the b and a' slots swapped and negated:
-        #     X[b, b', a, a'] = - D[a', b', a, b]   (on-site block only).
-        # Off-site exchange depends on both fermionic momenta and cannot be
-        # written as W(q); it stays outside the ring-form resummation (the
-        # same limitation the non-spin-orbital ladder has). In the
-        # spin-conserving limit X reproduces the adjudicated transverse
-        # (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
-        # (issue #137 reproduction).
-        exch_onsite = -np.transpose(
-            onsite_r.reshape(*(nd,) * 4), (3, 1, 2, 0))
-        # stays None when no on-site declaration sources the crossing:
-        # the structural pins read that as "nothing was crossed"
-        self.ham_spinful_exchange = (exch_onsite
-                                     if np.any(exch_onsite) else None)
+    def _accumulate_onsite_direct(self):
+        """Replay the on-site direct declarations recorded by
+        ``_make_ham_inter`` into a dense (ns, norb)*4 accumulator.
+
+        The body is ``_make_ham_inter``'s former ``_append_onsite_direct``
+        closure, moved here verbatim so the arithmetic is unchanged; the
+        ``_symmetrised`` helper it calls is likewise the same reduction
+        (see that closure's comment for why the mean over the two
+        declarations of a bond is the physical coefficient).
+        """
+        nx, ny, nz = self.lattice.shape
+        norb = self.norb
+        ns = 2
+
+        def _symmetrised(type, tbl):
+            arr = np.zeros((nx, ny, nz, norb, norb), dtype=np.complex128)
+            for (irvec, orbvec), v in tbl.items():
+                arr[(irvec[0] % nx, irvec[1] % ny, irvec[2] % nz,
+                     *orbvec)] += v
+            sym = symmetrise_dense(arr, hermitian=(type == "PairHop"))
+            out = {}
+            for ix, iy, iz, a, b in zip(*np.nonzero(sym)):
+                out[((int(ix), int(iy), int(iz)), (int(a), int(b)))] = \
+                    sym[ix, iy, iz, a, b]
+            return out
+
+        onsite_r = np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
+        for type, tbl, pairhop in getattr(self, "_onsite_direct_calls", []):
+            has_sub = getattr(self.lattice, "has_sublattice", False)
+            if tbl is None:
+                if has_sub:
+                    tbl = self.param_ham_orig.get(type, {})
+                else:
+                    tbl = self.param_ham.get(type, {})
+            filtered = {}
+            for (irvec, orbvec), v in tbl.items():
+                if tuple(irvec) == (0, 0, 0):
+                    filtered[(irvec, orbvec)] = v
+            if not filtered:
+                continue
+            if has_sub:
+                filtered = self._reshape_interaction(filtered, False)
+            filtered = _symmetrised(type, filtered)
+            spins = ring_spin_table(type)
+            for (irvec, orbvec), v in filtered.items():
+                if tuple(irvec) != (0, 0, 0):
+                    continue
+                a, b = orbvec
+                for spinvec, w in spins.items():
+                    s1, s2, s3, s4 = spinvec
+                    # same slot layouts as the ham_r builders
+                    orb = ((s4, b, s3, a, s1, a, s2, b) if pairhop
+                           else (s4, b, s3, b, s1, a, s2, a))
+                    onsite_r[orb] += v * w
+        return onsite_r
+
+    def spinful_exchange(self):
+        """Spinful exchange content (issue #137), materialized on demand.
+
+        The spinful general solve resums chi = [1 - chi0 W]^-1 chi0 with
+        ONE vertex tensor; the physically complete first order is the
+        ANTISYMMETRIZED bare particle-hole vertex Gamma = D + X, where X
+        is the crossed (exchange) wiring of the same interaction.
+        Re-pairing the on-site two-body term
+            W^{b b' a a'} c^+_a c_a' c^+_b' c_b
+              = - W^{b b' a a'} c^+_a c_b c^+_b' c_a' + (one-body)
+        shows the crossed wiring is the direct wiring of the coefficient
+        tensor with the b and a' slots swapped and negated:
+            X[b, b', a, a'] = - D[a', b', a, b]   (on-site block only).
+        Off-site exchange depends on both fermionic momenta and cannot be
+        written as W(q); it stays outside the ring-form resummation (the
+        same limitation the non-spin-orbital ladder has). In the
+        spin-conserving limit X reproduces the adjudicated transverse
+        (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
+        (issue #137 reproduction).
+
+        LAZY (issue #174 round-2 review): the tensor is (ns*norb)^4
+        complex128 -- 1.6 GB at norb = 50 -- and only the
+        ``spin_mode == 'spinful'`` solve branch consumes it, so it is
+        built on the first call and cached in ``ham_spinful_exchange``.
+        Until then that attribute is ``None`` for EVERY mode, and a
+        spin-free / spin-diag solve never calls this, so it never pays
+        the allocation. Returns ``None`` -- and caches ``None`` -- when no
+        on-site declaration sources a crossing; the structural pins read
+        that as "nothing was crossed".
+        """
+        if not getattr(self, "_spinful_exchange_built", False):
+            nd = self.norb * 2
+            exch_onsite = -np.transpose(
+                self._accumulate_onsite_direct().reshape(*(nd,) * 4),
+                (3, 1, 2, 0))
+            self.ham_spinful_exchange = (exch_onsite
+                                         if np.any(exch_onsite) else None)
+            self._spinful_exchange_built = True
+        return self.ham_spinful_exchange
 
 class RPA:
     """
@@ -2276,7 +2344,11 @@ class RPA:
                 # every on-site cross-orbital slot. Opt-out via
                 # [mode.param] spinful_vertex_exchange = false reproduces
                 # the pre-#137 ring-only numbers (ham_inter + fierz).
-                exch = getattr(self.ham_info, "ham_spinful_exchange", None)
+                # materializes the crossing on demand (#174): only this
+                # branch consumes it, so spin-free / spin-diag solves
+                # never allocate the (ns*norb)^4 tensor
+                _build_exch = getattr(self.ham_info, "spinful_exchange", None)
+                exch = _build_exch() if callable(_build_exch) else None
                 if exch is not None and self.spinful_vertex_exchange:
                     exch = xp.asarray(exch) if gpu_active else exch
                     ham_long = _to_bubble_pair_convention(
