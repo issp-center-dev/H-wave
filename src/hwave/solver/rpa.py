@@ -1053,10 +1053,34 @@ class Interaction:
                     " ... ({} more)".format(len(offsite) - 8)
                     if len(offsite) > 8 else "")
 
-            tbl = _symmetrised(type, self.param_ham[type])
+            # The VERTEX BUILD obeys the SAME pre-fold locality rule as
+            # the scan above -- filter the PRE-FOLD table to its on-site
+            # entries FIRST, and fold only those (the exact order
+            # _append_onsite_direct and _append_inter_cross below use,
+            # with the same _reshape_interaction call the reader itself
+            # applies in _init_interaction). Selecting r=(0,0,0) from the
+            # already-FOLDED self.param_ham instead let every off-site
+            # declaration through under a sublattice: folding maps an
+            # off-site bond onto r=(0,0,0) between supercell orbitals, so
+            # the discarded-by-the-warning content was summed into
+            # ham_inter_q anyway (measured on a norb=1
+            # CellShape=[2,1,1]/SubShape=[2,1,1] fixture: the full 2P
+            # weight, max|ham_inter_q difference| = 0.6 for P = 0.3).
+            # Without a sublattice the two readings coincide exactly
+            # (_symmetrised's r=0 output depends only on r=0 entries), so
+            # the unfolded path is bit-for-bit unchanged.
+            onsite_tbl = {}
+            for (irvec, orbvec), v in orig_tbl.items():
+                if tuple(int(x) for x in irvec) == (0, 0, 0):
+                    onsite_tbl[(irvec, orbvec)] = v
+            if not onsite_tbl:
+                return
+            if has_sub:
+                onsite_tbl = self._reshape_interaction(onsite_tbl, False)
+            tbl = _symmetrised(type, onsite_tbl)
             for (irvec,orbvec), v in tbl.items():
                 # take account of same-site interaction only
-                if (irvec == (0,0,0)):
+                if (tuple(irvec) == (0,0,0)):
                     a, b = orbvec
                     for spinvec, w in spins.items():
                         s1,s2,s3,s4 = spinvec

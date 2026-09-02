@@ -3023,6 +3023,178 @@ class TestPairHopOffsiteWarningAndGateRejection(ApproxTestCase):
         self.assertIn("0.15", msg)
         self.assertIn("representability limit", msg)
 
+    # ---------------------------------------------------------------
+    # The VERTEX BUILD must honour the same pre-fold locality rule as
+    # the warning (round-2 review). ``_append_pairhop`` used to select
+    # its on-site entries from ``self.param_ham`` -- the FOLDED table --
+    # so under SubShape folding every off-site declaration arrived as an
+    # r=(0,0,0) entry between supercell orbitals and was summed into
+    # ham_inter_q, while the log said it had been dropped (measured on
+    # the norb=1 fixture below: max|ham_inter_q difference| = 0.6, the
+    # full 2*P weight of the declaration). These two tests pin both
+    # halves of the corrected rule: pre-fold OFF-site contributes
+    # nothing, pre-fold ON-site still contributes in full.
+    # ---------------------------------------------------------------
+
+    def _write_norb1_folded_files(self, d, *, include_offsite_pairhop):
+        """norb=1, CellShape=[2,1,1]/SubShape=[2,1,1] (folded to one
+        supercell of 2 orbitals): an on-site CoulombIntra so the vertex
+        is nonzero either way, plus optionally a Hermitian-closed
+        OFF-site PairHop pair at R=(+-1,0,0) -- the declaration whose
+        contribution the warning claims to drop."""
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                     "0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n"
+                     " 1 0 0 1 1 -1.0 0.0\n-1 0 0 1 1 -1.0 0.0\n")
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("hdr\n1\n1\n1\n 0 0 0 1 1 2.0 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombIntra": "coulombintra.dat"}
+        if include_offsite_pairhop:
+            with open(os.path.join(d, "pairhop.dat"), "w") as f:
+                f.write("hdr\n1\n2\n1 1\n"
+                         " 1 0 0 1 1 0.3 0.0\n-1 0 0 1 1 0.3 0.0\n")
+            inter["PairHop"] = "pairhop.dat"
+        return inter
+
+    def _ham_inter_q(self, inter, *, cellshape, subshape):
+        param = {"T": 0.5, "mu": 0.0, "CellShape": cellshape,
+                 "SubShape": subshape, "Nmat": 8}
+        info_mode = {"mode": "RPA", "param": param,
+                     "calc_scheme": "general", "calc_type": "ring"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": inter["path_to_input"],
+             "interaction": inter})
+        solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+        return solver, np.asarray(solver.ham_info.ham_inter_q)
+
+    def test_folded_offsite_pairhop_contributes_nothing_to_the_vertex(
+            self):
+        """Gate OFF (the default path): a pre-fold OFF-site PairHop must
+        leave ham_inter_q BITWISE identical to the same input without the
+        declaration -- i.e. actually dropped, as the warning states, not
+        silently folded onto r=(0,0,0) between supercell orbitals."""
+        with tempfile.TemporaryDirectory() as d_on, \
+                tempfile.TemporaryDirectory() as d_off:
+            inter_with = self._write_norb1_folded_files(
+                d_on, include_offsite_pairhop=True)
+            inter_without = self._write_norb1_folded_files(
+                d_off, include_offsite_pairhop=False)
+            solver, ham_with = self._ham_inter_q(
+                inter_with, cellshape=[2, 1, 1], subshape=[2, 1, 1])
+            _s2, ham_without = self._ham_inter_q(
+                inter_without, cellshape=[2, 1, 1], subshape=[2, 1, 1])
+
+        # the fixture really does fold (otherwise the test is vacuous)
+        self.assertTrue(getattr(solver.lattice, "has_sublattice", False))
+        self.assertEqual(tuple(solver.lattice.shape), (1, 1, 1))
+        # ... and the folded table really does present the off-site
+        # declaration as an on-site one, which is what made it leak
+        self.assertEqual(
+            [], [irvec for (irvec, _o) in
+                 solver.ham_info.param_ham["PairHop"].keys()
+                 if tuple(int(x) for x in irvec) != (0, 0, 0)])
+        # the CoulombIntra content is present, so this is not a
+        # comparison of two zero tensors
+        self.assertGreater(float(np.max(np.abs(ham_without))), 0.0)
+
+        self.assertTrue(np.array_equal(ham_with, ham_without),
+                        "off-site PairHop leaked into ham_inter_q: "
+                        "max|diff| = {}".format(
+                            float(np.max(np.abs(ham_with - ham_without)))))
+
+    def test_folded_onsite_pairhop_still_reaches_the_vertex(self):
+        """Positive control for the same rule: a pre-fold ON-site
+        PairHop (norb=2, a genuine r=(0,0,0) declaration between two
+        orbitals) must still be represented in full after folding.
+
+        Asserted against an INDEPENDENT route rather than a stored
+        number: the folded run (CellShape=[2,1,1]/SubShape=[2,1,1],
+        norb=2 -> one supercell of 4 orbitals) is compared bitwise with
+        an UNFOLDED run that declares the folded content directly
+        (CellShape=SubShape=[1,1,1], norb=4, the same coefficients on the
+        supercell orbital pairs (1,2)/(2,1) and (3,4)/(4,3)). Both runs
+        have identical ham_inter_q shape (1,1,1,8,8,8,8), and the second
+        never exercises the folding path at all, so agreement pins that
+        the pre-fold on-site selection folds to exactly the same
+        declarations the reader's own folding produces -- the strongest
+        cheap assertion available, and one that stays valid if the
+        internal ordering of the builder ever changes."""
+        with tempfile.TemporaryDirectory() as d_fold, \
+                tempfile.TemporaryDirectory() as d_direct, \
+                tempfile.TemporaryDirectory() as d_none:
+            # (i) pre-fold ON-site PairHop on a norb=2 cell, folded
+            with open(os.path.join(d_fold, "geom.dat"), "w") as f:
+                f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n"
+                         "0.0 0.0 0.0\n0.0 0.0 0.0\n")
+            with open(os.path.join(d_fold, "transfer.dat"), "w") as f:
+                f.write("hdr\n1\n4\n1 1 1 1\n"
+                         " 1 0 0 1 1 -1.0 0.0\n-1 0 0 1 1 -1.0 0.0\n"
+                         " 1 0 0 2 2 -1.0 0.0\n-1 0 0 2 2 -1.0 0.0\n")
+            with open(os.path.join(d_fold, "pairhop.dat"), "w") as f:
+                f.write("hdr\n1\n2\n1 1\n"
+                         " 0 0 0 1 2 0.3 0.0\n 0 0 0 2 1 0.3 0.0\n")
+            inter_fold = {"path_to_input": d_fold, "Geometry": "geom.dat",
+                          "Transfer": "transfer.dat",
+                          "PairHop": "pairhop.dat"}
+            solver_fold, ham_fold = self._ham_inter_q(
+                inter_fold, cellshape=[2, 1, 1], subshape=[2, 1, 1])
+
+            # (ii) the SAME content declared directly on the supercell
+            with open(os.path.join(d_direct, "geom.dat"), "w") as f:
+                f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n4\n"
+                         + "0.0 0.0 0.0\n" * 4)
+            with open(os.path.join(d_direct, "transfer.dat"), "w") as f:
+                f.write("hdr\n1\n4\n1 1 1 1\n"
+                         " 0 0 0 1 1 -1.0 0.0\n 0 0 0 2 2 -1.0 0.0\n"
+                         " 0 0 0 3 3 -1.0 0.0\n 0 0 0 4 4 -1.0 0.0\n")
+            with open(os.path.join(d_direct, "pairhop.dat"), "w") as f:
+                f.write("hdr\n1\n4\n1 1 1 1\n"
+                         " 0 0 0 1 2 0.3 0.0\n 0 0 0 2 1 0.3 0.0\n"
+                         " 0 0 0 3 4 0.3 0.0\n 0 0 0 4 3 0.3 0.0\n")
+            inter_direct = {"path_to_input": d_direct,
+                            "Geometry": "geom.dat",
+                            "Transfer": "transfer.dat",
+                            "PairHop": "pairhop.dat"}
+            solver_direct, ham_direct = self._ham_inter_q(
+                inter_direct, cellshape=[1, 1, 1], subshape=[1, 1, 1])
+
+            # (iii) the same folded fixture with NO PairHop at all, to
+            # show the on-site content is genuinely nonzero content
+            with open(os.path.join(d_none, "geom.dat"), "w") as f:
+                f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n"
+                         "0.0 0.0 0.0\n0.0 0.0 0.0\n")
+            with open(os.path.join(d_none, "transfer.dat"), "w") as f:
+                f.write("hdr\n1\n4\n1 1 1 1\n"
+                         " 1 0 0 1 1 -1.0 0.0\n-1 0 0 1 1 -1.0 0.0\n"
+                         " 1 0 0 2 2 -1.0 0.0\n-1 0 0 2 2 -1.0 0.0\n")
+            with open(os.path.join(d_none, "coulombintra.dat"), "w") as f:
+                f.write("hdr\n1\n1\n1\n 0 0 0 1 1 2.0 0.0\n")
+            inter_none = {"path_to_input": d_none, "Geometry": "geom.dat",
+                          "Transfer": "transfer.dat",
+                          "CoulombIntra": "coulombintra.dat"}
+            _s3, ham_none = self._ham_inter_q(
+                inter_none, cellshape=[2, 1, 1], subshape=[2, 1, 1])
+
+        self.assertTrue(getattr(solver_fold.lattice, "has_sublattice",
+                                 False))
+        self.assertFalse(getattr(solver_direct.lattice, "has_sublattice",
+                                  False))
+        self.assertEqual(solver_fold.ham_info.norb,
+                          solver_direct.ham_info.norb)
+        self.assertEqual(ham_fold.shape, ham_direct.shape)
+        # on-site PairHop content is really there (not a zero tensor)
+        self.assertGreater(float(np.max(np.abs(ham_fold))), 0.0)
+        self.assertFalse(np.array_equal(ham_fold, ham_none))
+        self.assertTrue(np.array_equal(ham_fold, ham_direct),
+                        "folded on-site PairHop vertex differs from the "
+                        "directly declared supercell equivalent: "
+                        "max|diff| = {}".format(
+                            float(np.max(np.abs(ham_fold - ham_direct)))))
+
 
 class _CollectingHandler(logging.Handler):
     def __init__(self):
