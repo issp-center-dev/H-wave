@@ -487,18 +487,34 @@ input failing this is rejected. The transverse pair
 off-site term, so such a term’s vertex is not a function of <span class="math notranslate nohighlight">\(q\)</span> alone
 and cannot be represented. In practice this rejects off-site
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, while off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and
-<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
-rejected earlier, at read time (as of version 2.0: declaration files must be
-Hermitian-closed); an inter-site pair that folds into the supercell under
-<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> becomes an intra-cell orbital pair and is representable. The
-longitudinal (<code class="docutils literal notranslate"><span class="pre">ring</span></code>) channel is unaffected.</p>
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are accepted because their transverse vertex vanishes. Note that
+a set of declarations whose members cancel or disagree is rejected earlier, at
+read time (as of version 2.0: declaration files must be Hermitian-closed); and,
+for the interaction types governed by this <span class="math notranslate nohighlight">\(q\)</span>-independence check, an
+inter-site pair that folds into the supercell under <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> becomes an
+intra-cell orbital pair and is representable. <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is the exception: its
+locality is judged on the ORIGINAL (pre-fold) declarations, so an off-site
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is discarded – or, under the bond-resolved transverse channel,
+rejected – even when <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> folds it onto an intra-cell orbital pair
+(see the warning below). The longitudinal (<code class="docutils literal notranslate"><span class="pre">ring</span></code>) channel is unaffected.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p>Off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> entries are silently discarded when the interaction is
-read, before this check runs, so they are neither rejected nor included.
-Do not rely on off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> in any RPA calculation. A DIAGONAL
-PairHop entry (equal orbitals) denotes the density term
-<span class="math notranslate nohighlight">\(2P\, n_\uparrow n_\downarrow\)</span>; the interaction reader stores it
+<p>Off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> entries are <strong>not represented</strong>, and this is a
+<strong>permanent</strong> restriction rather than a missing feature: an off-site
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>’s transverse contribution is a pair-hopping bilinear lying
+outside the particle-hole channel space
+<span class="math notranslate nohighlight">\(c^\dagger_{i a \uparrow} c_{j b \downarrow}\)</span> that the transverse
+channel dresses, so representing it would require an enlarged bilinear
+basis. In the standard calculation such entries are discarded when the
+interaction is read, before this check runs, so they are neither rejected
+nor included; a warning naming every discarded declaration is written to
+the log. Do not rely on off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> in any RPA calculation. Under
+the experimental bond-resolved transverse channel
+(<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declaration
+is <strong>rejected with an error</strong> instead, so that no silently incomplete
+transverse result is produced. On-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is fully supported in
+both cases. A DIAGONAL PairHop entry (equal orbitals) denotes the density
+term <span class="math notranslate nohighlight">\(2P\, n_\uparrow n_\downarrow\)</span>; the interaction reader stores it
 with coefficient <span class="math notranslate nohighlight">\(P\)</span> rather than <span class="math notranslate nohighlight">\(2P\)</span>, consistently in both the
 longitudinal and transverse channels. Validation of such degenerate entries
 is tracked separately.</p>

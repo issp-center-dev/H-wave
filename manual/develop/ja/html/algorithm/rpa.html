@@ -462,15 +462,31 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Hund</span></code>と<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は横方向頂点が消えるため受理されます。
 なお、互いに打ち消し合う・値が食い違う宣言の組は、より早い読み込み時に
 拒否されます（バージョン 2.0 以降: 宣言ファイルはエルミート共役で閉じている必要が
-あります）。また<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>による折り畳みでスーパーセル内に収まる
-サイト間ペアはセル内軌道ペアとなり、表現可能として受理されます。縦方向（<code class="docutils literal notranslate"><span class="pre">ring</span></code>）チャネルは影響を受けません。</p>
+あります）。また、この<span class="math notranslate nohighlight">\(q\)</span>非依存性検査が対象とする相互作用の種類に
+ついては、<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>による折り畳みでスーパーセル内に収まるサイト間ペアは
+セル内軌道ペアとなり、表現可能として受理されます。ただし<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は例外で、
+その局所性は元の（折り畳み前の）宣言で判定されます。そのため、オフサイトの
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>による折り畳みでセル内軌道ペアになる場合でも
+破棄され、ボンド分解横方向チャネルでは拒否されます（下記の警告を参照）。
+縦方向（<code class="docutils literal notranslate"><span class="pre">ring</span></code>）チャネルは影響を受けません。</p>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p>オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は相互作用の読み込み時にこの検査より前に暗黙に
-破棄されるため、拒否も反映もされません。RPA 計算でオフサイトの
-<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>に依存しないでください。また、対角（同一軌道）の PairHop は
-密度項<span class="math notranslate nohighlight">\(2P\, n_\uparrow n_\downarrow\)</span>を意味しますが、読み込み時の
-係数は<span class="math notranslate nohighlight">\(2P\)</span>ではなく<span class="math notranslate nohighlight">\(P\)</span>として（縦・横チャネルで一貫して）
+<p>オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は <strong>表現されません</strong> 。これは未実装ではなく
+<strong>恒久的な制限</strong> です。オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の横方向寄与は、横方向
+チャネルが扱う粒子・正孔チャネル空間
+<span class="math notranslate nohighlight">\(c^\dagger_{i a \uparrow} c_{j b \downarrow}\)</span>の外にある
+ペアホッピング型の双線形であり、表現するには双線形基底の拡張が必要だから
+です。通常の計算では、これらのエントリは相互作用の読み込み時にこの検査より
+前に破棄されるため、拒否も反映もされません（破棄した宣言を列挙する警告が
+ログに出力されます）。RPA 計算でオフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>に依存しないで
+ください。実験的なボンド分解横方向チャネル
+（<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）では、オフサイトの
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言は代わりに <strong>エラーとして拒否</strong> されます。これは、
+不完全な横方向の結果が黙って生成されることを防ぐためです。オンサイトの
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>はいずれの場合も完全にサポートされます。
+また、対角（同一軌道）の PairHop は密度項
+<span class="math notranslate nohighlight">\(2P\, n_\uparrow n_\downarrow\)</span>を意味しますが、読み込み時の係数は
+<span class="math notranslate nohighlight">\(2P\)</span>ではなく<span class="math notranslate nohighlight">\(P\)</span>として（縦・横チャネルで一貫して）
 扱われます。この縮退エントリの検証は別途追跡されています。</p>
 </div>
 <p>スピンを本当に混合する（genuinely spin-mixing）スピン軌道ハミルトニアンを
