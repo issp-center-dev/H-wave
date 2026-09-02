@@ -219,8 +219,21 @@ class FLEX(RPA):
         logger.debug(">>> FLEX._init_flex_param")
 
         # #167: FLEX has no transverse channel, so ring+ladder is invalid
-        # REGARDLESS of the scheme -- rejected as step 0, before any scheme
-        # logic (1.0.x reached the same message through auto->general).
+        # for every scheme that reaches FLEX's own logic -- rejected here as
+        # step 0, before any scheme logic runs.
+        #
+        # Note this guard is not the only stop, and deliberately not the
+        # first one: an EXPLICIT non-general scheme with
+        # calc_type='ring+ladder' is already rejected upstream by the
+        # inherited RPA _set_scheme ("calc_type='ring+ladder' requires
+        # calc_scheme='general' or 'auto'", logger.error + sys.exit(1)), so
+        # explicit reduced never gets here. That precedence is 1.0.x
+        # behaviour and is preserved on purpose (pinned by
+        # tests/test_auto_scheme_exactness.py::TestFLEXAutoResolution::
+        # test_explicit_reduced_ring_ladder_is_stopped_by_the_inherited_gate).
+        # What this step-0 guard covers is the rest: 'auto' (which 1.0.x
+        # resolved to general and which would otherwise reach the ring-only
+        # general path) and an explicit 'general'.
         if getattr(self, "calc_type", "ring") == "ring+ladder":
             msg = ("FLEX does not support calc_type='ring+ladder' (the "
                    "transverse ladder channel); FLEX general is ring-only. "

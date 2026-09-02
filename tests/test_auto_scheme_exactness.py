@@ -758,6 +758,24 @@ class TestFLEXAutoResolution(_Case):
             self._build("auto", {"CoulombIntra": "coulombintra.dat"}, False,
                         mode="FLEX", calc_type="ring+ladder")
 
+    def test_explicit_reduced_ring_ladder_is_stopped_by_the_inherited_gate(self):
+        """1.0.x precedence, pinned.
+
+        FLEX's own step-0 ring+ladder guard raises ValueError, but an
+        EXPLICIT reduced request never reaches it: the inherited RPA
+        _set_scheme rejects calc_type='ring+ladder' with any non-general
+        scheme first, by logger.error + sys.exit(1). That is exactly what
+        H-wave 1.0.x did, so the step-0 guard must not change it -- it
+        covers the schemes that do reach FLEX's own logic (auto, general).
+        """
+        with self.assertLogs("hwave.solver.rpa", level="ERROR") as cm:
+            with self.assertRaises(SystemExit) as se:
+                self._build("reduced", {"CoulombIntra": "coulombintra.dat"},
+                            False, mode="FLEX", calc_type="ring+ladder")
+        self.assertEqual(se.exception.code, 1)
+        self.assertTrue(any("requires calc_scheme='general' or 'auto'" in m
+                            for m in cm.output), cm.output)
+
     def test_explicit_reduced_with_forcing_type_warns_at_construction(self):
         with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
             self._build("reduced", {"CoulombInter": "onsite_inter.dat"}, False, mode="FLEX")
