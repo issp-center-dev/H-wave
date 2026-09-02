@@ -779,18 +779,24 @@ frequency-dependent (non-Hermitian) kernel this can be fragile near an
 *exceptional point* — where two real eigenvalues collide and split into a
 complex-conjugate pair — so the "leading" branch may jump discontinuously
 between neighbouring temperatures even when the FLEX self-energy varies
-smoothly. To follow one physical branch, set ``[eliashberg] seed_eigenvector``
-to a ``gap_dynamic.npz`` written by a neighbouring run (e.g. the next-higher
-temperature): its gap is used as the ARPACK start vector **and** to select the
-eigenpair whose eigenvector maximally overlaps it, rather than the largest one.
-Stepping temperature down and feeding each run the previous ``gap_dynamic.npz``
-tracks the same gap symmetry (e.g. the d-wave mode) continuously. The seed must
+smoothly. To help follow one physical branch, set ``[eliashberg]
+seed_eigenvector`` to a ``gap_dynamic.npz`` written by a neighbouring run
+(e.g. the next-higher temperature): its gap is used as the ARPACK start
+vector **and**, among the eigenpairs actually *returned* by the eigensolver
+(governed by ``num_eigenvalues`` and, on the shift-invert path,
+``sigma_shift``), to select the one whose eigenvector maximally overlaps it,
+rather than the algebraically largest one. If the physical branch is not
+among the returned eigenpairs at all, increase ``num_eigenvalues`` or move
+``sigma_shift`` near it. Stepping temperature down and feeding each run the
+previous ``gap_dynamic.npz`` helps track the same gap symmetry (e.g. the
+d-wave mode) across the sweep, though it is not a guarantee: too large a
+step between temperatures can still lose the physical branch. The seed must
 share the run's ``CellShape`` and ``Nmat`` (a mismatch is a fail-fast error), so
 keep ``Nmat`` fixed across a continuation sweep; on the IR path the seed gap is
 refit onto the IR nodes automatically. ``[eliashberg] sigma_shift`` sets an
 explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
-combining ``sigma_shift`` near the branch with ``seed_eigenvector`` is the most
-robust way to resolve a masked or complexifying eigenvalue.
+combining ``sigma_shift`` near the branch with ``seed_eigenvector`` helps
+resolve a masked or complexifying eigenvalue.
 
 .. _sc_tsweep:
 
@@ -805,13 +811,17 @@ automates this: given one base TOML -- the same
 ``[mode]``/``[mode.param]``/``[file]``/``[eliashberg]`` configuration used
 for a single FLEX+Eliashberg run -- plus a ``[continuation]`` section, it
 runs FLEX (and, unless disabled, the Eliashberg solver) across a descending
-ladder of temperatures. At each rung it feeds the previous rung's converged
-self-energy into this rung's FLEX via ``sigma_init`` (warm start) and the
-previous rung's dynamic gap into this rung's Eliashberg solve via
+ladder of temperatures. At each rung it feeds the previous rung's final
+saved self-energy into this rung's FLEX via ``sigma_init`` (warm start) and
+the previous rung's dynamic gap into this rung's Eliashberg solve via
 ``seed_eigenvector`` (eigenvector continuation) -- automating the whole
-warm-start chain so a single physical branch is tracked smoothly down to low
-temperature instead of being cold-started, and potentially landing on a
-different metastable solution, at every point.
+warm-start chain instead of cold-starting (and potentially landing on a
+different metastable solution) at every rung. This chaining does not
+require the previous rung to have converged: any non-error rung whose seed
+files are present is used as the next rung's seed regardless of its FLEX
+convergence status, so inspect the summary's ``flex_converged`` column
+(below) rather than assuming every warm start came from a converged
+self-energy.
 
 Only ``mode.param.T`` is varied between rungs; ``CellShape``, ``Nmat``, and
 every other shape-determining field are held fixed across the ladder, which
@@ -853,8 +863,8 @@ The ``[continuation]`` section
   section -- pre-flight raises an error otherwise, naming the missing
   section. Set to ``false`` to run a FLEX-only sweep that chains only
   ``sigma_init``.
-- ``warm_start`` (default ``true``): chain each rung's converged self-energy
-  into the next rung's ``sigma_init``.
+- ``warm_start`` (default ``true``): chain each rung's final self-energy
+  (converged or not) into the next rung's ``sigma_init``.
 - ``seed_gap`` (default ``true``): chain each rung's gap into the next
   rung's ``seed_eigenvector``. This is only active for the dynamic
   Eliashberg solver (``[eliashberg] frequency = "dynamic"``); for a static

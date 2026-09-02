@@ -48,12 +48,18 @@ Estimating :math:`T_c` when :math:`\lambda` does not reach 1
 
 **Q. My leading eigenvalue never reaches 1. How do I estimate** :math:`T_c`\ **?**
 
-:math:`\lambda = 1` identifies :math:`T_c` when :math:`\lambda` is the
-eigenvalue of a single physical branch tracked continuously across
-temperature; :math:`\lambda < 1` at a given :math:`T` only tells you that the
-normal state is stable at that particular temperature, not how close
-:math:`T` is to :math:`T_c`. Finding the crossing therefore requires running
-at lower temperatures. ``hwave_tsweep`` automates a descending temperature
+:math:`\lambda = 1` for a single physical branch, tracked continuously across
+temperature, marks *that branch's own* instability -- not necessarily the
+overall system :math:`T_c`, since a different pairing channel, or a
+different symmetry within the same channel, could reach :math:`\lambda = 1`
+at a higher temperature first. The system :math:`T_c` is the highest
+temperature at which *any* physical branch reaches :math:`\lambda = 1`.
+Likewise, :math:`\lambda < 1` for the tracked branch at a given :math:`T`
+only rules out an instability of that particular mode at that temperature;
+it does not by itself establish that the normal state is stable overall, nor
+how close :math:`T` is to the tracked branch's own :math:`T_c`. Finding a
+branch's crossing therefore requires running at lower temperatures.
+``hwave_tsweep`` automates a descending temperature
 ladder, chaining each rung's final saved self-energy (and, for the dynamic
 solver, its leading eigenvector) into the next -- see :ref:`sc_tsweep`, and
 check the summary's ``flex_converged`` column, since an unconverged rung's
@@ -277,21 +283,37 @@ trying it. See :ref:`flex_params` for the full parameter table
 **Q. My run got noticeably slower and its output arrays got bigger after
 upgrading, even though I did not change my input. Why?**
 
-Since version 2.0, ``calc_scheme = "auto"`` (the default) resolves to a
-scheme that is *exact* for the declared input rather than always preferring
-the cheaper ``reduced`` scheme. For RPA, ``reduced`` is kept only when every
-declared interaction is density-only or the one-body Hamiltonian conserves
-orbital flavour, so a hybridised multi-orbital model declaring
-``CoulombInter``, ``Hund``, or ``Ising`` is promoted to ``general``. For
-FLEX, *every* run declaring one of those interactions (or the aggregate
-``Coulomb`` interaction) promotes to ``general`` unconditionally, hybridised
-or not, because the self-consistent loop cannot exploit the RPA-only
-exactness argument (see :ref:`flex_scope`). ``general`` uses a rank-6
-``chiq`` and costs more (memory/solve cost grow from
-:math:`O(N_d^2)/O(N_d^3)` to :math:`O(N_d^4)/O(N_d^6)` per
-:math:`(\mathbf{q},\omega)`). To keep the pre-2.0 behaviour explicitly --
-with a one-time warning that the result is then an approximation for that
-input -- request ``calc_scheme = "reduced"``. See the
+Since version 2.0, ``calc_scheme = "auto"`` (the default) resolves the
+scheme per declared interaction rather than always preferring the cheaper
+``reduced`` scheme, and the exact rule differs by consumer:
+
+- **RPA**, ``calc_type = "ring"`` (the default): ``Exchange`` or ``PairHop``
+  forces ``general`` *unconditionally*, regardless of orbital hybridisation.
+  ``CoulombInter``, ``Hund``, ``Ising``, ``PairLift``, or the aggregate
+  ``Coulomb`` interaction forces ``general`` only *conditionally* -- when the
+  one-body Hamiltonian (Transfer/Extern/``trans_mod``/``green_init``) mixes
+  orbital flavour (a hybridised model); otherwise ``reduced`` is kept
+  exactly. ``CoulombIntra`` alone never forces ``general``.
+- ``calc_type = "ring+ladder"`` always resolves to ``general``, regardless of
+  which interactions are declared.
+- **FLEX**: ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairHop``,
+  or the aggregate ``Coulomb`` interaction forces ``general``
+  *unconditionally* -- hybridisation is not checked at all, because the
+  self-consistent loop cannot exploit the RPA-only exactness argument (see
+  :ref:`flex_scope`). ``CoulombIntra`` and/or ``PairLift`` alone stay
+  ``reduced`` under FLEX auto.
+
+``general`` uses a rank-6 ``chiq`` and costs more (memory/solve cost grow
+from :math:`O(N_d^2)/O(N_d^3)` to :math:`O(N_d^4)/O(N_d^6)` per
+:math:`(\mathbf{q},\omega)`). To keep the pre-2.0 ``reduced`` behaviour
+explicitly, request ``calc_scheme = "reduced"``: this is **accepted**, with a
+one-time warning that the result is then an approximation for that input,
+for ``CoulombInter``/``Hund``/``Ising``/``PairLift``/``Coulomb`` inputs. It is
+**rejected** with an error for ``Exchange`` or ``PairHop``, whether requested
+for RPA or FLEX: their particle-hole vertex has no density-diagonal content
+at all, so ``reduced`` would not approximate them -- it would drop them with
+exactly zero effect -- and the error directs you to ``calc_scheme =
+"general"`` instead. See the
 :ref:`calc_scheme parameter description <rpa_calc_scheme_auto>` for the full
 migration note, including how to recover the old 4-axis density-channel
 layout from the rank-6 array.
