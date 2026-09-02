@@ -319,8 +319,13 @@ class TestSpinConservingLimits(unittest.TestCase):
 class TestExchangeTensorStructure(unittest.TestCase):
     """Structural pins on ham_spinful_exchange itself (round-1 review):
     the crossing must be built from PRE-fold on-site declarations only,
-    its density-pair projection must vanish for every type, and
-    non-spin-orbital runs must not construct it at all."""
+    and its density-pair projection must vanish for every type.
+
+    The third pin used to be "non-spin-orbital runs must not construct
+    it at all"; issue #174 falsified that premise (the npz routes reach
+    the spinful solve with the flag off), so it is now a pin on the
+    SOLVE instead -- see
+    ``test_non_spinful_solve_does_not_consume_exchange``."""
 
     LX = 4
 
@@ -381,11 +386,65 @@ class TestExchangeTensorStructure(unittest.TestCase):
                                (-self.LX, 0, 0, 0.3)])
         self.assertIsNone(solver.ham_info.ham_spinful_exchange)
 
-    def test_non_spin_orbital_builds_no_exchange(self):
-        solver = self._solver(False, (1, 1, 1), "CoulombIntra",
-                              [(0, 0, 0, 0.3)])
-        self.assertIsNone(
-            getattr(solver.ham_info, "ham_spinful_exchange", None))
+    def test_non_spinful_solve_does_not_consume_exchange(self):
+        """RESTATED for issue #174 (was
+        ``test_non_spin_orbital_builds_no_exchange``).
+
+        FALSIFIED PREMISE. The old pin asserted that a
+        non-``enable_spin_orbital`` run builds no crossing at all,
+        encoding ``_make_ham_inter``'s comment that "no other mode
+        consumes it". That is false: ``RPA._calc_epsilon_k`` takes the
+        spin-orbital branch UNCONDITIONALLY for the ``trans_mod`` /
+        ``green_init`` npz routes, so a spin-mixing H0 supplied through
+        an npz reaches ``spin_mode == 'spinful'`` -- and therefore the
+        one solve branch that DOES consume the crossing -- with
+        ``enable_spin_orbital = False``. Gating construction on the flag
+        silently downgraded that solve to the pre-#137 ring-only vertex
+        (measured 1.7e-02, 12.2% relative in ``chiq``; issue #174,
+        regression-tested in ``tests/test_rpa_spinful_npz_general.py``).
+        The crossing is now built for every run.
+
+        WHAT REPLACES IT. The invariant is about the SOLVE, not the
+        build: only the ``spin_mode == 'spinful'`` branch of
+        ``RPA._solve_impl`` reads ``ham_spinful_exchange``; the
+        ``spin-free`` and ``spin-diag`` branches take ``_fierz_long()``
+        unconditionally. So a NON-SPINFUL run's ``chiq`` is bitwise
+        independent of whether the crossing exists -- pinned here by
+        toggling ``spinful_vertex_exchange``, which is exactly the
+        switch that selects between consuming the crossing and taking
+        the ``_fierz_long()`` fallback, i.e. the pre-fix code path.
+        (The strongest available assertion: the crossing tensor itself
+        is not observable from a non-spinful solve, so equality of the
+        OUTPUT under the only switch that could expose it is what the
+        code supports.)
+        """
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        _write_geom(d, 1)
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n")
+            f.write(" 1 0 0 1 1 %.12f %.12f\n" % (THOP.real, THOP.imag))
+            f.write("-1 0 0 1 1 %.12f %.12f\n"
+                    % (np.conj(THOP).real, np.conj(THOP).imag))
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write("hdr\n1\n1\n1\n")
+            f.write(" 0 0 0 1 1 0.300000 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombIntra": "coulombintra.dat"}
+
+        s_on, g_on = _run_rpa(d, inter, self.LX, 16, so=False,
+                              exchange=True)
+        s_off, g_off = _run_rpa(d, inter, self.LX, 16, so=False,
+                                exchange=False)
+        # the run really is non-spinful (else the pin would be vacuous)
+        self.assertNotEqual(s_on.spin_mode, "spinful")
+        np.testing.assert_array_equal(np.asarray(g_on["chiq"]),
+                                      np.asarray(g_off["chiq"]))
+        # ... and the crossing IS built now, unlike under the old premise
+        self.assertIsNotNone(
+            getattr(s_on.ham_info, "ham_spinful_exchange", None))
 
     def test_aggregate_coulomb_mixed_sources_onsite_only(self):
         """The aggregate Coulomb input (split into intra + inter parts)

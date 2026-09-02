@@ -1062,17 +1062,25 @@ class Interaction:
         # orbitals, and reading ham_r[0, 0, 0] after folding would cross
         # off-site content that the ring-form resummation cannot
         # represent (round-1 review; the same trap the Fierz builder
-        # documents). Only built for spin-orbital runs -- no other mode
-        # consumes it.
-        # (getattr: tests drive _make_ham_inter on __new__-built stubs
-        # without __init__, the same pattern save_results documents)
-        onsite_r = (np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
-                    if getattr(self, "enable_spin_orbital", False)
-                    else None)
+        # documents).
+        #
+        # Built for EVERY run (issue #174). It used to be gated on
+        # `enable_spin_orbital`, on the premise that "no other mode
+        # consumes it" -- that premise is false: `RPA._calc_epsilon_k`
+        # takes the spin-orbital branch UNCONDITIONALLY for the
+        # `trans_mod` / `green_init` npz routes, so a spin-mixing H0
+        # supplied through an npz reaches `spin_mode == 'spinful'` with
+        # `enable_spin_orbital = False`, and the gate left that solve
+        # falling back to the pre-#137 ring-only vertex with no warning
+        # (measured 1.7e-02, 12.2% relative in chiq, confined to the
+        # spin-flip pair slots; calc_scheme='auto' promotes INTO the
+        # path since #167). Building it unconditionally cannot move a
+        # non-spinful result: only the `spin_mode == 'spinful'` branch
+        # of the solve reads `ham_spinful_exchange`, while `spin-free`
+        # and `spin-diag` take `_fierz_long()` regardless.
+        onsite_r = np.zeros((*(ns, norb) * 4,), dtype=np.complex128)
 
         def _append_onsite_direct(type, tbl=None, pairhop=False):
-            if onsite_r is None:
-                return
             has_sub = getattr(self.lattice, "has_sublattice", False)
             if tbl is None:
                 if has_sub:
@@ -1281,13 +1289,12 @@ class Interaction:
         # spin-conserving limit X reproduces the adjudicated transverse
         # (ring+ladder) vertex; ED confirmed Gamma = D + X for CoulombIntra
         # (issue #137 reproduction).
-        if onsite_r is not None:
-            exch_onsite = -np.transpose(
-                onsite_r.reshape(*(nd,) * 4), (3, 1, 2, 0))
-            self.ham_spinful_exchange = (exch_onsite
-                                         if np.any(exch_onsite) else None)
-        else:
-            self.ham_spinful_exchange = None
+        exch_onsite = -np.transpose(
+            onsite_r.reshape(*(nd,) * 4), (3, 1, 2, 0))
+        # stays None when no on-site declaration sources the crossing:
+        # the structural pins read that as "nothing was crossed"
+        self.ham_spinful_exchange = (exch_onsite
+                                     if np.any(exch_onsite) else None)
 
 class RPA:
     """
