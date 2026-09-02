@@ -3,7 +3,7 @@
 相互作用指定ファイル
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-次の形で表わされるハミルトニアンの一体項および二体相互作用項について、その係数 :math:`T_{\alpha\beta}(r_{ij})`\ および :math:`J_{\alpha\beta}(r_{ij})`, :math:`V_{\alpha\beta}(r_{ij})`, :math:`U_{\alpha}`\ を共通のWannier90(-like)形式で記述します。
+次の形で表わされるハミルトニアンの一体項および二体相互作用項について、その係数\ :math:`T_{\alpha\beta}(r_{ij})`\ および\ :math:`J_{\alpha\beta}(r_{ij})`, :math:`V_{\alpha\beta}(r_{ij})`, :math:`U_{\alpha}`\ を共通のWannier90(-like)形式で記述します。
 なお、波数空間版UHFでは一般化二体相互作用 InterAll 形式には対応していません。
 
     
@@ -14,7 +14,7 @@
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}` (\ :math:`n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`)
     **Coulomb**:
-      CoulombIntra と CoulombInter をまとめた形式（RESPACK の ``zvo_ur.dat``\ を想定）。:math:`r=0`\ かつ同一軌道（:math:`\alpha=\beta`\ ）の成分を CoulombIntra、それ以外を CoulombInter として読み込みます。CoulombIntra/CoulombInter を個別に指定するのと等価です。
+      CoulombIntra と CoulombInter をまとめた形式（RESPACK の\ ``zvo_ur.dat``\ を想定）。:math:`r=0`\ かつ同一軌道（:math:`\alpha=\beta`\ ）の成分を CoulombIntra、それ以外を CoulombInter として読み込みます。CoulombIntra/CoulombInter を個別に指定するのと等価です。
     **Hund**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
@@ -105,14 +105,14 @@
 
    **説明 :**
    軌道のインデックスを指定します。
-   ``[alpha]``\ が元のセル内の軌道、``[beta]`` が :math:`\vec{r}`\ 離れたセル内の軌道を指します。
+   ``[alpha]``\ が元のセル内の軌道、``[beta]``\ が\ :math:`\vec{r}`\ 離れたセル内の軌道を指します。
 
 -  ``[J.real]``, ``[J.imag]``
 
    **形式 :** float型
 
    **説明 :**
-   係数 :math:`J_{\alpha\beta}(\vec{r})`\ の実部と虚部を指定します。
+   係数\ :math:`J_{\alpha\beta}(\vec{r})`\ の実部と虚部を指定します。
 
 
 使用ルール
@@ -122,19 +122,19 @@
 
 -  行数固定で読み込みを行うため、ヘッダの省略はできません。
 
--  係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手 :math:`X_{ba}(-R)`\ が省略された宣言済みエントリは読み込み時に拒否されます（バージョン 2.0 以降）。結合の両方向を宣言してください。
+-  係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手\ :math:`X_{ba}(-R)`\ が省略された宣言済みエントリは読み込み時に拒否されます（バージョン 2.0 以降）。結合の両方向を宣言してください。
 
--  並進ベクトルは全て ``CellShape``\ 内に収まるとします。
-   ``r_x``, ``r_y``, ``r_z``\ の範囲が ``CellShape``\ のx,y,z軸のサイズを超える場合はエラーで終了します。
+-  並進ベクトルは全て\ ``CellShape``\ 内に収まるとします。
+   ``r_x``, ``r_y``, ``r_z``\ の範囲が\ ``CellShape``\ のx,y,z軸のサイズを超える場合はエラーで終了します。
 
--  ``mode.enable_spin_orbital`` が ``true``\ の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜 :math:`2 N_\text{orbital}`\ の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道 :math:`\alpha` (0 起点) とスピン :math:`s` (0: up, 1: down) に対しファイル上のインデックス（1 起点）は :math:`2\alpha + s + 1`\ ）。 ``mode.enable_spin_orbital`` が ``false``\ の場合は、インデックスの範囲が 1〜 :math:`N_\text{orbital}`\ の行のみ考慮します。
+-  ``mode.enable_spin_orbital``\ が\ ``true``\ の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜\ :math:`2 N_\text{orbital}`\ の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道\ :math:`\alpha` (0 起点) とスピン\ :math:`s` (0: up, 1: down) に対しファイル上のインデックス（1 起点）は\ :math:`2\alpha + s + 1`\ ）。\ ``mode.enable_spin_orbital``\ が\ ``false``\ の場合は、インデックスの範囲が 1〜\ :math:`N_\text{orbital}`\ の行のみ考慮します。
 
--  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された ``2α+s+1``\ のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜 :math:`N_\text{orbital}/2`\ ）を用います。
+-  スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された\ ``2α+s+1``\ のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜\ :math:`N_\text{orbital}/2`\ ）を用います。
 
 .. note::
 
    Ising 項の規約の履歴。（1）本ページの旧版はこの項を
-   :math:`J S^z S^z` （ :math:`S^z = (n_\uparrow - n_\downarrow)/2`\ ）
+   :math:`J S^z S^z`\ （\ :math:`S^z = (n_\uparrow - n_\downarrow)/2`\ ）
    と定義しており、UHFk ソルバーはその定義に従っていました（上記の形式
    に対して実効的に因子 1/4）。（2）RPA/FLEX ソルバーは一貫して上記の
    密度差形式でファイルを読んでおり、これは厳密対角化で頂点内容が判定
@@ -148,7 +148,7 @@
    二体相互作用の宣言ファイル（Coulomb, CoulombIntra, CoulombInter,
    Hund, Exchange, Ising, PairLift, PairHop）はエルミート共役で閉じて
    いる必要があります：
-   各エントリ :math:`X_{ab}(R)`\ には相手 :math:`X_{ba}(-R) = X_{ab}(R)^{*}`
+   各エントリ\ :math:`X_{ab}(R)`\ には相手\ :math:`X_{ba}(-R) = X_{ab}(R)^{*}`
    が伴わなければなりません。相手が欠けている、または値が一致しない場合
    は読み込み時に拒否されます。 CoulombIntra はさらにオンサイト同一軌道・有限実数値の
    エントリのみを受け付けます。（これはここで読む wannier90 形式の

@@ -12,21 +12,21 @@
     - requests モジュール
     - tomli モジュール
     - cupy モジュール（任意。``gpu = true``\ によるGPU実行にのみ必要です
-      — RPA/FLEX は ``[mode.param]``\ 、動的 Eliashberg ソルバーは
+      — RPA/FLEX は\ ``[mode.param]``\ 、動的 Eliashberg ソルバーは
       ``[eliashberg]``\ で指定。CUDAバージョンに合ったビルド済みwheel
-      （CUDA 12.x なら ``pip install cupy-cuda12x``\ ）の利用を推奨します。詳細は
+      （CUDA 12.x なら\ ``pip install cupy-cuda12x``\ ）の利用を推奨します。詳細は
       `CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_
       を参照してください。CuPyが無い場合、``gpu = true``\ は警告を出して
       CPU実行にフォールバックします。）
     - sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
       ``[eliashberg] matsubara_basis = "ir"``\ および FLEX ソルバーの
       ``[mode.param] matsubara_basis = "ir"``\ にのみ必要です。
-      ``pip install sparse-ir``\ でインストールできます。未導入で ``"ir"``
+      ``pip install sparse-ir``\ でインストールできます。未導入で\ ``"ir"``
       を指定した場合はインストール手順つきの明示エラーになります。）
 
-    なお、H-waveのUHFk、RPA、FLEXモードでは `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ をFFT計算に利用しています。
-    RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの ``fft_workers``
-    パラメータで並列FFTワーカーを指定した場合は `scipy.fft <https://docs.scipy.org/doc/scipy/reference/fft.html>`_ に、
+    なお、H-waveのUHFk、RPA、FLEXモードでは\ `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_\ をFFT計算に利用しています。
+    RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの\ ``fft_workers``
+    パラメータで並列FFTワーカーを指定した場合は\ `scipy.fft <https://docs.scipy.org/doc/scipy/reference/fft.html>`_\ に、
     GPU実行時は cuFFT に切り替わります。
 
 - Official Page
@@ -114,7 +114,7 @@
   #. 入力ファイルの作成
 
      最初にH-wave用の入力ファイルを作成します。計算条件や入出力ファイル・ディレクトリなどの指定と、Hamiltonianの定義ファイルなどを作成する必要があります。
-     後者は、`StdFaceライブラリ <https://github.com/issp-center-dev/StdFace>`_ の利用が便利です。
+     後者は、`StdFaceライブラリ <https://github.com/issp-center-dev/StdFace>`_\ の利用が便利です。
      各ファイルの簡単な紹介はチュートリアルの章に記載されています。
      詳細についてはファイルフォーマットの章を参照してください。
 
@@ -135,6 +135,6 @@
      計算終了後、計算結果が出力ディレクトリに出力されます。
      出力ファイルの詳細については、ファイルフォーマットの章を参照してください。
 
-     また、本パッケージには後処理ツール ``hwave_dos``\ （状態密度）および
+     また、本パッケージには後処理ツール\ ``hwave_dos``\ （状態密度）および
      ``hwave_sc``\ （Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。
 
