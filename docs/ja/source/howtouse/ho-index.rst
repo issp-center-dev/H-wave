@@ -6,7 +6,7 @@
 
     H-waveを利用するには、以下のプログラムとライブラリが必要です。
 
-    - python 3.x
+    - python 3.10 以降
     - numpy モジュール
     - scipy モジュール
     - requests モジュール
@@ -21,7 +21,8 @@
     - sparse-ir モジュール（任意。動的 Eliashberg ソルバーの IR 基底松原軸
       ``[eliashberg] matsubara_basis = "ir"``\ および FLEX ソルバーの
       ``[mode.param] matsubara_basis = "ir"``\ にのみ必要です。
-      ``pip install sparse-ir``\ でインストールできます。未導入で\ ``"ir"``
+      sparse-ir 2.0 以降が必要です。\ ``pip install "hwave[ir]"``\ （または\
+      ``pip install "sparse-ir>=2"``\ ）でインストールできます。未導入で\ ``"ir"``
       を指定した場合はインストール手順つきの明示エラーになります。）
 
     なお、H-waveのUHFk、RPA、FLEXモードでは\ `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_\ をFFT計算に利用しています。

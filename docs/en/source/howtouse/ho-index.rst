@@ -6,7 +6,7 @@ Basic usage
 
   H-wave requires the following programs and libraries:
 
-  - python 3.x
+  - python 3.10 or later
   - numpy module
   - scipy module
   - requests module
@@ -20,7 +20,8 @@ Basic usage
   - sparse-ir module (optional; only for the IR-basis Matsubara axis of the
     dynamic Eliashberg solver, ``[eliashberg] matsubara_basis = "ir"``, and
     of the FLEX solver, ``[mode.param] matsubara_basis = "ir"``.
-    Install with ``pip install sparse-ir``; without it, ``"ir"`` is a
+    Requires sparse-ir 2.0 or later. Install with ``pip install "hwave[ir]"``
+    (or ``pip install "sparse-ir>=2"``); without it, ``"ir"`` is a
     fail-fast error with this install hint.)
 
   Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.

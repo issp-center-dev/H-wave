@@ -13,13 +13,21 @@ packages = [
   ]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 numpy = "^1.14"
 scipy = "^1.7"
 requests = "^2.28.1"
 tomli = "^2.0.1"
 
+# Optional: the IR (intermediate representation) Matsubara basis used by
+# matsubara_basis = "ir". sparse-ir 2.x requires Python >= 3.10, which the
+# floor above now guarantees; pinning >= 2.0 keeps a single supported major
+# so the IR axis conditioning guard (#153) has one well-defined regime
+# boundary. Install with: pip install "hwave[ir]"
+sparse-ir = {version = ">=2.0", optional = true}
+
 [tool.poetry.extras]
+ir = ["sparse-ir"]
 
 [tool.poetry.group.dev.dependencies]
 flake8 = "^6.0.0"
