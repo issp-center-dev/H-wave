@@ -33,9 +33,15 @@ The crossing is materialized LAZILY by ``Interaction.spinful_exchange()``
 1.6 GB at norb = 50 -- and ``ham_spinful_exchange`` keeps a transposed
 view of it, so building it in the constructor would pin that allocation
 for every solver instance, including the spin-free and spin-diag solves
-that never read it. The contract these tests pin is therefore: absent
-after CONSTRUCTION in every mode; present after a SPINFUL solve; still
-absent after a non-spinful solve.
+that never read it. And it is asked for only where the solve actually
+CONSUMES it: not under the ``spinful_vertex_exchange = false`` opt-out,
+and not under ``calc_scheme = 'reduced'``, whose density projection
+annihilates the crossing structurally.
+
+The contract these tests pin is therefore: absent after CONSTRUCTION in
+every mode; present after a spinful solve that consumes it; absent after
+a non-spinful solve, after the ring-only opt-out, and after a reduced
+solve; and reused, not rebuilt, on a second solve of the same instance.
 
 Tests must run from the repository root.
 """
@@ -188,7 +194,8 @@ def write_fixture(d):
 
 
 def run_route(d, *, so, interactions, transfer, trans_mod=None,
-              green_init=None, calc_scheme="general", extra_param=None):
+              green_init=None, calc_scheme="general", extra_param=None,
+              resolve=False):
     """Run one RPA solve through the public input path.
 
     ``so`` selects the spin-orbital route (SO Geometry/Transfer plus the
@@ -215,9 +222,19 @@ def run_route(d, *, so, interactions, transfer, trans_mod=None,
     os.makedirs(out, exist_ok=True)
     rio = read_input_k.QLMSkInput(input_block)
     solver = solver_rpa.RPA(rio.get_param("ham"), {}, info_mode)
-    green = rio.get_param("green")
-    green.update(solver.read_init(input_block))
+
+    def _fresh_green():
+        g = rio.get_param("green")
+        g.update(solver.read_init(input_block))
+        return g
+
+    green = _fresh_green()
     solver.solve(green, out)
+    if resolve:
+        # same INSTANCE, second solve -- used by the caching pin
+        green2 = _fresh_green()
+        solver.solve(green2, out)
+        return solver, green, green2
     return solver, green
 
 
@@ -484,6 +501,84 @@ class TestExchangeIsNotMaterializedEagerly(unittest.TestCase):
         self.assertIsNotNone(X)
         self.assertEqual(np.asarray(X).shape, (nd, nd, nd, nd))
         self.assertGreater(np.asarray(X).nbytes, 5_000_000)
+
+
+class TestExchangeBuiltOnlyWhereConsumed(unittest.TestCase):
+    """Issue #174 round-2 review: a spinful solve must not materialize the
+    crossing in the branches that DISCARD it.
+
+    ``spinful_exchange()`` caches on the ``Interaction``, so asking for it
+    where the result is thrown away retains the (ns*norb)^4 allocation for
+    the rest of the run -- and for a non-``enable_spin_orbital`` npz route
+    that is a fresh regression against the behaviour before #174, where
+    the gate allocated nothing at all. Two spinful cases discard it:
+    ``spinful_vertex_exchange = false`` (the ring-only opt-out takes
+    ``_fierz_long()`` by definition) and ``calc_scheme = 'reduced'``
+    (``project_density_pairs`` annihilates the crossing structurally --
+    ``test_density_projection_vanishes_all_types`` -- and the Fierz
+    tensor likewise, so both candidates project to the same array;
+    measured bitwise identical, see ``tests/test_rpa_spinful_npz_reduced.py``).
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.d = tmp.name
+        write_fixture(self.d)
+        self.inter = {"CoulombIntra": "coulombintra.dat",
+                      "PairLift": "pairlift.dat"}
+
+    def _assert_unbuilt(self, solver):
+        self.assertEqual(solver.spin_mode, "spinful")
+        self.assertIsNone(solver.ham_info.ham_spinful_exchange)
+        self.assertFalse(solver.ham_info._spinful_exchange_built)
+        # laziness, not emptiness: this input does source a crossing
+        self.assertIsNotNone(solver.ham_info.spinful_exchange())
+
+    def test_ring_optout_solve_does_not_materialize(self):
+        """Spinful ``general`` ring solve with
+        ``spinful_vertex_exchange = false``: the opt-out takes
+        ``_fierz_long()``, so nothing must be allocated."""
+        solver, _ = run_route(
+            self.d, so=False, interactions=self.inter,
+            transfer=TRANSFER_MIX, trans_mod=TRANS_MOD,
+            calc_scheme="general",
+            extra_param={"spinful_vertex_exchange": False})
+        self._assert_unbuilt(solver)
+
+    def test_reduced_spinful_solve_does_not_materialize(self):
+        """Spinful ``reduced`` solve: the density projection is
+        independent of the crossing, so nothing must be allocated."""
+        solver, _ = run_route(self.d, so=False, interactions=self.inter,
+                              transfer=TRANSFER_MIX, trans_mod=TRANS_MOD,
+                              calc_scheme="reduced")
+        self._assert_unbuilt(solver)
+
+    def test_reduced_spin_orbital_solve_does_not_materialize(self):
+        """Same for the spin-orbital route, which HAS the flag set: the
+        gate is on what the solve consumes, not on the mode."""
+        solver, _ = run_route(self.d, so=True, interactions=self.inter,
+                              transfer=TRANSFER_MIX, trans_mod=TRANS_MOD,
+                              calc_scheme="reduced")
+        self._assert_unbuilt(solver)
+
+    def test_double_solve_reuses_the_cached_crossing(self):
+        """Two solves on the SAME instance (spinful ``general``, exchange
+        on): the cache must be reused, not rebuilt -- ``assertIs`` on the
+        tensor -- and the second chiq must equal the first bitwise, which
+        would fail if the crossing were accumulated twice."""
+        solver, g1, g2 = run_route(
+            self.d, so=False, interactions=self.inter,
+            transfer=TRANSFER_MIX, trans_mod=TRANS_MOD,
+            calc_scheme="general", resolve=True)
+        self.assertEqual(solver.spin_mode, "spinful")
+        X1 = solver.ham_info.ham_spinful_exchange
+        self.assertIsNotNone(X1)
+        self.assertTrue(solver.ham_info._spinful_exchange_built)
+        # the builder hands back the very same object, no rebuild
+        self.assertIs(solver.ham_info.spinful_exchange(), X1)
+        np.testing.assert_array_equal(np.asarray(g1["chiq"]),
+                                      np.asarray(g2["chiq"]))
 
 
 if __name__ == "__main__":

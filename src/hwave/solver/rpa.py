@@ -2344,12 +2344,42 @@ class RPA:
                 # every on-site cross-orbital slot. Opt-out via
                 # [mode.param] spinful_vertex_exchange = false reproduces
                 # the pre-#137 ring-only numbers (ham_inter + fierz).
-                # materializes the crossing on demand (#174): only this
-                # branch consumes it, so spin-free / spin-diag solves
-                # never allocate the (ns*norb)^4 tensor
-                _build_exch = getattr(self.ham_info, "spinful_exchange", None)
-                exch = _build_exch() if callable(_build_exch) else None
-                if exch is not None and self.spinful_vertex_exchange:
+                # Materialized on demand, and ONLY where this solve
+                # actually consumes it (#174, round-2 review). The tensor
+                # is (ns*norb)^4 complex128 -- about 1.6 GB at norb = 50 --
+                # and `spinful_exchange()` caches it on the Interaction,
+                # so asking for it in a branch that discards it would
+                # retain that allocation for the rest of the run. Two
+                # spinful cases discard it:
+                #
+                #   * spinful_vertex_exchange = false -- the ring-only
+                #     compatibility opt-out takes `_fierz_long()` by
+                #     definition;
+                #   * calc_scheme = 'reduced' -- the crossing's
+                #     density-pair projection vanishes STRUCTURALLY (its
+                #     (a,b,a,b) slots sit off the 'kaabb' diagonal
+                #     `project_density_pairs` keeps; pinned for every type
+                #     by test_density_projection_vanishes_all_types), and
+                #     so does the Fierz tensor's, for the same reason. So
+                #     both candidate `ham_long` values project to the same
+                #     array: measured bitwise identical -- the pre-#174
+                #     npz route reached reduced via `_fierz_long()` while
+                #     the spin-orbital route reached it via the crossing,
+                #     and the #161 adjudication probes found chi0q/chiq
+                #     bitwise equal across nine interaction sets (recorded
+                #     in tests/test_rpa_spinful_npz_reduced.py).
+                #
+                # Gating on 'reduced' cannot starve the transverse
+                # channel: calc_type='ring+ladder' requires
+                # calc_scheme='general' (rejected at init otherwise), and
+                # `_extract_transverse_from_dressed` slices THIS solve.
+                exch = None
+                if (self.spinful_vertex_exchange
+                        and self.calc_scheme != "reduced"):
+                    _build_exch = getattr(self.ham_info,
+                                          "spinful_exchange", None)
+                    exch = _build_exch() if callable(_build_exch) else None
+                if exch is not None:
                     exch = xp.asarray(exch) if gpu_active else exch
                     ham_long = _to_bubble_pair_convention(
                         ham_inter_q + exch[None, ...])
