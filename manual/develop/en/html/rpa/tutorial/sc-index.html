@@ -539,7 +539,7 @@ Each line contains:</p>
 <p>where <span class="math notranslate nohighlight">\(\alpha, \beta\)</span> are orbital indices.</p>
 </section>
 <section id="eigenvalue-dat">
-<h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
+<span id="sc-eigenvalue-dat"></span><h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
 <p>The eigenvalues of the linearized Eliashberg equation:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Iteration eigenvalue
 9.59724792e-01
@@ -804,27 +804,33 @@ Enabled flags are recorded in <code class="docutils literal notranslate"><span c
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Keep both flags off for production runs.</p>
 </section>
 <section id="eigenvector-continuation-seed-eigenvector">
-<h3>Eigenvector continuation (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>)<a class="headerlink" href="#eigenvector-continuation-seed-eigenvector" title="Link to this heading">¶</a></h3>
+<span id="sc-seed-eigenvector"></span><h3>Eigenvector continuation (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>)<a class="headerlink" href="#eigenvector-continuation-seed-eigenvector" title="Link to this heading">¶</a></h3>
 <p>The reported leading eigenpair is normally the algebraically largest one. For a
 frequency-dependent (non-Hermitian) kernel this can be fragile near an
 <em>exceptional point</em> — where two real eigenvalues collide and split into a
 complex-conjugate pair — so the “leading” branch may jump discontinuously
 between neighbouring temperatures even when the FLEX self-energy varies
-smoothly. To follow one physical branch, set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">seed_eigenvector</span></code>
-to a <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> written by a neighbouring run (e.g. the next-higher
-temperature): its gap is used as the ARPACK start vector <strong>and</strong> to select the
-eigenpair whose eigenvector maximally overlaps it, rather than the largest one.
-Stepping temperature down and feeding each run the previous <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>
-tracks the same gap symmetry (e.g. the d-wave mode) continuously. The seed must
+smoothly. To help follow one physical branch, set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">seed_eigenvector</span></code> to a <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> written by a neighbouring run
+(e.g. the next-higher temperature): its gap is used as the ARPACK start
+vector <strong>and</strong>, among the eigenpairs actually <em>returned</em> by the eigensolver
+(governed by <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> and, on the shift-invert path,
+<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>), to select the one whose eigenvector maximally overlaps it,
+rather than the algebraically largest one. If the physical branch is not
+among the returned eigenpairs at all, increase <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or move
+<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> near it. Stepping temperature down and feeding each run the
+previous <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> helps track the same gap symmetry (e.g. the
+d-wave mode) across the sweep, though it is not a guarantee: too large a
+step between temperatures can still lose the physical branch. The seed must
 share the run’s <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (a mismatch is a fail-fast error), so
 keep <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> fixed across a continuation sweep; on the IR path the seed gap is
 refit onto the IR nodes automatically. <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">sigma_shift</span></code> sets an
 explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
-combining <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> near the branch with <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> is the most
-robust way to resolve a masked or complexifying eigenvalue.</p>
+combining <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> near the branch with <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> helps
+resolve a masked or complexifying eigenvalue.</p>
 </section>
 <section id="temperature-continuation-hwave-tsweep">
-<h3>Temperature continuation (<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>)<a class="headerlink" href="#temperature-continuation-hwave-tsweep" title="Link to this heading">¶</a></h3>
+<span id="sc-tsweep"></span><h3>Temperature continuation (<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>)<a class="headerlink" href="#temperature-continuation-hwave-tsweep" title="Link to this heading">¶</a></h3>
 <p>Chaining <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> and <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> by hand across a temperature
 sweep, as described above, means re-running <code class="docutils literal notranslate"><span class="pre">hwave</span></code>/<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> once per
 temperature and wiring each step’s output into the next step’s input. The
@@ -833,13 +839,17 @@ automates this: given one base TOML – the same
 <code class="docutils literal notranslate"><span class="pre">[mode]</span></code>/<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>/<code class="docutils literal notranslate"><span class="pre">[file]</span></code>/<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> configuration used
 for a single FLEX+Eliashberg run – plus a <code class="docutils literal notranslate"><span class="pre">[continuation]</span></code> section, it
 runs FLEX (and, unless disabled, the Eliashberg solver) across a descending
-ladder of temperatures. At each rung it feeds the previous rung’s converged
-self-energy into this rung’s FLEX via <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> (warm start) and the
-previous rung’s dynamic gap into this rung’s Eliashberg solve via
+ladder of temperatures. At each rung it feeds the previous rung’s final
+saved self-energy into this rung’s FLEX via <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> (warm start) and
+the previous rung’s dynamic gap into this rung’s Eliashberg solve via
 <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> (eigenvector continuation) – automating the whole
-warm-start chain so a single physical branch is tracked smoothly down to low
-temperature instead of being cold-started, and potentially landing on a
-different metastable solution, at every point.</p>
+warm-start chain instead of cold-starting (and potentially landing on a
+different metastable solution) at every rung. This chaining does not
+require the previous rung to have converged: any non-error rung whose seed
+files are present is used as the next rung’s seed regardless of its FLEX
+convergence status, so inspect the summary’s <code class="docutils literal notranslate"><span class="pre">flex_converged</span></code> column
+(below) rather than assuming every warm start came from a converged
+self-energy.</p>
 <p>Only <code class="docutils literal notranslate"><span class="pre">mode.param.T</span></code> is varied between rungs; <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, and
 every other shape-determining field are held fixed across the ladder, which
 is what keeps each rung’s <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>/<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> files
@@ -878,8 +888,8 @@ each rung. This requires the base TOML to already have an <code class="docutils 
 section – pre-flight raises an error otherwise, naming the missing
 section. Set to <code class="docutils literal notranslate"><span class="pre">false</span></code> to run a FLEX-only sweep that chains only
 <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">warm_start</span></code> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>): chain each rung’s converged self-energy
-into the next rung’s <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">warm_start</span></code> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>): chain each rung’s final self-energy
+(converged or not) into the next rung’s <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">seed_gap</span></code> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>): chain each rung’s gap into the next
 rung’s <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>. This is only active for the dynamic
 Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>); for a static

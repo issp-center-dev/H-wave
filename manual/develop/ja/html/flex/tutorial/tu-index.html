@@ -335,7 +335,7 @@ FLEX converged after 64 iterations
 </div>
 </section>
 <section id="scf-sigma-init">
-<h3>SCFループのウォームスタート（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>）<a class="headerlink" href="#scf-sigma-init" title="Link to this heading">¶</a></h3>
+<span id="flex-sigma-init"></span><h3>SCFループのウォームスタート（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>）<a class="headerlink" href="#scf-sigma-init" title="Link to this heading">¶</a></h3>
 <p>FLEX はデフォルトで自己無撞着ループを<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から始めます。
 <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>の<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>に、以前の FLEX 計算が出力した<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
 を指定すると、その自己エネルギーからループを開始します:</p>
@@ -661,8 +661,8 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 入力としても使用できます。詳細は<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>
 </section>
 </section>
-<section id="id28">
-<h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
+<section id="flex-params">
+<span id="id28"></span><h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#flex-params" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションで以下のパラメータを受け付けます:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -1175,7 +1175,7 @@ FLEX converged after 62 iterations
 一致します。</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<span id="flex-tips"></span><h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul>
 <li><p><strong>収束しない場合</strong>: SCFループが収束しない場合は、<code class="docutils literal notranslate"><span class="pre">Mix</span></code>を小さくする
 (例: 0.1 や 0.05)か、温度を上げてみてください。磁気不安定性に近い
@@ -1394,7 +1394,7 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <li class="toctree-l3"><a class="reference internal" href="#id21">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id26">6.1.5. プロット</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id27">6.1.6. 出力ファイル形式</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id28">6.1.7. FLEX固有のパラメータ</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#flex-params">6.1.7. FLEX固有のパラメータ</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id29">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#b-general">6.1.9. サンプル 3b: 完全頂点（general）版</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">6.1.10. Tips</a></li>

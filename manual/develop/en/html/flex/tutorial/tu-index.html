@@ -353,7 +353,7 @@ spin-dependent (spin-diagonal / spinful) runs.</p>
 </div>
 </section>
 <section id="warm-starting-the-scf-loop-sigma-init">
-<h3>Warm-starting the SCF loop (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>)<a class="headerlink" href="#warm-starting-the-scf-loop-sigma-init" title="Link to this heading">¶</a></h3>
+<span id="flex-sigma-init"></span><h3>Warm-starting the SCF loop (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>)<a class="headerlink" href="#warm-starting-the-scf-loop-sigma-init" title="Link to this heading">¶</a></h3>
 <p>By default FLEX starts the self-consistency loop from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span>.
 Setting <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> in <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> to a <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written by an
 earlier FLEX run instead seeds the loop from that self-energy:</p>
@@ -695,7 +695,7 @@ superconducting instabilities. See <a class="reference internal" href="../../rpa
 </section>
 </section>
 <section id="flex-specific-parameters">
-<h2><span class="section-number">6.1.7. </span>FLEX-specific parameters<a class="headerlink" href="#flex-specific-parameters" title="Link to this heading">¶</a></h2>
+<span id="flex-params"></span><h2><span class="section-number">6.1.7. </span>FLEX-specific parameters<a class="headerlink" href="#flex-specific-parameters" title="Link to this heading">¶</a></h2>
 <p>The FLEX solver accepts the following parameters in the
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> section:</p>
 <table class="docutils align-default">
@@ -1233,7 +1233,7 @@ pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
 interaction files are identical, and so are the results.</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<span id="flex-tips"></span><h2><span class="section-number">6.1.10. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul>
 <li><p><strong>Convergence issues</strong>: If the SCF loop does not converge, try
 reducing <code class="docutils literal notranslate"><span class="pre">Mix</span></code> (e.g., 0.1 or 0.05) or increasing the temperature.

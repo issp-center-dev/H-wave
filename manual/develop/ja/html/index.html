@@ -13,6 +13,7 @@
     <script src="_static/doctools.js?v=fd6eb6e6"></script>
     <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/translations.js?v=4755f45a"></script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
     <link rel="index" title="索引" href="genindex.html" />
     <link rel="search" title="検索" href="search.html" />
     <link rel="next" title="1. H-waveとは？" href="about/index.html" />
@@ -121,7 +122,7 @@
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#id21">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#id26">6.1.5. プロット</a></li>
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#id27">6.1.6. 出力ファイル形式</a></li>
-<li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#id28">6.1.7. FLEX固有のパラメータ</a></li>
+<li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#flex-params">6.1.7. FLEX固有のパラメータ</a></li>
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#id29">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#b-general">6.1.9. サンプル 3b: 完全頂点（general）版</a></li>
 <li class="toctree-l3"><a class="reference internal" href="flex/tutorial/tu-index.html#tips">6.1.10. Tips</a></li>
@@ -153,7 +154,26 @@
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="faq/faq-index.html">8. FAQ</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="faq/faq-index.html#id1">8.1. 超伝導へのスピン・電荷の寄与を切り分けたい</a></li>
+<li class="toctree-l2"><a class="reference internal" href="faq/faq-index.html#eliashberg">8.1. 超伝導・Eliashberg方程式の利用</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#id1">8.1.1. 超伝導へのスピン・電荷の寄与を切り分けたい</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#lambda-1-t-c">8.1.2. <span class="math notranslate nohighlight">\(\lambda\)</span>が 1 に達しないときの <span class="math notranslate nohighlight">\(T_c\)</span>の見積もり方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#flex">8.1.3. FLEXが低温で収束しない（コールドスタートの失敗）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#id2">8.1.4. 温度を変えると最大固有値やギャップ対称性が飛び移る</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#match">8.1.5. 得られたギャップ対称性の確認方法（<code class="docutils literal notranslate"><span class="pre">match</span></code>列）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#lambda-t">8.1.6. <span class="math notranslate nohighlight">\(\lambda(T)\)</span>が非単調 -- 物理的な現象か？</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#ir-wmax">8.1.7. 動的モードの前提条件と<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>の選び方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#nmatgpu">8.1.8. 大きな<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でのGPUメモリ不足</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#chi-convention-kurokimyo">8.1.9. 2軌道系の<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>（<code class="docutils literal notranslate"><span class="pre">kuroki</span></code>対<code class="docutils literal notranslate"><span class="pre">myo</span></code>）</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="faq/faq-index.html#id3">8.2. FLEX近似</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#id4">8.2.1. FLEXの適用範囲</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#id5">8.2.2. 不安定点近傍でFLEXが発散・収束しない</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#flex-t-c">8.2.3. FLEXから得られる <span class="math notranslate nohighlight">\(T_c\)</span>の読み方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#flexnmatiterationmax">8.2.4. FLEX収束のための<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>・混合・<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>の選び方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="faq/faq-index.html#calc-scheme-auto-flexgeneral">8.2.5. <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>が混成模型・FLEX計算を<code class="docutils literal notranslate"><span class="pre">general</span></code>に昇格させる</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="acknowledgement.html">9. 謝辞</a></li>

@@ -37,8 +37,10 @@
             
   <section id="faq">
 <span id="ch-faq"></span><h1><span class="section-number">8. </span>FAQ<a class="headerlink" href="#faq" title="Link to this heading">¶</a></h1>
+<section id="eliashberg">
+<h2><span class="section-number">8.1. </span>超伝導・Eliashberg方程式の利用<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h2>
 <section id="id1">
-<h2><span class="section-number">8.1. </span>超伝導へのスピン・電荷の寄与を切り分けたい<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<h3><span class="section-number">8.1.1. </span>超伝導へのスピン・電荷の寄与を切り分けたい<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
 <p><strong>Q. 超伝導解析において、電荷とスピンの影響を切り分けて評価できますか？</strong></p>
 <p>可能です。動的 Eliashberg ソルバ（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、
 FLEX の感受率を読み込むモード）では、ペアリング頂点はスピン
@@ -68,6 +70,273 @@ FLEX の感受率を読み込むモード）では、ペアリング頂点はス
 相対的な強さの比較に用い、厳密な加法的分割としては扱わないでください。</p>
 </div>
 <p>頂点の式や詳細は<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-channel-decomposition"><span class="std std-ref">チャネル分解（診断用）</span></a>を参照してください。</p>
+</section>
+<section id="lambda-1-t-c">
+<h3><span class="section-number">8.1.2. </span><span class="math notranslate nohighlight">\(\lambda\)</span>が 1 に達しないときの <span class="math notranslate nohighlight">\(T_c\)</span>の見積もり方<a class="headerlink" href="#lambda-1-t-c" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 主要固有値が 1 に達しません。</strong><span class="math notranslate nohighlight">\(T_c\)</span><strong>をどう見積もればよいですか？</strong></p>
+<p>温度に対して連続的に追跡した1つの物理的ブランチについて<span class="math notranslate nohighlight">\(\lambda = 1\)</span>が成り立つのは、<strong>そのブランチ自身</strong>の不安定性を示すのであって、必ずしも
+系全体の<span class="math notranslate nohighlight">\(T_c\)</span>ではありません。別のペアリングチャネルや、同じ
+チャネル内の別の対称性が、より高い温度で先に<span class="math notranslate nohighlight">\(\lambda = 1\)</span>に
+達する可能性があるからです。系の<span class="math notranslate nohighlight">\(T_c\)</span>は、いずれかの物理的
+ブランチが<span class="math notranslate nohighlight">\(\lambda = 1\)</span>に達する温度のうち最も高いものです。
+同様に、追跡しているブランチについてある温度で<span class="math notranslate nohighlight">\(\lambda &lt; 1\)</span>で
+あることは、その温度でそのモードに対する不安定性がないことを示すに
+すぎず、それだけで系全体として常伝導状態が安定であることを保証するもの
+ではなく、追跡しているブランチ自身の<span class="math notranslate nohighlight">\(T_c\)</span>にどれだけ近いかも
+分かりません。横切る点を見つけるには、より低い温度で計算する必要があります。
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>を使えば降温ラダーを自動化でき、各段で最終的に保存された
+自己エネルギー（動的ソルバの場合は主要固有ベクトルも）を次の段に引き継ぎ
+ます（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">温度継続計算（hwave_tsweep）</span></a>を参照）。ただし、収束していない段の自己エネルギー
+でもそのまま次の段のシードに使われるため、サマリーの <code class="docutils literal notranslate"><span class="pre">flex_converged</span></code>列
+を確認してください。FLEX+Eliashberg による<span class="math notranslate nohighlight">\(T_c\)</span>はあくまで半定量的
+な値である点にも注意してください（<a class="reference internal" href="#faq-flex-tc"><span class="std std-ref">FLEXから得られる T_cの読み方</span></a>）。パラメータを
+振ったときの<span class="math notranslate nohighlight">\(\lambda(T)\)</span>や<span class="math notranslate nohighlight">\(\lambda(P)\)</span>の位置・形状を
+比較する方が、追跡したブランチが 1 を横切る絶対値そのものを読むよりも
+頑健です。</p>
+</section>
+<section id="flex">
+<h3><span class="section-number">8.1.3. </span>FLEXが低温で収束しない（コールドスタートの失敗）<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 高温では収束するのに、低温の FLEX 計算だけ収束しません。どうすればよい
+ですか？</strong></p>
+<p><span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から始めるコールドスタートは、相関が強くなるにつれて
+SCF の不動点が<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から遠ざかるため、低温でいきなり実行すると
+収束しないことがよくあります。代わりに、収束しやすい高温から始めて温度を
+少しずつ下げ、各温度の最終的な自己エネルギーを次の計算のウォームスタート
+として渡してください（<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>、<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">SCFループのウォームスタート（sigma_init）</span></a>を
+参照）。<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>はこのラダー全体を自動化し、各段の収束状況も記録
+するので、あるウォームスタートが実際に収束した段から来たものかどうかを
+確認できます（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">温度継続計算（hwave_tsweep）</span></a>）。</p>
+</section>
+<section id="id2">
+<h3><span class="section-number">8.1.4. </span>温度を変えると最大固有値やギャップ対称性が飛び移る<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 温度を少しずつ変えていくと、主要固有値のギャップ対称性が突然別のものに
+切り替わります。計算がおかしいのでしょうか？</strong></p>
+<p>必ずしもそうとは限りません。動的（周波数依存）Eliashberg カーネルは
+非エルミートであり、2つの実固有値が衝突して複素共役対に分裂する
+「例外点」を持つことがあります。そのため、FLEX の自己エネルギーが滑らかに
+変化していても、隣り合う温度の間で「主要」ブランチが不連続に飛ぶことが
+あります。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">seed_eigenvector</span></code>に隣接する計算の
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>を指定すると、1つの物理的なブランチ（例えば d 波
+モード）を温度掃引全体にわたって連続的に追跡しやすくなります。具体的には、
+固有値ソルバが実際に<strong>返した</strong>固有対（<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>、および
+シフトインバートを使う場合は <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>で決まる範囲）の中から、
+単に代数的に最大の固有値ではなく、指定した固有ベクトルと最も重なりの
+大きい固有対を選びます。物理的なブランチがそもそも返された固有対の中に
+なければ、<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>を増やすか <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>をその近傍に
+移すことで範囲内に入れる必要があります。仕組みの全体像は
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-seed-eigenvector"><span class="std std-ref">固有ベクトル継続（seed_eigenvector）</span></a>を参照してください。</p>
+</section>
+<section id="match">
+<h3><span class="section-number">8.1.5. </span>得られたギャップ対称性の確認方法（<code class="docutils literal notranslate"><span class="pre">match</span></code>列）<a class="headerlink" href="#match" title="Link to this heading">¶</a></h3>
+<p><strong>Q.</strong> <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> <strong>である対称性を狙ってシードしましたが、実際にその対称性
+に収束したのか確信が持てません。どう確認すればよいですか？</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>（静的ソルバ）は自己無撞着反復のシードにすぎず、報告される
+結果は要求したチャネルの<strong>パリティ</strong>（singlet なら偶、triplet なら奇）に
+属する主要固有対であって、シードした対称性そのものとは限りません。また
+固有値解析には、その意味では物理的でない反対パリティの解も含まれます。
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の末尾にある <code class="docutils literal notranslate"><span class="pre">match</span></code>列は厳密な判定ではなく優勢さの
+判定です。固有ベクトルを要求したチャネルパリティの成分に射影したときに
+ノルムの 90% 以上が残る場合に <code class="docutils literal notranslate"><span class="pre">1</span></code>（物理的）、そうでない場合に <code class="docutils literal notranslate"><span class="pre">0</span></code>（擬似的）になります。この基準を満たす固有対が1つも計算されなかった場合、
+ソルバは警告を出したうえで、一致しなかった最大固有対をそのまま報告に
+フォールバックします。その場合は <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>を増やすか
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>を確認してください。実際にどの対称性が得られたかは、
+報告されたギャップ関数そのもの（<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>やチュートリアルの図）を確認して
+判断してください。ファイル形式と、反対パリティの解がそもそも現れる理由に
+ついては <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-eigenvalue-dat"><span class="std std-ref">eigenvalue.dat</span></a>を参照してください。</p>
+</section>
+<section id="lambda-t">
+<h3><span class="section-number">8.1.6. </span><span class="math notranslate nohighlight">\(\lambda(T)\)</span>が非単調 -- 物理的な現象か？<a class="headerlink" href="#lambda-t" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 一つのペアリングチャネルについて、温度を下げていくと</strong> <span class="math notranslate nohighlight">\(\lambda\)</span>
+<strong>が一旦下がってからまた上がります。これは実際の物理効果でしょうか？</strong></p>
+<p>それを物理的だと結論する前に、まずよくある非物理的な原因を除外してください。
+連続的に追跡された1つのペアリングブランチに対しては、<span class="math notranslate nohighlight">\(\lambda\)</span>は
+<span class="math notranslate nohighlight">\(T \to 0\)</span>で増加すると期待されるため、説明のつかないくぼみが出たら
+次を確認する価値があります。その段がウォームスタートされ収束した段からの
+ものではなく、コールドスタートまたは FLEX の自己エネルギーが十分収束して
+いない段である可能性（<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>サマリーの <code class="docutils literal notranslate"><span class="pre">flex_converged</span></code>列
+を確認、<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">SCFループのウォームスタート（sigma_init）</span></a>）、「主要」固有対が段の間で対称性を
+静かに変えてしまう例外点でのブランチの切り替わり（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-seed-eigenvector"><span class="std std-ref">固有ベクトル継続（seed_eigenvector）</span></a>）、そして IR 経路を使っている場合は <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>や FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の
+分解能不足（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-ir"><span class="std std-ref">IR基底（sparse-ir）による松原軸の圧縮</span></a>）です。温度ラダー全体
+（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">温度継続計算（hwave_tsweep）</span></a>）を1つずつ確認し、<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>を使って
+1つの物理的ブランチを追跡できていることを確かめたうえで、そのくぼみを
+本物の非単調な効果として扱ってください。</p>
+</section>
+<section id="ir-wmax">
+<h3><span class="section-number">8.1.7. </span>動的モードの前提条件と<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>の選び方<a class="headerlink" href="#ir-wmax" title="Link to this heading">¶</a></h3>
+<p><strong>Q.</strong> <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> <strong>を使う前に何が必要ですか。また</strong>
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> <strong>はどう選べばよいですか？</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>には、事前に実行した FLEX 計算
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>）でしか得られない周波数分解された入力が必要です。
+必要なファイルと <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の整合性チェックについては
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的（振動数依存）Eliashberg方程式</span></a>を参照してください。IR 経路
+（<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>）を使う場合はさらに、オプションパッケージの
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> が必要です。<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>は、
+それを大きくしても<span class="math notranslate nohighlight">\(\lambda\)</span>が変わらなくなる程度に十分大きく
+選んでください（より大きな値や自動推定値と比較して確認します）。逆に
+大きくしすぎると、IR ローダーが分離しようとする
+delta(<span class="math notranslate nohighlight">\(\tau\)</span>)由来の定数項の推定がかえって不安定になることが
+あります。その場合の対処法は、自動推定される <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>（またはバンド幅
+と最大相互作用の和の 3 倍程度の値）を使う、FLEX の <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を大きくする、
+真に静的な成分を保持するよう <code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>を設定する、
+あるいは <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>に戻すことです。自動推定や
+分離の診断、測定された固有値の感度については <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-ir"><span class="std std-ref">IR基底（sparse-ir）による松原軸の圧縮</span></a>を
+参照してください。</p>
+</section>
+<section id="nmatgpu">
+<h3><span class="section-number">8.1.8. </span>大きな<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でのGPUメモリ不足<a class="headerlink" href="#nmatgpu" title="Link to this heading">¶</a></h3>
+<p><strong>Q.</strong> <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> <strong>で動的 Eliashberg 計算を実行すると、大きな</strong>
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> <strong>でメモリ不足エラーが出ます。どうすればよいですか？</strong></p>
+<p>デバイス上に常駐する2つの大きなテンソル（ペアバブルとペアリング頂点）は
+<span class="math notranslate nohighlight">\(N_{\mathrm{orb}}^4 N_k N_{\mathrm{mat}}\)</span>に比例するため、GPU メモリ
+使用量は <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>（およびkメッシュサイズや軌道数）に直接比例して増えます。
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>や <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を小さくするか、同じデバイス上で同時に走らせる
+計算数を減らしてください。大きなメモリ確保を行う前に、ソルバーは常駐
+テンソルのサイズを必ずログに出力します。その見積もりがデバイスの空き
+メモリを超える場合に<strong>限り</strong>、必要量と空き容量を示す警告が追加で
+出力されます（あくまで事前警告であり、実際の確保に失敗すれば CuPy 自身が
+明確な out-of-memory エラーを出します）。実行が黙って収まると仮定せず、
+この警告が出るかどうかに注意してください。メモリ量の式や速度・メモリの
+目安については <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-gpu"><span class="std std-ref">GPU実行（CuPy）</span></a>を参照してください。</p>
+</section>
+<section id="chi-convention-kurokimyo">
+<h3><span class="section-number">8.1.9. </span>2軌道系の<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>（<code class="docutils literal notranslate"><span class="pre">kuroki</span></code>対<code class="docutils literal notranslate"><span class="pre">myo</span></code>）<a class="headerlink" href="#chi-convention-kurokimyo" title="Link to this heading">¶</a></h3>
+<p><strong>Q. ファイルの配列形状は想定通りなのに、2軌道系の FLEX+Eliashberg の結果が
+おかしく見えます。何を確認すればよいですか？</strong></p>
+<p>FLEX の感受率ファイルには <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>タグ（reduced スキームなら
+<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code>、general フルベルテックススキームなら <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>）が付与
+されており、Eliashberg のローダーはこれを使って格納された軌道配置を
+解釈します。ローダーは、何かおかしいと判定できる場合には推測せずに
+エラーにします。<code class="docutils literal notranslate"><span class="pre">chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chi_c</span></code>のペアに異なるタグが付いている場合、
+未知のタグの場合、あるいは（配列形状から規約が一意に決まる
+<span class="math notranslate nohighlight">\(N_{\mathrm{orb}} \neq 2\)</span>の場合に限り）タグが形状と矛盾する場合は、
+すべて誤読せずに明示的なエラーを送出します。この方法で検出できない唯一の
+ケースが<span class="math notranslate nohighlight">\(N_{\mathrm{orb}} = 2\)</span>です。この場合、reduced のスピン
+軌道次元と general の軌道対次元がどちらも 4 で一致してしまうため、配列の<strong>形状だけでは区別できません</strong>。もしそのファイル自体は内部的に矛盾が
+ないものの、実際の中身とは違う規約タグが付いている場合（例えば
+kuroki レイアウトのファイルに誤って <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>タグが付いている場合）、
+ローダーにはそれを検出する手立てがなく、誤ったペアリング頂点を静かに
+構築してしまいます。詳しい説明と、
+このタグが防いでいる過去の誤ラベル付けについては
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的（振動数依存）Eliashberg方程式</span></a>を参照してください。</p>
+</section>
+</section>
+<section id="id3">
+<h2><span class="section-number">8.2. </span>FLEX近似<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h3><span class="section-number">8.2.1. </span>FLEXの適用範囲<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p><strong>Q. FLEX にはどのような限界がありますか。どのような場合に信頼すべきでは
+ありませんか？</strong></p>
+<p>FLEX は RPA の粒子・空孔バブルとラダー級数から構成される、弱結合から
+中間結合領域向けの保存則を満たす近似であり、Aslamazov-Larkin /
+Maki-Thompson 頂点補正を含みません。また Mott 絶縁体状態を記述する
+ことはできません。ここで解いている常磁性 FLEX は、磁気的・電荷的な
+秩序相にも入ることができません。そのため、そのような不安定性の近傍
+（感受率が大きくなる領域）で得られた大きな感受率やペアリング固有値は、
+確定的な予言ではなく信頼できないものとして扱うべきであり、そこから
+得られる転移温度もよくても半定量的なものです（<a class="reference internal" href="#faq-flex-tc"><span class="std std-ref">FLEXから得られる T_cの読み方</span></a>）。
+密度‐密度（<code class="docutils literal notranslate"><span class="pre">reduced</span></code>）とフルベルテックス（<code class="docutils literal notranslate"><span class="pre">general</span></code>）の区別を
+含む正確な適用範囲については <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">近似の適用範囲</span></a>を参照してください。</p>
+</section>
+<section id="id5">
+<h3><span class="section-number">8.2.2. </span>不安定点近傍でFLEXが発散・収束しない<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 磁気的・電荷的な不安定性に近づくと、FLEX が収束しなくなったり
+（あるいは感受率が発散したり）します。何が起きているのですか？</strong></p>
+<p>磁気的な不安定性に近づくと、Stoner 因子（RPA で足し上げた相互作用と
+<span class="math notranslate nohighlight">\(\chi_0\)</span>の積）が 1 に近づき、それに伴って RPA 型の分母
+（1 − Stoner 因子）が<strong>0 に近づきます</strong>（1 に近づくのではありません）。
+そのため<span class="math notranslate nohighlight">\(\chi\)</span>が大きくなり、自己無撞着ループが収束しにくく
+なります。この領域には、ウォームスタートの温度ラダー
+（<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">SCFループのウォームスタート（sigma_init）</span></a>、<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">温度継続計算（hwave_tsweep）</span></a>）を使って緩やかに近づき、
+混合もより穏やかにしてください。具体的な <code class="docutils literal notranslate"><span class="pre">Mix</span></code>・<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code>の
+指針は <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-tips"><span class="std std-ref">Tips</span></a>と <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-params"><span class="std std-ref">FLEX固有のパラメータ</span></a>を参照してください。
+その不安定性が物理的なもの
+（本物の磁気秩序・電荷秩序）である場合、FLEX 自体は秩序相・絶縁相には
+入れないことに注意してください。そこで得られる大きな感受率やペアリング
+固有値は、近似が限界に近づいているしるしであって、その領域での超伝導を
+信頼できる形で予言しているわけではありません。</p>
+</section>
+<section id="flex-t-c">
+<span id="faq-flex-tc"></span><h3><span class="section-number">8.2.3. </span>FLEXから得られる <span class="math notranslate nohighlight">\(T_c\)</span>の読み方<a class="headerlink" href="#flex-t-c" title="Link to this heading">¶</a></h3>
+<p><strong>Q. FLEX+Eliashberg 計算から具体的な</strong> <span class="math notranslate nohighlight">\(T_c\)</span> <strong>の値が得られました。
+どの程度信頼してよいでしょうか？</strong></p>
+<p>半定量的な値として扱ってください。定量的なものではありません。絶対的な
+<span class="math notranslate nohighlight">\(T_c\)</span>は相互作用の強さにほぼ指数的に依存するため、相互作用の
+較正の仕方にも近似そのもの（<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">近似の適用範囲</span></a>）にも敏感です。単一の
+計算から得られる<span class="math notranslate nohighlight">\(T_c\)</span>の絶対値に頼るのではなく、パラメータを
+振ったときの<span class="math notranslate nohighlight">\(\lambda(P, T)\)</span>の位置・形状といった傾向を比較して
+ください。</p>
+</section>
+<section id="flexnmatiterationmax">
+<h3><span class="section-number">8.2.4. </span>FLEX収束のための<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>・混合・<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>の選び方<a class="headerlink" href="#flexnmatiterationmax" title="Link to this heading">¶</a></h3>
+<p><strong>Q. FLEX をきちんと収束させるには</strong> <code class="docutils literal notranslate"><span class="pre">Nmat</span></code><strong>、</strong> <code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code><strong>、</strong>
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> <strong>をどう設定すればよいですか？</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数で、かつ対象の温度で低周波構造を解像できるだけの十分な
+数の松原周波数の和を取れる大きさが必要です（目安として
+<span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \gtrsim 10/T\)</span>、<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-tips"><span class="std std-ref">Tips</span></a>を参照）。
+Anderson 混合（<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;anderson&quot;</span></code>）は、控えめな <code class="docutils literal notranslate"><span class="pre">Mix</span></code>と
+ウォームスタートを組み合わせると、低温での自己無撞着計算を通常の線形混合
+よりずっと少ない反復回数で収束させられることが多いので、<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>を
+増やすのはまずこちらを試してからにしてください。<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Mix</span></code>・<code class="docutils literal notranslate"><span class="pre">EPS</span></code>・<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code>・<code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code>の全パラメータ
+表は <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-params"><span class="std std-ref">FLEX固有のパラメータ</span></a>を参照してください。</p>
+</section>
+<section id="calc-scheme-auto-flexgeneral">
+<h3><span class="section-number">8.2.5. </span><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>が混成模型・FLEX計算を<code class="docutils literal notranslate"><span class="pre">general</span></code>に昇格させる<a class="headerlink" href="#calc-scheme-auto-flexgeneral" title="Link to this heading">¶</a></h3>
+<p><strong>Q. 入力を変えていないのに、アップデート後に計算が明らかに遅くなり、
+出力配列も大きくなりました。なぜですか？</strong></p>
+<p>バージョン 2.0 以降、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>（既定値）は、常に安価な
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>を優先するのではなく、宣言された相互作用ごとにスキームを
+決定するようになりました。正確な規則は利用者ごとに異なります。</p>
+<ul class="simple">
+<li><p><strong>RPA</strong>（<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>、既定）: <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>または
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>を宣言すると、軌道混成の有無に<strong>かかわらず無条件</strong>に
+<code class="docutils literal notranslate"><span class="pre">general</span></code>になります。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、または集約された <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>相互作用は、一体
+ハミルトニアン（Transfer/Extern/<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>/<code class="docutils literal notranslate"><span class="pre">green_init</span></code>）が
+軌道フレーバーを混合する（＝混成模型である）場合に<strong>限り</strong><code class="docutils literal notranslate"><span class="pre">general</span></code>になり、そうでなければ <code class="docutils literal notranslate"><span class="pre">reduced</span></code>が厳密に維持され
+ます。<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>だけでは <code class="docutils literal notranslate"><span class="pre">general</span></code>にはなりません。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>は、宣言された相互作用によらず、常に
+<code class="docutils literal notranslate"><span class="pre">general</span></code>に解決されます。</p></li>
+<li><p><strong>FLEX</strong>: <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>、または集約された <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>相互作用のいずれかを
+宣言すると、混成の有無を一切確認せずに<strong>無条件</strong>に <code class="docutils literal notranslate"><span class="pre">general</span></code>に
+なります。これは自己無撞着ループでは RPA 専用の厳密性の議論が使えない
+ためです（<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">近似の適用範囲</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>や
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>だけを宣言した場合は、FLEX の auto でも <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の
+ままです。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">general</span></code>は 6 階の <code class="docutils literal notranslate"><span class="pre">chiq</span></code>を使うためコストが増加します（メモリ・
+計算量が<span class="math notranslate nohighlight">\((\mathbf{q},\omega)\)</span>あたり<span class="math notranslate nohighlight">\(O(N_d^2)/O(N_d^3)\)</span>から
+<span class="math notranslate nohighlight">\(O(N_d^4)/O(N_d^6)\)</span>に増えます）。2.0 より前の <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の挙動を
+あえて維持したい場合は <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>を明示してください。
+受理されるかどうかと、それに伴う診断は別の問題です。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>は、明示的な <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の下で<strong>すべて受理</strong>され
+ます。</p></li>
+<li><p><strong>RPA</strong>では、「これは近似です」という警告は、一体ハミルトニアンが
+軌道フレーバーを混合し、捨てられるクロスファミリー頂点セクターが到達
+可能になる場合に<strong>限って</strong>出ます。軌道フレーバーが保存される入力
+は <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の下で厳密であり、この警告は出ません。</p></li>
+<li><p><strong>FLEX</strong>では、同じ警告が（混成の有無を確認せずに）<strong>無条件</strong>に
+出ますが、対象は FLEX 自身の強制対象である <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>に限られます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はこれらとは異なります。その粒子・空孔頂点はどのスキーム
+でも厳密にゼロなので、<code class="docutils literal notranslate"><span class="pre">reduced</span></code>はそれに対して近似にはなりません。
+明示的な <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の下でこれを宣言すると、代わりに「効果を持たない
+（inert）」という警告が、軌道フレーバーの保存状況にかかわらず RPA・
+FLEX のいずれでも表示されます。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code>または <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>を
+含む入力に対しては（RPA・FLEX のいずれでも）<strong>エラーとして拒否</strong>され
+ます。これらの相互作用の粒子・空孔頂点には密度対角成分がまったくないため、
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>はそれらを近似するのではなく、効果をちょうどゼロにして
+捨ててしまうからです。エラーメッセージは <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の
+使用を促します。6 階配列から旧来の4軸密度チャネル形式を復元する方法を
+含む詳しい移行手順は、
+<a class="reference internal" href="../rpa/filespecification/config/index_config.html#rpa-calc-scheme-auto"><span class="std std-ref">calc_scheme パラメータの説明</span></a>を参照して
+ください。</p>
+</section>
 </section>
 </section>
 
@@ -102,7 +371,26 @@ FLEX の感受率を読み込むモード）では、ペアリング頂点はス
 <li class="toctree-l1"><a class="reference internal" href="../flex/flex-index.html">6. ゆらぎ交換近似 (FLEX)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">7. アルゴリズム</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">8. FAQ</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#id1">8.1. 超伝導へのスピン・電荷の寄与を切り分けたい</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#eliashberg">8.1. 超伝導・Eliashberg方程式の利用</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id1">8.1.1. 超伝導へのスピン・電荷の寄与を切り分けたい</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#lambda-1-t-c">8.1.2. <span class="math notranslate nohighlight">\(\lambda\)</span>が 1 に達しないときの <span class="math notranslate nohighlight">\(T_c\)</span>の見積もり方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#flex">8.1.3. FLEXが低温で収束しない（コールドスタートの失敗）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id2">8.1.4. 温度を変えると最大固有値やギャップ対称性が飛び移る</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#match">8.1.5. 得られたギャップ対称性の確認方法（<code class="docutils literal notranslate"><span class="pre">match</span></code>列）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#lambda-t">8.1.6. <span class="math notranslate nohighlight">\(\lambda(T)\)</span>が非単調 -- 物理的な現象か？</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ir-wmax">8.1.7. 動的モードの前提条件と<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>の選び方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#nmatgpu">8.1.8. 大きな<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>でのGPUメモリ不足</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#chi-convention-kurokimyo">8.1.9. 2軌道系の<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>（<code class="docutils literal notranslate"><span class="pre">kuroki</span></code>対<code class="docutils literal notranslate"><span class="pre">myo</span></code>）</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#id3">8.2. FLEX近似</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id4">8.2.1. FLEXの適用範囲</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id5">8.2.2. 不安定点近傍でFLEXが発散・収束しない</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#flex-t-c">8.2.3. FLEXから得られる <span class="math notranslate nohighlight">\(T_c\)</span>の読み方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#flexnmatiterationmax">8.2.4. FLEX収束のための<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>・混合・<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>の選び方</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#calc-scheme-auto-flexgeneral">8.2.5. <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>が混成模型・FLEX計算を<code class="docutils literal notranslate"><span class="pre">general</span></code>に昇格させる</a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">9. 謝辞</a></li>

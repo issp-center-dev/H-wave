@@ -36,8 +36,10 @@
             
   <section id="faq">
 <span id="ch-faq"></span><h1><span class="section-number">8. </span>FAQ<a class="headerlink" href="#faq" title="Link to this heading">¶</a></h1>
+<section id="superconductivity-eliashberg-equation-usage">
+<h2><span class="section-number">8.1. </span>Superconductivity / Eliashberg equation usage<a class="headerlink" href="#superconductivity-eliashberg-equation-usage" title="Link to this heading">¶</a></h2>
 <section id="separating-the-spin-and-charge-contributions-to-superconductivity">
-<h2><span class="section-number">8.1. </span>Separating the spin and charge contributions to superconductivity<a class="headerlink" href="#separating-the-spin-and-charge-contributions-to-superconductivity" title="Link to this heading">¶</a></h2>
+<h3><span class="section-number">8.1.1. </span>Separating the spin and charge contributions to superconductivity<a class="headerlink" href="#separating-the-spin-and-charge-contributions-to-superconductivity" title="Link to this heading">¶</a></h3>
 <p><strong>Q. I want to analyze superconductivity by separating the charge and spin
 contributions. Is that possible?</strong></p>
 <p>Yes. In the dynamic Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>,
@@ -69,6 +71,268 @@ twice by a simple sum. Use the decomposition to compare the relative
 strength of the two channels, not as an exact additive split.</p>
 </div>
 <p>See <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-channel-decomposition"><span class="std std-ref">Channel decomposition (diagnostic)</span></a> for the vertex formulas and further details.</p>
+</section>
+<section id="estimating-t-c-when-lambda-does-not-reach-1">
+<h3><span class="section-number">8.1.2. </span>Estimating <span class="math notranslate nohighlight">\(T_c\)</span> when <span class="math notranslate nohighlight">\(\lambda\)</span> does not reach 1<a class="headerlink" href="#estimating-t-c-when-lambda-does-not-reach-1" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My leading eigenvalue never reaches 1. How do I estimate</strong> <span class="math notranslate nohighlight">\(T_c\)</span><strong>?</strong></p>
+<p><span class="math notranslate nohighlight">\(\lambda = 1\)</span> for a single physical branch, tracked continuously across
+temperature, marks <em>that branch’s own</em> instability – not necessarily the
+overall system <span class="math notranslate nohighlight">\(T_c\)</span>, since a different pairing channel, or a
+different symmetry within the same channel, could reach <span class="math notranslate nohighlight">\(\lambda = 1\)</span>
+at a higher temperature first. The system <span class="math notranslate nohighlight">\(T_c\)</span> is the highest
+temperature at which <em>any</em> physical branch reaches <span class="math notranslate nohighlight">\(\lambda = 1\)</span>.
+Likewise, <span class="math notranslate nohighlight">\(\lambda &lt; 1\)</span> for the tracked branch at a given <span class="math notranslate nohighlight">\(T\)</span>
+only rules out an instability of that particular mode at that temperature;
+it does not by itself establish that the normal state is stable overall, nor
+how close <span class="math notranslate nohighlight">\(T\)</span> is to the tracked branch’s own <span class="math notranslate nohighlight">\(T_c\)</span>. Finding a
+branch’s crossing therefore requires running at lower temperatures.
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> automates a descending temperature
+ladder, chaining each rung’s final saved self-energy (and, for the dynamic
+solver, its leading eigenvector) into the next – see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">Temperature continuation (hwave_tsweep)</span></a>, and
+check the summary’s <code class="docutils literal notranslate"><span class="pre">flex_converged</span></code> column, since an unconverged rung’s
+self-energy is what seeds the next rung regardless. Because a
+FLEX+Eliashberg <span class="math notranslate nohighlight">\(T_c\)</span> is only semi-quantitative (see
+<a class="reference internal" href="#faq-flex-tc"><span class="std std-ref">How should I read a FLEX-derived T_c?</span></a>), comparing the position and shape of <span class="math notranslate nohighlight">\(\lambda(T)\)</span>
+or <span class="math notranslate nohighlight">\(\lambda(P)\)</span> across a parameter sweep is more robust than reading
+off the absolute value where a tracked branch crosses 1.</p>
+</section>
+<section id="flex-does-not-converge-at-low-temperature-cold-start-failure">
+<h3><span class="section-number">8.1.3. </span>FLEX does not converge at low temperature (cold-start failure)<a class="headerlink" href="#flex-does-not-converge-at-low-temperature-cold-start-failure" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My FLEX run at low</strong> <span class="math notranslate nohighlight">\(T\)</span> <strong>fails to converge, even though a similar
+run at higher</strong> <span class="math notranslate nohighlight">\(T\)</span> <strong>works. What should I do?</strong></p>
+<p>A cold start (<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>) directly at low <span class="math notranslate nohighlight">\(T\)</span> often fails to
+converge, because the SCF fixed point moves further from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span>
+as correlations strengthen. Instead, start from a higher temperature where
+convergence is easy and step down, feeding each temperature’s final
+self-energy into the next run as a warm start (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>,
+see <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">Warm-starting the SCF loop (sigma_init)</span></a>). <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> automates this whole ladder and
+records each rung’s convergence status, so you can check whether a given
+warm start actually came from a converged rung (<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">Temperature continuation (hwave_tsweep)</span></a>).</p>
+</section>
+<section id="the-leading-eigenvalue-or-gap-symmetry-jumps-between-temperatures">
+<h3><span class="section-number">8.1.4. </span>The leading eigenvalue or gap symmetry jumps between temperatures<a class="headerlink" href="#the-leading-eigenvalue-or-gap-symmetry-jumps-between-temperatures" title="Link to this heading">¶</a></h3>
+<p><strong>Q. Stepping through a temperature sweep, the leading eigenvalue’s gap
+symmetry suddenly switches to a different one. Is my calculation broken?</strong></p>
+<p>Not necessarily. The dynamic (frequency-dependent) Eliashberg kernel is
+non-Hermitian and can have <em>exceptional points</em> where two real eigenvalues
+collide and split into a complex-conjugate pair, so the “leading” branch can
+jump discontinuously between neighbouring temperatures even when the FLEX
+self-energy varies smoothly. Setting <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">seed_eigenvector</span></code> to a
+neighbouring run’s <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> helps track one physical branch (e.g.
+the d-wave mode) continuously across the sweep: among the eigenpairs actually
+<em>returned</em> by the eigensolver (governed by <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> and, on the
+shift-invert path, <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>), it selects the one whose eigenvector
+best overlaps the seed, instead of the algebraically largest one. If the
+physical branch is not among the returned eigenpairs at all, increasing
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or moving <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> near it is what brings it back
+into range. See <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-seed-eigenvector"><span class="std std-ref">Eigenvector continuation (seed_eigenvector)</span></a> for the full mechanism.</p>
+</section>
+<section id="how-do-i-identify-the-gap-symmetry-i-obtained-the-match-column">
+<h3><span class="section-number">8.1.5. </span>How do I identify the gap symmetry I obtained? (the <code class="docutils literal notranslate"><span class="pre">match</span></code> column)<a class="headerlink" href="#how-do-i-identify-the-gap-symmetry-i-obtained-the-match-column" title="Link to this heading">¶</a></h3>
+<p><strong>Q. I set</strong> <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> <strong>to seed a particular symmetry, but I am not sure
+the solver actually converged to it. How do I check?</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code> (static solver) only seeds the self-consistent iteration; the
+reported result is the leading eigenpair of the requested channel <em>parity</em>
+(even for singlet, odd for triplet), which need not be the symmetry you
+seeded, and the eigenvalue analysis also reports opposite-parity solutions
+that are mathematically valid but unphysical for that channel. The trailing
+<code class="docutils literal notranslate"><span class="pre">match</span></code> column of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> is a dominance test, not an exact
+one: it is <code class="docutils literal notranslate"><span class="pre">1</span></code> when projecting the eigenvector onto the requested
+channel-parity sector retains at least 90% of its norm (physical), and <code class="docutils literal notranslate"><span class="pre">0</span></code>
+otherwise (spurious). If no computed eigenpair reaches that threshold, the
+solver warns and falls back to reporting the unmatched leading eigenpair –
+in that case also try increasing <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or double-check
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>. Inspect the reported gap function itself (<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> /
+the figures in the tutorial) to identify which symmetry was actually
+obtained. See <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-eigenvalue-dat"><span class="std std-ref">eigenvalue.dat</span></a> for the file format and the parity
+note above it for why opposite-parity solutions appear at all.</p>
+</section>
+<section id="lambda-t-is-non-monotonic-is-that-physical">
+<h3><span class="section-number">8.1.6. </span><span class="math notranslate nohighlight">\(\lambda(T)\)</span> is non-monotonic – is that physical?<a class="headerlink" href="#lambda-t-is-non-monotonic-is-that-physical" title="Link to this heading">¶</a></h3>
+<p><strong>Q. For a fixed pairing channel,</strong> <span class="math notranslate nohighlight">\(\lambda\)</span> <strong>dips and then rises
+again as I lower the temperature. Is that a real effect?</strong></p>
+<p>Rule out the usual non-physical causes before concluding it is. For a fixed,
+continuously-tracked pairing branch, <span class="math notranslate nohighlight">\(\lambda\)</span> is expected to increase
+as <span class="math notranslate nohighlight">\(T \to 0\)</span>, so an unexplained dip is worth checking against: a
+cold-started or under-converged FLEX self-energy at that rung rather than a
+warm-started, converged one (check the <code class="docutils literal notranslate"><span class="pre">flex_converged</span></code> column in the
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> summary, <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">Warm-starting the SCF loop (sigma_init)</span></a>); a branch switch at an
+exceptional point, where the “leading” eigenpair silently changes symmetry
+between rungs (<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-seed-eigenvector"><span class="std std-ref">Eigenvector continuation (seed_eigenvector)</span></a>); and, on the IR path, an
+under-resolved <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> or FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-ir-en"><span class="std std-ref">IR-basis (sparse-ir) compression of the Matsubara axis</span></a>). Step
+through the full temperature ladder (<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">Temperature continuation (hwave_tsweep)</span></a>), checking these one by
+one, and use <code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code> to confirm you are tracking one physical
+branch, before treating a dip as a genuine non-monotonic effect.</p>
+</section>
+<section id="dynamic-mode-prerequisites-and-choosing-ir-wmax">
+<h3><span class="section-number">8.1.7. </span>Dynamic-mode prerequisites and choosing <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code><a class="headerlink" href="#dynamic-mode-prerequisites-and-choosing-ir-wmax" title="Link to this heading">¶</a></h3>
+<p><strong>Q. What do I need before I can use</strong> <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code><strong>, and how
+do I choose</strong> <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code><strong>?</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> requires frequency-resolved input that only a
+preceding FLEX run (<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>) produces – see
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Dynamic (frequency-dependent) Eliashberg equation</span></a> for the required files and the <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+consistency checks. On the IR path (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>) you also need
+the optional <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package. Choose
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> large enough that <span class="math notranslate nohighlight">\(\lambda\)</span> is converged with respect to it
+(check against a larger value or the automatic estimate); making it too
+large can instead make the delta(<span class="math notranslate nohighlight">\(\tau\)</span>)-derived constant that the IR
+loader has to isolate ill-conditioned. If that happens, the remedies are to
+use the automatic <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> estimate (or a value near
+<code class="docutils literal notranslate"><span class="pre">3*(bandwidth</span> <span class="pre">+</span> <span class="pre">max</span> <span class="pre">interaction)</span></code>), raise the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, set
+<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code> to retain a genuinely static component instead
+of isolating it, or fall back to <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>. See
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-ir-en"><span class="std std-ref">IR-basis (sparse-ir) compression of the Matsubara axis</span></a> for the automatic estimate, the isolation
+diagnostic, and measured eigenvalue sensitivity.</p>
+</section>
+<section id="gpu-out-of-memory-at-large-nmat">
+<h3><span class="section-number">8.1.8. </span>GPU out-of-memory at large <code class="docutils literal notranslate"><span class="pre">Nmat</span></code><a class="headerlink" href="#gpu-out-of-memory-at-large-nmat" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My dynamic Eliashberg run with</strong> <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> <strong>aborts with an
+out-of-memory error at large</strong> <code class="docutils literal notranslate"><span class="pre">Nmat</span></code><strong>. What can I do?</strong></p>
+<p>The two large resident device tensors (the pair bubble and the pairing
+vertex) scale as <span class="math notranslate nohighlight">\(N_{\mathrm{orb}}^4 N_k N_{\mathrm{mat}}\)</span>, so GPU
+memory use grows directly with <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> (and with the k-mesh size and orbital
+count). Reduce <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> or <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, or run fewer concurrent solves on
+the same device. Before the large allocation, the solver always logs the
+resident tensor size; only when that estimate exceeds the device’s free
+memory does it additionally log a warning naming the required and free
+amounts (advisory only – CuPy itself still raises a clear out-of-memory
+error on the actual allocation). Watch for that warning rather than
+assuming a silent fit. See <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-gpu-en"><span class="std std-ref">GPU execution (CuPy)</span></a> for the memory formula
+and a reference speed/memory point.</p>
+</section>
+<section id="two-orbital-chi-convention-kuroki-vs-myo">
+<h3><span class="section-number">8.1.9. </span>Two-orbital <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> (<code class="docutils literal notranslate"><span class="pre">kuroki</span></code> vs. <code class="docutils literal notranslate"><span class="pre">myo</span></code>)<a class="headerlink" href="#two-orbital-chi-convention-kuroki-vs-myo" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My two-orbital FLEX+Eliashberg results look wrong even though the file
+shapes match what I expect. What should I check?</strong></p>
+<p>The FLEX susceptibility files carry a <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> tag (<code class="docutils literal notranslate"><span class="pre">&quot;kuroki&quot;</span></code> for
+the reduced scheme, <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code> for the general full-vertex scheme) that the
+Eliashberg loader uses to interpret the stored orbital layout. The loader
+raises rather than guesses whenever it can tell something is wrong: a
+<code class="docutils literal notranslate"><span class="pre">chi_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chi_c</span></code> pair tagged with two different conventions, an
+unrecognized tag, or – for <span class="math notranslate nohighlight">\(N_{\mathrm{orb}} \neq 2\)</span>, where the array
+shape unambiguously implies one convention – a tag that disagrees with the
+shape, all raise an explicit error rather than mis-reading the file. The one
+case that cannot be caught this way is <span class="math notranslate nohighlight">\(N_{\mathrm{orb}} = 2\)</span>
+specifically: there the reduced spin-orbital dimension and the general
+orbital-pair dimension coincide (both equal 4), so the array <em>shape alone</em>
+cannot disambiguate them. If such a file is internally consistent but simply
+carries the wrong tag for what it actually is (e.g. a kuroki-layout file
+mistagged <code class="docutils literal notranslate"><span class="pre">&quot;myo&quot;</span></code>), the loader has no way to detect that, and it silently
+builds an incorrect pairing vertex. See <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Dynamic (frequency-dependent) Eliashberg equation</span></a> for the
+full explanation and the historical mislabeling this tag now guards against.</p>
+</section>
+</section>
+<section id="flex-approximation">
+<h2><span class="section-number">8.2. </span>FLEX approximation<a class="headerlink" href="#flex-approximation" title="Link to this heading">¶</a></h2>
+<section id="validity-range-of-flex">
+<h3><span class="section-number">8.2.1. </span>Validity range of FLEX<a class="headerlink" href="#validity-range-of-flex" title="Link to this heading">¶</a></h3>
+<p><strong>Q. What are the limitations of FLEX? When should I not trust it?</strong></p>
+<p>FLEX is a conserving, weak-to-intermediate-coupling approximation built from
+the RPA particle-hole bubble and ladder series; it does not include the
+Aslamazov-Larkin/Maki-Thompson vertex corrections, and it cannot describe a
+Mott insulating state. The paramagnetic FLEX solved here also cannot enter a
+magnetically or charge-ordered phase, so a large susceptibility or pairing
+eigenvalue obtained near such an instability should be treated as unreliable
+rather than as a confirmed prediction, and derived transition temperatures
+are semi-quantitative at best (see <a class="reference internal" href="#faq-flex-tc"><span class="std std-ref">How should I read a FLEX-derived T_c?</span></a>). See <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">Scope of the approximation</span></a>
+for the precise scope, including the density-density (<code class="docutils literal notranslate"><span class="pre">reduced</span></code>) vs.
+full-vertex (<code class="docutils literal notranslate"><span class="pre">general</span></code>) distinction.</p>
+</section>
+<section id="my-flex-run-diverges-or-will-not-converge-near-an-instability">
+<h3><span class="section-number">8.2.2. </span>My FLEX run diverges or will not converge near an instability<a class="headerlink" href="#my-flex-run-diverges-or-will-not-converge-near-an-instability" title="Link to this heading">¶</a></h3>
+<p><strong>Q. As I approach what looks like a magnetic or charge instability, FLEX
+stops converging (or the susceptibility blows up). What is happening?</strong></p>
+<p>As the system approaches a magnetic instability, the Stoner factor (the
+interaction times <span class="math notranslate nohighlight">\(\chi_0\)</span>, RPA-summed) approaches 1, so the RPA-type
+denominator (<span class="math notranslate nohighlight">\(1 -\)</span> the Stoner factor) approaches <strong>zero</strong> – not the
+other way around – and <span class="math notranslate nohighlight">\(\chi\)</span> grows large, making the self-consistency
+loop harder to converge. Approach the region gradually with a warm-start
+temperature ladder (<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-sigma-init"><span class="std std-ref">Warm-starting the SCF loop (sigma_init)</span></a>, <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-tsweep"><span class="std std-ref">Temperature continuation (hwave_tsweep)</span></a>) and gentler
+mixing – see <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-tips"><span class="std std-ref">Tips</span></a> and <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-params"><span class="std std-ref">FLEX-specific parameters</span></a> for concrete
+<code class="docutils literal notranslate"><span class="pre">Mix</span></code>/<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code> suggestions. If the instability is physical
+(genuine magnetic or charge order), keep in mind that FLEX itself cannot
+enter the ordered or insulating phase: a large susceptibility or pairing
+eigenvalue in that region is a sign of the approximation nearing its limits,
+not a reliable prediction of a superconducting state there.</p>
+</section>
+<section id="how-should-i-read-a-flex-derived-t-c">
+<span id="faq-flex-tc"></span><h3><span class="section-number">8.2.3. </span>How should I read a FLEX-derived <span class="math notranslate nohighlight">\(T_c\)</span>?<a class="headerlink" href="#how-should-i-read-a-flex-derived-t-c" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My FLEX+Eliashberg calculation gives a specific</strong> <span class="math notranslate nohighlight">\(T_c\)</span> <strong>value.
+How much should I trust that number?</strong></p>
+<p>Treat it as semi-quantitative, not quantitative. The absolute <span class="math notranslate nohighlight">\(T_c\)</span>
+depends near-exponentially on the interaction strength, so it is sensitive
+both to how the interaction was calibrated and to the approximation itself
+(<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">Scope of the approximation</span></a>). Compare trends – the position and shape of
+<span class="math notranslate nohighlight">\(\lambda(P, T)\)</span> across a parameter sweep – rather than relying on the
+absolute value of <span class="math notranslate nohighlight">\(T_c\)</span> from a single calculation.</p>
+</section>
+<section id="choosing-nmat-mixing-and-iterationmax-for-flex-convergence">
+<h3><span class="section-number">8.2.4. </span>Choosing <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, mixing, and <code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> for FLEX convergence<a class="headerlink" href="#choosing-nmat-mixing-and-iterationmax-for-flex-convergence" title="Link to this heading">¶</a></h3>
+<p><strong>Q. How should I set</strong> <code class="docutils literal notranslate"><span class="pre">Nmat</span></code><strong>,</strong> <code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code><strong>, and</strong>
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> <strong>for a well-converged FLEX run?</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even and large enough for the Matsubara sums to resolve the
+low-frequency structure at the target temperature (a good rule of thumb is
+<span class="math notranslate nohighlight">\(N_{\mathrm{mat}} \gtrsim 10/T\)</span>, see <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-tips"><span class="std std-ref">Tips</span></a>). Anderson
+mixing (<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;anderson&quot;</span></code>) together with a modest <code class="docutils literal notranslate"><span class="pre">Mix</span></code> and a
+warm start typically reaches self-consistency in far fewer iterations than
+plain linear mixing at low <span class="math notranslate nohighlight">\(T\)</span>, so raise <code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> only after
+trying it. See <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-params"><span class="std std-ref">FLEX-specific parameters</span></a> for the full parameter table
+(<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>, <code class="docutils literal notranslate"><span class="pre">Mix</span></code>, <code class="docutils literal notranslate"><span class="pre">EPS</span></code>, <code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code>, <code class="docutils literal notranslate"><span class="pre">anderson_depth</span></code>).</p>
+</section>
+<section id="calc-scheme-auto-promotes-hybridised-flex-runs-to-general">
+<h3><span class="section-number">8.2.5. </span><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> promotes hybridised/FLEX runs to <code class="docutils literal notranslate"><span class="pre">general</span></code><a class="headerlink" href="#calc-scheme-auto-promotes-hybridised-flex-runs-to-general" title="Link to this heading">¶</a></h3>
+<p><strong>Q. My run got noticeably slower and its output arrays got bigger after
+upgrading, even though I did not change my input. Why?</strong></p>
+<p>Since version 2.0, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (the default) resolves the
+scheme per declared interaction rather than always preferring the cheaper
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> scheme, and the exact rule differs by consumer:</p>
+<ul class="simple">
+<li><p><strong>RPA</strong>, <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> (the default): <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+forces <code class="docutils literal notranslate"><span class="pre">general</span></code> <em>unconditionally</em>, regardless of orbital hybridisation.
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, or the aggregate
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> interaction forces <code class="docutils literal notranslate"><span class="pre">general</span></code> only <em>conditionally</em> – when the
+one-body Hamiltonian (Transfer/Extern/<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>/<code class="docutils literal notranslate"><span class="pre">green_init</span></code>) mixes
+orbital flavour (a hybridised model); otherwise <code class="docutils literal notranslate"><span class="pre">reduced</span></code> is kept
+exactly. <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> alone never forces <code class="docutils literal notranslate"><span class="pre">general</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> always resolves to <code class="docutils literal notranslate"><span class="pre">general</span></code>, regardless of
+which interactions are declared.</p></li>
+<li><p><strong>FLEX</strong>: <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>,
+or the aggregate <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> interaction forces <code class="docutils literal notranslate"><span class="pre">general</span></code>
+<em>unconditionally</em> – hybridisation is not checked at all, because the
+self-consistent loop cannot exploit the RPA-only exactness argument (see
+<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-scope"><span class="std std-ref">Scope of the approximation</span></a>). <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> and/or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> alone stay
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> under FLEX auto.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">general</span></code> uses a rank-6 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> and costs more (memory/solve cost grow
+from <span class="math notranslate nohighlight">\(O(N_d^2)/O(N_d^3)\)</span> to <span class="math notranslate nohighlight">\(O(N_d^4)/O(N_d^6)\)</span> per
+<span class="math notranslate nohighlight">\((\mathbf{q},\omega)\)</span>). To keep the pre-2.0 <code class="docutils literal notranslate"><span class="pre">reduced</span></code> behaviour
+explicitly, request <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>. Acceptance and the
+accompanying diagnostic are two separate questions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, and the aggregate
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> interaction are all <strong>accepted</strong> under explicit <code class="docutils literal notranslate"><span class="pre">reduced</span></code>.</p></li>
+<li><p>For <strong>RPA</strong>, the “this is an approximation” warning fires only when the
+one-body Hamiltonian mixes orbital flavour, which makes the discarded
+cross-family vertex sectors reachable; a flavour-conserving input is
+exact under <code class="docutils literal notranslate"><span class="pre">reduced</span></code> and gets no such warning.</p></li>
+<li><p>For <strong>FLEX</strong>, that same warning is unconditional (hybridisation is never
+checked), but only for FLEX’s own forcing types – <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, and <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is different from those: its particle-hole vertex is exactly
+zero in every scheme, so <code class="docutils literal notranslate"><span class="pre">reduced</span></code> is never an approximation for it.
+Declaring it under explicit <code class="docutils literal notranslate"><span class="pre">reduced</span></code> instead gets an “inert, no
+effect” warning – in both RPA and FLEX, regardless of flavour
+conservation.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> under explicit <code class="docutils literal notranslate"><span class="pre">reduced</span></code> is <strong>rejected</strong> with
+an error instead, whether for RPA or FLEX: their particle-hole vertex has no
+density-diagonal content at all, so <code class="docutils literal notranslate"><span class="pre">reduced</span></code> would not approximate them –
+it would drop them with exactly zero effect – and the error directs you to
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> instead. See the
+<a class="reference internal" href="../rpa/filespecification/config/index_config.html#rpa-calc-scheme-auto"><span class="std std-ref">calc_scheme parameter description</span></a> for the full
+migration note, including how to recover the old 4-axis density-channel
+layout from the rank-6 array.</p>
+</section>
 </section>
 </section>
 
@@ -103,7 +367,26 @@ strength of the two channels, not as an exact additive split.</p>
 <li class="toctree-l1"><a class="reference internal" href="../flex/flex-index.html">6. Fluctuation Exchange Approximation (FLEX)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../algorithm/al-index.html">7. Algorithms</a></li>
 <li class="toctree-l1 current"><a class="current reference internal" href="#">8. FAQ</a><ul>
-<li class="toctree-l2"><a class="reference internal" href="#separating-the-spin-and-charge-contributions-to-superconductivity">8.1. Separating the spin and charge contributions to superconductivity</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#superconductivity-eliashberg-equation-usage">8.1. Superconductivity / Eliashberg equation usage</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#separating-the-spin-and-charge-contributions-to-superconductivity">8.1.1. Separating the spin and charge contributions to superconductivity</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#estimating-t-c-when-lambda-does-not-reach-1">8.1.2. Estimating <span class="math notranslate nohighlight">\(T_c\)</span> when <span class="math notranslate nohighlight">\(\lambda\)</span> does not reach 1</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#flex-does-not-converge-at-low-temperature-cold-start-failure">8.1.3. FLEX does not converge at low temperature (cold-start failure)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#the-leading-eigenvalue-or-gap-symmetry-jumps-between-temperatures">8.1.4. The leading eigenvalue or gap symmetry jumps between temperatures</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#how-do-i-identify-the-gap-symmetry-i-obtained-the-match-column">8.1.5. How do I identify the gap symmetry I obtained? (the <code class="docutils literal notranslate"><span class="pre">match</span></code> column)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#lambda-t-is-non-monotonic-is-that-physical">8.1.6. <span class="math notranslate nohighlight">\(\lambda(T)\)</span> is non-monotonic – is that physical?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#dynamic-mode-prerequisites-and-choosing-ir-wmax">8.1.7. Dynamic-mode prerequisites and choosing <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#gpu-out-of-memory-at-large-nmat">8.1.8. GPU out-of-memory at large <code class="docutils literal notranslate"><span class="pre">Nmat</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#two-orbital-chi-convention-kuroki-vs-myo">8.1.9. Two-orbital <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> (<code class="docutils literal notranslate"><span class="pre">kuroki</span></code> vs. <code class="docutils literal notranslate"><span class="pre">myo</span></code>)</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#flex-approximation">8.2. FLEX approximation</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#validity-range-of-flex">8.2.1. Validity range of FLEX</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#my-flex-run-diverges-or-will-not-converge-near-an-instability">8.2.2. My FLEX run diverges or will not converge near an instability</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#how-should-i-read-a-flex-derived-t-c">8.2.3. How should I read a FLEX-derived <span class="math notranslate nohighlight">\(T_c\)</span>?</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#choosing-nmat-mixing-and-iterationmax-for-flex-convergence">8.2.4. Choosing <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, mixing, and <code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> for FLEX convergence</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#calc-scheme-auto-promotes-hybridised-flex-runs-to-general">8.2.5. <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> promotes hybridised/FLEX runs to <code class="docutils literal notranslate"><span class="pre">general</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../acknowledgement.html">9. Acknowledgments</a></li>
