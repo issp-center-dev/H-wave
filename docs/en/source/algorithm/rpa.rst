@@ -520,11 +520,16 @@ input failing this is rejected. The transverse pair
 off-site term, so such a term's vertex is not a function of :math:`q` alone
 and cannot be represented. In practice this rejects off-site
 ``CoulombInter``, ``Ising`` and ``Exchange``, while off-site ``Hund`` and
-``PairLift`` are accepted because their transverse vertex vanishes. Note that a set of declarations whose members cancel or disagree is
-rejected earlier, at read time (as of version 2.0: declaration files must be
-Hermitian-closed); an inter-site pair that folds into the supercell under
-``SubShape`` becomes an intra-cell orbital pair and is representable. The
-longitudinal (``ring``) channel is unaffected.
+``PairLift`` are accepted because their transverse vertex vanishes. Note that
+a set of declarations whose members cancel or disagree is rejected earlier, at
+read time (as of version 2.0: declaration files must be Hermitian-closed); and,
+for the interaction types governed by this :math:`q`-independence check, an
+inter-site pair that folds into the supercell under ``SubShape`` becomes an
+intra-cell orbital pair and is representable. ``PairHop`` is the exception: its
+locality is judged on the ORIGINAL (pre-fold) declarations, so an off-site
+``PairHop`` is discarded -- or, under the bond-resolved transverse channel,
+rejected -- even when ``SubShape`` folds it onto an intra-cell orbital pair
+(see the warning below). The longitudinal (``ring``) channel is unaffected.
 
 .. warning::
 

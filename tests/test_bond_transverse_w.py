@@ -2944,6 +2944,85 @@ class TestPairHopOffsiteWarningAndGateRejection(ApproxTestCase):
         self.assertTrue(any("PairHop" in m and "off-site" in m
                             for m in cm.output), msgs)
 
+    # ---------------------------------------------------------------
+    # The PRE-FOLD locality path (review finding, #157). Everything
+    # above runs at SubShape=[1,1,1], where pre-fold and folded tables
+    # coincide and a guard reading either would pass. The fixture below
+    # separates them: CellShape=[2,1,1] with SubShape=[2,1,1] folds the
+    # whole cell into ONE supercell (folded shape (1,1,1), nvol=1), so
+    # the R=(+-1,0,0) PairHop bond becomes an r=(0,0,0) coupling between
+    # supercell orbitals 0 and 1 -- invisible to any check that reads
+    # the FOLDED table, and with the folded spatial dimension collapsed
+    # to one the existing q-dependence check cannot catch it either
+    # (a q-only mesh of a single point is trivially q-independent).
+    # This is the repo's recurring pre-fold locality trap.
+    # ---------------------------------------------------------------
+
+    def _build_folded(self, d, *, transverse_bond_channels=True):
+        """CellShape=[2,1,1] / SubShape=[2,1,1] (subvol=2, folded shape
+        (1,1,1)) with a Hermitian-closed off-site PairHop pair at
+        R=(+-1,0,0) -- off-site BEFORE folding, on-site (between
+        supercell orbitals) after it."""
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
+                     "0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n"
+                     " 1 0 0 1 1 0.5 0.0\n-1 0 0 1 1 0.5 0.0\n")
+        with open(os.path.join(d, "pairhop.dat"), "w") as f:
+            f.write("hdr\n1\n2\n1 1\n"
+                     " 1 0 0 1 1 0.15 0.0\n"
+                     "-1 0 0 1 1 0.15 0.0\n")
+        inter = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
+        param = {"T": 1.0, "mu": 0.0, "CellShape": [2, 1, 1],
+                 "SubShape": [2, 1, 1], "Nmat": 8,
+                 "transverse_bond_channels": transverse_bond_channels}
+        info_mode = {"mode": "RPA", "param": param,
+                     "calc_scheme": "general", "calc_type": "ring+ladder"}
+        io = read_input_k.QLMSkInput(
+            {"path_to_input": d, "interaction": inter})
+        return rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
+
+    def test_folded_offsite_pairhop_is_invisible_in_the_folded_table(self):
+        """Anti-vacuity for the test below: on this fixture the FOLDED
+        PairHop table carries NO off-site entry at all, while the
+        pre-fold table carries the two R=(+-1,0,0) declarations. A guard
+        reading the folded table would therefore find nothing to reject
+        -- which is exactly what the rejection must not do."""
+        with tempfile.TemporaryDirectory() as d:
+            solver = self._build_folded(d, transverse_bond_channels=False)
+        self.assertTrue(getattr(solver.lattice, "has_sublattice", False))
+        self.assertEqual(tuple(solver.lattice.shape), (1, 1, 1))
+
+        folded = solver.ham_info.param_ham["PairHop"]
+        prefold = solver.ham_info.param_ham_orig["PairHop"]
+        self.assertEqual(
+            [], [irvec for (irvec, _orb) in folded.keys()
+                 if tuple(int(x) for x in irvec) != (0, 0, 0)])
+        self.assertEqual(
+            {(1, 0, 0), (-1, 0, 0)},
+            {tuple(int(x) for x in irvec)
+             for (irvec, _orb) in prefold.keys()
+             if tuple(int(x) for x in irvec) != (0, 0, 0)})
+
+    def test_folded_offsite_pairhop_rejected_under_transverse_bond_gate(
+            self):
+        """The rejection keys on the ORIGINAL (pre-fold) declarations, so
+        it still fires when sublattice folding has mapped the off-site
+        bond onto r=(0,0,0) between supercell orbitals -- and its message
+        names the ORIGINAL nonzero displacements, not the folded r=0."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError) as cm:
+                self._build_folded(d, transverse_bond_channels=True)
+        msg = str(cm.exception)
+        self.assertIn("transverse_bond_channels=true", msg)
+        self.assertIn("PairHop", msg)
+        self.assertIn("(1, 0, 0)", msg)
+        self.assertIn("(-1, 0, 0)", msg)
+        self.assertIn("0.15", msg)
+        self.assertIn("representability limit", msg)
+
 
 class _CollectingHandler(logging.Handler):
     def __init__(self):
