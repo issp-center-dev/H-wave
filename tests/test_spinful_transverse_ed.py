@@ -567,7 +567,8 @@ def _s0_chi_dressed(v, nmat):
     solver.solve(green_info, tempfile.mkdtemp(prefix="s0_gate_out_"))
     chi0q = np.asarray(green_info["chi0q"])
     ham_inter_q = solver.ham_info.ham_inter_q
-    exch = solver.ham_info.ham_spinful_exchange
+    # materialize explicitly (#174): the crossing is lazy now
+    exch = solver.ham_info.spinful_exchange()
     if exch is None:
         exch = np.zeros(ham_inter_q.shape[-4:], dtype=complex)
     ham_long = rpa_mod._to_bubble_pair_convention(ham_inter_q + exch[None, ...])

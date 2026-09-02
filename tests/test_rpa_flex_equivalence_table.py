@@ -2952,15 +2952,22 @@ class TestReducedSpinfulGuard(unittest.TestCase):
     ``calc_scheme='reduced'`` + ``spin_mode == 'spinful'`` with
     ``enable_spin_orbital=False`` throughout -- never touching the
     CONSTRUCTOR-time guard cell 36 exercises. No registry cell is
-    added for this route: recording one would also require
-    characterizing RPA's own reduced+spinful-via-``trans_mod``
-    behaviour, which is outside what this table measures. That
-    characterization is tracked in issue #161; this docstring records
-    the corresponding KNOWN LIMITATION of the table's coverage, namely
-    that no cell describes the ``trans_mod`` route and none is
-    planned. The guard pinned here closes the gap regardless of how
-    ``spin_mode`` came to be ``'spinful'``, as this test
-    demonstrates.
+    added for this route: the route lies outside this table's fixture
+    model (TOML plus text inputs), so this docstring records the
+    corresponding KNOWN LIMITATION of the table's coverage, namely that
+    no cell describes the ``trans_mod`` route and none is planned. The
+    guard pinned here closes the gap regardless of how ``spin_mode``
+    came to be ``'spinful'``, as this test demonstrates.
+
+    RPA's own behaviour on that route IS now characterized, outside
+    this table: ``tests/test_rpa_spinful_npz_reduced.py`` records issue
+    #161's adjudication -- reduced via ``trans_mod`` / ``green_init``
+    computes bitwise the same ``chi0q`` / ``chiq`` as the adjudicated
+    ``enable_spin_orbital = true`` run, so it inherits that mode's
+    adjudication and needs no RPA-side guard, while #167's
+    reduced-exactness diagnostic announces the approximation. (The
+    ``general`` scheme on the same route was a real defect, issue #174,
+    fixed and pinned in ``tests/test_rpa_spinful_npz_general.py``.)
     """
 
     def test_direct_semantic_state_pin_rejects_spinful(self):
