@@ -6,7 +6,7 @@ energy
 ~~~~~~~~~~
 
 波数空間版UHF法で求めたエネルギー、粒子数、スピンに関する計算結果を出力します。
-ファイル名は環境設定ファイルの中の ``file.output``\ セクションでキーワード ``energy``\ を用いて指定することができます。
+ファイル名は環境設定ファイルの中の\ ``file.output``\ セクションでキーワード\ ``energy``\ を用いて指定することができます。
 以下にファイル例を記載します。
 
 ::
@@ -66,18 +66,18 @@ energy
    **形式 :** float型
 
    **説明 :**
-   自由エネルギー :math:`F = E - TS`\ （Helmholtz自由エネルギー）。
+   自由エネルギー\ :math:`F = E - TS`\ （Helmholtz自由エネルギー）。
    有限温度の自己無撞着計算で最小化される量。
-   :math:`T=0`\ では内部エネルギー ``[energy_total]``\ と一致する。
+   :math:`T=0`\ では内部エネルギー\ ``[energy_total]``\ と一致する。
 
 -  ``[free_energy_band]``
 
    **形式 :** float型
 
    **説明 :**
-   自由エネルギーのバンド寄与 :math:`\mu N + \Omega_0`
+   自由エネルギーのバンド寄与\ :math:`\mu N + \Omega_0`
    （:math:`\Omega_0 = -T\sum_n \ln(1+e^{-(\varepsilon_n-\mu)/T})`\ ）。
-   :math:`T=0`\ では ``[energy_band]``\ と一致する。
+   :math:`T=0`\ では\ ``[energy_band]``\ と一致する。
 
 -  ``[ncond]``
 
@@ -90,7 +90,7 @@ energy
 
    **形式 :** float型
 
-   **説明 :** 全スピンの :math:`z`\ 成分 :math:`S_z`\ の期待値。
+   **説明 :** 全スピンの\ :math:`z`\ 成分\ :math:`S_z`\ の期待値。
     :math:`\sum_{i}\langle (n_{i\uparrow}-n_{i\downarrow})\rangle/2`
 
 -  ``[mu]``
@@ -99,11 +99,11 @@ energy
 
    **説明 :**
    化学ポテンシャル（Fermi準位）。
-   :math:`T=0`\ ではHOMO-LUMOギャップの中点（有限温度の :math:`\mu`\ の
+   :math:`T=0`\ ではHOMO-LUMOギャップの中点（有限温度の\ :math:`\mu`\ の
    :math:`T\to 0^+`\ 極限）を採用する。
-   なお絶縁体ではギャップ内で粒子数が :math:`\mu`\ に依らず一定のため、
-   有限温度の :math:`\mu`\ はギャップ内で一意に定まらない点に注意。
-   :math:`\mu`\ グループが複数ある場合は ``ChemicalPotential_{g}``\ として
+   なお絶縁体ではギャップ内で粒子数が\ :math:`\mu`\ に依らず一定のため、
+   有限温度の\ :math:`\mu`\ はギャップ内で一意に定まらない点に注意。
+   :math:`\mu`\ グループが複数ある場合は\ ``ChemicalPotential_{g}``\ として
    グループごとに出力される。
 
 
