@@ -31,6 +31,48 @@ from hwave.solver import backend as _bk
 
 _logger = logging.getLogger(__name__)
 
+#: Largest tolerated coefficient-space roundtrip residual
+#: ``max |pinv(E) @ E - I_L|`` of an IR sampling design matrix ``E``
+#: (issue #153). ``pinv(E) @ E`` is exactly the fit-then-evaluate identity
+#: every :class:`IRAxis` transform is built on, so this single number
+#: detects BOTH ways the construction degrades at small
+#: ``Lambda = beta * wmax``: an underdetermined node set (fewer sampling
+#: nodes than basis functions -- the residual is then O(1), while the
+#: condition number stays small and notices nothing) and a merely
+#: ill-conditioned one (the residual tracks ``cond(E) * eps_machine``).
+#:
+#: Calibrated by measurement, not guessed (wmax = 5 unless noted):
+#:
+#:   healthy, Lambda = 0.5 .. 5e4 and eps = 1e-6 .. 1e-12 .. max 6.3e-14
+#:   beta = 0.1  (shipped-fixture regime) .............. 8.2e-16 .. 9.5e-16
+#:   beta = 1.0 / 10 / 100 / 500 ...................... 1.3e-15 .. 3.5e-14
+#:   -- threshold 1e-11 --
+#:   beta = 0.005, F (pole fit ~110% wrong) ............ 9.7e-11
+#:   beta = 0.002, F (pole fit ~215% wrong) ............ 3.7e-10
+#:   beta = 0.001, F (pole fit ~330% wrong) ............ 9.9e-09
+#:   beta <= 0.02, B (n_freq = 1 < L = 4, underdetermined)  O(1)
+#:
+#: The threshold therefore clears the worst HEALTHY residual by 160x and
+#: sits 10x below the mildest MEASURABLY WRONG one; against the beta = 0.1
+#: point the shipped tests rely on it has over four decades of margin.
+IR_FIT_RESIDUAL_MAX = 1e-11
+
+
+def _cond_str(mat):
+    """Condition number of ``mat`` rendered for an error message.
+
+    Purely diagnostic, and computed while an error is already being raised,
+    so it must never be able to replace that error with one of its own: it
+    runs its own SVD, which can fail (non-convergence) or trip on non-finite
+    entries exactly in the degenerate regimes this is reporting on. Any such
+    failure degrades to 'unavailable' rather than letting a bare LinAlgError
+    escape in place of the contextual ValueError the caller promised.
+    """
+    try:
+        return "{:.3e}".format(float(np.linalg.cond(mat)))
+    except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+        return "unavailable"
+
 
 def _import_sparse_ir():
     """Import sparse_ir (separated out so tests can monkeypatch a missing
@@ -173,12 +215,21 @@ class IRAxis:
         # eval_freq (n_freq, L): node values = eval_freq @ coeffs, so the
         # last-axis application uses its transpose; fits use the pinv
         # transposed likewise. pinv(eval)(L, n) -> fit matrix (n, L).
-        eval_freq = basis.uhat(self.freq_n).T          # (n_freq, L)
-        eval_tau = basis.u(self.tau).T                 # (n_tau, L)
+        # ``uhat``/``u`` return (L, n_nodes); a single node collapses that to
+        # a 1-D (L,) array, which ``pinv`` rejects outright -- reshape so the
+        # design matrices are unambiguously (n_nodes, L) before the guard
+        # below inspects them. For the ordinary n_nodes > 1 case the reshape
+        # is a no-op view, so the arithmetic is bit-for-bit what it was.
+        eval_freq = np.asarray(
+            basis.uhat(self.freq_n)).reshape(self.L, self.n_freq).T   # (n_freq, L)
+        eval_tau = np.asarray(
+            basis.u(self.tau)).reshape(self.L, self.n_tau).T          # (n_tau, L)
+        pinv_freq = self._pinv_checked(eval_freq, "Matsubara")        # (L, n_freq)
+        pinv_tau = self._pinv_checked(eval_tau, "tau")                # (L, n_tau)
         self._m = {}
-        self._m["fit_freq"] = np.ascontiguousarray(np.linalg.pinv(eval_freq).T)  # (n_freq, L)
+        self._m["fit_freq"] = np.ascontiguousarray(pinv_freq.T)                  # (n_freq, L)
         self._m["eval_freq"] = np.ascontiguousarray(eval_freq.T)                 # (L, n_freq)
-        self._m["fit_tau"] = np.ascontiguousarray(np.linalg.pinv(eval_tau).T)    # (n_tau, L)
+        self._m["fit_tau"] = np.ascontiguousarray(pinv_tau.T)                    # (n_tau, L)
         self._m["eval_tau"] = np.ascontiguousarray(eval_tau.T)                   # (L, n_tau)
         # composites: nodes -> nodes through coefficient space
         self._m["freq_to_tau"] = np.ascontiguousarray(
@@ -214,6 +265,68 @@ class IRAxis:
         # it is garbage-collected along with the instance, and its budget
         # is per-axis, not shared.
         self._tau_freq_pts_cache = OrderedDict()
+
+    # -- construction-time conditioning guard (issue #153) --------------------
+
+    def _params_str(self):
+        return ("beta={!r}, wmax={!r}, eps={!r}, statistics={!r} "
+                "(Lambda = beta*wmax = {!r})".format(
+                    self.beta, self.wmax, self.eps, self.statistics,
+                    self.beta * self.wmax))
+
+    _REMEDY = ("Increase beta*wmax -- raise ir_wmax (or lower the "
+               "temperature) -- or loosen eps (ir_tol).")
+
+    def _pinv_checked(self, eval_mat, axis_name):
+        """Pseudo-invert an IR sampling design matrix ``eval_mat`` (n_nodes,
+        L) and verify the result actually inverts it.
+
+        At small ``Lambda = beta * wmax`` sparse-ir's sampling node sets stop
+        supporting a well-posed least-squares fit onto the L coefficients, and
+        the unguarded build reacted in one of two unacceptable ways (#153):
+        a bare ``LinAlgError`` out of ``pinv`` when the node set collapsed
+        below L points, or -- worse -- a silent success whose transform
+        matrices were wrong by factors of order one, with no exception at all.
+
+        Both are caught here by the SAME quantity, the coefficient-space
+        roundtrip residual ``max |pinv(E) @ E - I_L|``, compared against
+        :data:`IR_FIT_RESIDUAL_MAX`. An underdetermined node set cannot be
+        diagnosed by conditioning alone -- ``cond(E)`` of a short-and-wide E
+        is perfectly small while its pinv is a right inverse only, so the
+        fit is not unique -- which is why the structural case is rejected
+        explicitly first, with the message that actually explains it.
+        """
+        n_nodes = eval_mat.shape[0]
+        if n_nodes < self.L:
+            raise ValueError(
+                "IR axis is not constructible at {}: sparse-ir returned only "
+                "{} {} sampling node(s) for a basis of size L={}, so the fit "
+                "onto the IR coefficients is underdetermined and the "
+                "transform matrices would be meaningless. {}".format(
+                    self._params_str(), n_nodes, axis_name, self.L,
+                    self._REMEDY))
+        try:
+            pinv = np.linalg.pinv(eval_mat)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                "IR axis is not constructible at {}: pseudo-inverting the {} "
+                "sampling matrix ({}x{}) failed ({}). {}".format(
+                    self._params_str(), axis_name, n_nodes, self.L, exc,
+                    self._REMEDY))
+        residual = float(np.max(np.abs(
+            pinv @ eval_mat - np.eye(self.L, dtype=pinv.dtype))))
+        if not (residual <= IR_FIT_RESIDUAL_MAX):
+            raise ValueError(
+                "IR axis is ill-conditioned at {}: the {} sampling matrix "
+                "({}x{}, condition number {}) does not admit a reliable "
+                "fit -- its coefficient roundtrip residual "
+                "max|pinv(E)@E - I| is {:.3e}, above the tolerated {:.1e}. "
+                "The transform matrices built from it would be silently "
+                "wrong rather than merely inaccurate. {}".format(
+                    self._params_str(), axis_name, n_nodes, self.L,
+                    _cond_str(eval_mat), residual,
+                    IR_FIT_RESIDUAL_MAX, self._REMEDY))
+        return pinv
 
     # -- matrix access with backend dispatch ---------------------------------
 
