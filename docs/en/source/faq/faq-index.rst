@@ -306,14 +306,29 @@ scheme per declared interaction rather than always preferring the cheaper
 ``general`` uses a rank-6 ``chiq`` and costs more (memory/solve cost grow
 from :math:`O(N_d^2)/O(N_d^3)` to :math:`O(N_d^4)/O(N_d^6)` per
 :math:`(\mathbf{q},\omega)`). To keep the pre-2.0 ``reduced`` behaviour
-explicitly, request ``calc_scheme = "reduced"``: this is **accepted**, with a
-one-time warning that the result is then an approximation for that input,
-for ``CoulombInter``/``Hund``/``Ising``/``PairLift``/``Coulomb`` inputs. It is
-**rejected** with an error for ``Exchange`` or ``PairHop``, whether requested
-for RPA or FLEX: their particle-hole vertex has no density-diagonal content
-at all, so ``reduced`` would not approximate them -- it would drop them with
-exactly zero effect -- and the error directs you to ``calc_scheme =
-"general"`` instead. See the
+explicitly, request ``calc_scheme = "reduced"``. Acceptance and the
+accompanying diagnostic are two separate questions:
+
+- ``CoulombInter``, ``Hund``, ``Ising``, ``PairLift``, and the aggregate
+  ``Coulomb`` interaction are all **accepted** under explicit ``reduced``.
+- For **RPA**, the "this is an approximation" warning fires only when the
+  one-body Hamiltonian mixes orbital flavour, which makes the discarded
+  cross-family vertex sectors reachable; a flavour-conserving input is
+  exact under ``reduced`` and gets no such warning.
+- For **FLEX**, that same warning is unconditional (hybridisation is never
+  checked), but only for FLEX's own forcing types -- ``CoulombInter``,
+  ``Hund``, ``Ising``, and ``Coulomb``.
+- ``PairLift`` is different from those: its particle-hole vertex is exactly
+  zero in every scheme, so ``reduced`` is never an approximation for it.
+  Declaring it under explicit ``reduced`` instead gets an "inert, no
+  effect" warning -- in both RPA and FLEX, regardless of flavour
+  conservation.
+
+``Exchange`` or ``PairHop`` under explicit ``reduced`` is **rejected** with
+an error instead, whether for RPA or FLEX: their particle-hole vertex has no
+density-diagonal content at all, so ``reduced`` would not approximate them --
+it would drop them with exactly zero effect -- and the error directs you to
+``calc_scheme = "general"`` instead. See the
 :ref:`calc_scheme parameter description <rpa_calc_scheme_auto>` for the full
 migration note, including how to recover the old 4-axis density-channel
 layout from the rank-6 array.
