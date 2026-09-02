@@ -1414,7 +1414,8 @@ class RPA:
             norb_phys=self.ham_info.norb_orig,
             coeff_extern=self.ext,
             trans_mod_present=bool(trans_mod_present),
-            green_init_present=bool(green_init_present))
+            green_init_present=bool(green_init_present),
+            enable_spin_orbital=self.ham_info.enable_spin_orbital)
         chosen, token = _scheme.resolve_rpa(
             types, self.calc_type, conserved=conserved, cause=cause,
             has_sublattice=bool(getattr(self.lattice, "has_sublattice", False)))
@@ -1532,7 +1533,8 @@ class RPA:
             conserved, cause = _scheme.flavour_conserved(
                 self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
                 coeff_extern=self.ext, trans_mod_present=trans_mod_present,
-                green_init_present=green_init_present)
+                green_init_present=green_init_present,
+                enable_spin_orbital=self.ham_info.enable_spin_orbital)
         except ValueError as exc:
             logger.debug("reduced-exactness diagnostic skipped: %s", exc)
             return

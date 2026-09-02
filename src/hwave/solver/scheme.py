@@ -169,29 +169,36 @@ def _find_key(tables, lower_name):
 
 def _has_nonzero_offdiagonal(tables, lower_name, *, index_limit=None):
     """True iff the section ``lower_name`` holds a nonzero entry with
-    ``a != b``. Entries are judged individually (no cancellation credit);
-    non-finite raises; with ``index_limit`` entries carrying an index
-    >= index_limit are ignored (the consumer never reads them)."""
+    ``a != b``. Entries are judged individually (no cancellation credit).
+
+    ``index_limit`` mirrors the CONSUMER's bounds: an entry carrying an
+    index >= index_limit is fully invisible here, exactly as it is to
+    ``rpa._make_ham_trans``, which skips it. The bounds filter therefore
+    runs BEFORE the finiteness check -- a row that never enters H0(k)
+    cannot promote the scheme, and cannot make the predicate refuse to
+    judge the input either. Within the bounds, non-finite raises.
+    """
     key = _find_key(tables, lower_name)
     if key is None:
         return False
     found = False
     for (irvec, orbvec), v in (tables[key] or {}).items():
+        a, b = int(orbvec[0]), int(orbvec[1])
+        if index_limit is not None and (a >= index_limit or b >= index_limit):
+            continue
         c = complex(v)
         if not (math.isfinite(c.real) and math.isfinite(c.imag)):
             raise ValueError(
                 "{}: non-finite entry {!r} at irvec={}, orbvec={}".format(
                     key, v, tuple(irvec), tuple(orbvec)))
-        a, b = int(orbvec[0]), int(orbvec[1])
-        if index_limit is not None and (a >= index_limit or b >= index_limit):
-            continue
         if c != 0 and a != b:
             found = True
     return found
 
 
 def flavour_conserved(tables, *, norb_phys, coeff_extern,
-                      trans_mod_present, green_init_present):
+                      trans_mod_present, green_init_present,
+                      enable_spin_orbital=False):
     """Pre-fold structural flavour-conservation predicate (RPA).
 
     Returns ``(True, "diagonal_transfer")`` when the effective one-body
@@ -200,15 +207,25 @@ def flavour_conserved(tables, *, norb_phys, coeff_extern,
     precedence is fixed and tested). ``tables`` must be the PRE-FOLD
     container. In enable_spin_orbital mode the Transfer indices are the
     combined ``2*orb+spin`` index, so ``a == b`` is generalized-flavour
-    conservation (a spin flip promotes). Extern entries with an index
-    >= ``norb_phys`` are ignored, mirroring ``_make_ham_trans``.
+    conservation (a spin flip promotes).
+
+    Both scans mirror their consumer's index bounds, so an entry H0(k)
+    never sees is invisible to the decision:
+
+    * Extern: ``_make_ham_trans`` reads physical orbital indices only, so
+      the limit is ``norb_phys``.
+    * Transfer: the normal branch of ``_make_ham_trans`` skips indices
+      >= norb ("skip spin dependence"), while the spin-orbital branch
+      consumes every index below the geometry norb = ``2*norb_phys``.
     """
     if not math.isfinite(float(coeff_extern)):
         raise ValueError("coeff_extern is non-finite: {!r}".format(coeff_extern))
+    transfer_limit = 2 * int(norb_phys) if enable_spin_orbital else int(norb_phys)
     mixing = {
         "trans_mod": bool(trans_mod_present),
         "green_init": bool(green_init_present),
-        "transfer": _has_nonzero_offdiagonal(tables, "transfer"),
+        "transfer": _has_nonzero_offdiagonal(tables, "transfer",
+                                             index_limit=transfer_limit),
         "extern": (float(coeff_extern) != 0.0
                    and _has_nonzero_offdiagonal(tables, "extern",
                                                 index_limit=int(norb_phys))),

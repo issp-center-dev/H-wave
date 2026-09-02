@@ -71,6 +71,22 @@ _CHAIN_COULOMBINTER = """CoulombInter, off-site same-orbital
   -1    0    0    1    1  0.3 0.0
 """
 
+#: Transfer declared in the spin-block-extended layout (num_wann = 2 =
+#: 2 * norb_phys) while the model runs in NORMAL (non spin-orbital) mode.
+#: The normal branch of ``_make_ham_trans`` keeps only indices < norb (= 1
+#: here) and skips the rest, so neither the spin-diagonal row (2,2) nor the
+#: spin-block off-diagonal row (1,2) ever enters H0(k).
+_CHAIN_SPIN_BLOCK_TRANSFER = """Transfer, spin-block extended (normal mode)
+2
+2
+ 1 1
+   1    0    0    1    1  -1.0 0.0
+  -1    0    0    1    1  -1.0 0.0
+   0    0    0    2    2  -0.4 0.0
+   1    0    0    1    2   0.7 0.0
+  -1    0    0    2    1   0.7 0.0
+"""
+
 #: Extern declared in the spin-block-extended layout (num_wann = 2 =
 #: 2 * norb_phys): index 2 is the SPIN block, which _make_ham_trans
 #: discards ("skip spin dependence"). Judged with the pre-fold physical
@@ -280,6 +296,43 @@ class TestRPAAutoResolution(_Case):
                          (2, 1))
         self.assertEqual(solver.preview_scheme(),
                          ("reduced", "auto:exact:folded_diagonal"))
+
+    def test_transfer_spin_block_rows_do_not_promote_in_normal_mode(self):
+        """The Transfer off-diagonal scan must mirror ``_make_ham_trans``'s
+        index bound.
+
+        A 1-orbital model whose transfer.dat is written in the
+        spin-extended layout (num_wann = 2) carries rows on indices >= norb
+        that the normal branch of ``_make_ham_trans`` silently skips. They
+        are not part of H0(k), so they must not promote the scheme.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+        d = self._dir()
+        for name, body in (("geom.dat", _CHAIN_GEOM),
+                           ("transfer.dat", _CHAIN_SPIN_BLOCK_TRANSFER),
+                           ("coulombinter.dat", _CHAIN_COULOMBINTER)):
+            with open(os.path.join(d, name), "w") as f:
+                f.write(body)
+        idict = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat"}
+        reader = read_input_k.QLMSkInput({"path_to_input": d,
+                                          "interaction": idict})
+        info_mode = {"mode": "RPA",
+                     "param": {"T": 2.0, "filling": 0.5,
+                               "CellShape": [4, 1, 1], "SubShape": [1, 1, 1],
+                               "Nmat": 16, "coeff_extern": 0.0},
+                     "enable_spin_orbital": False,
+                     "calc_scheme": "auto", "calc_type": "ring"}
+        solver = rpa_mod.RPA(reader.get_param("ham"), {}, info_mode)
+        # the fixture is only meaningful while the file really declares rows
+        # outside the consumed range
+        self.assertEqual(solver.ham_info.norb_orig, 1)
+        self.assertTrue(any(max(orbvec) >= 1 for _, orbvec
+                            in solver.ham_info.param_ham["Transfer"].keys()))
+        self.assertEqual(solver.preview_scheme(),
+                         ("reduced", "auto:exact:diagonal_transfer"))
 
     def test_show_params_prints_deferred_marker(self):
         solver, _ = self._build("auto", {"Hund": "hund_onsite.dat"}, False)

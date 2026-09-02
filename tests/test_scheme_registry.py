@@ -194,11 +194,44 @@ class TestFlavourConserved(unittest.TestCase):
                                     trans_mod_present=True), (False, "trans_mod"))
 
     def test_spin_orbital_combined_index(self):
-        # combined index 2*orb+spin: (0,1) is a spin flip on orbital 0
+        # combined index 2*orb+spin: (0,1) is a spin flip on orbital 0.
+        # The SO Transfer limit is 2*norb_phys (= geometry norb), so index 1
+        # is IN range for norb_phys=1 and the flip promotes.
         t = self._t({((0, 0, 0), (0, 0)): -1.0, ((0, 0, 0), (0, 1)): 0.1})
-        self.assertEqual(self._call(t, norb_phys=1), (False, "transfer"))
+        self.assertEqual(self._call(t, norb_phys=1, enable_spin_orbital=True),
+                         (False, "transfer"))
         t = self._t({((0, 0, 0), (0, 0)): -1.0, ((0, 0, 0), (1, 1)): -1.0})
-        self.assertEqual(self._call(t, norb_phys=1), (True, "diagonal_transfer"))
+        self.assertEqual(self._call(t, norb_phys=1, enable_spin_orbital=True),
+                         (True, "diagonal_transfer"))
+
+    def test_transfer_spin_block_rows_are_ignored_in_normal_mode(self):
+        # In normal mode _make_ham_trans keeps only indices < norb, silently
+        # skipping the spin-extended rows a num_wann = 2*norb file carries.
+        # The predicate must be blind to them too, or a flavour-conserving
+        # model would be promoted on a row H0(k) never sees.
+        t = self._t({((0, 0, 0), (0, 0)): -1.0, ((0, 0, 0), (2, 3)): 0.5})
+        self.assertEqual(self._call(t, norb_phys=2), (True, "diagonal_transfer"))
+        # the very same row DOES promote once it is in range
+        self.assertEqual(self._call(t, norb_phys=4), (False, "transfer"))
+
+    def test_out_of_range_transfer_non_finite_does_not_raise(self):
+        # bounds filter first: an entry the consumer never reads cannot make
+        # the predicate refuse to judge the input
+        t = self._t({((0, 0, 0), (0, 0)): -1.0,
+                     ((0, 0, 0), (2, 3)): float("nan")})
+        self.assertEqual(self._call(t, norb_phys=2), (True, "diagonal_transfer"))
+
+    def test_out_of_range_extern_non_finite_does_not_raise(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0},
+                    extern={((0, 0, 0), (2, 3)): float("inf"),
+                            ((0, 0, 0), (0, 1)): 0.0})
+        self.assertEqual(self._call(t, coeff_extern=1.0), (True, "diagonal_transfer"))
+
+    def test_in_range_transfer_non_finite_still_raises(self):
+        t = self._t({((0, 0, 0), (0, 0)): -1.0,
+                     ((0, 0, 0), (0, 1)): float("nan")})
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            self._call(t, norb_phys=2)
 
 
 class TestResolvers(unittest.TestCase):
