@@ -1767,9 +1767,15 @@ _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT = Cell(
     interaction_class="offsite",
     notes=(
         "E2 offsite_pairhop.dat, R=(1,0,0), coupling 0.2; "
-        "filling=0.5. RPA reads off-site PairHop but silently drops "
-        "it (issue #157, on-site-only representation) -- SUPPORTED "
-        "still holds since RPA does not raise. FLEX SOLVE-time "
+        "filling=0.5. RPA reads off-site PairHop and drops it with a "
+        "warning naming the dropped declarations (issue #157, "
+        "on-site-only representation -- a permanent representability "
+        "limit) -- SUPPORTED still holds since RPA does not raise on "
+        "this (calc_type='ring', gate-off) path. Only the opt-in "
+        "bond-resolved transverse gate "
+        "(calc_type='ring+ladder' + transverse_bond_channels=true, "
+        "outside this cell's fixture family) rejects the same "
+        "declaration at construction. FLEX SOLVE-time "
         "reject: flex.py:2020-2043 -- non-local particle-hole pair "
         "off-site, same as Exchange."
     ),

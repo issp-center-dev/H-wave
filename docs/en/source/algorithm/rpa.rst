@@ -528,11 +528,22 @@ longitudinal (``ring``) channel is unaffected.
 
 .. warning::
 
-   Off-site ``PairHop`` entries are silently discarded when the interaction is
-   read, before this check runs, so they are neither rejected nor included.
-   Do not rely on off-site ``PairHop`` in any RPA calculation. A DIAGONAL
-   PairHop entry (equal orbitals) denotes the density term
-   :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
+   Off-site ``PairHop`` entries are **not represented**, and this is a
+   **permanent** restriction rather than a missing feature: an off-site
+   ``PairHop``'s transverse contribution is a pair-hopping bilinear lying
+   outside the particle-hole channel space
+   :math:`c^\dagger_{i a \uparrow} c_{j b \downarrow}` that the transverse
+   channel dresses, so representing it would require an enlarged bilinear
+   basis. In the standard calculation such entries are discarded when the
+   interaction is read, before this check runs, so they are neither rejected
+   nor included; a warning naming every discarded declaration is written to
+   the log. Do not rely on off-site ``PairHop`` in any RPA calculation. Under
+   the experimental bond-resolved transverse channel
+   (``transverse_bond_channels = true``) an off-site ``PairHop`` declaration
+   is **rejected with an error** instead, so that no silently incomplete
+   transverse result is produced. On-site ``PairHop`` is fully supported in
+   both cases. A DIAGONAL PairHop entry (equal orbitals) denotes the density
+   term :math:`2P\, n_\uparrow n_\downarrow`; the interaction reader stores it
    with coefficient :math:`P` rather than :math:`2P`, consistently in both the
    longitudinal and transverse channels. Validation of such degenerate entries
    is tracked separately.

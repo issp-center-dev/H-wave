@@ -2732,12 +2732,26 @@ class TestTransverseBondGateOutput(ApproxTestCase):
             data["chiq_pm_static"], gi["chiq_pm_static"]))
 
 
-class TestPairHopOffsiteWarning(ApproxTestCase):
-    """``_append_pairhop``'s silent off-site discard now warns, naming
-    the ORIGINAL user declarations (spec "Deferred (recorded)": "Off-site
-    PairHop physics (warning + tracking issue only).")."""
+class TestPairHopOffsiteWarningAndGateRejection(ApproxTestCase):
+    """Off-site ``PairHop`` handling on both paths.
 
-    def _build(self, d):
+    Default (gate-off) path: ``_append_pairhop``'s silent off-site
+    discard warns, naming the ORIGINAL user declarations (spec "Deferred
+    (recorded)": "Off-site PairHop physics (warning + tracking issue
+    only).").
+
+    Opt-in bond-resolved transverse path
+    (``transverse_bond_channels=true``): the same declarations are
+    REJECTED at gate setup (issue #157, decision 2026-09-02 -- the
+    restriction is PERMANENT: an off-site PairHop's transverse
+    contribution is a pair-hopping bilinear outside the particle-hole
+    ``c^dag_up c_down`` channel space this gate dresses, a
+    representability limit rather than a missing feature). On-site
+    PairHop -- part of the ED-validated on-site transverse vertex --
+    stays fully supported under the gate.
+    """
+
+    def _build(self, d, *, calc_type="ring", transverse_bond_channels=None):
         with open(os.path.join(d, "geom.dat"), "w") as f:
             f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n"
                      "0.0 0.0 0.0\n")
@@ -2756,8 +2770,10 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
                  "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
         param = {"T": 1.0, "mu": 0.0, "CellShape": [4, 1, 1],
                  "SubShape": [1, 1, 1], "Nmat": 8}
+        if transverse_bond_channels is not None:
+            param["transverse_bond_channels"] = transverse_bond_channels
         info_mode = {"mode": "RPA", "param": param,
-                     "calc_scheme": "general", "calc_type": "ring"}
+                     "calc_scheme": "general", "calc_type": calc_type}
         io = read_input_k.QLMSkInput(
             {"path_to_input": d, "interaction": inter})
         return rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
@@ -2774,7 +2790,8 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
         self.assertIn("(-1, 0, 0)", msgs)
         self.assertIn("0.15", msgs)
 
-    def _build_variant(self, d, *, include_offsite):
+    def _build_variant(self, d, *, include_offsite, calc_type="ring",
+                        transverse_bond_channels=None):
         """SAME fixture as ``_build`` (transfer/geometry unchanged), but
         with the off-site PairHop pair present or absent, so the two
         variants can be solved and diffed numerically."""
@@ -2796,8 +2813,10 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
                  "Transfer": "transfer.dat", "PairHop": "pairhop.dat"}
         param = {"T": 1.0, "mu": 0.0, "CellShape": [4, 1, 1],
                  "SubShape": [1, 1, 1], "Nmat": 8}
+        if transverse_bond_channels is not None:
+            param["transverse_bond_channels"] = transverse_bond_channels
         info_mode = {"mode": "RPA", "param": param,
-                     "calc_scheme": "general", "calc_type": "ring"}
+                     "calc_scheme": "general", "calc_type": calc_type}
         io = read_input_k.QLMSkInput(
             {"path_to_input": d, "interaction": inter})
         solver = rpa_mod.RPA(io.get_param("ham"), {}, info_mode)
@@ -2866,6 +2885,64 @@ class TestPairHopOffsiteWarning(ApproxTestCase):
             self.assertFalse(any(
                 "PairHop declares" in r.getMessage()
                 for r in handler.records))
+
+
+    # ---------------------------------------------------------------
+    # Issue #157 (decision 2026-09-02): under the opt-in bond-resolved
+    # transverse gate the warn-and-drop is promoted to a REJECTION and
+    # the restriction is documented as PERMANENT. The gate is opt-in, so
+    # no default run changes: the two default-path tests above still pin
+    # the warn-and-drop there.
+    # ---------------------------------------------------------------
+
+    def test_offsite_pairhop_rejected_under_transverse_bond_gate(self):
+        """Gate-on construction REJECTS off-site PairHop, naming the
+        dropped declarations, the representability reason, what stays
+        supported, and the remedy."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError) as cm:
+                self._build(d, calc_type="ring+ladder",
+                            transverse_bond_channels=True)
+        msg = str(cm.exception)
+        self.assertIn("transverse_bond_channels=true", msg)
+        self.assertIn("PairHop", msg)
+        self.assertIn("off-site", msg)
+        # names the two rejected (pre-fold) declarations explicitly,
+        # exactly like the warning it replaces on this path
+        self.assertIn("(1, 0, 0)", msg)
+        self.assertIn("(-1, 0, 0)", msg)
+        self.assertIn("0.15", msg)
+        # the reason: a representability limit, not a missing feature
+        self.assertIn("particle-hole", msg)
+        self.assertIn("representability limit", msg)
+        self.assertIn("not a missing feature", msg)
+        self.assertIn("PERMANENT", msg)
+        # what stays supported, and the remedy
+        self.assertIn("On-site PairHop", msg)
+        self.assertIn("transverse_bond_channels=false", msg)
+
+    def test_onsite_pairhop_is_supported_under_transverse_bond_gate(self):
+        """On-site PairHop is part of the ED-validated on-site transverse
+        vertex: the rejection keys on the off-site declarations ALONE, so
+        gate-on construction with an on-site-only PairHop succeeds."""
+        with tempfile.TemporaryDirectory() as d:
+            solver, _gi = self._build_variant(
+                d, include_offsite=False, calc_type="ring+ladder",
+                transverse_bond_channels=True)
+        self.assertIs(solver.transverse_bond_channels, True)
+
+    def test_offsite_pairhop_still_only_warns_with_the_gate_off(self):
+        """The rejection is gate-scoped: with the gate explicitly off
+        (and even under calc_type='ring+ladder', where the gate key IS
+        parsed) the pre-existing warn-and-drop is unchanged."""
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+                solver = self._build(d, calc_type="ring+ladder",
+                                     transverse_bond_channels=False)
+        self.assertIs(solver.transverse_bond_channels, False)
+        msgs = "\n".join(cm.output)
+        self.assertTrue(any("PairHop" in m and "off-site" in m
+                            for m in cm.output), msgs)
 
 
 class _CollectingHandler(logging.Handler):

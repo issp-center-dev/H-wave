@@ -1009,12 +1009,18 @@ class Interaction:
         def _append_pairhop(type):
             spins = spin_table[type]
 
-            # Off-site PairHop physics is not implemented (spec
-            # "Deferred (recorded)": "Off-site PairHop physics (warning +
-            # tracking issue only)."). Only the on-site (irvec=(0,0,0))
-            # part is read below; warn LOUDLY instead of silently
-            # discarding the rest, naming the ORIGINAL (pre-fold) user
-            # declarations. Locality is judged on the PRE-fold table
+            # Off-site PairHop physics is NOT represented, permanently
+            # (issue #157, decision 2026-09-02): its transverse
+            # contribution is a pair-hopping bilinear outside the
+            # particle-hole channel space the solver dresses, so
+            # representing it would need an enlarged bilinear basis.
+            # Only the on-site (irvec=(0,0,0)) part is read below; warn
+            # LOUDLY instead of silently discarding the rest, naming the
+            # ORIGINAL (pre-fold) user declarations. Under the opt-in
+            # bond-resolved transverse gate the same declarations are a
+            # hard REJECT instead (RPA._reject_offsite_pairhop_under_
+            # transverse_bond_gate) -- this default path is unchanged.
+            # Locality is judged on the PRE-fold table
             # (self.param_ham_orig when the lattice has a sublattice,
             # else self.param_ham) -- the same pre-fold locality rule
             # _append_onsite_direct/_append_inter_cross above apply, for
@@ -1031,10 +1037,13 @@ class Interaction:
                 shown = offsite[:8]
                 logger.warning(
                     "PairHop declares %d off-site term(s) (irvec != "
-                    "(0,0,0)) that this solver silently discards: only "
-                    "the on-site part of PairHop is represented (off-site "
-                    "PairHop physics is not implemented; see issue #157). "
-                    "Restrict PairHop to on-site declarations "
+                    "(0,0,0)) that this solver discards: only the "
+                    "on-site part of PairHop is represented (an off-site "
+                    "PairHop's transverse contribution lies outside the "
+                    "particle-hole channel space this solver dresses -- "
+                    "a permanent restriction, see issue #157; with "
+                    "transverse_bond_channels=true it is rejected "
+                    "outright). Restrict PairHop to on-site declarations "
                     "if this is unintended. Declarations dropped: %s%s",
                     len(offsite),
                     "; ".join(
@@ -1801,6 +1810,83 @@ class RPA:
                 "[mode.param] transverse_bond_memory_cap_gb must be a "
                 "positive finite number, got {}".format(_cap_gb))
         self.transverse_bond_memory_cap_gb = _cap_gb
+
+        # Gate-scoped PERMANENT restriction (issue #157). Checked LAST,
+        # so a malformed companion option still reports its own
+        # (syntactic) error first.
+        self._reject_offsite_pairhop_under_transverse_bond_gate()
+
+    def _reject_offsite_pairhop_under_transverse_bond_gate(self):
+        """Reject off-site ``PairHop`` while ``transverse_bond_channels
+        =true`` (issue #157, decision 2026-09-02).
+
+        The bond-resolved transverse gate dresses the particle-hole
+        channel space spanned by the bond-resolved particle-hole
+        bilinears ``c^dag_{i a up} c_{j b down}``. An OFF-SITE
+        PairHop declaration's transverse contribution is a
+        pair-hopping bilinear that does not live in that space:
+        representing it needs an enlarged bilinear basis, so this is a
+        REPRESENTABILITY limit of the channel, not a missing feature --
+        the same conclusion recorded for the FLEX longitudinal sector on
+        2026-08-29. The restriction is therefore permanent, and the
+        gate refuses the input rather than returning a silently
+        incomplete transverse result.
+
+        Scope, deliberately narrow:
+
+        * ON-SITE PairHop is untouched -- it is part of the ED-validated
+          on-site transverse vertex (``_build_ham_pm_onsite`` ->
+          ``_append_pairhop_like``) and stays fully supported here.
+        * The gate is opt-in, so no default run changes: with the gate
+          off, ``Interaction._make_ham_inter``'s ``_append_pairhop``
+          keeps its long-standing warn-and-drop behaviour verbatim.
+
+        Locality is judged on the ORIGINAL PRE-FOLD declarations
+        (``ham_info.param_ham_orig`` when the lattice has a sublattice,
+        else ``ham_info.param_ham``) -- the same pre-fold locality rule
+        ``_append_pairhop``'s own warning, ``_build_ham_pm_onsite`` and
+        ``_append_inter_cross`` apply, and for the same reason: reading
+        it off the FOLDED table would let an off-site bond folded onto
+        ``r=(0,0,0)`` between supercell orbitals escape detection.
+        (Both tables are ``CaseInsensitiveDict``s, so the ``'PairHop'``
+        lookup honors any declared case.)
+        """
+        if not getattr(self, "transverse_bond_channels", False):
+            return
+
+        has_sub = getattr(self.lattice, "has_sublattice", False)
+        source = (self.ham_info.param_ham_orig if has_sub
+                  else self.ham_info.param_ham)
+        tbl = (source.get("PairHop", None) or {}) if source else {}
+        offsite = [(irvec, orbvec, v)
+                   for (irvec, orbvec), v in tbl.items()
+                   if tuple(int(x) for x in irvec) != (0, 0, 0)]
+        if not offsite:
+            return
+
+        shown = offsite[:8]
+        raise ValueError(
+            "[mode.param] transverse_bond_channels=true cannot be "
+            "combined with off-site PairHop: PairHop declares {} "
+            "off-site term(s) (irvec != (0,0,0)) whose transverse "
+            "contribution is a pair-hopping bilinear outside the "
+            "particle-hole c^dag_up c_down channel space this gate "
+            "dresses -- a representability limit, not a missing "
+            "feature, and therefore a PERMANENT restriction (issue "
+            "#157). On-site PairHop (irvec = (0,0,0)) remains fully "
+            "supported, both under this gate and on the plain "
+            "transverse path. Remove the off-site PairHop "
+            "declaration(s), or set transverse_bond_channels=false (the "
+            "plain path keeps its documented warn-and-drop behaviour: "
+            "the off-site part is reported and discarded). Declarations "
+            "rejected: {}{}".format(
+                len(offsite),
+                "; ".join(
+                    "irvec={} orb=({},{}) v={}".format(
+                        tuple(int(x) for x in irv), ov[0], ov[1], v)
+                    for irv, ov, v in shown),
+                " ... ({} more)".format(len(offsite) - 8)
+                if len(offsite) > 8 else ""))
 
     def _round_to_int(self, val, mode):
         import math
