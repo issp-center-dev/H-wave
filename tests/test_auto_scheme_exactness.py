@@ -457,6 +457,28 @@ class TestReusePathAndFingerprint(_Case):
         with self.assertRaisesRegex(ValueError, "resolved to 'reduced'"):
             solver.solve(green_info, self._dir())
 
+    def test_mutated_decision_input_is_detected_on_re_resolution(self):
+        """The fingerprint records declared types and late-input presence,
+        but the decision also reads construction-immutable inputs
+        (coeff_extern, the transfer/extern structure). Mutating one after
+        resolution violates the #167 immutability invariant; the re-resolve
+        must not silently keep the stale scheme."""
+        solver, green_info = self._build(
+            "auto", {"CoulombInter": "onsite_inter.dat"}, False,
+            extern="offdiag_extern", coeff_extern=0.0)
+        solver.read_init({})
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("reduced", "auto:exact:diagonal_transfer"))
+        solver.ext = 0.5          # the invariant violation
+        with self.assertRaises(ValueError) as cm:
+            solver.solve(green_info, self._dir())
+        msg = str(cm.exception)
+        self.assertIn("reduced", msg)
+        self.assertIn("auto:exact:diagonal_transfer", msg)
+        self.assertIn("general", msg)
+        self.assertIn("auto:mixed:extern", msg)
+        self.assertIn("coeff_extern", msg)
+
     def test_trans_mod_promotes_via_public_solve(self):
         solver, green_info = self._build("auto", {"Hund": "hund_onsite.dat"}, False)
         H = np.asarray(solver.ham_info.ham_trans_q)

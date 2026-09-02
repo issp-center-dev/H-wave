@@ -1456,6 +1456,21 @@ class RPA:
                     "input (declared types / trans_mod / green_init presence "
                     "changed since). Construct a new solver for the new input."
                     .format(self.calc_scheme, self._scheme_resolution))
+            # The fingerprint covers the declared types and the late-input
+            # presence flags; the decision ALSO reads inputs the spec declares
+            # construction-immutable (coeff_extern, the transfer/extern
+            # structure). Comparing the recomputed verdict closes that gap: a
+            # mutation of such an input is a contract violation, and must not
+            # silently leave the solver on the stale scheme.
+            if (chosen, token) != (self.calc_scheme, self._scheme_resolution):
+                raise ValueError(
+                    "calc_scheme='auto' was resolved to ('{}', '{}') but the same "
+                    "input now resolves to ('{}', '{}'): a construction-immutable "
+                    "decision input (e.g. coeff_extern, or a Transfer/Extern "
+                    "table) was mutated after resolution. Construct a new solver "
+                    "for the new input."
+                    .format(self.calc_scheme, self._scheme_resolution,
+                            chosen, token))
             return
         # deferred validation (assertions only; warnings are post-commit)
         if chosen not in ("reduced", "general") or token not in _scheme.RESOLUTION_TOKENS:
