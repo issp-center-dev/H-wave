@@ -28,6 +28,7 @@ bit-identical to the unguarded recipe, and (d) that the module still skips
 cleanly where sparse-ir is absent.
 """
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -58,6 +59,11 @@ class TestIRAxisConditioningGuard(unittest.TestCase):
         return IRAxis(beta=beta, wmax=WMAX, eps=EPS, statistics=statistics)
 
     def _assert_actionable(self, ctx, beta):
+        # LOAD-BEARING: np.linalg.LinAlgError IS a subclass of ValueError, so
+        # assertRaises(ValueError) alone would also accept the very crash this
+        # guard exists to replace. Every failure test must additionally reject
+        # that subclass.
+        self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
         msg = str(ctx.exception)
         # The message must name the three parameters that caused it, so the
         # user can act without reading the traceback.
@@ -72,15 +78,36 @@ class TestIRAxisConditioningGuard(unittest.TestCase):
         # ... and the remedy.
         self.assertIn("ir_wmax", msg)
 
-    def test_crash_regime_raises_valueerror_not_linalgerror(self):
-        """beta=0.02 (bosonic): underdetermined fit -> ValueError, and
-        specifically NOT a bare LinAlgError leaking out of pinv."""
+    def test_underdetermined_freq_node_set_rejected_structurally(self):
+        """beta=0.02 (bosonic): sparse-ir yields ONE Matsubara node for L=4,
+        so this exits through the n_nodes < L structural check -- it never
+        reaches np.linalg.pinv (which is what used to raise the bare
+        LinAlgError here). Assert the outcome is a ValueError, not that
+        LinAlgError, and that the message explains the real cause."""
         with self.assertRaises(ValueError) as ctx:
             self._construct(BETA_CRASH, "B")
         self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
         self._assert_actionable(ctx, BETA_CRASH)
-        # This regime is structurally underdetermined; say so.
-        self.assertIn("4", str(ctx.exception))  # L = 4 appears in the message
+        msg = str(ctx.exception)
+        self.assertIn("Matsubara", msg)
+        self.assertIn("underdetermined", msg)
+        self.assertIn("L=4", msg)
+
+    def test_underdetermined_tau_node_set_rejected_structurally(self):
+        """The tau design matrix has its own structural check, and it is the
+        one that fires first for a fermionic axis at a very tight eps
+        (beta=0.1, wmax=5, eps=1e-12: n_tau=4 < L=8, while the Matsubara node
+        set is still adequate). Covers the 'tau' label on the structural
+        route, and the F statistics on a structural rejection."""
+        from hwave.solver.ir_axis import IRAxis
+        with self.assertRaises(ValueError) as ctx:
+            IRAxis(beta=BETA_HEALTHY, wmax=WMAX, eps=1e-12, statistics="F")
+        self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+        msg = str(ctx.exception)
+        self.assertIn("tau", msg)
+        self.assertIn("underdetermined", msg)
+        for token in ("beta", "wmax", "eps", "ir_wmax"):
+            self.assertIn(token, msg)
 
     def test_silent_wrongness_regime_raises_valueerror(self):
         """beta=0.001 (fermionic): construction used to SUCCEED with ~4x-wrong
@@ -94,14 +121,130 @@ class TestIRAxisConditioningGuard(unittest.TestCase):
         """beta=0.005 is the LEAST ill-conditioned point that still fits a
         pole Green's function ~110% wrong; it must be rejected too (the guard
         threshold is not tuned so tightly that it only catches beta=0.001)."""
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             self._construct(0.005, "F")
+        self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+        self.assertIn("ill-conditioned", str(ctx.exception))
 
     def test_guard_error_is_not_the_missing_dependency_error(self):
         """A conditioning failure must not be reported as ImportError."""
         from hwave.solver.ir_axis import IRAxis
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as ctx:
             IRAxis(beta=BETA_SILENT, wmax=WMAX, eps=EPS, statistics="F")
+        self.assertNotIsInstance(ctx.exception, ImportError)
+        self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+
+
+@unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
+class TestGuardFailureRoutes(unittest.TestCase):
+    """The structural check short-circuits every REAL parameter set that
+    would otherwise reach the pinv exception handler or push a well-shaped
+    matrix past the residual threshold. Those two routes are therefore
+    exercised here by forcing the failure at a healthy parameter point, so
+    that the contextual re-raise is covered rather than assumed.
+
+    ``np.linalg.pinv`` is patched on the numpy module itself, which is what
+    ``ir_axis`` resolves at call time. That is safe to do around the whole
+    construction: sparse-ir's own basis build makes no pinv call (verified --
+    the side effects below record every call they see, and each test asserts
+    it intercepted exactly the matrix it meant to).
+    """
+
+    def _msg_is_actionable(self, msg):
+        for token in ("beta", "wmax", "eps", "ir_wmax"):
+            self.assertIn(token, msg, "message must name {!r}: {}"
+                          .format(token, msg))
+        self.assertIn(repr(BETA_HEALTHY), msg)
+        self.assertIn(repr(WMAX), msg)
+        self.assertIn(repr(EPS), msg)
+
+    def test_pinv_linalgerror_is_reraised_with_context(self):
+        """A LinAlgError out of pinv itself (e.g. SVD non-convergence on a
+        well-shaped matrix) must surface as the contextual ValueError, never
+        raw. Both statistics."""
+        from hwave.solver.ir_axis import IRAxis
+        for statistics in ("F", "B"):
+            seen = []
+
+            def _boom(a, *args, **kwargs):
+                seen.append(np.shape(a))
+                raise np.linalg.LinAlgError("SVD did not converge")
+
+            with mock.patch("numpy.linalg.pinv", side_effect=_boom):
+                with self.assertRaises(ValueError) as ctx:
+                    IRAxis(beta=BETA_HEALTHY, wmax=WMAX, eps=EPS,
+                           statistics=statistics)
+            self.assertTrue(seen, "pinv was never reached")
+            self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+            msg = str(ctx.exception)
+            self._msg_is_actionable(msg)
+            # the underlying failure is quoted, not swallowed
+            self.assertIn("SVD did not converge", msg)
+            self.assertIn("pseudo-inverting", msg)
+
+    def test_bad_residual_on_the_tau_matrix_is_reported_as_tau(self):
+        """Force a bad roundtrip residual on the TAU design matrix only, at
+        an otherwise healthy parameter point, and check the error names the
+        tau axis (not the Matsubara one) and reports the residual. The two
+        matrices are told apart by dtype: uhat() is complex, u() is real."""
+        from hwave.solver.ir_axis import IRAxis
+        from hwave.solver import ir_axis as _mod
+        real_pinv = np.linalg.pinv
+        for statistics in ("F", "B"):
+            perturbed = []
+
+            def _spoil(a, *args, **kwargs):
+                out = real_pinv(a, *args, **kwargs)
+                if not np.iscomplexobj(a):      # the tau matrix
+                    perturbed.append(np.shape(a))
+                    out = out + 1.0e-6          # >> IR_FIT_RESIDUAL_MAX
+                return out
+
+            with mock.patch("numpy.linalg.pinv", side_effect=_spoil):
+                with self.assertRaises(ValueError) as ctx:
+                    IRAxis(beta=BETA_HEALTHY, wmax=WMAX, eps=EPS,
+                           statistics=statistics)
+            self.assertTrue(perturbed, "the tau matrix was never perturbed")
+            self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+            msg = str(ctx.exception)
+            self._msg_is_actionable(msg)
+            self.assertIn("ill-conditioned", msg)
+            self.assertIn("tau sampling matrix", msg)
+            self.assertNotIn("Matsubara sampling matrix", msg)
+            self.assertIn("roundtrip residual", msg)
+            self.assertIn("{:.1e}".format(_mod.IR_FIT_RESIDUAL_MAX), msg)
+
+    def test_condition_number_diagnostic_cannot_mask_the_guard_error(self):
+        """The condition number in the ill-conditioning message runs a SECOND
+        SVD while an error is already being raised. If that diagnostic SVD
+        fails it must degrade to 'unavailable', not replace the contextual
+        ValueError with a bare LinAlgError."""
+        from hwave.solver.ir_axis import IRAxis
+        real_pinv = np.linalg.pinv
+
+        def _spoil(a, *args, **kwargs):
+            return real_pinv(a, *args, **kwargs) + 1.0e-6
+
+        def _cond_boom(a, *args, **kwargs):
+            raise np.linalg.LinAlgError("SVD did not converge")
+
+        with mock.patch("numpy.linalg.pinv", side_effect=_spoil), \
+                mock.patch("numpy.linalg.cond", side_effect=_cond_boom):
+            with self.assertRaises(ValueError) as ctx:
+                IRAxis(beta=BETA_HEALTHY, wmax=WMAX, eps=EPS,
+                       statistics="F")
+        self.assertNotIsInstance(ctx.exception, np.linalg.LinAlgError)
+        msg = str(ctx.exception)
+        self._msg_is_actionable(msg)
+        self.assertIn("condition number unavailable", msg)
+        self.assertIn("roundtrip residual", msg)
+
+    def test_cond_str_helper_degrades_on_nonfinite_input(self):
+        """Direct unit check of the diagnostic helper."""
+        from hwave.solver.ir_axis import _cond_str
+        self.assertIn("e+", _cond_str(np.eye(3) * np.array([1.0, 2.0, 4.0])))
+        bad = np.array([[np.nan, 0.0], [0.0, 1.0]])
+        self.assertEqual(_cond_str(bad), "unavailable")
 
 
 @unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")

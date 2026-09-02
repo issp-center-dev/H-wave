@@ -58,6 +58,22 @@ _logger = logging.getLogger(__name__)
 IR_FIT_RESIDUAL_MAX = 1e-11
 
 
+def _cond_str(mat):
+    """Condition number of ``mat`` rendered for an error message.
+
+    Purely diagnostic, and computed while an error is already being raised,
+    so it must never be able to replace that error with one of its own: it
+    runs its own SVD, which can fail (non-convergence) or trip on non-finite
+    entries exactly in the degenerate regimes this is reporting on. Any such
+    failure degrades to 'unavailable' rather than letting a bare LinAlgError
+    escape in place of the contextual ValueError the caller promised.
+    """
+    try:
+        return "{:.3e}".format(float(np.linalg.cond(mat)))
+    except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+        return "unavailable"
+
+
 def _import_sparse_ir():
     """Import sparse_ir (separated out so tests can monkeypatch a missing
     installation)."""
@@ -302,13 +318,13 @@ class IRAxis:
         if not (residual <= IR_FIT_RESIDUAL_MAX):
             raise ValueError(
                 "IR axis is ill-conditioned at {}: the {} sampling matrix "
-                "({}x{}, condition number {:.3e}) does not admit a reliable "
+                "({}x{}, condition number {}) does not admit a reliable "
                 "fit -- its coefficient roundtrip residual "
                 "max|pinv(E)@E - I| is {:.3e}, above the tolerated {:.1e}. "
                 "The transform matrices built from it would be silently "
                 "wrong rather than merely inaccurate. {}".format(
                     self._params_str(), axis_name, n_nodes, self.L,
-                    float(np.linalg.cond(eval_mat)), residual,
+                    _cond_str(eval_mat), residual,
                     IR_FIT_RESIDUAL_MAX, self._REMEDY))
         return pinv
 
