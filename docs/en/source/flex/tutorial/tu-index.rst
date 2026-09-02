@@ -302,6 +302,8 @@ in the ``output`` directory:
    paramagnetic (spin-free) calculation and non-zero only for
    spin-dependent (spin-diagonal / spinful) runs.
 
+.. _flex_sigma_init:
+
 Warm-starting the SCF loop (``sigma_init``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -600,6 +602,8 @@ These output files can also be used as input for the
 Eliashberg equation solver (``hwave_sc``) to analyze
 superconducting instabilities. See :doc:`/rpa/tutorial/sc-index` for details.
 
+
+.. _flex_params:
 
 FLEX-specific parameters
 ----------------------------
@@ -1025,6 +1029,8 @@ The only difference from Sample 3 is the explicit
 ``"auto"`` resolves to the same scheme); the geometry, transfer, and
 interaction files are identical, and so are the results.
 
+
+.. _flex_tips:
 
 Tips
 ----------------------------
