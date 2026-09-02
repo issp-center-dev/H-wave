@@ -5,9 +5,9 @@
 </div>
 
 [![Run tests](https://github.com/issp-center-dev/H-wave/actions/workflows/run_tests.yml/badge.svg)](https://github.com/issp-center-dev/H-wave/actions/workflows/run_tests.yml)
-[![CI Python 3.9+](https://github.com/issp-center-dev/H-wave/actions/workflows/ci-python39.yml/badge.svg)](https://github.com/issp-center-dev/H-wave/actions/workflows/ci-python39.yml)
+[![CI Python 3.10+](https://github.com/issp-center-dev/H-wave/actions/workflows/ci-python39.yml/badge.svg)](https://github.com/issp-center-dev/H-wave/actions/workflows/ci-python39.yml)
 [![PyPI version](https://img.shields.io/pypi/v/hwave)](https://pypi.org/project/hwave/)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Doc](https://img.shields.io/badge/doc-Manual-blue)](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual)
 
@@ -48,7 +48,7 @@ Optional (GPU execution): install the CuPy binary wheel matching your CUDA
 version, e.g. `pip install cupy-cuda12x` for CUDA 12.x (see the
 [CuPy installation guide](https://docs.cupy.dev/en/stable/install.html)).
 Without CuPy, `gpu = true` falls back to the CPU path with a warning.
-Optional (IR Matsubara basis): `pip install sparse-ir` for
+Optional (IR Matsubara basis): `pip install "hwave[ir]"` (sparse-ir >= 2) for
 `matsubara_basis = "ir"` in the dynamic Eliashberg solver.
 
 ## Quick Start

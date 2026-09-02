@@ -4,11 +4,11 @@ equivalence-table calibration workflow
 
 The calibration workflow (``.github/workflows/equivalence-calibration.
 yml``) uploads, per gating-runner job (``ubuntu-latest`` x Python
-3.9/3.10/3.11/3.12): three ``python -m tests.equivalence_measure``
+3.10/3.11/3.12): three ``python -m tests.equivalence_measure``
 invocations (``calib-<py>-<n>.json``, ``n`` in 1..3) plus one
 ``python -m unittest tests.test_rpa_flex_equivalence_table`` timing
 invocation (``unittest-<py>.json``). Whoever runs the calibration
-downloads all sixteen artifacts (``gh run download``) for a single
+downloads all twelve artifacts (``gh run download``) for a single
 successful run matching a source commit ``S``. This module parses
 those files (or, for testing, hand-built in-memory equivalents),
 VALIDATES completeness against the aggregation rules implemented
@@ -36,10 +36,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from tests.equivalence_cells import CELLS, Diverges, Equiv
 
-# The four gating runners (Global Constraints: "the classification set
-# is STRICTLY the four gating runners"). Used both as the expected
+# The three gating runners (Global Constraints: "the classification set
+# is STRICTLY the gating runners"). Used both as the expected
 # ``Sample.runner`` label set and to size the multiplicity checks.
-GATING_RUNNERS: Tuple[str, ...] = ("3.9", "3.10", "3.11", "3.12")
+# Python 3.9 was dropped when 2.0.0 raised the floor to 3.10 (#148).
+GATING_RUNNERS: Tuple[str, ...] = ("3.10", "3.11", "3.12")
 
 # The diagnostic apparatus records one named scalar per metric per
 # fixture: 11 metrics x 3 fixtures = 33 records per measurement sample
@@ -82,7 +83,7 @@ class Sample:
     measure`` invocations) or ``kind="unittest"`` for a
     ``unittest-<py>.json`` (the single per-runner unittest-timing
     invocation). ``runner`` is the gating Python-version label
-    (``"3.9"``..``"3.12"``); ``invocation`` is 1-based (always 1 for
+    (``"3.10"``..``"3.12"``); ``invocation`` is 1-based (always 1 for
     ``kind="unittest"``, since the workflow runs that step once per
     job). ``records`` is the tuple of parsed JSON objects, one per
     line, in file order.
@@ -150,7 +151,7 @@ def load_samples_from_dir(directory: str) -> List[Sample]:
     UNDER ``directory``, at any depth. Covers both the flat-directory
     case and the shape ``gh run download`` actually produces by
     default: one SUBDIRECTORY per uploaded artifact (named after the
-    artifact, e.g. ``<directory>/calib-3.9-1/calib-3.9-1.json``), each
+    artifact, e.g. ``<directory>/calib-3.10-1/calib-3.10-1.json``), each
     containing that artifact's single file. Raises ``ValueError`` (via
     ``load_sample_file`` -> ``parse_sample_filename``) on any matched
     file whose name does not fit the expected pattern -- a stray file
@@ -215,16 +216,17 @@ def validate_samples(samples: Sequence[Sample], expected_source_sha: str,
     measurement = [s for s in samples if s.kind == "measurement"]
     unittest_samples = [s for s in samples if s.kind == "unittest"]
 
-    # --- multiplicities: 12 measurement samples, 4 unittest samples ---
-    if len(measurement) != 12:
+    # --- multiplicities: 9 measurement samples, 3 unittest samples ---
+    if len(measurement) != 3 * len(GATING_RUNNERS):
         errors.append(
-            "expected 12 measurement samples (3 invocations x 4 gating "
-            "runners), got {}".format(len(measurement))
+            "expected {} measurement samples (3 invocations x {} gating "
+            "runners), got {}".format(
+                3 * len(GATING_RUNNERS), len(GATING_RUNNERS), len(measurement))
         )
-    if len(unittest_samples) != 4:
+    if len(unittest_samples) != len(GATING_RUNNERS):
         errors.append(
-            "expected 4 unittest-timing samples (1 per gating runner), "
-            "got {}".format(len(unittest_samples))
+            "expected {} unittest-timing samples (1 per gating runner), "
+            "got {}".format(len(GATING_RUNNERS), len(unittest_samples))
         )
 
     # --- (runner, invocation) uniqueness, within each kind ---
@@ -239,7 +241,7 @@ def validate_samples(samples: Sequence[Sample], expected_source_sha: str,
                     "appears {} times among {} samples".format(key, count, kind)
                 )
 
-    # --- runner-set shape: exactly the 4 gating runners, 3 measurement
+    # --- runner-set shape: exactly the 3 gating runners, 3 measurement
     #     invocations {1,2,3} and exactly 1 unittest invocation each ---
     measurement_counts = Counter(s.runner for s in measurement)
     for runner in GATING_RUNNERS:
@@ -511,10 +513,10 @@ def max_module_total_seconds(samples: Sequence[Sample]) -> float:
 
 
 def unittest_gate_seconds(samples: Sequence[Sample]) -> float:
-    """The 120s freeze-time budget's own reducer: MAX over EXACTLY the
-    four ``unittest_module_process_seconds`` samples (one per gating
-    runner). Raises if the count is not exactly 4 -- the budget
-    decision must never silently run on a partial sample set.
+    """The 120s freeze-time budget's own reducer: MAX over EXACTLY one
+    ``unittest_module_process_seconds`` sample per gating runner
+    (``len(GATING_RUNNERS)`` of them). Raises if the count differs --
+    the budget decision must never silently run on a partial sample set.
     """
 
     values = [
@@ -522,11 +524,11 @@ def unittest_gate_seconds(samples: Sequence[Sample]) -> float:
         for s in samples if s.kind == "unittest"
         for rec in s.records if "unittest_module_process_seconds" in rec
     ]
-    if len(values) != 4:
+    if len(values) != len(GATING_RUNNERS):
         raise ValueError(
-            "unittest_gate_seconds: expected exactly 4 "
+            "unittest_gate_seconds: expected exactly {} "
             "unittest_module_process_seconds samples (1 per gating "
-            "runner), got {}".format(len(values))
+            "runner), got {}".format(len(GATING_RUNNERS), len(values))
         )
     return max(values)
 
@@ -620,7 +622,8 @@ def build_report(samples: Sequence[Sample], expected_source_sha: str,
             lines.append("  - {}".format(e))
         return "\n".join(lines)
 
-    lines.append("VALIDATION OK (12 measurement + 4 unittest samples, source_sha {})".format(
+    lines.append("VALIDATION OK ({} measurement + {} unittest samples, source_sha {})".format(
+        3 * len(GATING_RUNNERS), len(GATING_RUNNERS),
         expected_source_sha
     ))
     lines.append("")
@@ -637,7 +640,9 @@ def build_report(samples: Sequence[Sample], expected_source_sha: str,
             lines.append("  {} / {}: {:.6e}".format(cell.cell_id, observable, value))
 
     lines.append("")
-    lines.append("120s freeze-time budget (MAX over the 4 unittest_module_process_seconds samples):")
+    lines.append(
+        "120s freeze-time budget (MAX over the {} "
+        "unittest_module_process_seconds samples):".format(len(GATING_RUNNERS)))
     lines.append("  {:.3f}s".format(unittest_gate_seconds(samples)))
 
     lines.append("")

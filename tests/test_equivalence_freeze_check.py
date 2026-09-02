@@ -114,7 +114,7 @@ def _diag_records(residual=1e-16):
 
 
 def _measurement_records(
-    runner_python="3.9.18",
+    runner_python="3.10.18",
     source_sha=SOURCE_SHA,
     chi0q_equiv=1e-16,
     chi0q_diverges=1e-16,
@@ -190,16 +190,19 @@ class TestValidateSamplesHappyPath(unittest.TestCase):
 
 
 class TestValidateSamplesCompleteness(unittest.TestCase):
-    def test_missing_measurement_sample_reports_the_12_multiplicity(self):
+    def test_missing_measurement_sample_reports_the_multiplicity(self):
         samples = _good_sample_set()
-        samples.pop(0)  # drop one measurement sample -> 11 remain
+        samples.pop(0)  # drop one measurement sample -> one short
         errors = validate_samples(samples, SOURCE_SHA, FAKE_CELLS)
-        self.assertTrue(any("expected 12 measurement samples" in e for e in errors))
+        expected = "expected {} measurement samples".format(3 * len(GATING_RUNNERS))
+        self.assertTrue(any(expected in e for e in errors))
 
-    def test_missing_unittest_sample_reports_the_4_multiplicity(self):
-        samples = [s for s in _good_sample_set() if not (s.kind == "unittest" and s.runner == "3.9")]
+    def test_missing_unittest_sample_reports_the_multiplicity(self):
+        samples = [s for s in _good_sample_set()
+                   if not (s.kind == "unittest" and s.runner == GATING_RUNNERS[0])]
         errors = validate_samples(samples, SOURCE_SHA, FAKE_CELLS)
-        self.assertTrue(any("expected 4 unittest-timing samples" in e for e in errors))
+        expected = "expected {} unittest-timing samples".format(len(GATING_RUNNERS))
+        self.assertTrue(any(expected in e for e in errors))
 
     def test_missing_cell_timing_line_reported(self):
         samples = _good_sample_set()
@@ -247,11 +250,12 @@ class TestValidateSamplesCompleteness(unittest.TestCase):
 class TestValidateSamplesUniqueness(unittest.TestCase):
     def test_duplicate_runner_invocation_is_detected(self):
         samples = _good_sample_set()
-        # Duplicate invocation 1 of runner "3.9" as an extra 13th
-        # measurement sample (also breaks the 12-count -- both errors
-        # are expected together, this test only asserts the duplicate
-        # one is present).
-        dupe = next(s for s in samples if s.kind == "measurement" and s.runner == "3.9" and s.invocation == 1)
+        # Duplicate invocation 1 of the first gating runner as one extra
+        # measurement sample (also breaks the count -- both errors are
+        # expected together, this test only asserts the duplicate one is
+        # present).
+        dupe = next(s for s in samples if s.kind == "measurement"
+                    and s.runner == GATING_RUNNERS[0] and s.invocation == 1)
         samples.append(dupe)
         errors = validate_samples(samples, SOURCE_SHA, FAKE_CELLS)
         self.assertTrue(any("duplicate (runner, invocation)" in e for e in errors))
@@ -294,8 +298,8 @@ class TestValidateSamplesErrorRecords(unittest.TestCase):
 class TestValidateSamplesRunnerMetadata(unittest.TestCase):
     def test_inconsistent_runner_metadata_across_invocations_is_detected(self):
         samples = _good_sample_set()
-        broken = samples[1]  # runner "3.9", invocation 2
-        assert broken.runner == "3.9" and broken.invocation == 2
+        broken = samples[1]  # first gating runner, invocation 2
+        assert broken.runner == GATING_RUNNERS[0] and broken.invocation == 2
         bad_records = tuple(
             {**r, "runner": {**r["runner"], "platform": "a-totally-different-platform"}}
             if "runner" in r else r
@@ -320,14 +324,14 @@ class TestValidateSamplesRunnerMetadata(unittest.TestCase):
 class TestLoadSamplesFromDir(unittest.TestCase):
     """``gh run download`` (no ``-n``) writes one SUBDIRECTORY per
     artifact, named after the artifact, containing that artifact's
-    single file -- e.g. ``<dir>/calib-3.9-1/calib-3.9-1.json``. This
+    single file -- e.g. ``<dir>/calib-3.10-1/calib-3.10-1.json``. This
     pins ``load_samples_from_dir`` against that exact real-world shape
     (not just a flat directory of files).
     """
 
     def test_loads_the_gh_run_download_nested_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for runner in ("3.9",):
+            for runner in (GATING_RUNNERS[0],):
                 for n in (1, 2, 3):
                     sub = os.path.join(tmp, "calib-{}-{}".format(runner, n))
                     os.makedirs(sub)
@@ -342,10 +346,11 @@ class TestLoadSamplesFromDir(unittest.TestCase):
 
         self.assertEqual(len(samples), 4)
         measurement = sorted((s.runner, s.invocation) for s in samples if s.kind == "measurement")
-        self.assertEqual(measurement, [("3.9", 1), ("3.9", 2), ("3.9", 3)])
+        r0 = GATING_RUNNERS[0]
+        self.assertEqual(measurement, [(r0, 1), (r0, 2), (r0, 3)])
         unittest_ones = [s for s in samples if s.kind == "unittest"]
         self.assertEqual(len(unittest_ones), 1)
-        self.assertEqual(unittest_ones[0].runner, "3.9")
+        self.assertEqual(unittest_ones[0].runner, r0)
 
 
 class TestReducers(unittest.TestCase):
@@ -366,7 +371,8 @@ class TestReducers(unittest.TestCase):
 
     def test_min_residual_is_the_global_min(self):
         samples = _good_sample_set()
-        target = next(s for s in samples if s.kind == "measurement" and s.runner == "3.9" and s.invocation == 3)
+        target = next(s for s in samples if s.kind == "measurement"
+                      and s.runner == GATING_RUNNERS[0] and s.invocation == 3)
         idx = samples.index(target)
         lowered = tuple(
             {**r, "residual": 2.0e-18} if r.get("cell") == "fake.diverges" and r.get("observable") == "chiq" else r
@@ -402,15 +408,16 @@ class TestReducers(unittest.TestCase):
         samples[2] = Sample(runner=target.runner, invocation=target.invocation, kind=target.kind, records=bumped)
         self.assertEqual(max_module_total_seconds(samples), 99.0)
 
-    def test_unittest_gate_seconds_requires_exactly_four_samples(self):
+    def test_unittest_gate_seconds_requires_one_sample_per_gating_runner(self):
         samples = _good_sample_set()
         self.assertEqual(unittest_gate_seconds(samples), 10.0)
 
-        fewer = [s for s in samples if not (s.kind == "unittest" and s.runner == "3.9")]
+        fewer = [s for s in samples
+                 if not (s.kind == "unittest" and s.runner == GATING_RUNNERS[0])]
         with self.assertRaises(ValueError):
             unittest_gate_seconds(fewer)
 
-    def test_unittest_gate_seconds_is_the_max_of_the_four(self):
+    def test_unittest_gate_seconds_is_the_max_over_gating_runners(self):
         samples = _good_sample_set()
         target = next(s for s in samples if s.kind == "unittest" and s.runner == "3.12")
         idx = samples.index(target)
@@ -475,7 +482,9 @@ class TestBuildReport(unittest.TestCase):
         samples.pop(0)
         report = build_report(samples, SOURCE_SHA, FAKE_CELLS)
         self.assertIn("VALIDATION FAILED", report)
-        self.assertIn("expected 12 measurement samples", report)
+        self.assertIn(
+            "expected {} measurement samples".format(3 * len(GATING_RUNNERS)),
+            report)
         self.assertNotIn("fake.equiv / chi0q", report)
 
     def test_valid_set_reports_every_cell_observable_and_the_gate(self):
