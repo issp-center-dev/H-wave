@@ -133,15 +133,21 @@ triangular fermion loop (mode–mode coupling). These higher-order corrections
 are outside the FLEX class and are <strong>not</strong> evaluated here. They can matter when
 charge/orbital fluctuations driven by two spin fluctuations are important
 (e.g. the orbital-fluctuation mechanism of Onari and Kontani <a class="footnote-reference brackets" href="#id7" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>).</p>
-<p>In addition, the default <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> scheme decomposes the
+<p>In addition, the <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> scheme decomposes the
 interaction via its density–density part for the spin/charge vertices.
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have <strong>no</strong> density–density vertex content at
-all, so this scheme cannot even approximate them: supplying either under
-<code class="docutils literal notranslate"><span class="pre">reduced</span></code> raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> directing you to
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (in earlier
-development builds this input was accepted with a warning while the
-interaction silently had zero effect). <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> selects
-<code class="docutils literal notranslate"><span class="pre">general</span></code> automatically when <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is present.
+Since version 2.0 <code class="docutils literal notranslate"><span class="pre">reduced</span></code> is no longer the default: <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
+<span class="pre">&quot;auto&quot;</span></code> is, and <code class="docutils literal notranslate"><span class="pre">reduced</span></code> is the explicit opt-out that reproduces the
+H-wave 1.0.x behaviour (a documented approximation, warned about once at
+construction). <code class="docutils literal notranslate"><span class="pre">auto</span></code> selects <code class="docutils literal notranslate"><span class="pre">general</span></code> whenever <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is present – these have <strong>no</strong> density–density vertex content
+at all, so <code class="docutils literal notranslate"><span class="pre">reduced</span></code> cannot even approximate them, and supplying either
+under an explicit <code class="docutils literal notranslate"><span class="pre">reduced</span></code> raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> directing you to
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (in earlier development builds this input was
+accepted with a warning while the interaction silently had zero effect).
+<code class="docutils literal notranslate"><span class="pre">auto</span></code> likewise selects <code class="docutils literal notranslate"><span class="pre">general</span></code> whenever <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, or the aggregate <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> interaction is declared, because
+these carry cross-family vertex content that <code class="docutils literal notranslate"><span class="pre">reduced</span></code> cannot represent
+exactly.
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is accepted everywhere: its particle-hole vertex is exactly
 zero, so omitting it from the susceptibility channels is exact, not an
 approximation. Accordingly, in this scheme “FLEX” means <em>not exact</em>: it

@@ -123,14 +123,21 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 （モード間結合）は <strong>含みません</strong>。これらの高次補正はFLEXの枠組みの外であり、
 ここでは評価されません。2つのスピンゆらぎから生成される電荷・軌道ゆらぎが
 重要となる場合（例：Onari--Kontaniの軌道ゆらぎ機構 <a class="footnote-reference brackets" href="#id14" id="id10" role="doc-noteref"><span class="fn-bracket">[</span>2<span class="fn-bracket">]</span></a>）には効くことがあります。</p>
-<p>またデフォルトの <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>スキームでは、
+<p>また <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>スキームでは、
 スピン/電荷バーテックスを相互作用の密度--密度成分で構成します。
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> と <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は密度--密度成分の頂点を <strong>一切持たない</strong> ため、
-このスキームでは近似すらできません。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>でこれらを
-与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>への切り替えが
-案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
-ゼロになっていました）。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> は <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
-がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code>を選択します。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はどのスキーム
+バージョン 2.0 以降、<code class="docutils literal notranslate"><span class="pre">reduced</span></code>はデフォルトではありません。デフォルトは
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>であり、<code class="docutils literal notranslate"><span class="pre">reduced</span></code>は H-wave 1.0.x の挙動を
+再現するための明示的なオプトアウト（文書化された近似であり、構成時に一度
+警告が出力されます）という位置づけです。<code class="docutils literal notranslate"><span class="pre">auto</span></code>は <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+がある場合、自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code>を選択します---これらは密度--密度成分の頂点を
+<strong>一切持たない</strong> ため <code class="docutils literal notranslate"><span class="pre">reduced</span></code>では近似すらできず、明示的な <code class="docutils literal notranslate"><span class="pre">reduced</span></code>で
+これらを与えると <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>となり、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>への
+切り替えが案内されます（以前の開発版では警告付きで受理され、相互作用は無音で
+効果ゼロになっていました）。<code class="docutils literal notranslate"><span class="pre">auto</span></code>は同様に、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、または集約された <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>相互作用が指定
+されている場合にも自動的に <code class="docutils literal notranslate"><span class="pre">general</span></code>を選択します。これらは
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code>では厳密に表現できない cross 族の頂点内容を持つためです。
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はどのスキーム
 でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
 落とすことは近似ではなく厳密です。
 したがってこのスキームでの「FLEX」は <em>厳密ではなく</em>、密度--密度かつ

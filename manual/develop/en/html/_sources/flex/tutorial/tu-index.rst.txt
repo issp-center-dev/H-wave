@@ -129,15 +129,21 @@ are outside the FLEX class and are **not** evaluated here. They can matter when
 charge/orbital fluctuations driven by two spin fluctuations are important
 (e.g. the orbital-fluctuation mechanism of Onari and Kontani [2]_).
 
-In addition, the default ``calc_scheme = "reduced"`` scheme decomposes the
+In addition, the ``calc_scheme = "reduced"`` scheme decomposes the
 interaction via its density--density part for the spin/charge vertices.
-``Exchange`` and ``PairHop`` have **no** density--density vertex content at
-all, so this scheme cannot even approximate them: supplying either under
-``reduced`` raises a ``ValueError`` directing you to
-``calc_scheme = "general"`` (in earlier
-development builds this input was accepted with a warning while the
-interaction silently had zero effect). ``calc_scheme = "auto"`` selects
-``general`` automatically when ``Exchange`` or ``PairHop`` is present.
+Since version 2.0 ``reduced`` is no longer the default: ``calc_scheme =
+"auto"`` is, and ``reduced`` is the explicit opt-out that reproduces the
+H-wave 1.0.x behaviour (a documented approximation, warned about once at
+construction). ``auto`` selects ``general`` whenever ``Exchange`` or
+``PairHop`` is present -- these have **no** density--density vertex content
+at all, so ``reduced`` cannot even approximate them, and supplying either
+under an explicit ``reduced`` raises a ``ValueError`` directing you to
+``calc_scheme = "general"`` (in earlier development builds this input was
+accepted with a warning while the interaction silently had zero effect).
+``auto`` likewise selects ``general`` whenever ``CoulombInter``, ``Hund``,
+``Ising``, or the aggregate ``Coulomb`` interaction is declared, because
+these carry cross-family vertex content that ``reduced`` cannot represent
+exactly.
 ``PairLift`` is accepted everywhere: its particle-hole vertex is exactly
 zero, so omitting it from the susceptibility channels is exact, not an
 approximation. Accordingly, in this scheme "FLEX" means *not exact*: it

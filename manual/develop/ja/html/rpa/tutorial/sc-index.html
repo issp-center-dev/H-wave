@@ -923,7 +923,8 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <section id="id27">
 <h4>設定例<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h4>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
-<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">mode</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"reduced"</span><span class="w">   </span><span class="c1"># ここでは必須（下記の注記を参照）</span>
 
 <span class="k">[mode.param]</span>
 <span class="w">  </span><span class="n">T</span><span class="w">         </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
@@ -963,14 +964,28 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 </div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>この例は <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>を含み <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>を明示していないため、
-既定の <code class="docutils literal notranslate"><span class="pre">reduced</span></code>スキームで実行されます。したがって Eliashberg ステップでは
+<p><strong>この例が</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code><strong>を明示する理由。</strong>
+バージョン 2.0 以降、既定は <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>であり、<code class="docutils literal notranslate"><span class="pre">auto</span></code>は
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（および <code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、集約された
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）を <code class="docutils literal notranslate"><span class="pre">general</span></code>へ昇格させます。<code class="docutils literal notranslate"><span class="pre">general</span></code>の FLEX 経路が
+受理するオフサイト項は同一軌道の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（副格子折り畳みなし）に
+限られるため、このワークフローが用いる一般のオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>は
+既定のままでは <strong>拒否されます</strong>。実行は <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で停止し、
+<code class="docutils literal notranslate"><span class="pre">auto</span></code>による解決結果と以下の対処が示されます。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>を明示的に
+要求することでこのワークフローは実行でき、これは H-wave 1.0.x が
+この入力に対して行っていた挙動と同じです:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"reduced"</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>は文書化された近似であるため、構成時に一度警告が出力され、
+さらに Eliashberg ステップでも
 <a class="reference internal" href="#sc-supported-inter"><span class="std std-ref">対応する相互作用</span></a>に記載の近似に関する警告が
-<strong>出力されます</strong>。これは想定内であり設定の誤りではありません---このワークフローが
-用いる一般のオフサイト <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>を扱えるのは <code class="docutils literal notranslate"><span class="pre">reduced</span></code>の方で、
-<code class="docutils literal notranslate"><span class="pre">general</span></code>のオフサイト対応は同一軌道の <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（副格子
-折り畳みなし）に限られます（それ以外はオンサイト項のみ）。相互作用が許すうえで
-軌道間チャネルも dress したい場合に <code class="docutils literal notranslate"><span class="pre">general</span></code>をご利用ください。</p>
+<strong>出力されます</strong>。いずれも想定内であり設定の誤りではありません。
+相互作用が上記のオフサイト制限の範囲に収まり、かつ軌道間チャネルも
+dress したい場合は、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>の行を削除する（または <code class="docutils literal notranslate"><span class="pre">general</span></code>を
+指定する）ことをご検討ください。</p>
 </div>
 <p>この例では <span class="math notranslate nohighlight">\(T = 0.02\)</span>から <span class="math notranslate nohighlight">\(T = 0.005\)</span>まで、対数間隔の6段を
 降順に計算します。各段で FLEX と動的 Eliashberg を実行し、<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と

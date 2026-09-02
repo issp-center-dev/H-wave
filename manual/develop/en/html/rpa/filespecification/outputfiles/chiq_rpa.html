@@ -70,6 +70,16 @@ under <span class="math notranslate nohighlight">\(q \to -q\)</span> (for which 
 regarded as those of the sublattice.</p>
 <p>The output file of <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> can be used as a pre-calculated input of the irreducible
 susceptibility by specifying the file to <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> section.</p>
+<section id="scheme-provenance">
+<h2>Scheme provenance<a class="headerlink" href="#scheme-provenance" title="Link to this heading">¶</a></h2>
+<p>Every <code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> file written by RPA and FLEX (2.0 and later) carries three plain-string fields, loaded as 0-d arrays (use <code class="docutils literal notranslate"><span class="pre">.item()</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>: the scheme the file was computed with (<code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme_requested</span></code>: the value in the input (<code class="docutils literal notranslate"><span class="pre">auto</span></code> | <code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scheme_resolution</span></code>: how it was decided. Closed vocabulary (changing it is an output-format change): <code class="docutils literal notranslate"><span class="pre">explicit</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:ring_ladder</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:general_only</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:no_discarded_content</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:diagonal_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:folded_diagonal</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:extern</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:green_init</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:flex_forcing</span></code>.</p></li>
+</ul>
+<p>Files written by 1.0.x lack these fields; readers do not require them.</p>
+</section>
 </section>
 <section id="data-format-of-chi0q">
 <h1>Data format of chi0q<a class="headerlink" href="#data-format-of-chi0q" title="Link to this heading">¶</a></h1>

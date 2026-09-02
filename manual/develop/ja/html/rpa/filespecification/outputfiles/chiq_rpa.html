@@ -66,6 +66,16 @@
 </ul>
 <p>副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code>の出力ファイルは、計算済み既約感受率データとして <code class="docutils literal notranslate"><span class="pre">file.input</span></code>セクションの <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>に指定して使用できます。</p>
+<section id="id1">
+<h2>スキームの来歴<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<p>バージョン 2.0 以降、RPA および FLEX が出力するすべての <code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>ファイルには、以下の3つの文字列フィールドが 0 次元配列として格納されます（読み込みには <code class="docutils literal notranslate"><span class="pre">.item()</span></code>を使用してください）。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>: そのファイルの計算に実際に使用されたスキーム（<code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme_requested</span></code>: 入力で指定された値（<code class="docutils literal notranslate"><span class="pre">auto</span></code> | <code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scheme_resolution</span></code>: どのように決定されたかを示します。閉じた語彙です（変更する場合は出力形式の変更として扱います）: <code class="docutils literal notranslate"><span class="pre">explicit</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:ring_ladder</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:general_only</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:no_discarded_content</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:diagonal_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:folded_diagonal</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:extern</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:green_init</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:flex_forcing</span></code>。</p></li>
+</ul>
+<p>1.0.x で出力されたファイルにはこれらのフィールドはありません。読み込み側でもこれらを必須とはしていません。</p>
+</section>
 </section>
 <section id="chi0q">
 <h1>chi0q のデータ形式<a class="headerlink" href="#chi0q" title="Link to this heading">¶</a></h1>
@@ -134,8 +144,8 @@ for s1 in (0, 1):
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">ring+ladder</span></code>の場合、 <code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルには配列 <code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>も追加で格納されます。これは横感受率 <span class="math notranslate nohighlight">\(\chi_{+-}(q)\)</span>を保持します。配列形式は <code class="docutils literal notranslate"><span class="pre">ndarray(l,q,a,ap,b,bp)</span></code>で、 <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">ap</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>, <code class="docutils literal notranslate"><span class="pre">bp</span></code>はスピン自由度を含 <strong>まない</strong> 軌道インデックス <span class="math notranslate nohighlight">\(\alpha\)</span>, <span class="math notranslate nohighlight">\(\gamma\)</span>, <span class="math notranslate nohighlight">\(\beta\)</span>, <span class="math notranslate nohighlight">\(\delta\)</span>です（スピン構造は <span class="math notranslate nohighlight">\(+-\)</span>のラベルで既に定まっているため）。したがって、対応する軸が一般化（スピン軌道）インデックスを走る <code class="docutils literal notranslate"><span class="pre">chiq</span></code>よりも小さい配列になります。縦方向の <code class="docutils literal notranslate"><span class="pre">chiq</span></code>はラダーの有無に影響されません。同一の入力に対して <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">ring</span></code>の結果とビット単位で一致します。</p>
 </section>
-<section id="id1">
-<h1>データ読み込みの例<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
+<section id="id2">
+<h1>データ読み込みの例<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h1>
 <p>以下にデータの読み込み方の例を示します。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">'output/chiq.npz'</span><span class="p">)</span>

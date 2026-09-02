@@ -48,6 +48,18 @@ The output file of ``chi0q`` can be used as a pre-calculated input of the irredu
 susceptibility by specifying the file to ``chi0q_init`` in ``file.input`` section.
 
 
+Scheme provenance
+^^^^^^^^^^^^^^^^^
+
+Every ``chiq``/``chi0q`` file written by RPA and FLEX (2.0 and later) carries three plain-string fields, loaded as 0-d arrays (use ``.item()``):
+
+- ``calc_scheme``: the scheme the file was computed with (``reduced`` | ``general``).
+- ``calc_scheme_requested``: the value in the input (``auto`` | ``reduced`` | ``general``).
+- ``scheme_resolution``: how it was decided. Closed vocabulary (changing it is an output-format change): ``explicit``, ``auto:ring_ladder``, ``auto:general_only``, ``auto:no_discarded_content``, ``auto:exact:diagonal_transfer``, ``auto:exact:folded_diagonal``, ``auto:mixed:transfer``, ``auto:mixed:extern``, ``auto:mixed:trans_mod``, ``auto:mixed:green_init``, ``auto:flex_forcing``.
+
+Files written by 1.0.x lack these fields; readers do not require them.
+
+
 Data format of chi0q
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
