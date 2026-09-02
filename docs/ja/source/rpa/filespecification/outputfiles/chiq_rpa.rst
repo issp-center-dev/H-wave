@@ -43,6 +43,18 @@ chiq, chi0q
 ``chi0q``\ の出力ファイルは、計算済み既約感受率データとして ``file.input``\ セクションの ``chi0q_init``\ に指定して使用できます。
 
 
+スキームの来歴
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+バージョン 2.0 以降、RPA および FLEX が出力するすべての ``chiq``/``chi0q``\ ファイルには、以下の3つの文字列フィールドが 0 次元配列として格納されます（読み込みには ``.item()``\ を使用してください）。
+
+- ``calc_scheme``: そのファイルの計算に実際に使用されたスキーム（``reduced`` | ``general``）。
+- ``calc_scheme_requested``: 入力で指定された値（``auto`` | ``reduced`` | ``general``）。
+- ``scheme_resolution``: どのように決定されたかを示します。閉じた語彙です（変更する場合は出力形式の変更として扱います）: ``explicit``, ``auto:ring_ladder``, ``auto:general_only``, ``auto:no_discarded_content``, ``auto:exact:diagonal_transfer``, ``auto:exact:folded_diagonal``, ``auto:mixed:transfer``, ``auto:mixed:extern``, ``auto:mixed:trans_mod``, ``auto:mixed:green_init``, ``auto:flex_forcing``\ 。
+
+1.0.x で出力されたファイルにはこれらのフィールドはありません。読み込み側でもこれらを必須とはしていません。
+
+
 chi0q のデータ形式
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

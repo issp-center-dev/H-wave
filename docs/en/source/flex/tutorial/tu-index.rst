@@ -138,6 +138,11 @@ all, so this scheme cannot even approximate them: supplying either under
 development builds this input was accepted with a warning while the
 interaction silently had zero effect). ``calc_scheme = "auto"`` selects
 ``general`` automatically when ``Exchange`` or ``PairHop`` is present.
+Since version 2.0, ``calc_scheme = "auto"`` likewise selects ``general``
+whenever ``CoulombInter``, ``Hund``, ``Ising``, or the aggregate
+``Coulomb`` interaction is declared, because these carry cross-family
+vertex content that ``reduced`` cannot represent exactly; request
+``calc_scheme = "reduced"`` explicitly to opt out.
 ``PairLift`` is accepted everywhere: its particle-hole vertex is exactly
 zero, so omitting it from the susceptibility channels is exact, not an
 approximation. Accordingly, in this scheme "FLEX" means *not exact*: it

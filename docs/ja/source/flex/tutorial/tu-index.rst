@@ -125,7 +125,13 @@ Aslamazov--Larkin (AL) 型および Maki--Thompson (MT) 型の頂点補正
 与えると ``ValueError``\ となり、``calc_scheme = "general"``\ への切り替えが
 案内されます（以前の開発版では警告付きで受理され、相互作用は無音で効果
 ゼロになっていました）。``calc_scheme = "auto"`` は ``Exchange``/``PairHop``
-がある場合、自動的に ``general``\ を選択します。``PairLift``\ はどのスキーム
+がある場合、自動的に ``general``\ を選択します。
+バージョン 2.0 以降、``calc_scheme = "auto"``\ は ``CoulombInter``\ 、
+``Hund``\ 、``Ising``\ 、または集約された ``Coulomb``\ 相互作用が指定
+されている場合にも同様に自動的に ``general``\ を選択します。これらは
+``reduced``\ では厳密に表現できない cross 族の頂点内容を持つためです。
+1.0.x の挙動を維持するには ``calc_scheme = "reduced"``\ を明示的に
+指定してください。``PairLift``\ はどのスキーム
 でも受理されます：その粒子-正孔頂点は厳密にゼロであり、感受率チャネルから
 落とすことは近似ではなく厳密です。
 したがってこのスキームでの「FLEX」は *厳密ではなく*、密度--密度かつ
