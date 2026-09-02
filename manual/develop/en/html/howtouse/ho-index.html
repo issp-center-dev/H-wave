@@ -5,11 +5,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>2. Basic usage &#8212; H-wave Users Guide 1.1-dev documentation</title>
+    <title>2. Basic usage &#8212; H-wave Users Guide 2.0.0 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
     <link rel="stylesheet" type="text/css" href="../_static/basic.css?v=b08954a9" />
     <link rel="stylesheet" type="text/css" href="../_static/alabaster.css?v=9814fe92" />
-    <script src="../_static/documentation_options.js?v=5f12b55d"></script>
+    <script src="../_static/documentation_options.js?v=51b770b3"></script>
     <script src="../_static/doctools.js?v=fd6eb6e6"></script>
     <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
     <link rel="index" title="Index" href="../genindex.html" />
@@ -39,7 +39,7 @@
 <li><p>Prerequisite</p>
 <p>H-wave requires the following programs and libraries:</p>
 <ul class="simple">
-<li><p>python 3.x</p></li>
+<li><p>python 3.10 or later</p></li>
 <li><p>numpy module</p></li>
 <li><p>scipy module</p></li>
 <li><p>requests module</p></li>
@@ -53,7 +53,8 @@ Without CuPy, <code class="docutils literal notranslate"><span class="pre">gpu</
 <li><p>sparse-ir module (optional; only for the IR-basis Matsubara axis of the
 dynamic Eliashberg solver, <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>, and
 of the FLEX solver, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.
-Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>; without it, <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> is a
+Requires sparse-ir 2.0 or later. Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[ir]&quot;</span></code>
+(or <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;sparse-ir&gt;=2&quot;</span></code>); without it, <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> is a
 fail-fast error with this install hint.)</p></li>
 </ul>
 <p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
