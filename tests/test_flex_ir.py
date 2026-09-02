@@ -342,12 +342,32 @@ def test_ir_subshape_folded_matches_uniform():
 
 def test_ir_wmax_explicit_override_and_decay_warning(caplog):
     """An explicit ir_wmax is honored verbatim, and an insufficient
-    bandwidth must trip the always-on coefficient-decay diagnostic."""
+    bandwidth must trip the always-on coefficient-decay diagnostic.
+
+    ir_wmax is 3.0 against an auto-estimate of 37.5 for this fixture, so the
+    override is unambiguously "smaller than what the solver would pick" while
+    staying constructible on every supported sparse-ir. It was 0.5
+    (Lambda = beta*wmax = 1.0), which sparse-ir 1.1.7 samples with only TWO
+    tau nodes for L=6 -- an underdetermined fit whose transform matrices are
+    meaningless, now rejected at construction by the #153 guard. On
+    sparse-ir 2.1.1 the same point builds, which is why this only ever failed
+    on the CI leg. Measured window for this fixture (beta=2.0, ir_tol=1e-8),
+    IDENTICAL on 1.1.7 and 2.1.1:
+
+        ir_wmax <= 0.5   not constructible on 1.1.7 (Lambda <= 1.0)
+        ir_wmax >= 1.0   constructible on both
+        ir_wmax <= 8.0   coefficient-tail warning fires
+        ir_wmax >= 12.0  warning no longer fires (basis is wide enough)
+
+    3.0 sits 3x above the constructibility floor and 4x below the warning
+    cliff -- deliberately mid-window rather than hugging either edge, so a
+    sampling or tail-ratio shift in a future sparse-ir cannot silently flip
+    the test's meaning."""
     import logging
     with caplog.at_level(logging.WARNING, logger="hwave.solver.flex"):
-        s, gi = _run(256, {'matsubara_basis': 'ir', 'ir_wmax': 0.5},
+        s, gi = _run(256, {'matsubara_basis': 'ir', 'ir_wmax': 3.0},
                      iteration_max=2)
-    assert s._ir_axF.wmax == 0.5
+    assert s._ir_axF.wmax == 3.0
     assert any("coefficient tail" in r.getMessage() for r in caplog.records)
 
 
