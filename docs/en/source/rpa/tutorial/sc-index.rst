@@ -941,7 +941,8 @@ Example
 .. code-block:: toml
 
     [mode]
-      mode = "FLEX"
+      mode        = "FLEX"
+      calc_scheme = "reduced"   # required here: see the note below
 
     [mode.param]
       T         = 0.02
@@ -980,15 +981,29 @@ Example
 
 .. note::
 
-   With ``CoulombInter`` and no explicit ``calc_scheme``, this example runs the
-   default ``reduced`` scheme, so the Eliashberg step **will** print the
-   approximation warning described in
-   :ref:`Supported interactions <sc_supported_inter>`. That is expected here and
-   not a misconfiguration: ``reduced`` supports the general off-site
-   ``CoulombInter`` this workflow uses, whereas ``general`` accepts off-site
-   entries only for same-orbital ``CoulombInter`` without sublattice folding
-   (and on-site terms otherwise). Use ``general`` when your interactions
-   allow it and you need the inter-orbital channels dressed as well.
+   **Why this example pins** ``calc_scheme = "reduced"``. Since version 2.0
+   the default is ``calc_scheme = "auto"``, which promotes ``CoulombInter``
+   (and ``Hund``, ``Ising``, the aggregate ``Coulomb``) to ``general``. The
+   ``general`` FLEX path accepts off-site entries only for same-orbital
+   ``CoulombInter`` without sublattice folding, so the generic off-site
+   ``CoulombInter`` this workflow uses is **rejected** under the default;
+   the run stops with a ``ValueError`` that names the ``auto`` resolution
+   and this remedy. Requesting ``reduced`` explicitly is what makes the
+   workflow run, and is what H-wave 1.0.x did for this input:
+
+   .. code-block:: toml
+
+      [mode]
+        mode        = "FLEX"
+        calc_scheme = "reduced"
+
+   ``reduced`` is a documented approximation, so it is warned about once at
+   construction, and the Eliashberg step **will** print the approximation
+   warning described in
+   :ref:`Supported interactions <sc_supported_inter>`. Both are expected here
+   and not a misconfiguration. Drop the ``calc_scheme`` line (or set
+   ``general``) when your interactions stay within that off-site restriction
+   and you need the inter-orbital channels dressed as well.
 
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both

@@ -900,7 +900,8 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
 .. code-block:: toml
 
     [mode]
-      mode = "FLEX"
+      mode        = "FLEX"
+      calc_scheme = "reduced"   # ここでは必須（下記の注記を参照）
 
     [mode.param]
       T         = 0.02
@@ -939,14 +940,30 @@ Eliashberg ソルバー）を実行します。各段では、直前の段の収
 
 .. note::
 
-   この例は ``CoulombInter``\ を含み ``calc_scheme``\ を明示していないため、
-   既定の ``reduced``\ スキームで実行されます。したがって Eliashberg ステップでは
+   **この例が** ``calc_scheme = "reduced"``\ **を明示する理由。**
+   バージョン 2.0 以降、既定は ``calc_scheme = "auto"``\ であり、``auto``\ は
+   ``CoulombInter``\ （および ``Hund``\ 、``Ising``\ 、集約された
+   ``Coulomb``\ ）を ``general``\ へ昇格させます。``general``\ の FLEX 経路が
+   受理するオフサイト項は同一軌道の ``CoulombInter``\ （副格子折り畳みなし）に
+   限られるため、このワークフローが用いる一般のオフサイト ``CoulombInter``\ は
+   既定のままでは **拒否されます**\ 。実行は ``ValueError``\ で停止し、
+   ``auto``\ による解決結果と以下の対処が示されます。``reduced``\ を明示的に
+   要求することでこのワークフローは実行でき、これは H-wave 1.0.x が
+   この入力に対して行っていた挙動と同じです:
+
+   .. code-block:: toml
+
+      [mode]
+        mode        = "FLEX"
+        calc_scheme = "reduced"
+
+   ``reduced``\ は文書化された近似であるため、構成時に一度警告が出力され、
+   さらに Eliashberg ステップでも
    :ref:`対応する相互作用 <sc_supported_inter>`\ に記載の近似に関する警告が
-   **出力されます**\ 。これは想定内であり設定の誤りではありません---このワークフローが
-   用いる一般のオフサイト ``CoulombInter``\ を扱えるのは ``reduced``\ の方で、
-   ``general``\ のオフサイト対応は同一軌道の ``CoulombInter``\ （副格子
-   折り畳みなし）に限られます（それ以外はオンサイト項のみ）。相互作用が許すうえで
-   軌道間チャネルも dress したい場合に ``general``\ をご利用ください。
+   **出力されます**\ 。いずれも想定内であり設定の誤りではありません。
+   相互作用が上記のオフサイト制限の範囲に収まり、かつ軌道間チャネルも
+   dress したい場合は、``calc_scheme``\ の行を削除する（または ``general``\ を
+   指定する）ことをご検討ください。
 
 この例では :math:`T = 0.02`\ から :math:`T = 0.005`\ まで、対数間隔の6段を
 降順に計算します。各段で FLEX と動的 Eliashberg を実行し、``sigma_init``\ と

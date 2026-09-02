@@ -42,6 +42,17 @@ _DIAG_EXTERN = """Extern, orbital-diagonal
    0    0    0    2    2 -0.30 0.0
 """
 
+#: off-site INTER-orbital V: the entry class FLEX's general path rejects
+#: (a != b off-site is not representable by its q-only vertex), while the
+#: reduced path has always accepted it.
+_OFFSITE_INTERORB_COULOMBINTER = """CoulombInter, off-site inter-orbital
+2
+2
+ 1 1
+   1    0    0    1    2  0.3 0.0
+  -1    0    0    2    1  0.3 0.0
+"""
+
 
 #: A 1-orbital chain, for the sublattice-folding case: SubShape (2,1,1)
 #: makes the POST-fold orbital count 2 while the PRE-FOLD physical count
@@ -113,6 +124,7 @@ class _Case(unittest.TestCase):
     INLINE = {"diag_transfer": _DIAGONAL_TRANSFER,
               "offdiag_extern": _OFFDIAG_EXTERN,
               "diag_extern": _DIAG_EXTERN,
+              "offsite_interorb": _OFFSITE_INTERORB_COULOMBINTER,
               # tests/rpa/input_2orb has no Exchange/PairLift file: on-site,
               # Hermitian-closed inter-orbital bodies (physical indices 1<->2)
               "exchange": "Exchange\n2\n1\n 1\n   0 0 0 1 2 0.2 0.0\n   0 0 0 2 1 0.2 0.0\n",
@@ -802,6 +814,50 @@ class TestFLEXAutoResolution(_Case):
         _, gi_gen, _ = self._solve("general", {"CoulombInter": "onsite_inter.dat"}, True, mode="FLEX")
         for key in ("chiq_s", "chiq_c"):
             self.assertTrue(np.array_equal(np.asarray(gi_auto[key]), np.asarray(gi_gen[key])), key)
+
+    # ---- the two general-only rejections auto can now walk into -------
+    # Both configurations SOLVE under 1.0.x (== explicit 'reduced'); the 2.0
+    # default promotes them to 'general', which rejects them.  The rejection
+    # must therefore name the auto resolution that chose 'general' and the
+    # one-line way back, not just the general-path restriction.
+
+    def test_auto_offsite_rejection_names_the_resolution_and_the_reduced_pin(self):
+        with self.assertRaisesRegex(
+                ValueError, r"auto:flex_forcing.*calc_scheme = 'reduced'"):
+            self._solve("auto", {"CoulombInter": "offsite_interorb"}, True,
+                        mode="FLEX")
+        # ... and the remediation the message names actually works
+        solver, _, _ = self._solve("reduced",
+                                   {"CoulombInter": "offsite_interorb"}, True,
+                                   mode="FLEX")
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("reduced", "explicit"))
+
+    def test_auto_spin_mode_rejection_names_the_resolution_and_the_reduced_pin(self):
+        # a declared Extern makes H0(k) spin-dependent, which the general
+        # FLEX path (v1) refuses; on-site CoulombInter alone still forces
+        # the auto promotion to 'general'
+        kw = dict(mode="FLEX", extern="diag_extern", coeff_extern=0.5)
+        with self.assertRaisesRegex(
+                ValueError, r"auto:flex_forcing.*calc_scheme = 'reduced'"):
+            self._solve("auto", {"CoulombInter": "onsite_inter.dat"}, True, **kw)
+        solver, _, _ = self._solve("reduced", {"CoulombInter": "onsite_inter.dat"},
+                                   True, **kw)
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("reduced", "explicit"))
+
+    def test_explicit_general_rejections_carry_no_auto_remediation(self):
+        """The added sentence is scoped to auto: an EXPLICIT general request
+        was not chosen by the resolver, so pointing at 'auto' would misname
+        what happened."""
+        with self.assertRaises(ValueError) as cm:
+            self._solve("general", {"CoulombInter": "offsite_interorb"}, True,
+                        mode="FLEX")
+        self.assertNotIn("calc_scheme='auto'", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            self._solve("general", {"CoulombInter": "onsite_inter.dat"}, True,
+                        mode="FLEX", extern="diag_extern", coeff_extern=0.5)
+        self.assertNotIn("calc_scheme='auto'", str(cm.exception))
 
     def test_unsupported_scheme_name_still_raises_the_actionable_valueerror(self):
         """The step-0 restructuring must not turn an unsupported scheme

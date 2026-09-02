@@ -157,6 +157,25 @@ class _AndersonMixer:
         return (x + self.mix * r).reshape(shape)
 
 
+def _auto_general_remediation(solver):
+    """#167: the 2.0 default calc_scheme='auto' promotes every declared
+    cross-carrying interaction to 'general', so a general-ONLY rejection can
+    now stop a configuration that H-wave 1.0.x (== explicit 'reduced') ran
+    without complaint. When that is how the run got here, name the
+    resolution that chose 'general' and the one-line way back; an explicit
+    'general' request was the user's own choice, so it gets no such hint.
+    Mirrors the 4-axis chi0q remediation hint in rpa.py.
+    """
+    token = getattr(solver, "_scheme_resolution", None)
+    if not str(token).startswith("auto:"):
+        return ""
+    return (" calc_scheme='auto' resolved to 'general' ({}) because a "
+            "cross-carrying interaction is declared; to run this "
+            "configuration as in H-wave 1.0.x request calc_scheme = "
+            "'reduced' explicitly (a documented approximation)."
+            .format(token))
+
+
 def _scheme_stamp(solver):
     # #167: describes THIS run (never inside _freq_meta, which passes
     # through the INPUT file's provenance). Plain str -> <U. FLEX's
@@ -602,7 +621,8 @@ class FLEX(RPA):
             raise ValueError(
                 "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
                 "only, got '{}'. spin-diag/spinful are deferred to the "
-                "generalized FLEX solver.".format(self.spin_mode))
+                "generalized FLEX solver.{}".format(
+                    self.spin_mode, _auto_general_remediation(self)))
 
         self._check_reduced_rejects_spinful()
 
@@ -2191,10 +2211,11 @@ class FLEX(RPA):
                             "class the general path is measured equal to "
                             "the RPA ring; other off-site classes are not "
                             "representable by a q-only vertex or carry "
-                            "unadjudicated vertex content.".format(
+                            "unadjudicated vertex content.{}".format(
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", with sublattice folding" if has_fold
-                                else ""))
+                                else "",
+                                _auto_general_remediation(self)))
                     # (Reader-bypassing internal tables only: file input
                     # rejects one-sided declarations since #93.)
                     # One-sided TABLES are fine: BOTH solvers reduce
