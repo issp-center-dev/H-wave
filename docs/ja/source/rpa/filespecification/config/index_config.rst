@@ -53,6 +53,8 @@ TOML形式
      **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit``\ はスピン軌道数になりました。
      既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit``\ は2倍にしてください。
 
+.. _rpa_calc_scheme_auto:
+
 - ``calc_scheme``
 
   **形式 :** string型 (デフォルトは ``"auto"``)

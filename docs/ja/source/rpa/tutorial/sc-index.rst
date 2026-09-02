@@ -463,6 +463,8 @@ Arnoldi固有値解析は複数の固有値を検出します。
 
 ここで :math:`\alpha, \beta`\ は軌道インデックスです。
 
+.. _sc_eigenvalue_dat:
+
 ``eigenvalue.dat``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -742,6 +744,8 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
 有効なフラグは ``gap_dynamic.npz``, ``gap.dat``, ``eigenvalue.dat``\ に記録
 されます。通常の本計算では両方を off にしてください。
 
+.. _sc_seed_eigenvector:
+
 固有ベクトル継続（``seed_eigenvector``\ ）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -758,6 +762,8 @@ continuation スイープでは ``Nmat``\ を固定してください。IR経路
 へ自動で再フィットされます。``[eliashberg] sigma_shift`` は shift-invert の狙い値を明示
 指定します（未指定なら予備 Arnoldi から推定）。``sigma_shift``\ をブランチ近傍に置き
 ``seed_eigenvector``\ と併用するのが、隠れた／複素化する固有値を解決する最も堅牢な方法です。
+
+.. _sc_tsweep:
 
 温度継続計算（``hwave_tsweep``\ ）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -475,6 +475,8 @@ Each line contains:
 
 where :math:`\alpha, \beta` are orbital indices.
 
+.. _sc_eigenvalue_dat:
+
 ``eigenvalue.dat``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -767,6 +769,8 @@ in general).
 Enabled flags are recorded in ``gap_dynamic.npz``, ``gap.dat``, and
 ``eigenvalue.dat``. Keep both flags off for production runs.
 
+.. _sc_seed_eigenvector:
+
 Eigenvector continuation (``seed_eigenvector``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -787,6 +791,8 @@ refit onto the IR nodes automatically. ``[eliashberg] sigma_shift`` sets an
 explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
 combining ``sigma_shift`` near the branch with ``seed_eigenvector`` is the most
 robust way to resolve a masked or complexifying eigenvalue.
+
+.. _sc_tsweep:
 
 Temperature continuation (``hwave_tsweep``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -62,6 +62,8 @@ Parameters
      spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
      ``Norbit``.
 
+.. _rpa_calc_scheme_auto:
+
 - ``calc_scheme`` (default value is ``"auto"``)
 
   **Type :**
