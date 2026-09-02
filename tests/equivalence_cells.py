@@ -415,12 +415,20 @@ POLICY_CEILINGS: dict = {
     # identity is structural at Sigma=0, so the ceiling floors at
     # 1e-15 (the worst==0 branch of the derivation rule).
     "counter_cross_nd_le2": 1e-15,
-    # worst (Event 5) 0.0 on both dev and all 4 CI runners -- same
-    # floor as counter_cross_nd_le2.
-    "counter_cross_geev": 1e-15,
-    # worst (Event 5) 0.0 on both dev and all 4 CI runners -- same
-    # floor.
-    "mu_number_residual": 1e-15,
+    # worst (Event 6) 3.552714e-15 (= 2^-48, i.e. 16 ULP of an O(1)
+    # count; counter_cross_at_mu_flex, geev fixture, CI runner Python
+    # 3.12 / numpy 1.26.4 OpenBLAS) -> 10**ceil(log10(10*worst)) =
+    # 1e-13. Event 5's 0.0 was a build coincidence: the two counters
+    # are DIFFERENT expressions whose bitwise tie survives only while
+    # the BLAS reduction order does; a runner-image update broke it by
+    # 16 ULP, amplified through the non-normal (geev) eigenvector
+    # conditioning this fixture deliberately exercises.
+    "counter_cross_geev": 1e-13,
+    # worst (Event 6) 3.552714e-15 (number_residual_flex, geev
+    # fixture, same runner and mechanism as counter_cross_geev above;
+    # one shared key over rpa+flex and all three fixtures, so the
+    # worst governs) -> 1e-13 by the same rule.
+    "mu_number_residual": 1e-13,
     # worst (Event 5) 9.930137e-16 (dyson_residual_inv, geev fixture,
     # dev machine) -- unchanged from its prior dev-only value.
     "green_dyson": 1e-14,
