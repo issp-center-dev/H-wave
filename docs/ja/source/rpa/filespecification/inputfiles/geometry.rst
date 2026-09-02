@@ -41,23 +41,23 @@
    **形式 :** float型
 
    **説明 :**
-   基本格子ベクトル :math:`\vec{a}_1, \vec{a}_2, \vec{a}_3`\ を指定します。
+   基本格子ベクトル\ :math:`\vec{a}_1, \vec{a}_2, \vec{a}_3`\ を指定します。
 
 -  ``[Norbit]``
 
    **形式 :** int型
 
    **説明 :**
-   ユニットセル内の軌道の数 :math:`N_\text{orbit}`\ を指定します。
+   ユニットセル内の軌道の数\ :math:`N_\text{orbit}`\ を指定します。
 
    .. note::
 
       スピン軌道モード（``enable_spin_orbital = true``\ ）では、``Norbit``\ はスピン軌道の総数
-      （= 物理軌道数 × 2 = Wannier90 の ``num_wann``\ ）を表し、UHFk と同じ規約です。
-      トランスファーファイルの軌道インデックスは ``2*orb + spin``\ のインターリーブ規約を用います。
+      （= 物理軌道数 × 2 = Wannier90 の\ ``num_wann``\ ）を表し、UHFk と同じ規約です。
+      トランスファーファイルの軌道インデックスは\ ``2*orb + spin``\ のインターリーブ規約を用います。
 
-      **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit``\ はスピン軌道数になりました。
-      既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit``\ は2倍にしてください。
+      **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数になりました。
+      既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
 
 -  ``[vx_i]``, ``[vy_i]``, ``[vz_i]``
@@ -65,7 +65,7 @@
    **形式 :** float型
 
    **説明 :**
-   各軌道のWannier center :math:`\vec{v}_i` を fractional coordinate 表記で指定します。
+   各軌道のWannier center :math:`\vec{v}_i`\ を fractional coordinate 表記で指定します。
 
 使用ルール
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
