@@ -185,12 +185,21 @@ def _scheme_stamp(solver):
     # rpa.py's fallback -- a stub without calc_scheme stamps "unknown"
     # rather than raising AttributeError).
     scheme = getattr(solver, "calc_scheme", "unknown")
+    # _scheme_resolution is None exactly in the AUTO-UNRESOLVED state, which
+    # is NOT an explicit request: a completed pipeline run never persists
+    # "unresolved" (resolution precedes solve); it appears only for
+    # direct-API saves before resolution -- deliberately NOT in
+    # RESOLUTION_TOKENS. A stub missing the attribute entirely keeps the
+    # "explicit" default. (FLEX resolves auto in its constructor, so the None
+    # branch is unreachable through the FLEX pipeline; the two stamps are kept
+    # identical so neither can drift into the mislabel.)
+    res = getattr(solver, "_scheme_resolution", "explicit")
+    res = "unresolved" if res is None else res
     return {
         "calc_scheme": str(scheme),
         "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
                                              scheme)),
-        "scheme_resolution": str(getattr(solver, "_scheme_resolution", None)
-                                 or "explicit"),
+        "scheme_resolution": str(res),
     }
 
 

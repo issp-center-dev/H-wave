@@ -2510,12 +2510,19 @@ class RPA:
             # calc_scheme entirely; fall back to "unknown" rather than
             # raising AttributeError on those pre-existing tests).
             scheme = getattr(self, "calc_scheme", "unknown")
+            # _scheme_resolution is None exactly in the AUTO-UNRESOLVED state,
+            # which is NOT an explicit request: a completed pipeline run never
+            # persists "unresolved" (resolution precedes solve); it appears
+            # only for direct-API saves before resolution -- deliberately NOT
+            # in RESOLUTION_TOKENS. A stub missing the attribute entirely
+            # (pre-#167 __new__ fixtures) keeps the "explicit" default.
+            res = getattr(self, "_scheme_resolution", "explicit")
+            res = "unresolved" if res is None else res
             return {
                 "calc_scheme": str(scheme),
                 "calc_scheme_requested": str(getattr(self, "calc_scheme_requested",
                                                      scheme)),
-                "scheme_resolution": str(getattr(self, "_scheme_resolution", None)
-                                         or "explicit"),
+                "scheme_resolution": str(res),
             }
 
         if "chiq" in info_outputfile.keys():

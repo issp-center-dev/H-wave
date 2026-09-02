@@ -991,6 +991,31 @@ class TestSchemeStamp(_Case):
                 self.assertEqual(z["scheme_resolution"].item(), "auto:flex_forcing", name)
                 self.assertEqual(z["calc_scheme"].item(), "general", name)
 
+    def test_unresolved_auto_save_is_stamped_unresolved_not_explicit(self):
+        """A direct-API save before resolution must not claim 'explicit'.
+
+        The pipeline always resolves before solve, so this state is only
+        reachable by driving save_results directly -- but when it is, the
+        file has to say the scheme was never resolved rather than assert an
+        explicit request that was never made.
+        """
+        from hwave.solver import scheme as sch
+        solver, _ = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
+        self.assertIsNone(solver._scheme_resolution)   # premise: AUTO-UNRESOLVED
+        out = self._dir()
+        chi0q = np.zeros((solver.nmat, solver.lattice.nvol,
+                          solver.norb, solver.norb), dtype=complex)
+        solver.save_results({"path_to_output": out, "chi0q": "chi0q"},
+                            {"chi0q": chi0q})
+        with np.load(os.path.join(out, "chi0q.npz"), allow_pickle=False) as z:
+            self.assertEqual((z["calc_scheme"].item(),
+                              z["calc_scheme_requested"].item(),
+                              z["scheme_resolution"].item()),
+                             ("auto", "auto", "unresolved"))
+        # deliberately outside the closed vocabulary: no completed run
+        # persists it
+        self.assertNotIn("unresolved", sch.RESOLUTION_TOKENS)
+
     def test_stamped_chi0q_round_trips_through_the_rpa_reader(self):
         out = self._saved("RPA", "general", True, {"chi0q": "chi0q"})
         solver, green_info = self._build("auto", {"CoulombInter": "onsite_inter.dat"}, True)
