@@ -9,7 +9,9 @@ off-site term is a non-local particle-hole pair, not representable by a
 q-only matrix, and is absent -- exactly the RPA ring's reading, so for every
 accepted class FLEX at IterationMax=1 is element-complete equal to the ring:
 every spin-orbital component of chiq at every frequency and q, reconstructed
-from the FLEX channels, to <= 1e-13. Locality is judged on the PRE-fold
+from the FLEX channels (measured max|diff| ~1e-15 .. 1e-13 on these fixtures;
+the helper below enforces atol=1e-12 absolute, the four calibrated registry
+cells 1e-14). Locality is judged on the PRE-fold
 declarations, so the answer does not depend on SubShape. The solver warns
 once per solve that only the Hartree vertex of off-site terms enters
 (bond-resolved treatment: #181 Tier 3).
@@ -188,6 +190,8 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
         SubShape=[4,1,1] maps EVERY x displacement to (0,0,0)."""
         cases = [
             ('tests/rpa/input_2orb', {'CoulombInter': 'offsite_sameorb.dat'}),
+            ('tests/equivalence_input/orb2',
+             {'CoulombInter': 'offsite_coulombinter_interorb.dat'}),
             ('tests/equivalence_input/orb2', {'Hund': 'offsite_hund.dat'}),
             ('tests/equivalence_input/orb2', {'Ising': 'offsite_ising.dat'}),
             # same-orbital off-site Hund/Ising folded (the one-orbital

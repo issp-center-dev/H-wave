@@ -24,14 +24,19 @@ pair is NON-local for ``R != 0`` (legs on orbital a at 0 and b at R) and
 therefore not a function of q alone; and the density-family gate
 ``l1 != l3`` -- right on-site, where an orbital has no Hund/Ising coupling
 with itself -- deletes the physical same-orbital off-site Hund/Ising. The
-split builder writes the on-site part through the full slot map and the
-off-site part into the density family only: the Hartree vertex ``V_ab(q)``
-on ``(aa,bb)`` including ``a == b``, which is q-representable exactly and is
-what the RPA ring carries for off-site input (measured element-complete
-equal, tests/test_flex_offsite_general.py). The exchange (Fock) crossing of
-an off-site term is deliberately ABSENT: it needs the bond-resolved vertex
-(#181, Tier 3). ``hwave.sc``'s own callers (Eliashberg) keep the shared
-builder unchanged.
+split entry hands the shared builder the WHOLE table (authoritative for
+every density element, in the reader's own entry order) plus two
+locality-ROUTING inputs: the on-site part feeds the cross/antidiag
+families, the off-site part supplies only the same-orbital ``(aa,aa)``
+density elements of Hund/Ising that the on-site gate would delete. Off-site
+content therefore reaches the density family only -- the Hartree vertex
+``V_ab(q)`` on ``(aa,bb)`` including ``a == b`` -- which is q-representable
+exactly and is what the RPA ring carries for off-site input (measured
+element-complete equal, tests/test_flex_offsite_general.py). The output is
+NOT the sum of two independently built parts. The exchange (Fock) crossing
+of an off-site term is deliberately ABSENT: it needs the bond-resolved
+vertex (#181, Tier 3). ``hwave.sc``'s own callers (Eliashberg) keep the
+shared builder unchanged.
 """
 
 from hwave.sc import _build_sc_matrices_all_q

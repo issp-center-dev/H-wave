@@ -2058,17 +2058,22 @@ class FLEX(RPA):
 
         Notes
         -----
-        The S/C matrices are built via ``build_sc_matrices_myo`` from an
-        ``inter_k`` dict assembled with ``hwave.sc._build_interaction_k``.  For
-        on-site Kanamori interactions the S/C matrices are CONSTANT over q, so
-        the k-array ordering used to build ``inter_k`` (a plain linspace grid)
-        need not match the FFT q-grid for this v1 path; this is reshaped to
-        ``(nvol, norb^2, norb^2)`` purely as ``Nx*Ny*Nz`` independent copies.
-        The reshape yields the matrix-per-q form that the downstream
-        channel-solver (``_solve_rpa``) consumes as ``ham``.  Because the S/C
-        matrices are q-independent constants for on-site Kanamori, they are
-        cached across SCF iterations; chi0q itself is passed straight through
-        and so needs no per-iteration work here.
+        The S/C matrices are built via
+        ``hwave.solver._sc_matrices_myo.build_sc_matrices_locality_split``
+        from three ``inter_k`` dicts assembled with
+        ``hwave.sc._build_interaction_k``: the whole (reader's folded,
+        normalised) table, and its on-site and off-site parts split on the
+        PRE-fold declarations (#181, Tier 1). On-site Kanamori entries give
+        q-independent matrices; off-site entries give a q-DEPENDENT Hartree
+        vertex V(q), so the k-array used to build ``inter_k`` must be the
+        same C-ordered ``linspace(0, 2pi, n, endpoint=False)`` grid as
+        chi0's FFT axis (verified element-complete against the RPA ring).
+        The reshape to ``(nvol, norb^2, norb^2)`` yields the matrix-per-q
+        form that the downstream channel-solver (``_solve_rpa``) consumes
+        as ``ham``. Because the interaction is SCF-invariant, the matrices
+        are cached across the iterations of one solve (``solve`` resets
+        the cache); chi0q itself is passed straight through and so needs
+        no per-iteration work here.
         """
         logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
 
@@ -2129,7 +2134,9 @@ class FLEX(RPA):
             #     V_ab(q). That is exactly q-representable and it is what the
             #     RPA ring carries for them: FLEX at one iteration is MEASURED
             #     element-complete equal to the ring for every such class
-            #     (<= 7e-15 relative; tests/test_flex_offsite_general.py),
+            #     (max|diff| ~1e-15 .. 1e-13 on the test fixtures, chiq of
+            #     order 1e-1 .. 1; the tests enforce atol 1e-12, the four
+            #     registry cells 1e-14; tests/test_flex_offsite_general.py),
             #     including under sublattice folding, where locality judged
             #     on the folded table would have put a folded bond's Fock
             #     crossing into the intra-supercell cross slot (1.3e-1
