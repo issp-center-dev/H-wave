@@ -2096,7 +2096,8 @@ class FLEX(RPA):
         cache = getattr(self, "_myo_sc_cache", None)
         if cache is None:
             from hwave.sc import _build_interaction_k
-            from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+            from hwave.solver._sc_matrices_myo import (
+                _OFFSITE_DENSITY_TYPES, build_sc_matrices_locality_split)
 
             # PairLift does not contribute to the particle-hole spin/charge
             # (S/C) vertex: its contribution is S=C=0 (verified against the full
@@ -2110,33 +2111,50 @@ class FLEX(RPA):
                     "pairing vertex (S=C=0); it is ignored in the general FLEX "
                     "calculation.")
 
-            # OFF-SITE entries are allowed ONLY where FLEX at one iteration
-            # is MEASURED equal to the RPA ring, element-complete: CoulombInter
-            # with SAME-orbital pairs (a == b), without sublattice folding.
-            # For that class the vertex is V(q) on the density slots alone and
-            # the equivalence holds to 1e-16 at one and two orbitals, on 4x4,
-            # non-cubic 4x6 and 3D 4x4x2 lattices including a z-direction bond.
+            # OFF-SITE entries (#181, Tier 1). The interaction is split by
+            # PRE-fold locality and the two parts reach the S/C matrices
+            # differently (hwave.solver._sc_matrices_myo
+            # .build_sc_matrices_locality_split):
             #
-            # Everything else stays rejected, each for a measured reason:
+            #   * on-site (R == 0) entries go through the full adjudicated
+            #     Kanamori slot map, as always;
+            #   * off-site CoulombInter / Hund / Ising enter the density
+            #     (aa,bb) slots ONLY, a == b included, as the Hartree vertex
+            #     V_ab(q). That is exactly q-representable and it is what the
+            #     RPA ring carries for them: FLEX at one iteration is MEASURED
+            #     element-complete equal to the ring for every such class
+            #     (<= 7e-15 relative; tests/test_flex_offsite_general.py),
+            #     including under sublattice folding, where locality judged
+            #     on the folded table would have put a folded bond's Fock
+            #     crossing into the intra-supercell cross slot (1.3e-1
+            #     against the ring, and an answer that depended on SubShape).
+            #     Before the split the shared builder wrote off-site content
+            #     into the cross (ab,ab) slots -- whose particle-hole pair is
+            #     NON-local for R != 0 -- and its on-site `l1 != l3` gate
+            #     deleted the same-orbital off-site Hund/Ising outright
+            #     (2.4e-2 .. 4.6e-1 against the ring).
+            #     The exchange (Fock) crossing of an off-site term is NOT
+            #     representable by a q-only matrix and is absent here, as it
+            #     is in the ring; the solver warns once per solve (bond-
+            #     resolved treatment: #181 Tier 3).
             #
-            #   * CoulombInter with a != b off-site, Hund, Ising -- the MYO
-            #     S/C builder applies the full on-site Kanamori slot mapping,
-            #     which places q-dependent values into the Fierz (Case 2)
-            #     inter-orbital slots; for R != 0 the particle-hole pair
-            #     behind those slots is NON-LOCAL and not representable by a
-            #     q-only matrix (the locality argument measured for the
-            #     transverse channel). Off-site Hund / Ising differ from the
-            #     ring by 3e-2 / 7e-2 even at ONE orbital, where no
-            #     inter-orbital slot exists to blame -- an unadjudicated
-            #     vertex-content disagreement, not a grid issue.
-            #   * off-site combined with sublattice folding -- folding turns
-            #     part of an a == b bond into intra-cell inter-orbital
-            #     coupling, and the two solvers then differ by 2e-2 (the
-            #     folded analogue of the #104 content); the equivalence claim
-            #     no longer holds, so it is deferred to the #107 unification.
-            #   * Exchange, PairHop -- non-local particle-hole pair off-site.
-            #   * CoulombIntra -- `uhfk.py` reads only its r = 0 component
-            #     (#106).
+            # Still rejected, each for its own reason:
+            #
+            #   * off-site Exchange -- its only local-bilinear regrouping,
+            #     -J S+_i S-_j, is transverse (spin-flip bilinears); the
+            #     longitudinal S/C content is unadjudicated (#181 Tier 2:
+            #     exact-diagonalization decides). The ring returns the bare
+            #     bubble for it, so "equal to the ring" would be agreement
+            #     at zero vertex effect -- not grounds to accept.
+            #   * off-site PairHop -- no local-bilinear particle-hole
+            #     regrouping exists at all (the ring drops it, #157).
+            #   * any other off-site type -- fail closed. (CoulombIntra is
+            #     on-site same-orbital by definition; the reader refuses an
+            #     off-site row under that key, #93, so it is unreachable
+            #     from file input.)
+            #   * off-site PairLift -- accepted and inert: it has no
+            #     particle-hole S/C content (vertex_table), so it is left out
+            #     of the off-site part rather than rejected.
             def _normalized(tbl_dict):
                 # The aggregate 'Coulomb' input carries CoulombIntra (the
                 # r = 0 orbital-diagonal entries) and CoulombInter
@@ -2195,36 +2213,53 @@ class FLEX(RPA):
                         "table canonicalizes displacements and can hide "
                         "off-site entries).")
             scan_ham = _normalized(scan_ham)
-            # PairLift is deliberately absent: hwave.solver.vertex_table
-            # gives it NO particle-hole S/C content, so an off-site
-            # PairLift declaration contributes exactly zero here and the
-            # answer is right without a guard. Listing it would reject a
-            # configuration that computes correctly.
+            # Split the PRE-fold table by locality. PairLift is read for
+            # the on-site part only (the S/C builders give it no content
+            # either way); an off-site PairLift is inert and not listed.
+            onsite_tbl, offsite_tbl = {}, {}
+            rejected_reason = {
+                "Exchange": (
+                    "its local-bilinear regrouping -J S+_i S-_j is a "
+                    "transverse (spin-flip) object, and its longitudinal "
+                    "spin/charge content has not been adjudicated (#181 "
+                    "Tier 2); the RPA ring returns the bare bubble for it"),
+                "PairHop": (
+                    "no local-bilinear particle-hole regrouping exists "
+                    "for an inter-site pair hopping (the RPA solver drops "
+                    "it, #157); it needs a bond-resolved vertex (#181 "
+                    "Tier 3)"),
+            }
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
-                          "Exchange", "PairHop", "Ising"):
+                          "Exchange", "PairHop", "Ising", "PairLift"):
                 if itype not in scan_ham:
                     continue
-                for (irvec, orbvec) in scan_ham[itype]:
+                for (irvec, orbvec), v in scan_ham[itype].items():
                     if tuple(irvec) == (0, 0, 0):
+                        onsite_tbl.setdefault(itype, {})[
+                            (irvec, orbvec)] = v
                         continue
-                    ok = (itype == "CoulombInter"
-                          and orbvec[0] == orbvec[1]
-                          and not has_fold)
-                    if not ok:
+                    if itype == "PairLift":
+                        continue
+                    if itype not in _OFFSITE_DENSITY_TYPES:
+                        reason = rejected_reason.get(
+                            itype,
+                            "no q-representable off-site vertex exists "
+                            "for this type in the pair-space spin/charge "
+                            "matrices")
+                        # No auto->reduced remediation hint here: the
+                        # reduced scheme rejects Exchange and PairHop as
+                        # well (no density-density content), so the hint
+                        # would send the user to a second error.
                         raise ValueError(
-                            "FLEX calc_scheme='general' accepts off-site "
-                            "entries only for CoulombInter with equal "
-                            "orbitals (a == b) and without sublattice "
-                            "folding; interaction '{}' has an off-site "
-                            "entry irvec={}, orbvec={}{}. For that entry "
-                            "class the general path is measured equal to "
-                            "the RPA ring; other off-site classes are not "
-                            "representable by a q-only vertex or carry "
-                            "unadjudicated vertex content.{}".format(
+                            "FLEX calc_scheme='general' does not support "
+                            "an off-site '{}' entry (irvec={}, orbvec={}"
+                            "{}): {}. Off-site CoulombInter, Hund and "
+                            "Ising are supported (as their Hartree "
+                            "vertex).".format(
                                 itype, tuple(irvec), tuple(orbvec),
-                                ", with sublattice folding" if has_fold
-                                else "",
-                                _auto_general_remediation(self)))
+                                ", declared before sublattice folding"
+                                if has_fold else "", reason))
+                    offsite_tbl.setdefault(itype, {})[(irvec, orbvec)] = v
                     # (Reader-bypassing internal tables only: file input
                     # rejects one-sided declarations since #93.)
                     # One-sided TABLES are fine: BOTH solvers reduce
@@ -2235,11 +2270,31 @@ class FLEX(RPA):
                     # given to rpa.py. Measured: one-sided v and v/2 at
                     # both ends give bit-identical chiq in both solvers.
 
+            if offsite_tbl:
+                logger.warning(
+                    "FLEX calc_scheme='general': off-site entries of {} "
+                    "enter as their Hartree (density-slot) vertex V(q) "
+                    "only; the exchange crossing of an off-site term is "
+                    "not representable by a q-only vertex and is not "
+                    "included (the same approximation the RPA ring makes; "
+                    "a bond-resolved treatment is tracked in #181).".format(
+                        ", ".join(sorted(offsite_tbl))))
+
+            if has_fold:
+                # Fold each part separately: the folded table cannot tell
+                # a folded bond from on-site input, so the split had to be
+                # made before folding (the pre-fold-locality rule the RPA
+                # solver's _append_inter_cross follows for the same reason).
+                onsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
+                              for t, tbl in onsite_tbl.items()}
+                offsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
+                               for t, tbl in offsite_tbl.items()}
+
             no = self.norb
             nx, ny, nz = self.lattice.shape
 
-            # Build k-space interactions from the raw real-space param_ham.
-            # The grid contract: linspace(0, 2pi, n, endpoint=False) per axis,
+            # Build k-space interactions from the real-space tables. The
+            # grid contract: linspace(0, 2pi, n, endpoint=False) per axis,
             # C-order flattened -- the same points, order and flattening as
             # chi0's spatial FFT axis, verified by the element-complete
             # equivalence with the RPA ring for off-site (q-dependent)
@@ -2247,11 +2302,12 @@ class FLEX(RPA):
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-            inter_k = _build_interaction_k(
-                kx, ky, kz, _normalized(self.ham_info.param_ham), no)
+            inter_k_onsite = _build_interaction_k(kx, ky, kz, onsite_tbl, no)
+            inter_k_offsite = _build_interaction_k(kx, ky, kz, offsite_tbl, no)
 
-            # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
-            Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+            # S/C matrices: (nx, ny, nz, norb^2, norb^2).
+            Us, Uc = build_sc_matrices_locality_split(
+                inter_k_onsite, inter_k_offsite, no, nx, ny, nz)
 
             # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
             nvol = self.lattice.nvol

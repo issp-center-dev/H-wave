@@ -22,6 +22,7 @@ Everything else stays rejected, each for a measured reason:
 * Exchange / PairHop off-site (non-local pair), CoulombIntra off-site (#106).
 """
 
+import logging
 import os
 import unittest
 
@@ -29,13 +30,13 @@ import numpy as np
 
 
 def _run_pair(path, interactions, cell, filling, flex_iters=1,
-              inject=None):
+              inject=None, sub=(1, 1, 1)):
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.rpa as rpa_mod
     import hwave.solver.flex as flex_mod
 
     par = {'T': 2.0, 'filling': filling, 'CellShape': cell,
-           'SubShape': [1, 1, 1], 'Nmat': 32}
+           'SubShape': list(sub), 'Nmat': 32}
 
     def io():
         idict = {'path_to_input': path, 'Geometry': 'geom.dat',
@@ -130,6 +131,123 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                    cell, filling=0.5)
                 _assert_element_complete_equal(self, gr, gf, norb=2)
 
+    def test_one_orbital_offsite_hund_and_ising_match_the_ring(self):
+        """Same-orbital off-site Hund / Ising (every one-orbital model): a
+        physical density-density term on the (00,00) slot. The shared
+        builder's on-site `l1 != l3` gate used to delete it (measured
+        3.0e-1 / 4.6e-1 against the ring); the locality split keeps it."""
+        for itype in ('Hund', 'Ising'):
+            with self.subTest(itype=itype):
+                gr, gf = _run_pair('tests/rpa/input',
+                                   {itype: 'coulombinter.dat'},
+                                   [4, 4, 1], filling=0.75)
+                _assert_element_complete_equal(self, gr, gf, norb=1)
+                # anti-vacuity: the ring's vertex has a real effect here
+                chiq = np.asarray(gr['chiq'])
+                self.assertGreater(
+                    np.max(np.abs(chiq[:, :, :1, :1, :1, :1]
+                                  - np.asarray(gr['chi0q']))), 1e-3)
+
+    def test_two_orbital_offsite_interorbital_classes_match_the_ring(self):
+        """Off-site inter-orbital CoulombInter / Hund / Ising: the density
+        (Hartree) half is q-only and ring-identical once the off-site
+        content stays out of the cross (ab,ab) slots, whose particle-hole
+        pair is non-local for R != 0 (measured 2.4e-2..3.4e-2 with the
+        on-site slot map, <= 7e-15 with the locality split). The 2-orbital
+        coulombinter.dat also carries ON-site a != b entries, so it pins
+        that the split keeps the on-site Fierz content intact."""
+        cases = [
+            ('tests/rpa/input_2orb', {'CoulombInter': 'coulombinter.dat'}),
+            ('tests/equivalence_input/orb2', {'Hund': 'offsite_hund.dat'}),
+            ('tests/equivalence_input/orb2', {'Ising': 'offsite_ising.dat'}),
+            ('tests/equivalence_input/orb2',
+             {'CoulombInter': 'offsite_coulombinter_interorb.dat'}),
+        ]
+        for path, interactions in cases:
+            with self.subTest(interaction=list(interactions)[0], path=path):
+                gr, gf = _run_pair(path, interactions, [4, 4, 1],
+                                   filling=0.5)
+                _assert_element_complete_equal(self, gr, gf, norb=2)
+                chiq = np.asarray(gr['chiq'])
+                self.assertGreater(
+                    np.max(np.abs(chiq[:, :, :2, :2, :2, :2]
+                                  - np.asarray(gr['chi0q']))), 1e-3)
+
+    def test_offsite_under_sublattice_folding_matches_the_ring(self):
+        """Locality is judged on the PRE-fold declarations (the RPA ring's
+        reading): a same-orbital +-x bond folded with SubShape=[2,1,1]
+        becomes an intra-supercell inter-orbital entry, which the folded
+        table cannot tell from on-site input. Reading it as on-site put
+        the bond's Fock crossing into the cross slot and the solvers
+        differed by 1.3e-1; the answer must not depend on SubShape.
+        SubShape=[4,1,1] maps EVERY x displacement to (0,0,0)."""
+        for sub in ((2, 1, 1), (4, 1, 1)):
+            with self.subTest(sub=sub):
+                gr, gf = _run_pair('tests/rpa/input_2orb',
+                                   {'CoulombInter': 'offsite_sameorb.dat'},
+                                   [4, 4, 1], filling=0.5, sub=sub)
+                norb_folded = int(np.asarray(gr['chi0q']).shape[2])
+                self.assertEqual(norb_folded, 2 * sub[0])
+                _assert_element_complete_equal(self, gr, gf,
+                                               norb=norb_folded)
+
+    def test_offsite_input_warns_that_only_the_hartree_vertex_enters(self):
+        """Every off-site two-body term enters the general path as its
+        Hartree (density-slot) vertex only; the exchange crossing is not
+        representable by a q-only matrix and is absent (the ring makes the
+        same approximation; bond-resolved treatment is #181 Tier 3). The
+        solver says so once per solve, naming the types; purely on-site
+        input stays silent."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        def _solve(path, interactions, sub=(1, 1, 1)):
+            idict = {'path_to_input': path, 'Geometry': 'geom.dat',
+                     'Transfer': 'transfer.dat'}
+            idict.update(interactions)
+            r = read_input_k.QLMSkInput({'path_to_input': path,
+                                         'interaction': idict})
+            pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                  'SubShape': list(sub), 'Nmat': 32,
+                  'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+            fx = flex_mod.FLEX(r.get_param("ham"), {},
+                               {'mode': 'FLEX', 'param': pf,
+                                'enable_spin_orbital': False,
+                                'calc_scheme': 'general'})
+            fx.solve(r.get_param("green"), 'tests/rpa/output')
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            _solve('tests/rpa/input_2orb',
+                   {'CoulombInter': 'coulombinter.dat',
+                    'Hund': 'offsite_hund.dat'})
+        hits = [m for m in cm.output if 'exchange' in m.lower()
+                and 'off-site' in m.lower()]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertIn('CoulombInter', hits[0])
+        self.assertIn('Hund', hits[0])
+
+        # folded: the warning names the PRE-fold declarations' types
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            _solve('tests/rpa/input_2orb',
+                   {'CoulombInter': 'offsite_sameorb.dat'}, sub=(4, 1, 1))
+        self.assertEqual(
+            len([m for m in cm.output if 'off-site' in m.lower()]), 1,
+            cm.output)
+
+        # on-site only: no such warning (assertNoLogs is 3.10+; count)
+        logger = logging.getLogger('hwave.solver.flex')
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        logger.addHandler(handler)
+        try:
+            _solve('tests/rpa/input_2orb', {'CoulombInter': 'onsite_inter.dat'})
+        finally:
+            logger.removeHandler(handler)
+        self.assertFalse([r for r in records
+                          if 'off-site' in r.getMessage().lower()])
+
     def test_wrapped_declaration_reads_like_its_signed_form(self):
         """A -x bond may be declared as (n-1, 0, 0) on an n-cell lattice.
         The symmetrisation reverses displacements modulo the grid (roll+flip,
@@ -188,28 +306,43 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                           np.asarray(ga[key]))
 
     def test_aggregate_coulomb_offsite_follows_the_same_policy(self):
-        """Off-site entries arriving through the aggregate table must hit the
-        same guard as explicit CoulombInter: a != b off-site is rejected."""
+        """Off-site entries arriving through the aggregate table must take
+        the same route as explicit CoulombInter: an a != b off-site bond
+        declared as `Coulomb` gives chiq_s bit-identical to the explicit
+        CoulombInter declaration of the same bond (and the bond must have
+        an effect, so the comparison cannot pass vacuously)."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as flex_mod
 
-        r = read_input_k.QLMSkInput(
-            {'path_to_input': 'tests/rpa/input_2orb',
-             'interaction': {'path_to_input': 'tests/rpa/input_2orb',
-                             'Geometry': 'geom.dat',
-                             'Transfer': 'transfer.dat'}})
-        ham = r.get_param("ham")
-        ham['Coulomb'] = {((1, 0, 0), (0, 1)): 0.7,
-                          ((-1, 0, 0), (1, 0)): 0.7}
-        pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
-              'SubShape': [1, 1, 1], 'Nmat': 32,
-              'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
-        fx = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
-                                     'enable_spin_orbital': False,
-                                     'calc_scheme': 'general'})
-        os.makedirs('tests/rpa/output', exist_ok=True)
-        with self.assertRaises(ValueError):
-            fx.solve(r.get_param("green"), 'tests/rpa/output')
+        def _chiq_s(key, table):
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat'}})
+            ham = r.get_param("ham")
+            if table is not None:
+                ham[key] = table
+            pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                  'SubShape': [1, 1, 1], 'Nmat': 32,
+                  'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+            fx = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
+                                         'enable_spin_orbital': False,
+                                         'calc_scheme': 'general'})
+            os.makedirs('tests/rpa/output', exist_ok=True)
+            gf = r.get_param("green")
+            fx.solve(gf, 'tests/rpa/output')
+            # an off-site CoulombInter has charge-channel content only
+            # (density (S, C) = (0, +2)), so the effect check is on chiq_c
+            return np.asarray(gf['chiq_s']), np.asarray(gf['chiq_c'])
+
+        bond = {((1, 0, 0), (0, 1)): 0.7, ((-1, 0, 0), (1, 0)): 0.7}
+        via_coulomb = _chiq_s('Coulomb', bond)
+        via_inter = _chiq_s('CoulombInter', bond)
+        none = _chiq_s('CoulombInter', None)
+        np.testing.assert_array_equal(via_coulomb[0], via_inter[0])
+        np.testing.assert_array_equal(via_coulomb[1], via_inter[1])
+        self.assertGreater(np.max(np.abs(via_inter[1] - none[1])), 1e-3)
 
     def test_missing_prefold_table_fails_closed(self):
         """If folding is active but the pre-fold table is unavailable, the
@@ -276,23 +409,25 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
         import hwave.solver.flex as flex_mod
 
         cases = [
-            # a != b off-site CoulombInter (the 2orb fixture has such bonds)
-            ({'CoulombInter': 'coulombinter.dat'}, 'tests/rpa/input_2orb',
-             [1, 1, 1]),
-            ({'Hund': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
-            ({'Ising': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
+            # off-site Exchange: no adjudicated longitudinal S/C content
+            # (its local regrouping -J S+_i S-_j is transverse; #181 Tier 2)
             ({'Exchange': 'coulombinter.dat'}, 'tests/rpa/input', [1, 1, 1]),
+            ({'Exchange': 'offsite_exchange.dat'},
+             'tests/equivalence_input/orb2', [1, 1, 1]),
+            # off-site PairHop: no local-bilinear particle-hole regrouping
+            # exists at all (RPA drops it too, #157)
+            ({'PairHop': 'offsite_pairhop.dat'},
+             'tests/equivalence_input/orb2', [1, 1, 1]),
+            # CoulombIntra is on-site same-orbital by definition; an
+            # off-site row under that key is refused by the READER (#93)
             ({'CoulombIntra': 'coulombinter.dat'}, 'tests/rpa/input',
              [1, 1, 1]),
-            # the accepted class, but with sublattice folding
-            ({'CoulombInter': 'offsite_sameorb.dat'}, 'tests/rpa/input_2orb',
-             [2, 1, 1]),
-            # folding that maps the bond direction to a single supercell:
-            # every off-site displacement canonicalizes to (0,0,0) in the
-            # folded table, so the guard must scan the PRE-fold table --
-            # before that fix this input was accepted and diverged
-            ({'CoulombInter': 'offsite_sameorb.dat'}, 'tests/rpa/input_2orb',
-             [4, 1, 1]),
+            # folding must not hide a rejected class: with SubShape=[4,1,1]
+            # every +-x displacement canonicalizes to (0,0,0) in the folded
+            # table, so the guard must scan the PRE-fold table -- before
+            # that fix folded off-site input was accepted and diverged
+            ({'Exchange': 'offsite_exchange.dat'},
+             'tests/equivalence_input/orb2', [4, 1, 1]),
         ]
         os.makedirs('tests/rpa/output', exist_ok=True)
         for interactions, path, sub in cases:
@@ -375,7 +510,8 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
     result: canonical-vs-absent must differ.
     """
 
-    def _run(self, hund_key, with_hund=True, hund_file="hund_onsite.dat"):
+    def _run(self, hund_key, with_hund=True, hund_file="hund_onsite.dat",
+             file_dir=None):
         import shutil
         import tempfile
 
@@ -387,6 +523,8 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d, ignore_errors=True)
         for f in ("geom.dat", "transfer.dat"):
             shutil.copy(os.path.join(src, f), d)
+        if file_dir is not None:
+            src = file_dir
         # Aggregate Coulomb: r=0 orbital-diagonal entries only, so
         # split_coulomb sends all of it to CoulombIntra.
         with open(os.path.join(d, "coulomb.dat"), "w") as f:
@@ -438,16 +576,24 @@ class TestAggregateCoulombPreservesKeyCase(unittest.TestCase):
         """The same container loss hid entries from the off-site GUARD as
         well as from the interaction builder, and an unsupported off-site
         declaration that the guard cannot see completes silently instead
-        of raising. The test above exercises the builder (its Hund term is
-        on-site); this one exercises the guard.
+        of raising. The test above exercises the builder with an on-site
+        term; this one exercises the off-site route both ways: a
+        supported off-site type (Hund) must be APPLIED under either
+        spelling (identically, and with an effect), and a rejected one
+        (Exchange) must RAISE under either spelling.
         """
-        with self.assertRaises(ValueError) as cm:
-            self._run("Hund", hund_file="offsite_hund.dat")
-        self.assertIn("off-site", str(cm.exception))
+        canonical = self._run("Hund", hund_file="offsite_hund.dat")
+        lower = self._run("hund", hund_file="offsite_hund.dat")
+        absent = self._run("Hund", with_hund=False)
+        np.testing.assert_array_equal(canonical, lower)
+        self.assertGreater(np.max(np.abs(canonical - absent)), 1e-3)
 
-        with self.assertRaises(ValueError) as cm:
-            self._run("hund", hund_file="offsite_hund.dat")
-        self.assertIn("off-site", str(cm.exception))
+        for key in ("Exchange", "exchange"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError) as cm:
+                    self._run(key, hund_file="offsite_exchange.dat",
+                              file_dir="tests/equivalence_input/orb2")
+                self.assertIn("off-site", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

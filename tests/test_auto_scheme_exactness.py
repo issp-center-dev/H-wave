@@ -143,6 +143,10 @@ class _Case(unittest.TestCase):
               # tests/rpa/input_2orb has no Exchange/PairLift file: on-site,
               # Hermitian-closed inter-orbital bodies (physical indices 1<->2)
               "exchange": "Exchange\n2\n1\n 1\n   0 0 0 1 2 0.2 0.0\n   0 0 0 2 1 0.2 0.0\n",
+              # off-site Exchange: the general path rejects it (#181 Tier 2
+              # pending), and so does reduced (Exchange has no
+              # density-density content)
+              "offsite_exchange": "Exchange\n2\n2\n 1 1\n   1 0 0 1 2 0.2 0.0\n  -1 0 0 2 1 0.2 0.0\n",
               "pairlift": "PairLift\n2\n1\n 1\n   0 0 0 1 2 0.2 0.0\n   0 0 0 2 1 0.2 0.0\n"}
 
     def _dir(self):
@@ -859,17 +863,43 @@ class TestFLEXAutoResolution(_Case):
     # must therefore name the auto resolution that chose 'general' and the
     # one-line way back, not just the general-path restriction.
 
-    def test_auto_offsite_rejection_names_the_resolution_and_the_reduced_pin(self):
-        with self.assertRaisesRegex(
-                ValueError, r"auto:flex_forcing.*calc_scheme = 'reduced'"):
-            self._solve("auto", {"CoulombInter": "offsite_interorb"}, True,
-                        mode="FLEX")
-        # ... and the remediation the message names actually works
+    def test_auto_offsite_interorb_promotes_to_general_and_runs(self):
+        """Off-site inter-orbital CoulombInter used to be a general-ONLY
+        rejection, the case the auto remediation hint was written for.
+        Since #181 Tier 1 the general path accepts it (Hartree vertex,
+        measured equal to the RPA ring), so auto promotes and RUNS; the
+        explicit 'reduced' pin stays available as the 1.0.x approximation.
+        No off-site class is general-only-rejected any more: the two still
+        rejected off-site types (Exchange, PairHop) are rejected by reduced
+        too, so their messages carry no 'request reduced' hint (see
+        test_offsite_exchange_rejection_carries_no_reduced_hint)."""
+        solver, _, _ = self._solve("auto", {"CoulombInter": "offsite_interorb"},
+                                   True, mode="FLEX")
+        self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
+                         ("general", "auto:flex_forcing"))
         solver, _, _ = self._solve("reduced",
                                    {"CoulombInter": "offsite_interorb"}, True,
                                    mode="FLEX")
         self.assertEqual((solver.calc_scheme, solver._scheme_resolution),
                          ("reduced", "explicit"))
+
+    def test_offsite_exchange_rejection_carries_no_reduced_hint(self):
+        """auto -> general (CoulombInter is flex_forcing) meets an off-site
+        Exchange: the general path rejects it, and the message must NOT
+        point at calc_scheme='reduced', which rejects Exchange as well --
+        the hint would send the user to a second error."""
+        with self.assertRaises(ValueError) as cm:
+            self._solve("auto", {"CoulombInter": "onsite_inter.dat",
+                                 "Exchange": "offsite_exchange"}, True,
+                        mode="FLEX")
+        msg = str(cm.exception)
+        self.assertIn("off-site", msg)
+        self.assertIn("Exchange", msg)
+        self.assertNotIn("calc_scheme = 'reduced'", msg)
+        with self.assertRaises(ValueError):
+            self._solve("reduced", {"CoulombInter": "onsite_inter.dat",
+                                    "Exchange": "offsite_exchange"}, True,
+                        mode="FLEX")
 
     def test_auto_spin_mode_rejection_names_the_resolution_and_the_reduced_pin(self):
         # a declared Extern makes H0(k) spin-dependent, which the general
@@ -889,8 +919,9 @@ class TestFLEXAutoResolution(_Case):
         was not chosen by the resolver, so pointing at 'auto' would misname
         what happened."""
         with self.assertRaises(ValueError) as cm:
-            self._solve("general", {"CoulombInter": "offsite_interorb"}, True,
+            self._solve("general", {"Exchange": "offsite_exchange"}, True,
                         mode="FLEX")
+        self.assertIn("off-site", str(cm.exception))
         self.assertNotIn("calc_scheme='auto'", str(cm.exception))
         with self.assertRaises(ValueError) as cm:
             self._solve("general", {"CoulombInter": "onsite_inter.dat"}, True,
