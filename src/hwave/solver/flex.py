@@ -2227,13 +2227,14 @@ class FLEX(RPA):
                 "Exchange": (
                     "its local-bilinear regrouping -J S+_i S-_j is a "
                     "transverse (spin-flip) object, and its longitudinal "
-                    "spin/charge content has not been adjudicated (#181 "
-                    "Tier 2); the RPA ring returns the bare bubble for it"),
+                    "spin/charge content has not been adjudicated "
+                    "(GitHub issue #181, Tier 2); the RPA ring returns "
+                    "the bare bubble for it"),
                 "PairHop": (
                     "no local-bilinear particle-hole regrouping exists "
                     "for an inter-site pair hopping (the RPA solver drops "
-                    "it, #157); it needs a bond-resolved vertex (#181 "
-                    "Tier 3)"),
+                    "it, GitHub issue #157); it needs a bond-resolved "
+                    "vertex (GitHub issue #181, Tier 3)"),
             }
             for itype in ("CoulombIntra", "CoulombInter", "Hund",
                           "Exchange", "PairHop", "Ising", "PairLift"):
@@ -2258,13 +2259,15 @@ class FLEX(RPA):
                         # would send the user to a second error.
                         raise ValueError(
                             "FLEX calc_scheme='general' does not support "
-                            "an off-site '{}' entry (irvec={}, orbvec={}"
-                            "{}): {}. Off-site CoulombInter, Hund and "
-                            "Ising are supported (as their Hartree "
-                            "vertex).".format(
+                            "an off-site '{}' entry (irvec={}, orbvec={}, "
+                            "as declared in the interaction input{}): {}. "
+                            "Remove the off-site '{}' entries from the "
+                            "input to run FLEX; off-site CoulombInter, "
+                            "Hund and Ising are supported (as their "
+                            "Hartree vertex).".format(
                                 itype, tuple(irvec), tuple(orbvec),
-                                ", declared before sublattice folding"
-                                if has_fold else "", reason))
+                                ", before sublattice folding"
+                                if has_fold else "", reason, itype))
                     offsite_tbl.setdefault(itype, {})[(irvec, orbvec)] = v
                     # (Reader-bypassing internal tables only: file input
                     # rejects one-sided declarations since #93.)
@@ -2278,12 +2281,13 @@ class FLEX(RPA):
 
             if offsite_tbl:
                 logger.warning(
-                    "FLEX calc_scheme='general': off-site entries of {} "
-                    "enter as their Hartree (density-slot) vertex V(q) "
-                    "only; the exchange crossing of an off-site term is "
-                    "not representable by a q-only vertex and is not "
-                    "included (the same approximation the RPA ring makes; "
-                    "a bond-resolved treatment is tracked in #181).".format(
+                    "FLEX calc_scheme='general': proceeding with the "
+                    "Hartree (density-slot) vertex V(q) only for the "
+                    "off-site entries of {}; the exchange crossing of an "
+                    "off-site term is not representable by a q-only "
+                    "vertex and is omitted (the same approximation the "
+                    "RPA ring makes; a bond-resolved treatment is tracked "
+                    "in GitHub issue #181).".format(
                         ", ".join(sorted(offsite_tbl))))
 
             if has_fold:
