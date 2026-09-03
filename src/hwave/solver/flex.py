@@ -2291,17 +2291,24 @@ class FLEX(RPA):
                 # a folded bond from on-site input, so the split had to be
                 # made before folding (the pre-fold-locality rule the RPA
                 # solver's _append_inter_cross follows for the same reason).
-                # A folded on-site entry and a folded bond never share a
-                # key (same sub-cell AND R' = 0 means R = 0 before the
-                # fold), so the union below is the folded whole table.
+                # The whole table is the fold of the whole PRE-fold table,
+                # never a dict union of the two folded parts: a
+                # displacement that is a full lattice period (judged
+                # off-site by the irvec == 0 rule, as the ring judges it)
+                # folds onto the SAME key as the on-site entry of that
+                # orbital pair, and a union would keep one of the two
+                # where the fold sums them (review finding; pinned by
+                # test_folded_key_collision_between_the_two_parts_is_summed).
+                types_present = [t for t in list(onsite_tbl)
+                                 + [t for t in offsite_tbl
+                                    if t not in onsite_tbl]]
+                whole_tbl = {t: self.ham_info._reshape_interaction(
+                                 scan_ham[t], False)
+                             for t in types_present}
                 onsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                               for t, tbl in onsite_tbl.items()}
                 offsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                                for t, tbl in offsite_tbl.items()}
-                whole_tbl = {t: {**onsite_tbl.get(t, {}),
-                                 **offsite_tbl.get(t, {})}
-                             for t in list(onsite_tbl)
-                             + [t for t in offsite_tbl if t not in onsite_tbl]}
             else:
                 # the reader's own table, in its own entry order: every
                 # slot element that existed before the split keeps its

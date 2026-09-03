@@ -212,6 +212,33 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                         np.max(np.abs(chiq[:, :, :n, :n, :n, :n]
                                       - np.asarray(gr['chi0q']))), 1e-3)
 
+    def test_folded_key_collision_between_the_two_parts_is_summed(self):
+        """A displacement that is a full lattice period (R = (4,0,0) on a
+        4-cell axis; internal table -- the reader-side wrap is the
+        (n-1,0,0) form tested elsewhere) is judged off-site by the
+        irvec == 0 rule, exactly as the RPA ring judges it, yet it folds
+        onto the SAME key as the on-site entry of the same orbital pair.
+        The whole-table k-space array must carry the SUM of the two
+        (folding the combined table), not whichever part was merged
+        last; the ring is the reference, and the on-site entry must
+        matter."""
+        wrapped = [('CoulombInter', ((4, 0, 0), (0, 1)), 0.2),
+                   ('CoulombInter', ((-4, 0, 0), (1, 0)), 0.2)]
+        gr, gf = _run_pair('tests/rpa/input_2orb',
+                           {'CoulombInter': 'onsite_inter.dat'},
+                           [4, 4, 1], filling=0.5, sub=(2, 1, 1),
+                           inject=wrapped)
+        _assert_element_complete_equal(self, gr, gf, norb=4)
+        # anti-vacuity: the on-site declaration changes the answer
+        gr_off_only, _ = _run_pair(
+            'tests/rpa/input_2orb', {'CoulombInter': 'onsite_inter.dat'},
+            [4, 4, 1], filling=0.5, sub=(2, 1, 1),
+            inject=wrapped + [('CoulombInter', ((0, 0, 0), (0, 1)), 0.0),
+                              ('CoulombInter', ((0, 0, 0), (1, 0)), 0.0)])
+        self.assertGreater(np.max(np.abs(np.asarray(gr['chiq'])
+                                         - np.asarray(gr_off_only['chiq']))),
+                           1e-3)
+
     def test_aggregate_coulomb_under_folding_equals_the_explicit_split(self):
         """Aggregate `Coulomb` is normalised into CoulombIntra + CoulombInter
         BEFORE the locality split and the per-part folding; the result
