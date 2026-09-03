@@ -785,10 +785,16 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
    :ref:`above <flex_scope>`), but it is **spin-free only** — it raises a
    ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"`` and
-   rejects ``enable_spin_orbital``. Off-site input is accepted only for
-   ``CoulombInter`` with equal orbitals (a == b) and no sublattice folding
-   — the class measured element-complete equal to the RPA ring; every
-   other off-site entry raises a ``ValueError``. ``Exchange`` and
+   rejects ``enable_spin_orbital``. Off-site input is accepted for
+   ``CoulombInter``, ``Hund`` and ``Ising`` (same-orbital or inter-orbital,
+   with or without sublattice folding): each enters as its Hartree
+   (density) vertex :math:`V(q)` only — the exchange crossing of an
+   off-site term is not representable by a :math:`q`-only vertex and is
+   left out, the same approximation the RPA ring makes, and the solver
+   logs a warning saying so. For every such class the general path is
+   measured element-complete equal to the RPA ring. Off-site ``Exchange``
+   and ``PairHop`` raise a ``ValueError`` (no adjudicated content and no
+   local-pair form, respectively). On-site ``Exchange`` and
    ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme),
    but ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
    **inert** (accepted with a note that it is exactly zero). The general path writes ``chiq_s``/

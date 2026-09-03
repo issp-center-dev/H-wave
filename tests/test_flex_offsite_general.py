@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """Off-site interactions in the general (full-vertex) FLEX: the measured policy.
 
-Accepted off-site: CoulombInter with SAME-orbital pairs (a == b), without
-sublattice folding. For exactly that class, FLEX at IterationMax=1 is
-element-complete equal to the RPA ring -- every spin-orbital component of chiq
-at every frequency and q, reconstructed from the FLEX channels, to ~1e-14 --
-because the vertex is V(q) on the density slots alone and the S/C k-grid is
-the same C-ordered 2*pi*i/n grid as chi0's FFT axis.
+Accepted off-site (#181, Tier 1): CoulombInter, Hund and Ising -- same-orbital
+or inter-orbital, with or without sublattice folding. Each enters as its
+Hartree vertex V_ab(q) on the density (aa,bb) slots ONLY (the locality-split
+S/C builder, hwave.solver._sc_matrices_myo); the exchange crossing of an
+off-site term is a non-local particle-hole pair, not representable by a
+q-only matrix, and is absent -- exactly the RPA ring's reading, so for every
+accepted class FLEX at IterationMax=1 is element-complete equal to the ring:
+every spin-orbital component of chiq at every frequency and q, reconstructed
+from the FLEX channels, to <= 1e-13. Locality is judged on the PRE-fold
+declarations, so the answer does not depend on SubShape. The solver warns
+once per solve that only the Hartree vertex of off-site terms enters
+(bond-resolved treatment: #181 Tier 3).
 
-Everything else stays rejected, each for a measured reason:
+Before the split the shared builder wrote off-site content into the cross
+(ab,ab) slots and its on-site `l1 != l3` density gate deleted the same-orbital
+off-site Hund/Ising: 3.0e-1 / 4.6e-1 against the ring at one orbital,
+2.4e-2 .. 3.4e-2 for the inter-orbital classes, 1.3e-1 under folding.
 
-* CoulombInter with a != b off-site, and Hund / Ising off-site: the MYO S/C
-  builder applies the full on-site Kanamori slot mapping, which feeds the
-  Fierz (Case 2) inter-orbital slots; off-site, the particle-hole pair behind
-  those slots is non-local and not representable by a q-only matrix. Off-site
-  Hund / Ising differ from the ring by 3e-2 / 7e-2 even at ONE orbital, where
-  no inter-orbital slot exists to blame.
-* Off-site combined with sublattice folding: folding turns part of an a == b
-  bond into intra-cell inter-orbital coupling and the solvers then differ by
-  2e-2 (the folded analogue of the #104 content); deferred to #107.
-* Exchange / PairHop off-site (non-local pair), CoulombIntra off-site (#106).
+Still rejected: off-site Exchange (its local regrouping -J S+_i S-_j is
+transverse; the longitudinal content is unadjudicated -- #181 Tier 2; the ring
+returns the bare bubble for it, so "equal to the ring" would be agreement at
+zero vertex effect) and off-site PairHop (no local-bilinear regrouping at
+all; the ring drops it, #157). An off-site CoulombIntra row is refused by the
+reader (#93).
 """
 
 import logging
