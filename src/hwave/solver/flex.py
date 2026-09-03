@@ -2243,10 +2243,11 @@ class FLEX(RPA):
                     "tests/test_offsite_exchange_ed_longitudinal.py) -- "
                     "its physics is transverse (the local regrouping "
                     "-J S+_i S-_j is a spin-flip object, outside this "
-                    "spin-free longitudinal solve), and what remains in "
-                    "the longitudinal channel is a non-local pair "
-                    "(bond-resolved, Tier 3); accepting it would give a "
-                    "term with no effect"),
+                    "spin-free longitudinal solve; the RPA solver's "
+                    "transverse channel is where it acts), and what "
+                    "remains in the longitudinal channel is a non-local "
+                    "pair (bond-resolved, Tier 3); accepting it would "
+                    "give a term with no effect"),
                 "PairHop": (
                     "no local-bilinear particle-hole regrouping exists "
                     "for an inter-site pair hopping (the RPA solver drops "
