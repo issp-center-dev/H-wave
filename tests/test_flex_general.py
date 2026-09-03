@@ -836,36 +836,42 @@ class TestFLEXGeneralGuards(unittest.TestCase):
             solver.solve(green_info, info_file['output']['path_to_output'])
 
     def test_general_offsite_policy_per_type(self):
-        """Off-site entries are allowed only for CoulombInter with EQUAL
-        orbitals (a == b) and no sublattice folding -- the class measured
-        element-complete equal to the RPA ring (see
-        tests/test_flex_offsite_general.py). Everything else is rejected:
-        a != b CoulombInter, Hund and Ising feed non-local Fierz slots (and
-        Hund / Ising differ from the ring even at one orbital), Exchange and
-        PairHop have a non-local pair, CoulombIntra is read only at r = 0 by
-        UHFk (#106)."""
-        # accepted: a == b off-site CoulombInter (a one-sided internal
-        # TABLE is fine: both solvers reduce it to its reversal-symmetric
-        # part; file input must be closed since #93)
-        flex = _make_general_flex(norb=2)
-        flex.ham_info.param_ham.setdefault("CoulombInter", {})[
-            ((1, 0, 0), (0, 0))] = 1.0
-        flex._myo_sc_cache = None
-        chi0_raw = _fake_general_chi0q(flex)
-        flex._inflate_chi0q_and_ham_general(chi0_raw, None)   # must not raise
-
-        # rejected: a != b CoulombInter, and every other type
-        for itype, orbvec in (("CoulombInter", (0, 1)), ("Hund", (0, 0)),
-                              ("Ising", (0, 0)), ("Exchange", (0, 1)),
-                              ("PairHop", (0, 1)), ("CoulombIntra", (0, 0))):
-            flex = _make_general_flex(norb=2)
-            flex.ham_info.param_ham.setdefault(itype, {})[
-                ((1, 0, 0), orbvec)] = 1.0
-            flex._myo_sc_cache = None
-            chi0_raw = _fake_general_chi0q(flex)
-            with self.assertRaises(ValueError) as cm:
+        """Off-site entries are accepted for CoulombInter, Hund and Ising --
+        same-orbital or inter-orbital -- as their Hartree (density-slot)
+        vertex, the class measured element-complete equal to the RPA ring
+        (tests/test_flex_offsite_general.py, #181 Tier 1). Off-site
+        Exchange (longitudinal content unadjudicated, Tier 2) and PairHop
+        (no local-bilinear regrouping) are rejected, and so is any other
+        type handed in off-site through an internal table (fail closed;
+        the reader already refuses an off-site CoulombIntra row, #93)."""
+        # accepted (a one-sided internal TABLE is fine: both solvers reduce
+        # it to its reversal-symmetric part; file input must be closed
+        # since #93)
+        for itype, orbvec in (("CoulombInter", (0, 0)), ("CoulombInter", (0, 1)),
+                              ("Hund", (0, 0)), ("Hund", (0, 1)),
+                              ("Ising", (0, 0)), ("Ising", (0, 1)),
+                              ("PairLift", (0, 1))):
+            with self.subTest(accepted=itype, orbvec=orbvec):
+                flex = _make_general_flex(norb=2)
+                flex.ham_info.param_ham.setdefault(itype, {})[
+                    ((1, 0, 0), orbvec)] = 1.0
+                flex._myo_sc_cache = None
+                chi0_raw = _fake_general_chi0q(flex)
                 flex._inflate_chi0q_and_ham_general(chi0_raw, None)
-            self.assertIn("off-site", str(cm.exception).lower())
+
+        # rejected
+        for itype, orbvec in (("Exchange", (0, 1)), ("PairHop", (0, 1)),
+                              ("CoulombIntra", (0, 0))):
+            with self.subTest(rejected=itype):
+                flex = _make_general_flex(norb=2)
+                flex.ham_info.param_ham.setdefault(itype, {})[
+                    ((1, 0, 0), orbvec)] = 1.0
+                flex._myo_sc_cache = None
+                chi0_raw = _fake_general_chi0q(flex)
+                with self.assertRaises(ValueError) as cm:
+                    flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+                self.assertIn("off-site", str(cm.exception).lower())
+                self.assertIn(itype, str(cm.exception))
 
     def test_general_pairlift_is_inert_and_warns(self):
         """PairLift contributes S=C=0 to the particle-hole spin/charge vertex

@@ -36,9 +36,10 @@ Status of these records
 
 The tolerances below are **confirmed**: they were reproduced on the
 project's continuous-integration runners at source revision
-``8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`` (workflow run
-``32204319966 attempt 1``), and hold as of that revision. The notes
-below record where each residual was originally measured.
+``db2c3ff0444165aaca95c54f03f99efaccab9ff7`` (workflow runs
+``32204319966 attempt 1``, ``33714525023 attempt 1``), and hold as of
+that revision. The notes below record where each residual was
+originally measured.
 
 How to read the table
 *********************
@@ -117,13 +118,13 @@ Support matrix
      - supported
      - supported
      - ``EQUIV``
-   * - ``general.ring.offsite_coulombinter_interorb.flexreject``
+   * - ``general.ring.offsite_coulombinter_interorb.mu``
      - ``CoulombInter`` (off-site)
      - ``general``
      - spin-free
      - supported
-     - rejected
-     - ``FLEX-REJECT·RPA-SUPPORTED``
+     - supported
+     - ``EQUIV``
    * - ``general.ring.offsite_coulombinter_sameorb.mu``
      - ``CoulombInter`` (off-site)
      - ``general``
@@ -136,8 +137,8 @@ Support matrix
      - ``general``
      - spin-free
      - supported
-     - rejected
-     - ``FLEX-REJECT·RPA-SUPPORTED``
+     - supported
+     - ``EQUIV``
    * - ``general.ring.offsite_coulombintra_literalkey.reject``
      - ``CoulombIntra`` (off-site)
      - ``general``
@@ -152,20 +153,20 @@ Support matrix
      - supported
      - rejected
      - ``FLEX-REJECT·RPA-SUPPORTED``
-   * - ``general.ring.offsite_hund.flexreject``
+   * - ``general.ring.offsite_hund.mu``
      - ``Hund`` (off-site)
      - ``general``
      - spin-free
      - supported
-     - rejected
-     - ``FLEX-REJECT·RPA-SUPPORTED``
-   * - ``general.ring.offsite_ising.flexreject``
+     - supported
+     - ``EQUIV``
+   * - ``general.ring.offsite_ising.mu``
      - ``Ising`` (off-site)
      - ``general``
      - spin-free
      - supported
-     - rejected
-     - ``FLEX-REJECT·RPA-SUPPORTED``
+     - supported
+     - ``EQUIV``
    * - ``general.ring.offsite_pairhop.flexreject``
      - ``PairHop`` (off-site)
      - ``general``
@@ -351,27 +352,15 @@ record what the unsupported side does instead.
 ``chi0q_init.reuse``
    * FLEX: nothing to compare -- accepted; no corresponding option semantics (flex.py:408) -- FLEX starts every SCF loop from zero self-energy and recomputes chi0q from the dressed Green's function each iteration (flex.py:446-451's own docstring), so a chi0q_init entry loaded by the inherited RPA read_init is never consumed. Measured: supplying a chi0q_init DELIBERATELY PERTURBED to twice the value FLEX itself computes leaves every one of FLEX's output arrays bitwise unchanged.
 
-``general.ring.offsite_coulombinter_interorb.flexreject``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'CoulombInter'``.
-
-``general.ring.offsite_coulombinter_sameorb.subshape``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``with sublattice folding``.
-
 ``general.ring.offsite_coulombintra_literalkey.reject``
    * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``the documented operator is on-site and same-orbital``.
    * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``the documented operator is on-site and same-orbital``.
 
 ``general.ring.offsite_exchange.flexreject``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'Exchange'``.
-
-``general.ring.offsite_hund.flexreject``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'Hund'``.
-
-``general.ring.offsite_ising.flexreject``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'Ising'``.
+   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``off-site 'Exchange' entry``.
 
 ``general.ring.offsite_pairhop.flexreject``
-   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``interaction 'PairHop'``.
+   * FLEX refuses the input during the solve and raises ``ValueError`` whose message contains ``off-site 'PairHop' entry``.
 
 ``reduced.ring.onsite_exchange.reject``
    * RPA refuses the input at construction and raises ``ValueError`` whose message contains ``has no density-diagonal content``.
@@ -412,11 +401,35 @@ records rather than user guidance.
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-12``.
      Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter.conditioning.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 7.294815e-14; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 6.843859e-14. Resulting atol 1.0e-12 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12). Supersedes this cell's original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell's actual (much smaller) post-fix residual.
 
+``general.ring.offsite_coulombinter_interorb.mu``
+   * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+   * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+
 ``general.ring.offsite_coulombinter_sameorb.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
      Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter_sameorb.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.551921e-17; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 4.167915e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14). Supersedes this cell's original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell's actual (much smaller) post-fix residual.
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
      Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter_sameorb.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.220865e-16; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 1.944572e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12). Supersedes this cell's original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell's actual (much smaller) post-fix residual.
+
+``general.ring.offsite_coulombinter_sameorb.subshape``
+   * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.776646e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 4.163442e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+   * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.645067e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.267834e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+
+``general.ring.offsite_hund.mu``
+   * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+   * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714462e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+
+``general.ring.offsite_ising.mu``
+   * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+   * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
 
 ``general.ring.onsite_coulombinter.coefftail.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
@@ -540,23 +553,26 @@ same ground, each with the note recorded alongside it. They are
 listed for orientation only: the claims on this page are
 established by ``tests/test_rpa_flex_equivalence_table.py`` alone.
 
-``general.ring.offsite_coulombinter_interorb.flexreject``
-   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: FLEX rejects off-site CoulombInter with a != b (inter-orbital) under calc_scheme='general'.
+``general.ring.offsite_coulombinter_interorb.mu``
+   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring``: The same fixture element-complete equal between RPA and FLEX for off-site inter-orbital CoulombInter (#181 Tier 1).
 
 ``general.ring.offsite_coulombinter_sameorb.mu``
    * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_one_orbital_offsite_v_matches_the_rpa_ring_exactly``: The same fixture (tests/rpa/input's coulombinter.dat, filling=0.75) element-complete equal between RPA and FLEX for off-site same-orbital CoulombInter.
 
+``general.ring.offsite_coulombinter_sameorb.subshape``
+   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_offsite_under_sublattice_folding_matches_the_ring``: Same-orbital off-site CoulombInter under SubShape=(2,1,1) and (4,1,1) element-complete equal between RPA and FLEX (#181 Tier 1).
+
 ``general.ring.offsite_exchange.flexreject``
    * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: FLEX rejects off-site Exchange under calc_scheme='general'.
 
-``general.ring.offsite_hund.flexreject``
-   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: FLEX rejects off-site Hund under calc_scheme='general'.
+``general.ring.offsite_hund.mu``
+   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring``: The same fixture element-complete equal between RPA and FLEX for off-site Hund (#181 Tier 1).
 
-``general.ring.offsite_ising.flexreject``
-   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: FLEX rejects off-site Ising under calc_scheme='general'.
+``general.ring.offsite_ising.mu``
+   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring``: The same fixture element-complete equal between RPA and FLEX for off-site Ising (#181 Tier 1).
 
 ``general.ring.offsite_pairhop.flexreject``
-   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: tests/test_flex_offsite_general.py's general rejection-classes coverage (this exact PairHop case is not one of its enumerated subTest rows -- the module's docstring names off-site PairHop as rejected for the same non-local-pair reason as Exchange; linked for the surrounding module context, not a per-type pin).
+   * FLEX -- ``tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes``: FLEX rejects off-site PairHop under calc_scheme='general' (this fixture is one of the enumerated subTest rows since #181 Tier 1).
 
 ``reduced.ring.offsite_coulombinter.mu``
    * RPA -- ``tests.test_rpa_flex_oneshot_equivalence::TestReducedOneShot::test_matrix_cells``: An existing one-shot comparison over this same fixture and filling pins the chiq uu-ud/uu+ud block equivalence under calc_scheme='reduced'.

@@ -1981,7 +1981,7 @@ def _accumulate_coeff(dst, coeff, value):
 
 
 def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
-                             _presymmetrised=False):
+                             _presymmetrised=False, locality_split=None):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
 
     Follows Kuroki et al., Eq.(5) in arXiv:0902.3691:
@@ -1995,6 +1995,28 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         Number of orbitals.
     Nx, Ny, Nz : int
         Grid dimensions.
+    locality_split : None or (dict, dict), keyword
+        Default None: the on-site Kanamori slot map is applied to
+        ``inter_k`` as a whole (every existing caller). When given, the
+        pair ``(inter_k_onsite, inter_k_offsite)`` -- the k-space forms of
+        the ``R == 0`` and ``R != 0`` PRE-fold declarations, separately --
+        makes the slot map locality-aware (#181 Tier 1, the general FLEX
+        path). ``inter_k`` stays the authoritative whole table (the
+        reader's own, folded under SubShape); the two parts are
+        locality-ROUTING inputs and need not form a per-type
+        decomposition of it (under folding a full-period displacement
+        folds onto an on-site key, and an aggregate ``Coulomb`` entry can
+        then be CoulombIntra in the whole table while the pre-fold split
+        holds it as CoulombInter): the cross (Case 2) and antidiag (Case 4)
+        families, whose particle-hole pair is NON-local for ``R != 0``,
+        are built from the on-site part only, and the same-orbital
+        density elements of Hund / Ising (Case 3 at ``l1 == l3``, where
+        an orbital has no ON-site Hund / Ising coupling with itself) take
+        the off-site part, which is a physical density-density term.
+        Everything else keeps reading ``inter_k`` as a whole, so the
+        summation order of every element that existed without the split
+        is unchanged (bit-identical output for on-site input and for
+        same-orbital off-site CoulombInter, the class accepted before).
 
     Returns
     -------
@@ -2013,18 +2035,35 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     # average with the wrong (same-q) partner and corrupt off-site input.
     if not _presymmetrised:
         inter_k = _symmetrise_interactions_k(inter_k)
+    if locality_split is None:
+        inter_k_onsite = inter_k
+        inter_k_offsite = None
+    else:
+        inter_k_onsite, inter_k_offsite = locality_split
+        if not _presymmetrised:
+            inter_k_onsite = _symmetrise_interactions_k(inter_k_onsite)
+            inter_k_offsite = _symmetrise_interactions_k(inter_k_offsite)
 
-    def _get(itype):
-        if itype in inter_k:
-            return inter_k[itype]  # (norb, norb, Nx, Ny, Nz)
+    def _get(itype, source=inter_k):
+        if source is not None and itype in source:
+            return source[itype]  # (norb, norb, Nx, Ny, Nz)
         return None
 
     U_mat = _get("CoulombIntra")
     Up_mat = _get("CoulombInter")
     J_mat = _get("Hund")
-    Jp_mat = _get("Exchange")
     I_mat = _get("Ising")
-    PH_mat = _get("PairHop")
+    # the families whose pair is non-local off-site read the on-site part
+    # (Exchange and PairHop have cross / antidiag content only)
+    Up_on = _get("CoulombInter", inter_k_onsite)
+    J_on = _get("Hund", inter_k_onsite)
+    Jp_on = _get("Exchange", inter_k_onsite)
+    I_on = _get("Ising", inter_k_onsite)
+    PH_on = _get("PairHop", inter_k_onsite)
+    # the same-orbital density elements of Hund / Ising read the off-site
+    # part (None without a split: the on-site gate below then applies)
+    J_off = _get("Hund", inter_k_offsite)
+    I_off = _get("Ising", inter_k_offsite)
 
     # Build using precomputed index arrays to avoid Python loops
     # for small norb (1-3), the loop overhead is negligible;
@@ -2059,8 +2098,8 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     # Hund + Exchange at equal J giving S(ab,ab) without J and
     # C(ab,ab) = -U' + 2J -- is pinned in the tests.
     mask2 = (l1f == l3f) & (l2f == l4f) & (l1f != l2f)
-    cross_terms = [(Up_mat, "CoulombInter"), (I_mat, "Ising"),
-                   (J_mat, "Hund"), (Jp_mat, "Exchange")]
+    cross_terms = [(Up_on, "CoulombInter"), (I_on, "Ising"),
+                   (J_on, "Hund"), (Jp_on, "Exchange")]
     for i in np.where(mask2)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
@@ -2079,20 +2118,26 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     # (issue #95); the simple two-index formulation used by chi0q_mode="load"
     # builds exactly that (`Wc = U_k + 2 V_k`, _compute_vertices_simple).
     # Case 1 above writes U_a into the same element, so both accumulate.
-    # Hund and Ising stay restricted to l1 != l3: an orbital has no Hund or
-    # Ising coupling with itself, and letting a stray diagonal entry through
-    # here would silently move S as well.
+    # Hund and Ising stay restricted to l1 != l3 for ON-site input: an
+    # orbital has no on-site Hund or Ising coupling with itself, and letting
+    # a stray diagonal entry through here would silently move S as well.
+    # With a locality split the l1 == l3 element takes the OFF-site part
+    # only (an inter-site same-orbital Hund / Ising is a physical
+    # density-density term, #181 Tier 1).
     mask3 = (l1f == l2f) & (l3f == l4f)
     for i in np.where(mask3)[0]:
         s_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         c_q = np.zeros((Nx, Ny, Nz), dtype=complex)
         _l1, _l3 = l1f[i], l3f[i]
         if _l1 != _l3:
-            for mat, itype in ((J_mat, "Hund"), (I_mat, "Ising")):
-                if mat is not None:
-                    sco, cco = sc_coefficients(itype, "density")
-                    _accumulate_coeff(s_q, sco, mat[_l1, _l3])
-                    _accumulate_coeff(c_q, cco, mat[_l1, _l3])
+            density_terms = ((J_mat, "Hund"), (I_mat, "Ising"))
+        else:
+            density_terms = ((J_off, "Hund"), (I_off, "Ising"))
+        for mat, itype in density_terms:
+            if mat is not None:
+                sco, cco = sc_coefficients(itype, "density")
+                _accumulate_coeff(s_q, sco, mat[_l1, _l3])
+                _accumulate_coeff(c_q, cco, mat[_l1, _l3])
         if Up_mat is not None:
             sco, cco = sc_coefficients("CoulombInter", "density")
             _accumulate_coeff(s_q, sco, Up_mat[_l1, _l3])
@@ -2110,10 +2155,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         # its vertex on the pair-DIAGONAL slot family (Case 2), and end to end
         # the antidiagonal placement produced the right magnitude at the wrong
         # slots in both channels. Only PairHop belongs here (#100/#102).
-        if PH_mat is not None:
+        if PH_on is not None:
             sco, cco = sc_coefficients("PairHop", "antidiag")
-            _accumulate_coeff(s_q, sco, PH_mat[_l1, _l2])
-            _accumulate_coeff(c_q, cco, PH_mat[_l1, _l2])
+            _accumulate_coeff(s_q, sco, PH_on[_l1, _l2])
+            _accumulate_coeff(c_q, cco, PH_on[_l1, _l2])
         S_all[:, :, :, idx12[i], idx34[i]] = s_q
         C_all[:, :, :, idx12[i], idx34[i]] = c_q
 

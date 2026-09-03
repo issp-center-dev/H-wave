@@ -473,8 +473,14 @@ POLICY_CEILINGS: dict = {
 # asserted by ``TestRegistrySchema`` in
 # ``tests/test_rpa_flex_equivalence_table.py``.
 PROVENANCE: dict = {
-    "source_sha": "8144bf3f9e9539bad4759a2fbd1b24f52f7bef33",
-    "run_ids": ("32204319966 attempt 1",),
+    # Event 7 (#181 Tier 1): the inventory changed (four cells flipped
+    # to comparison cells, ids renamed), so the record moves to the
+    # revision and run that froze the enlarged registry; the earlier
+    # freeze (8144bf3f, run 32204319966 attempt 1, Event 3) is kept in
+    # the run list as the provenance of every pre-existing bound, all of
+    # which the Event-7 run reproduced without change.
+    "source_sha": "db2c3ff0444165aaca95c54f03f99efaccab9ff7",
+    "run_ids": ("32204319966 attempt 1", "33714525023 attempt 1"),
     "status": "frozen",
 }
 
@@ -719,6 +725,98 @@ def _measured_equiv_recalibrated(
             ),
         }
     )
+
+
+def _measured_equiv_tier1(
+    label: str,
+    chi0q_ceiling_key: str,
+    chi0q_dev: float,
+    chi0q_ci_max: float,
+    chiq_comparator: str,
+    chiq_ceiling_key: str,
+    chiq_dev: float,
+    chiq_ci_max: float,
+) -> "Equiv":
+    """Calibration log Event 7 (#181 Tier 1) variant of
+    ``_measured_equiv_recalibrated`` for the four cells that flipped
+    from ``FLEX-REJECT.RPA-SUPPORTED`` to ``SUPPORTED`` when the general
+    FLEX path gained the locality-split S/C builder: they had no
+    comparison before, so their literals are measured fresh over {the
+    current dev machine, the three gating CI runners} -- the same bound
+    rule (``_candidate_atol``: 10x the larger residual, floored at
+    1e-15, rounded up to a power of ten, capped at the mapped ceiling).
+    ``label`` names the cell, for the provenance string only.
+    """
+
+    def _prov(dev_residual, ci_residual, atol, ceiling):
+        return (
+            "NEW comparison cell (#181 Tier 1, calibration log Event 7, "
+            "cell {}; FLEX-REJECT.RPA-SUPPORTED before): measured on the "
+            "macOS arm64 development machine (Python 3.13.13, numpy "
+            "2.4.6, scipy 1.17.1) max|diff| {:.6e}; MAX over the three "
+            "gating CI runners (ubuntu-latest x Python 3.10-3.12, "
+            "workflow run {}) max|diff| {:.6e}. Resulting atol {:.1e} "
+            "(10x the larger residual, floored at 1e-15, rounded up to "
+            "a power of ten; policy ceiling {:.1e}).".format(
+                label, dev_residual, _TIER1_CI_RUN, ci_residual, atol,
+                ceiling
+            )
+        )
+
+    chi0q_ceiling = POLICY_CEILINGS[chi0q_ceiling_key]
+    chiq_ceiling = POLICY_CEILINGS[chiq_ceiling_key]
+    chi0q_atol = _candidate_atol(chi0q_dev, chi0q_ci_max, chi0q_ceiling)
+    chiq_atol = _candidate_atol(chiq_dev, chiq_ci_max, chiq_ceiling)
+
+    return Equiv(
+        observables={
+            "chi0q": ObservableSpec(
+                comparator="identity",
+                atol=chi0q_atol,
+                provenance=_prov(chi0q_dev, chi0q_ci_max, chi0q_atol, chi0q_ceiling),
+            ),
+            "chiq": ObservableSpec(
+                comparator=chiq_comparator,
+                atol=chiq_atol,
+                provenance=_prov(chiq_dev, chiq_ci_max, chiq_atol, chiq_ceiling),
+            ),
+        }
+    )
+
+
+# The CI calibration run the Event-7 literals below were frozen from
+# (workflow_dispatch of .github/workflows/equivalence-calibration.yml on
+# the #181 Tier 1 branch). "PENDING" until that run has been aggregated.
+_TIER1_CI_RUN = "33714525023 attempt 1"
+
+# Event 7 literals: (chi0q_dev, chi0q_ci_max, chiq_dev, chiq_ci_max) per
+# cell, read off ``python -m tests.equivalence_measure`` (dev, 3
+# invocations at db2c3ff0) and the calibration workflow's artifacts (CI
+# MAX over 3 runners x 3 invocations, aggregated by
+# ``tests.equivalence_freeze_check``), see
+# ``tests/equivalence_calibration_log.md`` Event 7.
+_MEASURED_OFFSITE_TIER1 = {
+    "general.ring.offsite_coulombinter_interorb.mu": _measured_equiv_tier1(
+        "general.ring.offsite_coulombinter_interorb.mu",
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.110249e-16,
+    ),
+    "general.ring.offsite_hund.mu": _measured_equiv_tier1(
+        "general.ring.offsite_hund.mu",
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 9.71446153374694e-17, 9.714755e-17,
+    ),
+    "general.ring.offsite_ising.mu": _measured_equiv_tier1(
+        "general.ring.offsite_ising.mu",
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.110249e-16,
+    ),
+    "general.ring.offsite_coulombinter_sameorb.subshape": _measured_equiv_tier1(
+        "general.ring.offsite_coulombinter_sameorb.subshape",
+        "chi0q_fixed", 2.77664569531416e-17, 4.163442e-17,
+        "general_from_flex_channels", "chiq_fixed", 5.645067159738241e-16, 9.267834e-16,
+    ),
+}
 
 
 # The cell inventory. It opens with a 2-cell BOOTSTRAP (rows 1 and 17),
@@ -1572,8 +1670,8 @@ _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU = Cell(
     ),
 )
 
-_CELL_21_OFFSITE_COULOMBINTER_INTERORB_FLEXREJECT = Cell(
-    cell_id="general.ring.offsite_coulombinter_interorb.flexreject",
+_CELL_21_OFFSITE_COULOMBINTER_INTERORB_MU = Cell(
+    cell_id="general.ring.offsite_coulombinter_interorb.mu",
     fixture=FixtureSpec(
         interactions={"CoulombInter": "offsite_coulombinter_interorb.dat"},
         **_E2_GENERAL_MU_KWARGS,
@@ -1582,42 +1680,43 @@ _CELL_21_OFFSITE_COULOMBINTER_INTERORB_FLEXREJECT = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(
-        status=Status.REJECT,
-        steps=(
-            ExecuteReject(
-                site=Site.SOLVE, exc_type="ValueError",
-                fragment="interaction 'CoulombInter'",
-            ),
-        ),
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
         links=(
             SupplementaryLink(
                 test_id=(
                     "tests.test_flex_offsite_general::"
-                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                    "TestOffsiteGeneralFLEX::"
+                    "test_two_orbital_offsite_interorbital_classes_match_the_ring"
                 ),
                 claim=(
-                    "FLEX rejects off-site CoulombInter with a != b "
-                    "(inter-orbital) under calc_scheme='general'."
+                    "The same fixture element-complete equal between RPA "
+                    "and FLEX for off-site inter-orbital CoulombInter "
+                    "(#181 Tier 1)."
                 ),
             ),
         ),
     ),
-    comparison=None,
-    required_observables=(),
+    comparison=_MEASURED_OFFSITE_TIER1["general.ring.offsite_coulombinter_interorb.mu"],
+    required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
         "E2 offsite_coulombinter_interorb.dat -- off-site CoulombInter, "
         "inter-orbital (1,2), R=(1,0,0), coupling 0.2; filling=0.5. "
-        "RPA=SUPPORTED (off-site inter-orbital CoulombInter has no "
-        "known equivalence gap on the RPA side). FLEX SOLVE-time "
-        "reject: flex.py:2020-2043 (_flex_compute_veff_general -> "
-        "_inflate_chi0q_and_ham_general), the off-site guard's "
-        "a==b-only CoulombInter exemption."
+        "Was FLEX-REJECT.RPA-SUPPORTED until #181 Tier 1: the shared "
+        "S/C builder wrote the off-site bond into the cross (ab,ab) "
+        "slot, whose particle-hole pair is non-local for R != 0 "
+        "(3.4e-2 against the ring when forced through). The "
+        "locality-split builder (hwave.solver._sc_matrices_myo) "
+        "writes off-site content into the density (aa,bb) slots only "
+        "-- the Hartree vertex V_ab(q), exactly the ring's reading -- "
+        "and the cell is Equiv at round-off. The exchange crossing of "
+        "the off-site bond is absent on BOTH sides (#181 Tier 3)."
     ),
 )
 
-_CELL_22_OFFSITE_HUND_FLEXREJECT = Cell(
-    cell_id="general.ring.offsite_hund.flexreject",
+_CELL_22_OFFSITE_HUND_MU = Cell(
+    cell_id="general.ring.offsite_hund.mu",
     fixture=FixtureSpec(
         interactions={"Hund": "offsite_hund.dat"},
         **_E2_GENERAL_MU_KWARGS,
@@ -1626,36 +1725,41 @@ _CELL_22_OFFSITE_HUND_FLEXREJECT = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(
-        status=Status.REJECT,
-        steps=(
-            ExecuteReject(
-                site=Site.SOLVE, exc_type="ValueError",
-                fragment="interaction 'Hund'",
-            ),
-        ),
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
         links=(
             SupplementaryLink(
                 test_id=(
                     "tests.test_flex_offsite_general::"
-                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                    "TestOffsiteGeneralFLEX::"
+                    "test_two_orbital_offsite_interorbital_classes_match_the_ring"
                 ),
-                claim="FLEX rejects off-site Hund under calc_scheme='general'.",
+                claim=(
+                    "The same fixture element-complete equal between RPA "
+                    "and FLEX for off-site Hund (#181 Tier 1)."
+                ),
             ),
         ),
     ),
-    comparison=None,
-    required_observables=(),
+    comparison=_MEASURED_OFFSITE_TIER1["general.ring.offsite_hund.mu"],
+    required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
         "E2 offsite_hund.dat, R=(1,0,0), coupling 0.2; filling=0.5. "
-        "FLEX SOLVE-time reject: flex.py:2020-2043 -- off-site Hund "
-        "is not representable by a q-only vertex (non-local "
-        "particle-hole pair)."
+        "Was FLEX-REJECT.RPA-SUPPORTED until #181 Tier 1 (2.4e-2 "
+        "against the ring when forced through the on-site slot map: "
+        "off-site content in the non-local cross slot). Off-site Hund "
+        "is density-density on each site, so its Hartree vertex on the "
+        "density (aa,bb) slots is q-only and ring-identical; Equiv at "
+        "round-off with the locality-split builder. (Same-orbital "
+        "off-site Hund, deleted outright by the on-site `l1 != l3` "
+        "gate before Tier 1, is pinned by the one-orbital test in the "
+        "linked module.)"
     ),
 )
 
-_CELL_23_OFFSITE_ISING_FLEXREJECT = Cell(
-    cell_id="general.ring.offsite_ising.flexreject",
+_CELL_23_OFFSITE_ISING_MU = Cell(
+    cell_id="general.ring.offsite_ising.mu",
     fixture=FixtureSpec(
         interactions={"Ising": "offsite_ising.dat"},
         **_E2_GENERAL_MU_KWARGS,
@@ -1664,29 +1768,32 @@ _CELL_23_OFFSITE_ISING_FLEXREJECT = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(
-        status=Status.REJECT,
-        steps=(
-            ExecuteReject(
-                site=Site.SOLVE, exc_type="ValueError",
-                fragment="interaction 'Ising'",
-            ),
-        ),
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
         links=(
             SupplementaryLink(
                 test_id=(
                     "tests.test_flex_offsite_general::"
-                    "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
+                    "TestOffsiteGeneralFLEX::"
+                    "test_two_orbital_offsite_interorbital_classes_match_the_ring"
                 ),
-                claim="FLEX rejects off-site Ising under calc_scheme='general'.",
+                claim=(
+                    "The same fixture element-complete equal between RPA "
+                    "and FLEX for off-site Ising (#181 Tier 1)."
+                ),
             ),
         ),
     ),
-    comparison=None,
-    required_observables=(),
+    comparison=_MEASURED_OFFSITE_TIER1["general.ring.offsite_ising.mu"],
+    required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
         "E2 offsite_ising.dat, R=(1,0,0), coupling 0.2; filling=0.5. "
-        "FLEX SOLVE-time reject: flex.py:2020-2043."
+        "Was FLEX-REJECT.RPA-SUPPORTED until #181 Tier 1 (2.4e-2 "
+        "against the ring when forced through the on-site slot map). "
+        "Identical mechanism to the Hund cell: density-density on each "
+        "site, Hartree vertex on the density slots, Equiv at round-off "
+        "with the locality-split builder."
     ),
 )
 
@@ -1704,7 +1811,7 @@ _CELL_24_OFFSITE_EXCHANGE_FLEXREJECT = Cell(
         steps=(
             ExecuteReject(
                 site=Site.SOLVE, exc_type="ValueError",
-                fragment="interaction 'Exchange'",
+                fragment="off-site 'Exchange' entry",
             ),
         ),
         links=(
@@ -1722,8 +1829,17 @@ _CELL_24_OFFSITE_EXCHANGE_FLEXREJECT = Cell(
     interaction_class="offsite",
     notes=(
         "E2 offsite_exchange.dat, R=(1,0,0), coupling 0.2; "
-        "filling=0.5. FLEX SOLVE-time reject: flex.py:2020-2043 -- "
-        "non-local particle-hole pair off-site."
+        "filling=0.5. FLEX SOLVE-time reject (the off-site guard in "
+        "_inflate_chi0q_and_ham_general): off-site Exchange has no "
+        "adjudicated longitudinal spin/charge content -- its only "
+        "local-bilinear regrouping, -J S+_i S-_j, is transverse "
+        "(spin-flip bilinears), and in the longitudinal channel the "
+        "pair is non-local (#181 Tier 2: exact diagonalization "
+        "decides). RPA-SUPPORTED here means the ring runs and returns "
+        "the BARE bubble: ring_spin_table('Exchange') has spin-flip "
+        "content only, inert in the spin-free longitudinal solve -- "
+        "so lifting the FLEX rejection on ring parity would be "
+        "agreement at zero vertex effect, deliberately not done."
     ),
 )
 
@@ -1741,7 +1857,7 @@ _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT = Cell(
         steps=(
             ExecuteReject(
                 site=Site.SOLVE, exc_type="ValueError",
-                fragment="interaction 'PairHop'",
+                fragment="off-site 'PairHop' entry",
             ),
         ),
         links=(
@@ -1751,13 +1867,9 @@ _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT = Cell(
                     "TestOffsiteGeneralFLEX::test_rejected_offsite_classes"
                 ),
                 claim=(
-                    "tests/test_flex_offsite_general.py's general "
-                    "rejection-classes coverage (this exact PairHop "
-                    "case is not one of its enumerated subTest rows -- "
-                    "the module's docstring names off-site PairHop as "
-                    "rejected for the same non-local-pair reason as "
-                    "Exchange; linked for the surrounding module "
-                    "context, not a per-type pin)."
+                    "FLEX rejects off-site PairHop under "
+                    "calc_scheme='general' (this fixture is one of the "
+                    "enumerated subTest rows since #181 Tier 1)."
                 ),
             ),
         ),
@@ -1776,8 +1888,11 @@ _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT = Cell(
         "(calc_type='ring+ladder' + transverse_bond_channels=true, "
         "outside this cell's fixture family) rejects the same "
         "declaration at construction. FLEX SOLVE-time "
-        "reject: flex.py:2020-2043 -- non-local particle-hole pair "
-        "off-site, same as Exchange."
+        "reject (the off-site guard in _inflate_chi0q_and_ham_general): "
+        "no local-bilinear particle-hole regrouping exists for an "
+        "inter-site pair hopping, so it needs a bond-resolved vertex "
+        "(#181 Tier 3); a genuine representability limit, unlike the "
+        "Tier-1 classes."
     ),
 )
 
@@ -1849,29 +1964,37 @@ _CELL_27_OFFSITE_COULOMBINTER_SAMEORB_SUBSHAPE = Cell(
     expected_spin_mode="spin-free",
     rpa=SolverProof(status=Status.SUPPORTED, steps=(ExecuteRun(),)),
     flex=SolverProof(
-        status=Status.REJECT,
-        steps=(
-            ExecuteReject(
-                site=Site.SOLVE, exc_type="ValueError",
-                fragment="with sublattice folding",
+        status=Status.SUPPORTED,
+        steps=(ExecuteRun(),),
+        links=(
+            SupplementaryLink(
+                test_id=(
+                    "tests.test_flex_offsite_general::"
+                    "TestOffsiteGeneralFLEX::"
+                    "test_offsite_under_sublattice_folding_matches_the_ring"
+                ),
+                claim=(
+                    "Same-orbital off-site CoulombInter under "
+                    "SubShape=(2,1,1) and (4,1,1) element-complete equal "
+                    "between RPA and FLEX (#181 Tier 1)."
+                ),
             ),
         ),
     ),
-    comparison=None,
-    required_observables=(),
+    comparison=_MEASURED_OFFSITE_TIER1["general.ring.offsite_coulombinter_sameorb.subshape"],
+    required_observables=("chi0q", "chiq"),
     interaction_class="offsite",
     notes=(
         "Cell 19's fixture (E1 coulombinter.dat, same-orbital off-site "
-        "CoulombInter) with SubShape=(2,1,1); mu=0.0. STOP-and-amend "
-        "audit VERIFIED: per the audit, FLEX REJECTS folded off-site "
-        "entries even in the otherwise-accepted a==b "
-        "CoulombInter class -- confirmed empirically: RPA solves "
-        "(chi0q shape (32,8,2,2,2,2)); FLEX raises ValueError at "
-        "SOLVE time (flex.py:2020-2043's has_fold branch), message "
-        "'...interaction 'CoulombInter' has an off-site entry "
-        "irvec=(1, 0, 0), orbvec=(0, 1), with sublattice folding...'. "
-        "Matches the recorded expectation exactly -- NO STOP-and-amend "
-        "triggered; FLEX-REJECT.RPA-SUPPORTED as predicted."
+        "CoulombInter) with SubShape=(2,1,1); mu=0.0. Was "
+        "FLEX-REJECT.RPA-SUPPORTED until #181 Tier 1: folding maps the "
+        "+-x bond onto an intra-supercell inter-orbital entry that the "
+        "folded table cannot tell from on-site input, and reading it as "
+        "on-site put the bond's Fock crossing into the cross slot "
+        "(1.3e-1 against the ring, an answer that depended on "
+        "SubShape). FLEX now splits the PRE-fold table by locality and "
+        "folds each part separately (the ring's own reading), so the "
+        "cell is Equiv at round-off."
     ),
 )
 
@@ -2310,9 +2433,9 @@ CELLS: tuple = (
     _CELL_18_REDUCED_PAIRHOP_REJECT,
     _CELL_19_OFFSITE_COULOMBINTER_SAMEORB_MU,
     _CELL_20_REDUCED_OFFSITE_COULOMBINTER_MU,
-    _CELL_21_OFFSITE_COULOMBINTER_INTERORB_FLEXREJECT,
-    _CELL_22_OFFSITE_HUND_FLEXREJECT,
-    _CELL_23_OFFSITE_ISING_FLEXREJECT,
+    _CELL_21_OFFSITE_COULOMBINTER_INTERORB_MU,
+    _CELL_22_OFFSITE_HUND_MU,
+    _CELL_23_OFFSITE_ISING_MU,
     _CELL_24_OFFSITE_EXCHANGE_FLEXREJECT,
     _CELL_25_OFFSITE_PAIRHOP_FLEXREJECT,
     _CELL_26_OFFSITE_COULOMBINTRA_LITERALKEY_REJECT,
