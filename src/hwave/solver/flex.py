@@ -2153,12 +2153,17 @@ class FLEX(RPA):
             #
             # Still rejected, each for its own reason:
             #
-            #   * off-site Exchange -- its only local-bilinear regrouping,
-            #     -J S+_i S-_j, is transverse (spin-flip bilinears); the
-            #     longitudinal S/C content is unadjudicated (#181 Tier 2:
-            #     exact-diagonalization decides). The ring returns the bare
-            #     bubble for it, so "equal to the ring" would be agreement
-            #     at zero vertex effect -- not grounds to accept.
+            #   * off-site Exchange -- ADJUDICATED by exact diagonalization
+            #     (#181 Tier 2, tests/test_offsite_exchange_ed_longitudinal
+            #     .py): no q-representable longitudinal S/C content at all
+            #     (density slots 1e-3 against the controls' 2.0 / 1.0; a
+            #     purely imaginary J gives an identically vanishing
+            #     longitudinal response), its longitudinal remainder is the
+            #     same non-local pair a density bond's Fock crossing is
+            #     (Tier 3), and its physics is transverse (spin-flip
+            #     response 40x larger). Accepting it would run a term with
+            #     no effect; the user decided (2026-09-03) to keep the
+            #     rejection rather than the PairLift-style inert-and-warn.
             #   * off-site PairHop -- no local-bilinear particle-hole
             #     regrouping exists at all (the ring drops it, #157).
             #   * any other off-site type -- fail closed. (CoulombIntra is
@@ -2232,11 +2237,16 @@ class FLEX(RPA):
             onsite_tbl, offsite_tbl = {}, {}
             rejected_reason = {
                 "Exchange": (
-                    "its local-bilinear regrouping -J S+_i S-_j is a "
-                    "transverse (spin-flip) object, and its longitudinal "
-                    "spin/charge content has not been adjudicated "
-                    "(GitHub issue #181, Tier 2); the RPA ring returns "
-                    "the bare bubble for it"),
+                    "exact diagonalization finds NO q-representable "
+                    "longitudinal spin/charge content for an off-site "
+                    "Exchange term (GitHub issue #181, Tier 2; "
+                    "tests/test_offsite_exchange_ed_longitudinal.py) -- "
+                    "its physics is transverse (the local regrouping "
+                    "-J S+_i S-_j is a spin-flip object, outside this "
+                    "spin-free longitudinal solve), and what remains in "
+                    "the longitudinal channel is a non-local pair "
+                    "(bond-resolved, Tier 3); accepting it would give a "
+                    "term with no effect"),
                 "PairHop": (
                     "no local-bilinear particle-hole regrouping exists "
                     "for an inter-site pair hopping (the RPA solver drops "

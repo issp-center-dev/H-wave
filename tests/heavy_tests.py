@@ -117,6 +117,15 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
+    # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
+    ("test_offsite_exchange_ed_longitudinal",
+     "TestOffsiteExchangeLongitudinalControls",
+     "test_one_orbital_controls_and_the_fock_residual_identity",
+     "off-site Exchange vs density-bond controls, one-orbital ring (ED)"),
+    ("test_offsite_exchange_ed_longitudinal",
+     "TestOffsiteExchangeLongitudinalControls",
+     "test_two_orbital_interorbital_exchange_and_controls",
+     "off-site inter-orbital Exchange longitudinal content vs ED, L=3 norb=2"),
     # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
     ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
      "general-scheme RPA first-order response vs ED"),

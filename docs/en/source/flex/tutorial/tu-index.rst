@@ -793,8 +793,10 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    left out, the same approximation the RPA ring makes, and the solver
    logs a warning saying so. For every such class the general path is
    measured element-complete equal to the RPA ring. Off-site ``Exchange``
-   and ``PairHop`` raise a ``ValueError`` (no adjudicated content and no
-   local-pair form, respectively). On-site ``Exchange`` and
+   and ``PairHop`` raise a ``ValueError``: exact diagonalization finds no
+   longitudinal (spin/charge) content for an off-site ``Exchange`` at all
+   -- its physics is transverse, invisible to this spin-free path -- and an
+   off-site ``PairHop`` has no local-pair form. On-site ``Exchange`` and
    ``PairHop`` off-diagonal vertices **are kept** (the point of the scheme),
    but ``PairLift`` contributes ``S=C=0`` to the particle-hole vertex and is
    **inert** (accepted with a note that it is exactly zero). The general path writes ``chiq_s``/
