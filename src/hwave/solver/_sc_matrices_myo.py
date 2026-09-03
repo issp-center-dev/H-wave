@@ -34,10 +34,7 @@ an off-site term is deliberately ABSENT: it needs the bond-resolved vertex
 builder unchanged.
 """
 
-import numpy as np
-
-from hwave.sc import _build_sc_matrices_all_q, _symmetrise_interactions_k
-from hwave.solver.vertex_table import sc_coefficients
+from hwave.sc import _build_sc_matrices_all_q
 
 # The interaction types whose off-site content has a q-only representation
 # in the pair-space S/C matrices: density-density on each site, so the
@@ -52,21 +49,38 @@ def build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz):
     return _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
 
 
-def _build_sc_density_offsite(inter_k_offsite, norb, Nx, Ny, Nz):
-    """Density-family S/C content of the OFF-SITE interaction part.
+def build_sc_matrices_locality_split(inter_k, inter_k_onsite, inter_k_offsite,
+                                     norb, Nx, Ny, Nz):
+    """S/C matrices from a PRE-fold-locality split of the interaction.
 
-    ``S[(aa),(bb)] += s_type * V_ab(q)``, ``C[(aa),(bb)] += c_type *
-    V_ab(q)`` with the adjudicated density (S, C) per type
-    (:mod:`hwave.solver.vertex_table`), for every orbital pair INCLUDING
-    ``a == b``. Same symmetrisation (reversal partner at -q) and the same
-    ``mat[l1, l3]`` orientation as the shared builder's Case 3.
+    Parameters
+    ----------
+    inter_k : dict
+        k-space interactions (``hwave.sc._build_interaction_k``) built from
+        the WHOLE table, in the caller's own entry order. Every slot
+        element that exists without a split is read from this, so their
+        floating-point summation order is unchanged.
+    inter_k_onsite : dict
+        Built from the ``R == 0`` declarations only. Feeds the cross
+        ``(ab,ab)`` and antidiag ``(ab,ba)`` families, whose particle-hole
+        pair is non-local for ``R != 0``.
+    inter_k_offsite : dict
+        Built from the ``R != 0`` declarations only. Feeds the same-orbital
+        density elements ``(aa,aa)`` of Hund / Ising, which the on-site
+        gate of the shared builder otherwise deletes. Must contain only
+        CoulombInter / Hund / Ising: ``ValueError`` otherwise (fail closed
+        -- no off-site type is silently dropped here).
+    norb, Nx, Ny, Nz : int
+
+    Returns
+    -------
+    S_all, C_all : ndarray, shape (Nx, Ny, Nz, norb**2, norb**2)
+
+    Bit-identical to the shared builder for on-site input and for the
+    class the general path accepted before the split (same-orbital
+    off-site CoulombInter), see tests/test_sc_matrices_locality_split.py.
     """
-    nd = norb * norb
-    S = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-    C = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-    if not inter_k_offsite:
-        return S, C
-    bad = [t for t in inter_k_offsite if t not in _OFFSITE_DENSITY_TYPES]
+    bad = [t for t in (inter_k_offsite or {}) if t not in _OFFSITE_DENSITY_TYPES]
     if bad:
         raise ValueError(
             "off-site interaction part contains {}: only {} have a "
@@ -74,48 +88,6 @@ def _build_sc_density_offsite(inter_k_offsite, norb, Nx, Ny, Nz):
             "pair-space S/C matrices; the caller must reject or route "
             "other off-site types before building.".format(
                 ", ".join(sorted(bad)), "/".join(_OFFSITE_DENSITY_TYPES)))
-    inter_k_offsite = _symmetrise_interactions_k(inter_k_offsite)
-    for itype in _OFFSITE_DENSITY_TYPES:
-        mat = inter_k_offsite.get(itype)
-        if mat is None:
-            continue
-        s, c = sc_coefficients(itype, "density")
-        for l1 in range(norb):
-            for l3 in range(norb):
-                i, j = l1 * norb + l1, l3 * norb + l3
-                if s != 0.0:
-                    S[:, :, :, i, j] += s * mat[l1, l3]
-                if c != 0.0:
-                    C[:, :, :, i, j] += c * mat[l1, l3]
-    return S, C
-
-
-def build_sc_matrices_locality_split(inter_k_onsite, inter_k_offsite, norb,
-                                     Nx, Ny, Nz):
-    """S/C matrices from a PRE-fold-locality split of the interaction.
-
-    Parameters
-    ----------
-    inter_k_onsite : dict
-        k-space interactions (``hwave.sc._build_interaction_k``) built from
-        the ``R == 0`` declarations only. Goes through the full adjudicated
-        slot map (:func:`hwave.sc._build_sc_matrices_all_q`), unchanged.
-    inter_k_offsite : dict
-        k-space interactions built from the ``R != 0`` declarations only.
-        Written into the density ``(aa,bb)`` family only, ``a == b``
-        included. Must contain only CoulombInter / Hund / Ising:
-        ``ValueError`` otherwise (fail closed -- no off-site type is
-        silently dropped here).
-    norb, Nx, Ny, Nz : int
-
-    Returns
-    -------
-    S_all, C_all : ndarray, shape (Nx, Ny, Nz, norb**2, norb**2)
-
-    With an empty off-site part the result is bit-identical to the shared
-    builder on the on-site part.
-    """
-    S, C = _build_sc_matrices_all_q(inter_k_onsite, norb, Nx, Ny, Nz)
-    S_off, C_off = _build_sc_density_offsite(inter_k_offsite, norb,
-                                             Nx, Ny, Nz)
-    return S + S_off, C + C_off
+    return _build_sc_matrices_all_q(
+        inter_k, norb, Nx, Ny, Nz,
+        locality_split=(inter_k_onsite, inter_k_offsite or {}))

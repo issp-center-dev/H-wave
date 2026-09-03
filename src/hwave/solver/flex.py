@@ -590,6 +590,12 @@ class FLEX(RPA):
         ``finally`` a mid-solve error would leave a reused or inspected solver
         object holding device arrays (issue #63).
         """
+        # The S/C matrices are cached across the SCF iterations of ONE
+        # solve; a reused solver rebuilds them (cheap: a few small
+        # matrices per q) so the off-site Hartree-only notice in
+        # _inflate_chi0q_and_ham_general is emitted once per solve, not
+        # once per object.
+        self._myo_sc_cache = None
         return self._solve_restoring_host_attrs(green_info, path_to_output)
 
     def _solve_impl(self, green_info, path_to_output):
@@ -2285,10 +2291,23 @@ class FLEX(RPA):
                 # a folded bond from on-site input, so the split had to be
                 # made before folding (the pre-fold-locality rule the RPA
                 # solver's _append_inter_cross follows for the same reason).
+                # A folded on-site entry and a folded bond never share a
+                # key (same sub-cell AND R' = 0 means R = 0 before the
+                # fold), so the union below is the folded whole table.
                 onsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                               for t, tbl in onsite_tbl.items()}
                 offsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                                for t, tbl in offsite_tbl.items()}
+                whole_tbl = {t: {**onsite_tbl.get(t, {}),
+                                 **offsite_tbl.get(t, {})}
+                             for t in list(onsite_tbl)
+                             + [t for t in offsite_tbl if t not in onsite_tbl]}
+            else:
+                # the reader's own table, in its own entry order: every
+                # slot element that existed before the split keeps its
+                # floating-point summation order (bit-identical output
+                # for the previously accepted class)
+                whole_tbl = scan_ham
 
             no = self.norb
             nx, ny, nz = self.lattice.shape
@@ -2302,12 +2321,13 @@ class FLEX(RPA):
             kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
             ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
             kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
+            inter_k = _build_interaction_k(kx, ky, kz, whole_tbl, no)
             inter_k_onsite = _build_interaction_k(kx, ky, kz, onsite_tbl, no)
             inter_k_offsite = _build_interaction_k(kx, ky, kz, offsite_tbl, no)
 
             # S/C matrices: (nx, ny, nz, norb^2, norb^2).
             Us, Uc = build_sc_matrices_locality_split(
-                inter_k_onsite, inter_k_offsite, no, nx, ny, nz)
+                inter_k, inter_k_onsite, inter_k_offsite, no, nx, ny, nz)
 
             # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
             nvol = self.lattice.nvol

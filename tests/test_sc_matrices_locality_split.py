@@ -41,9 +41,12 @@ class TestLocalitySplitBuilder(unittest.TestCase):
             build_sc_matrices_locality_split)
 
         kx, ky, kz = _grid(n)
+        full = {t: {**onsite.get(t, {}), **offsite.get(t, {})}
+                for t in list(onsite) + [t for t in offsite if t not in onsite]}
+        ik = sc._build_interaction_k(kx, ky, kz, full, norb)
         ik_on = sc._build_interaction_k(kx, ky, kz, onsite, norb)
         ik_off = sc._build_interaction_k(kx, ky, kz, offsite, norb)
-        return build_sc_matrices_locality_split(ik_on, ik_off, norb,
+        return build_sc_matrices_locality_split(ik, ik_on, ik_off, norb,
                                                 n, n, 1)
 
     def test_onsite_only_input_is_bitwise_the_full_builder(self):
@@ -69,6 +72,32 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         # anti-vacuity: every family is populated in this fixture
         for slot in ((0, 0), (1, 1), (0, 3), (1, 2)):
             self.assertNotEqual(np.abs(S_ref[..., slot[0], slot[1]]).max(), 0.0)
+
+    def test_previously_accepted_class_is_bitwise_the_full_builder(self):
+        """The class the general path accepted BEFORE the split -- same-
+        orbital off-site CoulombInter, no folding -- must give S/C
+        bit-identical to the former full-table build, INCLUDING when the
+        same density element also carries an R = 0 same-orbital
+        CoulombInter contribution (the summation order inside the shared
+        builder's Case 3 must not change: 2 (V_0 + V(q)) is not
+        2 V_0 + 2 V(q) in floating point)."""
+        import hwave.sc as sc
+
+        onsite = {"CoulombInter": {((0, 0, 0), (0, 0)): 0.3,
+                                   ((0, 0, 0), (1, 1)): 0.7},
+                  "CoulombIntra": {((0, 0, 0), (0, 0)): 2.0,
+                                   ((0, 0, 0), (1, 1)): 2.0}}
+        offsite = {"CoulombInter": {**_bond(0, 0, 0.1), **_bond(1, 1, 0.2),
+                                    **_bond(0, 0, 0.05, R=(0, 1, 0))}}
+        full = {t: {**onsite.get(t, {}), **offsite.get(t, {})}
+                for t in set(onsite) | set(offsite)}
+        kx, ky, kz = _grid(4)
+        S_ref, C_ref = sc._build_sc_matrices_all_q(
+            sc._build_interaction_k(kx, ky, kz, full, 2), 2, 4, 4, 1)
+        S, C = self._build(onsite, offsite, 2)
+        self.assertTrue(np.array_equal(S, S_ref))
+        self.assertTrue(np.array_equal(C, C_ref))
+        self.assertNotEqual(np.abs(C_ref[..., 0, 0]).max(), 0.0)
 
     def test_offsite_content_lands_on_density_slots_only(self):
         """Off-site inter-orbital CoulombInter / Hund / Ising: the density
@@ -147,7 +176,11 @@ class TestLocalitySplitBuilder(unittest.TestCase):
 
     def test_onsite_and_offsite_parts_add(self):
         """Mixed input: on-site Kanamori plus an off-site bond of the same
-        type; the result is the sum of the two single-part builds."""
+        type; the result is the sum of the two single-part builds (to
+        round-off: the whole-table build sums the two parts INSIDE the
+        k-space matrix, which is what keeps the pre-split summation order
+        for the previously accepted class; it is not the elementwise sum
+        of two separately built matrices)."""
         onsite = {"CoulombInter": {((0, 0, 0), (0, 1)): 0.8,
                                    ((0, 0, 0), (1, 0)): 0.8},
                   "Hund": {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}}
@@ -155,8 +188,8 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         S, C = self._build(onsite, offsite, 2)
         S1, C1 = self._build(onsite, {}, 2)
         S2, C2 = self._build({}, offsite, 2)
-        np.testing.assert_allclose(S, S1 + S2, atol=0.0, rtol=0.0)
-        np.testing.assert_allclose(C, C1 + C2, atol=0.0, rtol=0.0)
+        np.testing.assert_allclose(S, S1 + S2, atol=0.0, rtol=1e-15)
+        np.testing.assert_allclose(C, C1 + C2, atol=0.0, rtol=1e-15)
         self.assertNotEqual(np.abs(S2).max(), 0.0)
 
 

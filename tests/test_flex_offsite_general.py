@@ -186,15 +186,70 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
         the bond's Fock crossing into the cross slot and the solvers
         differed by 1.3e-1; the answer must not depend on SubShape.
         SubShape=[4,1,1] maps EVERY x displacement to (0,0,0)."""
-        for sub in ((2, 1, 1), (4, 1, 1)):
-            with self.subTest(sub=sub):
-                gr, gf = _run_pair('tests/rpa/input_2orb',
-                                   {'CoulombInter': 'offsite_sameorb.dat'},
-                                   [4, 4, 1], filling=0.5, sub=sub)
-                norb_folded = int(np.asarray(gr['chi0q']).shape[2])
-                self.assertEqual(norb_folded, 2 * sub[0])
-                _assert_element_complete_equal(self, gr, gf,
-                                               norb=norb_folded)
+        cases = [
+            ('tests/rpa/input_2orb', {'CoulombInter': 'offsite_sameorb.dat'}),
+            ('tests/equivalence_input/orb2', {'Hund': 'offsite_hund.dat'}),
+            ('tests/equivalence_input/orb2', {'Ising': 'offsite_ising.dat'}),
+            # same-orbital off-site Hund/Ising folded (the one-orbital
+            # fixture's +-x/+-y bonds read as Hund / Ising)
+            ('tests/rpa/input', {'Hund': 'coulombinter.dat'}),
+            ('tests/rpa/input', {'Ising': 'coulombinter.dat'}),
+        ]
+        for path, interactions in cases:
+            norb_phys = 1 if path == 'tests/rpa/input' else 2
+            for sub in ((2, 1, 1), (4, 1, 1)):
+                with self.subTest(interaction=list(interactions)[0],
+                                  path=path, sub=sub):
+                    gr, gf = _run_pair(path, interactions, [4, 4, 1],
+                                       filling=0.5, sub=sub)
+                    norb_folded = int(np.asarray(gr['chi0q']).shape[2])
+                    self.assertEqual(norb_folded, norb_phys * sub[0])
+                    _assert_element_complete_equal(self, gr, gf,
+                                                   norb=norb_folded)
+                    chiq = np.asarray(gr['chiq'])
+                    n = norb_folded
+                    self.assertGreater(
+                        np.max(np.abs(chiq[:, :, :n, :n, :n, :n]
+                                      - np.asarray(gr['chi0q']))), 1e-3)
+
+    def test_aggregate_coulomb_under_folding_equals_the_explicit_split(self):
+        """Aggregate `Coulomb` is normalised into CoulombIntra + CoulombInter
+        BEFORE the locality split and the per-part folding; the result
+        must be bit-identical to the explicit declaration of the same
+        tables (nothing lost or double-counted by folding each part
+        separately), and the off-site part must have an effect."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+
+        onsite_u = {((0, 0, 0), (0, 0)): 3.0, ((0, 0, 0), (1, 1)): 3.0}
+        bond = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4,
+                ((1, 0, 0), (0, 0)): 0.3, ((-1, 0, 0), (0, 0)): 0.3}
+
+        def _chiq(tables):
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat'}})
+            ham = r.get_param("ham")
+            ham.update(tables)
+            pf = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+                  'SubShape': [2, 1, 1], 'Nmat': 32,
+                  'IterationMax': 1, 'Mix': 1.0, 'EPS': 1}
+            fx = flex_mod.FLEX(ham, {}, {'mode': 'FLEX', 'param': pf,
+                                         'enable_spin_orbital': False,
+                                         'calc_scheme': 'general'})
+            os.makedirs('tests/rpa/output', exist_ok=True)
+            gf = r.get_param("green")
+            fx.solve(gf, 'tests/rpa/output')
+            return np.asarray(gf['chiq_s']), np.asarray(gf['chiq_c'])
+
+        agg = _chiq({'Coulomb': {**onsite_u, **bond}})
+        explicit = _chiq({'CoulombIntra': onsite_u, 'CoulombInter': bond})
+        onsite_only = _chiq({'CoulombIntra': onsite_u})
+        for a, e in zip(agg, explicit):
+            np.testing.assert_array_equal(a, e)
+        self.assertGreater(np.max(np.abs(explicit[1] - onsite_only[1])), 1e-3)
 
     def test_offsite_input_warns_that_only_the_hartree_vertex_enters(self):
         """Every off-site two-body term enters the general path as its
@@ -219,18 +274,30 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                {'mode': 'FLEX', 'param': pf,
                                 'enable_spin_orbital': False,
                                 'calc_scheme': 'general'})
-            fx.solve(r.get_param("green"), 'tests/rpa/output')
+            gf = r.get_param("green")
+            fx.solve(gf, 'tests/rpa/output')
+            fx._test_green_info = gf
+            return fx
 
         os.makedirs('tests/rpa/output', exist_ok=True)
         with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            _solve('tests/rpa/input_2orb',
-                   {'CoulombInter': 'coulombinter.dat',
-                    'Hund': 'offsite_hund.dat'})
+            fx = _solve('tests/rpa/input_2orb',
+                        {'CoulombInter': 'coulombinter.dat',
+                         'Hund': 'offsite_hund.dat'})
         hits = [m for m in cm.output if 'exchange' in m.lower()
                 and 'off-site' in m.lower()]
         self.assertEqual(len(hits), 1, cm.output)
         self.assertIn('CoulombInter', hits[0])
         self.assertIn('Hund', hits[0])
+
+        # once per SOLVE, not once per solver instance: a second solve on
+        # the same object (the S/C matrices are cached across the SCF
+        # iterations of one solve) must say it again
+        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+            fx.solve(fx._test_green_info, 'tests/rpa/output')
+        self.assertEqual(
+            len([m for m in cm.output if 'off-site' in m.lower()]), 1,
+            cm.output)
 
         # folded: the warning names the PRE-fold declarations' types
         with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:

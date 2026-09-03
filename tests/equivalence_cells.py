@@ -781,32 +781,34 @@ def _measured_equiv_tier1(
 # The CI calibration run the Event-7 literals below were frozen from
 # (workflow_dispatch of .github/workflows/equivalence-calibration.yml on
 # the #181 Tier 1 branch). "PENDING" until that run has been aggregated.
-_TIER1_CI_RUN = "PENDING"
+_TIER1_CI_RUN = "33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)"
 
 # Event 7 literals: (chi0q_dev, chi0q_ci_max, chiq_dev, chiq_ci_max) per
-# cell, read off ``python -m tests.equivalence_measure`` (dev) and the
-# calibration workflow's artifacts (CI MAX), see
+# cell, read off ``python -m tests.equivalence_measure`` (dev, 3
+# invocations at 76e09354) and the calibration workflow's artifacts (CI
+# MAX over 3 runners x 3 invocations, aggregated by
+# ``tests.equivalence_freeze_check``), see
 # ``tests/equivalence_calibration_log.md`` Event 7.
 _MEASURED_OFFSITE_TIER1 = {
     "general.ring.offsite_coulombinter_interorb.mu": _measured_equiv_tier1(
         "general.ring.offsite_coulombinter_interorb.mu",
-        "chi0q_mu", 9.714461446114839e-17, 9.714461446114839e-17,
-        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.11022390184477e-16,
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.110249e-16,
     ),
     "general.ring.offsite_hund.mu": _measured_equiv_tier1(
         "general.ring.offsite_hund.mu",
-        "chi0q_mu", 9.714461446114839e-17, 9.714461446114839e-17,
-        "general_from_flex_channels", "chiq_mu", 9.71446153374694e-17, 9.71446153374694e-17,
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 9.71446153374694e-17, 9.714755e-17,
     ),
     "general.ring.offsite_ising.mu": _measured_equiv_tier1(
         "general.ring.offsite_ising.mu",
-        "chi0q_mu", 9.714461446114839e-17, 9.714461446114839e-17,
-        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.11022390184477e-16,
+        "chi0q_mu", 9.714461446114839e-17, 9.714755e-17,
+        "general_from_flex_channels", "chiq_mu", 1.11022390184477e-16, 1.110249e-16,
     ),
     "general.ring.offsite_coulombinter_sameorb.subshape": _measured_equiv_tier1(
         "general.ring.offsite_coulombinter_sameorb.subshape",
-        "chi0q_fixed", 2.77664569531416e-17, 2.77664569531416e-17,
-        "general_from_flex_channels", "chiq_fixed", 5.645067159738241e-16, 5.645067159738241e-16,
+        "chi0q_fixed", 2.77664569531416e-17, 4.163442e-17,
+        "general_from_flex_channels", "chiq_fixed", 5.645067159738241e-16, 9.267834e-16,
     ),
 }
 
