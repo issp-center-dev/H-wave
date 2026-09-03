@@ -2259,12 +2259,14 @@ class FLEX(RPA):
                         # would send the user to a second error.
                         raise ValueError(
                             "FLEX calc_scheme='general' does not support "
-                            "an off-site '{}' entry (irvec={}, orbvec={}, "
-                            "as declared in the interaction input{}): {}. "
-                            "Remove the off-site '{}' entries from the "
-                            "input to run FLEX; off-site CoulombInter, "
-                            "Hund and Ising are supported (as their "
-                            "Hartree vertex).".format(
+                            "an off-site '{}' entry (irvec={}, orbvec={} "
+                            "-- the declared displacement and the "
+                            "zero-based orbital pair, i.e. the file's "
+                            "orbital indices minus one{}): {}. Remove the "
+                            "off-site '{}' entries from the input to run "
+                            "FLEX; off-site CoulombInter, Hund and Ising "
+                            "are supported (as their Hartree "
+                            "vertex).".format(
                                 itype, tuple(irvec), tuple(orbvec),
                                 ", before sublattice folding"
                                 if has_fold else "", reason, itype))

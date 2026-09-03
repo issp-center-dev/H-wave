@@ -1210,9 +1210,10 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - 備考
    * - 2体項の距離
      - オンサイト・\ **オフサイト**\ 両方
-     - オンサイト。オフサイトは同一軌道\ ``CoulombInter``\ のみ
-     - それ以外のオフサイト項は general で\ ``ValueError``
-       （副格子折り畳み時はオフサイト対応も無効）
+     - オンサイト。オフサイトは\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``
+       （Hartree 頂点のみ、副格子折り畳みの有無を問わず）
+     - オフサイトの\ ``Exchange``\ / ``PairHop``\ は general で\ ``ValueError``\ 。
+       受理されるオフサイト項の交換交差は省かれます（警告が出ます）
    * - スピン構造
      - spin-free / spin-diag / spinful
      - **spin-free のみ**
