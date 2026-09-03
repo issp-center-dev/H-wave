@@ -1000,12 +1000,13 @@ Example
    **Why this example pins** ``calc_scheme = "reduced"``. Since version 2.0
    the default is ``calc_scheme = "auto"``, which promotes ``CoulombInter``
    (and ``Hund``, ``Ising``, the aggregate ``Coulomb``) to ``general``. The
-   ``general`` FLEX path accepts off-site entries only for same-orbital
-   ``CoulombInter`` without sublattice folding, so the generic off-site
-   ``CoulombInter`` this workflow uses is **rejected** under the default;
-   the run stops with a ``ValueError`` that names the ``auto`` resolution
-   and this remedy. Requesting ``reduced`` explicitly is what makes the
-   workflow run, and is what H-wave 1.0.x did for this input:
+   ``general`` FLEX path accepts the off-site ``CoulombInter`` this
+   workflow uses (as its Hartree vertex only, with a warning; it is
+   spin-free only), so under the default the sweep would run on the
+   ``general`` path and produce different susceptibilities from the ones
+   this tutorial's reference results were made with. Requesting
+   ``reduced`` explicitly reproduces those results, and is what H-wave
+   1.0.x did for this input:
 
    .. code-block:: toml
 
@@ -1018,8 +1019,9 @@ Example
    warning described in
    :ref:`Supported interactions <sc_supported_inter>`. Both are expected here
    and not a misconfiguration. Drop the ``calc_scheme`` line (or set
-   ``general``) when your interactions stay within that off-site restriction
-   and you need the inter-orbital channels dressed as well.
+   ``general``) when you need the inter-orbital channels dressed as well;
+   off-site ``Exchange`` / ``PairHop`` are the only two-body terms the
+   ``general`` path still rejects.
 
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
@@ -1264,9 +1266,11 @@ was checked by running the combination.
      - note
    * - two-body range
      - on-site and **off-site**
-     - on-site; off-site only for same-orbital ``CoulombInter``
-     - other off-site entries raise ``ValueError`` on the general path
-       (and sublattice folding disables its off-site support)
+     - on-site; off-site ``CoulombInter``, ``Hund``, ``Ising``
+       (Hartree vertex only, with or without sublattice folding)
+     - off-site ``Exchange`` / ``PairHop`` raise ``ValueError`` on the
+       general path; the exchange crossing of an off-site term is
+       omitted there (a warning says so)
    * - spin structure
      - spin-free, spin-diag, spinful
      - **spin-free only**

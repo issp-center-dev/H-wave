@@ -1019,12 +1019,13 @@ failed) print as <code class="docutils literal notranslate"><span class="pre">na
 <p><strong>Why this example pins</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>. Since version 2.0
 the default is <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>, which promotes <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 (and <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, the aggregate <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>) to <code class="docutils literal notranslate"><span class="pre">general</span></code>. The
-<code class="docutils literal notranslate"><span class="pre">general</span></code> FLEX path accepts off-site entries only for same-orbital
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> without sublattice folding, so the generic off-site
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> this workflow uses is <strong>rejected</strong> under the default;
-the run stops with a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> that names the <code class="docutils literal notranslate"><span class="pre">auto</span></code> resolution
-and this remedy. Requesting <code class="docutils literal notranslate"><span class="pre">reduced</span></code> explicitly is what makes the
-workflow run, and is what H-wave 1.0.x did for this input:</p>
+<code class="docutils literal notranslate"><span class="pre">general</span></code> FLEX path accepts the off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> this
+workflow uses (as its Hartree vertex only, with a warning; it is
+spin-free only), so under the default the sweep would run on the
+<code class="docutils literal notranslate"><span class="pre">general</span></code> path and produce different susceptibilities from the ones
+this tutorial’s reference results were made with. Requesting
+<code class="docutils literal notranslate"><span class="pre">reduced</span></code> explicitly reproduces those results, and is what H-wave
+1.0.x did for this input:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="w">  </span><span class="n">mode</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
 <span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"reduced"</span>
@@ -1035,8 +1036,9 @@ construction, and the Eliashberg step <strong>will</strong> print the approximat
 warning described in
 <a class="reference internal" href="#sc-supported-inter"><span class="std std-ref">Supported interactions</span></a>. Both are expected here
 and not a misconfiguration. Drop the <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> line (or set
-<code class="docutils literal notranslate"><span class="pre">general</span></code>) when your interactions stay within that off-site restriction
-and you need the inter-orbital channels dressed as well.</p>
+<code class="docutils literal notranslate"><span class="pre">general</span></code>) when you need the inter-orbital channels dressed as well;
+off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> / <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are the only two-body terms the
+<code class="docutils literal notranslate"><span class="pre">general</span></code> path still rejects.</p>
 </div>
 <p>This descends from <span class="math notranslate nohighlight">\(T = 0.02\)</span> to <span class="math notranslate nohighlight">\(T = 0.005\)</span> over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
@@ -1272,9 +1274,11 @@ was checked by running the combination.</p>
 <tbody>
 <tr class="row-even"><td><p>two-body range</p></td>
 <td><p>on-site and <strong>off-site</strong></p></td>
-<td><p>on-site; off-site only for same-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code></p></td>
-<td><p>other off-site entries raise <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> on the general path
-(and sublattice folding disables its off-site support)</p></td>
+<td><p>on-site; off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+(Hartree vertex only, with or without sublattice folding)</p></td>
+<td><p>off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> / <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> on the
+general path; the exchange crossing of an off-site term is
+omitted there (a warning says so)</p></td>
 </tr>
 <tr class="row-odd"><td><p>spin structure</p></td>
 <td><p>spin-free, spin-diag, spinful</p></td>

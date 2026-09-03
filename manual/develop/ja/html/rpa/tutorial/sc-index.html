@@ -976,12 +976,12 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 <p><strong>この例が</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code><strong>を明示する理由。</strong>
 バージョン 2.0 以降、既定は<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>であり、<code class="docutils literal notranslate"><span class="pre">auto</span></code>は
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（および<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、集約された
-<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）を<code class="docutils literal notranslate"><span class="pre">general</span></code>へ昇格させます。<code class="docutils literal notranslate"><span class="pre">general</span></code>の FLEX 経路が
-受理するオフサイト項は同一軌道の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（副格子折り畳みなし）に
-限られるため、このワークフローが用いる一般のオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>は
-既定のままでは <strong>拒否されます</strong>。実行は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>で停止し、
-<code class="docutils literal notranslate"><span class="pre">auto</span></code>による解決結果と以下の対処が示されます。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>を明示的に
-要求することでこのワークフローは実行でき、これは H-wave 1.0.x が
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）を<code class="docutils literal notranslate"><span class="pre">general</span></code>へ昇格させます。<code class="docutils literal notranslate"><span class="pre">general</span></code>の FLEX 経路は
+このワークフローが用いるオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>を受理します
+（Hartree 頂点としてのみ、警告付き。また spin-free 専用です）。そのため
+既定のままではスイープは<code class="docutils literal notranslate"><span class="pre">general</span></code>経路で実行され、このチュートリアルの
+参照結果を作成した際とは異なる感受率が得られます。<code class="docutils literal notranslate"><span class="pre">reduced</span></code>を明示的に
+要求することでその参照結果が再現でき、これは H-wave 1.0.x が
 この入力に対して行っていた挙動と同じです:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
 <span class="w">  </span><span class="n">mode</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
@@ -992,9 +992,10 @@ resume 付きで掃引を再実行すると、<code class="docutils literal notr
 さらに Eliashberg ステップでも
 <a class="reference internal" href="#sc-supported-inter"><span class="std std-ref">対応する相互作用</span></a>に記載の近似に関する警告が
 <strong>出力されます</strong>。いずれも想定内であり設定の誤りではありません。
-相互作用が上記のオフサイト制限の範囲に収まり、かつ軌道間チャネルも
-dress したい場合は、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>の行を削除する（または<code class="docutils literal notranslate"><span class="pre">general</span></code>を
-指定する）ことをご検討ください。</p>
+軌道間チャネルも dress したい場合は、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>の行を削除する
+（または<code class="docutils literal notranslate"><span class="pre">general</span></code>を指定する）ことをご検討ください。<code class="docutils literal notranslate"><span class="pre">general</span></code>経路が
+依然として拒否する二体項は、オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の
+2 つだけです。</p>
 </div>
 <p>この例では<span class="math notranslate nohighlight">\(T = 0.02\)</span>から<span class="math notranslate nohighlight">\(T = 0.005\)</span>まで、対数間隔の6段を
 降順に計算します。各段で FLEX と動的 Eliashberg を実行し、<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と
@@ -1215,9 +1216,10 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <tbody>
 <tr class="row-even"><td><p>2体項の距離</p></td>
 <td><p>オンサイト・<strong>オフサイト</strong>両方</p></td>
-<td><p>オンサイト。オフサイトは同一軌道<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>のみ</p></td>
-<td><p>それ以外のオフサイト項は general で<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>
-（副格子折り畳み時はオフサイト対応も無効）</p></td>
+<td><p>オンサイト。オフサイトは<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+（Hartree 頂点のみ、副格子折り畳みの有無を問わず）</p></td>
+<td><p>オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/ <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は general で<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>。
+受理されるオフサイト項の交換交差は省かれます（警告が出ます）</p></td>
 </tr>
 <tr class="row-odd"><td><p>スピン構造</p></td>
 <td><p>spin-free / spin-diag / spinful</p></td>

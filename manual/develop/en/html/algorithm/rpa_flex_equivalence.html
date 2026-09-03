@@ -57,9 +57,10 @@ cannot drift away from what the tests assert.</p>
 <h2><span class="section-number">7.4.1. </span>Status of these records<a class="headerlink" href="#status-of-these-records" title="Link to this heading">¶</a></h2>
 <p>The tolerances below are <strong>confirmed</strong>: they were reproduced on the
 project’s continuous-integration runners at source revision
-<code class="docutils literal notranslate"><span class="pre">8144bf3f9e9539bad4759a2fbd1b24f52f7bef33</span></code> (workflow run
-<code class="docutils literal notranslate"><span class="pre">32204319966</span> <span class="pre">attempt</span> <span class="pre">1</span></code>), and hold as of that revision. The notes
-below record where each residual was originally measured.</p>
+<code class="docutils literal notranslate"><span class="pre">db2c3ff0444165aaca95c54f03f99efaccab9ff7</span></code> (workflow runs
+<code class="docutils literal notranslate"><span class="pre">32204319966</span> <span class="pre">attempt</span> <span class="pre">1</span></code>, <code class="docutils literal notranslate"><span class="pre">33714525023</span> <span class="pre">attempt</span> <span class="pre">1</span></code>), and hold as of
+that revision. The notes below record where each residual was
+originally measured.</p>
 </section>
 <section id="how-to-read-the-table">
 <h2><span class="section-number">7.4.2. </span>How to read the table<a class="headerlink" href="#how-to-read-the-table" title="Link to this heading">¶</a></h2>
@@ -149,13 +150,13 @@ not. The next section says what happens instead.</p>
 <td><p>supported</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.mu</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
 <td><p>spin-free</p></td>
 <td><p>supported</p></td>
-<td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (off-site)</p></td>
@@ -170,8 +171,8 @@ not. The next section says what happens instead.</p>
 <td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
 <td><p>spin-free</p></td>
 <td><p>supported</p></td>
-<td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombintra_literalkey.reject</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> (off-site)</p></td>
@@ -189,21 +190,21 @@ not. The next section says what happens instead.</p>
 <td><p>rejected</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.mu</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">Hund</span></code> (off-site)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
 <td><p>spin-free</p></td>
 <td><p>supported</p></td>
-<td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.mu</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">Ising</span></code> (off-site)</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">general</span></code></p></td>
 <td><p>spin-free</p></td>
 <td><p>supported</p></td>
-<td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">FLEX-REJECT·RPA-SUPPORTED</span></code></p></td>
+<td><p>supported</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EQUIV</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (off-site)</p></td>
@@ -417,33 +418,17 @@ record what the unsupported side does instead.</p>
 <li><p>FLEX: nothing to compare – accepted; no corresponding option semantics (flex.py:408) – FLEX starts every SCF loop from zero self-energy and recomputes chi0q from the dressed Green’s function each iteration (flex.py:446-451’s own docstring), so a chi0q_init entry loaded by the inherited RPA read_init is never consumed. Measured: supplying a chi0q_init DELIBERATELY PERTURBED to twice the value FLEX itself computes leaves every one of FLEX’s output arrays bitwise unchanged.</p></li>
 </ul>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'CoulombInter'</span></code>.</p></li>
-</ul>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.subshape</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">sublattice</span> <span class="pre">folding</span></code>.</p></li>
-</ul>
-</dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombintra_literalkey.reject</span></code></dt><dd><ul class="simple">
 <li><p>RPA refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">documented</span> <span class="pre">operator</span> <span class="pre">is</span> <span class="pre">on-site</span> <span class="pre">and</span> <span class="pre">same-orbital</span></code>.</p></li>
 <li><p>FLEX refuses the input at construction and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">documented</span> <span class="pre">operator</span> <span class="pre">is</span> <span class="pre">on-site</span> <span class="pre">and</span> <span class="pre">same-orbital</span></code>.</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_exchange.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Exchange'</span></code>.</p></li>
-</ul>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Hund'</span></code>.</p></li>
-</ul>
-</dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'Ising'</span></code>.</p></li>
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">off-site</span> <span class="pre">'Exchange'</span> <span class="pre">entry</span></code>.</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">interaction</span> <span class="pre">'PairHop'</span></code>.</p></li>
+<li><p>FLEX refuses the input during the solve and raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> whose message contains <code class="docutils literal notranslate"><span class="pre">off-site</span> <span class="pre">'PairHop'</span> <span class="pre">entry</span></code>.</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.onsite_exchange.reject</span></code></dt><dd><ul class="simple">
@@ -491,11 +476,39 @@ Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5
 Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter.conditioning.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 7.294815e-14; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 6.843859e-14. Resulting atol 1.0e-12 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12). Supersedes this cell’s original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell’s actual (much smaller) post-fix residual.</p></li>
 </ul>
 </dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></dt><dd><ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
 Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter_sameorb.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.551921e-17; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 4.167915e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14). Supersedes this cell’s original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell’s actual (much smaller) post-fix residual.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
 Provenance: RECALIBRATED for the #160 mu/Green-seam fix (calibration log Event 5, cell general.ring.offsite_coulombinter_sameorb.mu): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.220865e-16; MAX over the four gating CI runners (ubuntu-latest x Python 3.9-3.12, workflow run 33278664447 attempt 1) max|diff| 1.944572e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12). Supersedes this cell’s original two-development-machine literal, which dated from before the #160 fix and no longer reflected this cell’s actual (much smaller) post-fix residual.</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.subshape</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.776646e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 4.163442e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.645067e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.267834e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714462e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
+</ul>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.mu</span></code></dt><dd><ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">identity</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code> (comparator <code class="docutils literal notranslate"><span class="pre">general_from_flex_channels</span></code>): agree to <code class="docutils literal notranslate"><span class="pre">1.0e-14</span></code>.
+Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.onsite_coulombinter.coefftail.mu</span></code></dt><dd><ul class="simple">
@@ -640,28 +653,32 @@ same ground, each with the note recorded alongside it. They are
 listed for orientation only: the claims on this page are
 established by <code class="docutils literal notranslate"><span class="pre">tests/test_rpa_flex_equivalence_table.py</span></code> alone.</p>
 <dl class="simple">
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site CoulombInter with a != b (inter-orbital) under calc_scheme=’general’.</p></li>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_interorb.mu</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring</span></code>: The same fixture element-complete equal between RPA and FLEX for off-site inter-orbital CoulombInter (#181 Tier 1).</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.mu</span></code></dt><dd><ul class="simple">
 <li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_one_orbital_offsite_v_matches_the_rpa_ring_exactly</span></code>: The same fixture (tests/rpa/input’s coulombinter.dat, filling=0.75) element-complete equal between RPA and FLEX for off-site same-orbital CoulombInter.</p></li>
 </ul>
 </dd>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_coulombinter_sameorb.subshape</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_offsite_under_sublattice_folding_matches_the_ring</span></code>: Same-orbital off-site CoulombInter under SubShape=(2,1,1) and (4,1,1) element-complete equal between RPA and FLEX (#181 Tier 1).</p></li>
+</ul>
+</dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_exchange.flexreject</span></code></dt><dd><ul class="simple">
 <li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Exchange under calc_scheme=’general’.</p></li>
 </ul>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Hund under calc_scheme=’general’.</p></li>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_hund.mu</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring</span></code>: The same fixture element-complete equal between RPA and FLEX for off-site Hund (#181 Tier 1).</p></li>
 </ul>
 </dd>
-<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site Ising under calc_scheme=’general’.</p></li>
+<dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_ising.mu</span></code></dt><dd><ul class="simple">
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_two_orbital_offsite_interorbital_classes_match_the_ring</span></code>: The same fixture element-complete equal between RPA and FLEX for off-site Ising (#181 Tier 1).</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">general.ring.offsite_pairhop.flexreject</span></code></dt><dd><ul class="simple">
-<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: tests/test_flex_offsite_general.py’s general rejection-classes coverage (this exact PairHop case is not one of its enumerated subTest rows – the module’s docstring names off-site PairHop as rejected for the same non-local-pair reason as Exchange; linked for the surrounding module context, not a per-type pin).</p></li>
+<li><p>FLEX – <code class="docutils literal notranslate"><span class="pre">tests.test_flex_offsite_general::TestOffsiteGeneralFLEX::test_rejected_offsite_classes</span></code>: FLEX rejects off-site PairHop under calc_scheme=’general’ (this fixture is one of the enumerated subTest rows since #181 Tier 1).</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">reduced.ring.offsite_coulombinter.mu</span></code></dt><dd><ul class="simple">

@@ -834,9 +834,15 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 します。ただし <strong>spin-freeモード専用</strong> であり、
 <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>や<code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>に対しては<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を
 送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>にも対応していません。オフサイト項は
-同一軌道（a == b）の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>かつ副格子折り畳みなしの場合のみ
-受理されます（RPA ring と要素完全一致が実測されたクラス）。それ以外の
-オフサイト項は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>となります。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>について受理されます
+（同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
+Hartree（密度）頂点 <span class="math notranslate nohighlight">\(V(q)\)</span> としてのみ入り、オフサイト項の交換
+（Fock）交差は <span class="math notranslate nohighlight">\(q\)</span> のみの頂点では表現できないため含まれません
+（RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
+これらのクラスはいずれも RPA ring と要素完全一致が実測されています。
+オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>と
+なります（前者は裁定済みの頂点内容がなく、後者は局所対の形が存在
+しないため）。オンサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の非対角頂点は <strong>保持されます</strong>（本スキームの目的）が、
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子-正孔頂点に<code class="docutils literal notranslate"><span class="pre">S=C=0</span></code>で寄与せず <strong>無効（inert）</strong> で、
 厳密にゼロである旨の表示とともに受理されます。general パスは<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>をMYO規約で

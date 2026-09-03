@@ -889,10 +889,16 @@ zero effect). The <code class="docutils literal notranslate"><span class="pre">&
 full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
 <a class="reference internal" href="#flex-scope"><span class="std std-ref">above</span></a>), but it is <strong>spin-free only</strong> — it raises a
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and
-rejects <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. Off-site input is accepted only for
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> with equal orbitals (a == b) and no sublattice folding
-— the class measured element-complete equal to the RPA ring; every
-other off-site entry raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
+rejects <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. Off-site input is accepted for
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital or inter-orbital,
+with or without sublattice folding): each enters as its Hartree
+(density) vertex <span class="math notranslate nohighlight">\(V(q)\)</span> only — the exchange crossing of an
+off-site term is not representable by a <span class="math notranslate nohighlight">\(q\)</span>-only vertex and is
+left out, the same approximation the RPA ring makes, and the solver
+logs a warning saying so. For every such class the general path is
+measured element-complete equal to the RPA ring. Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> (no adjudicated content and no
+local-pair form, respectively). On-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
 <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> off-diagonal vertices <strong>are kept</strong> (the point of the scheme),
 but <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S=C=0</span></code> to the particle-hole vertex and is
 <strong>inert</strong> (accepted with a note that it is exactly zero). The general path writes <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/
