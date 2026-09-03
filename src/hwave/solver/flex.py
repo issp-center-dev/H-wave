@@ -2291,30 +2291,29 @@ class FLEX(RPA):
                 # a folded bond from on-site input, so the split had to be
                 # made before folding (the pre-fold-locality rule the RPA
                 # solver's _append_inter_cross follows for the same reason).
-                # The whole table is the fold of the whole PRE-fold table,
-                # never a dict union of the two folded parts: a
-                # displacement that is a full lattice period (judged
-                # off-site by the irvec == 0 rule, as the ring judges it)
-                # folds onto the SAME key as the on-site entry of that
-                # orbital pair, and a union would keep one of the two
-                # where the fold sums them (review finding; pinned by
-                # test_folded_key_collision_between_the_two_parts_is_summed).
-                types_present = [t for t in list(onsite_tbl)
-                                 + [t for t in offsite_tbl
-                                    if t not in onsite_tbl]]
-                whole_tbl = {t: self.ham_info._reshape_interaction(
-                                 scan_ham[t], False)
-                             for t in types_present}
                 onsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                               for t, tbl in onsite_tbl.items()}
                 offsite_tbl = {t: self.ham_info._reshape_interaction(tbl, False)
                                for t, tbl in offsite_tbl.items()}
-            else:
-                # the reader's own table, in its own entry order: every
-                # slot element that existed before the split keeps its
-                # floating-point summation order (bit-identical output
-                # for the previously accepted class)
-                whole_tbl = scan_ham
+            # The WHOLE table is the reader's own (folded, under SubShape)
+            # table normalised -- exactly what this path always consumed
+            # and what the RPA ring reads -- never a dict union of the two
+            # folded parts, and not the fold of the pre-fold-normalised
+            # table either: a displacement that is a full lattice period
+            # (judged off-site by the irvec == 0 rule, as the ring judges
+            # it) folds onto the SAME key as the on-site entry of that
+            # orbital pair, where a union keeps one coefficient instead of
+            # their sum, and where an aggregate Coulomb declaration is
+            # classified CoulombIntra by the reader's fold-then-split but
+            # CoulombInter by a split-then-fold (review findings; pinned
+            # by test_folded_key_collision_between_the_two_parts_is_summed
+            # and test_aggregate_coulomb_full_period_entry_under_folding_
+            # follows_the_ring). Without folding this is scan_ham itself,
+            # in the reader's entry order, so every slot element that
+            # existed before the split keeps its floating-point summation
+            # order (bit-identical output for the previously accepted
+            # class). The two folded parts feed only their own slot roles.
+            whole_tbl = _normalized(self.ham_info.param_ham)
 
             no = self.norb
             nx, ny, nz = self.lattice.shape

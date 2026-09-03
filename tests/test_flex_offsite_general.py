@@ -239,6 +239,67 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                          - np.asarray(gr_off_only['chiq']))),
                            1e-3)
 
+    def test_aggregate_coulomb_full_period_entry_under_folding_follows_the_ring(self):
+        """Aggregate `Coulomb` with a same-orbital displacement equal to a
+        full lattice period (internal table) under folding: the reader's
+        folded table maps it to R = 0 same-orbital, which split_coulomb
+        then classifies as CoulombIntra (the U slot); the pre-fold split
+        classifies the same entry as off-site CoulombInter. The RPA ring
+        reads the folded classification, so the whole-table array must
+        be built from the folded-then-normalised table (element-complete
+        parity), while the locality split still judges the pre-fold
+        declarations."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        table = {((0, 0, 0), (0, 0)): 3.0, ((0, 0, 0), (1, 1)): 3.0,
+                 ((0, 0, 0), (0, 1)): 0.5, ((0, 0, 0), (1, 0)): 0.5,
+                 ((4, 0, 0), (0, 0)): 0.2, ((-4, 0, 0), (0, 0)): 0.2,
+                 ((1, 0, 0), (1, 1)): 0.1, ((-1, 0, 0), (1, 1)): 0.1}
+        par = {'T': 2.0, 'filling': 0.5, 'CellShape': [4, 4, 1],
+               'SubShape': [2, 1, 1], 'Nmat': 32}
+
+        def io():
+            r = read_input_k.QLMSkInput(
+                {'path_to_input': 'tests/rpa/input_2orb',
+                 'interaction': {'path_to_input': 'tests/rpa/input_2orb',
+                                 'Geometry': 'geom.dat',
+                                 'Transfer': 'transfer.dat'}})
+            ham = r.get_param("ham")
+            ham['Coulomb'] = dict(table)
+            return r, ham
+
+        os.makedirs('tests/rpa/output', exist_ok=True)
+        r1, ham1 = io()
+        rpa = rpa_mod.RPA(ham1, {}, {'mode': 'RPA', 'param': dict(par),
+                                     'enable_spin_orbital': False,
+                                     'calc_scheme': 'general',
+                                     'calc_type': 'ring'})
+        gr = r1.get_param("green")
+        rpa.solve(gr, 'tests/rpa/output')
+        r2, ham2 = io()
+        pf = dict(par)
+        pf.update({'IterationMax': 1, 'Mix': 1.0, 'EPS': 1})
+        fx = flex_mod.FLEX(ham2, {}, {'mode': 'FLEX', 'param': pf,
+                                      'enable_spin_orbital': False,
+                                      'calc_scheme': 'general'})
+        gf = r2.get_param("green")
+        fx.solve(gf, 'tests/rpa/output')
+        _assert_element_complete_equal(self, gr, gf, norb=4)
+        # anti-vacuity: the full-period entry changes the ring's answer
+        r3, ham3 = io()
+        ham3['Coulomb'][((4, 0, 0), (0, 0))] = 0.0
+        ham3['Coulomb'][((-4, 0, 0), (0, 0))] = 0.0
+        rpa3 = rpa_mod.RPA(ham3, {}, {'mode': 'RPA', 'param': dict(par),
+                                      'enable_spin_orbital': False,
+                                      'calc_scheme': 'general',
+                                      'calc_type': 'ring'})
+        gr3 = r3.get_param("green")
+        rpa3.solve(gr3, 'tests/rpa/output')
+        self.assertGreater(np.max(np.abs(np.asarray(gr['chiq'])
+                                         - np.asarray(gr3['chiq']))), 1e-3)
+
     def test_aggregate_coulomb_under_folding_equals_the_explicit_split(self):
         """Aggregate `Coulomb` is normalised into CoulombIntra + CoulombInter
         BEFORE the locality split and the per-part folding; the result
