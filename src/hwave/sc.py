@@ -1999,9 +1999,15 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
         Default None: the on-site Kanamori slot map is applied to
         ``inter_k`` as a whole (every existing caller). When given, the
         pair ``(inter_k_onsite, inter_k_offsite)`` -- the k-space forms of
-        the ``R == 0`` and ``R != 0`` declarations SEPARATELY, whose sum
-        is ``inter_k`` -- makes the slot map locality-aware (#181 Tier 1,
-        the general FLEX path): the cross (Case 2) and antidiag (Case 4)
+        the ``R == 0`` and ``R != 0`` PRE-fold declarations, separately --
+        makes the slot map locality-aware (#181 Tier 1, the general FLEX
+        path). ``inter_k`` stays the authoritative whole table (the
+        reader's own, folded under SubShape); the two parts are
+        locality-ROUTING inputs and need not form a per-type
+        decomposition of it (under folding a full-period displacement
+        folds onto an on-site key, and an aggregate ``Coulomb`` entry can
+        then be CoulombIntra in the whole table while the pre-fold split
+        holds it as CoulombInter): the cross (Case 2) and antidiag (Case 4)
         families, whose particle-hole pair is NON-local for ``R != 0``,
         are built from the on-site part only, and the same-orbital
         density elements of Hund / Ising (Case 3 at ``l1 == l3``, where

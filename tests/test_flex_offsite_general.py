@@ -239,6 +239,28 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
                                          - np.asarray(gr_off_only['chiq']))),
                            1e-3)
 
+        # Hund / Ising: a full-period SAME-orbital entry folds onto the
+        # (a,a) key, whose density content the shared builder's on-site
+        # gate deletes; with the split it comes through the off-site part,
+        # as the ring (no gate) carries it
+        for itype in ('Hund', 'Ising'):
+            with self.subTest(itype=itype):
+                wrapped_same = [(itype, ((4, 0, 0), (0, 0)), 0.15),
+                                (itype, ((-4, 0, 0), (0, 0)), 0.15)]
+                gr, gf = _run_pair('tests/equivalence_input/orb2',
+                                   {itype: 'offsite_%s.dat' % itype.lower()},
+                                   [4, 4, 1], filling=0.5, sub=(2, 1, 1),
+                                   inject=wrapped_same)
+                _assert_element_complete_equal(self, gr, gf, norb=4)
+                gr0, _ = _run_pair('tests/equivalence_input/orb2',
+                                   {itype: 'offsite_%s.dat' % itype.lower()},
+                                   [4, 4, 1], filling=0.5, sub=(2, 1, 1),
+                                   inject=[(t, k, 0.0)
+                                           for t, k, _ in wrapped_same])
+                self.assertGreater(
+                    np.max(np.abs(np.asarray(gr['chiq'])
+                                  - np.asarray(gr0['chiq']))), 1e-3)
+
     def test_aggregate_coulomb_full_period_entry_under_folding_follows_the_ring(self):
         """Aggregate `Coulomb` with a same-orbital displacement equal to a
         full lattice period (internal table) under folding: the reader's

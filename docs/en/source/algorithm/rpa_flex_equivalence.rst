@@ -36,9 +36,10 @@ Status of these records
 
 The tolerances below are **confirmed**: they were reproduced on the
 project's continuous-integration runners at source revision
-``8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`` (workflow run
-``32204319966 attempt 1``), and hold as of that revision. The notes
-below record where each residual was originally measured.
+``db2c3ff0444165aaca95c54f03f99efaccab9ff7`` (workflow runs
+``32204319966 attempt 1``, ``33714525023 attempt 1``), and hold as of
+that revision. The notes below record where each residual was
+originally measured.
 
 How to read the table
 *********************
@@ -402,9 +403,9 @@ records rather than user guidance.
 
 ``general.ring.offsite_coulombinter_interorb.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_interorb.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
 
 ``general.ring.offsite_coulombinter_sameorb.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
@@ -414,21 +415,21 @@ records rather than user guidance.
 
 ``general.ring.offsite_coulombinter_sameorb.subshape``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.776646e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 4.163442e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 2.776646e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 4.163442e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.645067e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 9.267834e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_coulombinter_sameorb.subshape; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 5.645067e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.267834e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
 
 ``general.ring.offsite_hund.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714462e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_hund.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714462e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
 
 ``general.ring.offsite_ising.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 9.714461e-17; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 9.714755e-17. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-14).
    * ``chiq`` (comparator ``general_from_flex_channels``): agree to ``1.0e-14``.
-     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
+     Provenance: NEW comparison cell (#181 Tier 1, calibration log Event 7, cell general.ring.offsite_ising.mu; FLEX-REJECT.RPA-SUPPORTED before): measured on the macOS arm64 development machine (Python 3.13.13, numpy 2.4.6, scipy 1.17.1) max|diff| 1.110224e-16; MAX over the three gating CI runners (ubuntu-latest x Python 3.10-3.12, workflow run 33714525023 attempt 1) max|diff| 1.110249e-16. Resulting atol 1.0e-14 (10x the larger residual, floored at 1e-15, rounded up to a power of ten; policy ceiling 1.0e-12).
 
 ``general.ring.onsite_coulombinter.coefftail.mu``
    * ``chi0q`` (comparator ``identity``): agree to ``1.0e-14``.

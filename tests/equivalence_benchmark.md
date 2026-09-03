@@ -133,3 +133,68 @@ Section schema: header (commit, protocol, runner matrix), then a table `cell_id 
 **Conditioning-cell amplification:** the diagnostic's assertion 2 (the chemical-potential seam) amplifies by **1.07e+03x** on every one of the four gating runners -- identical across Python 3.9, 3.10, 3.11 and 3.12, and far above the >= 10x conditioning criterion. See `tests/equivalence_calibration_log.md`, Event 3, for the full checkpoint table.
 
 **Source SHA / run identity:** `8144bf3f9e9539bad4759a2fbd1b24f52f7bef33` on all 12 measurement invocations, verified by `python3 -m tests.equivalence_freeze_check <artifacts> --source-sha 8144bf3f9e9539bad4759a2fbd1b24f52f7bef33`, which reports **VALIDATION OK (12 measurement + 4 unittest samples)**. Recomputing all 42 (cell, observable) bounds from the gating-runner MAX using the registry's own rounding rule reproduces every recorded atol exactly: **no bound changed**, no bound exceeds its policy ceiling, and no cell diverges or straddles its ceiling. On the strength of this section and Event 3, the registry's `PROVENANCE` record moves to `status = "frozen"`, naming this commit and this run.
+
+---
+
+## Section 3 -- freeze pass for the #181 Tier-1 registry change (four off-site cells become comparison cells)
+
+- **Commit:** db2c3ff0444165aaca95c54f03f99efaccab9ff7 (the revision every measurement below was taken at -- see `tests/equivalence_calibration_log.md`, Event 7, for the residual side of this same sweep and for the freeze decision it supports).
+- **Why a new section:** the registry inventory changed (the maintenance checklist in `tests/equivalence_cells.py`'s docstring): cells 21-23 (`general.ring.offsite_coulombinter_interorb.flexreject`, `general.ring.offsite_hund.flexreject`, `general.ring.offsite_ising.flexreject`) were RENAMED to `...interorb.mu` / `...hund.mu` / `...ising.mu` and, together with cell 27 (`general.ring.offsite_coulombinter_sameorb.subshape`), flipped from `FLEX-REJECT.RPA-SUPPORTED` to `SUPPORTED` with an `Equiv` comparison -- their FLEX side now runs instead of raising, which moves their wall time. Cell count unchanged (37).
+- **Authoritative run identity:** `.github/workflows/equivalence-calibration.yml`, **workflow run 33714525023, attempt 1**, event `workflow_dispatch` on branch `feat/flex-offsite-tier1-181`, head SHA `db2c3ff0444165aaca95c54f03f99efaccab9ff7`. The three `calibrate` jobs report `failure` because their unittest timing step hit exactly ONE expected failure -- `TestBenchmarkRegistryTie.test_most_recent_section_is_an_exact_multiset_match_with_cells`, which this section resolves (the measured revision predates the section that names it, as in Section 2 / Event 3); every measurement step ran to completion under `if: always()` and all 12 artifacts (3 runners x (3 measurement + 1 unittest-timing)) are present. Chosen by the Section-2 rule: the only run of the workflow at this head SHA. (Three earlier dispatches on this branch -- runs 33706826878 at 76e09354, 33707963617 at a73d3363 and 33708296822 at d8dc8c01 -- measured revisions that code-review rounds then changed; they are superseded and not recorded.)
+- **Protocol:** `python -m tests.equivalence_measure` run 3x per gating runner (9 measurement samples) plus one timed `python -m unittest tests.test_rpa_flex_equivalence_table` process per runner (3 timing samples). Aggregated with `python3 -m tests.equivalence_freeze_check <artifacts> --source-sha db2c3ff0444165aaca95c54f03f99efaccab9ff7`: **VALIDATION OK (9 measurement + 3 unittest samples)**.
+- **Runner matrix:** the three gating runners (Python 3.9 was dropped from the matrix when 2.0.0 raised the floor to 3.10, #148), all on `ubuntu-latest` (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39): Python 3.10.21 (numpy 1.26.4, scipy 1.15.3), Python 3.11.16 (numpy 1.26.4, scipy 1.17.1), Python 3.12.14 (numpy 1.26.4, scipy 1.17.1).
+
+### Per-cell timing (37 rows -- every cell in `CELLS`)
+
+| cell_id | max_seconds_over_runs_and_runners |
+|---|---|
+| `general.ring.onsite_coulombintra.fixedmu` | 0.453044 |
+| `general.ring.onsite_coulombinter.fixedmu` | 0.014193 |
+| `general.ring.onsite_hund.fixedmu` | 0.012381 |
+| `general.ring.onsite_ising.fixedmu` | 0.013594 |
+| `general.ring.onsite_exchange.fixedmu` | 0.013501 |
+| `general.ring.onsite_pairhop.fixedmu` | 0.012904 |
+| `general.ring.onsite_pairlift.fixedmu` | 0.012641 |
+| `general.ring.onsite_u_v_hund.mu` | 0.016178 |
+| `general.ring.onsite_full_kanamori.mu` | 0.017900 |
+| `reduced.ring.onsite_coulombintra.spinfree.mu` | 0.008220 |
+| `reduced.ring.onsite_coulombinter.spinfree.mu` | 0.008688 |
+| `reduced.ring.onsite_hund.spinfree.mu` | 0.008592 |
+| `reduced.ring.onsite_ising.spinfree.mu` | 0.008762 |
+| `reduced.ring.onsite_pairlift.spinfree.mu` | 0.008123 |
+| `reduced.ring.onsite_coulombintra.spindiag.mu` | 0.009408 |
+| `reduced.ring.onsite_coulombinter.spindiag.mu` | 0.010087 |
+| `reduced.ring.onsite_exchange.reject` | 0.001918 |
+| `reduced.ring.onsite_pairhop.reject` | 0.001508 |
+| `general.ring.offsite_coulombinter_sameorb.mu` | 0.006789 |
+| `reduced.ring.offsite_coulombinter.mu` | 0.006944 |
+| `general.ring.offsite_coulombinter_interorb.mu` | 0.014460 |
+| `general.ring.offsite_hund.mu` | 0.013640 |
+| `general.ring.offsite_ising.mu` | 0.014695 |
+| `general.ring.offsite_exchange.flexreject` | 0.009390 |
+| `general.ring.offsite_pairhop.flexreject` | 0.009910 |
+| `general.ring.offsite_coulombintra_literalkey.reject` | 0.000627 |
+| `general.ring.offsite_coulombinter_sameorb.subshape` | 0.014491 |
+| `general.ring.onsite_coulombinter.subshape.mu` | 0.129944 |
+| `general.ring.onsite_coulombinter.coefftail.mu` | 0.015829 |
+| `auto.density.resolution` | 0.002139 |
+| `auto.exchange.resolution` | 0.002112 |
+| `auto.pairhop.resolution` | 0.001630 |
+| `chi0q_init.reuse` | 0.016918 |
+| `ringladder.general.onsite_coulombintra` | 0.002426 |
+| `so.general.construction.reject` | 0.003334 |
+| `so.reduced.construction.reject` | 0.002524 |
+| `general.ring.offsite_coulombinter.conditioning.mu` | 0.015845 |
+
+### Module-level and process-level timing (per runner; MAX over the 3 invocations)
+
+| quantity | Python 3.10 | Python 3.11 | Python 3.12 |
+|---|---|---|---|
+| `module_total_seconds_per_runner` (MAX of 3 invocations) | 0.948 | 0.967 | 0.782 |
+| `process_seconds` (MAX of 3 invocations, external wall clock) | 1.300 | 1.290 | 0.995 |
+| `process_overhead_seconds` (the two rows above differenced) | 0.352 | 0.323 | 0.213 |
+| `unittest_module_process_seconds` (`python -m unittest tests.test_rpa_flex_equivalence_table`, 1 sample) | 1.179 | 1.257 | 1.014 |
+
+**120s freeze-time budget:** the gated quantity is the MAX of the three `unittest_module_process_seconds` samples above, **1.257 s** (Python 3.11) against the **120 s** budget -- roughly 95x of headroom. The budget holds and needed no change.
+
+**Source SHA / run identity:** `db2c3ff0444165aaca95c54f03f99efaccab9ff7` on all 9 measurement invocations, verified by the freeze checker's VALIDATION OK line quoted above. Recomputing every (cell, observable) bound from the MAX over {this run's 9 samples, the dev machine's 3 samples at the same revision} with the registry's own rounding rule reproduces every pre-existing recorded atol exactly and yields the four new cells' atols recorded in Event 7: **no pre-existing bound changed**, no bound exceeds its policy ceiling, no cell diverges or straddles its ceiling. On the strength of this section and Event 7, the registry's `PROVENANCE` record names this commit and this run (keeping run 32204319966 attempt 1 in its run list as the origin of every pre-existing bound).

@@ -758,3 +758,100 @@ the measured worst. If a future runner pool measures >1e-14 here, the
 next recalibration should consider an ULP-distance metric (the
 invariant "the two counters agree to a few tens of ULP through geev
 conditioning" is platform-stable; an absolute epsilon is not).
+
+---
+
+## Event 7 -- four off-site cells become comparison cells (#181 Tier 1: the general FLEX path accepts off-site CoulombInter/Hund/Ising)
+
+- **Date:** 2026-09-03
+- **Commit:** db2c3ff0444165aaca95c54f03f99efaccab9ff7 (branch
+  `feat/flex-offsite-tier1-181`; the revision every measurement below
+  was taken at). Unlike Events 4-6, this Event DOES move the file's
+  last bare `- **Commit:**` line: it changes the cell inventory, so
+  `tests/equivalence_benchmark.md` gained Section 3 at this revision
+  and `PROVENANCE.source_sha` moves to it -- the benchmark /
+  provenance / calibration-log tie tests require all three to agree.
+- **Trigger:** issue #181 Tier 1. The general (full-vertex) FLEX path
+  rejected every off-site two-body interaction except same-orbital
+  CoulombInter without sublattice folding, because the shared
+  pair-space S/C builder applied the on-site Kanamori slot map to the
+  full Fourier sum: off-site content landed in the cross (ab,ab) slots
+  -- whose particle-hole pair is non-local for R != 0 -- and the
+  on-site `l1 != l3` density gate deleted the same-orbital off-site
+  Hund/Ising. With the locality-aware slot map
+  (`hwave.sc._build_sc_matrices_all_q(..., locality_split=...)`, the
+  general FLEX path's entry `hwave.solver._sc_matrices_myo.
+  build_sc_matrices_locality_split`: cross/antidiag families from the
+  on-site part, same-orbital Hund/Ising density elements from the
+  off-site part, everything else from the reader's own (folded,
+  normalised) whole table in its entry order; the split is judged on
+  the PRE-fold declarations) the four affected registry cells flip
+  from `FLEX-REJECT.RPA-SUPPORTED` to `SUPPORTED` and gain an `Equiv`
+  comparison. Cells 21-23 are RENAMED (`...flexreject` -> `...mu`);
+  cell 27 keeps its id. Off-site Exchange / PairHop (cells 24-25) stay
+  rejected; their reject fragments follow the new message.
+- **Stage 1 (dev machine):** macOS-26.5.2-arm64-arm-64bit-Mach-O,
+  Python 3.13.13, numpy 2.4.6, scipy 1.17.1, BLAS/LAPACK = Accelerate.
+  THREE `python -m tests.equivalence_measure` invocations at
+  db2c3ff0, 0 `"error"` records, `source_sha` == db2c3ff0 on all
+  three.
+- **Stage 2 (the three gating continuous-integration runners):**
+  `ubuntu-latest` (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39) x
+  Python 3.10.21/3.11.16/3.12.14, numpy 1.26.4, scipy
+  1.15.3/1.17.1/1.17.1, `.github/workflows/equivalence-calibration.yml`,
+  **workflow run 33714525023, attempt 1** (workflow_dispatch at
+  db2c3ff0 on the branch). All 9 measurement artifacts + 3
+  unittest-timing artifacts present; `tests.equivalence_freeze_check`
+  on the downloaded set: `VALIDATION OK (9 measurement + 3 unittest
+  samples, source_sha db2c3ff0444165aaca95c54f03f99efaccab9ff7)`. The
+  jobs' own unittest step failed on exactly ONE test,
+  `TestBenchmarkRegistryTie.test_most_recent_section_is_an_exact_
+  multiset_match_with_cells` -- the benchmark section this Event adds
+  did not exist at the measured revision (the measurement steps run
+  under `if: always()` and completed). Three earlier dispatches on the
+  branch (runs 33706826878 at 76e09354, 33707963617 at a73d3363,
+  33708296822 at d8dc8c01) measured revisions that the code review
+  then changed (a summation-order fix, then two folded-whole-table
+  fixes); they are superseded by this run and not recorded.
+- **Derivation rule (Events 2/3's):** bound = 10x the larger of {dev
+  MAX, CI MAX}, floored at 1e-15 before the multiply, rounded up to a
+  power of ten, must land at or under the mapped policy ceiling
+  (`chi0q_mu`/`chiq_mu` for the filling-driven cells 21-23,
+  `chi0q_fixed`/`chiq_fixed` for the fixed-mu cell 27).
+
+| cell_id/checkpoint | observable | primary residual (dev MAX) | secondary residual (CI MAX) | derived value (candidate atol) | decision | reason |
+|---|---|---|---|---|---|---|
+| `general.ring.offsite_coulombinter_interorb.mu` (cell 21, NEW comparison) | chi0q | 9.714461e-17 | 9.714755e-17 | 1e-14 (= `chi0q_mu` ceiling) | freeze | round-off; same family as every other `chi0q_mu` cell |
+| `general.ring.offsite_coulombinter_interorb.mu` (cell 21, NEW comparison) | chiq | 1.110224e-16 | 1.110249e-16 | 1e-14 | freeze | round-off; the Hartree vertex V_ab(q) on the density slots is ring-identical (before Tier 1: 3.4e-2 when forced through the on-site slot map) |
+| `general.ring.offsite_hund.mu` (cell 22, NEW comparison) | chi0q | 9.714461e-17 | 9.714755e-17 | 1e-14 | freeze | round-off |
+| `general.ring.offsite_hund.mu` (cell 22, NEW comparison) | chiq | 9.714462e-17 | 9.714755e-17 | 1e-14 | freeze | round-off (before Tier 1: 2.4e-2) |
+| `general.ring.offsite_ising.mu` (cell 23, NEW comparison) | chi0q | 9.714461e-17 | 9.714755e-17 | 1e-14 | freeze | round-off |
+| `general.ring.offsite_ising.mu` (cell 23, NEW comparison) | chiq | 1.110224e-16 | 1.110249e-16 | 1e-14 | freeze | round-off (before Tier 1: 2.4e-2) |
+| `general.ring.offsite_coulombinter_sameorb.subshape` (cell 27, NEW comparison) | chi0q | 2.776646e-17 | 4.163442e-17 | 1e-14 (= `chi0q_fixed` ceiling) | freeze | round-off; folded (2,1,1) grid, the pre-fold locality split folds each part separately |
+| `general.ring.offsite_coulombinter_sameorb.subshape` (cell 27, NEW comparison) | chiq | 5.645067e-16 | 9.267834e-16 | 1e-14 | freeze | the largest of the four (folded 2-supercell-orbital reconstruction); still 2 orders under the `chiq_fixed` ceiling 1e-12 (before Tier 1: 1.3e-1, an answer that depended on SubShape) |
+
+The bound rule's floor (`_candidate_atol`, 1e-15 before the 10x) lands
+every one of these at 1e-14, the same value every other round-off
+cell in the registry carries; the candidate atol is recorded through
+`_measured_equiv_tier1` in `tests/equivalence_cells.py` (dev and CI
+residuals both kept in the provenance string).
+
+**Every pre-existing bound reproduced:** recomputing all 42
+pre-existing (cell, observable) bounds from this run's CI MAX and the
+dev MAX at the same revision with the registry rule reproduces every
+recorded atol exactly (checked by script over `CELLS`: 0 breaches, 0
+rule-bound-above-recorded). Worst movers, all far inside their
+bounds: `general.ring.offsite_coulombinter.conditioning.mu / chiq`
+7.294815e-14 (dev) / 6.843859e-14 (CI) vs atol 1e-12;
+`reduced.ring.onsite_coulombintra.spindiag.mu / chiq` 4.718455e-16
+(CI) vs 1e-14. No `POLICY_CEILINGS` key is re-derived by this Event.
+
+**Timing:** `tests/equivalence_benchmark.md` Section 3 owns the
+authoritative table; the 120 s freeze-time budget holds at 1.257 s
+(Python 3.11).
+
+**Runner-set note (carried from the #148 release prep):** this is the
+first calibration Event on the THREE-runner gating set (3.10-3.12);
+the historical provenance lines of the pre-existing cells still name
+the four-runner set they were originally frozen on, which is accurate
+for them.

@@ -473,8 +473,14 @@ POLICY_CEILINGS: dict = {
 # asserted by ``TestRegistrySchema`` in
 # ``tests/test_rpa_flex_equivalence_table.py``.
 PROVENANCE: dict = {
-    "source_sha": "8144bf3f9e9539bad4759a2fbd1b24f52f7bef33",
-    "run_ids": ("32204319966 attempt 1",),
+    # Event 7 (#181 Tier 1): the inventory changed (four cells flipped
+    # to comparison cells, ids renamed), so the record moves to the
+    # revision and run that froze the enlarged registry; the earlier
+    # freeze (8144bf3f, run 32204319966 attempt 1, Event 3) is kept in
+    # the run list as the provenance of every pre-existing bound, all of
+    # which the Event-7 run reproduced without change.
+    "source_sha": "db2c3ff0444165aaca95c54f03f99efaccab9ff7",
+    "run_ids": ("32204319966 attempt 1", "33714525023 attempt 1"),
     "status": "frozen",
 }
 
@@ -781,11 +787,11 @@ def _measured_equiv_tier1(
 # The CI calibration run the Event-7 literals below were frozen from
 # (workflow_dispatch of .github/workflows/equivalence-calibration.yml on
 # the #181 Tier 1 branch). "PENDING" until that run has been aggregated.
-_TIER1_CI_RUN = "33706826878 attempt 1 (PROVISIONAL, measured at 76e09354; refrozen in the calibration commit)"
+_TIER1_CI_RUN = "33714525023 attempt 1"
 
 # Event 7 literals: (chi0q_dev, chi0q_ci_max, chiq_dev, chiq_ci_max) per
 # cell, read off ``python -m tests.equivalence_measure`` (dev, 3
-# invocations at 76e09354) and the calibration workflow's artifacts (CI
+# invocations at db2c3ff0) and the calibration workflow's artifacts (CI
 # MAX over 3 runners x 3 invocations, aggregated by
 # ``tests.equivalence_freeze_check``), see
 # ``tests/equivalence_calibration_log.md`` Event 7.
