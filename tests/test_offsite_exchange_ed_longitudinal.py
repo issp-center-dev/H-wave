@@ -28,10 +28,14 @@ Findings (2026-09-03, recorded in the assertions below):
 * CONTROLS reproduce the adjudicated table: an off-site density bond gives
   CoulombInter ``(S, C) = (0, +2) V(q)`` and Hund ``(+1, -1) V(q)`` on the
   density slots, with ``V(q) = 2 v cos q`` for the two-sided one-orbital
-  bond and ``v e^{+iq}`` for the one-sided two-orbital bond -- to 0.2%,
-  the residual being the bond's own exchange (Fock) crossing, a NON-local
-  pair that a q-only vertex cannot carry (the part Tier 1 omits with a
-  warning; #181 Tier 3).
+  bond and ``v e^{+iq}`` for the one-sided two-orbital bond. Measured
+  discrepancy: 0.2% on the two-orbital density slots (1.9964 vs 2), 1-3%
+  on the one-orbital ring (3.949 vs 4; 1.949 vs 2), where the bond's own
+  exchange (Fock) crossing -- a NON-local pair that a q-only vertex cannot
+  carry (the part Tier 1 omits with a warning; #181 Tier 3) -- lands on
+  the same single slot. The ENFORCED tolerances below (0.05-0.06 absolute
+  per unit coupling) are looser than the measurement: they bound the
+  Fock residual, not the round-off.
 * OFF-SITE EXCHANGE: the longitudinal first-order response is 40x smaller
   than the spin-flip one (1-orbital: 3.4e-3 vs 2.2e-1; 2-orbital: 4.8e-3
   vs 1.9e-1 per unit coupling) and carries NO density-family content
@@ -40,8 +44,9 @@ Findings (2026-09-03, recorded in the assertions below):
   (1-orbital: S = C = 0.0513 / 0.0297 / 0.0083 over q against the
   CoulombInter control's S-channel residual 0.0509 / 0.0293 / 0.0076) --
   i.e. it is the same non-local-pair content, not a q-only vertex. For a
-  purely imaginary J the longitudinal response vanishes identically
-  (1.5e-7) while the spin-flip response stays at 1.6e-1.
+  purely imaginary J the longitudinal response is numerically zero
+  (1.5e-7 on the one-orbital fixture, bound 1e-6; no analytic identity is
+  claimed) while the spin-flip response stays at 1.6e-1.
 * OFF-SITE PAIRLIFT (Sz-breaking; dense route): longitudinal response
   8e-9, spin-flip 2.2e-1 -- inert in the longitudinal channels off-site
   exactly as on-site.
@@ -237,6 +242,12 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
         S_x, C_x = _longitudinal_sc(fx, D_x)
         np.testing.assert_allclose(S_x[:, 0, 0], S_ci[:, 0, 0], atol=3e-3)
         np.testing.assert_allclose(C_x[:, 0, 0], S_ci[:, 0, 0], atol=3e-3)
+        self.assertGreater(np.max(np.abs(S_ci[:, 0, 0])), 0.03)   # not vacuous
+        # Richardson stability: the step 0.005 is not what makes the
+        # Exchange content small (measured |D(v1) - D(v1/2)| = 2.7e-6)
+        D_x_half = _first_order(fx, lambda v: _terms_exchange(fx, 0, 0, 1, v),
+                                v1=V1 / 2)
+        self.assertLess(np.max(np.abs(D_x_half - D_x)), 1e-4)
 
     @heavy
     def test_two_orbital_interorbital_exchange_and_controls(self):
@@ -252,6 +263,17 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
         np.testing.assert_allclose(C_ci[:, 0, 3], 2.0 * eq.conj(), atol=0.05)
         np.testing.assert_allclose(C_ci[:, 3, 0], 2.0 * eq, atol=0.05)
         self.assertLess(np.max(np.abs(S_ci[:, 0, 3])), 0.02)
+        # the same placement as the solver's k-space builder: the (00,11)
+        # slot reads mat[0, 1] of hwave.sc._build_interaction_k, i.e. the
+        # pair-transposed entry (issue #96)
+        import hwave.sc as sc
+        kx = 2.0 * np.pi * np.arange(fx.L) / fx.L
+        ik = sc._build_interaction_k(kx, np.array([0.0]), np.array([0.0]),
+                                     {"CoulombInter": {((1, 0, 0), (0, 1)): 1.0,
+                                                       ((-1, 0, 0), (1, 0)): 1.0}},
+                                     2)["CoulombInter"]
+        np.testing.assert_allclose(C_ci[:, 0, 3], 2.0 * ik[0, 1, :, 0, 0], atol=0.05)
+        np.testing.assert_allclose(C_ci[:, 3, 0], 2.0 * ik[1, 0, :, 0, 0], atol=0.05)
         D_h = _first_order(fx, lambda v: _terms_hund(fx, 0, 1, 1, v))
         S_h, C_h = _longitudinal_sc(fx, D_h)
         np.testing.assert_allclose(S_h[:, 0, 3], eq.conj(), atol=0.05)
@@ -272,6 +294,17 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
                 # CoulombInter control's cross residual)
                 self.assertLess(np.max(np.abs(S_x)), 0.05)
                 self.assertLess(np.max(np.abs(C_x)), 0.05)
+                if label == "real":
+                    # ... and for real J it IS that residual, element for
+                    # element on the cross slots (01,01), (10,10): the
+                    # Exchange term's (S, C) both equal the CoulombInter
+                    # control's S-channel Fock residual there (measured
+                    # 0.0113 at q=0, 0.0307/0.0038 at q != 0) -- a nonzero
+                    # identity, so an all-zero implementation cannot pass
+                    for (r, c) in ((1, 1), (2, 2)):
+                        np.testing.assert_allclose(S_x[:, r, c], S_ci[:, r, c], atol=3e-3)
+                        np.testing.assert_allclose(C_x[:, r, c], S_ci[:, r, c], atol=3e-3)
+                    self.assertGreater(np.max(np.abs(S_ci[:, 1, 1])), 0.02)
 
 
 if __name__ == "__main__":

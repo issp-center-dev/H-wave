@@ -40,7 +40,7 @@ particular, off-site Exchange and PairLift have NO longitudinal entry:
 adjudicated by exact diagonalization (#181 Tier 2,
 tests/test_offsite_exchange_ed_longitudinal.py) -- Exchange's density
 slots measure 1e-3 against the controls' 2.0 / 1.0 per unit coupling and
-a purely imaginary J gives an identically vanishing longitudinal
+a purely imaginary J gives a numerically vanishing (< 1e-6) longitudinal
 response; PairLift's longitudinal response vanishes off-site as it does
 on-site. Their content is transverse (RING_SPIN_FLIP below), which is
 why the table carries no off-site entry for either.

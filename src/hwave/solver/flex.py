@@ -2157,7 +2157,7 @@ class FLEX(RPA):
             #     (#181 Tier 2, tests/test_offsite_exchange_ed_longitudinal
             #     .py): no q-representable longitudinal S/C content at all
             #     (density slots 1e-3 against the controls' 2.0 / 1.0; a
-            #     purely imaginary J gives an identically vanishing
+            #     purely imaginary J gives a numerically vanishing (< 1e-6)
             #     longitudinal response), its longitudinal remainder is the
             #     same non-local pair a density bond's Fock crossing is
             #     (Tier 3), and its physics is transverse (spin-flip
