@@ -1834,7 +1834,7 @@ _CELL_24_OFFSITE_EXCHANGE_FLEXREJECT = Cell(
         "q-representable longitudinal spin/charge content -- "
         "ADJUDICATED by exact diagonalization (#181 Tier 2, "
         "tests/test_offsite_exchange_ed_longitudinal.py: density slots "
-        "1e-3 against the controls' 2.0 / 1.0, an imaginary J gives an "
+        "1e-3 against the controls' 2.0 / 1.0, an imaginary J gives a "
         "numerically vanishing (< 1e-6) longitudinal response); its only "
         "local-bilinear regrouping, -J S+_i S-_j, is transverse "
         "(spin-flip bilinears; spin-flip response 40x the longitudinal "
