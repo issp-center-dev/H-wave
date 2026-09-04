@@ -897,8 +897,14 @@ off-site term is not representable by a <span class="math notranslate nohighligh
 left out, the same approximation the RPA ring makes, and the solver
 logs a warning saying so. For every such class the general path is
 measured element-complete equal to the RPA ring. Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
-and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> (no adjudicated content and no
-local-pair form, respectively). On-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
+and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> has no
+effect a <span class="math notranslate nohighlight">\(q\)</span>-dependent spin/charge vertex could carry (verified
+by exact diagonalization): its physics is spin-flip (transverse), which
+this spin-free path does not compute, and the small remainder needs a
+bond-resolved vertex. An off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> has no local-pair form.
+Remove such entries from the interaction files for a FLEX run; an
+interaction set prepared for the RPA solver (which reads them) is not
+reusable as-is. On-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
 <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> off-diagonal vertices <strong>are kept</strong> (the point of the scheme),
 but <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S=C=0</span></code> to the particle-hole vertex and is
 <strong>inert</strong> (accepted with a note that it is exactly zero). The general path writes <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/

@@ -841,8 +841,14 @@ Hartree（密度）頂点 <span class="math notranslate nohighlight">\(V(q)\)</s
 （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
 これらのクラスはいずれも RPA ring と要素完全一致が実測されています。
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>と
-なります（前者は裁定済みの頂点内容がなく、後者は局所対の形が存在
-しないため）。オンサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+なります。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>には、<span class="math notranslate nohighlight">\(q\)</span> に依存する
+スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。
+その物理はスピン反転（transverse）型で、この spin-free 経路では計算されず、
+わずかに残る部分は bond 分解した頂点を必要とします。オフサイトの
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は局所対の形が存在しません。FLEX で計算する際はこれらの
+項を相互作用ファイルから除いてください。RPA ソルバー用に用意した
+相互作用（RPA はこれらを読み込みます）をそのまま流用することはできません。
+オンサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の非対角頂点は <strong>保持されます</strong>（本スキームの目的）が、
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子-正孔頂点に<code class="docutils literal notranslate"><span class="pre">S=C=0</span></code>で寄与せず <strong>無効（inert）</strong> で、
 厳密にゼロである旨の表示とともに受理されます。general パスは<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>をMYO規約で
