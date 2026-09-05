@@ -268,5 +268,197 @@ class TestGatePreflight(unittest.TestCase):
         self.assertTrue(any("SVD" in m for m in cm.output), cm.output)
 
 
+def _lb_keys(gi):
+    return sorted(k for k in gi if str(k).startswith("longitudinal_bond_"))
+
+
+def _inject_zero_shell(solver):
+    """A declared-but-ZERO off-site shell (+-x, orbital pair (0,1)) on top
+    of an on-site-only declaration: identical physics to the plain solve,
+    but the gate's topology has B=3 (spec G0)."""
+    tbl = solver.ham_info.param_ham.setdefault("CoulombInter", {})
+    tbl[((1, 0, 0), (0, 1))] = 0.0
+    tbl[((-1, 0, 0), (1, 0))] = 0.0
+
+
+class TestGatePipelineAndOutputs(unittest.TestCase):
+
+    _OUT = "tests/rpa/output"
+
+    def _run(self, param_extra=None, interactions=None):
+        s, r = _build(dict({"longitudinal_bond_channels": True},
+                           **(param_extra or {})), interactions)
+        gi = r.get_param("green")
+        os.makedirs(self._OUT, exist_ok=True)
+        s.solve(gi, self._OUT)
+        return s, gi
+
+    def test_g0_parity_declared_but_zero_topology(self):
+        """G0: with every off-site coefficient zero the collapse equals the
+        plain general path's static S/C channels (FLEX general at one
+        iteration, the primary reference) and the ring's same +- diff
+        combination (cross-check), and the bond blocks of the dressed
+        objects are the bare bond bubble (no bond vertex)."""
+        s, r = _build({"longitudinal_bond_channels": True},
+                      {"CoulombInter": "onsite_inter.dat"})
+        _inject_zero_shell(s)
+        gi = r.get_param("green")
+        os.makedirs(self._OUT, exist_ok=True)
+        s.solve(gi, self._OUT)
+        cs = np.asarray(gi["longitudinal_bond_chiq_s_static"])
+        cc = np.asarray(gi["longitudinal_bond_chiq_c_static"])
+        w0 = int(s.nmat) // 2
+        norb = s.norb
+        chiq = np.asarray(gi["chiq"])[w0]
+        same = chiq[:, :norb, :norb, :norb, :norb]
+        diff = chiq[:, :norb, :norb, norb:, norb:]
+        np.testing.assert_allclose(cc, same + diff, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(cs, same - diff, rtol=0, atol=1e-12)
+
+        f, r2 = _build({}, {"CoulombInter": "onsite_inter.dat"}, mode="FLEX")
+        _inject_zero_shell(f)
+        gf = r2.get_param("green")
+        f.solve(gf, self._OUT)
+        np.testing.assert_allclose(cs, np.asarray(gf["chiq_s"])[w0], rtol=0, atol=1e-12)
+        np.testing.assert_allclose(cc, np.asarray(gf["chiq_c"])[w0], rtol=0, atol=1e-12)
+
+        from hwave.solver import bond_channels as bc, bubble
+        topo, _ = s._validate_longitudinal_bond_prereqs()
+        chi_bar = np.asarray(bubble.bond_bubble_static(
+            s.green0, s.green0_tail, 1.0 / 2.0, bc.BondSetView(topo),
+            spatial_shape=tuple(s.lattice.shape)))
+        nd = norb * norb
+        chi_s = np.asarray(gi["longitudinal_bond_chi_s"])
+        self.assertEqual(chi_s.shape, chi_bar.shape)
+        self.assertEqual(chi_s.shape[1], 3 * nd)
+        # the plain chi0 static slice is chi_bar's channel-0 block
+        np.testing.assert_allclose(
+            chi_bar[:, :nd, :nd].reshape(-1, norb, norb, norb, norb),
+            np.asarray(gi["chi0q"])[w0], rtol=0, atol=1e-13)
+
+    def test_keys_present_when_on_absent_when_off_and_saved(self):
+        s, gi = self._run()
+        keys = _lb_keys(gi)
+        self.assertEqual(len(keys), 16, keys)
+        B = int(gi["longitudinal_bond_delta_r"].shape[0])
+        nd = s.norb ** 2
+        nvol = s.lattice.nvol
+        self.assertEqual(gi["longitudinal_bond_chi_s"].shape, (nvol, B * nd, B * nd))
+        self.assertEqual(gi["longitudinal_bond_chi_c"].shape, (nvol, B * nd, B * nd))
+        self.assertEqual(gi["longitudinal_bond_chiq_s_static"].shape, (nvol,) + (s.norb,) * 4)
+        self.assertEqual(gi["longitudinal_bond_reverse"].shape, (B,))
+        self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising"])
+        self.assertEqual(int(gi["longitudinal_bond_schema"]), 1)
+        self.assertEqual(int(gi["longitudinal_bond_max_shells"]), -1)
+        self.assertEqual(tuple(gi["longitudinal_bond_spatial_shape"]), (4, 4, 1))
+        self.assertEqual(str(gi["longitudinal_bond_spin_mode"]), "spin-free")
+        self.assertIn("m*norb**2", str(gi["longitudinal_bond_index_order"]))
+        self.assertGreater(float(gi["longitudinal_bond_cond_min_s"]), 1e-3)
+        self.assertGreater(float(gi["longitudinal_bond_cond_min_c"]), 1e-3)
+        s.save_results({"path_to_output": self._OUT, "chiq": "chiq_lb.npz"}, gi)
+        data = np.load(os.path.join(self._OUT, "chiq_lb.npz"), allow_pickle=True)
+        self.assertEqual(sorted(k for k in data.files
+                                if k.startswith("longitudinal_bond_")), keys)
+        self.assertIn("chiq", data.files)
+
+        s_off, r = _build({})
+        gi2 = r.get_param("green")
+        s_off.solve(gi2, self._OUT)
+        self.assertEqual(_lb_keys(gi2), [])
+        s_off.save_results({"path_to_output": self._OUT, "chiq": "chiq_off.npz"}, gi2)
+        data = np.load(os.path.join(self._OUT, "chiq_off.npz"), allow_pickle=True)
+        self.assertFalse([k for k in data.files if k.startswith("longitudinal_bond_")])
+
+    def test_reused_green_info_carries_no_stale_keys(self):
+        s, gi = self._run()
+        self.assertEqual(len(_lb_keys(gi)), 16)
+        s_off, _ = _build({})
+        s_off.solve(gi, self._OUT)                    # gate off, same container
+        self.assertEqual(_lb_keys(gi), [])
+        # a container carrying a previous chi0q is the in-memory reuse
+        # route (an EXTERNAL chi0q), which the gate refuses like chi0q_init
+        s2, _ = _build({"longitudinal_bond_channels": True})
+        with self.assertRaises(ValueError) as cm:
+            s2.solve(gi, self._OUT)
+        self.assertIn("chi0q", str(cm.exception))
+        self.assertEqual(_lb_keys(gi), [])
+        gi.pop("chi0q")
+        s2.solve(gi, self._OUT)
+        self.assertEqual(len(_lb_keys(gi)), 16)
+        gi.pop("chi0q")
+        s_bad, _ = _build({"longitudinal_bond_channels": True},
+                          {"CoulombInter": "onsite_inter.dat"})
+        with self.assertRaises(ValueError):           # prerequisite refusal
+            s_bad.solve(gi, self._OUT)
+        self.assertEqual(_lb_keys(gi), [])
+        self.assertNotIn("chiq", gi)                  # dropped at entry too
+
+    def test_nonzero_end_to_end_matches_direct_evaluation(self):
+        from hwave.solver import bond_channels as bc, bubble
+        from hwave.solver.offsite import sc_matrices_from_split
+        s, gi = self._run({}, {"CoulombInter": "coulombinter.dat",
+                               "Hund": "offsite_hund.dat"})
+        topo, split = s._validate_longitudinal_bond_prereqs()
+        nx, ny, nz = s.lattice.shape
+        nvol, nd = s.lattice.nvol, s.norb ** 2
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                        s.norb, nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        chi_bar = np.asarray(bubble.bond_bubble_static(
+            s.green0, s.green0_tail, 1.0 / 2.0, bc.BondSetView(topo),
+            spatial_shape=(nx, ny, nz)))
+        chi_s, cond_s = bc.dress_channel(
+            chi_bar, bc.build_sc_bond_channel(topo, S0, "S"), "spin",
+            spatial_shape=(nx, ny, nz))
+        chi_c, cond_c = bc.dress_channel(
+            chi_bar, bc.build_sc_bond_channel(topo, C0, "C"), "charge",
+            spatial_shape=(nx, ny, nz))
+        np.testing.assert_allclose(np.asarray(gi["longitudinal_bond_chi_s"]), chi_s, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(gi["longitudinal_bond_chi_c"]), chi_c, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(
+            np.asarray(gi["longitudinal_bond_chiq_s_static"]),
+            chi_s[:, :nd, :nd].reshape(nvol, s.norb, s.norb, s.norb, s.norb), rtol=0, atol=1e-13)
+        self.assertEqual(float(gi["longitudinal_bond_cond_min_s"]), cond_s)
+        self.assertEqual(float(gi["longitudinal_bond_cond_min_c"]), cond_c)
+        # the Hund bond blocks make the collapse DIFFER from the plain ring
+        w0 = int(s.nmat) // 2
+        norb = s.norb
+        chiq = np.asarray(gi["chiq"])[w0]
+        same = chiq[:, :norb, :norb, :norb, :norb]
+        diff = chiq[:, :norb, :norb, norb:, norb:]
+        self.assertGreater(np.abs(np.asarray(gi["longitudinal_bond_chiq_s_static"]) - (same - diff)).max(), 1e-6)
+        # chiq itself is the plain ring result (untouched by the gate)
+        s_off, r = _build({}, {"CoulombInter": "coulombinter.dat", "Hund": "offsite_hund.dat"})
+        gi2 = r.get_param("green")
+        s_off.solve(gi2, self._OUT)
+        np.testing.assert_array_equal(np.asarray(gi["chiq"]), np.asarray(gi2["chiq"]))
+
+    def test_info_line_names_the_gate_outputs(self):
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
+            self._run()
+        self.assertTrue(any("chiq is the plain" in m for m in cm.output), cm.output[-5:])
+
+    def test_measured_peak_below_preflight_estimate(self):
+        import tracemalloc
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.offsite import sc_matrices_from_split
+        s, gi = self._run()
+        topo, split = s._validate_longitudinal_bond_prereqs()
+        est = s._longitudinal_bond_resource_preflight(topo)
+        nx, ny, nz = s.lattice.shape
+        nvol, nd = s.lattice.nvol, s.norb ** 2
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                        s.norb, nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        tracemalloc.start()
+        res = s._run_longitudinal_bond_pipeline(s.green0, s.green0_tail, 0.5, topo, S0, C0)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        self.assertLess(peak, est["peak"])
+        self.assertIsInstance(res, rpa_mod.LongitudinalBondResults)
+
+
 if __name__ == "__main__":
     unittest.main()

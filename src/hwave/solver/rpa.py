@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Optional
 
 import sys, os
+import dataclasses
 import numpy as np
 import numpy.fft as FFT
 import itertools
@@ -1400,6 +1401,23 @@ class Interaction:
             self._spinful_exchange_built = True
         return self.ham_spinful_exchange
 
+@dataclasses.dataclass(frozen=True)
+class LongitudinalBondResults:
+    """The objects of one bond-resolved longitudinal static solve (#181
+    Tier 3 Phase A): the dressed ``(nvol, ND, ND)`` spin/charge
+    susceptibilities, their ``(m=0, m'=0)`` collapse ``(nvol, norb,
+    norb, norb, norb)``, the conditioning scores, the topology and the
+    types whose bond blocks were built."""
+    chi_s: np.ndarray
+    chi_c: np.ndarray
+    chiq_s_static: np.ndarray
+    chiq_c_static: np.ndarray
+    cond_min_s: float
+    cond_min_c: float
+    topo: object
+    types: tuple
+
+
 class RPA:
     """
     RPA calculation
@@ -2226,6 +2244,13 @@ class RPA:
         green_info.pop("chiq_pm", None)
         green_info.pop("chiq_pm_bond_static", None)
         green_info.pop("chiq_pm_static", None)
+        # The longitudinal bond gate (#181 Tier 3 Phase A) owns the whole
+        # ``longitudinal_bond_*`` prefix: drop every such key at entry so
+        # a reused container never carries a previous run's objects
+        # (gate off, or a refused run) under this run's label.
+        for _k in [k for k in list(green_info)
+                   if str(k).startswith("longitudinal_bond_")]:
+            green_info.pop(_k, None)
 
         # #167: resolve calc_scheme='auto' before anything scheme-shaped is
         # touched (in-memory chi0q validation below reads calc_scheme)
@@ -2705,12 +2730,24 @@ class RPA:
                         self._transverse_bond_topo)
                 else:
                     self._check_transverse_representable(ham_orig)
+            elif self.calc_type == "ring" and self.longitudinal_bond_channels:
+                # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
+                # cheap prerequisite validation, then the memory preflight,
+                # both BEFORE the ring solve so a refusal fires before any
+                # expensive step.
+                self._longitudinal_bond_topo, self._longitudinal_bond_split = \
+                    self._validate_longitudinal_bond_prereqs()
+                self._longitudinal_bond_resource_preflight(
+                    self._longitudinal_bond_topo)
 
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
 
             # adhoc store (as a host array: the writers are numpy)
             green_info["chiq"] = _bk.to_host(sol)
+
+            if self.calc_type == "ring" and self.longitudinal_bond_channels:
+                self._publish_longitudinal_bond_results(green_info, beta)
 
             # Solve transverse (ladder) RPA if requested
             if self.calc_type == "ring+ladder":
@@ -2902,6 +2939,13 @@ class RPA:
                     save_kwargs["transverse_spin_mode"] = self.spin_mode
                     save_kwargs["transverse_normalization"] = \
                         "per-site, 1/sqrt(Nvol) bilinears"
+                # Bond-resolved LONGITUDINAL channel (#181 Tier 3 Phase A,
+                # longitudinal_bond_channels=true): gate-owned keys, all
+                # under one prefix, published atomically by solve().
+                if green_info.get("longitudinal_bond_chi_s") is not None:
+                    for _k in sorted(k for k in green_info
+                                     if str(k).startswith("longitudinal_bond_")):
+                        save_kwargs[_k] = green_info[_k]
                 np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
@@ -5531,6 +5575,118 @@ class RPA:
                 "conditioning SVDs; this run fits the memory cap but may "
                 "take very long.", ops, ND, nvol)
         return est
+
+    def _run_longitudinal_bond_pipeline(self, green_kw, green0_tail, beta,
+                                        topo, S0, C0):
+        """The bond-resolved longitudinal static pipeline (spec "Bubble,
+        dressing, collapse"): mesh validation -> static bond bubble ->
+        per-channel vertex + dressing (ONE ``(nvol, ND, ND)`` vertex alive
+        at a time) -> collapse of the ``(m=0, m'=0)`` block. Test-invocable;
+        no prerequisite fallback (the caller validated).
+
+        Parameters
+        ----------
+        green_kw, green0_tail : the solver's single-block Green tensor
+            ``(1, nmat, nvol, norb, norb)`` and its tail (or None).
+        beta : float
+        topo : bond_channels.BondTopology over _LONGITUDINAL_ACTIVE_TYPES.
+        S0, C0 : ndarray (nvol, nd, nd)
+            The Tier-1 locality-split S/C matrices (channel-0 blocks).
+
+        Returns
+        -------
+        LongitudinalBondResults
+        """
+        from hwave.solver import bubble
+        spatial_shape = tuple(int(x) for x in self.lattice.shape)
+        nvol = int(self.lattice.nvol)
+        norb = int(self.norb)
+        nd = norb * norb
+        if int(self.nmat) % 2 != 0:
+            raise ValueError(
+                "longitudinal bond pipeline: Nmat must be even (the static "
+                "bubble reads the Omega = 0 slice at Nmat//2)")
+        S0 = np.asarray(S0)
+        C0 = np.asarray(C0)
+        bond_channels.validate_topology_against_mesh(
+            topo, spatial_shape, arrays={"S0": S0, "C0": C0})
+        chi_bar = bubble.bond_bubble_static(
+            green_kw, green0_tail, beta, bond_channels.BondSetView(topo),
+            spatial_shape=spatial_shape,
+            workers=getattr(self, "fft_workers", 1))
+        chi_bar = np.ascontiguousarray(_bk.to_host(chi_bar))
+        types = tuple(topo.coeffs)
+        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types)
+        chi_s, cond_s = bond_channels.dress_channel(
+            chi_bar, S_bond, "spin", spatial_shape=spatial_shape)
+        del S_bond
+        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types)
+        chi_c, cond_c = bond_channels.dress_channel(
+            chi_bar, C_bond, "charge", spatial_shape=spatial_shape)
+        del C_bond
+        del chi_bar
+        return LongitudinalBondResults(
+            chi_s=chi_s, chi_c=chi_c,
+            chiq_s_static=np.ascontiguousarray(
+                chi_s[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            chiq_c_static=np.ascontiguousarray(
+                chi_c[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            cond_min_s=float(cond_s), cond_min_c=float(cond_c),
+            topo=topo, types=types)
+
+    def _publish_longitudinal_bond_results(self, green_info, beta):
+        """Build the channel-0 blocks from the validated split, run the
+        pipeline, and publish the sixteen ``longitudinal_bond_*`` keys
+        ATOMICALLY (nothing is written until every object exists).
+        ``green_info["chiq"]`` stays the plain ring result."""
+        from hwave.solver.offsite import sc_matrices_from_split
+        topo = self._longitudinal_bond_topo
+        split = self._longitudinal_bond_split
+        nx, ny, nz = (int(x) for x in self.lattice.shape)
+        nvol = int(self.lattice.nvol)
+        nd = int(self.norb) ** 2
+        S0, C0 = sc_matrices_from_split(
+            split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, self.norb,
+            nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        res = self._run_longitudinal_bond_pipeline(
+            self.green0, self.green0_tail, beta, topo, S0, C0)
+        del S0, C0
+        delta_r = np.asarray(topo.delta_r, dtype=np.int64)
+        out = {
+            "longitudinal_bond_chi_s": res.chi_s,
+            "longitudinal_bond_chi_c": res.chi_c,
+            "longitudinal_bond_chiq_s_static": res.chiq_s_static,
+            "longitudinal_bond_chiq_c_static": res.chiq_c_static,
+            "longitudinal_bond_delta_r": delta_r,
+            "longitudinal_bond_reverse": np.asarray(topo.reverse, dtype=np.int64),
+            "longitudinal_bond_index_order":
+                np.str_("I = m*norb**2 + l1*norb + l2 (bond-major)"),
+            "longitudinal_bond_spatial_shape":
+                np.array(self.lattice.shape, dtype=np.int64),
+            "longitudinal_bond_q_convention":
+                np.str_("q_d = 2*pi*n_d/N_d, C-order flattening"),
+            "longitudinal_bond_spin_mode": np.str_(self.spin_mode),
+            "longitudinal_bond_normalization":
+                np.str_("per-site bond bilinears; chi_bar = -(T/N) sum_k G G"),
+            "longitudinal_bond_types": np.asarray(res.types),
+            "longitudinal_bond_max_shells": np.int64(
+                -1 if self.longitudinal_bond_max_shells is None
+                else int(self.longitudinal_bond_max_shells)),
+            "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
+            "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
+            "longitudinal_bond_schema": np.int64(1),
+        }
+        green_info.update(out)
+        logger.info(
+            "longitudinal_bond_channels=true: chiq is the plain ring result; "
+            "the bond-resolved static objects are the longitudinal_bond_* "
+            "keys (B = %d channels %s, ND = %d; cond_min spin %.3e, charge "
+            "%.3e).", int(delta_r.shape[0]),
+            [tuple(int(x) for x in r) for r in delta_r],
+            int(res.chi_s.shape[1]), res.cond_min_s, res.cond_min_c)
+
 
 
 
