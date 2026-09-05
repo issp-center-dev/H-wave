@@ -644,7 +644,7 @@ interaction :math:`V_{ab}(R)` that vertex carries the Hartree part
 particle-hole pair sits on the bond :math:`(i, i+R)` rather than on one
 site: the crossing depends on the two fermionic momenta and has no
 :math:`q`-only representation. With ``longitudinal_bond_channels = true``
-(``calc_type = "ring"``, ``general`` scheme, spin-free system) the static
+(``calc_type = "ring"``, ``calc_scheme = "general"``, spin-free system) the static
 longitudinal channel is instead resummed on the bond-enlarged pair basis
 of the Eliashberg bond-channel extension: the pair index runs over
 ``(m, l_1, l_2)`` with :math:`m` a bond channel (the on-site
@@ -663,8 +663,8 @@ for the spin and charge channels). The dressed objects
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi` and
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi` and their
 :math:`(m = 0, m' = 0)` blocks are written under the
-``longitudinal_bond_*`` keys of the ``chiq`` file; ``chiq`` stays the
-standard ring result. When every off-site coefficient is zero the
+``longitudinal_bond_*`` keys of the ``chiq`` file; the ``chiq`` array in
+that file is not overwritten and stays the standard ring result. When every off-site coefficient is zero the
 collapsed blocks equal the standard ring's static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first

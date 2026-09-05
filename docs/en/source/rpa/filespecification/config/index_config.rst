@@ -247,13 +247,15 @@ Parameters
 
   **Description :**
   **Experimental.** Enables the bond-resolved longitudinal (spin/charge)
-  channel for ``calc_type = "ring"`` with the ``general`` scheme on a
-  spin-free system (see :ref:`Ch:Algorithm`). The exchange (Fock)
+  channel for ``calc_type = "ring"`` with ``calc_scheme = "general"`` (or
+  ``"auto"`` resolving to it) on a spin-free system (see
+  :ref:`rpa_longitudinal_bond`). The exchange (Fock)
   crossing of the off-site ``CoulombInter``, ``Hund`` and ``Ising``
   terms -- which the standard ring omits -- is carried on a bond-enlarged
   pair basis, and the dressed static susceptibilities are written to the
-  ``chiq`` file under the ``longitudinal_bond_*`` keys; ``chiq`` itself
-  stays the standard ring result. The gate requires at least one
+  ``chiq`` file under the ``longitudinal_bond_*`` keys; the ``chiq``
+  array inside that file is not overwritten and stays the standard ring
+  result. The gate requires at least one
   declared off-site ``CoulombInter``/``Hund``/``Ising`` shell (a
   declared-zero coefficient counts), real coefficients, an even
   ``Nmat``, no sublattice, no ``chi0q_init`` and no
@@ -270,9 +272,12 @@ Parameters
 
   **Description :**
   Keeps only the ``longitudinal_bond_max_shells`` shortest off-site
-  shells (must be >= 1). A truncation that would drop a shell carrying a
-  declared nonzero coefficient is rejected. Ignored with a warning
-  unless ``longitudinal_bond_channels = true``.
+  shells (must be >= 1). This is NOT an approximation knob: a truncation
+  that would drop a shell carrying a declared nonzero coefficient is
+  rejected, so it can only remove declared-zero (spectator) shells; to
+  exclude a physical interaction, set its coefficient to zero in the
+  interaction file. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_memory_cap_gb``
 
@@ -280,10 +285,12 @@ Parameters
   Float (default value is ``8.0``)
 
   **Description :**
-  Cap on the ESTIMATED peak host memory of the bond-resolved solve, in
-  binary GiB; the estimate is logged and the run is refused before any
-  expensive step when it exceeds the cap. Ignored with a warning unless
-  ``longitudinal_bond_channels = true``.
+  Cap on the ESTIMATED peak host (CPU) memory of the bond-resolved solve,
+  in binary GiB (GPU memory is not covered); the estimate is logged and
+  the run is refused before any expensive step when it exceeds the cap.
+  The refusal message reports the estimate and the shapes behind it; on
+  a machine with enough physical memory, raise the cap to proceed.
+  Ignored with a warning unless ``longitudinal_bond_channels = true``.
 
 - ``matsubara_frequency``
 
