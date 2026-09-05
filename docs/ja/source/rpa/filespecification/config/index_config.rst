@@ -194,6 +194,46 @@ TOML形式
   exchange 配線は2つのフェルミオン運動量に依存するためこの再帰和では
   表現できず、（非スピン軌道の ladder と同様に）含まれません。
 
+- ``longitudinal_bond_channels``
+
+  **形式 :** bool型 (デフォルトは\ ``false``)
+
+  **説明 :**
+  **実験的機能。** ``calc_type = "ring"``\ ・\ ``general``\ スキーム・
+  スピンフリー系で、ボンド分解した縦方向（スピン・電荷）チャネルを有効に
+  します（:ref:`Ch:Algorithm`\ を参照）。標準の ring では省かれる
+  オフサイト\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ 項の交換
+  （Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
+  感受率を\ ``chiq``\ ファイルの\ ``longitudinal_bond_*``\ キーに書き
+  出します。\ ``chiq``\ 自体は標準の ring の結果のままです。少なくとも
+  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``\ シェルの宣言
+  （係数ゼロの宣言も可）、実数の係数、偶数の\ ``Nmat``\ 、副格子なし、
+  ``chi0q_init``\ なし、\ ``enable_spin_orbital``\ なしが必要で、
+  オフサイトの\ ``Exchange``\ または\ ``PairHop``\ の宣言はエラーとして
+  拒否されます。\ ``transverse_bond_channels = true``\ とは併用でき
+  ません。\ ``mode = "FLEX"``\ では\ ``true``\ は拒否されます
+  （ボンド基底の自己無撞着 FLEX はまだありません）。
+
+- ``longitudinal_bond_max_shells``
+
+  **形式 :** int型 (デフォルトは宣言された全オフサイトシェルを保持)
+
+  **説明 :**
+  最短のオフサイトシェルを\ ``longitudinal_bond_max_shells``\ 個だけ
+  残します（1以上）。非零の係数が宣言されたシェルを落とす切り捨ては
+  拒否されます。\ ``longitudinal_bond_channels = true``\ でない場合は
+  警告付きで無視されます。
+
+- ``longitudinal_bond_memory_cap_gb``
+
+  **形式 :** float型 (デフォルトは\ ``8.0``)
+
+  **説明 :**
+  ボンド分解した解法の **推定** ピークホストメモリの上限（2進 GiB）
+  です。推定値はログに出力され、上限を超える場合は高コストな計算の前に
+  実行が拒否されます。\ ``longitudinal_bond_channels = true``\ でない
+  場合は警告付きで無視されます。
+
 - ``matsubara_frequency``
 
   **形式 :** int型, list型, または str型 (デフォルトは\ ``"all"``)

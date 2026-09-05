@@ -240,6 +240,51 @@ Parameters
   this resummation; it remains excluded (as it is in the
   non-spin-orbital ladder).
 
+- ``longitudinal_bond_channels``
+
+  **Type :**
+  Boolean (default value is ``false``)
+
+  **Description :**
+  **Experimental.** Enables the bond-resolved longitudinal (spin/charge)
+  channel for ``calc_type = "ring"`` with the ``general`` scheme on a
+  spin-free system (see :ref:`Ch:Algorithm`). The exchange (Fock)
+  crossing of the off-site ``CoulombInter``, ``Hund`` and ``Ising``
+  terms -- which the standard ring omits -- is carried on a bond-enlarged
+  pair basis, and the dressed static susceptibilities are written to the
+  ``chiq`` file under the ``longitudinal_bond_*`` keys; ``chiq`` itself
+  stays the standard ring result. The gate requires at least one
+  declared off-site ``CoulombInter``/``Hund``/``Ising`` shell (a
+  declared-zero coefficient counts), real coefficients, an even
+  ``Nmat``, no sublattice, no ``chi0q_init`` and no
+  ``enable_spin_orbital``; an off-site ``Exchange`` or ``PairHop``
+  declaration is rejected with an error. It cannot be combined with
+  ``transverse_bond_channels = true``. In ``mode = "FLEX"`` a ``true``
+  value is rejected (the bond basis has no self-consistent FLEX
+  treatment yet).
+
+- ``longitudinal_bond_max_shells``
+
+  **Type :**
+  Integer (default: keep every declared off-site shell)
+
+  **Description :**
+  Keeps only the ``longitudinal_bond_max_shells`` shortest off-site
+  shells (must be >= 1). A truncation that would drop a shell carrying a
+  declared nonzero coefficient is rejected. Ignored with a warning
+  unless ``longitudinal_bond_channels = true``.
+
+- ``longitudinal_bond_memory_cap_gb``
+
+  **Type :**
+  Float (default value is ``8.0``)
+
+  **Description :**
+  Cap on the ESTIMATED peak host memory of the bond-resolved solve, in
+  binary GiB; the estimate is logged and the run is refused before any
+  expensive step when it exceeds the cap. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``matsubara_frequency``
 
   **Type :**
