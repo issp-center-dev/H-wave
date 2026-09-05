@@ -32,7 +32,8 @@ class TestResolveBondTopology(unittest.TestCase):
     def test_active_types_validated(self):
         from hwave.solver import bond_channels as bc
         for bad in ((), ("CoulombInter", "CoulombInter"), ("Coulomb",),
-                    ("PairHop",), ("coulombinter",), "CoulombInter"):
+                    ("PairHop",), ("coulombinter",), "CoulombInter",
+                    [[]], [None], ("CoulombInter", 1)):
             with self.subTest(active_types=bad):
                 with self.assertRaises(ValueError) as cm:
                     bc.resolve_bond_topology({}, np.eye(3), 1, active_types=bad)

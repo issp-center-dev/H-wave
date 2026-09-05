@@ -170,6 +170,8 @@ class TestGatePrerequisites(unittest.TestCase):
         self.assertNotIn("chi0q", gi)
 
     def test_refusals_fire_before_the_green_function(self):
+        """Nothing expensive runs before a gate refusal: the chemical
+        potential search, the Green's function and the bubble all trip."""
         for extra, inter, fragment in (
                 ({"longitudinal_bond_memory_cap_gb": 1e-9}, None, "memory"),
                 ({}, {"CoulombInter": "onsite_inter.dat"}, "declared off-site")):
@@ -177,13 +179,40 @@ class TestGatePrerequisites(unittest.TestCase):
                 s, r = _build(dict({"longitudinal_bond_channels": True}, **extra), inter)
 
                 def _boom(*a, **k):
-                    raise AssertionError("_calc_green ran before the gate check")
+                    raise AssertionError("expensive work ran before the gate check")
+                s._find_mu = _boom
                 s._calc_green = _boom
                 s._calc_chi0q = _boom
                 gi = r.get_param("green")
                 with self.assertRaises(ValueError) as cm:
                     s.solve(gi, "tests/rpa/output")
                 self.assertIn(fragment, str(cm.exception))
+
+    def test_external_chi0q_is_refused_before_inspection(self):
+        """A supplied chi0q is refused by the gate before its dtype, shape
+        or provenance are inspected (a string tensor still gets the
+        gate-owned message)."""
+        s, r = _build({"longitudinal_bond_channels": True})
+        gi = r.get_param("green")
+        gi["chi0q"] = np.array(["not", "a", "bubble"])
+        with self.assertRaises(ValueError) as cm:
+            s.solve(gi, "tests/rpa/output")
+        self.assertIn("longitudinal_bond_channels", str(cm.exception))
+        self.assertIn("chi0q", str(cm.exception))
+
+    def test_resolved_backend_state_reaches_the_preflight(self):
+        s, r = _build({"longitudinal_bond_channels": True})
+        seen = {}
+        real = s._longitudinal_bond_resource_preflight
+
+        def _spy(topo, gpu_active=None):
+            seen["gpu_active"] = gpu_active
+            return real(topo, gpu_active=gpu_active)
+        s._longitudinal_bond_resource_preflight = _spy
+        gi = r.get_param("green")
+        os.makedirs("tests/rpa/output", exist_ok=True)
+        s.solve(gi, "tests/rpa/output")
+        self.assertIs(seen["gpu_active"], False)      # CPU run: resolved, not None
 
     def test_spin_orbital_flag_is_read_from_the_interaction(self):
         s = self._gate()
@@ -366,8 +395,9 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         """G0: with every off-site coefficient zero the collapse equals the
         plain general path's static S/C channels (FLEX general at one
         iteration, the primary reference) and the ring's same +- diff
-        combination (cross-check), and the bond blocks of the dressed
-        objects are the bare bond bubble (no bond vertex)."""
+        combination (cross-check), the bond-enlarged bubble's channel-0
+        block is the plain static chi0, and the bare vertex has no
+        content outside its channel-0 block."""
         s, r = _build({"longitudinal_bond_channels": True},
                       {"CoulombInter": "onsite_inter.dat"})
         _inject_zero_shell(s)
@@ -519,6 +549,9 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         np.testing.assert_allclose(
             np.asarray(gi["longitudinal_bond_chiq_s_static"]),
             chi_s[:, :nd, :nd].reshape(nvol, s.norb, s.norb, s.norb, s.norb), rtol=0, atol=1e-13)
+        np.testing.assert_allclose(
+            np.asarray(gi["longitudinal_bond_chiq_c_static"]),
+            chi_c[:, :nd, :nd].reshape(nvol, s.norb, s.norb, s.norb, s.norb), rtol=0, atol=1e-13)
         self.assertEqual(float(gi["longitudinal_bond_cond_min_s"]), cond_s)
         self.assertEqual(float(gi["longitudinal_bond_cond_min_c"]), cond_c)
         # the Hund bond blocks make the collapse DIFFER from the plain ring

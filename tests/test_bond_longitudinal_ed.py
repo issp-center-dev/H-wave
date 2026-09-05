@@ -183,6 +183,14 @@ def _chibar(fx, shells, nmat):
 
 
 @functools.lru_cache(maxsize=None)
+def _ed_side(fx_name, t, a, b, R, shells, v1):
+    """The ED-side Richardson derivative, computed ONCE per direction and
+    step (the G3 no-bond comparison reuses the same ED data)."""
+    fx = {"fx5": fx5(), "fx3": fx3()}[fx_name]
+    return _Side(fx, t, a, b, R, shells).ed_D(v1)
+
+
+@functools.lru_cache(maxsize=None)
 def adjudicate(fx_name, t, a, b, R, shells, bond_blocks=True):
     """The canonical S and C records for one direction, plus the raw
     finer-estimate arrays (for the G3 claim)."""
@@ -193,8 +201,8 @@ def adjudicate(fx_name, t, a, b, R, shells, bond_blocks=True):
     dS, dC = side.dW(bond_blocks)
     Dn_S, Dn_C = pred_first_order(side.chibar(NMAT), dS, dC)
     D2_S, D2_C = pred_first_order(side.chibar(2 * NMAT), dS, dC)
-    E1_S, E1_C = side.ed_D(CAMPAIGN_V1)
-    Eh_S, Eh_C = side.ed_D(CAMPAIGN_V1 / 2)
+    E1_S, E1_C = _ed_side(fx_name, t, a, b, R, shells, CAMPAIGN_V1)
+    Eh_S, Eh_C = _ed_side(fx_name, t, a, b, R, shells, CAMPAIGN_V1 / 2)
     free = np.ones(dS.shape[1:], bool)
     zS = ed_oracle_util.projected_structural_zero_mask(
         free, np.any(np.abs(dS) > 0, axis=0))

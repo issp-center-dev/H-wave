@@ -7,7 +7,7 @@ reversal orbit, the bond-DIAGONAL Fock entries ``w_t * Re v`` at
 ``(m, a, b)`` and ``(reverse[m], b, a)``, ``w_t`` the type's adjudicated
 ``cross`` coefficient from ``vertex_table`` (S or C column). Gate G1:
 for CoulombInter it must equal the Eliashberg module's
-``bare_bond_vertices`` exactly.
+``bare_bond_vertices`` to round-off (pinned at 1e-13).
 """
 import unittest
 
@@ -102,13 +102,13 @@ class TestBuildScBondChannel(unittest.TestCase):
 
     def test_matches_bare_bond_vertices_for_coulombinter(self):
         """G1: CoulombInter through the new builder equals the Eliashberg
-        objects VERBATIM on a norb=1 two-shell topology, on the case-M
-        inter-orbital bond (norb=2) and on a mixed same/inter-orbital
-        declaration. Both channel-0 builders (``_build_bond_m0_blocks``
-        and the Tier-1 locality split) and both bubbles
-        (``bond_bubble``/``bubble.bond_bubble_static``, whose channel-0
-        block is the solver's static ``chi0q`` slice bit-for-bit) share
-        one pair frame."""
+        objects to round-off (pinned at atol 1e-13) on a norb=1 two-shell
+        topology, on the case-M inter-orbital bond (norb=2) and on a
+        mixed same/inter-orbital declaration. Both channel-0 builders
+        (``_build_bond_m0_blocks`` and the Tier-1 locality split) and
+        both bubbles (``bond_bubble``/``bubble.bond_bubble_static``,
+        whose channel-0 block equals the solver's static ``chi0q`` slice
+        to round-off) share one pair frame."""
         from hwave.sc import _build_bond_m0_blocks
         L = 5
         for norb, entries in ((1, [(1, 0, 0, 0.7), (2, 0, 0, 0.2)]),
@@ -170,6 +170,9 @@ class TestBuildScBondChannel(unittest.TestCase):
             bc.build_sc_bond_channel(topo, z, "S", types=("Exchange",))
         with self.assertRaises(ValueError):                      # duplicate type
             bc.build_sc_bond_channel(topo, z, "S", types=("CoulombInter", "CoulombInter"))
+        for bad in ([[]], [None], "CoulombInter", 3):            # malformed selector
+            with self.assertRaises(ValueError):
+                bc.build_sc_bond_channel(topo, z, "S", types=bad)
         with self.assertRaises(ValueError):                      # bad imag_tol
             bc.build_sc_bond_channel(topo, z, "S", imag_tol=-1.0)
         with self.assertRaises(ValueError):                      # mutated topology

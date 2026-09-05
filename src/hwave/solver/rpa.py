@@ -2277,6 +2277,18 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
+            # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
+            # Green's function that produced the bubble: refuse an
+            # external chi0q HERE, before it is inspected, validated,
+            # fingerprinted or moved to a device, so the gate-owned
+            # refusal is what the user sees.
+            if self.calc_type == "ring" and self.longitudinal_bond_channels:
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_channels=true cannot be "
+                    "combined with an externally supplied chi0q (chi0q_init "
+                    "or a chi0q carried in green_info): the bond bubble is "
+                    "built from the Green's function directly. Recompute "
+                    "chi0q internally (drop the supplied chi0q).")
             # use chi0q input; a green_info stored by a previous solve
             # arrives here, so establish spin_mode from the shape exactly
             # as the file-based chi0q_init route does (issue #109)
@@ -2432,6 +2444,19 @@ class RPA:
         else:
             self._calc_epsilon_k(green_info)
 
+            # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
+            # prerequisites and memory preflight as soon as spin_mode is
+            # known (the H0 diagonalization above is what establishes
+            # it) and BEFORE the chemical potential search, any device
+            # transfer, the Green's function and the bubble -- so a
+            # refusal costs nothing and a gate-on run can never degrade
+            # into a silent chi0-only run (calc_chiq is not consulted).
+            # This run computes its own bubble: say so BEFORE the check,
+            # so a previous (refused) external-chi0q solve on this
+            # instance cannot leak its flag into this one.
+            self._chi0q_external = False
+            self._longitudinal_bond_gate_check(gpu_active)
+
             if self.calc_mu:
                 if self.spin_mode == "spin-free":
                     Ncond = self.Ncond/2
@@ -2459,17 +2484,6 @@ class RPA:
                     2 * chi_bytes, logger, label="the RPA chi0q/chiq solve")
                 self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
-
-            # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
-            # prerequisites and memory preflight BEFORE the Green's
-            # function and the bubble are computed, so a refusal costs
-            # nothing and a gate-on run can never degrade into a silent
-            # chi0-only run (calc_chiq is not consulted here). This run
-            # computes its own bubble: say so BEFORE the check, so a
-            # previous (refused) external-chi0q solve on this instance
-            # cannot leak its flag into this one.
-            self._chi0q_external = False
-            self._longitudinal_bond_gate_check(gpu_active)
 
             green0, green0_tail = self._calc_green(beta, mu)
             #XXX
@@ -2525,11 +2539,6 @@ class RPA:
                 # must not inherit this metadata (round-5 review)
                 "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
             }
-
-        if self._chi0q_external:
-            # external chi0q route: the gate refuses it (see the check),
-            # and the refusal must not depend on calc_chiq either
-            self._longitudinal_bond_gate_check(gpu_active)
 
         if self.calc_chiq:
             # ham_inter_q is built on the host at init; mirror it to chi0q's

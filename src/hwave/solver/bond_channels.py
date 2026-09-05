@@ -2813,6 +2813,7 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
     if (isinstance(active_types, str)
             or not isinstance(active_types, (tuple, list))
             or len(active_types) == 0
+            or any(not isinstance(t, str) for t in active_types)
             or len(set(active_types)) != len(active_types)
             or any(t not in _BOND_RESOLVABLE_TYPES for t in active_types)):
         raise ValueError(
@@ -3400,7 +3401,9 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
                 "build_sc_bond_channel: types must be a list/tuple of type "
                 "names, got {!r}".format(types))
         types = list(types)
-    if len(set(types)) != len(types) or any(t not in keys for t in types):
+    if (any(not isinstance(t, str) for t in types)
+            or len(set(types)) != len(types)
+            or any(t not in keys for t in types)):
         raise ValueError(
             "build_sc_bond_channel: types must be an ordered, duplicate-"
             "free subset of the topology's coefficient keys {}; got {!r}"
