@@ -135,6 +135,39 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 
 When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)`. Its layout is ``ndarray(l,q,a,ap,b,bp)`` where ``a``, ``ap``, ``b``, ``bp`` are **orbital** indices :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta` that do *not* include the spin degree of freedom -- the spin structure is fixed by the :math:`+-` labels. It is therefore smaller than ``chiq``, whose corresponding axes run over the generalized (spin-orbital) indices. The longitudinal ``chiq`` is unaffected by the presence of the ladder: on identical input it is bit-identical to the ``calc_type = ring`` result.
 
+When ``longitudinal_bond_channels = true`` (experimental, ``calc_type = "ring"``,
+see :ref:`rpa_longitudinal_bond`), the ``chiq`` file additionally contains the
+bond-resolved longitudinal objects, all under the ``longitudinal_bond_`` prefix.
+The ``chiq`` array inside the file is NOT overwritten: it keeps the standard
+(Hartree-only) ring result; the exchange-corrected static susceptibilities live
+exclusively under the new keys. With :math:`B` bond channels (channel 0 is the
+on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
+
+- ``longitudinal_bond_chi_s``, ``longitudinal_bond_chi_c``: the dressed static
+  spin and charge susceptibilities, complex ``ndarray(q, I, J)`` with the
+  bond-major indices :math:`I = m\, n_d + l_1 n_{\rm orb} + l_2` and
+  :math:`J = m'\, n_d + l_3 n_{\rm orb} + l_4` (``longitudinal_bond_index_order``
+  records this rule as a string).
+- ``longitudinal_bond_chiq_s_static``, ``longitudinal_bond_chiq_c_static``: their
+  :math:`(m = 0, m' = 0)` blocks, complex ``ndarray(q, a, b, c, d)`` over orbital
+  indices -- the static spin/charge channels of the standard ring with the
+  off-site exchange crossing included.
+- ``longitudinal_bond_delta_r`` (integer ``(B, 3)`` displacements, channel 0
+  first), ``longitudinal_bond_reverse`` (integer ``(B,)``, the channel of
+  :math:`-R`), ``longitudinal_bond_spatial_shape`` (integer ``(3,)``, the
+  ``CellShape``), ``longitudinal_bond_q_convention`` (string:
+  ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened``),
+  ``longitudinal_bond_spin_mode`` (string, ``spin-free``),
+  ``longitudinal_bond_normalization`` (string: ``chi_bar = -(T/N) sum_k G G,
+  per site``), ``longitudinal_bond_types`` (string array, always
+  ``CoulombInter, Hund, Ising`` -- the types whose bond blocks the channel
+  builds, declared or not; an undeclared type contributes zero blocks),
+  ``longitudinal_bond_max_shells`` (integer, ``-1`` when unset),
+  ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c`` (float:
+  the smallest conditioning score of the spin / charge RPA denominator over
+  :math:`q`; the run is refused when it reaches the instability floor) and
+  ``longitudinal_bond_schema`` (integer, ``1``).
+
 
 Example for reading data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

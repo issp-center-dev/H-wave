@@ -143,6 +143,37 @@ for s1 in (0, 1):
 常に同一のバブル表現を共有していたためです。</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">ring+ladder</span></code>の場合、<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルには配列<code class="docutils literal notranslate"><span class="pre">chiq_pm</span></code>も追加で格納されます。これは横感受率<span class="math notranslate nohighlight">\(\chi_{+-}(q)\)</span>を保持します。配列形式は<code class="docutils literal notranslate"><span class="pre">ndarray(l,q,a,ap,b,bp)</span></code>で、<code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">ap</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>, <code class="docutils literal notranslate"><span class="pre">bp</span></code>はスピン自由度を含 <strong>まない</strong> 軌道インデックス<span class="math notranslate nohighlight">\(\alpha\)</span>, <span class="math notranslate nohighlight">\(\gamma\)</span>, <span class="math notranslate nohighlight">\(\beta\)</span>, <span class="math notranslate nohighlight">\(\delta\)</span>です（スピン構造は<span class="math notranslate nohighlight">\(+-\)</span>のラベルで既に定まっているため）。したがって、対応する軸が一般化（スピン軌道）インデックスを走る<code class="docutils literal notranslate"><span class="pre">chiq</span></code>よりも小さい配列になります。縦方向の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>はラダーの有無に影響されません。同一の入力に対して<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">ring</span></code>の結果とビット単位で一致します。</p>
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（実験的機能、<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>、
+<a class="reference internal" href="../../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照）の場合、<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルにはボンド分解した
+縦方向のオブジェクトが<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_</span></code>接頭辞の下に追加で格納されます。
+ファイル内の配列<code class="docutils literal notranslate"><span class="pre">chiq</span></code>は上書き <strong>されません</strong> 。標準（Hartree のみ）の ring の
+結果のままで、交換交差を含めた静的感受率は新しいキーの下にのみ格納されます。
+ボンドチャネル数を<span class="math notranslate nohighlight">\(B\)</span>（チャネル0はオンサイト<span class="math notranslate nohighlight">\(R = 0\)</span>）、
+<span class="math notranslate nohighlight">\(n_d = n_{\rm orb}^2\)</span>、<span class="math notranslate nohighlight">\(N_D = B\, n_d\)</span>として、</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_s</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_c</span></code>: ドレスされた静的
+スピン・電荷感受率。複素<code class="docutils literal notranslate"><span class="pre">ndarray(q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>で、ボンド優先の添字は
+<span class="math notranslate nohighlight">\(I = m\, n_d + l_1 n_{\rm orb} + l_2\)</span>、
+<span class="math notranslate nohighlight">\(J = m'\, n_d + l_3 n_{\rm orb} + l_4\)</span>です
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_index_order</span></code>にこの規則が文字列として記録されます）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chiq_s_static</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chiq_c_static</span></code>:
+その<span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロック。軌道添字の複素<code class="docutils literal notranslate"><span class="pre">ndarray(q,</span> <span class="pre">a,</span> <span class="pre">b,</span> <span class="pre">c,</span> <span class="pre">d)</span></code>で、
+標準の ring の静的スピン・電荷チャネルにオフサイト交換交差を含めたものに相当します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_delta_r</span></code>（整数<code class="docutils literal notranslate"><span class="pre">(B,</span> <span class="pre">3)</span></code>の変位。チャネル0が先頭）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_reverse</span></code>（整数<code class="docutils literal notranslate"><span class="pre">(B,)</span></code>、<span class="math notranslate nohighlight">\(-R\)</span>のチャネル）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_spatial_shape</span></code>（整数<code class="docutils literal notranslate"><span class="pre">(3,)</span></code>、<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_q_convention</span></code>（文字列:
+<code class="docutils literal notranslate"><span class="pre">q</span> <span class="pre">=</span> <span class="pre">2*pi*(n_x/N_x,</span> <span class="pre">n_y/N_y,</span> <span class="pre">n_z/N_z),</span> <span class="pre">C-order</span> <span class="pre">flattened</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_spin_mode</span></code>（文字列、<code class="docutils literal notranslate"><span class="pre">spin-free</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_normalization</span></code>（文字列:
+<code class="docutils literal notranslate"><span class="pre">chi_bar</span> <span class="pre">=</span> <span class="pre">-(T/N)</span> <span class="pre">sum_k</span> <span class="pre">G</span> <span class="pre">G,</span> <span class="pre">per</span> <span class="pre">site</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_types</span></code>（文字列配列。常に<code class="docutils literal notranslate"><span class="pre">CoulombInter,</span> <span class="pre">Hund,</span> <span class="pre">Ising</span></code>の
+3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
+ブロックはゼロ）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>（整数。未指定なら<code class="docutils literal notranslate"><span class="pre">-1</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_c</span></code>（浮動小数。
+スピン／電荷の RPA 分母の<span class="math notranslate nohighlight">\(q\)</span>にわたる最小の条件数スコア。不安定性の
+下限に達すると実行は拒否されます）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code>（整数、<code class="docutils literal notranslate"><span class="pre">1</span></code>）。</p></li>
+</ul>
 </section>
 <section id="id2">
 <h1>データ読み込みの例<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h1>

@@ -238,7 +238,7 @@ X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
  &amp;=\left[\hat{I}+\hat{X}^{(0)}(q)\hat{W}(q)\right]^{-1}\hat{X}^{(0)}(q).
 \end{aligned}\end{split}\]</div>
 <p>と書けることがわかります。以上が一般的なRPAの定式化になります。</p>
-<p>なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id7" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
+<p>なお、より高次な相関効果を考慮する手法としてvertex補正の考慮などがあります。詳細については、例えばこちらの文献 <a class="footnote-reference brackets" href="#id8" id="id2" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を参考にしてください。</p>
 <section id="id3">
 <h2><span class="section-number">7.2.1. </span>セクター構造とブロック分解<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
 <p>感受率が複数のブロックに分解できる場合、RPA 方程式は各ブロックで独立に解くことが
@@ -555,12 +555,58 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 <p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>はスピン軌道数になりました。
 既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
+<section id="rpa-longitudinal-bond">
+<span id="id7"></span><h3>ボンド分解した縦方向チャネル（実験的機能）<a class="headerlink" href="#rpa-longitudinal-bond" title="Link to this heading">¶</a></h3>
+<p>ring は縦方向（スピン・電荷）チャネルを、移行運動量<span class="math notranslate nohighlight">\(q\)</span>のみに
+依存する頂点で足し上げます。オフサイト相互作用<span class="math notranslate nohighlight">\(V_{ab}(R)\)</span>に
+ついて、この頂点は Hartree 部分<span class="math notranslate nohighlight">\(V_{ab}(q)\)</span>を含みますが、
+交換（Fock）交差は含みません。交換交差の粒子・正孔対は1サイト上では
+なくボンド<span class="math notranslate nohighlight">\((i, i+R)\)</span>の上にあり、2つのフェルミオン運動量に
+依存するため、<span class="math notranslate nohighlight">\(q\)</span>のみでは表現できないからです。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、スピンフリー系）では、静的な縦方向チャネルを
+代わりに Eliashberg のボンドチャネル拡張と同じボンド拡張対基底の上で
+足し上げます。対の添字は<code class="docutils literal notranslate"><span class="pre">(m,</span> <span class="pre">l_1,</span> <span class="pre">l_2)</span></code>を走り、<span class="math notranslate nohighlight">\(m\)</span>は
+ボンドチャネル（オンサイト<span class="math notranslate nohighlight">\(R = 0\)</span>と、宣言された全ての
+オフサイト変位を<span class="math notranslate nohighlight">\(R \to -R\)</span>について閉じたもの）、裸のバブルは
+<span class="math notranslate nohighlight">\(\Omega = 0\)</span>における
+<span class="math notranslate nohighlight">\(\bar\chi_{m l_1 l_2;\, m' l_3 l_4}(q) = -\frac{T}{N}\sum_k
+e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
+頂点は<span class="math notranslate nohighlight">\(m = m' = 0\)</span>ブロックに標準の ring の対空間行列を置き、
+さらにボンド対角<span class="math notranslate nohighlight">\((m, l_1, l_2) = (m', l_3, l_4)\)</span>（<span class="math notranslate nohighlight">\(m \neq 0\)</span>）
+にオフサイト項の交換交差<span class="math notranslate nohighlight">\(w_t\, \mathrm{Re}\, V^{(t)}_{l_1 l_2}(R_m)\)</span>を
+置いたものです。ここで<span class="math notranslate nohighlight">\(w_t\)</span>はオンサイトの交換スロットと同じ
+種類ごとの係数（スピン・電荷チャネルについて<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。ドレスされた
+<span class="math notranslate nohighlight">\(\chi_s = [1 - \bar\chi S]^{-1}\bar\chi\)</span>と
+<span class="math notranslate nohighlight">\(\chi_c = [1 + \bar\chi C]^{-1}\bar\chi\)</span>、およびその
+<span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックが<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルの
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>キーに書き出されます。ファイル内の配列<code class="docutils literal notranslate"><span class="pre">chiq</span></code>は
+上書きされず、標準の ring の結果のままです。オフサイト係数が全てゼロなら縮約ブロックは
+標準の ring の静的スピン・電荷チャネルと一致し、非零なら交換交差の分だけ
+異なります。ボンドブロックはオフサイトの<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>（同一軌道・軌道間ボンド）について結合の1次
+まで厳密対角化と照合され、Hartree のみの頂点では同じデータを再現
+できないことも確認されています。</p>
+<p>このバージョンの制限: オフサイト係数は実数のみ。オフサイトの
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言は拒否されます（ボンド基底での
+取り込みは今後の予定）。副格子折り畳み・<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>・
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>は非対応。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数である必要が
+あります。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>とは併用できず、
+<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では拒否されます（ボンド基底の自己無撞着計算は
+未実装）。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
+不安定領域では実行が拒否されます（最小スコアは
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>として出力）。推定ピーク
+ホストメモリは高コストな計算の前に<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>
+と照合されます。</p>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id7" role="doc-footnote">
+<aside class="footnote brackets" id="id8" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>
 <p><a class="reference external" href="https://journals.jps.jp/doi/10.1143/JPSJ.78.104002">K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009).</a></p>
 </aside>
 </aside>
+</section>
 </section>
 </section>
 

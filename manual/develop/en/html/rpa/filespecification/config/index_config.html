@@ -274,6 +274,52 @@ terms depends on both fermionic momenta and is not representable in
 this resummation; it remains excluded (as it is in the
 non-spin-orbital ladder).</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p>
+<p><strong>Description :</strong>
+<strong>Experimental.</strong> Enables the bond-resolved longitudinal (spin/charge)
+channel for <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> resolving to it) on a spin-free system (see
+<a class="reference internal" href="../../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>). The exchange (Fock)
+crossing of the off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+terms – which the standard ring omits – is carried on a bond-enlarged
+pair basis, and the dressed static susceptibilities are written to the
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code> file under the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> keys; the <code class="docutils literal notranslate"><span class="pre">chiq</span></code>
+array inside that file is not overwritten and stays the standard ring
+result. The gate requires at least one
+declared off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code> shell (a
+declared-zero coefficient counts), real coefficients, an even
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, no sublattice, no <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> and no
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+declaration is rejected with an error. It cannot be combined with
+<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> a <code class="docutils literal notranslate"><span class="pre">true</span></code>
+value is rejected (the bond basis has no self-consistent FLEX
+treatment yet).</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code></p>
+<p><strong>Type :</strong>
+Integer (default: keep every declared off-site shell)</p>
+<p><strong>Description :</strong>
+Keeps only the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code> shortest off-site
+shells (must be &gt;= 1). This is NOT an approximation knob: a truncation
+that would drop a shell carrying a declared nonzero coefficient is
+rejected, so it can only remove declared-zero (spectator) shells; to
+exclude a physical interaction, set its coefficient to zero in the
+interaction file. Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is <code class="docutils literal notranslate"><span class="pre">8.0</span></code>)</p>
+<p><strong>Description :</strong>
+Cap on the ESTIMATED peak host (CPU) memory of the bond-resolved solve,
+in binary GiB (GPU memory is not covered); the estimate is logged and
+the run is refused before any expensive step when it exceeds the cap.
+The refusal message reports the estimate and the shapes behind it; on
+a machine with enough physical memory, raise the cap to proceed.
+Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>Type :</strong>
 Integer, List of Integers, or String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>

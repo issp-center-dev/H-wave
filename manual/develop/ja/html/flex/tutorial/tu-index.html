@@ -839,7 +839,10 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 Hartree（密度）頂点 <span class="math notranslate nohighlight">\(V(q)\)</span> としてのみ入り、オフサイト項の交換
 （Fock）交差は <span class="math notranslate nohighlight">\(q\)</span> のみの頂点では表現できないため含まれません
 （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
-これらのクラスはいずれも RPA ring と要素完全一致が実測されています。
+これらのクラスはいずれも RPA ring と要素完全一致が実測されています
+（省かれた交換交差は、RPA ソルバーの実験的なボンド分解縦方向チャネル
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で静的に取り込めます。
+<a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照）。
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>と
 なります。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>には、<span class="math notranslate nohighlight">\(q\)</span> に依存する
 スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。

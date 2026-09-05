@@ -896,7 +896,10 @@ with or without sublattice folding): each enters as its Hartree
 off-site term is not representable by a <span class="math notranslate nohighlight">\(q\)</span>-only vertex and is
 left out, the same approximation the RPA ring makes, and the solver
 logs a warning saying so. For every such class the general path is
-measured element-complete equal to the RPA ring. Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+measured element-complete equal to the RPA ring. (The omitted
+crossing is available, statically, in the RPA solver’s experimental
+bond-resolved longitudinal channel, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>; see <a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>.) Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> has no
 effect a <span class="math notranslate nohighlight">\(q\)</span>-dependent spin/charge vertex could carry (verified
 by exact diagonalization): its physics is spin-flip (transverse), which

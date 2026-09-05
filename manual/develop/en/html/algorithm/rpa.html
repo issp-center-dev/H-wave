@@ -590,12 +590,60 @@ convention as UHFk.</p></li>
 spin-orbital count; double any pre-existing RPA spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
+<section id="bond-resolved-longitudinal-channel-experimental">
+<span id="rpa-longitudinal-bond"></span><h3>Bond-resolved longitudinal channel (experimental)<a class="headerlink" href="#bond-resolved-longitudinal-channel-experimental" title="Link to this heading">¶</a></h3>
+<p>The ring resums the longitudinal (spin/charge) channel with a vertex that
+depends on the transferred momentum <span class="math notranslate nohighlight">\(q\)</span> only. For an off-site
+interaction <span class="math notranslate nohighlight">\(V_{ab}(R)\)</span> that vertex carries the Hartree part
+<span class="math notranslate nohighlight">\(V_{ab}(q)\)</span> but not the exchange (Fock) crossing, whose
+particle-hole pair sits on the bond <span class="math notranslate nohighlight">\((i, i+R)\)</span> rather than on one
+site: the crossing depends on the two fermionic momenta and has no
+<span class="math notranslate nohighlight">\(q\)</span>-only representation. With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free system) the static
+longitudinal channel is instead resummed on the bond-enlarged pair basis
+of the Eliashberg bond-channel extension: the pair index runs over
+<code class="docutils literal notranslate"><span class="pre">(m,</span> <span class="pre">l_1,</span> <span class="pre">l_2)</span></code> with <span class="math notranslate nohighlight">\(m\)</span> a bond channel (the on-site
+<span class="math notranslate nohighlight">\(R = 0\)</span> and every declared off-site displacement, closed under
+<span class="math notranslate nohighlight">\(R \to -R\)</span>), the bare bubble is
+<span class="math notranslate nohighlight">\(\bar\chi_{m l_1 l_2;\, m' l_3 l_4}(q) = -\frac{T}{N}\sum_k
+e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span> at
+<span class="math notranslate nohighlight">\(\Omega = 0\)</span>, and the vertex is the standard ring’s pair-space
+matrix in the <span class="math notranslate nohighlight">\(m = m' = 0\)</span> block plus, on the bond diagonal
+<span class="math notranslate nohighlight">\((m, l_1, l_2) = (m', l_3, l_4)\)</span> with <span class="math notranslate nohighlight">\(m \neq 0\)</span>, the
+exchange crossing of the off-site term, <span class="math notranslate nohighlight">\(w_t\, \mathrm{Re}\,
+V^{(t)}_{l_1 l_2}(R_m)\)</span>, where <span class="math notranslate nohighlight">\(w_t\)</span> is the same per-type
+coefficient the on-site exchange slot uses (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\((+1, -1)\)</span>
+for the spin and charge channels). The dressed objects
+<span class="math notranslate nohighlight">\(\chi_s = [1 - \bar\chi S]^{-1}\bar\chi\)</span> and
+<span class="math notranslate nohighlight">\(\chi_c = [1 + \bar\chi C]^{-1}\bar\chi\)</span> and their
+<span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks are written under the
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> keys of the <code class="docutils literal notranslate"><span class="pre">chiq</span></code> file; the <code class="docutils literal notranslate"><span class="pre">chiq</span></code> array in
+that file is not overwritten and stays the standard ring result. When every off-site coefficient is zero the
+collapsed blocks equal the standard ring’s static spin/charge channels;
+with a nonzero off-site coefficient they differ by the exchange crossing.
+The bond blocks were verified against exact diagonalization at first
+order in the coupling for off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital and inter-orbital bonds), and the Hartree-only
+vertex was verified to miss the same data.</p>
+<p>Limitations of this version: real off-site coefficients only; off-site
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declarations are rejected (their promotion
+through the bond basis is planned); no sublattice folding, no
+<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, no <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even; the
+gate cannot be combined with <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>, and <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span>
+<span class="pre">&quot;FLEX&quot;</span></code> refuses it (no bond-basis self-consistency yet). Each RPA
+denominator is checked for conditioning at every <span class="math notranslate nohighlight">\(q\)</span> and the run
+is refused inside the instability region (the smallest scores are
+reported as <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>); the estimated
+peak host memory is checked against <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>
+before any expensive step.</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>
 <p><a class="reference external" href="https://journals.jps.jp/doi/10.1143/JPSJ.78.104002">K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009).</a></p>
 </aside>
 </aside>
+</section>
 </section>
 </section>
 
