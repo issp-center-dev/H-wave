@@ -632,4 +632,56 @@ in the input TOML file. In this mode:
    ``Norbit``.
 
 
+.. _rpa_longitudinal_bond:
+
+Bond-resolved longitudinal channel (experimental)
+-------------------------------------------------
+
+The ring resums the longitudinal (spin/charge) channel with a vertex that
+depends on the transferred momentum :math:`q` only. For an off-site
+interaction :math:`V_{ab}(R)` that vertex carries the Hartree part
+:math:`V_{ab}(q)` but not the exchange (Fock) crossing, whose
+particle-hole pair sits on the bond :math:`(i, i+R)` rather than on one
+site: the crossing depends on the two fermionic momenta and has no
+:math:`q`-only representation. With ``longitudinal_bond_channels = true``
+(``calc_type = "ring"``, ``calc_scheme = "general"``, spin-free system) the static
+longitudinal channel is instead resummed on the bond-enlarged pair basis
+of the Eliashberg bond-channel extension: the pair index runs over
+``(m, l_1, l_2)`` with :math:`m` a bond channel (the on-site
+:math:`R = 0` and every declared off-site displacement, closed under
+:math:`R \to -R`), the bare bubble is
+:math:`\bar\chi_{m l_1 l_2;\, m' l_3 l_4}(q) = -\frac{T}{N}\sum_k
+e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)` at
+:math:`\Omega = 0`, and the vertex is the standard ring's pair-space
+matrix in the :math:`m = m' = 0` block plus, on the bond diagonal
+:math:`(m, l_1, l_2) = (m', l_3, l_4)` with :math:`m \neq 0`, the
+exchange crossing of the off-site term, :math:`w_t\, \mathrm{Re}\,
+V^{(t)}_{l_1 l_2}(R_m)`, where :math:`w_t` is the same per-type
+coefficient the on-site exchange slot uses (``CoulombInter``
+:math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`
+for the spin and charge channels). The dressed objects
+:math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi` and
+:math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi` and their
+:math:`(m = 0, m' = 0)` blocks are written under the
+``longitudinal_bond_*`` keys of the ``chiq`` file; the ``chiq`` array in
+that file is not overwritten and stays the standard ring result. When every off-site coefficient is zero the
+collapsed blocks equal the standard ring's static spin/charge channels;
+with a nonzero off-site coefficient they differ by the exchange crossing.
+The bond blocks were verified against exact diagonalization at first
+order in the coupling for off-site ``CoulombInter``, ``Hund`` and
+``Ising`` (same-orbital and inter-orbital bonds), and the Hartree-only
+vertex was verified to miss the same data.
+
+Limitations of this version: real off-site coefficients only; off-site
+``Exchange`` and ``PairHop`` declarations are rejected (their promotion
+through the bond basis is planned); no sublattice folding, no
+``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
+gate cannot be combined with ``transverse_bond_channels``, and ``mode =
+"FLEX"`` refuses it (no bond-basis self-consistency yet). Each RPA
+denominator is checked for conditioning at every :math:`q` and the run
+is refused inside the instability region (the smallest scores are
+reported as ``longitudinal_bond_cond_min_s`` / ``_c``); the estimated
+peak host memory is checked against ``longitudinal_bond_memory_cap_gb``
+before any expensive step.
+
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

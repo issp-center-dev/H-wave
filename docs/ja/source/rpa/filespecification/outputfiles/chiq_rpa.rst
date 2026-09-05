@@ -131,6 +131,37 @@ chiq のデータ形式
 
 ``calc_type = ring+ladder``\ の場合、\ ``chiq``\ ファイルには配列\ ``chiq_pm``\ も追加で格納されます。これは横感受率\ :math:`\chi_{+-}(q)`\ を保持します。配列形式は\ ``ndarray(l,q,a,ap,b,bp)``\ で、\ ``a``, ``ap``, ``b``, ``bp``\ はスピン自由度を含 **まない** 軌道インデックス\ :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta`\ です（スピン構造は\ :math:`+-`\ のラベルで既に定まっているため）。したがって、対応する軸が一般化（スピン軌道）インデックスを走る\ ``chiq``\ よりも小さい配列になります。縦方向の\ ``chiq``\ はラダーの有無に影響されません。同一の入力に対して\ ``calc_type = ring``\ の結果とビット単位で一致します。
 
+``longitudinal_bond_channels = true``\ （実験的機能、\ ``calc_type = "ring"``\ 、
+:ref:`rpa_longitudinal_bond`\ を参照）の場合、\ ``chiq``\ ファイルにはボンド分解した
+縦方向のオブジェクトが\ ``longitudinal_bond_``\ 接頭辞の下に追加で格納されます。
+ファイル内の配列\ ``chiq``\ は上書き **されません** 。標準（Hartree のみ）の ring の
+結果のままで、交換交差を含めた静的感受率は新しいキーの下にのみ格納されます。
+ボンドチャネル数を\ :math:`B`\ （チャネル0はオンサイト\ :math:`R = 0`\ ）、
+:math:`n_d = n_{\rm orb}^2`\ 、\ :math:`N_D = B\, n_d`\ として、
+
+- ``longitudinal_bond_chi_s``\ 、\ ``longitudinal_bond_chi_c``\ : ドレスされた静的
+  スピン・電荷感受率。複素\ ``ndarray(q, I, J)``\ で、ボンド優先の添字は
+  :math:`I = m\, n_d + l_1 n_{\rm orb} + l_2`\ 、
+  :math:`J = m'\, n_d + l_3 n_{\rm orb} + l_4`\ です
+  （\ ``longitudinal_bond_index_order``\ にこの規則が文字列として記録されます）。
+- ``longitudinal_bond_chiq_s_static``\ 、\ ``longitudinal_bond_chiq_c_static``\ :
+  その\ :math:`(m = 0, m' = 0)`\ ブロック。軌道添字の複素\ ``ndarray(q, a, b, c, d)``\ で、
+  標準の ring の静的スピン・電荷チャネルにオフサイト交換交差を含めたものに相当します。
+- ``longitudinal_bond_delta_r``\ （整数\ ``(B, 3)``\ の変位。チャネル0が先頭）、
+  ``longitudinal_bond_reverse``\ （整数\ ``(B,)``\ 、\ :math:`-R`\ のチャネル）、
+  ``longitudinal_bond_spatial_shape``\ （整数\ ``(3,)``\ 、\ ``CellShape``\ ）、
+  ``longitudinal_bond_q_convention``\ （文字列:
+  ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened``\ ）、
+  ``longitudinal_bond_spin_mode``\ （文字列、\ ``spin-free``\ ）、
+  ``longitudinal_bond_normalization``\ （文字列:
+  ``chi_bar = -(T/N) sum_k G G, per site``\ ）、
+  ``longitudinal_bond_types``\ （文字列配列。常に\ ``CoulombInter, Hund, Ising``\ の
+  3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
+  ブロックはゼロ）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
+  ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c``\ （浮動小数。
+  スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
+  下限に達すると実行は拒否されます）、\ ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
+
 
 データ読み込みの例
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

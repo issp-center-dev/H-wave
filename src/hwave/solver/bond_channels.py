@@ -16,6 +16,7 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 from dataclasses import dataclass, field
 import logging
 
+import numbers
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
@@ -686,6 +687,11 @@ _BOND_COND_FLOOR = 1.0e-3
 def _check_bond_conditioning(name, mat, cond_tol):
     """Refuse a singular / nearly singular enlarged RPA denominator.
 
+    Returns the guard score (the minimum over q of the smaller of the two
+    criteria below) when the block passes, ``None`` when ``cond_tol`` is
+    ``None`` (guard disabled); raises ``ValueError`` otherwise (#181 Tier 3
+    Phase A: the score is published as ``longitudinal_bond_cond_min_*``).
+
     ``np.linalg.solve`` raises a bare ``LinAlgError("Singular matrix")`` on an
     exactly singular block -- with no indication of WHICH channel or WHICH
     q-point diverged -- and returns enormous, unreliable numbers just short of
@@ -713,7 +719,7 @@ def _check_bond_conditioning(name, mat, cond_tol):
        criterion 1 already covers that regime.
     """
     if cond_tol is None:
-        return
+        return None
     Nx, Ny, Nz, ND, _ = mat.shape
     sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -728,7 +734,7 @@ def _check_bond_conditioning(name, mat, cond_tol):
     iq = int(np.argmin(score))
     worst = float(score[iq])
     if worst > cond_tol:
-        return
+        return worst
     qx, rem = divmod(iq, Ny * Nz)
     qy, qz = divmod(rem, Nz)
     raise ValueError(
@@ -817,6 +823,12 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
 
     # Batched RPA solve for all q-points simultaneously (same algebra/
     # orientation as sc.py._compute_vertices_general, generalized nd -> ND).
+    # Kept as the legacy schedule -- BOTH denominators are formed and
+    # conditioning-checked before either solve -- so the Eliashberg path
+    # is unchanged in numbers, error text and order of diagnostics. The
+    # production longitudinal bond gate uses the one-channel-at-a-time
+    # ``dress_channel`` below instead (#181 Tier 3 Phase A); the two agree
+    # bit-for-bit (tests/test_bond_longitudinal_vertex.py).
     I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (Nx, Ny, Nz, ND, ND)).copy()
 
     mat_s = I_mat - chi_bar @ S_bond
@@ -832,6 +844,67 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     chi_c = np.linalg.solve(mat_c, chi_bar)
 
     return chi_s, chi_c
+
+
+_DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0}
+
+
+def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLOOR):
+    """Dress ONE RPA channel on the (bond-enlarged) pair basis::
+
+        chi = [I + sign * chi_bar @ W]^{-1} chi_bar,   sign = -1 ("spin"),
+                                                              +1 ("charge")
+
+    ``chi_bar``/``W`` are ``(nvol, ND, ND)``; ``spatial_shape`` =
+    ``(Nx, Ny, Nz)`` with ``prod == nvol`` (the q-point named in a
+    conditioning refusal is decoded from it). ONE denominator is formed,
+    conditioning-checked (:func:`_check_bond_conditioning`, criteria
+    ``sigma_min/sigma_max`` and ``sigma_min/max(1, sigma_max)``; refused
+    at ``<= cond_tol``, disabled by ``cond_tol=None``) and solved with a
+    batched ``numpy.linalg.solve`` (no explicit inverse). Returns
+    ``(chi, cond_min)``, ``cond_min`` the guard score (``None`` when the
+    guard is disabled). Peak transient: the denominator plus the solve's
+    LU workspace; the denominator is released before returning.
+    """
+    if channel not in _DRESS_CHANNELS:
+        raise ValueError(
+            "dress_channel: channel must be 'spin' or 'charge', got {!r}"
+            .format(channel))
+    sign = _DRESS_CHANNELS[channel]
+    chi_bar = np.asarray(chi_bar)
+    W = np.asarray(W)
+    if (chi_bar.ndim != 3 or chi_bar.shape[1] != chi_bar.shape[2]
+            or W.shape != chi_bar.shape):
+        raise ValueError(
+            "dress_channel: chi_bar and W must both have shape (nvol, ND, "
+            "ND); got {} and {}".format(chi_bar.shape, W.shape))
+    try:
+        shape = tuple(spatial_shape)
+        ok = (len(shape) == 3 and all(
+            not isinstance(x, bool) and isinstance(x, (int, np.integer))
+            and int(x) > 0 for x in shape))
+    except TypeError:
+        ok = False
+    if not ok:
+        raise ValueError(
+            "dress_channel: spatial_shape must be three positive integers "
+            "(Nx, Ny, Nz), got {!r}".format(spatial_shape))
+    Nx, Ny, Nz = (int(x) for x in shape)
+    nvol, ND = chi_bar.shape[0], chi_bar.shape[1]
+    if Nx * Ny * Nz != nvol:
+        raise ValueError(
+            "dress_channel: prod(spatial_shape) = {} != nvol = {}".format(
+                Nx * Ny * Nz, nvol))
+    mat = chi_bar @ W
+    if sign < 0:
+        np.negative(mat, out=mat)
+    idx = np.arange(ND)
+    mat[:, idx, idx] += 1.0
+    cond_min = _check_bond_conditioning(
+        channel, mat.reshape(Nx, Ny, Nz, ND, ND), cond_tol)
+    chi = np.linalg.solve(mat, chi_bar)
+    del mat
+    return chi, cond_min
 
 
 def _validate_green_beta(green, beta, label):
@@ -2126,6 +2199,16 @@ import collections as _collections  # local: keeps the append-only region
 
 _TRANSVERSE_ACTIVE_TYPES = ("CoulombInter", "Ising", "Exchange")
 
+# Every interaction type the shared resolver can read a bond shell from
+# (#181 Tier 3 Phase A). A caller selects a subset as ``active_types``:
+# the transverse (spin-flip) channel reads _TRANSVERSE_ACTIVE_TYPES, the
+# longitudinal (spin/charge) channel _LONGITUDINAL_ACTIVE_TYPES -- Hund is
+# a longitudinal bond source with no transverse content, Exchange the
+# reverse (its longitudinal content is adjudicated absent, Tier 2; its
+# promotion through the bond basis is a recorded follow-up).
+_BOND_RESOLVABLE_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
+_LONGITUDINAL_ACTIVE_TYPES = ("CoulombInter", "Hund", "Ising")
+
 
 def _as_readonly_int_array(value, name, *, ndim, last_dim=None):
     """Validate/convert ``value`` into a read-only ``int64`` array for
@@ -2141,23 +2224,23 @@ def _as_readonly_int_array(value, name, *, ndim, last_dim=None):
     arr = np.asarray(value)
     if arr.ndim != ndim:
         raise ValueError(
-            "TransverseTopology: {} must have ndim={}; got shape {}".format(
+            "BondTopology: {} must have ndim={}; got shape {}".format(
                 name, ndim, arr.shape))
     if last_dim is not None and arr.shape[-1] != last_dim:
         raise ValueError(
-            "TransverseTopology: {} must have last axis of length {}; got "
+            "BondTopology: {} must have last axis of length {}; got "
             "shape {}".format(name, last_dim, arr.shape))
     if np.iscomplexobj(arr):
         raise ValueError(
-            "TransverseTopology: {} must be real/integer-valued; got a "
+            "BondTopology: {} must be real/integer-valued; got a "
             "complex dtype ({})".format(name, arr.dtype))
     if arr.size and not np.all(np.isfinite(arr)):
         raise ValueError(
-            "TransverseTopology: {} must be finite; got {}".format(name, arr))
+            "BondTopology: {} must be finite; got {}".format(name, arr))
     if not np.issubdtype(arr.dtype, np.integer):
         if arr.size and not np.all(arr == np.round(arr)):
             raise ValueError(
-                "TransverseTopology: {} must be integer-valued (no "
+                "BondTopology: {} must be integer-valued (no "
                 "fractional part); got {}".format(name, arr))
     out = np.array(arr, dtype=np.int64, copy=True)
     out.flags.writeable = False
@@ -2168,7 +2251,7 @@ _TransverseTopologyBase = _collections.namedtuple(
     "_TransverseTopologyBase", ["delta_r", "reverse", "coeffs"])
 
 
-class TransverseTopology(_TransverseTopologyBase):
+class BondTopology(_TransverseTopologyBase):
     """Alias-safe, closure-validated bond-channel topology for the
     transverse (spin-flip) channel (spec, "The master transverse
     topology").
@@ -2218,34 +2301,34 @@ class TransverseTopology(_TransverseTopologyBase):
         B = delta_r.shape[0]
         if B < 1:
             raise ValueError(
-                "TransverseTopology: delta_r must carry at least channel 0 "
+                "BondTopology: delta_r must carry at least channel 0 "
                 "(the mandatory local R=(0,0,0) channel); got shape {}"
                 .format(delta_r.shape))
         if not np.array_equal(delta_r[0], np.zeros(3, dtype=np.int64)):
             raise ValueError(
-                "TransverseTopology: channel 0 must be R=(0,0,0) (the "
+                "BondTopology: channel 0 must be R=(0,0,0) (the "
                 "mandatory local channel every topology contains); got "
                 "delta_r[0]={}".format(tuple(int(x) for x in delta_r[0])))
 
         reverse = _as_readonly_int_array(reverse, "reverse", ndim=1)
         if reverse.shape != (B,):
             raise ValueError(
-                "TransverseTopology: reverse must have shape ({},), "
+                "BondTopology: reverse must have shape ({},), "
                 "matching delta_r's channel count B={}; got {}".format(
                     B, B, reverse.shape))
         if reverse.size and (np.any(reverse < 0) or np.any(reverse >= B)):
             raise ValueError(
-                "TransverseTopology: reverse entries must all be valid "
+                "BondTopology: reverse entries must all be valid "
                 "channel indices in [0, {}); got {}".format(
                     B, reverse.tolist()))
         if not np.array_equal(reverse[reverse], np.arange(B, dtype=np.int64)):
             raise ValueError(
-                "TransverseTopology: reverse must be an involution "
+                "BondTopology: reverse must be an involution "
                 "(reverse[reverse[m]] == m for every channel m); got "
                 "reverse={}".format(reverse.tolist()))
         if int(reverse[0]) != 0:
             raise ValueError(
-                "TransverseTopology: reverse[0] must be 0 -- channel 0 "
+                "BondTopology: reverse[0] must be 0 -- channel 0 "
                 "(R=(0,0,0)) is its own reversal partner; got reverse[0]={}"
                 .format(int(reverse[0])))
         # Geometric consistency: reverse[m] must genuinely be the channel of
@@ -2262,7 +2345,7 @@ class TransverseTopology(_TransverseTopologyBase):
             mism = np.any(delta_r[reverse] != neg, axis=1)
             bad = int(np.argmax(mism))
             raise ValueError(
-                "TransverseTopology: reverse is not geometrically "
+                "BondTopology: reverse is not geometrically "
                 "consistent with delta_r -- delta_r[reverse[{0}]]={1} != "
                 "-delta_r[{0}]={2}".format(
                     bad, tuple(int(x) for x in delta_r[reverse[bad]]),
@@ -2274,19 +2357,19 @@ class TransverseTopology(_TransverseTopologyBase):
             arr = np.array(raw_arr, dtype=complex, copy=True)
             if arr.ndim != 3 or arr.shape[0] != B or arr.shape[1] != arr.shape[2]:
                 raise ValueError(
-                    "TransverseTopology: coeffs[{!r}] must have shape "
+                    "BondTopology: coeffs[{!r}] must have shape "
                     "(B, norb, norb) with B={} (matching delta_r); got {}"
                     .format(type_name, B, arr.shape))
             if common_norb is None:
                 common_norb = arr.shape[1]
             elif arr.shape[1] != common_norb:
                 raise ValueError(
-                    "TransverseTopology: coeffs arrays disagree on norb -- "
+                    "BondTopology: coeffs arrays disagree on norb -- "
                     "coeffs[{!r}] has norb={} but an earlier type has "
                     "norb={}".format(type_name, arr.shape[1], common_norb))
             if np.any(arr[0] != 0):
                 raise ValueError(
-                    "TransverseTopology: coeffs[{!r}][0] (channel 0, the "
+                    "BondTopology: coeffs[{!r}][0] (channel 0, the "
                     "on-site R=(0,0,0) channel) must be EXACTLY zero -- "
                     "on-site content is represented exclusively by the "
                     "caller's ham_pm_onsite, never by a topology coeffs "
@@ -2296,7 +2379,7 @@ class TransverseTopology(_TransverseTopologyBase):
             if np.any(mism != 0):
                 m_bad = int(np.argmax(np.any(mism != 0, axis=(1, 2))))
                 raise ValueError(
-                    "TransverseTopology: coeffs[{!r}] fails the Hermitian "
+                    "BondTopology: coeffs[{!r}] fails the Hermitian "
                     "closure invariant coeffs[reverse[m]] == "
                     "conj(coeffs[m]).T at channel m={} (reverse[m]={}): "
                     "coeffs[{!r}][{}]={} but conj(coeffs[{!r}][{}]).T={}"
@@ -2306,8 +2389,14 @@ class TransverseTopology(_TransverseTopologyBase):
             arr.flags.writeable = False
             new_coeffs[type_name] = arr
 
-        return super(TransverseTopology, cls).__new__(
+        return super(BondTopology, cls).__new__(
             cls, delta_r, reverse, new_coeffs)
+
+
+# Phase W name, kept as an alias: the topology carrier is channel-agnostic
+# (the CHANNEL is decided by which types the resolver is asked to read and
+# by which vertex builder consumes the result; #181 Tier 3 Phase A).
+TransverseTopology = BondTopology
 
 
 def iter_reversal_orbits(topo):
@@ -2509,7 +2598,7 @@ def validate_topology_against_mesh(topo, spatial_shape, *, arrays=None):
     return None
 
 
-def transverse_effective_activity(topo):
+def bond_effective_activity(topo):
     """The shared "is this topology doing anything transverse off-site"
     predicate: EXACT nonzero after summation, Hermitian projection and
     shell truncation -- i.e. after everything
@@ -2542,8 +2631,32 @@ def transverse_effective_activity(topo):
     return False
 
 
+# Phase W name (see BondTopology): one predicate for both channels.
+transverse_effective_activity = bond_effective_activity
+
+
+class BondSetView:
+    """A :class:`BondTopology` presented under the bubble kernel's
+    duck-typed bond-set contract (``bubble._validate_bond_set``:
+    ``n_channels`` a positive int, ``delta_r`` a sequence of integer
+    3-tuples, plus ``reverse``): the longitudinal bond bubble
+    (``bubble.bond_bubble_static``) and the test-side ED map consume a
+    topology through this view instead of a ``ResolvedInteractionSet``
+    (#181 Tier 3 Phase A). The topology is re-validated on construction
+    (alias-safe, like ``validate_topology_against_mesh``)."""
+
+    def __init__(self, topo):
+        topo = BondTopology(delta_r=topo.delta_r, reverse=topo.reverse,
+                            coeffs=topo.coeffs)
+        self.delta_r = tuple(tuple(int(x) for x in row)
+                             for row in np.asarray(topo.delta_r))
+        self.reverse = tuple(int(x) for x in np.asarray(topo.reverse))
+        self.n_channels = len(self.delta_r)
+
+
+
 def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
-                              type_name):
+                              type_name, diag="resolve_transverse_topology"):
     """Off-site (``R != 0``) reverse-closure / Hermitian-projection for
     ONE interaction type, per the SAME algorithm ``resolve_interactions``
     (its "Step 2: reverse closure / Hermiticity synthesis", above in this
@@ -2618,7 +2731,7 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
                 tol = reverse_atol + reverse_rtol * abs(v_declared)
                 if abs(v_declared - v_synth) > tol:
                     raise ValueError(
-                        "resolve_transverse_topology: {}_{}{}({}) = {} "
+                        diag + ": {}_{}{}({}) = {} "
                         "disagrees with conj({}_{}{}({})) = {} beyond "
                         "tolerance (atol={}, rtol={})".format(
                             type_name, a, b, irvec, v_declared,
@@ -2638,7 +2751,7 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
                 tol = reverse_atol + reverse_rtol * abs(v_declared)
                 if abs(v_declared - v_synth) > tol:
                     raise ValueError(
-                        "resolve_transverse_topology: {}_{}{}({}) = {} "
+                        diag + ": {}_{}{}({}) = {} "
                         "disagrees with conj({}_{}{}({})) = {} beyond "
                         "tolerance (atol={}, rtol={})".format(
                             type_name, a, b, neg, v_declared,
@@ -2660,7 +2773,7 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
     return completed
 
 
-def _require_transverse_integral(value, label):
+def _require_transverse_integral(value, label, diag="resolve_transverse_topology"):
     """Coerce ``value`` to ``int`` iff it is an exact integral scalar;
     otherwise raise a ``resolve_transverse_topology``-prefixed
     ``ValueError`` naming ``label``. ``bool`` is rejected even though
@@ -2670,7 +2783,7 @@ def _require_transverse_integral(value, label):
     """
     if isinstance(value, (bool, np.bool_)):
         raise ValueError(
-            "resolve_transverse_topology: {} must be an integer, not a "
+            diag + ": {} must be an integer, not a "
             "bool, got {!r}".format(label, value))
     # Exact-integer types pass through unchanged (arbitrary precision:
     # no float round-trip, which would silently round values above
@@ -2690,12 +2803,223 @@ def _require_transverse_integral(value, label):
         if (not np.isfinite(value) or value != np.floor(value)
                 or abs(value) > 2.0**53):
             raise ValueError(
-                "resolve_transverse_topology: {} must be an integral "
+                diag + ": {} must be an integral "
                 "value, got {!r}".format(label, value))
         return int(value)
     raise ValueError(
-        "resolve_transverse_topology: {} must be an integer, got "
+        diag + ": {} must be an integer, got "
         "{!r}".format(label, value))
+
+
+def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
+                                active_types, diag):
+    """Shared body of :func:`resolve_bond_topology` and
+    :func:`resolve_transverse_topology`; ``diag`` prefixes every
+    diagnostic so each public entry reports under its own name."""
+    if (isinstance(active_types, str)
+            or not isinstance(active_types, (tuple, list))
+            or len(active_types) == 0
+            or any(not isinstance(t, str) for t in active_types)
+            or len(set(active_types)) != len(active_types)
+            or any(t not in _BOND_RESOLVABLE_TYPES for t in active_types)):
+        raise ValueError(
+            "{}: active_types must be a non-empty, duplicate-free sequence "
+            "drawn from {}; got {!r} (an aggregate 'Coulomb' table must be "
+            "split by the caller first)".format(
+                diag, _BOND_RESOLVABLE_TYPES, active_types))
+    active_types = tuple(active_types)
+
+    norb = _require_transverse_integral(norb, "norb", diag)
+    if norb < 1:
+        raise ValueError(
+            diag + ": norb must be a positive integer, "
+            "got {!r}".format(norb))
+    if not hasattr(interactions, "get"):
+        raise ValueError(
+            diag + ": interactions must be a "
+            "dict-like container (mapping interaction type name -> "
+            "{(irvec, orbvec): value} sub-dict), got {!r}".format(
+                type(interactions)))
+
+    reverse_atol, reverse_rtol = 1e-10, 1e-8
+
+    per_type_by_irvec = {}
+    per_type_completed = {}
+    union_irvecs = set()
+    for type_name in active_types:
+        tbl = interactions.get(type_name, {}) or {}
+        by_irvec = {}
+        for (irvec, orbvec), value in tbl.items():
+            try:
+                irvec_len = len(irvec)
+            except TypeError:
+                raise ValueError(
+                    diag + ": {} declares an irvec "
+                    "key that is not a 3-component vector, got "
+                    "{!r}".format(type_name, irvec))
+            if irvec_len != 3:
+                raise ValueError(
+                    diag + ": {} declares an irvec "
+                    "key with {} component(s), expected exactly 3, got "
+                    "{!r}".format(type_name, irvec_len, irvec))
+            irvec = tuple(
+                _require_transverse_integral(x, "{} irvec component".format(type_name), diag)
+                for x in irvec)
+
+            try:
+                orbvec_len = len(orbvec)
+            except TypeError:
+                raise ValueError(
+                    diag + ": {} declares an orbvec "
+                    "key that is not a 2-component (a, b) pair, got "
+                    "{!r}".format(type_name, orbvec))
+            if orbvec_len != 2:
+                raise ValueError(
+                    diag + ": {} declares an orbvec "
+                    "key with {} component(s), expected exactly 2 (a, "
+                    "b), got {!r}".format(type_name, orbvec_len, orbvec))
+            a = _require_transverse_integral(orbvec[0], "{} orbvec[0]".format(type_name), diag)
+            b = _require_transverse_integral(orbvec[1], "{} orbvec[1]".format(type_name), diag)
+            if not (0 <= a < norb and 0 <= b < norb):
+                raise ValueError(
+                    diag + ": {} declares orbital "
+                    "index (a={}, b={}) at irvec={} out of range for "
+                    "norb={}; orbital indices must satisfy 0 <= a,b < "
+                    "norb".format(type_name, a, b, irvec, norb))
+
+            if irvec == (0, 0, 0):
+                continue
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, numbers.Number)
+                    or not np.isfinite(value)):
+                raise ValueError(
+                    diag + ": {} declares a coefficient that is not a "
+                    "finite number at irvec {}, orbvec {}: got {!r}".format(
+                        type_name, irvec, orbvec, value))
+            by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
+        per_type_by_irvec[type_name] = by_irvec
+        completed = _close_offsite_hermitian(
+            by_irvec, norb, reverse_atol, reverse_rtol, type_name, diag)
+        per_type_completed[type_name] = completed
+        union_irvecs.update(completed.keys())
+
+    # --- shell sort: SAME ordering resolve_interactions uses (m=0 first,
+    # then shells by (Euclidean length, lexicographic irvec)) ---
+    def sort_key(irvec):
+        return (_shell_length(irvec, cell), irvec)
+
+    ordered_irvecs_all = sorted(union_irvecs, key=sort_key)
+    shells = []  # list of (length, [irvecs...])
+    for irvec in ordered_irvecs_all:
+        length = _shell_length(irvec, cell)
+        if shells and abs(length - shells[-1][0]) <= 1e-6 * max(
+                length, shells[-1][0], 1.0):
+            shells[-1][1].append(irvec)
+        else:
+            shells.append((length, [irvec]))
+
+    if max_shells is not None:
+        try:
+            shells_f = float(max_shells)
+        except (TypeError, ValueError):
+            raise ValueError(
+                diag + ": max_shells must be a "
+                "non-negative integer or None, got {!r}".format(max_shells))
+        if (not np.isfinite(shells_f) or shells_f < 0
+                or shells_f != np.floor(shells_f)):
+            raise ValueError(
+                diag + ": max_shells must be a "
+                "non-negative integral value (shell 0 is the mandatory "
+                "on-site R=(0,0,0) channel, always kept regardless; "
+                "max_shells counts OFF-SITE shells beyond it) or None, "
+                "got {!r}".format(max_shells))
+        n_keep = int(shells_f)
+        dropped_shells = shells[n_keep:]
+
+        # Ambiguity guard (review fix, generalizing resolve_interactions's
+        # "Step 4" bond_max_shells=0 guard, bond_channels.py above, to
+        # every truncation depth): dropping a shell that carries any
+        # exactly-nonzero DECLARED coefficient (from CoulombInter, Ising
+        # or Exchange) is ALWAYS an error, never silent -- the docstring's
+        # "max_shells truncates the UNION of off-site shells" promise
+        # would otherwise silently discard content the caller explicitly
+        # asked for. Checked against per_type_by_irvec (the RAW declared
+        # entries, pre-closure), matching resolve_interactions's own
+        # has_nonzero_inter_site_v -- a synthesized-but-negligible
+        # reverse partner never triggers this on its own (it is not
+        # itself a declared entry), but its declared mirror at the SAME
+        # shell (same |R|, since |R| == |-R| always) does.
+        dropped_irvecs = {irvec for _, irvecs in dropped_shells
+                           for irvec in irvecs}
+        if dropped_irvecs:
+            offending = []
+            for type_name in active_types:
+                by_irvec = per_type_by_irvec[type_name]
+                for irvec in dropped_irvecs:
+                    entries = by_irvec.get(irvec)
+                    if entries and any(v != 0 for v in entries.values()):
+                        offending.append((type_name, irvec))
+            if offending:
+                offending.sort(key=lambda x: (x[0], x[1]))
+                raise ValueError(
+                    diag + ": max_shells={} requested "
+                    "but this would drop shell(s) carrying declared "
+                    "nonzero off-site content: {}; this is ambiguous "
+                    "(asks to truncate away declared coefficients rather "
+                    "than merely unresolved/zero-valued shells). Use a "
+                    "larger max_shells, or omit the offending "
+                    "declarations, for the genuinely truncated model "
+                    "instead.".format(max_shells, offending))
+        shells = shells[:n_keep]
+
+    ordered_irvecs = [irvec for _, irvecs in shells for irvec in irvecs]
+
+    delta_r = [(0, 0, 0)] + ordered_irvecs
+    index_of = {dr: i for i, dr in enumerate(delta_r)}
+    B = len(delta_r)
+
+    reverse = [0]
+    for irvec in ordered_irvecs:
+        neg = tuple(-x for x in irvec)
+        if neg not in index_of:
+            raise ValueError(
+                diag + ": internal error -- channel "
+                "{} has no reverse partner {} in the resolved union "
+                "(reversal closure invariant violated)".format(irvec, neg))
+        reverse.append(index_of[neg])
+
+    coeffs = {}
+    for type_name in active_types:
+        completed = per_type_completed[type_name]
+        arr = np.zeros((B, norb, norb), dtype=complex)
+        for m, irvec in enumerate(delta_r):
+            if m == 0:
+                continue
+            block = completed.get(irvec)
+            if block is not None:
+                arr[m] = block
+        coeffs[type_name] = arr
+
+    return BondTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
+
+
+def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
+                          active_types):
+    """Resolve the master bond topology over an explicit ``active_types``
+    selection (#181 Tier 3 Phase A): the union of every declared off-site
+    shell of those types, channel 0 always ``R=(0,0,0)``, shells ordered
+    by length then lexicographically, reversal-closed, ``coeffs`` holding
+    EXACTLY ``active_types`` (in that order, zero-filled for a type that
+    declares nothing off-site), each ``(B, norb, norb)`` complex and
+    Hermitian-closed. Same pre-fold-declaration rule, mirrored-pair
+    consistency check and ``max_shells`` truncation guard as
+    :func:`resolve_transverse_topology` (whose docstring has the details);
+    that function is this one at ``active_types=_TRANSVERSE_ACTIVE_TYPES``.
+    Diagnostics are prefixed ``resolve_bond_topology:``.
+    """
+    return _resolve_bond_topology_impl(
+        interactions, cell, norb, max_shells=max_shells,
+        active_types=active_types, diag="resolve_bond_topology")
 
 
 def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
@@ -2780,174 +3104,10 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         :class:`TransverseTopology`'s constructor) if the resolved
         topology somehow fails its own invariants.
     """
-    norb = _require_transverse_integral(norb, "norb")
-    if norb < 1:
-        raise ValueError(
-            "resolve_transverse_topology: norb must be a positive integer, "
-            "got {!r}".format(norb))
-    if not hasattr(interactions, "get"):
-        raise ValueError(
-            "resolve_transverse_topology: interactions must be a "
-            "dict-like container (mapping interaction type name -> "
-            "{(irvec, orbvec): value} sub-dict), got {!r}".format(
-                type(interactions)))
-
-    reverse_atol, reverse_rtol = 1e-10, 1e-8
-
-    per_type_by_irvec = {}
-    per_type_completed = {}
-    union_irvecs = set()
-    for type_name in _TRANSVERSE_ACTIVE_TYPES:
-        tbl = interactions.get(type_name, {}) or {}
-        by_irvec = {}
-        for (irvec, orbvec), value in tbl.items():
-            try:
-                irvec_len = len(irvec)
-            except TypeError:
-                raise ValueError(
-                    "resolve_transverse_topology: {} declares an irvec "
-                    "key that is not a 3-component vector, got "
-                    "{!r}".format(type_name, irvec))
-            if irvec_len != 3:
-                raise ValueError(
-                    "resolve_transverse_topology: {} declares an irvec "
-                    "key with {} component(s), expected exactly 3, got "
-                    "{!r}".format(type_name, irvec_len, irvec))
-            irvec = tuple(
-                _require_transverse_integral(
-                    x, "{} irvec component".format(type_name))
-                for x in irvec)
-
-            try:
-                orbvec_len = len(orbvec)
-            except TypeError:
-                raise ValueError(
-                    "resolve_transverse_topology: {} declares an orbvec "
-                    "key that is not a 2-component (a, b) pair, got "
-                    "{!r}".format(type_name, orbvec))
-            if orbvec_len != 2:
-                raise ValueError(
-                    "resolve_transverse_topology: {} declares an orbvec "
-                    "key with {} component(s), expected exactly 2 (a, "
-                    "b), got {!r}".format(type_name, orbvec_len, orbvec))
-            a = _require_transverse_integral(
-                orbvec[0], "{} orbvec[0]".format(type_name))
-            b = _require_transverse_integral(
-                orbvec[1], "{} orbvec[1]".format(type_name))
-            if not (0 <= a < norb and 0 <= b < norb):
-                raise ValueError(
-                    "resolve_transverse_topology: {} declares orbital "
-                    "index (a={}, b={}) at irvec={} out of range for "
-                    "norb={}; orbital indices must satisfy 0 <= a,b < "
-                    "norb".format(type_name, a, b, irvec, norb))
-
-            if irvec == (0, 0, 0):
-                continue
-            by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
-        per_type_by_irvec[type_name] = by_irvec
-        completed = _close_offsite_hermitian(
-            by_irvec, norb, reverse_atol, reverse_rtol, type_name)
-        per_type_completed[type_name] = completed
-        union_irvecs.update(completed.keys())
-
-    # --- shell sort: SAME ordering resolve_interactions uses (m=0 first,
-    # then shells by (Euclidean length, lexicographic irvec)) ---
-    def sort_key(irvec):
-        return (_shell_length(irvec, cell), irvec)
-
-    ordered_irvecs_all = sorted(union_irvecs, key=sort_key)
-    shells = []  # list of (length, [irvecs...])
-    for irvec in ordered_irvecs_all:
-        length = _shell_length(irvec, cell)
-        if shells and abs(length - shells[-1][0]) <= 1e-6 * max(
-                length, shells[-1][0], 1.0):
-            shells[-1][1].append(irvec)
-        else:
-            shells.append((length, [irvec]))
-
-    if max_shells is not None:
-        try:
-            shells_f = float(max_shells)
-        except (TypeError, ValueError):
-            raise ValueError(
-                "resolve_transverse_topology: max_shells must be a "
-                "non-negative integer or None, got {!r}".format(max_shells))
-        if (not np.isfinite(shells_f) or shells_f < 0
-                or shells_f != np.floor(shells_f)):
-            raise ValueError(
-                "resolve_transverse_topology: max_shells must be a "
-                "non-negative integral value (shell 0 is the mandatory "
-                "on-site R=(0,0,0) channel, always kept regardless; "
-                "max_shells counts OFF-SITE shells beyond it) or None, "
-                "got {!r}".format(max_shells))
-        n_keep = int(shells_f)
-        dropped_shells = shells[n_keep:]
-
-        # Ambiguity guard (review fix, generalizing resolve_interactions's
-        # "Step 4" bond_max_shells=0 guard, bond_channels.py above, to
-        # every truncation depth): dropping a shell that carries any
-        # exactly-nonzero DECLARED coefficient (from CoulombInter, Ising
-        # or Exchange) is ALWAYS an error, never silent -- the docstring's
-        # "max_shells truncates the UNION of off-site shells" promise
-        # would otherwise silently discard content the caller explicitly
-        # asked for. Checked against per_type_by_irvec (the RAW declared
-        # entries, pre-closure), matching resolve_interactions's own
-        # has_nonzero_inter_site_v -- a synthesized-but-negligible
-        # reverse partner never triggers this on its own (it is not
-        # itself a declared entry), but its declared mirror at the SAME
-        # shell (same |R|, since |R| == |-R| always) does.
-        dropped_irvecs = {irvec for _, irvecs in dropped_shells
-                           for irvec in irvecs}
-        if dropped_irvecs:
-            offending = []
-            for type_name in _TRANSVERSE_ACTIVE_TYPES:
-                by_irvec = per_type_by_irvec[type_name]
-                for irvec in dropped_irvecs:
-                    entries = by_irvec.get(irvec)
-                    if entries and any(v != 0 for v in entries.values()):
-                        offending.append((type_name, irvec))
-            if offending:
-                offending.sort(key=lambda x: (x[0], x[1]))
-                raise ValueError(
-                    "resolve_transverse_topology: max_shells={} requested "
-                    "but this would drop shell(s) carrying declared "
-                    "nonzero off-site content: {}; this is ambiguous "
-                    "(asks to truncate away declared coefficients rather "
-                    "than merely unresolved/zero-valued shells). Use a "
-                    "larger max_shells, or omit the offending "
-                    "declarations, for the genuinely truncated model "
-                    "instead.".format(max_shells, offending))
-        shells = shells[:n_keep]
-
-    ordered_irvecs = [irvec for _, irvecs in shells for irvec in irvecs]
-
-    delta_r = [(0, 0, 0)] + ordered_irvecs
-    index_of = {dr: i for i, dr in enumerate(delta_r)}
-    B = len(delta_r)
-
-    reverse = [0]
-    for irvec in ordered_irvecs:
-        neg = tuple(-x for x in irvec)
-        if neg not in index_of:
-            raise ValueError(
-                "resolve_transverse_topology: internal error -- channel "
-                "{} has no reverse partner {} in the resolved union "
-                "(reversal closure invariant violated)".format(irvec, neg))
-        reverse.append(index_of[neg])
-
-    coeffs = {}
-    for type_name in _TRANSVERSE_ACTIVE_TYPES:
-        completed = per_type_completed[type_name]
-        arr = np.zeros((B, norb, norb), dtype=complex)
-        for m, irvec in enumerate(delta_r):
-            if m == 0:
-                continue
-            block = completed.get(irvec)
-            if block is not None:
-                arr[m] = block
-        coeffs[type_name] = arr
-
-    return TransverseTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
+    return _resolve_bond_topology_impl(
+        interactions, cell, norb, max_shells=max_shells,
+        active_types=_TRANSVERSE_ACTIVE_TYPES,
+        diag="resolve_transverse_topology")
 
 
 # =============================================================================
@@ -3182,3 +3342,142 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
             W[:, idx_bb, idx_aa] += -1.0 * J * phase
 
     return W
+
+
+# =============================================================================
+# #181 Tier 3 Phase A -- the bond-resolved LONGITUDINAL (spin/charge) vertex
+# =============================================================================
+#
+# APPEND-ONLY REGION (continued). Spec:
+# docs/superpowers/specs/2026-09-05-flex-offsite-bond-longitudinal-181-design.md,
+# "The longitudinal bond vertices". The channel-0 block is the Tier-1
+# locality-split pair-space matrix (hwave.solver.offsite
+# .sc_matrices_from_split: on-site Kanamori slots + the off-site Hartree
+# vertex V(q) in the density slots) placed VERBATIM; the off-site Fock
+# (exchange) crossing that no q-only matrix can carry lives on the
+# bond-DIAGONAL of the enlarged index, exactly where the Eliashberg module's
+# bare_bond_vertices puts CoulombInter's (+Re v, -Re v) -- generalized here
+# to every type through vertex_table's adjudicated ``cross`` row (Gate G1:
+# equality with bare_bond_vertices for CoulombInter; Gate G2: exact
+# diagonalization for Hund/Ising, tests/test_bond_longitudinal_ed.py).
+
+def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
+    """One channel (``"S"`` or ``"C"``) of the bond-resolved longitudinal
+    vertex, shape ``(nvol, ND, ND)`` complex128, ``ND = B * norb**2``.
+
+    ``W0`` (``(nvol, nd, nd)``, ``nd = norb**2``) is placed verbatim as
+    the channel-0 block. For every type in ``types`` (default: every key
+    of ``topo.coeffs``, in order) and every off-site reversal orbit
+    ``{(m, a, b), (reverse[m], b, a)}`` (``m != 0``, one representative
+    from :func:`iter_reversal_orbits`), the bond-diagonal entries at
+    ``I = m*nd + a*norb + b`` and ``I' = reverse[m]*nd + b*norb + a``
+    receive ``w_t * Re v_t[m, a, b]`` with ``w_t`` the type's ``cross``
+    coefficient (S or C column of ``vertex_table.ADJUDICATED_SC``); both
+    members of an orbit carry the same real part by Hermitian closure.
+    A coefficient with ``|Im v| > imag_tol`` is refused (real
+    coefficients only in this version; the imaginary direction of an
+    off-site coefficient is not represented by this bond-diagonal rule).
+    Every bond-diagonal entry is q-INDEPENDENT; the q-dependence of the
+    vertex sits entirely in ``W0``'s density slots.
+
+    FRAME. The result lives in the general path's pair frame: the one
+    ``bubble.bond_bubble_static`` produces (its channel-0 block equals
+    the solver's static ``chi0q`` slice to round-off -- measured
+    difference 0.0 on the 2-orbital fixture, pinned at 1e-13), the one
+    the Tier-1 ``W0`` is built in, and the one the Eliashberg module's
+    ``bare_bond_vertices`` uses -- for CoulombInter the two vertex
+    builders agree to round-off (Gate G1, pinned at 1e-13 in
+    tests/test_bond_longitudinal_vertex.py). Structure: Hermitian at
+    every q, and ``W(-q) == W(q)^T`` for real coefficients (NOT
+    ``W(q)^dagger == W(-q)``: the density slot (aa,bb) carries
+    ``V_ab(q) = V_ab(-q)^*``).
+    """
+    from hwave.solver.vertex_table import sc_coefficients
+    if channel not in ("S", "C"):
+        raise ValueError(
+            "build_sc_bond_channel: channel must be 'S' or 'C', got {!r}"
+            .format(channel))
+    # re-validate (alias-safe): coeffs is a plain dict a caller may have
+    # re-keyed since the topology was resolved
+    topo = BondTopology(delta_r=topo.delta_r, reverse=topo.reverse,
+                        coeffs=topo.coeffs)
+    keys = list(topo.coeffs)
+    if not keys:
+        raise ValueError(
+            "build_sc_bond_channel: the topology carries no coefficient "
+            "arrays, so norb cannot be inferred")
+    if types is None:
+        types = keys
+    else:
+        if isinstance(types, str) or not isinstance(types, (list, tuple)):
+            raise ValueError(
+                "build_sc_bond_channel: types must be a list/tuple of type "
+                "names, got {!r}".format(types))
+        types = list(types)
+    if (any(not isinstance(t, str) for t in types)
+            or len(set(types)) != len(types)
+            or any(t not in keys for t in types)):
+        raise ValueError(
+            "build_sc_bond_channel: types must be an ordered, duplicate-"
+            "free subset of the topology's coefficient keys {}; got {!r}"
+            .format(keys, types))
+    try:
+        imag_ok = np.isfinite(imag_tol) and imag_tol >= 0
+    except TypeError:
+        imag_ok = False
+    if not imag_ok:
+        raise ValueError(
+            "build_sc_bond_channel: imag_tol must be a finite number >= 0, "
+            "got {!r}".format(imag_tol))
+    norb = int(topo.coeffs[keys[0]].shape[1])
+    nd = norb * norb
+    W0 = np.asarray(W0)
+    if W0.dtype.kind not in ("f", "c"):
+        raise ValueError(
+            "build_sc_bond_channel: W0 must be a real or complex floating "
+            "array (it is promoted to complex128); got dtype {}"
+            .format(W0.dtype))
+    if W0.ndim != 3 or W0.shape[1:] != (nd, nd):
+        raise ValueError(
+            "build_sc_bond_channel: W0 must have shape (nvol, {0}, {0}) "
+            "(nd = norb**2 with norb={1} from the topology); got {2}"
+            .format(nd, norb, W0.shape))
+    if not np.all(np.isfinite(W0)):
+        raise ValueError(
+            "build_sc_bond_channel: W0 has non-finite entries")
+    nvol = W0.shape[0]
+    B = int(np.asarray(topo.delta_r).shape[0])
+    ND = B * nd
+    W = np.zeros((nvol, ND, ND), dtype=np.complex128)
+    W[:, :nd, :nd] = W0
+    col = 0 if channel == "S" else 1
+    reverse = np.asarray(topo.reverse)
+    delta_r = np.asarray(topo.delta_r)
+    orbits = [orb for orb in iter_reversal_orbits(topo) if orb[0] != 0]
+    for t in types:
+        w_t = sc_coefficients(t, "cross")[col]
+        arr = topo.coeffs[t]
+        for (m, a, b) in orbits:
+            v = complex(arr[m, a, b])
+            if abs(v.imag) > imag_tol:
+                raise ValueError(
+                    "build_sc_bond_channel: the off-site {} coefficient at "
+                    "channel {} (delta_r={}), orbitals ({}, {}) is complex "
+                    "({}); only real off-site coefficients are supported "
+                    "by the bond-resolved longitudinal channel in this "
+                    "version".format(
+                        t, m, tuple(int(x) for x in delta_r[m]), a, b, v))
+            if w_t == 0.0 or v.real == 0.0:
+                continue
+            for I in (m * nd + a * norb + b,
+                      int(reverse[m]) * nd + b * norb + a):
+                W[:, I, I] += w_t * v.real
+    return W
+
+
+def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
+    """``(S_bond, C_bond)``: :func:`build_sc_bond_channel` for both
+    channels (tests and Gate G1; production builds one channel at a time
+    so that only one ``(nvol, ND, ND)`` vertex is alive)."""
+    return (build_sc_bond_channel(topo, S0, "S", imag_tol=imag_tol, types=types),
+            build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types))

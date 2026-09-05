@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Optional
 
 import sys, os
+import dataclasses
 import numpy as np
 import numpy.fft as FFT
 import itertools
@@ -97,6 +98,9 @@ MOMENTUM_CONVENTION = "e_plus_ikR"
 # longitudinal sibling (_BOND_MEMORY_CAP_GB), so the two bond-channel
 # gates share one documented default rather than drifting apart.
 TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
+# The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A) shares the
+# same default for the same reason.
+LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
 
 
 def check_momentum_marker(data, file_name):
@@ -1397,6 +1401,23 @@ class Interaction:
             self._spinful_exchange_built = True
         return self.ham_spinful_exchange
 
+@dataclasses.dataclass(frozen=True)
+class LongitudinalBondResults:
+    """The objects of one bond-resolved longitudinal static solve (#181
+    Tier 3 Phase A): the dressed ``(nvol, ND, ND)`` spin/charge
+    susceptibilities, their ``(m=0, m'=0)`` collapse ``(nvol, norb,
+    norb, norb, norb)``, the conditioning scores, the topology and the
+    types whose bond blocks were built."""
+    chi_s: np.ndarray
+    chi_c: np.ndarray
+    chiq_s_static: np.ndarray
+    chiq_c_static: np.ndarray
+    cond_min_s: float
+    cond_min_c: float
+    topo: object
+    types: tuple
+
+
 class RPA:
     """
     RPA calculation
@@ -1408,6 +1429,20 @@ class RPA:
         self.param_ham = param_ham
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
+        # The two experimental bond gates are mutually exclusive by
+        # calc_type (#181 Tier 3 Phase A); refuse both TRUE here, before
+        # any numerical state is built, so nothing else can mask it.
+        _lb_raw = self.param_mod.get("longitudinal_bond_channels", False)
+        _tb_raw = self.param_mod.get("transverse_bond_channels", False)
+        if (isinstance(_lb_raw, (bool, np.bool_)) and bool(_lb_raw)
+                and isinstance(_tb_raw, (bool, np.bool_)) and bool(_tb_raw)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true and "
+                "transverse_bond_channels=true cannot be combined: the "
+                "longitudinal gate requires calc_type='ring' and the "
+                "transverse gate calc_type='ring+ladder' (their "
+                "coexistence under ring+ladder is a recorded follow-up of "
+                "GitHub issue #181). Enable one of the two.")
 
         if str(info_mode.get("calc_scheme", "auto")).lower() == "squashed":
             # Removed in 2.0 (issue #144): squashed computed the same
@@ -1818,6 +1853,7 @@ class RPA:
             sys.exit(1)
 
         self._init_transverse_bond_config()
+        self._init_longitudinal_bond_config()
 
         pass
 
@@ -1914,6 +1950,93 @@ class RPA:
         # so a malformed companion option still reports its own
         # (syntactic) error first.
         self._reject_offsite_pairhop_under_transverse_bond_gate()
+
+
+    def _init_longitudinal_bond_config(self):
+        """Parse ``[mode.param] longitudinal_bond_channels`` and its
+        companion options (the experimental bond-resolved LONGITUDINAL
+        gate, GitHub issue #181 Tier 3 Phase A; spec
+        2026-09-05-flex-offsite-bond-longitudinal-181-design.md
+        "Production surface").
+
+        Mirrors ``_init_transverse_bond_config``: the switch defaults to
+        ``False``, is parsed ONLY under ``calc_type='ring'`` (the
+        longitudinal channel is the ring), and every companion option set
+        while the switch is stale is IGNORED WITH A WARNING. The two bond
+        gates are mutually exclusive by calc_type, so both switches TRUE
+        is refused here, at configuration time, whatever calc_type says.
+        """
+        import numbers
+
+        _lbc_keys = ("longitudinal_bond_channels",
+                     "longitudinal_bond_max_shells",
+                     "longitudinal_bond_memory_cap_gb")
+        _flag = self.param_mod.get("longitudinal_bond_channels", False)
+        if not isinstance(_flag, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels must be a boolean, "
+                "got {!r}".format(_flag))
+        # (both gates TRUE was already refused in __init__, at config time)
+        present = [k for k in _lbc_keys if k in self.param_mod]
+
+        if self.calc_type != "ring":
+            if present:
+                logger.warning(
+                    "[mode.param] %s set but calc_type='%s'; the "
+                    "bond-resolved longitudinal gate only applies to "
+                    "calc_type='ring' and %s ignored here.",
+                    ", ".join(present), self.calc_type,
+                    "is" if len(present) == 1 else "are")
+            self.longitudinal_bond_channels = False
+            self.longitudinal_bond_max_shells = None
+            self.longitudinal_bond_memory_cap_gb = \
+                LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        self.longitudinal_bond_channels = bool(_flag)
+        if not self.longitudinal_bond_channels:
+            stale = [k for k in _lbc_keys
+                     if k != "longitudinal_bond_channels"
+                     and k in self.param_mod]
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but longitudinal_bond_channels="
+                    "false; these options only apply to "
+                    "longitudinal_bond_channels=true and are ignored here.",
+                    ", ".join(stale))
+            self.longitudinal_bond_max_shells = None
+            self.longitudinal_bond_memory_cap_gb = \
+                LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        # longitudinal_bond_max_shells: int >= 1, or absent/None (keep
+        # every declared off-site shell). Unlike the transverse gate, 0
+        # is refused: the gate REQUIRES at least one declared off-site
+        # shell, so a truncation to none can never be satisfied.
+        _max_shells = self.param_mod.get("longitudinal_bond_max_shells", None)
+        if _max_shells is not None:
+            if (isinstance(_max_shells, (bool, np.bool_))
+                    or not isinstance(_max_shells, numbers.Integral)):
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_max_shells must be an "
+                    "integer >= 1, got {!r}".format(_max_shells))
+            _max_shells = int(_max_shells)
+            if _max_shells < 1:
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_max_shells must be >= 1 "
+                    "(the gate needs at least one declared off-site shell), "
+                    "got {}".format(_max_shells))
+        self.longitudinal_bond_max_shells = _max_shells
+
+        _cap_gb = self.param_mod.get("longitudinal_bond_memory_cap_gb",
+                                      LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT)
+        if (isinstance(_cap_gb, (bool, np.bool_))
+                or not isinstance(_cap_gb, numbers.Real)
+                or not np.isfinite(_cap_gb) or _cap_gb <= 0):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_memory_cap_gb must be a "
+                "finite number > 0 (binary GiB), got {!r}".format(_cap_gb))
+        self.longitudinal_bond_memory_cap_gb = float(_cap_gb)
 
     def _reject_offsite_pairhop_under_transverse_bond_gate(self):
         """Reject off-site ``PairHop`` while ``transverse_bond_channels
@@ -2049,6 +2172,8 @@ class RPA:
         logger.info("    calc_type       = {}".format(self.calc_type))
         logger.info("    transverse_bond_channels = {}".format(
             self.transverse_bond_channels))
+        logger.info("    longitudinal_bond_channels = {}".format(
+            self.longitudinal_bond_channels))
         pass
 
     @do_profile
@@ -2124,6 +2249,13 @@ class RPA:
         green_info.pop("chiq_pm", None)
         green_info.pop("chiq_pm_bond_static", None)
         green_info.pop("chiq_pm_static", None)
+        # The longitudinal bond gate (#181 Tier 3 Phase A) owns the whole
+        # ``longitudinal_bond_*`` prefix: drop every such key at entry so
+        # a reused container never carries a previous run's objects
+        # (gate off, or a refused run) under this run's label.
+        for _k in [k for k in list(green_info)
+                   if str(k).startswith("longitudinal_bond_")]:
+            green_info.pop(_k, None)
 
         # #167: resolve calc_scheme='auto' before anything scheme-shaped is
         # touched (in-memory chi0q validation below reads calc_scheme)
@@ -2136,6 +2268,21 @@ class RPA:
 
         beta = 1.0/self.T
 
+        # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
+        # Green's function that produced the bubble: refuse an external
+        # chi0q FIRST -- before the backend is resolved and before the
+        # tensor is inspected, validated, fingerprinted or moved to a
+        # device -- so the gate-owned refusal is what the user sees.
+        if (self.calc_type == "ring" and self.longitudinal_bond_channels
+                and "chi0q" in green_info
+                and green_info["chi0q"] is not None):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true cannot be "
+                "combined with an externally supplied chi0q (chi0q_init "
+                "or a chi0q carried in green_info): the bond bubble is "
+                "built from the Green's function directly. Recompute "
+                "chi0q internally (drop the supplied chi0q).")
+
         # GPU (CuPy) execution: resolve the backend once. The heavy work --
         # the bare Green's function, the chi0q FFT pair bubble, the spin
         # inflation einsums, and the batched chiq solve -- all dispatch on
@@ -2145,6 +2292,8 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
+            # (the longitudinal bond gate refused an external chi0q above,
+            # before the backend was resolved)
             # use chi0q input; a green_info stored by a previous solve
             # arrives here, so establish spin_mode from the shape exactly
             # as the file-based chi0q_init route does (issue #109)
@@ -2298,7 +2447,24 @@ class RPA:
                     label="the RPA chiq solve (supplied chi0q)")
                 chi0q = xp.asarray(chi0q)
         else:
+            # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
+            # every prerequisite that does not need spin_mode, plus the
+            # memory preflight, BEFORE the H0 diagonalization -- so a
+            # refusal costs nothing and a gate-on run can never degrade
+            # into a silent chi0-only run (calc_chiq is not consulted).
+            # This run computes its own bubble: say so BEFORE the check,
+            # so a previous (refused) external-chi0q solve on this
+            # instance cannot leak its flag into this one.
+            self._chi0q_external = False
+            self._longitudinal_bond_gate_check(gpu_active, stage="pre")
+
             self._calc_epsilon_k(green_info)
+
+            # ... and the spin-mode prerequisite as soon as the H0 block
+            # structure has established it, before the chemical
+            # potential search, any device transfer, the Green's
+            # function and the bubble.
+            self._longitudinal_bond_gate_check(gpu_active, stage="spin")
 
             if self.calc_mu:
                 if self.spin_mode == "spin-free":
@@ -2332,7 +2498,6 @@ class RPA:
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
-            self._chi0q_external = False
             # a previous chi0q_init on this instance must not relabel the
             # axis of a bubble THIS run computes
             self._chi0q_init_meta = None
@@ -2610,6 +2775,9 @@ class RPA:
             # adhoc store (as a host array: the writers are numpy)
             green_info["chiq"] = _bk.to_host(sol)
 
+            if self.calc_type == "ring" and self.longitudinal_bond_channels:
+                self._publish_longitudinal_bond_results(green_info, beta)
+
             # Solve transverse (ladder) RPA if requested
             if self.calc_type == "ring+ladder":
                 if self.transverse_bond_channels:
@@ -2800,6 +2968,13 @@ class RPA:
                     save_kwargs["transverse_spin_mode"] = self.spin_mode
                     save_kwargs["transverse_normalization"] = \
                         "per-site, 1/sqrt(Nvol) bilinears"
+                # Bond-resolved LONGITUDINAL channel (#181 Tier 3 Phase A,
+                # longitudinal_bond_channels=true): gate-owned keys, all
+                # under one prefix, published atomically by solve().
+                if green_info.get("longitudinal_bond_chi_s") is not None:
+                    for _k in sorted(k for k in green_info
+                                     if str(k).startswith("longitudinal_bond_")):
+                        save_kwargs[_k] = green_info[_k]
                 np.savez(file_name, **save_kwargs)
                 logger.info("save_results: save chiq in file {}".format(file_name))
             else:
@@ -5264,6 +5439,312 @@ class RPA:
                 "op-count Nq*ND**3 = %.3e exceeds 1e12 (ND = %d, Nq = "
                 "%d); this run fits the memory cap but may be "
                 "compute-prohibitive.", op_count, ND, Nq)
+
+    # -----------------------------------------------------------------
+    # #181 Tier 3 Phase A -- the experimental bond-resolved LONGITUDINAL
+    # (spin/charge) channel. Spec: docs/superpowers/specs/
+    # 2026-09-05-flex-offsite-bond-longitudinal-181-design.md.
+    # -----------------------------------------------------------------
+
+    def _longitudinal_bond_gate_check(self, gpu_active=None, stage="all"):
+        """Run the gate's prerequisite validation and memory preflight
+        when the gate is on (no-op otherwise); stores the topology and the
+        locality split for the publication step. ``stage="pre"`` runs
+        everything that does not need ``spin_mode`` (before the H0
+        diagonalization), ``stage="spin"`` only the spin-mode check
+        (right after it), ``stage="all"`` both."""
+        if not (self.calc_type == "ring" and self.longitudinal_bond_channels):
+            return
+        if stage in ("pre", "all"):
+            self._longitudinal_bond_topo, self._longitudinal_bond_split = \
+                self._validate_longitudinal_bond_prereqs(
+                    check_spin=(stage == "all"))
+            self._longitudinal_bond_resource_preflight(
+                self._longitudinal_bond_topo, gpu_active=gpu_active)
+        if stage == "spin":
+            self._check_longitudinal_bond_spin_mode()
+
+    def _check_longitudinal_bond_spin_mode(self):
+        if getattr(self, "spin_mode", "spin-free") != "spin-free":
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true requires a "
+                "spin-free system (spin_mode='spin-free'): the longitudinal "
+                "bond bubble is the single-block object; got spin_mode={!r}."
+                .format(self.spin_mode))
+
+    def _validate_longitudinal_bond_prereqs(self, check_spin=True):
+        """Top-level guards for ``longitudinal_bond_channels=true`` (spec
+        "Production surface -- prerequisites"). Every refusal is a
+        ``ValueError`` naming the gate; there is no fallback. Called from
+        ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
+        work. Returns ``(topo, split)``: the master bond topology over
+        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` and the pre-fold
+        :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
+        is built from.
+        """
+        from hwave.solver.offsite import split_locality
+        g = "[mode.param] longitudinal_bond_channels=true"
+        if self.calc_scheme != "general":
+            raise ValueError(
+                g + " requires calc_scheme='general' (resolved), got {!r}"
+                .format(self.calc_scheme))
+        if self.calc_type != "ring":
+            raise ValueError(g + " requires calc_type='ring'.")
+        if check_spin:
+            self._check_longitudinal_bond_spin_mode()
+        if getattr(self.ham_info, "enable_spin_orbital", False):
+            raise ValueError(g + " does not support enable_spin_orbital.")
+        if getattr(self, "_chi0q_external", False):
+            raise ValueError(
+                g + " cannot be combined with an externally supplied chi0q "
+                "(chi0q_init): the bond bubble is built from the Green's "
+                "function directly. Recompute chi0q internally.")
+        if getattr(self.lattice, "has_sublattice", False):
+            raise ValueError(
+                g + " is not supported with a sublattice (SubShape < "
+                "CellShape): the bond channels carry no folding map. Run "
+                "with SubShape == CellShape.")
+        if int(self.nmat) % 2 != 0:
+            raise ValueError(
+                g + " requires an even Nmat (the static bubble reads the "
+                "Omega = 0 slice at Nmat//2); got Nmat={}.".format(self.nmat))
+
+        split = split_locality(self.ham_info, self.lattice)
+        for itype in ("PairHop", "Exchange"):
+            if itype in split.offsite_types:
+                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+                if itype == "PairHop":
+                    reason = ("no local-pair particle-hole form exists for "
+                              "an inter-site pair hopping (Phase C of GitHub "
+                              "issue #181)")
+                else:
+                    reason = ("exact diagonalization finds no q-representable "
+                              "longitudinal content (#181 Tier 2); its "
+                              "bond-resolved promotion is a recorded "
+                              "follow-up, so the gate refuses it rather than "
+                              "silently dropping it")
+                raise ValueError(
+                    g + " does not support an off-site '{}' declaration "
+                    "(irvec={}, orbvec={} -- the declared displacement and "
+                    "the zero-based orbital pair): {}. Remove those entries "
+                    "from the interaction input.".format(
+                        itype, tuple(irvec), tuple(orbvec), reason))
+        if "PairLift" in split.offsite_types:
+            logger.info(
+                g + ": off-site PairLift declarations carry no longitudinal "
+                "(spin/charge) content and are ignored by the bond channels.")
+
+        # Aggregate 'Coulomb': invisible to the resolver (it reads the
+        # canonical keys only); merge its off-site inter-orbital part into
+        # CoulombInter exactly as the transverse gate does. The pre-fold
+        # table is the reader's own here (no sublattice), so the whole
+        # table of the split -- already normalised -- is what to read.
+        interactions = CaseInsensitiveDict(split.whole_tbl)
+        topo = bond_channels.resolve_bond_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.longitudinal_bond_max_shells,
+            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+        if int(np.asarray(topo.delta_r).shape[0]) <= 1:
+            raise ValueError(
+                g + " requires at least one declared off-site CoulombInter, "
+                "Hund or Ising shell (a declared-but-zero coefficient "
+                "counts; the aggregate Coulomb table's off-site part "
+                "counts); none is present after longitudinal_bond_max_shells "
+                "truncation, so the bond channels have nothing to "
+                "represent.")
+        for t, arr in topo.coeffs.items():
+            if np.any(np.abs(np.asarray(arr).imag) > 1e-12):
+                raise ValueError(
+                    g + ": off-site {} coefficients must be real in this "
+                    "version (a complex coefficient was declared); the "
+                    "imaginary direction is not represented by the "
+                    "bond-diagonal Fock rule.".format(t))
+        return topo, split
+
+    def _longitudinal_bond_resource_preflight(self, topo, gpu_active=None):
+        """Host-memory preflight of the longitudinal bond gate (spec
+        "Memory preflight"), run BEFORE the ring solve. With ``U = 16 *
+        nvol * ND**2`` bytes (one ``(nvol, ND, ND)`` complex128 tensor,
+        ``ND = B * norb**2``): ``peak_solve = 1.25 * (5 + K_solve + t) *
+        U`` (``K_solve = 2`` LU allowance, ``t = 1`` when a device backend
+        mirrors the vertex; ``gpu_active`` is the state ``solve()`` resolved, falling back to the requested ``use_gpu``), ``bubble_bytes = 1.25 * max(prep, pair)`` with
+        the same preparation/pair-loop formulas as the transverse
+        preflight (single-block Green tensor), ``peak = max(bubble_bytes,
+        peak_solve)`` against ``longitudinal_bond_memory_cap_gb`` in
+        BINARY GiB; a warning when the two dense solves exceed about
+        ``2 * nvol * ND**3 = 1e12`` operations. Returns the estimate
+        families (bytes) for tests and logs. ``gpu_active`` is the backend
+        state ``solve()`` resolved (a requested GPU that fell back to the
+        CPU counts as inactive); when not given, the requested ``use_gpu``
+        is used.
+        """
+        nvol = int(self.lattice.nvol)
+        P = int(self.norb) ** 2
+        B = int(np.asarray(topo.delta_r).shape[0])
+        ND = B * P
+        nmat = int(self.nmat)
+        itemsize = 16
+        U = nvol * ND * ND * itemsize
+        K_solve = 2
+        if gpu_active is None:
+            gpu_active = getattr(self, "use_gpu", False)
+        t = 1 if gpu_active else 0
+        peak_solve = 1.25 * (5 + K_solve + t) * U
+        prep_bytes = itemsize * nvol * (ND ** 2 + 4 * P * (nmat + 2))
+        pair_bytes = itemsize * nvol * (
+            2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
+        bubble_bytes = 1.25 * max(prep_bytes, pair_bytes)
+        peak = max(bubble_bytes, peak_solve)
+        cap_bytes = float(self.longitudinal_bond_memory_cap_gb) * 1024 ** 3
+        gib = float(1024 ** 3)
+        est = dict(U=U, peak_solve=peak_solve, prep_bytes=prep_bytes,
+                   pair_bytes=pair_bytes, bubble_bytes=bubble_bytes,
+                   peak=peak, cap_bytes=cap_bytes, B=B, ND=ND, nvol=nvol)
+        delta_r = [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)]
+        logger.info(
+            "Longitudinal bond-channel preflight (ESTIMATE): B = %d channels "
+            "%s, ND = B*norb**2 = %d, nvol = %d, Nmat = %d; solve-phase peak "
+            "%.3f GiB, bubble-phase peak %.3f GiB (prep %.3f, pair-loop %.3f), "
+            "overall %.3f GiB against the cap %.3f GiB.",
+            B, delta_r, ND, nvol, nmat, peak_solve / gib, bubble_bytes / gib,
+            prep_bytes / gib, pair_bytes / gib, peak / gib, cap_bytes / gib)
+        if peak > cap_bytes:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true: the estimated "
+                "peak host memory {:.3f} GiB exceeds "
+                "longitudinal_bond_memory_cap_gb = {:.3f} GiB (B = {} "
+                "channels {}, ND = B*norb**2 = {}, nvol = {}, Nmat = {}; "
+                "solve-phase estimate {:.3f} GiB = 1.25*(5+{}+{})*16*nvol*ND**2, "
+                "bubble-phase estimate {:.3f} GiB = 1.25*max(prep, pair-loop); "
+                "the two phases do not overlap). Reduce the k mesh, drop "
+                "declared-zero outer shells with longitudinal_bond_max_shells, "
+                "reduce Nmat (a lever for the bubble phase only), or raise "
+                "the cap.".format(
+                    peak / gib, self.longitudinal_bond_memory_cap_gb, B,
+                    delta_r, ND, nvol, nmat, peak_solve / gib, K_solve, t,
+                    bubble_bytes / gib))
+        ops = 2.0 * nvol * float(ND) ** 3
+        if ops > 1.0e12:
+            logger.warning(
+                "[mode.param] longitudinal_bond_channels=true: about %.2e "
+                "operations for the two dense ND x ND solves over nvol q "
+                "points (ND = %d, nvol = %d), roughly doubled by the two "
+                "conditioning SVDs; this run fits the memory cap but may "
+                "take very long.", ops, ND, nvol)
+        return est
+
+    def _run_longitudinal_bond_pipeline(self, green_kw, green0_tail, beta,
+                                        topo, S0, C0):
+        """The bond-resolved longitudinal static pipeline (spec "Bubble,
+        dressing, collapse"): mesh validation -> static bond bubble ->
+        per-channel vertex + dressing (ONE ``(nvol, ND, ND)`` vertex alive
+        at a time) -> collapse of the ``(m=0, m'=0)`` block. Test-invocable;
+        no prerequisite fallback (the caller validated).
+
+        Parameters
+        ----------
+        green_kw, green0_tail : the solver's single-block Green tensor
+            ``(1, nmat, nvol, norb, norb)`` and its tail (or None).
+        beta : float
+        topo : bond_channels.BondTopology over _LONGITUDINAL_ACTIVE_TYPES.
+        S0, C0 : ndarray (nvol, nd, nd)
+            The Tier-1 locality-split S/C matrices (channel-0 blocks).
+
+        Returns
+        -------
+        LongitudinalBondResults
+        """
+        from hwave.solver import bubble
+        spatial_shape = tuple(int(x) for x in self.lattice.shape)
+        nvol = int(self.lattice.nvol)
+        norb = int(self.norb)
+        nd = norb * norb
+        if int(self.nmat) % 2 != 0:
+            raise ValueError(
+                "longitudinal bond pipeline: Nmat must be even (the static "
+                "bubble reads the Omega = 0 slice at Nmat//2)")
+        S0 = np.asarray(S0)
+        C0 = np.asarray(C0)
+        bond_channels.validate_topology_against_mesh(
+            topo, spatial_shape, arrays={"S0": S0, "C0": C0})
+        chi_bar = bubble.bond_bubble_static(
+            green_kw, green0_tail, beta, bond_channels.BondSetView(topo),
+            spatial_shape=spatial_shape,
+            workers=getattr(self, "fft_workers", 1))
+        chi_bar = np.ascontiguousarray(_bk.to_host(chi_bar))
+        types = tuple(topo.coeffs)
+        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types)
+        chi_s, cond_s = bond_channels.dress_channel(
+            chi_bar, S_bond, "spin", spatial_shape=spatial_shape)
+        del S_bond
+        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types)
+        chi_c, cond_c = bond_channels.dress_channel(
+            chi_bar, C_bond, "charge", spatial_shape=spatial_shape)
+        del C_bond
+        del chi_bar
+        return LongitudinalBondResults(
+            chi_s=chi_s, chi_c=chi_c,
+            chiq_s_static=np.ascontiguousarray(
+                chi_s[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            chiq_c_static=np.ascontiguousarray(
+                chi_c[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            cond_min_s=float(cond_s), cond_min_c=float(cond_c),
+            topo=topo, types=types)
+
+    def _publish_longitudinal_bond_results(self, green_info, beta):
+        """Build the channel-0 blocks from the validated split, run the
+        pipeline, and publish the sixteen ``longitudinal_bond_*`` keys
+        ATOMICALLY (nothing is written until every object exists).
+        ``green_info["chiq"]`` stays the plain ring result."""
+        from hwave.solver.offsite import sc_matrices_from_split
+        topo = self._longitudinal_bond_topo
+        split = self._longitudinal_bond_split
+        nx, ny, nz = (int(x) for x in self.lattice.shape)
+        nvol = int(self.lattice.nvol)
+        nd = int(self.norb) ** 2
+        S0, C0 = sc_matrices_from_split(
+            split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, self.norb,
+            nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        res = self._run_longitudinal_bond_pipeline(
+            self.green0, self.green0_tail, beta, topo, S0, C0)
+        del S0, C0
+        delta_r = np.asarray(topo.delta_r, dtype=np.int64)
+        out = {
+            "longitudinal_bond_chi_s": res.chi_s,
+            "longitudinal_bond_chi_c": res.chi_c,
+            "longitudinal_bond_chiq_s_static": res.chiq_s_static,
+            "longitudinal_bond_chiq_c_static": res.chiq_c_static,
+            "longitudinal_bond_delta_r": delta_r,
+            "longitudinal_bond_reverse": np.asarray(topo.reverse, dtype=np.int64),
+            "longitudinal_bond_index_order":
+                np.str_("I = m*norb**2 + l1*norb + l2"),
+            "longitudinal_bond_spatial_shape":
+                np.array(self.lattice.shape, dtype=np.int64),
+            "longitudinal_bond_q_convention":
+                np.str_("q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened"),
+            "longitudinal_bond_spin_mode": np.str_(self.spin_mode),
+            "longitudinal_bond_normalization":
+                np.str_("chi_bar = -(T/N) sum_k G G, per site"),
+            "longitudinal_bond_types": np.asarray(res.types),
+            "longitudinal_bond_max_shells": np.int64(
+                -1 if self.longitudinal_bond_max_shells is None
+                else int(self.longitudinal_bond_max_shells)),
+            "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
+            "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
+            "longitudinal_bond_schema": np.int64(1),
+        }
+        green_info.update(out)
+        logger.info(
+            "longitudinal_bond_channels=true: chiq is the plain ring result; "
+            "the bond-resolved static objects are the longitudinal_bond_* "
+            "keys (B = %d channels %s, ND = %d; cond_min spin %.3e, charge "
+            "%.3e).", int(delta_r.shape[0]),
+            [tuple(int(x) for x in r) for r in delta_r],
+            int(res.chi_s.shape[1]), res.cond_min_s, res.cond_min_c)
+
+
 
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):

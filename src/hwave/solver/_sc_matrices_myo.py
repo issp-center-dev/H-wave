@@ -45,8 +45,10 @@ from hwave.sc import _build_sc_matrices_all_q
 # in the pair-space S/C matrices: density-density on each site, so the
 # whole displacement dependence sits in the coefficient V_ab(q) of the
 # (aa,bb) density slots. Everything else in the off-site part is a caller
-# error (see build_sc_matrices_locality_split).
-_OFFSITE_DENSITY_TYPES = ("CoulombInter", "Hund", "Ising")
+# error (see build_sc_matrices_locality_split). Owned by
+# hwave.solver.offsite (one definition, #181 Tier 3); re-exported here for
+# the builder's own validation and for existing importers.
+from hwave.solver.offsite import _OFFSITE_DENSITY_TYPES  # noqa: E402,F401
 
 
 def build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz):

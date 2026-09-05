@@ -792,7 +792,10 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    off-site term is not representable by a :math:`q`-only vertex and is
    left out, the same approximation the RPA ring makes, and the solver
    logs a warning saying so. For every such class the general path is
-   measured element-complete equal to the RPA ring. Off-site ``Exchange``
+   measured element-complete equal to the RPA ring. (The omitted
+   crossing is available, statically, in the RPA solver's experimental
+   bond-resolved longitudinal channel, ``longitudinal_bond_channels =
+   true``; see :ref:`rpa_longitudinal_bond`.) Off-site ``Exchange``
    and ``PairHop`` raise a ``ValueError``. An off-site ``Exchange`` has no
    effect a :math:`q`-dependent spin/charge vertex could carry (verified
    by exact diagonalization): its physics is spin-flip (transverse), which
