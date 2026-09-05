@@ -5367,6 +5367,172 @@ class RPA:
                 "%d); this run fits the memory cap but may be "
                 "compute-prohibitive.", op_count, ND, Nq)
 
+    # -----------------------------------------------------------------
+    # #181 Tier 3 Phase A -- the experimental bond-resolved LONGITUDINAL
+    # (spin/charge) channel. Spec: docs/superpowers/specs/
+    # 2026-09-05-flex-offsite-bond-longitudinal-181-design.md.
+    # -----------------------------------------------------------------
+
+    def _validate_longitudinal_bond_prereqs(self):
+        """Top-level guards for ``longitudinal_bond_channels=true`` (spec
+        "Production surface -- prerequisites"). Every refusal is a
+        ``ValueError`` naming the gate; there is no fallback. Called from
+        ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
+        work. Returns ``(topo, split)``: the master bond topology over
+        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` and the pre-fold
+        :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
+        is built from.
+        """
+        from hwave.solver.offsite import split_locality
+        g = "[mode.param] longitudinal_bond_channels=true"
+        if self.calc_scheme != "general":
+            raise ValueError(
+                g + " requires calc_scheme='general' (resolved), got {!r}"
+                .format(self.calc_scheme))
+        if self.calc_type != "ring":
+            raise ValueError(g + " requires calc_type='ring'.")
+        if getattr(self, "spin_mode", "spin-free") != "spin-free":
+            raise ValueError(
+                g + " requires a spin-free system (spin_mode='spin-free'): "
+                "the longitudinal bond bubble is the single-block object; "
+                "got spin_mode={!r}.".format(self.spin_mode))
+        if getattr(self, "enable_spin_orbital", False):
+            raise ValueError(g + " does not support enable_spin_orbital.")
+        if getattr(self, "_chi0q_external", False):
+            raise ValueError(
+                g + " cannot be combined with an externally supplied chi0q "
+                "(chi0q_init): the bond bubble is built from the Green's "
+                "function directly. Recompute chi0q internally.")
+        if getattr(self.lattice, "has_sublattice", False):
+            raise ValueError(
+                g + " is not supported with a sublattice (SubShape < "
+                "CellShape): the bond channels carry no folding map. Run "
+                "with SubShape == CellShape.")
+        if int(self.nmat) % 2 != 0:
+            raise ValueError(
+                g + " requires an even Nmat (the static bubble reads the "
+                "Omega = 0 slice at Nmat//2); got Nmat={}.".format(self.nmat))
+
+        split = split_locality(self.ham_info, self.lattice)
+        for itype in ("PairHop", "Exchange"):
+            if itype in split.offsite_types:
+                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+                if itype == "PairHop":
+                    reason = ("no local-pair particle-hole form exists for "
+                              "an inter-site pair hopping (Phase C of GitHub "
+                              "issue #181)")
+                else:
+                    reason = ("exact diagonalization finds no q-representable "
+                              "longitudinal content (#181 Tier 2); its "
+                              "bond-resolved promotion is a recorded "
+                              "follow-up, so the gate refuses it rather than "
+                              "silently dropping it")
+                raise ValueError(
+                    g + " does not support an off-site '{}' declaration "
+                    "(irvec={}, orbvec={} -- the declared displacement and "
+                    "the zero-based orbital pair): {}. Remove those entries "
+                    "from the interaction input.".format(
+                        itype, tuple(irvec), tuple(orbvec), reason))
+        if "PairLift" in split.offsite_types:
+            logger.info(
+                g + ": off-site PairLift declarations carry no longitudinal "
+                "(spin/charge) content and are ignored by the bond channels.")
+
+        # Aggregate 'Coulomb': invisible to the resolver (it reads the
+        # canonical keys only); merge its off-site inter-orbital part into
+        # CoulombInter exactly as the transverse gate does. The pre-fold
+        # table is the reader's own here (no sublattice), so the whole
+        # table of the split -- already normalised -- is what to read.
+        interactions = CaseInsensitiveDict(split.whole_tbl)
+        topo = bond_channels.resolve_bond_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.longitudinal_bond_max_shells,
+            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+        if int(np.asarray(topo.delta_r).shape[0]) <= 1:
+            raise ValueError(
+                g + " requires at least one declared off-site CoulombInter, "
+                "Hund or Ising shell (a declared-but-zero coefficient "
+                "counts; the aggregate Coulomb table's off-site part "
+                "counts); none is present after longitudinal_bond_max_shells "
+                "truncation, so the bond channels have nothing to "
+                "represent.")
+        for t, arr in topo.coeffs.items():
+            if np.any(np.abs(np.asarray(arr).imag) > 1e-12):
+                raise ValueError(
+                    g + ": off-site {} coefficients must be real in this "
+                    "version (a complex coefficient was declared); the "
+                    "imaginary direction is not represented by the "
+                    "bond-diagonal Fock rule.".format(t))
+        return topo, split
+
+    def _longitudinal_bond_resource_preflight(self, topo):
+        """Host-memory preflight of the longitudinal bond gate (spec
+        "Memory preflight"), run BEFORE the ring solve. With ``U = 16 *
+        nvol * ND**2`` bytes (one ``(nvol, ND, ND)`` complex128 tensor,
+        ``ND = B * norb**2``): ``peak_solve = 1.25 * (5 + K_solve + t) *
+        U`` (``K_solve = 2`` LU allowance, ``t = 1`` when a device backend
+        mirrors the vertex), ``bubble_bytes = 1.25 * max(prep, pair)`` with
+        the same preparation/pair-loop formulas as the transverse
+        preflight (single-block Green tensor), ``peak = max(bubble_bytes,
+        peak_solve)`` against ``longitudinal_bond_memory_cap_gb`` in
+        BINARY GiB; a warning when the two dense solves exceed about
+        ``2 * nvol * ND**3 = 1e12`` operations. Returns the estimate
+        families (bytes) for tests and logs.
+        """
+        nvol = int(self.lattice.nvol)
+        P = int(self.norb) ** 2
+        B = int(np.asarray(topo.delta_r).shape[0])
+        ND = B * P
+        nmat = int(self.nmat)
+        itemsize = 16
+        U = nvol * ND * ND * itemsize
+        K_solve = 2
+        t = 1 if getattr(self, "use_gpu", False) else 0
+        peak_solve = 1.25 * (5 + K_solve + t) * U
+        prep_bytes = itemsize * nvol * (ND ** 2 + 4 * P * (nmat + 2))
+        pair_bytes = itemsize * nvol * (
+            2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
+        bubble_bytes = 1.25 * max(prep_bytes, pair_bytes)
+        peak = max(bubble_bytes, peak_solve)
+        cap_bytes = float(self.longitudinal_bond_memory_cap_gb) * 1024 ** 3
+        gib = float(1024 ** 3)
+        est = dict(U=U, peak_solve=peak_solve, prep_bytes=prep_bytes,
+                   pair_bytes=pair_bytes, bubble_bytes=bubble_bytes,
+                   peak=peak, cap_bytes=cap_bytes, B=B, ND=ND, nvol=nvol)
+        delta_r = [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)]
+        logger.info(
+            "Longitudinal bond-channel preflight (ESTIMATE): B = %d channels "
+            "%s, ND = B*norb**2 = %d, nvol = %d, Nmat = %d; solve-phase peak "
+            "%.3f GiB, bubble-phase peak %.3f GiB (prep %.3f, pair-loop %.3f), "
+            "overall %.3f GiB against the cap %.3f GiB.",
+            B, delta_r, ND, nvol, nmat, peak_solve / gib, bubble_bytes / gib,
+            prep_bytes / gib, pair_bytes / gib, peak / gib, cap_bytes / gib)
+        if peak > cap_bytes:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true: the estimated "
+                "peak host memory {:.3f} GiB exceeds "
+                "longitudinal_bond_memory_cap_gb = {:.3f} GiB (B = {} "
+                "channels {}, ND = B*norb**2 = {}, nvol = {}, Nmat = {}; "
+                "solve-phase estimate {:.3f} GiB = 1.25*(5+{}+{})*16*nvol*ND**2, "
+                "bubble-phase estimate {:.3f} GiB = 1.25*max(prep, pair-loop); "
+                "the two phases do not overlap). Reduce the k mesh, drop "
+                "declared-zero outer shells with longitudinal_bond_max_shells, "
+                "reduce Nmat (a lever for the bubble phase only), or raise "
+                "the cap.".format(
+                    peak / gib, self.longitudinal_bond_memory_cap_gb, B,
+                    delta_r, ND, nvol, nmat, peak_solve / gib, K_solve, t,
+                    bubble_bytes / gib))
+        ops = 2.0 * nvol * float(ND) ** 3
+        if ops > 1.0e12:
+            logger.warning(
+                "[mode.param] longitudinal_bond_channels=true: about %.2e "
+                "operations for the two dense ND x ND solves over nvol q "
+                "points (ND = %d, nvol = %d), roughly doubled by the two "
+                "conditioning SVDs; this run fits the memory cap but may "
+                "take very long.", ops, ND, nvol)
+        return est
+
+
 
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     """Main entry point for running RPA calculations.
