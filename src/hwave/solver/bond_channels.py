@@ -824,8 +824,11 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     # same algebra/orientation as sc.py._compute_vertices_general
     # generalized nd -> ND, bit-identical to the former inline
     # ``solve(I -/+ chi_bar @ V, chi_bar)`` (pinned by
-    # tests/test_bond_longitudinal_vertex.py). The conditioning guard runs
-    # per channel, spin first.
+    # tests/test_bond_longitudinal_vertex.py). ORDER CHANGE (accepted):
+    # the guard used to check BOTH denominators before either solve; now
+    # each channel is checked and solved in turn, spin first, so a charge
+    # instability is reported after the spin solve has run. The numbers
+    # and the error text are unchanged.
     nvol = Nx * Ny * Nz
     chi_s, _ = dress_channel(
         chi_bar.reshape(nvol, ND, ND), S_bond.reshape(nvol, ND, ND), "spin",
@@ -870,11 +873,17 @@ def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLO
             "dress_channel: chi_bar and W must both have shape (nvol, ND, "
             "ND); got {} and {}".format(chi_bar.shape, W.shape))
     try:
-        Nx, Ny, Nz = (int(x) for x in spatial_shape)
-    except (TypeError, ValueError):
+        shape = tuple(spatial_shape)
+        ok = (len(shape) == 3 and all(
+            not isinstance(x, bool) and isinstance(x, (int, np.integer))
+            and int(x) > 0 for x in shape))
+    except TypeError:
+        ok = False
+    if not ok:
         raise ValueError(
-            "dress_channel: spatial_shape must be (Nx, Ny, Nz), got {!r}"
-            .format(spatial_shape))
+            "dress_channel: spatial_shape must be three positive integers "
+            "(Nx, Ny, Nz), got {!r}".format(spatial_shape))
+    Nx, Ny, Nz = (int(x) for x in shape)
     nvol, ND = chi_bar.shape[0], chi_bar.shape[1]
     if Nx * Ny * Nz != nvol:
         raise ValueError(
@@ -3358,13 +3367,16 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     vertex sits entirely in ``W0``'s density slots.
 
     FRAME. The result lives in the general path's pair frame: the one
-    ``bubble.bond_bubble_static`` produces (its channel-0 block IS the
-    solver's static ``chi0q`` slice, measured bit-identical on the
-    2-orbital fixture), the one the Tier-1 ``W0`` is built in, and the
-    one the Eliashberg module's ``bare_bond_vertices`` uses -- for
-    CoulombInter the two vertex builders agree VERBATIM (Gate G1,
+    ``bubble.bond_bubble_static`` produces (its channel-0 block equals
+    the solver's static ``chi0q`` slice to round-off -- measured
+    difference 0.0 on the 2-orbital fixture, pinned at 1e-13), the one
+    the Tier-1 ``W0`` is built in, and the one the Eliashberg module's
+    ``bare_bond_vertices`` uses -- for CoulombInter the two vertex
+    builders agree to round-off (Gate G1, pinned at 1e-13 in
     tests/test_bond_longitudinal_vertex.py). Structure: Hermitian at
-    every q, and ``W(-q) == W(q)^T`` for real coefficients.
+    every q, and ``W(-q) == W(q)^T`` for real coefficients (NOT
+    ``W(q)^dagger == W(-q)``: the density slot (aa,bb) carries
+    ``V_ab(q) = V_ab(-q)^*``).
     """
     from hwave.solver.vertex_table import sc_coefficients
     if channel not in ("S", "C"):
@@ -3380,7 +3392,14 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
         raise ValueError(
             "build_sc_bond_channel: the topology carries no coefficient "
             "arrays, so norb cannot be inferred")
-    types = keys if types is None else list(types)
+    if types is None:
+        types = keys
+    else:
+        if isinstance(types, str) or not isinstance(types, (list, tuple)):
+            raise ValueError(
+                "build_sc_bond_channel: types must be a list/tuple of type "
+                "names, got {!r}".format(types))
+        types = list(types)
     if len(set(types)) != len(types) or any(t not in keys for t in types):
         raise ValueError(
             "build_sc_bond_channel: types must be an ordered, duplicate-"

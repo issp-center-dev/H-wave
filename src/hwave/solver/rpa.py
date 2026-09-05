@@ -1429,6 +1429,20 @@ class RPA:
         self.param_ham = param_ham
         self.info_log = info_log
         self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
+        # The two experimental bond gates are mutually exclusive by
+        # calc_type (#181 Tier 3 Phase A); refuse both TRUE here, before
+        # any numerical state is built, so nothing else can mask it.
+        _lb_raw = self.param_mod.get("longitudinal_bond_channels", False)
+        _tb_raw = self.param_mod.get("transverse_bond_channels", False)
+        if (isinstance(_lb_raw, (bool, np.bool_)) and bool(_lb_raw)
+                and isinstance(_tb_raw, (bool, np.bool_)) and bool(_tb_raw)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true and "
+                "transverse_bond_channels=true cannot be combined: the "
+                "longitudinal gate requires calc_type='ring' and the "
+                "transverse gate calc_type='ring+ladder' (their "
+                "coexistence under ring+ladder is a recorded follow-up of "
+                "GitHub issue #181). Enable one of the two.")
 
         if str(info_mode.get("calc_scheme", "auto")).lower() == "squashed":
             # Removed in 2.0 (issue #144): squashed computed the same
@@ -1962,16 +1976,7 @@ class RPA:
             raise ValueError(
                 "[mode.param] longitudinal_bond_channels must be a boolean, "
                 "got {!r}".format(_flag))
-        _tflag = self.param_mod.get("transverse_bond_channels", False)
-        if (bool(_flag) and isinstance(_tflag, (bool, np.bool_))
-                and bool(_tflag)):
-            raise ValueError(
-                "[mode.param] longitudinal_bond_channels=true and "
-                "transverse_bond_channels=true cannot be combined: the "
-                "longitudinal gate requires calc_type='ring' and the "
-                "transverse gate calc_type='ring+ladder' (their "
-                "coexistence under ring+ladder is a recorded follow-up of "
-                "GitHub issue #181). Enable one of the two.")
+        # (both gates TRUE was already refused in __init__, at config time)
         present = [k for k in _lbc_keys if k in self.param_mod]
 
         if self.calc_type != "ring":
@@ -2455,11 +2460,21 @@ class RPA:
                 self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 
+            # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
+            # prerequisites and memory preflight BEFORE the Green's
+            # function and the bubble are computed, so a refusal costs
+            # nothing and a gate-on run can never degrade into a silent
+            # chi0-only run (calc_chiq is not consulted here). This run
+            # computes its own bubble: say so BEFORE the check, so a
+            # previous (refused) external-chi0q solve on this instance
+            # cannot leak its flag into this one.
+            self._chi0q_external = False
+            self._longitudinal_bond_gate_check(gpu_active)
+
             green0, green0_tail = self._calc_green(beta, mu)
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
-            self._chi0q_external = False
             # a previous chi0q_init on this instance must not relabel the
             # axis of a bubble THIS run computes
             self._chi0q_init_meta = None
@@ -2510,6 +2525,11 @@ class RPA:
                 # must not inherit this metadata (round-5 review)
                 "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
             }
+
+        if self._chi0q_external:
+            # external chi0q route: the gate refuses it (see the check),
+            # and the refusal must not depend on calc_chiq either
+            self._longitudinal_bond_gate_check(gpu_active)
 
         if self.calc_chiq:
             # ham_inter_q is built on the host at init; mirror it to chi0q's
@@ -2730,15 +2750,6 @@ class RPA:
                         self._transverse_bond_topo)
                 else:
                     self._check_transverse_representable(ham_orig)
-            elif self.calc_type == "ring" and self.longitudinal_bond_channels:
-                # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
-                # cheap prerequisite validation, then the memory preflight,
-                # both BEFORE the ring solve so a refusal fires before any
-                # expensive step.
-                self._longitudinal_bond_topo, self._longitudinal_bond_split = \
-                    self._validate_longitudinal_bond_prereqs()
-                self._longitudinal_bond_resource_preflight(
-                    self._longitudinal_bond_topo)
 
             # solve longitudinal (ring) RPA
             sol = self._solve_rpa(chi0q, ham)
@@ -5417,6 +5428,17 @@ class RPA:
     # 2026-09-05-flex-offsite-bond-longitudinal-181-design.md.
     # -----------------------------------------------------------------
 
+    def _longitudinal_bond_gate_check(self, gpu_active=None):
+        """Run the gate's prerequisite validation and memory preflight
+        when the gate is on (no-op otherwise); stores the topology and the
+        locality split for the publication step."""
+        if not (self.calc_type == "ring" and self.longitudinal_bond_channels):
+            return
+        self._longitudinal_bond_topo, self._longitudinal_bond_split = \
+            self._validate_longitudinal_bond_prereqs()
+        self._longitudinal_bond_resource_preflight(
+            self._longitudinal_bond_topo, gpu_active=gpu_active)
+
     def _validate_longitudinal_bond_prereqs(self):
         """Top-level guards for ``longitudinal_bond_channels=true`` (spec
         "Production surface -- prerequisites"). Every refusal is a
@@ -5440,7 +5462,7 @@ class RPA:
                 g + " requires a spin-free system (spin_mode='spin-free'): "
                 "the longitudinal bond bubble is the single-block object; "
                 "got spin_mode={!r}.".format(self.spin_mode))
-        if getattr(self, "enable_spin_orbital", False):
+        if getattr(self.ham_info, "enable_spin_orbital", False):
             raise ValueError(g + " does not support enable_spin_orbital.")
         if getattr(self, "_chi0q_external", False):
             raise ValueError(
@@ -5509,19 +5531,22 @@ class RPA:
                     "bond-diagonal Fock rule.".format(t))
         return topo, split
 
-    def _longitudinal_bond_resource_preflight(self, topo):
+    def _longitudinal_bond_resource_preflight(self, topo, gpu_active=None):
         """Host-memory preflight of the longitudinal bond gate (spec
         "Memory preflight"), run BEFORE the ring solve. With ``U = 16 *
         nvol * ND**2`` bytes (one ``(nvol, ND, ND)`` complex128 tensor,
         ``ND = B * norb**2``): ``peak_solve = 1.25 * (5 + K_solve + t) *
         U`` (``K_solve = 2`` LU allowance, ``t = 1`` when a device backend
-        mirrors the vertex), ``bubble_bytes = 1.25 * max(prep, pair)`` with
+        mirrors the vertex; ``gpu_active`` is the state ``solve()`` resolved, falling back to the requested ``use_gpu``), ``bubble_bytes = 1.25 * max(prep, pair)`` with
         the same preparation/pair-loop formulas as the transverse
         preflight (single-block Green tensor), ``peak = max(bubble_bytes,
         peak_solve)`` against ``longitudinal_bond_memory_cap_gb`` in
         BINARY GiB; a warning when the two dense solves exceed about
         ``2 * nvol * ND**3 = 1e12`` operations. Returns the estimate
-        families (bytes) for tests and logs.
+        families (bytes) for tests and logs. ``gpu_active`` is the backend
+        state ``solve()`` resolved (a requested GPU that fell back to the
+        CPU counts as inactive); when not given, the requested ``use_gpu``
+        is used.
         """
         nvol = int(self.lattice.nvol)
         P = int(self.norb) ** 2
@@ -5531,7 +5556,9 @@ class RPA:
         itemsize = 16
         U = nvol * ND * ND * itemsize
         K_solve = 2
-        t = 1 if getattr(self, "use_gpu", False) else 0
+        if gpu_active is None:
+            gpu_active = getattr(self, "use_gpu", False)
+        t = 1 if gpu_active else 0
         peak_solve = 1.25 * (5 + K_solve + t) * U
         prep_bytes = itemsize * nvol * (ND ** 2 + 4 * P * (nmat + 2))
         pair_bytes = itemsize * nvol * (
@@ -5662,14 +5689,14 @@ class RPA:
             "longitudinal_bond_delta_r": delta_r,
             "longitudinal_bond_reverse": np.asarray(topo.reverse, dtype=np.int64),
             "longitudinal_bond_index_order":
-                np.str_("I = m*norb**2 + l1*norb + l2 (bond-major)"),
+                np.str_("I = m*norb**2 + l1*norb + l2"),
             "longitudinal_bond_spatial_shape":
                 np.array(self.lattice.shape, dtype=np.int64),
             "longitudinal_bond_q_convention":
-                np.str_("q_d = 2*pi*n_d/N_d, C-order flattening"),
+                np.str_("q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened"),
             "longitudinal_bond_spin_mode": np.str_(self.spin_mode),
             "longitudinal_bond_normalization":
-                np.str_("per-site bond bilinears; chi_bar = -(T/N) sum_k G G"),
+                np.str_("chi_bar = -(T/N) sum_k G G, per site"),
             "longitudinal_bond_types": np.asarray(res.types),
             "longitudinal_bond_max_shells": np.int64(
                 -1 if self.longitudinal_bond_max_shells is None

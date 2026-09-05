@@ -320,6 +320,18 @@ class TestLongitudinalBondGranulesCaseM(unittest.TestCase):
         self._assert_pass(rec_S, rec_C)
 
     @heavy
+    def test_g3_bond_blocks_are_load_bearing_interorbital(self):
+        for t in ("CoulombInter", "Hund", "Ising"):
+            with self.subTest(t=t):
+                rec_S, rec_C, (E_S, E_C, _, _) = adjudicate("fx3", t, 0, 1, 1, (1,))
+                self._assert_pass(rec_S, rec_C)
+                _, _, (_, _, P_S, P_C) = adjudicate("fx3", t, 0, 1, 1, (1,),
+                                                    bond_blocks=False)
+                miss = max(np.max(np.abs(E_S - P_S)), np.max(np.abs(E_C - P_C)))
+                tol = max(rec_S["tol"], rec_C["tol"])
+                self.assertGreaterEqual(miss, 10.0 * tol, (t, miss, tol))
+
+    @heavy
     def test_exchange_interorbital_oracle_only_recorded(self):
         rec_S, rec_C, _ = adjudicate("fx3", "Exchange", 0, 1, 1, (1,))
         print("ORACLE-ONLY Exchange fx3 R=1 (0,1):",

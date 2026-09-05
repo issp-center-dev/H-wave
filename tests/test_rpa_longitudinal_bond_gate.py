@@ -19,7 +19,8 @@ def _build(param_extra=None, interactions=None, calc_type="ring",
            mode="RPA", nmat=32, path=_IN, cell=(4, 4, 1)):
     idict = {"path_to_input": path, "Geometry": "geom.dat",
              "Transfer": "transfer.dat"}
-    idict.update(interactions or {"CoulombInter": "coulombinter.dat"})
+    idict.update({"CoulombInter": "coulombinter.dat"}
+                 if interactions is None else interactions)
     r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
     par = {"T": 2.0, "filling": 0.5, "CellShape": list(cell),
            "SubShape": [1, 1, 1], "Nmat": nmat}
@@ -111,6 +112,22 @@ class TestGateConfig(unittest.TestCase):
         with self.assertRaises(ValueError):
             _build({"longitudinal_bond_channels": "true"}, mode="FLEX")
 
+    def test_flex_rejects_a_case_varied_true_key_under_ring_ladder(self):
+        """The RAW value is inspected before the RPA base parser can turn
+        it stale under calc_type='ring+ladder'."""
+        import hwave.solver.flex as flex_mod
+        idict = {"path_to_input": _IN, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
+        r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1],
+               "SubShape": [1, 1, 1], "Nmat": 32, "IterationMax": 1,
+               "Mix": 1.0, "EPS": 1, "Longitudinal_Bond_CHANNELS": True}
+        info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False,
+                "calc_scheme": "general", "calc_type": "ring+ladder"}
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX(r.get_param("ham"), {}, info)
+        self.assertIn("Phase A", str(cm.exception))
+
 
 _EQ2 = "tests/equivalence_input/orb2"
 
@@ -139,6 +156,41 @@ class TestGatePrerequisites(unittest.TestCase):
                     s._validate_longitudinal_bond_prereqs()
                 self.assertIn("longitudinal_bond_channels", str(cm.exception))
                 self.assertIn(fragment, str(cm.exception))
+
+    def test_no_interaction_is_refused_not_a_silent_chi0_run(self):
+        """A gate-on run without any interaction has calc_chiq=False; it
+        must still reach the 'no declared off-site shell' refusal."""
+        s, r = _build({"longitudinal_bond_channels": True}, interactions={})
+        self.assertFalse(s.calc_chiq)
+        gi = r.get_param("green")
+        os.makedirs("tests/rpa/output", exist_ok=True)
+        with self.assertRaises(ValueError) as cm:
+            s.solve(gi, "tests/rpa/output")
+        self.assertIn("declared off-site", str(cm.exception))
+        self.assertNotIn("chi0q", gi)
+
+    def test_refusals_fire_before_the_green_function(self):
+        for extra, inter, fragment in (
+                ({"longitudinal_bond_memory_cap_gb": 1e-9}, None, "memory"),
+                ({}, {"CoulombInter": "onsite_inter.dat"}, "declared off-site")):
+            with self.subTest(fragment=fragment):
+                s, r = _build(dict({"longitudinal_bond_channels": True}, **extra), inter)
+
+                def _boom(*a, **k):
+                    raise AssertionError("_calc_green ran before the gate check")
+                s._calc_green = _boom
+                s._calc_chi0q = _boom
+                gi = r.get_param("green")
+                with self.assertRaises(ValueError) as cm:
+                    s.solve(gi, "tests/rpa/output")
+                self.assertIn(fragment, str(cm.exception))
+
+    def test_spin_orbital_flag_is_read_from_the_interaction(self):
+        s = self._gate()
+        s.ham_info.enable_spin_orbital = True
+        with self.assertRaises(ValueError) as cm:
+            s._validate_longitudinal_bond_prereqs()
+        self.assertIn("enable_spin_orbital", str(cm.exception))
 
     def test_odd_nmat_is_the_constructor_exit(self):
         """The documented exception to 'every refusal is a ValueError':
@@ -257,6 +309,23 @@ class TestGatePreflight(unittest.TestCase):
         self.assertIn("ND", msg)
         self.assertIn("GiB", msg)
 
+    def test_gpu_fallback_uses_the_resolved_backend_state(self):
+        s, _ = _build({"longitudinal_bond_channels": True,
+                       "longitudinal_bond_memory_cap_gb": 1e6})
+        s.spin_mode = "spin-free"
+        topo, _ = s._validate_longitudinal_bond_prereqs()
+        s.use_gpu = True
+        U = s._longitudinal_bond_resource_preflight(topo)["U"]
+        self.assertAlmostEqual(
+            s._longitudinal_bond_resource_preflight(topo, gpu_active=False)["peak_solve"],
+            1.25 * (5 + 2) * U)
+        self.assertAlmostEqual(
+            s._longitudinal_bond_resource_preflight(topo, gpu_active=True)["peak_solve"],
+            1.25 * (5 + 2 + 1) * U)
+        self.assertAlmostEqual(
+            s._longitudinal_bond_resource_preflight(topo)["peak_solve"],
+            1.25 * (5 + 2 + 1) * U)                      # falls back to use_gpu
+
     def test_op_count_warning(self):
         s, _ = _build({"longitudinal_bond_channels": True,
                        "longitudinal_bond_memory_cap_gb": 1e9})
@@ -335,6 +404,16 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         np.testing.assert_allclose(
             chi_bar[:, :nd, :nd].reshape(-1, norb, norb, norb, norb),
             np.asarray(gi["chi0q"])[w0], rtol=0, atol=1e-13)
+        # and the vertex has NO content outside the channel-0 block
+        from hwave.solver.offsite import sc_matrices_from_split
+        _, split = s._validate_longitudinal_bond_prereqs()
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES, norb,
+                                        *s.lattice.shape)
+        for ch, W0 in (("S", S0), ("C", C0)):
+            W = bc.build_sc_bond_channel(topo, W0.reshape(-1, nd, nd), ch)
+            mask = np.ones(W.shape[1:], bool)
+            mask[:nd, :nd] = False
+            self.assertEqual(np.abs(W[:, mask]).max(), 0.0)
 
     def test_keys_present_when_on_absent_when_off_and_saved(self):
         s, gi = self._run()
@@ -352,7 +431,24 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertEqual(int(gi["longitudinal_bond_max_shells"]), -1)
         self.assertEqual(tuple(gi["longitudinal_bond_spatial_shape"]), (4, 4, 1))
         self.assertEqual(str(gi["longitudinal_bond_spin_mode"]), "spin-free")
-        self.assertIn("m*norb**2", str(gi["longitudinal_bond_index_order"]))
+        exact = {
+            "longitudinal_bond_index_order": "I = m*norb**2 + l1*norb + l2",
+            "longitudinal_bond_q_convention":
+                "q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened",
+            "longitudinal_bond_normalization": "chi_bar = -(T/N) sum_k G G, per site",
+        }
+        for k, v in exact.items():
+            self.assertEqual(str(gi[k]), v)
+            self.assertEqual(np.asarray(gi[k]).dtype.kind, "U")
+        for k in ("longitudinal_bond_delta_r", "longitudinal_bond_reverse",
+                  "longitudinal_bond_spatial_shape", "longitudinal_bond_max_shells",
+                  "longitudinal_bond_schema"):
+            self.assertEqual(np.asarray(gi[k]).dtype, np.int64, k)
+        for k in ("longitudinal_bond_cond_min_s", "longitudinal_bond_cond_min_c"):
+            self.assertEqual(np.asarray(gi[k]).dtype, np.float64, k)
+        for k in ("longitudinal_bond_chi_s", "longitudinal_bond_chi_c",
+                  "longitudinal_bond_chiq_s_static", "longitudinal_bond_chiq_c_static"):
+            self.assertEqual(np.asarray(gi[k]).dtype, np.complex128, k)
         self.assertGreater(float(gi["longitudinal_bond_cond_min_s"]), 1e-3)
         self.assertGreater(float(gi["longitudinal_bond_cond_min_c"]), 1e-3)
         s.save_results({"path_to_output": self._OUT, "chiq": "chiq_lb.npz"}, gi)
@@ -360,6 +456,10 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertEqual(sorted(k for k in data.files
                                 if k.startswith("longitudinal_bond_")), keys)
         self.assertIn("chiq", data.files)
+        for k, v in exact.items():
+            self.assertEqual(str(data[k]), v)
+        for k in keys:
+            np.testing.assert_array_equal(np.asarray(data[k]), np.asarray(gi[k]))
 
         s_off, r = _build({})
         gi2 = r.get_param("green")
@@ -433,6 +533,29 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         gi2 = r.get_param("green")
         s_off.solve(gi2, self._OUT)
         np.testing.assert_array_equal(np.asarray(gi["chiq"]), np.asarray(gi2["chiq"]))
+
+    def test_charge_conditioning_failure_publishes_nothing(self):
+        """Atomic publication: a refusal in the SECOND dressing leaves no
+        longitudinal_bond_* key behind, while chiq (stored earlier) stays."""
+        from hwave.solver import bond_channels as bc
+        s, r = _build({"longitudinal_bond_channels": True})
+        gi = r.get_param("green")
+        os.makedirs(self._OUT, exist_ok=True)
+        real = bc.dress_channel
+
+        def _fail_charge(chi_bar, W, channel, **kw):
+            if channel == "charge":
+                raise ValueError("dress_bond: the charge RPA denominator is singular (forced)")
+            return real(chi_bar, W, channel, **kw)
+        bc.dress_channel = _fail_charge
+        try:
+            with self.assertRaises(ValueError) as cm:
+                s.solve(gi, self._OUT)
+        finally:
+            bc.dress_channel = real
+        self.assertIn("charge", str(cm.exception))
+        self.assertEqual(_lb_keys(gi), [])
+        self.assertIn("chiq", gi)
 
     def test_info_line_names_the_gate_outputs(self):
         with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
