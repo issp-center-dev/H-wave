@@ -97,6 +97,9 @@ MOMENTUM_CONVENTION = "e_plus_ikR"
 # longitudinal sibling (_BOND_MEMORY_CAP_GB), so the two bond-channel
 # gates share one documented default rather than drifting apart.
 TRANSVERSE_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
+# The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A) shares the
+# same default for the same reason.
+LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT = 8.0
 
 
 def check_momentum_marker(data, file_name):
@@ -1818,6 +1821,7 @@ class RPA:
             sys.exit(1)
 
         self._init_transverse_bond_config()
+        self._init_longitudinal_bond_config()
 
         pass
 
@@ -1914,6 +1918,102 @@ class RPA:
         # so a malformed companion option still reports its own
         # (syntactic) error first.
         self._reject_offsite_pairhop_under_transverse_bond_gate()
+
+
+    def _init_longitudinal_bond_config(self):
+        """Parse ``[mode.param] longitudinal_bond_channels`` and its
+        companion options (the experimental bond-resolved LONGITUDINAL
+        gate, GitHub issue #181 Tier 3 Phase A; spec
+        2026-09-05-flex-offsite-bond-longitudinal-181-design.md
+        "Production surface").
+
+        Mirrors ``_init_transverse_bond_config``: the switch defaults to
+        ``False``, is parsed ONLY under ``calc_type='ring'`` (the
+        longitudinal channel is the ring), and every companion option set
+        while the switch is stale is IGNORED WITH A WARNING. The two bond
+        gates are mutually exclusive by calc_type, so both switches TRUE
+        is refused here, at configuration time, whatever calc_type says.
+        """
+        import numbers
+
+        _lbc_keys = ("longitudinal_bond_channels",
+                     "longitudinal_bond_max_shells",
+                     "longitudinal_bond_memory_cap_gb")
+        _flag = self.param_mod.get("longitudinal_bond_channels", False)
+        if not isinstance(_flag, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels must be a boolean, "
+                "got {!r}".format(_flag))
+        _tflag = self.param_mod.get("transverse_bond_channels", False)
+        if (bool(_flag) and isinstance(_tflag, (bool, np.bool_))
+                and bool(_tflag)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true and "
+                "transverse_bond_channels=true cannot be combined: the "
+                "longitudinal gate requires calc_type='ring' and the "
+                "transverse gate calc_type='ring+ladder' (their "
+                "coexistence under ring+ladder is a recorded follow-up of "
+                "GitHub issue #181). Enable one of the two.")
+        present = [k for k in _lbc_keys if k in self.param_mod]
+
+        if self.calc_type != "ring":
+            if present:
+                logger.warning(
+                    "[mode.param] %s set but calc_type='%s'; the "
+                    "bond-resolved longitudinal gate only applies to "
+                    "calc_type='ring' and %s ignored here.",
+                    ", ".join(present), self.calc_type,
+                    "is" if len(present) == 1 else "are")
+            self.longitudinal_bond_channels = False
+            self.longitudinal_bond_max_shells = None
+            self.longitudinal_bond_memory_cap_gb = \
+                LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        self.longitudinal_bond_channels = bool(_flag)
+        if not self.longitudinal_bond_channels:
+            stale = [k for k in _lbc_keys
+                     if k != "longitudinal_bond_channels"
+                     and k in self.param_mod]
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but longitudinal_bond_channels="
+                    "false; these options only apply to "
+                    "longitudinal_bond_channels=true and are ignored here.",
+                    ", ".join(stale))
+            self.longitudinal_bond_max_shells = None
+            self.longitudinal_bond_memory_cap_gb = \
+                LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT
+            return
+
+        # longitudinal_bond_max_shells: int >= 1, or absent/None (keep
+        # every declared off-site shell). Unlike the transverse gate, 0
+        # is refused: the gate REQUIRES at least one declared off-site
+        # shell, so a truncation to none can never be satisfied.
+        _max_shells = self.param_mod.get("longitudinal_bond_max_shells", None)
+        if _max_shells is not None:
+            if (isinstance(_max_shells, (bool, np.bool_))
+                    or not isinstance(_max_shells, numbers.Integral)):
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_max_shells must be an "
+                    "integer >= 1, got {!r}".format(_max_shells))
+            _max_shells = int(_max_shells)
+            if _max_shells < 1:
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_max_shells must be >= 1 "
+                    "(the gate needs at least one declared off-site shell), "
+                    "got {}".format(_max_shells))
+        self.longitudinal_bond_max_shells = _max_shells
+
+        _cap_gb = self.param_mod.get("longitudinal_bond_memory_cap_gb",
+                                      LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT)
+        if (isinstance(_cap_gb, (bool, np.bool_))
+                or not isinstance(_cap_gb, numbers.Real)
+                or not np.isfinite(_cap_gb) or _cap_gb <= 0):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_memory_cap_gb must be a "
+                "finite number > 0 (binary GiB), got {!r}".format(_cap_gb))
+        self.longitudinal_bond_memory_cap_gb = float(_cap_gb)
 
     def _reject_offsite_pairhop_under_transverse_bond_gate(self):
         """Reject off-site ``PairHop`` while ``transverse_bond_channels
@@ -2049,6 +2149,8 @@ class RPA:
         logger.info("    calc_type       = {}".format(self.calc_type))
         logger.info("    transverse_bond_channels = {}".format(
             self.transverse_bond_channels))
+        logger.info("    longitudinal_bond_channels = {}".format(
+            self.longitudinal_bond_channels))
         pass
 
     @do_profile

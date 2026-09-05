@@ -239,6 +239,18 @@ class FLEX(RPA):
         # Initialize RPA infrastructure (lattice, interaction, params)
         super().__init__(param_ham, info_log, info_mode)
 
+        # The RPA-only experimental bond-resolved longitudinal gate (#181
+        # Tier 3 Phase A) is parsed by the RPA base (calc_type defaults to
+        # 'ring' here, so the key would be ACCEPTED silently); FLEX has no
+        # bond-basis self-consistency yet (Phase B), so a TRUE key is a
+        # configuration error, not a silently ignored option.
+        if self.longitudinal_bond_channels:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true is RPA-only "
+                "in Phase A (mode='RPA', calc_type='ring'): the FLEX "
+                "self-consistency on the bond basis is Phase B of GitHub "
+                "issue #181. Remove the key for a FLEX run.")
+
         # FLEX-specific parameters
         self._init_flex_param()
 
