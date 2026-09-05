@@ -686,6 +686,11 @@ _BOND_COND_FLOOR = 1.0e-3
 def _check_bond_conditioning(name, mat, cond_tol):
     """Refuse a singular / nearly singular enlarged RPA denominator.
 
+    Returns the guard score (the minimum over q of the smaller of the two
+    criteria below) when the block passes, ``None`` when ``cond_tol`` is
+    ``None`` (guard disabled); raises ``ValueError`` otherwise (#181 Tier 3
+    Phase A: the score is published as ``longitudinal_bond_cond_min_*``).
+
     ``np.linalg.solve`` raises a bare ``LinAlgError("Singular matrix")`` on an
     exactly singular block -- with no indication of WHICH channel or WHICH
     q-point diverged -- and returns enormous, unreliable numbers just short of
@@ -713,7 +718,7 @@ def _check_bond_conditioning(name, mat, cond_tol):
        criterion 1 already covers that regime.
     """
     if cond_tol is None:
-        return
+        return None
     Nx, Ny, Nz, ND, _ = mat.shape
     sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -728,7 +733,7 @@ def _check_bond_conditioning(name, mat, cond_tol):
     iq = int(np.argmin(score))
     worst = float(score[iq])
     if worst > cond_tol:
-        return
+        return worst
     qx, rem = divmod(iq, Ny * Nz)
     qy, qz = divmod(rem, Nz)
     raise ValueError(
@@ -815,23 +820,76 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
             "dress_bond: C_bond shape {} must match chi_bar shape {}".format(
                 C_bond.shape, chi_bar.shape))
 
-    # Batched RPA solve for all q-points simultaneously (same algebra/
-    # orientation as sc.py._compute_vertices_general, generalized nd -> ND).
-    I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (Nx, Ny, Nz, ND, ND)).copy()
+    # Two per-channel dressings (dress_channel, #181 Tier 3 Phase A): the
+    # same algebra/orientation as sc.py._compute_vertices_general
+    # generalized nd -> ND, bit-identical to the former inline
+    # ``solve(I -/+ chi_bar @ V, chi_bar)`` (pinned by
+    # tests/test_bond_longitudinal_vertex.py). The conditioning guard runs
+    # per channel, spin first.
+    nvol = Nx * Ny * Nz
+    chi_s, _ = dress_channel(
+        chi_bar.reshape(nvol, ND, ND), S_bond.reshape(nvol, ND, ND), "spin",
+        spatial_shape=(Nx, Ny, Nz), cond_tol=cond_tol)
+    chi_c, _ = dress_channel(
+        chi_bar.reshape(nvol, ND, ND), C_bond.reshape(nvol, ND, ND), "charge",
+        spatial_shape=(Nx, Ny, Nz), cond_tol=cond_tol)
+    return (chi_s.reshape(Nx, Ny, Nz, ND, ND),
+            chi_c.reshape(Nx, Ny, Nz, ND, ND))
 
-    mat_s = I_mat - chi_bar @ S_bond
-    mat_c = I_mat + chi_bar @ C_bond
 
-    # Off-instability guard BEFORE the solve, so an unstable point is named
-    # rather than crashing (exactly singular) or silently producing garbage
-    # (nearly singular).
-    _check_bond_conditioning("spin", mat_s, cond_tol)
-    _check_bond_conditioning("charge", mat_c, cond_tol)
+_DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0}
 
-    chi_s = np.linalg.solve(mat_s, chi_bar)
-    chi_c = np.linalg.solve(mat_c, chi_bar)
 
-    return chi_s, chi_c
+def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLOOR):
+    """Dress ONE RPA channel on the (bond-enlarged) pair basis::
+
+        chi = [I + sign * chi_bar @ W]^{-1} chi_bar,   sign = -1 ("spin"),
+                                                              +1 ("charge")
+
+    ``chi_bar``/``W`` are ``(nvol, ND, ND)``; ``spatial_shape`` =
+    ``(Nx, Ny, Nz)`` with ``prod == nvol`` (the q-point named in a
+    conditioning refusal is decoded from it). ONE denominator is formed,
+    conditioning-checked (:func:`_check_bond_conditioning`, criteria
+    ``sigma_min/sigma_max`` and ``sigma_min/max(1, sigma_max)``; refused
+    at ``<= cond_tol``, disabled by ``cond_tol=None``) and solved with a
+    batched ``numpy.linalg.solve`` (no explicit inverse). Returns
+    ``(chi, cond_min)``, ``cond_min`` the guard score (``None`` when the
+    guard is disabled). Peak transient: the denominator plus the solve's
+    LU workspace; the denominator is released before returning.
+    """
+    if channel not in _DRESS_CHANNELS:
+        raise ValueError(
+            "dress_channel: channel must be 'spin' or 'charge', got {!r}"
+            .format(channel))
+    sign = _DRESS_CHANNELS[channel]
+    chi_bar = np.asarray(chi_bar)
+    W = np.asarray(W)
+    if (chi_bar.ndim != 3 or chi_bar.shape[1] != chi_bar.shape[2]
+            or W.shape != chi_bar.shape):
+        raise ValueError(
+            "dress_channel: chi_bar and W must both have shape (nvol, ND, "
+            "ND); got {} and {}".format(chi_bar.shape, W.shape))
+    try:
+        Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "dress_channel: spatial_shape must be (Nx, Ny, Nz), got {!r}"
+            .format(spatial_shape))
+    nvol, ND = chi_bar.shape[0], chi_bar.shape[1]
+    if Nx * Ny * Nz != nvol:
+        raise ValueError(
+            "dress_channel: prod(spatial_shape) = {} != nvol = {}".format(
+                Nx * Ny * Nz, nvol))
+    mat = chi_bar @ W
+    if sign < 0:
+        np.negative(mat, out=mat)
+    idx = np.arange(ND)
+    mat[:, idx, idx] += 1.0
+    cond_min = _check_bond_conditioning(
+        channel, mat.reshape(Nx, Ny, Nz, ND, ND), cond_tol)
+    chi = np.linalg.solve(mat, chi_bar)
+    del mat
+    return chi, cond_min
 
 
 def _validate_green_beta(green, beta, label):
@@ -3261,3 +3319,125 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
             W[:, idx_bb, idx_aa] += -1.0 * J * phase
 
     return W
+
+
+# =============================================================================
+# #181 Tier 3 Phase A -- the bond-resolved LONGITUDINAL (spin/charge) vertex
+# =============================================================================
+#
+# APPEND-ONLY REGION (continued). Spec:
+# docs/superpowers/specs/2026-09-05-flex-offsite-bond-longitudinal-181-design.md,
+# "The longitudinal bond vertices". The channel-0 block is the Tier-1
+# locality-split pair-space matrix (hwave.solver.offsite
+# .sc_matrices_from_split: on-site Kanamori slots + the off-site Hartree
+# vertex V(q) in the density slots) placed VERBATIM; the off-site Fock
+# (exchange) crossing that no q-only matrix can carry lives on the
+# bond-DIAGONAL of the enlarged index, exactly where the Eliashberg module's
+# bare_bond_vertices puts CoulombInter's (+Re v, -Re v) -- generalized here
+# to every type through vertex_table's adjudicated ``cross`` row (Gate G1:
+# equality with bare_bond_vertices for CoulombInter; Gate G2: exact
+# diagonalization for Hund/Ising, tests/test_bond_longitudinal_ed.py).
+
+def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
+    """One channel (``"S"`` or ``"C"``) of the bond-resolved longitudinal
+    vertex, shape ``(nvol, ND, ND)`` complex128, ``ND = B * norb**2``.
+
+    ``W0`` (``(nvol, nd, nd)``, ``nd = norb**2``) is placed verbatim as
+    the channel-0 block. For every type in ``types`` (default: every key
+    of ``topo.coeffs``, in order) and every off-site reversal orbit
+    ``{(m, a, b), (reverse[m], b, a)}`` (``m != 0``, one representative
+    from :func:`iter_reversal_orbits`), the bond-diagonal entries at
+    ``I = m*nd + a*norb + b`` and ``I' = reverse[m]*nd + b*norb + a``
+    receive ``w_t * Re v_t[m, a, b]`` with ``w_t`` the type's ``cross``
+    coefficient (S or C column of ``vertex_table.ADJUDICATED_SC``); both
+    members of an orbit carry the same real part by Hermitian closure.
+    A coefficient with ``|Im v| > imag_tol`` is refused (real
+    coefficients only in this version; the imaginary direction of an
+    off-site coefficient is not represented by this bond-diagonal rule).
+    Every bond-diagonal entry is q-INDEPENDENT; the q-dependence of the
+    vertex sits entirely in ``W0``'s density slots.
+
+    FRAME. The result lives in the general path's pair frame: the one
+    ``bubble.bond_bubble_static`` produces (its channel-0 block IS the
+    solver's static ``chi0q`` slice, measured bit-identical on the
+    2-orbital fixture), the one the Tier-1 ``W0`` is built in, and the
+    one the Eliashberg module's ``bare_bond_vertices`` uses -- for
+    CoulombInter the two vertex builders agree VERBATIM (Gate G1,
+    tests/test_bond_longitudinal_vertex.py). Structure: Hermitian at
+    every q, and ``W(-q) == W(q)^T`` for real coefficients.
+    """
+    from hwave.solver.vertex_table import sc_coefficients
+    if channel not in ("S", "C"):
+        raise ValueError(
+            "build_sc_bond_channel: channel must be 'S' or 'C', got {!r}"
+            .format(channel))
+    # re-validate (alias-safe): coeffs is a plain dict a caller may have
+    # re-keyed since the topology was resolved
+    topo = BondTopology(delta_r=topo.delta_r, reverse=topo.reverse,
+                        coeffs=topo.coeffs)
+    keys = list(topo.coeffs)
+    if not keys:
+        raise ValueError(
+            "build_sc_bond_channel: the topology carries no coefficient "
+            "arrays, so norb cannot be inferred")
+    types = keys if types is None else list(types)
+    if len(set(types)) != len(types) or any(t not in keys for t in types):
+        raise ValueError(
+            "build_sc_bond_channel: types must be an ordered, duplicate-"
+            "free subset of the topology's coefficient keys {}; got {!r}"
+            .format(keys, types))
+    try:
+        imag_ok = np.isfinite(imag_tol) and imag_tol >= 0
+    except TypeError:
+        imag_ok = False
+    if not imag_ok:
+        raise ValueError(
+            "build_sc_bond_channel: imag_tol must be a finite number >= 0, "
+            "got {!r}".format(imag_tol))
+    norb = int(topo.coeffs[keys[0]].shape[1])
+    nd = norb * norb
+    W0 = np.asarray(W0)
+    if W0.ndim != 3 or W0.shape[1:] != (nd, nd):
+        raise ValueError(
+            "build_sc_bond_channel: W0 must have shape (nvol, {0}, {0}) "
+            "(nd = norb**2 with norb={1} from the topology); got {2}"
+            .format(nd, norb, W0.shape))
+    if not np.all(np.isfinite(W0)):
+        raise ValueError(
+            "build_sc_bond_channel: W0 has non-finite entries")
+    nvol = W0.shape[0]
+    B = int(np.asarray(topo.delta_r).shape[0])
+    ND = B * nd
+    W = np.zeros((nvol, ND, ND), dtype=np.complex128)
+    W[:, :nd, :nd] = W0
+    col = 0 if channel == "S" else 1
+    reverse = np.asarray(topo.reverse)
+    delta_r = np.asarray(topo.delta_r)
+    orbits = [orb for orb in iter_reversal_orbits(topo) if orb[0] != 0]
+    for t in types:
+        w_t = sc_coefficients(t, "cross")[col]
+        arr = topo.coeffs[t]
+        for (m, a, b) in orbits:
+            v = complex(arr[m, a, b])
+            if abs(v.imag) > imag_tol:
+                raise ValueError(
+                    "build_sc_bond_channel: the off-site {} coefficient at "
+                    "channel {} (delta_r={}), orbitals ({}, {}) is complex "
+                    "({}); only real off-site coefficients are supported "
+                    "by the bond-resolved longitudinal channel in this "
+                    "version".format(
+                        t, m, tuple(int(x) for x in delta_r[m]), a, b, v))
+            if w_t == 0.0 or v.real == 0.0:
+                continue
+            for I in (m * nd + a * norb + b,
+                      int(reverse[m]) * nd + b * norb + a):
+                W[:, I, I] += w_t * v.real
+    return W
+
+
+def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
+    """``(S_bond, C_bond)``: :func:`build_sc_bond_channel` for both
+    channels (tests and Gate G1; production builds one channel at a time
+    so that only one ``(nvol, ND, ND)`` vertex is alive)."""
+    return (build_sc_bond_channel(topo, S0, "S", imag_tol=imag_tol, types=types),
+            build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types))
