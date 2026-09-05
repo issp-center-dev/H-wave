@@ -135,17 +135,14 @@ class _Side:
 
     def ed_D(self, v1):
         channels, smap = self.channels_and_map()
-        fx = self.fx
 
-        @functools.lru_cache(maxsize=None)
         def chi_hf_sub(v):
-            terms = _terms(self.t, fx, self.a, self.b, self.R, v)
-            full = ed_oracle_util.SectorED(
-                fx, terms=terms).bond_correlator(channels)
-            hf = ed_oracle_util.SectorED(
-                fx, terms=(), h1=ed_oracle_util.hf_h1_from_terms(fx, terms)
-            ).bond_correlator(channels)
-            return full - hf
+            # module-level cache keyed by (fixture, direction, v): the
+            # v = v1 evaluation is shared between the two Richardson
+            # steps (v1 and v1/2, since 2*(v1/2) == v1 exactly); v = 0
+            # is exact zero and costs nothing (see _chi_hf_sub)
+            return _chi_hf_sub(self.fx, self.t, self.a, self.b, self.R,
+                               tuple(channels), v)
 
         def mapped(v, s1, s2):
             return chi_hf_sub(v)[:, s1, s2][:, smap][:, :, smap]
@@ -168,6 +165,25 @@ class _MapSet:
         self.delta_r = view.delta_r
         self.n_channels = view.n_channels
         self.v_bond = [np.zeros((norb, norb), complex)] * view.n_channels
+
+
+@functools.lru_cache(maxsize=None)
+def _chi_hf_sub(fx, t, a, b, R, channels, v):
+    """HF-subtracted bond correlator of one direction at amplitude ``v``
+    (full minus the HF-only propagator renormalisation), computed once
+    per (fixture, direction, v) for the whole module. At ``v == 0`` the
+    interaction terms all carry a zero coefficient, so the full and the
+    HF-only Hamiltonians are identical and the difference is exactly
+    zero: returned without a diagonalization."""
+    terms = _terms(t, fx, a, b, R, v)
+    if v == 0:
+        n = len(channels)
+        return np.zeros((fx.L, 2, 2, n, n), dtype=complex)
+    full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(list(channels))
+    hf = ed_oracle_util.SectorED(
+        fx, terms=(), h1=ed_oracle_util.hf_h1_from_terms(fx, terms)
+    ).bond_correlator(list(channels))
+    return full - hf
 
 
 @functools.lru_cache(maxsize=None)
