@@ -3432,6 +3432,11 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     norb = int(topo.coeffs[keys[0]].shape[1])
     nd = norb * norb
     W0 = np.asarray(W0)
+    if W0.dtype.kind not in ("f", "c"):
+        raise ValueError(
+            "build_sc_bond_channel: W0 must be a real or complex floating "
+            "array (it is promoted to complex128); got dtype {}"
+            .format(W0.dtype))
     if W0.ndim != 3 or W0.shape[1:] != (nd, nd):
         raise ValueError(
             "build_sc_bond_channel: W0 must have shape (nvol, {0}, {0}) "

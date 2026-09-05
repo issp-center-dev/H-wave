@@ -272,6 +272,13 @@ class TestGatePrerequisites(unittest.TestCase):
         with self.assertRaises(ValueError):            # R=4 aliases R=0 on a 4-point axis
             s._run_longitudinal_bond_pipeline(s.green0, s.green0_tail, 0.5, alias, z, z)
 
+    def test_non_general_scheme_is_refused(self):
+        s = self._gate()
+        s.calc_scheme = "reduced"
+        with self.assertRaises(ValueError) as cm:
+            s._validate_longitudinal_bond_prereqs()
+        self.assertIn("general", str(cm.exception))
+
     def test_spin_orbital_flag_is_read_from_the_interaction(self):
         s = self._gate()
         s.ham_info.enable_spin_orbital = True
@@ -625,6 +632,19 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         s_off.solve(gi2, self._OUT)
         np.testing.assert_array_equal(np.asarray(gi["chiq"]), np.asarray(gi2["chiq"]))
 
+    def test_gate_absent_and_explicit_false_are_bitwise_identical(self):
+        s1, r1 = _build({})
+        s2, r2 = _build({"longitudinal_bond_channels": False})
+        g1 = r1.get_param("green")
+        g2 = r2.get_param("green")
+        os.makedirs(self._OUT, exist_ok=True)
+        s1.solve(g1, self._OUT)
+        s2.solve(g2, self._OUT)
+        for k in ("chi0q", "chiq"):
+            np.testing.assert_array_equal(np.asarray(g1[k]), np.asarray(g2[k]))
+        self.assertEqual(_lb_keys(g1), [])
+        self.assertEqual(_lb_keys(g2), [])
+
     def test_charge_conditioning_failure_publishes_nothing(self):
         """Atomic publication: a refusal in the SECOND dressing leaves no
         longitudinal_bond_* key behind, while chiq (stored earlier) stays."""
@@ -647,6 +667,20 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertIn("charge", str(cm.exception))
         self.assertEqual(_lb_keys(gi), [])
         self.assertIn("chiq", gi)
+        # the same refusal on a REUSED container that already carried the
+        # sixteen keys leaves none of them behind either
+        s_ok, r2 = _build({"longitudinal_bond_channels": True})
+        gi2 = r2.get_param("green")
+        s_ok.solve(gi2, self._OUT)
+        self.assertEqual(len(_lb_keys(gi2)), 16)
+        gi2.pop("chi0q")
+        bc.dress_channel = _fail_charge
+        try:
+            with self.assertRaises(ValueError):
+                s_ok.solve(gi2, self._OUT)
+        finally:
+            bc.dress_channel = real
+        self.assertEqual(_lb_keys(gi2), [])
 
     def test_info_line_names_the_gate_outputs(self):
         with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:

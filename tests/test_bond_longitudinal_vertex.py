@@ -173,12 +173,32 @@ class TestBuildScBondChannel(unittest.TestCase):
         for bad in ([[]], [None], "CoulombInter", 3):            # malformed selector
             with self.assertRaises(ValueError):
                 bc.build_sc_bond_channel(topo, z, "S", types=bad)
-        with self.assertRaises(ValueError):                      # bad imag_tol
-            bc.build_sc_bond_channel(topo, z, "S", imag_tol=-1.0)
+        with self.assertRaises(ValueError):                      # non-numeric W0
+            bc.build_sc_bond_channel(topo, np.array([[["x"]], [["y"]], [["z"]]]), "S")
+        with self.assertRaises(ValueError):                      # integer W0
+            bc.build_sc_bond_channel(topo, np.zeros((3, 1, 1), int), "S")
+        W = bc.build_sc_bond_channel(topo, np.zeros((3, 1, 1), float), "S")   # real: promoted
+        self.assertEqual(W.dtype, np.complex128)
+        bad = bc.BondTopology(topo.delta_r, topo.reverse, dict(topo.coeffs))
+        bad.coeffs["CoulombInter"] = np.full((3, 1, 1), np.nan + 0j)
+        with self.assertRaises(ValueError):                      # non-finite coefficients
+            bc.build_sc_bond_channel(bad, z, "S")
+
         with self.assertRaises(ValueError):                      # mutated topology
             bad = bc.BondTopology(topo.delta_r, topo.reverse, topo.coeffs)
             bad.coeffs["CoulombInter"] = np.zeros((7, 1, 1), complex)
             bc.build_sc_bond_channel(bad, z, "S")
+        with self.assertRaises(ValueError):                      # bad imag_tol
+            bc.build_sc_bond_channel(topo, z, "S", imag_tol=-1.0)
+
+    def test_w_sc_bond_is_the_two_channel_calls(self):
+        L = 5
+        decl = _two_sided("Hund", 1, 0, 1, 0.3)
+        S0, C0 = _sc0(decl, 2, L)
+        topo = _topo(decl, 2)
+        S, C = bc.W_sc_bond(topo, S0, C0)
+        np.testing.assert_array_equal(S, bc.build_sc_bond_channel(topo, S0, "S"))
+        np.testing.assert_array_equal(C, bc.build_sc_bond_channel(topo, C0, "C"))
 
 
 class TestDressChannel(unittest.TestCase):
