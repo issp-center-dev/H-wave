@@ -39,6 +39,20 @@ class TestResolveBondTopology(unittest.TestCase):
                     bc.resolve_bond_topology({}, np.eye(3), 1, active_types=bad)
                 self.assertIn("active_types", str(cm.exception))
 
+    def test_non_finite_or_non_numeric_coefficients_are_valueerrors(self):
+        from hwave.solver import bond_channels as bc
+        for bad in (None, float("nan"), float("inf"), "0.1", True):
+            with self.subTest(bad=bad):
+                inter = {"Hund": {((1, 0, 0), (0, 0)): bad, ((-1, 0, 0), (0, 0)): bad}}
+                with self.assertRaises(ValueError) as cm:
+                    bc.resolve_bond_topology(
+                        inter, np.eye(3), 1, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+                self.assertTrue(str(cm.exception).startswith("resolve_bond_topology:"))
+                with self.assertRaises(ValueError) as cm:
+                    bc.resolve_transverse_topology(
+                        {"Ising": inter["Hund"]}, np.eye(3), 1)
+                self.assertTrue(str(cm.exception).startswith("resolve_transverse_topology:"))
+
     def test_resolvable_type_sets(self):
         from hwave.solver import bond_channels as bc
         self.assertEqual(bc._BOND_RESOLVABLE_TYPES,

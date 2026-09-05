@@ -16,6 +16,7 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 from dataclasses import dataclass, field
 import logging
 
+import numbers
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
@@ -820,24 +821,29 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
             "dress_bond: C_bond shape {} must match chi_bar shape {}".format(
                 C_bond.shape, chi_bar.shape))
 
-    # Two per-channel dressings (dress_channel, #181 Tier 3 Phase A): the
-    # same algebra/orientation as sc.py._compute_vertices_general
-    # generalized nd -> ND, bit-identical to the former inline
-    # ``solve(I -/+ chi_bar @ V, chi_bar)`` (pinned by
-    # tests/test_bond_longitudinal_vertex.py). ORDER CHANGE (accepted):
-    # the guard used to check BOTH denominators before either solve; now
-    # each channel is checked and solved in turn, spin first, so a charge
-    # instability is reported after the spin solve has run. The numbers
-    # and the error text are unchanged.
-    nvol = Nx * Ny * Nz
-    chi_s, _ = dress_channel(
-        chi_bar.reshape(nvol, ND, ND), S_bond.reshape(nvol, ND, ND), "spin",
-        spatial_shape=(Nx, Ny, Nz), cond_tol=cond_tol)
-    chi_c, _ = dress_channel(
-        chi_bar.reshape(nvol, ND, ND), C_bond.reshape(nvol, ND, ND), "charge",
-        spatial_shape=(Nx, Ny, Nz), cond_tol=cond_tol)
-    return (chi_s.reshape(Nx, Ny, Nz, ND, ND),
-            chi_c.reshape(Nx, Ny, Nz, ND, ND))
+    # Batched RPA solve for all q-points simultaneously (same algebra/
+    # orientation as sc.py._compute_vertices_general, generalized nd -> ND).
+    # Kept as the legacy schedule -- BOTH denominators are formed and
+    # conditioning-checked before either solve -- so the Eliashberg path
+    # is unchanged in numbers, error text and order of diagnostics. The
+    # production longitudinal bond gate uses the one-channel-at-a-time
+    # ``dress_channel`` below instead (#181 Tier 3 Phase A); the two agree
+    # bit-for-bit (tests/test_bond_longitudinal_vertex.py).
+    I_mat = np.broadcast_to(np.eye(ND, dtype=complex), (Nx, Ny, Nz, ND, ND)).copy()
+
+    mat_s = I_mat - chi_bar @ S_bond
+    mat_c = I_mat + chi_bar @ C_bond
+
+    # Off-instability guard BEFORE the solve, so an unstable point is named
+    # rather than crashing (exactly singular) or silently producing garbage
+    # (nearly singular).
+    _check_bond_conditioning("spin", mat_s, cond_tol)
+    _check_bond_conditioning("charge", mat_c, cond_tol)
+
+    chi_s = np.linalg.solve(mat_s, chi_bar)
+    chi_c = np.linalg.solve(mat_c, chi_bar)
+
+    return chi_s, chi_c
 
 
 _DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0}
@@ -2883,6 +2889,13 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
 
             if irvec == (0, 0, 0):
                 continue
+            if (isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, numbers.Number)
+                    or not np.isfinite(value)):
+                raise ValueError(
+                    diag + ": {} declares a coefficient that is not a "
+                    "finite number at irvec {}, orbvec {}: got {!r}".format(
+                        type_name, irvec, orbvec, value))
             by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
         per_type_by_irvec[type_name] = by_irvec
         completed = _close_offsite_hermitian(

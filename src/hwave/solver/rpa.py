@@ -2268,6 +2268,21 @@ class RPA:
 
         beta = 1.0/self.T
 
+        # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
+        # Green's function that produced the bubble: refuse an external
+        # chi0q FIRST -- before the backend is resolved and before the
+        # tensor is inspected, validated, fingerprinted or moved to a
+        # device -- so the gate-owned refusal is what the user sees.
+        if (self.calc_type == "ring" and self.longitudinal_bond_channels
+                and "chi0q" in green_info
+                and green_info["chi0q"] is not None):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true cannot be "
+                "combined with an externally supplied chi0q (chi0q_init "
+                "or a chi0q carried in green_info): the bond bubble is "
+                "built from the Green's function directly. Recompute "
+                "chi0q internally (drop the supplied chi0q).")
+
         # GPU (CuPy) execution: resolve the backend once. The heavy work --
         # the bare Green's function, the chi0q FFT pair bubble, the spin
         # inflation einsums, and the batched chiq solve -- all dispatch on
@@ -2277,18 +2292,8 @@ class RPA:
                                          required=self.gpu_required)
 
         if "chi0q" in green_info and green_info["chi0q"] is not None:
-            # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
-            # Green's function that produced the bubble: refuse an
-            # external chi0q HERE, before it is inspected, validated,
-            # fingerprinted or moved to a device, so the gate-owned
-            # refusal is what the user sees.
-            if self.calc_type == "ring" and self.longitudinal_bond_channels:
-                raise ValueError(
-                    "[mode.param] longitudinal_bond_channels=true cannot be "
-                    "combined with an externally supplied chi0q (chi0q_init "
-                    "or a chi0q carried in green_info): the bond bubble is "
-                    "built from the Green's function directly. Recompute "
-                    "chi0q internally (drop the supplied chi0q).")
+            # (the longitudinal bond gate refused an external chi0q above,
+            # before the backend was resolved)
             # use chi0q input; a green_info stored by a previous solve
             # arrives here, so establish spin_mode from the shape exactly
             # as the file-based chi0q_init route does (issue #109)
@@ -2442,20 +2447,24 @@ class RPA:
                     label="the RPA chiq solve (supplied chi0q)")
                 chi0q = xp.asarray(chi0q)
         else:
-            self._calc_epsilon_k(green_info)
-
             # The bond-resolved LONGITUDINAL gate (#181 Tier 3 Phase A):
-            # prerequisites and memory preflight as soon as spin_mode is
-            # known (the H0 diagonalization above is what establishes
-            # it) and BEFORE the chemical potential search, any device
-            # transfer, the Green's function and the bubble -- so a
+            # every prerequisite that does not need spin_mode, plus the
+            # memory preflight, BEFORE the H0 diagonalization -- so a
             # refusal costs nothing and a gate-on run can never degrade
             # into a silent chi0-only run (calc_chiq is not consulted).
             # This run computes its own bubble: say so BEFORE the check,
             # so a previous (refused) external-chi0q solve on this
             # instance cannot leak its flag into this one.
             self._chi0q_external = False
-            self._longitudinal_bond_gate_check(gpu_active)
+            self._longitudinal_bond_gate_check(gpu_active, stage="pre")
+
+            self._calc_epsilon_k(green_info)
+
+            # ... and the spin-mode prerequisite as soon as the H0 block
+            # structure has established it, before the chemical
+            # potential search, any device transfer, the Green's
+            # function and the bubble.
+            self._longitudinal_bond_gate_check(gpu_active, stage="spin")
 
             if self.calc_mu:
                 if self.spin_mode == "spin-free":
@@ -5437,18 +5446,33 @@ class RPA:
     # 2026-09-05-flex-offsite-bond-longitudinal-181-design.md.
     # -----------------------------------------------------------------
 
-    def _longitudinal_bond_gate_check(self, gpu_active=None):
+    def _longitudinal_bond_gate_check(self, gpu_active=None, stage="all"):
         """Run the gate's prerequisite validation and memory preflight
         when the gate is on (no-op otherwise); stores the topology and the
-        locality split for the publication step."""
+        locality split for the publication step. ``stage="pre"`` runs
+        everything that does not need ``spin_mode`` (before the H0
+        diagonalization), ``stage="spin"`` only the spin-mode check
+        (right after it), ``stage="all"`` both."""
         if not (self.calc_type == "ring" and self.longitudinal_bond_channels):
             return
-        self._longitudinal_bond_topo, self._longitudinal_bond_split = \
-            self._validate_longitudinal_bond_prereqs()
-        self._longitudinal_bond_resource_preflight(
-            self._longitudinal_bond_topo, gpu_active=gpu_active)
+        if stage in ("pre", "all"):
+            self._longitudinal_bond_topo, self._longitudinal_bond_split = \
+                self._validate_longitudinal_bond_prereqs(
+                    check_spin=(stage == "all"))
+            self._longitudinal_bond_resource_preflight(
+                self._longitudinal_bond_topo, gpu_active=gpu_active)
+        if stage == "spin":
+            self._check_longitudinal_bond_spin_mode()
 
-    def _validate_longitudinal_bond_prereqs(self):
+    def _check_longitudinal_bond_spin_mode(self):
+        if getattr(self, "spin_mode", "spin-free") != "spin-free":
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true requires a "
+                "spin-free system (spin_mode='spin-free'): the longitudinal "
+                "bond bubble is the single-block object; got spin_mode={!r}."
+                .format(self.spin_mode))
+
+    def _validate_longitudinal_bond_prereqs(self, check_spin=True):
         """Top-level guards for ``longitudinal_bond_channels=true`` (spec
         "Production surface -- prerequisites"). Every refusal is a
         ``ValueError`` naming the gate; there is no fallback. Called from
@@ -5466,11 +5490,8 @@ class RPA:
                 .format(self.calc_scheme))
         if self.calc_type != "ring":
             raise ValueError(g + " requires calc_type='ring'.")
-        if getattr(self, "spin_mode", "spin-free") != "spin-free":
-            raise ValueError(
-                g + " requires a spin-free system (spin_mode='spin-free'): "
-                "the longitudinal bond bubble is the single-block object; "
-                "got spin_mode={!r}.".format(self.spin_mode))
+        if check_spin:
+            self._check_longitudinal_bond_spin_mode()
         if getattr(self.ham_info, "enable_spin_orbital", False):
             raise ValueError(g + " does not support enable_spin_orbital.")
         if getattr(self, "_chi0q_external", False):

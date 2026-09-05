@@ -180,6 +180,7 @@ class TestGatePrerequisites(unittest.TestCase):
 
                 def _boom(*a, **k):
                     raise AssertionError("expensive work ran before the gate check")
+                s._calc_epsilon_k = _boom          # the H0 diagonalization
                 s._find_mu = _boom
                 s._calc_green = _boom
                 s._calc_chi0q = _boom
@@ -195,8 +196,16 @@ class TestGatePrerequisites(unittest.TestCase):
         s, r = _build({"longitudinal_bond_channels": True})
         gi = r.get_param("green")
         gi["chi0q"] = np.array(["not", "a", "bubble"])
-        with self.assertRaises(ValueError) as cm:
-            s.solve(gi, "tests/rpa/output")
+        real_backend = rpa_mod._bk.get_backend
+
+        def _boom(*a, **k):
+            raise AssertionError("the backend was resolved before the gate refusal")
+        rpa_mod._bk.get_backend = _boom
+        try:
+            with self.assertRaises(ValueError) as cm:
+                s.solve(gi, "tests/rpa/output")
+        finally:
+            rpa_mod._bk.get_backend = real_backend
         self.assertIn("longitudinal_bond_channels", str(cm.exception))
         self.assertIn("chi0q", str(cm.exception))
 
@@ -213,6 +222,55 @@ class TestGatePrerequisites(unittest.TestCase):
         os.makedirs("tests/rpa/output", exist_ok=True)
         s.solve(gi, "tests/rpa/output")
         self.assertIs(seen["gpu_active"], False)      # CPU run: resolved, not None
+
+    def test_spin_mode_is_checked_right_after_the_h0_diagonalization(self):
+        """The spin-mode prerequisite cannot run before H0 is classified;
+        it runs immediately after, before the chemical potential search."""
+        s, r = _build({"longitudinal_bond_channels": True})
+        real = s._calc_epsilon_k
+
+        def _spinful(green_info):
+            real(green_info)
+            s.spin_mode = "spinful"
+        s._calc_epsilon_k = _spinful
+
+        def _boom(*a, **k):
+            raise AssertionError("_find_mu ran before the spin-mode check")
+        s._find_mu = _boom
+        gi = r.get_param("green")
+        with self.assertRaises(ValueError) as cm:
+            s.solve(gi, "tests/rpa/output")
+        self.assertIn("spin-free", str(cm.exception))
+
+    def test_case_varied_companion_keys(self):
+        s, _ = _build({"LONGITUDINAL_BOND_CHANNELS": True,
+                       "Longitudinal_Bond_Max_Shells": 2,
+                       "longitudinal_bond_MEMORY_cap_gb": 3.0})
+        self.assertTrue(s.longitudinal_bond_channels)
+        self.assertEqual(s.longitudinal_bond_max_shells, 2)
+        self.assertEqual(s.longitudinal_bond_memory_cap_gb, 3.0)
+
+    def test_pipeline_direct_guards(self):
+        """The test-invocable pipeline refuses an odd Nmat and a topology
+        that aliases on the mesh, at its own entry."""
+        from hwave.solver import bond_channels as bc
+        s, r = _build({"longitudinal_bond_channels": True})
+        gi = r.get_param("green")
+        os.makedirs("tests/rpa/output", exist_ok=True)
+        s.solve(gi, "tests/rpa/output")
+        topo, _ = s._validate_longitudinal_bond_prereqs()
+        nd = s.norb ** 2
+        z = np.zeros((s.lattice.nvol, nd, nd), complex)
+        s.nmat = 31
+        with self.assertRaises(ValueError) as cm:
+            s._run_longitudinal_bond_pipeline(s.green0, s.green0_tail, 0.5, topo, z, z)
+        self.assertIn("even", str(cm.exception))
+        s.nmat = 32
+        alias = bc.resolve_bond_topology(
+            {"CoulombInter": {((4, 0, 0), (0, 0)): 0.1, ((-4, 0, 0), (0, 0)): 0.1}},
+            np.eye(3), s.norb, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+        with self.assertRaises(ValueError):            # R=4 aliases R=0 on a 4-point axis
+            s._run_longitudinal_bond_pipeline(s.green0, s.green0_tail, 0.5, alias, z, z)
 
     def test_spin_orbital_flag_is_read_from_the_interaction(self):
         s = self._gate()
