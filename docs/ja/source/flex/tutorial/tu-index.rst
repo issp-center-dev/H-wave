@@ -340,7 +340,10 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
 ``CoulombInter`` / ``Hund`` / ``Ising``\ の交換交差を自己無撞着に取り込みます
 （式と適用範囲は\ :ref:`flex_bond_hf`\ を参照）。いずれも\ ``calc_scheme = "general"``\ ・
-スピンフリー・CPU・一様格子のオプションです:
+スピンフリー・CPU・一様格子のオプションです。オンサイト\ ``U``\ と最近接\ ``V``\ を
+持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
+:ref:`相互作用入力 <Ch:Config_rpa>`\ の Wannier90 形式で、\ ``coulombinter.dat``\ には
+4本のボンド\ ``(+-1, 0, 0)``\ ・\ ``(0, +-1, 0)``\ を列挙します）:
 
 .. code-block:: toml
 
@@ -358,13 +361,28 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
      EPS = 8
      flex_hartree_fock = true
      longitudinal_bond_channels = true
-     # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ
+     # longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否
+     # longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き
+     # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
    [file.output]
      path_to_output = "output"
      sigma = "sigma"
      green = "green"
      chiq = "chiq"         # 静的な longitudinal_bond_* キーはここに書かれます
+     # longitudinal_bond = "longitudinal_bond.npz"   # 動的アーカイブ（output_full のときのみ）
      energy = "energy.dat"
+
+このような計算では\ ``[file.output] chiq``\ を指定してください。指定がないと、両チャネルの
+静的ボンドキーが\ ``chiq_s.npz``\ に書き出されます。\ ``.npz``\ 拡張子のない出力名には、
+他の\ ``.npz``\ 出力と同様に拡張子が付加されます。
 
 計算は、分割状態の3つの残差が3反復連続で\ ``EPS``\ を下回ったときにのみ収束と
 みなされます。ログには\ ``[pass k/3]``\ カウンタとともに残差が出力され、全ての
@@ -375,13 +393,18 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 （``[file.input] trans_mod = "trans_mod.npz"``\ ）。\ ``flex_hartree_fock = true``\ では
 平均場はバンドに折り込まれ **ず** 、静的自己エネルギーの初期値になるため、最初の反復は
 UHFk 解から始まり、Hartree-Fock 項が二重に数えられることはありません。この使い方に
-変換ツールは不要です。
+変換ツールは不要です。UHFk 解は常磁性（``2Sz = 0``\ 、等しいスピンブロック、スピン混合なし）
+である必要があります。磁気秩序のある\ ``trans_mod``\ は拒否されます（Hartree-Fock FLEX は
+スピンフリーのため）。
 
 *以前の計算から再開する。* ``flex_hartree_fock = true``\ で出力された\ ``sigma.npz``\ は
 分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ ）。
-同時に平均場は渡さないでください（アーカイブが既に平均場を含むため拒否されます）。
+その場合は\ ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ を削除（またはコメント
+アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
 ``flex_hartree_fock``\ なしの計算の\ ``sigma.npz``\ （や手作りの全自己エネルギー）は
-初期値として拒否されるため、変換が必要です::
+初期値として拒否されるため、変換が必要です。その計算が平均場なしだった（静的部分が
+化学ポテンシャルに吸収されていた）場合は\ ``--zero-static``\ を、UHFk のバンド修正から
+始めていた場合は\ ``--uhfk-trans-mod``\ を使います::
 
    hwave_sigma_split total.npz seed.npz --zero-static
    hwave_sigma_split total.npz seed.npz --static static.npz

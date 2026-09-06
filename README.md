@@ -65,6 +65,10 @@ hwave_dos input.toml
 # RPA run (chi0q_mode = "load"), or chiq_s/chiq_c from a FLEX run
 # (chi0q_mode = "flex"), as selected in the [eliashberg] section.
 hwave_sc input.toml
+
+# Convert a total-form FLEX self-energy archive into the split form that a
+# run with flex_hartree_fock = true accepts as sigma_init
+hwave_sigma_split total.npz seed.npz --zero-static
 ```
 
 For input file format and examples, see the [User Manual](https://www.pasums.issp.u-tokyo.ac.jp/h-wave/en/doc/manual).

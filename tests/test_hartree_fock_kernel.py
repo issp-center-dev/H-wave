@@ -159,7 +159,7 @@ class _LegacyUHFk:
 
         #----------------
         # Hund
-        #----------------        
+        #----------------
         if 'Hund' in self.param_ham.keys():
             jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
 

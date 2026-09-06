@@ -365,7 +365,11 @@ self-energy of every interaction term to the FLEX loop, and
 fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site ``CoulombInter`` / ``Hund`` / ``Ising`` enters
 self-consistently (see :ref:`flex_bond_hf` for the equations and the domain).
-Both are ``calc_scheme = "general"``, spin-free, CPU, uniform-grid options:
+Both are ``calc_scheme = "general"``, spin-free, CPU, uniform-grid options.
+A complete input for a single-band square lattice with an on-site ``U`` and a
+nearest-neighbour ``V`` (the interaction files follow the Wannier90-style
+format of the :ref:`interaction input <Ch:Config_rpa>`; ``coulombinter.dat``
+lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
 
 .. code-block:: toml
 
@@ -383,13 +387,28 @@ Both are ``calc_scheme = "general"``, spin-free, CPU, uniform-grid options:
      EPS = 8
      flex_hartree_fock = true
      longitudinal_bond_channels = true
-     # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive
+     # longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it
+     # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
+     # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
    [file.output]
      path_to_output = "output"
      sigma = "sigma"
      green = "green"
      chiq = "chiq"         # the static longitudinal_bond_* keys go here
+     # longitudinal_bond = "longitudinal_bond.npz"   # the dynamic archive (output_full only)
      energy = "energy.dat"
+
+Set ``[file.output] chiq`` in such runs: without it the static bond keys of
+BOTH channels are written into ``chiq_s.npz``. Output archive names without
+a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
 
 The run is accepted only when the three residuals of the split state stay
 below ``EPS`` for three consecutive iterations; the log prints them with a
@@ -402,14 +421,21 @@ today (``[file.input] trans_mod = "trans_mod.npz"``): with
 ``flex_hartree_fock = true`` the mean field is NOT folded into the band but
 becomes the initial static self-energy, so the first iteration starts from
 the UHFk solution and the Hartree-Fock term is never counted twice. No
-converter is needed for this workflow.
+converter is needed for this workflow. The UHFk solution must be
+paramagnetic (``2Sz = 0``, equal spin blocks, no spin mixing): a
+magnetically ordered ``trans_mod`` is refused, because the Hartree-Fock
+FLEX is spin-free.
 
 *Restarting from a previous run.* A ``sigma.npz`` written with
 ``flex_hartree_fock = true`` carries the split components and seeds a new
-run exactly as stored (``[file.input] sigma_init``); do not pass a mean
-field at the same time (it is refused, since the archive already contains
-one). A ``sigma.npz`` from a run without ``flex_hartree_fock`` (or a
-hand-made total self-energy) is refused as a seed and must be converted::
+run exactly as stored (``[file.input] sigma_init``). Remove (or comment
+out) ``trans_mod`` and ``green_init`` from ``[file.input]`` in that case:
+the archive already contains the static part, and a mean field given at
+the same time is refused. A ``sigma.npz`` from a run without
+``flex_hartree_fock`` (or a hand-made total self-energy) is refused as a
+seed and must be converted; use ``--zero-static`` when that run had no
+mean field (its static part was absorbed by the chemical potential), and
+``--uhfk-trans-mod`` when it was started from a UHFk band modification::
 
    hwave_sigma_split total.npz seed.npz --zero-static
    hwave_sigma_split total.npz seed.npz --static static.npz

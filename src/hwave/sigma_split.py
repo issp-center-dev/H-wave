@@ -35,7 +35,7 @@ def _parser():
     p.add_argument("--zero-static", action="store_true", help="write sigma_static = 0")
     p.add_argument("--uhfk-trans-mod", metavar="trans_mod.npz",
                    help="native UHFk trans_mod archive (requires --bare-transfer)")
-    p.add_argument("--bare-transfer", metavar="transfer",
+    p.add_argument("--bare-transfer", metavar="transfer.dat",
                    help="the bare Transfer input of the run (Wannier90-style text or .npz)")
     p.add_argument("--uhfk-spin-major", action="store_true",
                    help="the --static array is spin-major (nvol, 2 norb, 2 norb)")

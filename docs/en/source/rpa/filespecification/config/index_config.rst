@@ -592,6 +592,7 @@ to the definition files.
   Name of the dedicated archive of the dynamic bond-resolved
   susceptibilities, written only when ``longitudinal_bond_channels =
   true`` and ``longitudinal_bond_output_full = true`` in FLEX mode (see
-  :ref:`flex_bond_hf`). It must not resolve to the same file as any other
-  output of the run (the collision is refused before the calculation
-  starts).
+  :ref:`flex_bond_hf`). A name without the ``.npz`` suffix gets it
+  appended, as for the other ``.npz`` outputs. It must not resolve to the
+  same file as any other output of the run (the collision is refused
+  before the calculation starts).
