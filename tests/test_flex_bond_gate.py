@@ -365,8 +365,19 @@ class TestFailureClearing(unittest.TestCase):
             self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
             # the seed is gone once the loop runs (a successful run)
             s, r = _flex({"IterationMax": 1})
-            s.solve(r.get_param("green"), out)
+            gi = r.get_param("green")
+            s.solve(gi, out)
             self.assertFalse(hasattr(s, "_phase_b_seed"))
+            # a reused solver whose stored output mapping now collides: the
+            # solve-entry refusal clears the previous results too
+            s.validate_output_paths({"path_to_output": out, "sigma": "s"})
+            s._info_outputfile = {"path_to_output": out, "chiq_s": "same", "sigma": "same"}
+            with self.assertRaises(ValueError):
+                s.solve(gi, out)
+            for k in ("sigma", "green", "chiq_s", "physics"):
+                self.assertNotIn(k, gi)
+            for a in attrs + ("sigma", "green_kw", "chi_s", "physics"):
+                self.assertFalse(hasattr(s, a), a)
 
 
 class TestStandaloneHFAdmissibility(unittest.TestCase):

@@ -804,9 +804,9 @@ class FLEX(RPA):
         self._myo_sc_cache = None
         if getattr(self, "_phase_b_active", False):
             self._path_to_output = path_to_output
-            if getattr(self, "_info_outputfile", None) is not None:
-                self.validate_output_paths(path_to_output=path_to_output)
             try:
+                if getattr(self, "_info_outputfile", None) is not None:
+                    self.validate_output_paths(path_to_output=path_to_output)
                 return self._solve_restoring_host_attrs(green_info, path_to_output)
             except BaseException:
                 # spec 3.5: after a failed solve nothing is produced -- every
@@ -1292,8 +1292,8 @@ class FLEX(RPA):
             raise ValueError("flex_hartree_fock=true does not support an external field "
                              "(spin-diagonal H0)")
         self._phase_b_seed = self._assemble_static_seed(green_info, expected)
-        self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
         split = self._validate_phase_b_interactions()
+        self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
         if self.longitudinal_bond_channels:
             self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs(split)
             self._bond_view = bond_channels.BondSetView(self._bond_topo)
@@ -1590,7 +1590,11 @@ class FLEX(RPA):
                 if self.calc_mu:
                     mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
                     self.mu = mu
+                if not np.isfinite(mu):
+                    raise _hf.NonFiniteError("non-finite final-state chemical potential")
                 green_kw = self._calc_dressed_green(beta, mu, sigma)
+                if not np.all(np.isfinite(green_kw)):
+                    raise _hf.NonFiniteError("non-finite final-state Green function")
                 dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
                 if self.calc_mu:
                     dev = abs(dens.n_per_spin - Ncond_target)
@@ -2993,17 +2997,21 @@ class FLEX(RPA):
                             if t in _OFFSITE_DENSITY_TYPES]
 
             if offsite_used:
-                _msg = ("FLEX calc_scheme='general': proceeding with the "
-                        "Hartree (density-slot) vertex V(q) only for the "
-                        "off-site entries of {}; the exchange crossing of an "
-                        "off-site term is not representable by a q-only "
-                        "vertex and is omitted (the same approximation the "
-                        "RPA ring makes; a bond-resolved treatment is tracked "
-                        "in GitHub issue #181).")
                 if getattr(self, "flex_hartree_fock", False):
-                    _msg += (" With flex_hartree_fock=true the FIRST-order exchange of "
-                             "these terms is carried by the Hartree-Fock self-energy; "
-                             "longitudinal_bond_channels=true resums the crossing.")
+                    _msg = ("FLEX calc_scheme='general' with flex_hartree_fock=true: the "
+                            "off-site entries of {} enter the fluctuation vertex through "
+                            "their Hartree (density-slot) part V(q); their first-order "
+                            "exchange is carried by the Hartree-Fock self-energy, and "
+                            "their exchange crossing beyond first order is resummed only "
+                            "with longitudinal_bond_channels=true.")
+                else:
+                    _msg = ("FLEX calc_scheme='general': proceeding with the "
+                            "Hartree (density-slot) vertex V(q) only for the "
+                            "off-site entries of {}; the exchange crossing of an "
+                            "off-site term is not representable by a q-only "
+                            "vertex and is omitted (the same approximation the "
+                            "RPA ring makes; a bond-resolved treatment is tracked "
+                            "in GitHub issue #181).")
                 logger.warning(_msg.format(", ".join(sorted(offsite_used))))
 
             no = self.norb

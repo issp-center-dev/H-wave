@@ -206,12 +206,12 @@ class TestG5UHFkFixedPoint(unittest.TestCase):
         from hwave.solver import hartree_fock as hf
         heff = hf.heff_eigenpairs(np.asarray(s.H0_k)[0], gi["sigma_static"][0, 0])
         dens = hf.equal_time_density(gi["green"], heff, s.mu, 1.0 / 2.0, (4, 4, 1))
-        np.testing.assert_allclose(G[:, 0, :, 0, :], dens.rho_r, atol=1e-8)
-        np.testing.assert_allclose(G[:, 1, :, 1, :], dens.rho_r, atol=1e-8)
+        np.testing.assert_allclose(G[:, 0, :, 0, :], dens.rho_r, rtol=0, atol=1e-8)
+        np.testing.assert_allclose(G[:, 1, :, 1, :], dens.rho_r, rtol=0, atol=1e-8)
         self.assertLess(np.abs(G[:, 0, :, 1, :]).max(), 1e-10)
         h_uhf = np.asarray(u.ham).reshape(nvol, 2, norb, 2, norb)[:, 0, :, 0, :]
         h_flex = np.asarray(s.H0_k)[0] + gi["sigma_static"][0, 0]
-        np.testing.assert_allclose(h_flex, h_uhf, atol=1e-8)
+        np.testing.assert_allclose(h_flex, h_uhf, rtol=0, atol=1e-8)
 
 
 if __name__ == "__main__":

@@ -73,14 +73,14 @@ class TestDressAndBuildW(unittest.TestCase):
                 W_ref = W_ref + W2
                 np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
                 np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], rtol=0, atol=1e-14)
-                np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], atol=1e-12)
-                np.testing.assert_allclose(res.collapse_c, chi_c[:, :, :nd, :nd], atol=1e-12)
-                np.testing.assert_allclose(res.static_s, chi_s[nmat // 2], atol=1e-12)
-                np.testing.assert_allclose(res.static_c, chi_c[nmat // 2], atol=1e-12)
+                np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], rtol=0, atol=1e-12)
+                np.testing.assert_allclose(res.collapse_c, chi_c[:, :, :nd, :nd], rtol=0, atol=1e-12)
+                np.testing.assert_allclose(res.static_s, chi_s[nmat // 2], rtol=0, atol=1e-12)
+                np.testing.assert_allclose(res.static_c, chi_c[nmat // 2], rtol=0, atol=1e-12)
                 self.assertTrue(res.static_s.flags.owndata)
                 self.assertGreater(res.cond_min_s, 0.0)
                 if output_full:
-                    np.testing.assert_allclose(store.get_freq_batch("chi_s_w", 0, nmat), chi_s, atol=1e-12)
+                    np.testing.assert_allclose(store.get_freq_batch("chi_s_w", 0, nmat), chi_s, rtol=0, atol=1e-12)
                     np.testing.assert_allclose(store.get_freq_batch("chi_s_w", nmat // 2, nmat // 2 + 1)[0],
                                                res.static_s, atol=0)
                 else:
