@@ -185,5 +185,22 @@ class TestMeanFieldSeed(unittest.TestCase):
             np.testing.assert_array_equal(info["sigma_init"], f.sigma)
 
 
+class TestSplitTailDiagnostic(unittest.TestCase):
+
+    def test_ratio_and_window_rule(self):
+        from hwave.solver.flex_hf import split_tail_diagnostic
+        nmat, nvol = 64, 3
+        wn = (2 * np.arange(nmat) + 1 - nmat) * np.pi
+        odd = (1.0 / (1j * wn))[None, :, None, None, None] * np.ones((1, 1, nvol, 1, 1))
+        self.assertIsNone(split_tail_diagnostic(odd[:, :31], 31))
+        r, emax = split_tail_diagnostic(odd, nmat)
+        self.assertLess(emax, 1e-14)
+        r, emax = split_tail_diagnostic(odd + 0.3, nmat)
+        self.assertGreater(r, 0.1)
+        self.assertAlmostEqual(emax, 0.3, places=12)
+        r, emax = split_tail_diagnostic(odd + 1e-9, nmat)
+        self.assertLess(emax, 1e-8)
+
+
 if __name__ == "__main__":
     unittest.main()

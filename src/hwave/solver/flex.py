@@ -418,6 +418,15 @@ class FLEX(RPA):
                         "when resuming from a Phase B sigma archive, or fold the mean field "
                         "into the archive's sigma_static with hwave_sigma_split".format(env.file_name))
                 static, fluct = flex_hf.validate_split_seed(env, expected_shape)
+                diag = flex_hf.split_tail_diagnostic(fluct, nmat)
+                if diag is not None and diag[0] > 0.1 and diag[1] > 1e-8:
+                    logger.warning(
+                        "sigma_init '{}': sigma_fluct carries a frequency-independent "
+                        "remainder on the outer Matsubara window (pair-even/pair-odd ratio "
+                        "{:.3e}, max |even| {:.3e}); a constant part in sigma_fluct degrades "
+                        "the density truncation from O(Nmat^-3) towards O(Nmat^-1). Move the "
+                        "static part into sigma_static (e.g. with hwave_sigma_split "
+                        "--static).".format(env.file_name, diag[0], diag[1]))
             else:
                 raise ValueError(
                     "sigma_init '{}' carries sigma_convention={!r}; a run with "
@@ -731,9 +740,10 @@ class FLEX(RPA):
     def _read_sigma(self, file_name):
         """Load a saved self-energy array from a FLEX ``sigma.npz``.
 
-        Returns ``(sigma, ir_meta)``: ``ir_meta`` is ``None`` for uniform
-        (densified) files, or the node metadata of an IR-native file
-        (Stage 3; ``read_init`` decides whether this run can consume it).
+        Returns a :class:`hwave.solver.flex_hf.SigmaSeedEnvelope` (the
+        arrays, the ``sigma_convention`` marker, and ``ir_meta``: ``None``
+        for uniform (densified) files, or the node metadata of an IR-native
+        file -- Stage 3; ``read_init`` decides whether this run can consume it).
 
         Validates the recorded ``cell_shape`` against this run's lattice:
         ``Nvol = Lx*Ly*Lz`` is a single dimension of the sigma array, so an
@@ -796,6 +806,13 @@ class FLEX(RPA):
             self._path_to_output = path_to_output
             if getattr(self, "_info_outputfile", None) is not None:
                 self.validate_output_paths(path_to_output=path_to_output)
+            try:
+                return self._solve_restoring_host_attrs(green_info, path_to_output)
+            except BaseException:
+                # spec 3.5: after a failed solve nothing is produced -- every
+                # solve-produced member and solver-owned cache is dropped
+                self._phase_b_reset(green_info)
+                raise
         return self._solve_restoring_host_attrs(green_info, path_to_output)
 
     def _solve_impl(self, green_info, path_to_output):
@@ -1276,20 +1293,24 @@ class FLEX(RPA):
                              "(spin-diagonal H0)")
         self._phase_b_seed = self._assemble_static_seed(green_info, expected)
         self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
+        split = self._validate_phase_b_interactions()
         if self.longitudinal_bond_channels:
-            self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs()
+            self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs(split)
             self._bond_view = bond_channels.BondSetView(self._bond_topo)
             env = green_info.get("sigma_init_envelope")
             split_seed = env is not None and getattr(env, "marker", None) == "split"
             self._bond_est = self._bond_memory_preflight(self._bond_topo, split_seed)
             self._bond_nb = int(self._bond_est["nb"])
 
-    def _validate_bond_gate_prereqs(self):
-        """Interaction admissibility and topology of the FLEX bond gate
-        (spec 4.1 steps 6-7; the RPA gate's rules). Returns ``(topo, split)``."""
+    def _validate_phase_b_interactions(self):
+        """Interaction admissibility shared by flex_hartree_fock and the
+        bond gate (spec 2.2 / 4.1 step 6): off-site Exchange and PairHop are
+        refused, and every off-site coefficient of every type (PairLift
+        included) must be real. Returns the pre-fold locality split."""
         from hwave.solver import bond_channels
         from hwave.solver.offsite import split_locality
-        g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
+        g = ("[mode.param] longitudinal_bond_channels=true (FLEX)"
+             if self.longitudinal_bond_channels else "[mode.param] flex_hartree_fock=true")
         if getattr(self.ham_info, "enable_spin_orbital", False):
             raise ValueError(g + " does not support enable_spin_orbital.")
         split = split_locality(self.ham_info, self.lattice)
@@ -1309,19 +1330,26 @@ class FLEX(RPA):
                     "orbvec={} -- the declared displacement and the zero-based orbital "
                     "pair): {}. Remove those entries from the interaction input."
                     .format(itype, tuple(irvec), tuple(orbvec), reason))
-        if "PairLift" in split.offsite_types:
+        if "PairLift" in split.offsite_types and self.longitudinal_bond_channels:
             logger.info(g + ": off-site PairLift declarations carry no longitudinal "
-                        "(spin/charge) content and are ignored by the bond channels.")
+                        "(spin/charge) content and are ignored by the bond channels "
+                        "(they reach the Hartree-Fock kernel, where they vanish on the "
+                        "paramagnetic density).")
         for itype, tbl in split.offsite_prefold_tbl.items():
-            if itype not in bond_channels._LONGITUDINAL_ACTIVE_TYPES:
-                continue
             for (irvec, orbvec), v in tbl.items():
                 if not bond_channels.is_real_coefficient(v):
                     raise ValueError(
                         g + ": off-site {} coefficients must be real in this version "
                         "(irvec={}, orbvec={} carries {}); the imaginary direction is not "
-                        "represented by the bond-diagonal Fock rule."
+                        "represented by the Hartree-Fock term or the bond-diagonal Fock rule."
                         .format(itype, tuple(irvec), tuple(orbvec), complex(v)))
+        return split
+
+    def _validate_bond_gate_prereqs(self, split):
+        """Topology of the FLEX bond gate (spec 4.1 step 7) on the validated
+        split. Returns ``(topo, split)``."""
+        from hwave.solver import bond_channels
+        g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
         interactions = CaseInsensitiveDict(split.whole_tbl)
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
@@ -1346,7 +1374,8 @@ class FLEX(RPA):
         included), the batch selection and the operation warnings."""
         from hwave.solver import flex_bond
         B = int(np.asarray(topo.delta_r).shape[0])
-        n_types = len(getattr(self._hf_tables, "inter_table", {}) or {})
+        n_types = sum(1 for t in (getattr(self._hf_tables, "inter_table", {}) or {}).values()
+                      if t is not None)
         est = flex_bond.estimate_bond_memory(
             nmat=self.nmat, nvol=self.lattice.nvol, norb=self.norb, B=B,
             depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
@@ -1438,6 +1467,8 @@ class FLEX(RPA):
         shape = tuple(int(x) for x in self.lattice.shape)
         static0, fluct0 = self._phase_b_seed
         state = SplitState(static=np.array(static0, copy=True), fluct=np.array(fluct0, copy=True))
+        del static0, fluct0
+        del self._phase_b_seed            # the working state owns the seed from here on (spec 3.6)
         if np.any(state.static != 0) or np.any(state.fluct != 0):
             logger.info("FLEX: warm-starting the Phase B loop from the seed")
         mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
@@ -1561,6 +1592,15 @@ class FLEX(RPA):
                     self.mu = mu
                 green_kw = self._calc_dressed_green(beta, mu, sigma)
                 dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+                if self.calc_mu:
+                    dev = abs(dens.n_per_spin - Ncond_target)
+                    if dev > 1e-10 * max(1.0, abs(Ncond_target)):
+                        raise ValueError(
+                            "flex_hartree_fock: the final-state chemical potential search closed "
+                            "on N/2 = {:.12g} but the equal-time density gives {:.12g} (residual "
+                            "{:.3e} > tolerance {:.3e})".format(
+                                Ncond_target, dens.n_per_spin, dev,
+                                1e-10 * max(1.0, abs(Ncond_target))))
                 self.hf_density_error_state = abs(
                     2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
                 physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
@@ -2818,10 +2858,16 @@ class FLEX(RPA):
             # but warn so a configured PairLift term is not silently ignored --
             # matching the Eliashberg-path wording.
             if "PairLift" in self.ham_info.param_ham:
-                logger.warning(
-                    "PairLift is configured but does not contribute to the S/C "
-                    "pairing vertex (S=C=0); it is ignored in the general FLEX "
-                    "calculation.")
+                if getattr(self, "flex_hartree_fock", False):
+                    logger.warning(
+                        "PairLift is configured but does not contribute to the S/C "
+                        "pairing vertex (S=C=0); it enters only the Hartree-Fock term, "
+                        "where it vanishes on the paramagnetic density.")
+                else:
+                    logger.warning(
+                        "PairLift is configured but does not contribute to the S/C "
+                        "pairing vertex (S=C=0); it is ignored in the general FLEX "
+                        "calculation.")
 
             # OFF-SITE entries (#181, Tier 1). The interaction is split by
             # PRE-fold locality and the two parts reach the S/C matrices
@@ -2947,15 +2993,18 @@ class FLEX(RPA):
                             if t in _OFFSITE_DENSITY_TYPES]
 
             if offsite_used:
-                logger.warning(
-                    "FLEX calc_scheme='general': proceeding with the "
-                    "Hartree (density-slot) vertex V(q) only for the "
-                    "off-site entries of {}; the exchange crossing of an "
-                    "off-site term is not representable by a q-only "
-                    "vertex and is omitted (the same approximation the "
-                    "RPA ring makes; a bond-resolved treatment is tracked "
-                    "in GitHub issue #181).".format(
-                        ", ".join(sorted(offsite_used))))
+                _msg = ("FLEX calc_scheme='general': proceeding with the "
+                        "Hartree (density-slot) vertex V(q) only for the "
+                        "off-site entries of {}; the exchange crossing of an "
+                        "off-site term is not representable by a q-only "
+                        "vertex and is omitted (the same approximation the "
+                        "RPA ring makes; a bond-resolved treatment is tracked "
+                        "in GitHub issue #181).")
+                if getattr(self, "flex_hartree_fock", False):
+                    _msg += (" With flex_hartree_fock=true the FIRST-order exchange of "
+                             "these terms is carried by the Hartree-Fock self-energy; "
+                             "longitudinal_bond_channels=true resums the crossing.")
+                logger.warning(_msg.format(", ".join(sorted(offsite_used))))
 
             no = self.norb
             nx, ny, nz = self.lattice.shape

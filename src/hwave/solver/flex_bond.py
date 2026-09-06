@@ -88,10 +88,14 @@ def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, wo
     """Fill ``store['chibar']`` pair by pair from ``bubble._iter_bond_dynamic``
     (spec 3.1). ``green_scf`` is the TAIL-SUBTRACTED single-block Green
     function the general bubble consumes; ``green0_tail`` its tail."""
+    from .hartree_fock import NonFiniteError
     for (alpha, beta_), block in _bubble._iter_bond_dynamic(
             green_scf, green0_tail, beta, view, spatial_shape=tuple(spatial_shape),
             workers=workers):
-        store.put_pair("chibar", alpha, beta_, _bk.to_host(block))
+        block = _bk.to_host(block)
+        if not np.all(np.isfinite(block)):
+            raise NonFiniteError("non-finite bond bubble block ({}, {})".format(alpha, beta_))
+        store.put_pair("chibar", alpha, beta_, block)
         del block
 
 

@@ -101,5 +101,31 @@ class TestSplitMixing(unittest.TestCase):
             self.assertEqual(pc.update(1e-8, 1e-8, 1e-8), expect)
 
 
+class TestResidualDefinitions(unittest.TestCase):
+
+    def test_res_sigma_equals_the_legacy_convergence_rule(self):
+        """res_sigma is FLEX._calc_convergence's diff / ||sigma_new|| with its
+        1e-30 rule: a cold 0 -> nonzero map gives 1, a near-zero new total
+        the bare difference."""
+        from hwave.solver.flex_mixing import SplitState, residuals
+        rng = np.random.default_rng(0)
+        nmat, nvol, norb = 4, 2, 2
+        z = np.zeros((1, nmat, nvol, norb, norb), complex)
+        zs = np.zeros((1, 1, nvol, norb, norb), complex)
+        x = rng.normal(size=z.shape) + 1j * rng.normal(size=z.shape)
+        s0 = SplitState(static=zs, fluct=z)
+        n1 = SplitState(static=zs, fluct=x)
+        G = np.ones_like(z)
+        self.assertAlmostEqual(residuals(s0, n1, G, G)[0], 1.0, places=14)
+        s1 = SplitState(static=zs, fluct=x)
+        n2 = SplitState(static=zs, fluct=1e-40 * x)
+        diff = float(np.linalg.norm((n2.total() - s1.total()).ravel()))
+        self.assertAlmostEqual(residuals(s1, n2, G, G)[0], diff, places=14)
+        n3 = SplitState(static=zs, fluct=1.5 * x)
+        self.assertAlmostEqual(residuals(s1, n3, G, G)[0],
+                               float(np.linalg.norm((0.5 * x).ravel())) / float(np.linalg.norm((1.5 * x).ravel())),
+                               places=14)
+
+
 if __name__ == "__main__":
     unittest.main()

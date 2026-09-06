@@ -188,7 +188,7 @@ def build_interaction_tables(param_ham, norb, shape):
 
 
 def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
-                  include_fock):
+                  include_fock, debug=None):
     """Add the Hartree (+ Fock) mean-field terms of every type onto ``out``
     IN PLACE (UHFk's ``_make_ham`` interaction loop, normal mode, verbatim
     expressions and order). ``rho_so_r`` is the real-space equal-time
@@ -205,6 +205,8 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
     ham = out
     for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
         if inter_table[type] is not None:
+            if debug is not None:
+                debug(type)
             jab_r = inter_table[type].reshape(nvol, norb_inter, norb_inter)
             spin = spin_table[type]
             hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
@@ -219,6 +221,8 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
                 ham -= hh5.reshape(nvol, nd, nd)
     for type in ['PairHop']:
         if inter_table[type] is not None:
+            if debug is not None:
+                debug(type)
             jab_r = inter_table[type].reshape(nvol, norb_inter, norb_inter)
             spin = spin_table[type]
             if include_fock:

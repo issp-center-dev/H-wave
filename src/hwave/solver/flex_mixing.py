@@ -112,8 +112,11 @@ class StackedAndersonMixer:
 def residuals(state, new, G_state, G_new, eps_den=1e-300):
     """``(res_sigma, res_G, res_component)`` of spec 5.6, all before mixing."""
     tot, tot_new = state.total(), new.total()
-    res_sigma = float(np.linalg.norm((tot_new - tot).ravel())
-                      / max(float(np.linalg.norm(tot.ravel())), eps_den))
+    # res_sigma: exactly FLEX._calc_convergence (diff / ||sigma_new||, the
+    # bare difference when ||sigma_new|| < 1e-30)
+    diff = float(np.linalg.norm((tot_new - tot).ravel()))
+    norm_new = float(np.linalg.norm(tot_new.ravel()))
+    res_sigma = diff if norm_new < 1.0e-30 else diff / norm_new
     res_G = float(np.linalg.norm((np.asarray(G_new) - np.asarray(G_state)).ravel())
                   / max(float(np.linalg.norm(np.asarray(G_state).ravel())), eps_den))
     nmat = state.nmat

@@ -112,7 +112,7 @@ class TestStandaloneHF(unittest.TestCase):
         self.assertEqual(len(seen), 2)
         self.assertEqual(np.abs(seen[0]["static_new"]).max(), 0.0)              # the map is zero
         np.testing.assert_allclose(np.asarray(gi["sigma_static"])[0, 0],
-                                   0.75 ** 2 * np.broadcast_to(shift, (nvol, norb, norb)), atol=1e-12)
+                                   0.75 ** 2 * np.broadcast_to(shift, (nvol, norb, norb)), rtol=0, atol=1e-12)
         self.assertIn("trans_mod", gi)                                          # input preserved
 
     def test_reset_set_iteration_max_zero_and_provenance(self):

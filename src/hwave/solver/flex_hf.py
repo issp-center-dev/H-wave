@@ -108,6 +108,27 @@ def make_seed_envelope(data, file_name, sigma, ir_meta):
                              marker=marker, ir_meta=ir_meta, file_name=str(file_name))
 
 
+def split_tail_diagnostic(fluct, nmat):
+    """D11 tail check of a split seed: on the outer 25 % of the positive
+    Matsubara window, the pair-even part ``e(n) = [s(n) + s(-n)]/2`` (zero for a
+    pure ``1/iw`` tail, constant for a frequency-independent remainder) is
+    compared with the pair-odd part ``o(n)``. Returns ``(r, e_max)`` with
+    ``r = max_n |e(n)| / max(max_n |o(n)|, 1e-300)``, or ``None`` when
+    ``nmat < 32`` (no window)."""
+    nmat = int(nmat)
+    if nmat < 32:
+        return None
+    f = np.asarray(fluct)
+    n_outer = max(nmat // 8, 1)
+    hi = np.arange(nmat - n_outer, nmat)
+    lo = nmat - 1 - hi
+    e = 0.5 * (f[:, hi] + f[:, lo])
+    o = 0.5 * (f[:, hi] - f[:, lo])
+    e_max = float(np.max(np.abs(e))) if e.size else 0.0
+    o_max = float(np.max(np.abs(o))) if o.size else 0.0
+    return e_max / max(o_max, 1e-300), e_max
+
+
 def validate_split_seed(env, expected_shape, *, sum_tol=1e-12, herm_tol=1e-10):
     """Semantic validation of a ``"split"`` seed (spec 2.3): marker, exact
     shapes, finiteness, singleton frequency axis of ``sigma_static``, the
@@ -274,6 +295,9 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
         raise ValueError("--bare-transfer is required with --uhfk-trans-mod and accepted only with it")
     if uhfk_spin_major and static_path is None:
         raise ValueError("--uhfk-spin-major applies to --static only")
+    out_path = str(out_path)
+    if not out_path.endswith(".npz"):
+        out_path += ".npz"          # numpy.savez appends it; check and report the real name
     if os.path.exists(out_path) and not force:
         raise FileExistsError("output '{}' exists; pass --force to overwrite".format(out_path))
     total = np.load(total_path)
@@ -287,6 +311,8 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     if sigma.ndim != 5 or sigma.shape[0] != 1 or sigma.shape[-1] != sigma.shape[-2]:
         raise ValueError("'{}': sigma must be rank 5 (1, nmat, nvol, norb, norb), got {}".format(
             total_path, sigma.shape))
+    if not np.all(np.isfinite(sigma)):
+        raise ValueError("'{}': sigma is not finite".format(total_path))
     _, nmat, nvol, norb, _ = sigma.shape
     if "cell_shape" in total:
         cs = tuple(int(x) for x in total["cell_shape"])
@@ -307,13 +333,19 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     if not ok:
         raise ValueError("the static correction is not Hermitian (relative deviation {:.3e})".format(err))
     fluct = sigma - static
+    if not np.all(np.isfinite(fluct)):
+        raise ValueError("the fluctuation part sigma - sigma_static is not finite")
+    # the solver's own seed validation, IN MEMORY, before anything is written
+    env = SigmaSeedEnvelope(sigma=_readonly(sigma), sigma_static=_readonly(static),
+                            sigma_fluct=_readonly(fluct), marker="split", ir_meta=None,
+                            file_name=out_path)
+    validate_split_seed(env, sigma.shape)
     members = {k: total[k] for k in total.files if k not in _SPLIT_FIELDS and k != "sigma"}
     members.update(sigma=sigma, sigma_convention=np.str_("split"), sigma_static=static,
                    sigma_fluct=fluct)
     np.savez(out_path, **members)
-    # validate what was written through the solver's own seed validation
+    # read-back check of the written archive
     data = np.load(out_path)
-    env = make_seed_envelope(data, out_path, data["sigma"], None)
-    validate_split_seed(env, sigma.shape)
+    validate_split_seed(make_seed_envelope(data, out_path, data["sigma"], None), sigma.shape)
     return dict(out=out_path, nmat=nmat, nvol=nvol, norb=norb,
                 static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))))

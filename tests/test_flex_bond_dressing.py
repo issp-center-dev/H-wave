@@ -72,7 +72,7 @@ class TestDressAndBuildW(unittest.TestCase):
                 W2[:, :, nd:, :nd] = 0.25 * (A + Bc)[:, :, nd:, :nd]
                 W_ref = W_ref + W2
                 np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
-                np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], atol=1e-14)
+                np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], rtol=0, atol=1e-14)
                 np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], atol=1e-12)
                 np.testing.assert_allclose(res.collapse_c, chi_c[:, :, :nd, :nd], atol=1e-12)
                 np.testing.assert_allclose(res.static_s, chi_s[nmat // 2], atol=1e-12)

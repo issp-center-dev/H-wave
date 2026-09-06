@@ -1369,7 +1369,7 @@ class UHFk(solver_base):
             # with the original expressions (bit-identical; #181 Phase B)
             hartree_fock.accumulate_hf(
                 ham, gab_r, self.inter_table, self.spin_table, self.shape,
-                include_fock=self.iflag_fock)
+                include_fock=self.iflag_fock, debug=logger.debug)
         else:
             for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
                 if self.inter_table[type] is not None:

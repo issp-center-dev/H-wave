@@ -340,5 +340,64 @@ class TestOutputs(unittest.TestCase):
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
 
+class TestFailureClearing(unittest.TestCase):
+
+    def test_caches_and_seed_are_dropped_on_every_failure(self):
+        from hwave.solver import flex_bond
+        attrs = ("_phase_b_seed", "_hf_tables", "_bond_topo", "_bond_split", "_bond_view",
+                 "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on", "_bond_est", "_bond_last")
+        with tempfile.TemporaryDirectory() as out:
+            # preflight failure (no declared shell)
+            s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
+            with self.assertRaises(ValueError):
+                s.solve(r.get_param("green"), out)
+            for a in attrs:
+                self.assertFalse(hasattr(s, a), a)
+            # mid-loop failure in the transport
+            s, r = _flex({"IterationMax": 2})
+            gi = r.get_param("green")
+            with mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                   side_effect=RuntimeError("injected")):
+                with self.assertRaises(RuntimeError):
+                    s.solve(gi, out)
+            for a in attrs:
+                self.assertFalse(hasattr(s, a), a)
+            self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
+            # the seed is gone once the loop runs (a successful run)
+            s, r = _flex({"IterationMax": 1})
+            s.solve(r.get_param("green"), out)
+            self.assertFalse(hasattr(s, "_phase_b_seed"))
+
+
+class TestStandaloneHFAdmissibility(unittest.TestCase):
+
+    def test_complex_offsite_coefficient_and_offsite_exchange_refused_at_preflight(self):
+        with tempfile.TemporaryDirectory() as inp:
+            for f in ("geom.dat", "transfer.dat"):
+                shutil.copy(os.path.join(_IN2, f), inp)
+            lines = open(os.path.join(_IN2, "coulombinter.dat")).read().splitlines()
+            out = lines[:4]
+            for ln in lines[4:]:
+                p = ln.split()
+                if p[:3] == ["0", "1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "0.2"
+                if p[:3] == ["0", "-1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "-0.2"
+                out.append("  ".join(p))
+            open(os.path.join(inp, "pairlift.dat"), "w").write("\n".join(out).replace("CoulombInter", "PairLift") + "\n")
+            open(os.path.join(inp, "coulombinter.dat"), "w").write("\n".join(out) + "\n")
+            shutil.copy(os.path.join(_IN2, "coulombinter.dat"), os.path.join(inp, "coulombinter_real.dat"))
+            boom = mock.Mock(side_effect=RuntimeError("expensive step reached"))
+            for inter in ({"CoulombInter": "coulombinter.dat"},
+                          {"CoulombInter": "coulombinter_real.dat", "PairLift": "pairlift.dat"},
+                          {"Exchange": "coulombinter_real.dat"}):
+                s, r = _flex(path=inp, inter=inter, gate=False)
+                with mock.patch.object(type(s), "_calc_epsilon_k", boom), \
+                        tempfile.TemporaryDirectory() as o:
+                    with self.assertRaises(ValueError) as cm:
+                        s.solve(r.get_param("green"), o)
+                self.assertIn("flex_hartree_fock", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

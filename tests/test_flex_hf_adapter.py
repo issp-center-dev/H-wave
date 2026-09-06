@@ -56,7 +56,7 @@ class TestHfAdapter(unittest.TestCase):
         from hwave.solver import flex_hf
         tabs = flex_hf.build_flex_hf_tables(_KANAMORI, self.norb, self.shape)
         sig = flex_hf.hf_map(self.rho, tabs, self.shape, self.norb)
-        np.testing.assert_allclose(sig, np.conj(np.swapaxes(sig, -1, -2)), atol=1e-12)
+        np.testing.assert_allclose(sig, np.conj(np.swapaxes(sig, -1, -2)), rtol=0, atol=1e-12)
         bad = self.rho.copy(); bad[:, 0, 1] += 0.3                # breaks rho(r) = conj(rho(-r))^T
         with self.assertRaises(ValueError):
             flex_hf.hf_map(bad, tabs, self.shape, self.norb)

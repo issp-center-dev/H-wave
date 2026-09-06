@@ -200,5 +200,35 @@ class TestSigmaSplitCLI(unittest.TestCase):
         self.assertFalse(os.path.exists(self._out("y.npz")))
 
 
+class TestSigmaSplitRefusalsWriteNothing(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.f = _Files(cls._tmp.name)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_output_name_without_suffix(self):
+        out = os.path.join(self.f.d, "noext")
+        self.assertEqual(_run([self.f.total, out, "--zero-static"]), 0)
+        self.assertTrue(os.path.exists(out + ".npz"))
+        self.assertFalse(os.path.exists(out))
+        self.assertEqual(_run([self.f.total, out, "--zero-static"]), 1)          # overwrite refused
+        self.assertEqual(_run([self.f.total, out + ".npz", "--zero-static"]), 1)
+        self.assertEqual(_run([self.f.total, out, "--zero-static", "--force"]), 0)
+
+    def test_non_finite_total_writes_nothing(self):
+        total = np.load(self.f.total)
+        bad = os.path.join(self.f.d, "nan_total.npz")
+        sig = np.array(total["sigma"]); sig[0, 0, 0, 0, 0] = np.nan
+        np.savez(bad, **{k: (sig if k == "sigma" else total[k]) for k in total.files})
+        out = os.path.join(self.f.d, "nan_out.npz")
+        self.assertEqual(_run([bad, out, "--zero-static"]), 1)
+        self.assertFalse(os.path.exists(out))
+
+
 if __name__ == "__main__":
     unittest.main()
