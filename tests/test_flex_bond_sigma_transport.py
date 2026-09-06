@@ -47,11 +47,39 @@ class TestTransport(unittest.TestCase):
         ref = s._calc_self_energy_general(G, W, beta)
         np.testing.assert_array_equal(sig, ref)
 
+    def test_hermitian_consistency_of_the_transport(self):
+        """Sigma(k, iw)^dagger == Sigma(k, -iw) to round-off for a W with the
+        bubble's conjugation symmetry W(q, i nu)^dagger = W(q, -i nu); the
+        mixed-leg phase assignment breaks this at O(1e-3)."""
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.flex_bond import BondBlockStore, calc_self_energy_bond
+        s, _ = _flex()
+        s._calc_epsilon_k({})
+        nmat, nvol, norb, nd = s.nmat, s.lattice.nvol, s.norb, s.norb ** 2
+        decl = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.3, ((-1, 0, 0), (1, 0)): 0.3,
+                                 ((0, 1, 0), (0, 0)): 0.2, ((0, -1, 0), (0, 0)): 0.2}}
+        topo = bc.resolve_bond_topology(decl, np.eye(3), norb, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+        view = bc.BondSetView(topo)
+        ND = view.n_channels * nd
+        rng = np.random.default_rng(7)
+        X = rng.normal(size=(nmat, nvol, ND, ND)) + 1j * rng.normal(size=(nmat, nvol, ND, ND))
+        # impose W(q, l)^dagger = W(q, nmat - l) (l -> -l on the centred grid)
+        W = np.empty_like(X)
+        for l in range(nmat):
+            lm = (nmat - l) % nmat
+            W[l] = 0.5 * (X[l] + X[lm].conj().swapaxes(-1, -2))
+        G = _green(s, 0.5)
+        with BondBlockStore(nmat, nvol, ND, nd, ("W",)) as store:
+            store.put_freq_batch("W", 0, nmat, W)
+            sig = calc_self_energy_bond(store, G, 0.5, view, (4, 4, 1), norb, 1)[0]
+        dev = np.max(np.abs(sig.conj().swapaxes(-1, -2) - sig[::-1])) / np.max(np.abs(sig))
+        self.assertLess(dev, 1e-12)
+
     def test_g1_direct_sum_oracle(self):
         """4x4, norb = 2, nmat = 8, B = 5 (declared +-x, +-y), complex hopping,
-        a random non-symmetric W: the (k, q, tau) oracle with explicit
-        phases e^{+ik.R_alpha} e^{-i(k-q).R_beta} and k - q reduced modulo
-        the mesh equals the production transport."""
+        a random non-symmetric W: the (k, q, tau) oracle with the explicit
+        bond form factor e^{+i(k-q).(R_alpha - R_beta)} on the internal leg
+        and k - q reduced modulo the mesh equals the production transport."""
         from hwave.solver import bond_channels as bc
         from hwave.solver.flex_bond import BondBlockStore, calc_self_energy_bond
         from hwave.solver import matsubara as _ms
@@ -87,7 +115,7 @@ class TestTransport(unittest.TestCase):
                 kk = kvec[k]; kq = kvec[kmq]
                 for a_ in range(B):
                     for b_ in range(B):
-                        ph = np.exp(1j * kk @ R[a_]) * np.exp(-1j * kq @ R[b_])
+                        ph = np.exp(1j * kq @ (R[a_] - R[b_]))
                         Wblk = W_t[:, q, a_, :, b_, :].reshape(nmat, norb, norb, norb, norb)   # (t, c, a, d, b)
                         sig_t[:, k] += ph * np.einsum('tcadb,tcd->tab', Wblk, G_t[:, kmq])
         sig_t /= nvol
@@ -136,7 +164,7 @@ class TestFrequencyOracleSanity(unittest.TestCase):
                 kmq = idx[(ik[0] - iq[0]) % nx, (ik[1] - iq[1]) % ny]
                 for a_ in range(B):
                     for b_ in range(B):
-                        ph = np.exp(1j * kvec[k] @ R[a_]) * np.exp(-1j * kvec[kmq] @ R[b_])
+                        ph = np.exp(1j * kvec[kmq] @ (R[a_] - R[b_]))
                         for n in range(nmat):
                             for l in range(nmat):
                                 m = n - l + nmat // 2          # w_n - nu_l -> index n - l + nmat/2

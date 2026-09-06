@@ -148,6 +148,12 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
+    # --- tests/test_flex_bond_memory.py -- #181 Phase B memory validation --
+    ("test_flex_bond_memory", "TestSubprocessRSS",
+     "test_subprocess_rss_below_estimate_plus_allowance",
+     "bond-resolved FLEX peak RSS of a subprocess vs the preflight estimate "
+     "plus the calibrated interpreter baseline (6x6, Nmat=64, depth 8, "
+     "full output)"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

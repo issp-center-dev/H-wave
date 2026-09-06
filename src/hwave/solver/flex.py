@@ -15,6 +15,7 @@ The solver inherits from the RPA class to reuse infrastructure for:
 from __future__ import annotations
 from typing import Optional
 
+import contextlib
 import os
 import numpy as np
 from requests.structures import CaseInsensitiveDict
@@ -791,6 +792,10 @@ class FLEX(RPA):
         # _inflate_chi0q_and_ham_general is emitted once per solve, not
         # once per object.
         self._myo_sc_cache = None
+        if getattr(self, "_phase_b_active", False):
+            self._path_to_output = path_to_output
+            if getattr(self, "_info_outputfile", None) is not None:
+                self.validate_output_paths(path_to_output=path_to_output)
         return self._solve_restoring_host_attrs(green_info, path_to_output)
 
     def _solve_impl(self, green_info, path_to_output):
@@ -830,6 +835,7 @@ class FLEX(RPA):
             # initial self-energy (spec 2.3, D7), so trans_mod/green_init are
             # withheld from the H0 path (the inputs themselves are preserved).
             self._phase_b_reset(green_info)
+            self._phase_b_preflight(green_info)
             _gi_h0 = {k: v for k, v in green_info.items()
                       if k not in ("trans_mod", "green_init")}
             self._calc_epsilon_k(_gi_h0)
@@ -1180,6 +1186,13 @@ class FLEX(RPA):
     # loop in _solve_impl is untouched.
     # ------------------------------------------------------------------
     _iteration_hook = None      # test-only callback (spec G0)
+    _phase_tracer = None        # test-only per-phase context factory (spec 3.6)
+    _info_outputfile = None     # [file.output] mapping stored by validate_output_paths
+    _path_to_output = None
+
+    def _traced(self, name):
+        tracer = getattr(self, "_phase_tracer", None)
+        return contextlib.nullcontext() if tracer is None else tracer(name)
 
     def _phase_b_reset(self, green_info):
         """Solve-entry reset by ownership (spec 3.5): every solve-produced
@@ -1197,7 +1210,8 @@ class FLEX(RPA):
                 green_info.pop(k, None)
         for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
-                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_hf_tables"):
+                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_types",
+                     "_bond_last", "_bond_est", "_bond_nb", "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
         self.scf_converged = False
@@ -1246,23 +1260,186 @@ class FLEX(RPA):
         sigma_hf = flex_hf.hf_map(dens.rho_r, self._hf_tables, shape, self.norb)
         return dens, sigma_hf[None, None], heff
 
-    def _solve_phase_b(self, green_info, beta, mu, Ncond_target, xp,
-                       green0_tail, green_tail_w, ham_orig):
-        from hwave.solver import flex_hf, hartree_fock as _hf
-        from hwave.solver.flex_mixing import (SplitState, StackedAndersonMixer,
-                                              linear_mix_pair, residuals, PassCounter)
+    def _phase_b_preflight(self, green_info):
+        """Refusal precedence steps 4-7 (spec 4.1): the copied mean-field
+        assembly and the seed (4-5), the HF tables and the interaction
+        admissibility (6), the topology and the memory preflight (7) --
+        all BEFORE H0 is diagonalised, before the backend is resolved and
+        before any expensive work."""
+        from hwave.solver import flex_hf, bond_channels
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         shape = tuple(int(x) for x in self.lattice.shape)
         expected = (1, nmat, nvol, norb, norb)
-        self._hf_tables = flex_hf.build_flex_hf_tables(
-            self.ham_info.param_ham, norb, shape)
-        static0, fluct0 = self._assemble_static_seed(green_info, expected)
-        state = SplitState(static=static0, fluct=fluct0)
+        if self.ham_info.ham_extern_q is not None:
+            raise ValueError("flex_hartree_fock=true does not support an external field "
+                             "(spin-diagonal H0)")
+        self._phase_b_seed = self._assemble_static_seed(green_info, expected)
+        self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
+        if self.longitudinal_bond_channels:
+            self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs()
+            self._bond_view = bond_channels.BondSetView(self._bond_topo)
+            env = green_info.get("sigma_init_envelope")
+            split_seed = env is not None and getattr(env, "marker", None) == "split"
+            self._bond_est = self._bond_memory_preflight(self._bond_topo, split_seed)
+            self._bond_nb = int(self._bond_est["nb"])
+
+    def _validate_bond_gate_prereqs(self):
+        """Interaction admissibility and topology of the FLEX bond gate
+        (spec 4.1 steps 6-7; the RPA gate's rules). Returns ``(topo, split)``."""
+        from hwave.solver import bond_channels
+        from hwave.solver.offsite import split_locality
+        g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
+        if getattr(self.ham_info, "enable_spin_orbital", False):
+            raise ValueError(g + " does not support enable_spin_orbital.")
+        split = split_locality(self.ham_info, self.lattice)
+        for itype in ("PairHop", "Exchange"):
+            if itype in split.offsite_types:
+                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+                if itype == "PairHop":
+                    reason = ("no local-pair particle-hole form exists for an inter-site "
+                              "pair hopping (Phase C of GitHub issue #181)")
+                else:
+                    reason = ("exact diagonalization finds no q-representable longitudinal "
+                              "content (#181 Tier 2); its bond-resolved promotion is a "
+                              "recorded follow-up, so the gate refuses it rather than "
+                              "silently dropping it")
+                raise ValueError(
+                    g + " does not support an off-site '{}' declaration (irvec={}, "
+                    "orbvec={} -- the declared displacement and the zero-based orbital "
+                    "pair): {}. Remove those entries from the interaction input."
+                    .format(itype, tuple(irvec), tuple(orbvec), reason))
+        if "PairLift" in split.offsite_types:
+            logger.info(g + ": off-site PairLift declarations carry no longitudinal "
+                        "(spin/charge) content and are ignored by the bond channels.")
+        for itype, tbl in split.offsite_prefold_tbl.items():
+            if itype not in bond_channels._LONGITUDINAL_ACTIVE_TYPES:
+                continue
+            for (irvec, orbvec), v in tbl.items():
+                if not bond_channels.is_real_coefficient(v):
+                    raise ValueError(
+                        g + ": off-site {} coefficients must be real in this version "
+                        "(irvec={}, orbvec={} carries {}); the imaginary direction is not "
+                        "represented by the bond-diagonal Fock rule."
+                        .format(itype, tuple(irvec), tuple(orbvec), complex(v)))
+        interactions = CaseInsensitiveDict(split.whole_tbl)
+        topo = bond_channels.resolve_bond_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.longitudinal_bond_max_shells,
+            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+        if int(np.asarray(topo.delta_r).shape[0]) <= 1:
+            raise ValueError(
+                g + " requires at least one declared off-site CoulombInter, Hund or Ising "
+                "shell (a declared-but-zero coefficient counts; the aggregate Coulomb "
+                "table's off-site part counts); none is present after "
+                "longitudinal_bond_max_shells truncation, so the bond channels have "
+                "nothing to represent.")
+        for t, arr in topo.coeffs.items():
+            if np.any(np.abs(np.asarray(arr).imag) > 1e-12):
+                raise ValueError(
+                    g + ": off-site {} coefficients must be real in this version (a "
+                    "complex coefficient was declared).".format(t))
+        return topo, split
+
+    def _bond_memory_preflight(self, topo, split_seed):
+        """The spec 3.6 admission estimate (absolute, ordinary FLEX arrays
+        included), the batch selection and the operation warnings."""
+        from hwave.solver import flex_bond
+        B = int(np.asarray(topo.delta_r).shape[0])
+        n_types = len(getattr(self._hf_tables, "inter_table", {}) or {})
+        est = flex_bond.estimate_bond_memory(
+            nmat=self.nmat, nvol=self.lattice.nvol, norb=self.norb, B=B,
+            depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
+            split_seed=split_seed, n_types=n_types,
+            freq_batch=self.longitudinal_bond_freq_batch,
+            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme)
+        gib = flex_bond._GIB
+        logger.info(
+            "Bond-resolved FLEX preflight (ESTIMATE): B = %d channels %s, ND = %d, nvol = %d, "
+            "Nmat = %d, frequency batch %d; persistent %.4f GiB, peak %.4f GiB = 1.25 * "
+            "(persistent + max phase row) against the cap %.4f GiB\n%s",
+            B, [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)], est["ND"],
+            est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
+            est["cap_bytes"] / gib, est["table"])
+        if est["dressing_ops"] > flex_bond._DRESSING_OPS_WARN:
+            logger.warning(
+                "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "
+                "for the two dense ND x ND solves over (Nmat, nvol) (ND = %d, nvol = %d, "
+                "Nmat = %d); this run fits the memory cap but may take very long.",
+                est["dressing_ops"], est["ND"], est["nvol"], est["nmat"])
+        if est["transport_ops"] > flex_bond._TRANSPORT_OPS_WARN:
+            logger.warning(
+                "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "
+                "for the bond self-energy transport (B = %d, Nmat = %d, nvol = %d, norb = %d); "
+                "expect long iterations.", est["transport_ops"], B, est["nmat"], est["nvol"],
+                self.norb)
+        return est
+
+    def _phase_b_active_outputs(self, info_outputfile):
+        active = [k for k in ("energy", "sigma", "green") if k in info_outputfile]
+        if self.max_iter > 0:
+            active += ["chiq_s", "chiq_c"]
+            active += [k for k in ("chi0q", "chiq") if k in info_outputfile]
+            if self.longitudinal_bond_channels and self.longitudinal_bond_output_full:
+                active.append("longitudinal_bond")
+        return tuple(active)
+
+    def validate_output_paths(self, info_outputfile=None, path_to_output=None):
+        """Refuse two output artifacts resolving to one file (spec 4.2).
+        Stores the ``[file.output]`` mapping for the solve-entry re-check;
+        a no-op for runs without flex_hartree_fock / the bond gate."""
+        from hwave.solver import flex_bond
+        if not getattr(self, "_phase_b_active", False):
+            return {}
+        if info_outputfile is None:
+            info_outputfile = getattr(self, "_info_outputfile", None)
+        if info_outputfile is None:
+            raise ValueError("validate_output_paths: no [file.output] mapping is stored on the "
+                             "solver; pass info_outputfile explicitly")
+        if path_to_output is None:
+            path_to_output = info_outputfile.get("path_to_output",
+                                                 getattr(self, "_path_to_output", None))
+        if path_to_output is None:
+            raise ValueError("validate_output_paths: path_to_output is not known; pass it "
+                             "explicitly (or a mapping carrying 'path_to_output')")
+        self._info_outputfile = info_outputfile
+        self._path_to_output = path_to_output
+        return flex_bond.resolve_output_paths(info_outputfile, path_to_output,
+                                              self._phase_b_active_outputs(info_outputfile))
+
+    def _phase_b_prepare_vertices(self):
+        """S, C on the bond basis, cached once per solve (spec 3.5)."""
+        from hwave.solver import bond_channels, hartree_fock as _hf
+        from hwave.solver.offsite import sc_matrices_from_split
+        nx, ny, nz = (int(x) for x in self.lattice.shape)
+        nvol, nd = self.lattice.nvol, self.norb ** 2
+        S0, C0 = sc_matrices_from_split(self._bond_split, bond_channels._LONGITUDINAL_ACTIVE_TYPES,
+                                        self.norb, nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        types = tuple(self._bond_topo.coeffs)
+        self._bond_types = types
+        self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types)
+        self._bond_C = bond_channels.build_sc_bond_channel(self._bond_topo, C0, "C", types=types)
+        del S0, C0
+        if not (np.all(np.isfinite(self._bond_S)) and np.all(np.isfinite(self._bond_C))):
+            raise _hf.NonFiniteError("non-finite bond vertices S/C")
+
+    def _solve_phase_b(self, green_info, beta, mu, Ncond_target, xp,
+                       green0_tail, green_tail_w, ham_orig):
+        from hwave.solver import flex_bond, hartree_fock as _hf
+        from hwave.solver.flex_mixing import (SplitState, StackedAndersonMixer,
+                                              linear_mix_pair, residuals, PassCounter)
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        nd = norb * norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        static0, fluct0 = self._phase_b_seed
+        state = SplitState(static=np.array(static0, copy=True), fluct=np.array(fluct0, copy=True))
         if np.any(state.static != 0) or np.any(state.fluct != 0):
             logger.info("FLEX: warm-starting the Phase B loop from the seed")
         mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
-        if self.mixing_scheme == "linear" and self.longitudinal_bond_channels:
+        gate = bool(self.longitudinal_bond_channels)
+        if self.mixing_scheme == "linear" and gate:
             logger.warning("longitudinal_bond_channels with mixing_scheme='linear': "
                            "linear mixing is known to mis-converge near the charge "
                            "instability; consider mixing_scheme='anderson'.")
@@ -1270,112 +1447,215 @@ class FLEX(RPA):
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
-        heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
-        for iteration in range(self.max_iter):
-            logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
-            sigma = xp.asarray(state.total())
-            if self.calc_mu:
-                mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
-                self.mu = mu
-            green_kw = self._calc_dressed_green(beta, mu, sigma)
-            dens, sigma_hf, _ = self._phase_b_density_and_hf(green_kw, state.static, mu, beta,
-                                                             Ncond_target)
-            self.hf_density_error_map = abs(2.0 * dens.n_per_spin - self.Ncond) / nvol
-            green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
-            if self.longitudinal_bond_channels:
-                chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
-                    green_kw, green_scf, green0_tail, beta, iteration + 1)
-            else:
-                chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
-                assert chi0q_raw.shape[0] == 1
-                chi0q_raw = chi0q_raw[0]
-                chi0q_out, v_eff, chi_s, chi_c = \
-                    self._flex_compute_veff_general(chi0q_raw, ham_orig)
-                sigma_fluct = self._calc_self_energy_general(green_kw, v_eff, beta)
-            new_state = SplitState(static=_bk.to_host(sigma_hf),
-                                   fluct=_bk.to_host(sigma_fluct))
-            for name, arr in (("Sigma_HF", new_state.static), ("Sigma_fluct", new_state.fluct)):
-                if not np.all(np.isfinite(arr)):
-                    raise _hf.NonFiniteError("non-finite {} at iteration {}".format(name, iteration + 1))
-            g_new = self._calc_dressed_green(beta, mu, xp.asarray(new_state.total()))
-            res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
-                                                   _bk.to_host(g_new))
-            del g_new
-            self.map_iteration = iteration + 1
-            n_iter_done = iteration + 1
-            self.scf_sigma_residual, self.scf_green_residual, self.scf_component_residual = \
-                res_sigma, res_g, res_comp
-            done, count = counter.update(res_sigma, res_g, res_comp)
-            logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
-                        .format(res_sigma, res_g, res_comp, count))
-            if self._iteration_hook is not None:
-                self._iteration_hook(dict(
-                    iteration=iteration + 1, mu=float(mu),
-                    static_new=np.array(new_state.static, copy=True),
-                    fluct_new=np.array(new_state.fluct, copy=True),
-                    chi0q=np.array(_bk.to_host(chi0q_out), copy=True),
-                    chiq_s=np.array(_bk.to_host(chi_s), copy=True),
-                    chiq_c=np.array(_bk.to_host(chi_c), copy=True)))
-            if mixer is not None:
-                state = mixer.step(state, new_state)
-            else:
-                state = linear_mix_pair(state, new_state, self.mix)
-            self.state_iteration = iteration + 1
-            ok, err = _hf.is_hermitian_batch(state.static[:, 0], 1e-10)
-            if not ok:
-                raise ValueError("the mixed static self-energy is not Hermitian "
-                                 "(relative deviation {:.3e})".format(err))
+        with contextlib.ExitStack() as stack:
+            store = None
+            if gate:
+                names = ["chibar", "W"]
+                if self.longitudinal_bond_output_full:
+                    names += ["chi_s_w", "chi_c_w"]
+                store = stack.enter_context(flex_bond.BondBlockStore(
+                    nmat, nvol, self._bond_view.n_channels * nd, nd, tuple(names)))
+                self._phase_b_prepare_vertices()
             heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
-            if done:
-                logger.info("FLEX converged after {} iterations".format(iteration + 1))
-                converged = True
-                break
-        if not converged:
-            logger.warning("FLEX did not converge after {} iterations (residuals sigma={:.3e}, "
-                           "green={:.3e}, component={:.3e}, eps={:.3e})".format(
-                               self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
-                               self.scf_component_residual, self.eps))
-        self.scf_converged = converged
-        self.scf_iterations = n_iter_done
-        # final state: mu, G, density, physics from the (post-mix) state
-        sigma = xp.asarray(state.total())
-        if self.calc_mu:
-            mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
-            self.mu = mu
-        green_kw = self._calc_dressed_green(beta, mu, sigma)
-        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
-        self.hf_density_error_state = abs(2.0 * dens.n_per_spin - self.Ncond) / nvol
-        physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
-        self.physics = physics
-        logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
-            physics["NCond"], physics["Sz"], physics["mu"]))
-        self.sigma = _bk.to_host(sigma)
-        self.sigma_static = np.array(state.static, copy=True)
-        self.sigma_fluct = np.array(state.fluct, copy=True)
-        self.green_kw = _bk.to_host(green_kw)
-        green_info["sigma"] = self.sigma
-        green_info["sigma_static"] = self.sigma_static
-        green_info["sigma_fluct"] = self.sigma_fluct
-        green_info["green"] = self.green_kw
-        green_info["physics"] = physics
-        if self.max_iter > 0:
-            self.chi_s = _bk.to_host(chi_s)
-            self.chi_c = _bk.to_host(chi_c)
-            green_info["chi0q"] = _bk.to_host(chi0q_out)
-            green_info["chiq_s"] = self.chi_s
-            green_info["chiq_c"] = self.chi_c
-            if self.longitudinal_bond_channels:
-                self._phase_b_publish_bond(green_info)
-        else:
-            logger.info("FLEX IterationMax=0: no map executed; only the final-state "
-                        "outputs (sigma, green, physics) of the seed state are stored.")
+            for iteration in range(self.max_iter):
+                logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
+                with self._traced("green_mu"):
+                    sigma = xp.asarray(state.total())
+                    if self.calc_mu:
+                        mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+                        self.mu = mu
+                    if not np.isfinite(mu):
+                        raise _hf.NonFiniteError("non-finite chemical potential at iteration {}"
+                                                 .format(iteration + 1))
+                    green_kw = self._calc_dressed_green(beta, mu, sigma)
+                    del sigma
+                    if not np.all(np.isfinite(green_kw)):
+                        raise _hf.NonFiniteError("non-finite Green function at iteration {}"
+                                                 .format(iteration + 1))
+                with self._traced("density_hf"):
+                    dens, sigma_hf, _ = self._phase_b_density_and_hf(
+                        green_kw, state.static, mu, beta, Ncond_target)
+                    self.hf_density_error_map = abs(
+                        2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                    del dens
+                green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
+                if gate:
+                    chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
+                        store, green_kw, green_scf, green0_tail, beta, iteration + 1)
+                else:
+                    chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
+                    assert chi0q_raw.shape[0] == 1
+                    chi0q_raw = chi0q_raw[0]
+                    chi0q_out, v_eff, chi_s, chi_c = \
+                        self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                    sigma_fluct = self._calc_self_energy_general(green_kw, v_eff, beta)
+                    del v_eff
+                del green_scf
+                new_state = SplitState(static=_bk.to_host(sigma_hf),
+                                       fluct=_bk.to_host(sigma_fluct))
+                del sigma_hf, sigma_fluct
+                for name, arr in (("Sigma_HF", new_state.static), ("Sigma_fluct", new_state.fluct)):
+                    if not np.all(np.isfinite(arr)):
+                        raise _hf.NonFiniteError("non-finite {} at iteration {}".format(
+                            name, iteration + 1))
+                with self._traced("convergence"):
+                    g_new = self._calc_dressed_green(beta, mu, xp.asarray(new_state.total()))
+                    res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
+                                                           _bk.to_host(g_new))
+                    del g_new
+                del green_kw
+                self.map_iteration = iteration + 1
+                n_iter_done = iteration + 1
+                self.scf_sigma_residual, self.scf_green_residual, self.scf_component_residual = \
+                    res_sigma, res_g, res_comp
+                done, count = counter.update(res_sigma, res_g, res_comp)
+                logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
+                            .format(res_sigma, res_g, res_comp, count))
+                if self._iteration_hook is not None:
+                    payload = dict(
+                        iteration=iteration + 1, mu=float(mu),
+                        static_new=np.array(new_state.static, copy=True),
+                        fluct_new=np.array(new_state.fluct, copy=True),
+                        chi0q=np.array(_bk.to_host(chi0q_out), copy=True),
+                        chiq_s=np.array(_bk.to_host(chi_s), copy=True),
+                        chiq_c=np.array(_bk.to_host(chi_c), copy=True))
+                    if gate:
+                        payload["bond_static_s"] = np.array(self._bond_last.static_s, copy=True)
+                        payload["bond_static_c"] = np.array(self._bond_last.static_c, copy=True)
+                    self._iteration_hook(payload)
+                with self._traced("mixing"):
+                    if mixer is not None:
+                        state = mixer.step(state, new_state)
+                    else:
+                        state = linear_mix_pair(state, new_state, self.mix)
+                    del new_state
+                self.state_iteration = iteration + 1
+                if not (np.all(np.isfinite(state.static)) and np.all(np.isfinite(state.fluct))):
+                    raise _hf.NonFiniteError("non-finite mixed self-energy at iteration {}"
+                                             .format(iteration + 1))
+                ok, err = _hf.is_hermitian_batch(state.static[:, 0], 1e-10)
+                if not ok:
+                    raise ValueError("the mixed static self-energy is not Hermitian "
+                                     "(relative deviation {:.3e})".format(err))
+                heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
+                if done:
+                    logger.info("FLEX converged after {} iterations".format(iteration + 1))
+                    converged = True
+                    break
+            if not converged:
+                logger.warning("FLEX did not converge after {} iterations (residuals sigma={:.3e}, "
+                               "green={:.3e}, component={:.3e}, eps={:.3e})".format(
+                                   self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
+                                   self.scf_component_residual, self.eps))
+            self.scf_converged = converged
+            self.scf_iterations = n_iter_done
+            with self._traced("post_scf"):
+                # final state: mu, G, density, physics from the (post-mix) state
+                sigma = xp.asarray(state.total())
+                if self.calc_mu:
+                    mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+                    self.mu = mu
+                green_kw = self._calc_dressed_green(beta, mu, sigma)
+                dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+                self.hf_density_error_state = abs(
+                    2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
+                self.physics = physics
+                logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
+                    physics["NCond"], physics["Sz"], physics["mu"]))
+                self.sigma = _bk.to_host(sigma)
+                self.sigma_static = np.array(state.static, copy=True)
+                self.sigma_fluct = np.array(state.fluct, copy=True)
+                self.green_kw = _bk.to_host(green_kw)
+                green_info["sigma"] = self.sigma
+                green_info["sigma_static"] = self.sigma_static
+                green_info["sigma_fluct"] = self.sigma_fluct
+                green_info["green"] = self.green_kw
+                green_info["physics"] = physics
+                if self.max_iter > 0:
+                    self.chi_s = _bk.to_host(chi_s)
+                    self.chi_c = _bk.to_host(chi_c)
+                    green_info["chi0q"] = _bk.to_host(chi0q_out)
+                    green_info["chiq_s"] = self.chi_s
+                    green_info["chiq_c"] = self.chi_c
+                    if gate:
+                        self._phase_b_publish_bond(green_info, store)
+                else:
+                    logger.info("FLEX IterationMax=0: no map executed; only the final-state "
+                                "outputs (sigma, green, physics) of the seed state are stored.")
         logger.info("End FLEX calculations")
 
-    def _phase_b_bond_map(self, green_kw, green_scf, green0_tail, beta, iteration):
-        raise NotImplementedError("the bond-resolved map is implemented in a later task")
+    def _phase_b_bond_map(self, store, green_kw, green_scf, green0_tail, beta, iteration):
+        """One bond-resolved map (spec 1, gate on): bubble -> batched
+        dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
+        collapses (``acbd`` layout) and Sigma_fluct."""
+        from hwave.solver import flex_bond
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        nd = norb * norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        workers = getattr(self, "fft_workers", 1)
+        with self._traced("bubble"):
+            flex_bond.assemble_bubble(
+                store, _bk.to_host(green_scf),
+                None if green0_tail is None else _bk.to_host(green0_tail),
+                beta, self._bond_view, shape, workers)
+        with self._traced("dressing"):
+            res = flex_bond.dress_and_build_w(
+                store, self._bond_S, self._bond_C, nb=self._bond_nb,
+                output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
+                spatial_shape=shape, iteration=iteration)
+        with self._traced("transport"):
+            sigma_fluct = flex_bond.calc_self_energy_bond(
+                store, _bk.to_host(green_kw), beta, self._bond_view, shape, norb, workers)
+        self._bond_last = res
+        r6 = (nmat, nvol, norb, norb, norb, norb)
+        return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
+                res.collapse_c.reshape(r6), sigma_fluct)
 
-    def _phase_b_publish_bond(self, green_info):
-        raise NotImplementedError("the bond-resolved outputs are implemented in a later task")
+    def _phase_b_publish_bond(self, green_info, store):
+        """The sixteen static ``longitudinal_bond_*`` keys of the LAST map
+        (Phase A schema), ``longitudinal_bond_source`` and, with
+        ``longitudinal_bond_output_full``, the detached dynamic channels."""
+        res = self._bond_last
+        topo = self._bond_topo
+        nvol, norb = self.lattice.nvol, self.norb
+        nd = norb * norb
+        delta_r = np.asarray(topo.delta_r, dtype=np.int64)
+        out = {
+            "longitudinal_bond_chi_s": res.static_s,
+            "longitudinal_bond_chi_c": res.static_c,
+            "longitudinal_bond_chiq_s_static": np.ascontiguousarray(
+                res.static_s[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            "longitudinal_bond_chiq_c_static": np.ascontiguousarray(
+                res.static_c[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            "longitudinal_bond_delta_r": delta_r,
+            "longitudinal_bond_reverse": np.asarray(topo.reverse, dtype=np.int64),
+            "longitudinal_bond_index_order": np.str_("I = m*norb**2 + l1*norb + l2"),
+            "longitudinal_bond_spatial_shape": np.array(self.lattice.shape, dtype=np.int64),
+            "longitudinal_bond_q_convention":
+                np.str_("q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened"),
+            "longitudinal_bond_spin_mode": np.str_(self.spin_mode),
+            "longitudinal_bond_normalization": np.str_("chi_bar = -(T/N) sum_k G G, per site"),
+            "longitudinal_bond_types": np.asarray(self._bond_types),
+            "longitudinal_bond_max_shells": np.int64(
+                -1 if self.longitudinal_bond_max_shells is None
+                else int(self.longitudinal_bond_max_shells)),
+            "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
+            "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
+            "longitudinal_bond_schema": np.int64(1),
+            "longitudinal_bond_source": np.str_("last_map"),
+        }
+        if self.longitudinal_bond_output_full:
+            out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
+            out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+        green_info.update(out)
+        logger.info(
+            "longitudinal_bond_channels (FLEX): chi0q/chiq_s/chiq_c are the channel-0 "
+            "collapses of the last map; the bond-resolved static objects are the "
+            "longitudinal_bond_* keys (B = %d channels %s, ND = %d; cond_min spin %.3e, "
+            "charge %.3e).", int(delta_r.shape[0]),
+            [tuple(int(x) for x in r) for r in delta_r], int(res.static_s.shape[1]),
+            res.cond_min_s, res.cond_min_c)
 
     def _ir_setup(self, beta):
         """Build the fermionic/bosonic IR axes once per solve."""
@@ -3222,6 +3502,20 @@ class FLEX(RPA):
         """
         logger.info("Save FLEX results")
         path_to_output = info_outputfile["path_to_output"]
+        _pb = getattr(self, "_phase_b_active", False)
+        _bond_static = {}
+        _last_map_omitted = False
+        if _pb:
+            # backstop of the output-path validation (spec 4.2)
+            self.validate_output_paths(info_outputfile, path_to_output)
+            _bond_static = {k: v for k, v in green_info.items()
+                            if str(k).startswith("longitudinal_bond_")
+                            and not str(k).endswith("_w")}
+            if "chiq_s" not in green_info:
+                _last_map_omitted = True
+                logger.info("save_results: no map was executed (IterationMax=0); the last-map "
+                            "archives chi0q, chiq_s, chiq_c, chiq and the bond archive are "
+                            "omitted.")
 
         self._init_wavevec()
 
@@ -3276,7 +3570,7 @@ class FLEX(RPA):
                     file_name))
 
         # Save chi0q
-        if "chi0q" in info_outputfile:
+        if "chi0q" in info_outputfile and not _last_map_omitted:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
             # coeff_tail provenance (issue #80): the tail correction changes
             # chi0q at O(1); record the producing value. On the IR path the
@@ -3356,10 +3650,21 @@ class FLEX(RPA):
         if getattr(self, "_phase_b_active", False):
             common_meta.update(self._provenance_block("last_map"))
 
+        _bond_into_chiq_s = {}
+        if _bond_static:
+            if "chiq" in info_outputfile:
+                logger.info("save_results: the static longitudinal_bond_* keys are written "
+                            "into the combined chiq archive")
+            else:
+                _bond_into_chiq_s = _bond_static
+                logger.info("save_results: no combined chiq archive is configured; the "
+                            "static longitudinal_bond_* keys (charge channel included) are "
+                            "written into the chiq_s archive")
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
                                      info_outputfile.get("chiq_s", "chiq_s"))
-            np.savez(file_name, chiq_s=green_info["chiq_s"], **common_meta)
+            np.savez(file_name, chiq_s=green_info["chiq_s"], **common_meta,
+                     **_bond_into_chiq_s)
             logger.info("save_results: save chiq_s in file {}".format(file_name))
 
         if "chiq_c" in green_info:
@@ -3368,9 +3673,10 @@ class FLEX(RPA):
             np.savez(file_name, chiq_c=green_info["chiq_c"], **common_meta)
             logger.info("save_results: save chiq_c in file {}".format(file_name))
 
-        if "chiq" in info_outputfile:
+        if "chiq" in info_outputfile and not _last_map_omitted:
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             save_dict = dict(**common_meta)
+            save_dict.update(_bond_static)
             if "chiq_s" in green_info:
                 save_dict["chiq_s"] = green_info["chiq_s"]
             if "chiq_c" in green_info:
@@ -3425,3 +3731,32 @@ class FLEX(RPA):
                      **green_extra,
                      **_freq_meta("F"))
             logger.info("save_results: save green in file {}".format(file_name))
+
+        # Dedicated bond archive (spec 4.2, longitudinal_bond_output_full)
+        if _pb and "longitudinal_bond_chi_s_w" in green_info:
+            file_name = os.path.join(path_to_output,
+                                     info_outputfile.get("longitudinal_bond",
+                                                         "longitudinal_bond.npz"))
+            chi_s_w = green_info["longitudinal_bond_chi_s_w"]
+            chi_c_w = green_info["longitudinal_bond_chi_c_w"]
+            logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
+                        "channel data)".format(file_name), 2 * chi_s_w.nbytes / 1024 ** 3)
+            np.savez(file_name,
+                     bond_archive_schema=np.int64(1),
+                     chi_s_w=chi_s_w,
+                     chi_c_w=chi_c_w,
+                     freq_axis=np.str_("bosonic l -> 2l - nmat"),
+                     beta=1.0 / self.T,
+                     T=self.T,
+                     nmat=self.nmat,
+                     cell_shape=np.array(self.lattice.shape),
+                     momentum_convention=MOMENTUM_CONVENTION,
+                     wavevector_unit=self.kvec,
+                     wavevector_index=self.wavenum_table,
+                     index_order=green_info["longitudinal_bond_index_order"],
+                     delta_r=green_info["longitudinal_bond_delta_r"],
+                     reverse=green_info["longitudinal_bond_reverse"],
+                     types=green_info["longitudinal_bond_types"],
+                     **_bond_static,
+                     **self._provenance_block("last_map"))
+            logger.info("save_results: save the bond archive in file {}".format(file_name))

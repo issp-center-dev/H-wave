@@ -3361,6 +3361,13 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
 # equality with bare_bond_vertices for CoulombInter; Gate G2: exact
 # diagonalization for Hund/Ising, tests/test_bond_longitudinal_ed.py).
 
+def is_real_coefficient(v, imag_tol=1e-12):
+    """True when the interaction coefficient ``v`` is real to ``imag_tol``
+    (the admissibility rule shared by the RPA and FLEX bond gates and by
+    :func:`build_sc_bond_channel`)."""
+    return abs(complex(v).imag) <= imag_tol
+
+
 def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     """One channel (``"S"`` or ``"C"``) of the bond-resolved longitudinal
     vertex, shape ``(nvol, ND, ND)`` complex128, ``ND = B * norb**2``.
@@ -3459,7 +3466,7 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
         arr = topo.coeffs[t]
         for (m, a, b) in orbits:
             v = complex(arr[m, a, b])
-            if abs(v.imag) > imag_tol:
+            if not is_real_coefficient(v, imag_tol=imag_tol):
                 raise ValueError(
                     "build_sc_bond_channel: the off-site {} coefficient at "
                     "channel {} (delta_r={}), orbitals ({}, {}) is complex "
