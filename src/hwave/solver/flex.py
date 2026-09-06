@@ -825,7 +825,16 @@ class FLEX(RPA):
         # _calc_epsilon_k determines self.spin_mode from H0(k); the general
         # full-vertex path (v1) is paramagnetic only, so guard here once
         # spin_mode is known.
-        self._calc_epsilon_k(green_info)
+        if self._phase_b_active:
+            # Phase B (#181): the band stays BARE -- a user mean field is an
+            # initial self-energy (spec 2.3, D7), so trans_mod/green_init are
+            # withheld from the H0 path (the inputs themselves are preserved).
+            self._phase_b_reset(green_info)
+            _gi_h0 = {k: v for k, v in green_info.items()
+                      if k not in ("trans_mod", "green_init")}
+            self._calc_epsilon_k(_gi_h0)
+        else:
+            self._calc_epsilon_k(green_info)
 
         if self._flex_general and self.spin_mode != "spin-free":
             raise ValueError(
@@ -938,6 +947,10 @@ class FLEX(RPA):
         nfreq_axis = self._ir_axF.n_freq if self.use_ir else nmat
         expected_uniform = (nblock, nmat, nvol, nd_block, nd_block)
         expected = (nblock, nfreq_axis, nvol, nd_block, nd_block)
+        if self._phase_b_active:
+            return self._solve_phase_b(green_info, beta, mu, Ncond_target, xp,
+                                       green0_tail, green_tail_w,
+                                       self.ham_info.ham_inter_q)
         sigma_init = green_info.get("sigma_init")
         seed_ir_meta = green_info.get("sigma_init_ir")
         if sigma_init is not None:
@@ -1159,6 +1172,210 @@ class FLEX(RPA):
     # ------------------------------------------------------------------
     # IR-basis Matsubara axis (Stage 2, docs/design/ir-matsubara.md 3.3/3.4)
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Phase B (#181): the self-consistent loop with the Hartree-Fock term
+    # (spec 2026-09-06 sections 1, 2, 5.6). Entered only when
+    # flex_hartree_fock or longitudinal_bond_channels is true; the legacy
+    # loop in _solve_impl is untouched.
+    # ------------------------------------------------------------------
+    _iteration_hook = None      # test-only callback (spec G0)
+
+    def _phase_b_reset(self, green_info):
+        """Solve-entry reset by ownership (spec 3.5): every solve-produced
+        member and solver result attribute is dropped; the inputs
+        (sigma_init, trans_mod, green_init, chi0q_init, reader entries)
+        are preserved."""
+        produced = ("sigma", "sigma_static", "sigma_fluct", "green", "physics",
+                    "chi0q", "chiq_s", "chiq_c")
+        prov = ("map_iteration", "state_iteration", "payload_kind", "hf_density_error",
+                "hf_density_source", "density_target_enforced")
+        for k in list(green_info):
+            ks = str(k)
+            if (k in produced or ks.startswith("longitudinal_bond_")
+                    or ks.startswith("scf_") or ks in prov):
+                green_info.pop(k, None)
+        for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
+                     "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
+                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_hf_tables"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        self.scf_converged = False
+        self.scf_iterations = 0
+        self.scf_sigma_residual = float("nan")
+        self.scf_green_residual = float("nan")
+        self.scf_component_residual = float("nan")
+        self.map_iteration = 0
+        self.state_iteration = 0
+        self.hf_density_error_map = float("nan")
+        self.hf_density_error_state = float("nan")
+
+    def _provenance_block(self, payload_kind):
+        """The provenance block of every archive of an active Phase B run
+        (spec 4.3)."""
+        return {
+            "scf_converged": bool(self.scf_converged),
+            "scf_iterations": int(self.scf_iterations),
+            "map_iteration": int(self.map_iteration),
+            "state_iteration": int(self.state_iteration),
+            "scf_sigma_residual": float(self.scf_sigma_residual),
+            "scf_green_residual": float(self.scf_green_residual),
+            "scf_component_residual": float(self.scf_component_residual),
+            "payload_kind": payload_kind,
+            "hf_density_error": float(self.hf_density_error_map if payload_kind == "last_map"
+                                      else self.hf_density_error_state),
+            "hf_density_source": payload_kind,
+            "density_target_enforced": bool(self.calc_mu),
+        }
+
+    def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target):
+        """rho, the density-closure check and Sigma_HF for one map."""
+        from hwave.solver import flex_hf, hartree_fock as _hf
+        shape = tuple(int(x) for x in self.lattice.shape)
+        heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], np.asarray(static)[0, 0])
+        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+        if self.calc_mu:
+            dev = abs(dens.n_per_spin - Ncond_target)
+            if dev > 1e-10 * max(1.0, abs(Ncond_target)):
+                raise ValueError(
+                    "flex_hartree_fock: the chemical potential search closed on "
+                    "N/2 = {:.12g} but the equal-time density gives {:.12g} "
+                    "(residual {:.3e} > tolerance {:.3e})".format(
+                        Ncond_target, dens.n_per_spin, dev,
+                        1e-10 * max(1.0, abs(Ncond_target))))
+        sigma_hf = flex_hf.hf_map(dens.rho_r, self._hf_tables, shape, self.norb)
+        return dens, sigma_hf[None, None], heff
+
+    def _solve_phase_b(self, green_info, beta, mu, Ncond_target, xp,
+                       green0_tail, green_tail_w, ham_orig):
+        from hwave.solver import flex_hf, hartree_fock as _hf
+        from hwave.solver.flex_mixing import (SplitState, StackedAndersonMixer,
+                                              linear_mix_pair, residuals, PassCounter)
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        expected = (1, nmat, nvol, norb, norb)
+        self._hf_tables = flex_hf.build_flex_hf_tables(
+            self.ham_info.param_ham, norb, shape)
+        static0, fluct0 = self._assemble_static_seed(green_info, expected)
+        state = SplitState(static=static0, fluct=fluct0)
+        if np.any(state.static != 0) or np.any(state.fluct != 0):
+            logger.info("FLEX: warm-starting the Phase B loop from the seed")
+        mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
+                 if self.mixing_scheme == "anderson" else None)
+        if self.mixing_scheme == "linear" and self.longitudinal_bond_channels:
+            logger.warning("longitudinal_bond_channels with mixing_scheme='linear': "
+                           "linear mixing is known to mis-converge near the charge "
+                           "instability; consider mixing_scheme='anderson'.")
+        counter = PassCounter(self.eps, needed=3)
+        converged = False
+        n_iter_done = 0
+        chi0q_out = chi_s = chi_c = None
+        heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
+        for iteration in range(self.max_iter):
+            logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
+            sigma = xp.asarray(state.total())
+            if self.calc_mu:
+                mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+                self.mu = mu
+            green_kw = self._calc_dressed_green(beta, mu, sigma)
+            dens, sigma_hf, _ = self._phase_b_density_and_hf(green_kw, state.static, mu, beta,
+                                                             Ncond_target)
+            self.hf_density_error_map = abs(2.0 * dens.n_per_spin - self.Ncond) / nvol
+            green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
+            if self.longitudinal_bond_channels:
+                chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
+                    green_kw, green_scf, green0_tail, beta, iteration + 1)
+            else:
+                chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
+                assert chi0q_raw.shape[0] == 1
+                chi0q_raw = chi0q_raw[0]
+                chi0q_out, v_eff, chi_s, chi_c = \
+                    self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                sigma_fluct = self._calc_self_energy_general(green_kw, v_eff, beta)
+            new_state = SplitState(static=_bk.to_host(sigma_hf),
+                                   fluct=_bk.to_host(sigma_fluct))
+            for name, arr in (("Sigma_HF", new_state.static), ("Sigma_fluct", new_state.fluct)):
+                if not np.all(np.isfinite(arr)):
+                    raise _hf.NonFiniteError("non-finite {} at iteration {}".format(name, iteration + 1))
+            g_new = self._calc_dressed_green(beta, mu, xp.asarray(new_state.total()))
+            res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
+                                                   _bk.to_host(g_new))
+            del g_new
+            self.map_iteration = iteration + 1
+            n_iter_done = iteration + 1
+            self.scf_sigma_residual, self.scf_green_residual, self.scf_component_residual = \
+                res_sigma, res_g, res_comp
+            done, count = counter.update(res_sigma, res_g, res_comp)
+            logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
+                        .format(res_sigma, res_g, res_comp, count))
+            if self._iteration_hook is not None:
+                self._iteration_hook(dict(
+                    iteration=iteration + 1, mu=float(mu),
+                    static_new=np.array(new_state.static, copy=True),
+                    fluct_new=np.array(new_state.fluct, copy=True),
+                    chi0q=np.array(_bk.to_host(chi0q_out), copy=True),
+                    chiq_s=np.array(_bk.to_host(chi_s), copy=True),
+                    chiq_c=np.array(_bk.to_host(chi_c), copy=True)))
+            if mixer is not None:
+                state = mixer.step(state, new_state)
+            else:
+                state = linear_mix_pair(state, new_state, self.mix)
+            self.state_iteration = iteration + 1
+            ok, err = _hf.is_hermitian_batch(state.static[:, 0], 1e-10)
+            if not ok:
+                raise ValueError("the mixed static self-energy is not Hermitian "
+                                 "(relative deviation {:.3e})".format(err))
+            heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
+            if done:
+                logger.info("FLEX converged after {} iterations".format(iteration + 1))
+                converged = True
+                break
+        if not converged:
+            logger.warning("FLEX did not converge after {} iterations (residuals sigma={:.3e}, "
+                           "green={:.3e}, component={:.3e}, eps={:.3e})".format(
+                               self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
+                               self.scf_component_residual, self.eps))
+        self.scf_converged = converged
+        self.scf_iterations = n_iter_done
+        # final state: mu, G, density, physics from the (post-mix) state
+        sigma = xp.asarray(state.total())
+        if self.calc_mu:
+            mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+            self.mu = mu
+        green_kw = self._calc_dressed_green(beta, mu, sigma)
+        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+        self.hf_density_error_state = abs(2.0 * dens.n_per_spin - self.Ncond) / nvol
+        physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
+        self.physics = physics
+        logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
+            physics["NCond"], physics["Sz"], physics["mu"]))
+        self.sigma = _bk.to_host(sigma)
+        self.sigma_static = np.array(state.static, copy=True)
+        self.sigma_fluct = np.array(state.fluct, copy=True)
+        self.green_kw = _bk.to_host(green_kw)
+        green_info["sigma"] = self.sigma
+        green_info["sigma_static"] = self.sigma_static
+        green_info["sigma_fluct"] = self.sigma_fluct
+        green_info["green"] = self.green_kw
+        green_info["physics"] = physics
+        if self.max_iter > 0:
+            self.chi_s = _bk.to_host(chi_s)
+            self.chi_c = _bk.to_host(chi_c)
+            green_info["chi0q"] = _bk.to_host(chi0q_out)
+            green_info["chiq_s"] = self.chi_s
+            green_info["chiq_c"] = self.chi_c
+            if self.longitudinal_bond_channels:
+                self._phase_b_publish_bond(green_info)
+        else:
+            logger.info("FLEX IterationMax=0: no map executed; only the final-state "
+                        "outputs (sigma, green, physics) of the seed state are stored.")
+        logger.info("End FLEX calculations")
+
+    def _phase_b_bond_map(self, green_kw, green_scf, green0_tail, beta, iteration):
+        raise NotImplementedError("the bond-resolved map is implemented in a later task")
+
+    def _phase_b_publish_bond(self, green_info):
+        raise NotImplementedError("the bond-resolved outputs are implemented in a later task")
 
     def _ir_setup(self, beta):
         """Build the fermionic/bosonic IR axes once per solve."""
@@ -1853,7 +2070,7 @@ class FLEX(RPA):
         return n, dn
 
     @do_profile
-    def _find_mu_dressed(self, sigma, beta, Ncond):
+    def _find_mu_dressed(self, sigma, beta, Ncond, ew_ref=None):
         """Re-solve mu so the dressed Green's function carries ``Ncond``.
 
         Holds ``sigma`` fixed and solves ``N(mu) = Ncond``.  The ``M``
@@ -1894,6 +2111,10 @@ class FLEX(RPA):
         # and returns plain floats, so the Newton/bisection logic below is
         # backend-independent.
         lam, ew = self._matsubara_number_operator(sigma, beta)
+        if ew_ref is not None:
+            # Phase B (#181): the analytic reference is Heff = H0 + sigma_static
+            # (exact Fermi count when the fluctuation part vanishes)
+            ew = np.asarray(ew_ref)
         w = ew
 
         def _delta_n(mu, with_deriv=False):
@@ -3070,8 +3291,11 @@ class FLEX(RPA):
                          else {"coeff_tail": getattr(self, "coeff_tail", 0.0),
                                # endpoint convention marker (issue #134)
                                "tail_endpoint": TAIL_ENDPOINT_CONVENTION})
+            chi0_extra = (self._provenance_block("last_map")
+                          if getattr(self, "_phase_b_active", False) else {})
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
+                     **chi0_extra,
                      # full grid size: lets consumers locate the zero bosonic
                      # frequency (index nmat//2) unambiguously (run
                      # provenance only on IR-native files)
@@ -3129,6 +3353,8 @@ class FLEX(RPA):
             # be false machine-readable metadata. The reader accepts
             # marker-less "kuroki" files; only "myo" requires the marker.
             common_meta["chi_orbital_layout"] = "acbd"
+        if getattr(self, "_phase_b_active", False):
+            common_meta.update(self._provenance_block("last_map"))
 
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
@@ -3157,8 +3383,15 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
             # #167: no scheme stamp here -- sigma/green are outside the
             # spec's listed npz-stamp scope (deliberate, not an omission).
+            sigma_extra = {}
+            if getattr(self, "_phase_b_active", False):
+                sigma_extra = dict(sigma_convention="split",
+                                   sigma_static=green_info.get("sigma_static"),
+                                   sigma_fluct=green_info.get("sigma_fluct"),
+                                   **self._provenance_block("final_state"))
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
+                     **sigma_extra,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
@@ -3176,6 +3409,8 @@ class FLEX(RPA):
                 # native-only provenance key (the densified green.npz key
                 # set stays unchanged -- design R-S3-2)
                 green_extra["cell_shape"] = np.array(self.lattice.shape)
+            if getattr(self, "_phase_b_active", False):
+                green_extra.update(self._provenance_block("final_state"))
             np.savez(file_name,
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,
