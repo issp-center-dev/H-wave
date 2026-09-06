@@ -128,4 +128,6 @@ Basic usage
      See File format sections for the details of the output files.
 
      The package also provides the post-processing tools ``hwave_dos`` (density of states)
-     and ``hwave_sc`` (Eliashberg / superconducting analysis), which take the same input file.
+     and ``hwave_sc`` (Eliashberg / superconducting analysis), which take the same input file,
+     and the converter ``hwave_sigma_split`` (a total-form FLEX self-energy archive into the
+     split form that a run with ``flex_hartree_fock = true`` accepts as ``sigma_init``).

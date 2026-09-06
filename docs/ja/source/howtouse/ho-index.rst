@@ -138,4 +138,6 @@
 
      また、本パッケージには後処理ツール\ ``hwave_dos``\ （状態密度）および
      ``hwave_sc``\ （Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。
+     また、変換ツール\ ``hwave_sigma_split``\ （FLEX の全自己エネルギーアーカイブを、
+     ``flex_hartree_fock = true``\ の計算が\ ``sigma_init``\ として受理する分割形式に変換）も含まれます。
 
