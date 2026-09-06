@@ -367,6 +367,73 @@ class FLEX(RPA):
             logger.info("    longitudinal_bond_channels (FLEX) = {}".format(
                 self.longitudinal_bond_channels))
 
+    def _assemble_static_seed(self, green_info, expected_shape):
+        """Refusal precedence steps 4-5 and the seed matrix (spec 2.3, D7,
+        D10, D15) under flex_hartree_fock=true. Returns
+        ``(sigma_static (nb, 1, nvol, norb, norb), sigma_fluct
+        (expected_shape))`` as fresh arrays; ``green_info`` is not
+        modified (inputs are preserved)."""
+        from hwave.solver import flex_hf, hartree_fock as _hf
+        nb, nmat, nvol, norb, _ = (int(x) for x in expected_shape)
+        env = green_info.get("sigma_init_envelope")
+        has_tm = "trans_mod" in green_info
+        has_gi = "green_init" in green_info
+        # step 4: copied mean-field assembly and spin classification
+        delta_h = None
+        if has_tm or has_gi:
+            if has_tm and has_gi:
+                logger.info("flex_hartree_fock: both trans_mod and green_init "
+                            "are given; trans_mod takes precedence (as in the "
+                            "legacy H0 path) and green_init is ignored")
+            if has_tm:
+                h_mod = np.array(green_info["trans_mod"], dtype=np.complex128, copy=True)
+            else:
+                h_mod = self._calc_trans_mod_copy(green_info["green_init"])
+            h_mod = h_mod.reshape(nvol, 2, norb, 2, norb)
+            off = max(float(np.max(np.abs(h_mod[:, 0, :, 1, :]))),
+                      float(np.max(np.abs(h_mod[:, 1, :, 0, :]))))
+            diff = float(np.max(np.abs(h_mod[:, 0, :, 0, :] - h_mod[:, 1, :, 1, :])))
+            scale = max(1.0, float(np.max(np.abs(h_mod))))
+            if off > 1e-12 * scale or diff > 1e-12 * scale:
+                raise ValueError(
+                    "flex_hartree_fock=true requires a spin-free mean field: the supplied "
+                    "trans_mod/green_init is spin-mixing ({:.3e}) or spin-diagonal with unequal "
+                    "blocks ({:.3e}); Phase B is spin-free only".format(off, diff))
+            if self.ham_info.ham_extern_q is not None:
+                raise ValueError("flex_hartree_fock=true does not support an external field "
+                                 "(spin-diagonal H0)")
+            h0_bare = np.array(self.ham_info.ham_trans_q, dtype=np.complex128,
+                               copy=True).reshape(nvol, norb, norb)
+            delta_h = h_mod[:, 0, :, 0, :] - h0_bare
+        # step 5: seed file semantics
+        static = np.zeros((nb, 1, nvol, norb, norb), dtype=np.complex128)
+        fluct = np.zeros(tuple(expected_shape), dtype=np.complex128)
+        if env is not None:
+            if env.marker == "split":
+                if delta_h is not None:
+                    raise ValueError(
+                        "sigma_init '{}' is a split self-energy archive and a mean field "
+                        "(trans_mod/green_init) is also given; remove trans_mod/green_init "
+                        "when resuming from a Phase B sigma archive, or fold the mean field "
+                        "into the archive's sigma_static with hwave_sigma_split".format(env.file_name))
+                static, fluct = flex_hf.validate_split_seed(env, expected_shape)
+            else:
+                raise ValueError(
+                    "sigma_init '{}' carries sigma_convention={!r}; a run with "
+                    "flex_hartree_fock=true accepts only a \"split\" archive. Convert it "
+                    "with: hwave_sigma_split {} out.npz --static static.npz (or --zero-static, "
+                    "or --uhfk-trans-mod ...)".format(env.file_name, env.marker, env.file_name))
+        elif delta_h is not None:
+            static[:, 0] = delta_h[None]
+        # checkpoint 4b: the assembled static seed
+        if not np.all(np.isfinite(static)):
+            raise _hf.NonFiniteError("the assembled static self-energy seed is not finite")
+        ok, err = _hf.is_hermitian_batch(static[:, 0], 1e-10)
+        if not ok:
+            raise ValueError("the assembled static self-energy seed is not Hermitian "
+                             "(relative deviation {:.3e})".format(err))
+        return static, fluct
+
     def _init_flex_param(self):
         """Initialize FLEX-specific parameters."""
         logger.debug(">>> FLEX._init_flex_param")
@@ -645,7 +712,8 @@ class FLEX(RPA):
             path_to_input = info_inputfile.get("path_to_input", "")
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
-            sigma, ir_meta = self._read_sigma(file_name)
+            env = self._read_sigma(file_name)
+            sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(
                     "sigma_init file '{}' holds sparse-IR node data "
@@ -654,6 +722,7 @@ class FLEX(RPA):
                     "run, or re-run the seeding FLEX with [mode.param] "
                     "write_densified = true.".format(file_name))
             info["sigma_init"] = sigma
+            info["sigma_init_envelope"] = env
             if ir_meta is not None:
                 info["sigma_init_ir"] = ir_meta
         return info
@@ -700,7 +769,8 @@ class FLEX(RPA):
         # do NOT search by size, nmat == nvol collisions are realistic
         validate_momentum_convention(data, file_name, sig, 2,
                                      self.lattice.shape)
-        return sig, meta
+        from hwave.solver.flex_hf import make_seed_envelope
+        return make_seed_envelope(data, file_name, sig, meta)
 
     @do_profile
     def solve(self, green_info, path_to_output):

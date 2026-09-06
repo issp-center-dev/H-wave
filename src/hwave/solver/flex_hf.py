@@ -65,3 +65,81 @@ def hf_map(rho_r, tables, shape, norb, *, block_tol=1e-12, herm_tol=1e-10):
             "hf_map: Sigma_HF(k) is not Hermitian (relative deviation {:.3e}); "
             "the density matrix violates rho_ab(r) = conj(rho_ba(-r))".format(err))
     return sigma
+
+
+# =============================================================================
+# Self-energy seeds (spec section 2.3)
+# =============================================================================
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass(frozen=True)
+class SigmaSeedEnvelope:
+    """An UNVALIDATED self-energy seed as loaded from a ``sigma.npz``:
+    every required member materialised and read-only, the convention
+    marker (``"split"``, ``"total"`` or ``None`` for a legacy file), the
+    IR metadata (``None`` for uniform files) and the file name for
+    diagnostics. Semantic validation happens in ``solve`` at refusal
+    precedence step 5 (:func:`validate_split_seed`)."""
+    sigma: np.ndarray
+    sigma_static: object
+    sigma_fluct: object
+    marker: object
+    ir_meta: object
+    file_name: str
+
+
+def _readonly(a):
+    a = np.array(a, dtype=np.complex128, copy=True)
+    a.flags.writeable = False
+    return a
+
+
+def make_seed_envelope(data, file_name, sigma, ir_meta):
+    """Build the envelope from an opened npz ``data`` (its ``sigma`` and
+    ``ir_meta`` already extracted by the caller)."""
+    marker = None
+    if "sigma_convention" in data.files:
+        marker = str(np.asarray(data["sigma_convention"]).ravel()[0])
+    st = _readonly(data["sigma_static"]) if "sigma_static" in data.files else None
+    fl = _readonly(data["sigma_fluct"]) if "sigma_fluct" in data.files else None
+    return SigmaSeedEnvelope(sigma=_readonly(sigma), sigma_static=st, sigma_fluct=fl,
+                             marker=marker, ir_meta=ir_meta, file_name=str(file_name))
+
+
+def validate_split_seed(env, expected_shape, *, sum_tol=1e-12, herm_tol=1e-10):
+    """Semantic validation of a ``"split"`` seed (spec 2.3): marker, exact
+    shapes, finiteness, singleton frequency axis of ``sigma_static``, the
+    sum identity, Hermiticity of ``sigma_static``. Returns the components
+    EXACTLY as stored (copies)."""
+    f = env.file_name
+    if env.marker != "split":
+        raise ValueError(
+            "sigma_init '{}': sigma_convention must be \"split\" for a run with "
+            "flex_hartree_fock=true (got {!r}); convert a total archive with "
+            "hwave_sigma_split".format(f, env.marker))
+    if env.sigma_static is None or env.sigma_fluct is None:
+        raise ValueError("sigma_init '{}': a split archive needs sigma_static and sigma_fluct".format(f))
+    expected = tuple(int(x) for x in expected_shape)
+    nb, nmat, nvol, n1, n2 = expected
+    if tuple(env.sigma.shape) != expected:
+        raise ValueError("sigma_init '{}': sigma shape {} != expected {}".format(f, env.sigma.shape, expected))
+    if tuple(env.sigma_fluct.shape) != expected:
+        raise ValueError("sigma_init '{}': sigma_fluct shape {} != expected {}".format(f, env.sigma_fluct.shape, expected))
+    if tuple(env.sigma_static.shape) != (nb, 1, nvol, n1, n2):
+        raise ValueError(
+            "sigma_init '{}': sigma_static shape {} != {} (it must be frequency independent, "
+            "singleton frequency axis)".format(f, env.sigma_static.shape, (nb, 1, nvol, n1, n2)))
+    for name, a in (("sigma", env.sigma), ("sigma_static", env.sigma_static), ("sigma_fluct", env.sigma_fluct)):
+        if not np.all(np.isfinite(a)):
+            raise ValueError("sigma_init '{}': {} has non-finite entries".format(f, name))
+    scale = max(1.0, float(np.max(np.abs(env.sigma))))
+    dev = float(np.max(np.abs(env.sigma - (env.sigma_static + env.sigma_fluct))))
+    if dev > sum_tol * scale:
+        raise ValueError(
+            "sigma_init '{}': sigma != sigma_static + sigma_fluct (max deviation {:.3e})".format(f, dev))
+    ok, err = _hf.is_hermitian_batch(env.sigma_static[:, 0], herm_tol)
+    if not ok:
+        raise ValueError("sigma_init '{}': sigma_static is not Hermitian (relative deviation {:.3e})".format(f, err))
+    return (np.array(env.sigma_static, copy=True), np.array(env.sigma_fluct, copy=True))
