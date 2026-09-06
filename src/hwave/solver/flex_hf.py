@@ -143,3 +143,177 @@ def validate_split_seed(env, expected_shape, *, sum_tol=1e-12, herm_tol=1e-10):
     if not ok:
         raise ValueError("sigma_init '{}': sigma_static is not Hermitian (relative deviation {:.3e})".format(f, err))
     return (np.array(env.sigma_static, copy=True), np.array(env.sigma_fluct, copy=True))
+
+
+# =============================================================================
+# hwave_sigma_split converter (spec 2.3)
+# =============================================================================
+
+_SPLIT_FIELDS = ("sigma_convention", "sigma_static", "sigma_fluct")
+_STATIC_META = ("cell_shape", "momentum_convention", "wavevector_unit", "wavevector_index")
+
+
+def _spin_reduce(h, norb, label):
+    """(nvol, 2 norb, 2 norb) spin-major -> (nvol, norb, norb); refuses a
+    spin-mixing or unequal-block matrix (Phase B is spin-free)."""
+    nvol = h.shape[0]
+    h5 = h.reshape(nvol, 2, norb, 2, norb)
+    scale = max(1.0, float(np.max(np.abs(h5))))
+    off = max(float(np.max(np.abs(h5[:, 0, :, 1, :]))), float(np.max(np.abs(h5[:, 1, :, 0, :]))))
+    diff = float(np.max(np.abs(h5[:, 0, :, 0, :] - h5[:, 1, :, 1, :])))
+    if off > 1e-12 * scale or diff > 1e-12 * scale:
+        raise ValueError("{}: the spin-major matrix is spin-mixing ({:.3e}) or has unequal spin "
+                         "blocks ({:.3e}); a Phase B seed must be spin-free".format(label, off, diff))
+    return np.ascontiguousarray(h5[:, 0, :, 0, :])
+
+
+def _bare_transfer_k(transfer_file, cell_shape, norb):
+    """H0_bare(k) from a Transfer input (Wannier90-style text or the .npz
+    form) exactly as the k-space reader assembles it (e^{+ikR}, C-order
+    momentum layout), (nvol, norb, norb)."""
+    nx, ny, nz = (int(x) for x in cell_shape)
+    nvol = nx * ny * nz
+    if str(transfer_file).endswith(".npz"):
+        data = np.load(transfer_file)
+        if "Transfer" not in data:
+            raise ValueError("--bare-transfer {}: the archive carries no 'Transfer' member"
+                             .format(transfer_file))
+        tab_r = np.asarray(data["Transfer"], dtype=np.complex128)
+        if tab_r.shape not in ((nvol, norb, norb), (nx, ny, nz, norb, norb)):
+            raise ValueError("--bare-transfer {}: Transfer shape {} does not match cell {} and "
+                             "norb {}".format(transfer_file, tab_r.shape, list(cell_shape), norb))
+        tab_r = tab_r.reshape(nx, ny, nz, norb, norb)
+    else:
+        from hwave.qlmsio.wan90 import read_w90
+        table = read_w90(str(transfer_file))
+        tab_r = np.zeros((nx, ny, nz, norb, norb), dtype=np.complex128)
+        for (irvec, orbvec), v in table.items():
+            if orbvec[0] < norb and orbvec[1] < norb:
+                tab_r[(*irvec, *orbvec)] += v
+            else:
+                raise ValueError("--bare-transfer {}: orbital index {} exceeds norb {} of the "
+                                 "total archive (a spin-dependent Transfer file is not a bare "
+                                 "one-body transfer)".format(transfer_file, orbvec, norb))
+    return (np.fft.ifftn(tab_r, axes=(0, 1, 2)) * nvol).reshape(nvol, norb, norb)
+
+
+def _static_from_uhfk_trans_mod(trans_mod_file, transfer_file, cell_shape, norb):
+    """Delta H = H_mod(k) - H0_bare(k) from a native UHFk ``trans_mod``
+    archive (real-space, spin-major ``(nvol, 2 norb, 2 norb)``), with the
+    solver's own Fourier convention (``RPA._read_trans_mod``)."""
+    data = np.load(trans_mod_file)
+    if "trans_mod" not in data:
+        raise ValueError("--uhfk-trans-mod {}: no 'trans_mod' member".format(trans_mod_file))
+    tab_r = np.asarray(data["trans_mod"], dtype=np.complex128)
+    nx, ny, nz = (int(x) for x in cell_shape)
+    nvol = nx * ny * nz
+    nd = 2 * norb
+    if tab_r.shape != (nvol, nd, nd):
+        raise ValueError("--uhfk-trans-mod {}: trans_mod shape {} does not match (nvol, 2 norb, "
+                         "2 norb) = {} of the total archive (a sublattice run must be converted "
+                         "on its deflated cell)".format(trans_mod_file, tab_r.shape, (nvol, nd, nd)))
+    h_mod = (np.fft.ifftn(tab_r.reshape(nx, ny, nz, nd, nd), axes=(0, 1, 2)) * nvol
+             ).reshape(nvol, nd, nd)
+    h_mod = _spin_reduce(h_mod, norb, "--uhfk-trans-mod")
+    h0 = _bare_transfer_k(transfer_file, cell_shape, norb)
+    return (h_mod - h0)[None, None]
+
+
+def _static_from_file(static_file, total, norb, nvol, spin_major, log):
+    data = np.load(static_file)
+    if "sigma_static" in data:
+        st = np.asarray(data["sigma_static"])
+    elif "sigma" in data:
+        log.info("--static {}: no 'sigma_static' member; using 'sigma' as the static correction"
+                 .format(static_file))
+        st = np.asarray(data["sigma"])
+    else:
+        raise ValueError("--static {}: neither 'sigma_static' nor 'sigma' is present".format(static_file))
+    for key in _STATIC_META:
+        if key not in data or key not in total:
+            raise ValueError("--static {}: the mandatory metadata member '{}' must be present in "
+                             "both the static and the total archive".format(static_file, key))
+        a, b = data[key], total[key]
+        same = (str(a) == str(b)) if key == "momentum_convention" else (
+            np.asarray(a).shape == np.asarray(b).shape and np.array_equal(np.asarray(a), np.asarray(b)))
+        if not same:
+            raise ValueError("--static {}: metadata '{}' differs from the total archive ({!r} vs "
+                             "{!r})".format(static_file, key, a, b))
+    if spin_major:
+        if st.shape != (nvol, 2 * norb, 2 * norb):
+            raise ValueError("--static --uhfk-spin-major: expected shape {} , got {}".format(
+                (nvol, 2 * norb, 2 * norb), st.shape))
+        st = _spin_reduce(np.asarray(st, dtype=np.complex128), norb, "--static")[None, None]
+    elif st.ndim == 4:
+        if st.shape != (1, nvol, norb, norb):
+            raise ValueError("--static: rank-4 sigma_static must be (1, nvol, norb, norb) = {}, got {}"
+                             .format((1, nvol, norb, norb), st.shape))
+        st = st[:, None]
+    elif st.shape != (1, 1, nvol, norb, norb):
+        raise ValueError("--static: sigma_static must be (1, 1, nvol, norb, norb) = {} (or rank 4 "
+                         "without the frequency axis), got {}".format((1, 1, nvol, norb, norb), st.shape))
+    return np.array(st, dtype=np.complex128, copy=True)
+
+
+def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=False,
+                        uhfk_trans_mod=None, bare_transfer=None, uhfk_spin_major=False,
+                        force=False, logger=None):
+    """Write a ``"split"`` self-energy archive from a total-form one (spec
+    2.3). Exactly one static source: ``static_path`` (the static.npz
+    contract), ``zero_static`` or ``uhfk_trans_mod`` + ``bare_transfer``.
+    Returns a summary dict; raises ``ValueError`` / ``FileExistsError`` on
+    any refusal (nothing is written then)."""
+    import logging
+    import os
+    log = logger or logging.getLogger(__name__)
+    n_src = int(static_path is not None) + int(zero_static) + int(uhfk_trans_mod is not None)
+    if n_src != 1:
+        raise ValueError("exactly one static source is required (--static, --zero-static or "
+                         "--uhfk-trans-mod)")
+    if (uhfk_trans_mod is not None) != (bare_transfer is not None):
+        raise ValueError("--bare-transfer is required with --uhfk-trans-mod and accepted only with it")
+    if uhfk_spin_major and static_path is None:
+        raise ValueError("--uhfk-spin-major applies to --static only")
+    if os.path.exists(out_path) and not force:
+        raise FileExistsError("output '{}' exists; pass --force to overwrite".format(out_path))
+    total = np.load(total_path)
+    marker = str(total["sigma_convention"]) if "sigma_convention" in total else None
+    if marker not in (None, "total"):
+        raise ValueError("'{}' carries sigma_convention={!r}; only a total-form archive (no "
+                         "marker or \"total\") can be converted".format(total_path, marker))
+    if "sigma" not in total:
+        raise ValueError("'{}' has no 'sigma' member".format(total_path))
+    sigma = np.asarray(total["sigma"], dtype=np.complex128)
+    if sigma.ndim != 5 or sigma.shape[0] != 1 or sigma.shape[-1] != sigma.shape[-2]:
+        raise ValueError("'{}': sigma must be rank 5 (1, nmat, nvol, norb, norb), got {}".format(
+            total_path, sigma.shape))
+    _, nmat, nvol, norb, _ = sigma.shape
+    if "cell_shape" in total:
+        cs = tuple(int(x) for x in total["cell_shape"])
+        if int(np.prod(cs)) != nvol:
+            raise ValueError("'{}': cell_shape {} does not match nvol {}".format(total_path, cs, nvol))
+    if zero_static:
+        static = np.zeros((1, 1, nvol, norb, norb), dtype=np.complex128)
+    elif static_path is not None:
+        static = _static_from_file(static_path, total, norb, nvol, uhfk_spin_major, log)
+    else:
+        if "cell_shape" not in total:
+            raise ValueError("--uhfk-trans-mod needs the cell_shape member of the total archive")
+        static = _static_from_uhfk_trans_mod(uhfk_trans_mod, bare_transfer, total["cell_shape"], norb)
+    if not np.all(np.isfinite(static)):
+        raise ValueError("the static correction is not finite")
+    from hwave.solver.hartree_fock import is_hermitian_batch
+    ok, err = is_hermitian_batch(static[:, 0], 1e-10)
+    if not ok:
+        raise ValueError("the static correction is not Hermitian (relative deviation {:.3e})".format(err))
+    fluct = sigma - static
+    members = {k: total[k] for k in total.files if k not in _SPLIT_FIELDS and k != "sigma"}
+    members.update(sigma=sigma, sigma_convention=np.str_("split"), sigma_static=static,
+                   sigma_fluct=fluct)
+    np.savez(out_path, **members)
+    # validate what was written through the solver's own seed validation
+    data = np.load(out_path)
+    env = make_seed_envelope(data, out_path, data["sigma"], None)
+    validate_split_seed(env, sigma.shape)
+    return dict(out=out_path, nmat=nmat, nvol=nvol, norb=norb,
+                static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))))
