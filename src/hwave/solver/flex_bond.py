@@ -88,3 +88,70 @@ def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, wo
             workers=workers):
         store.put_pair("chibar", alpha, beta_, _bk.to_host(block))
         del block
+
+
+# =============================================================================
+# Batched dressing, effective interaction and collapses (spec 3.2-3.3)
+# =============================================================================
+
+from dataclasses import dataclass as _dataclass
+
+from . import bond_channels as _bc
+
+
+@_dataclass(frozen=True)
+class DressResult:
+    collapse0: np.ndarray      # (nmat, nvol, nd, nd)  channel-0 block of chibar
+    collapse_s: np.ndarray     # (nmat, nvol, nd, nd)  channel-0 block of chi_s
+    collapse_c: np.ndarray
+    static_s: np.ndarray       # (nvol, ND, ND) at Omega = 0
+    static_c: np.ndarray
+    cond_min_s: float
+    cond_min_c: float
+
+
+def dress_and_build_w(store, S, C, *, nb, output_full, nmat, nvol, nd, spatial_shape,
+                      cond_tol=_bc._BOND_COND_FLOOR):
+    """The spec 3.2 loop: per frequency batch, dress spin then charge (one
+    channel batch alive at a time), consume each into W, the channel-0
+    collapses, the static slices (slice assignment into preallocated
+    buffers) and, with ``output_full``, the store's ``chi_s_w``/``chi_c_w``."""
+    ND = S.shape[-1]
+    SpC = S + C
+    collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
+    collapse_s = np.empty_like(collapse0)
+    collapse_c = np.empty_like(collapse0)
+    static_s = np.zeros((nvol, ND, ND), dtype=np.complex128)
+    static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
+    l_static = nmat // 2
+    cond_s = cond_c = np.inf
+    for l0 in range(0, nmat, nb):
+        l1 = min(nmat, l0 + nb)
+        cb = store.get_freq_batch("chibar", l0, l1)
+        collapse0[l0:l1] = cb[:, :, :nd, :nd]
+        chi_s_b, cs = _bc.dress_batch(cb, S, "spin", l0=l0, nmat=nmat, spatial_shape=spatial_shape,
+                                      cond_tol=cond_tol)
+        cond_s = min(cond_s, cs if cs is not None else np.inf)
+        W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
+        collapse_s[l0:l1] = chi_s_b[:, :, :nd, :nd]
+        if l0 <= l_static < l1:
+            static_s[...] = chi_s_b[l_static - l0]
+        if output_full:
+            store.put_freq_batch("chi_s_w", l0, l1, chi_s_b)
+        del chi_s_b
+        chi_c_b, cc = _bc.dress_batch(cb, C, "charge", l0=l0, nmat=nmat, spatial_shape=spatial_shape,
+                                      cond_tol=cond_tol)
+        cond_c = min(cond_c, cc if cc is not None else np.inf)
+        W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
+        collapse_c[l0:l1] = chi_c_b[:, :, :nd, :nd]
+        if l0 <= l_static < l1:
+            static_c[...] = chi_c_b[l_static - l0]
+        if output_full:
+            store.put_freq_batch("chi_c_w", l0, l1, chi_c_b)
+        del chi_c_b
+        W_b -= 0.25 * (SpC[None] @ cb @ SpC[None])
+        store.put_freq_batch("W", l0, l1, W_b)
+        del W_b
+    return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
+                       static_s=static_s, static_c=static_c,
+                       cond_min_s=float(cond_s), cond_min_c=float(cond_c))
