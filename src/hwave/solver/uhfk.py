@@ -6,6 +6,7 @@ from .base import solver_base
 from .perf import do_profile
 from . import fold
 from .kgrid import reverse_fft_axes
+from . import hartree_fock
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -1055,261 +1056,26 @@ class UHFk(solver_base):
 
     @do_profile
     def _make_ham_inter(self):
+        """Build the per-type interaction and spin tables.
+
+        The normal (spin-major) mode delegates to the shared kernel
+        ``hartree_fock.build_interaction_tables`` (#181 Phase B); the
+        ``discarded`` report it returns (declared entries the per-type
+        semantics drop, e.g. a CoulombIntra entry that is not r = 0,
+        a == b) is ignored here exactly as those entries were silently
+        skipped before, and the ambiguous aggregate/explicit Coulomb case
+        keeps its legacy logger.error + exit(1).
+        """
         logger.debug(">>> _make_ham_inter")
-
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        # In spin-orbital mode, interaction arrays use physical orbital count
-        norb     = self.norb_phys if self.enable_spin_orbital else self.norb
-        nd       = self.nd
-
-        #----------------
-        # interaction table
-        #----------------
-        self.inter_table = {}
-        self.spin_table = {}
-
-        #----------------
-        # Coulomb Intra and Coulomb Inter
-        #----------------
-        if 'Coulomb' in self.param_ham.keys():
-            # The aggregate 'Coulomb' input already provides both the intra and
-            # inter parts; combining it with explicit CoulombIntra/CoulombInter
-            # is ambiguous (the explicit terms would be silently dropped).
-            if ('CoulombIntra' in self.param_ham.keys()
-                    or 'CoulombInter' in self.param_ham.keys()):
-                logger.error(
-                    "Coulomb cannot be specified together with "
-                    "CoulombIntra or CoulombInter")
-                exit(1)
-
-            # assume zvo_ur.dat
-            # divide into r=0 (coulomb intra) and r!=0 (coulomb inter)
-            # via the decomposition shared with RPA/FLEX
-            coulomb_intra, coulomb_inter = wan90.split_coulomb(
-                self.param_ham["Coulomb"])
-
-            # coulomb intra: diagonal part of r=0 cell
-            uab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            # coulomb inter: off-diagonal part
-            vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in coulomb_intra.items():
-                uab_r[(*irvec,*orbvec)] += v
-            for (irvec,orbvec), v in coulomb_inter.items():
-                vab_r[(*irvec,*orbvec)] += v
-
-            # coulomb intra
-            # interaction coeffs
-            self.inter_table["CoulombIntra"] = uab_r # r=0 component
-            # spin combination
-            self.spin_table["CoulombIntra"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["CoulombIntra"][0,1,1,0] = 1
-            self.spin_table["CoulombIntra"][1,0,0,1] = 1
-
-            #XXX
-            # n_up n_up = n_up -> include in one-body term
-
-            # coulomb inter
-            # J~ab(r) = Jab(r) + Jba(-r)
-            vba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(vab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs
-            self.inter_table["CoulombInter"] = (vab_r + vba)/2
-            # spin combination
-            self.spin_table["CoulombInter"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["CoulombInter"][0,0,0,0] = 1
-            self.spin_table["CoulombInter"][1,1,1,1] = 1
-            self.spin_table["CoulombInter"][0,1,1,0] = 1
-            self.spin_table["CoulombInter"][1,0,0,1] = 1
-
-        else:
-            self.inter_table["CoulombIntra"] = None
-            self.inter_table["CoulombInter"] = None
-
-            # coulomb intra
-            if 'CoulombIntra' in self.param_ham.keys():
-                uab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-                # only r=0 and a=b component
-                for (irvec,orbvec), v in self.param_ham["CoulombIntra"].items():
-                    alpha, beta = orbvec
-                    if irvec == (0,0,0) and alpha == beta:
-                        uab_r[(*irvec, *orbvec)] += v
-
-                # interaction coeffs
-                self.inter_table["CoulombIntra"] = uab_r
-                # spin combination
-                self.spin_table["CoulombIntra"] = np.zeros((2,2,2,2), dtype=int)
-                self.spin_table["CoulombIntra"][0,1,1,0] = 1
-                self.spin_table["CoulombIntra"][1,0,0,1] = 1
-
-            if 'CoulombInter' in self.param_ham.keys():
-                vab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-                for (irvec,orbvec), v in self.param_ham["CoulombInter"].items():
-#                    if irvec != (0,0,0):
-                        vab_r[(*irvec, *orbvec)] += v
-
-                vba = np.conjugate(
-                    np.transpose(
-                        reverse_fft_axes(vab_r, (0, 1, 2)),
-                        (0,1,2,4,3)
-                    )
-                )
-
-                # interaction coeffs
-                self.inter_table["CoulombInter"] = (vab_r + vba)/2
-                # spin combination
-                self.spin_table["CoulombInter"] = np.zeros((2,2,2,2), dtype=int)
-                self.spin_table["CoulombInter"][0,0,0,0] = 1
-                self.spin_table["CoulombInter"][1,1,1,1] = 1
-                self.spin_table["CoulombInter"][0,1,1,0] = 1
-                self.spin_table["CoulombInter"][1,0,0,1] = 1
-
-        #----------------
-        # Hund
-        #----------------        
-        if 'Hund' in self.param_ham.keys():
-            jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Hund"].items():
-                jab_r[(*irvec, *orbvec)] += v
-
-            # J~ab(r) = Jab(r) + Jba(-r)
-            jba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(jab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs : -J^{Hund} by convention
-            self.inter_table["Hund"] = -(jab_r + jba)/2
-            # spin combination
-            self.spin_table["Hund"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["Hund"][0,0,0,0] = 1
-            self.spin_table["Hund"][1,1,1,1] = 1
-        else:
-            self.inter_table["Hund"] = None
-
-        #----------------
-        # Ising
-        #----------------
-        if 'Ising' in self.param_ham.keys():
-            jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Ising"].items():
-                jab_r[(*irvec, *orbvec)] += v
-
-            # J~ab(r) = Jab(r) + Jba(-r)
-            jba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(jab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs -- no 1/4: the documented Hamiltonian is
-            # J (n_up - n_down)(n_up - n_down), and the RPA/FLEX vertex
-            # content was adjudicated by exact diagonalization against
-            # exactly that operator (#106); the historical /4 read the
-            # file as J S^z S^z instead, so the same Ising file meant
-            # couplings differing by 4 between UHFk and RPA/FLEX
-            self.inter_table["Ising"] = (jab_r + jba)/2
-            # spin combination
-            self.spin_table["Ising"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["Ising"][0,0,0,0] = 1
-            self.spin_table["Ising"][1,1,1,1] = 1
-            self.spin_table["Ising"][0,1,1,0] = -1
-            self.spin_table["Ising"][1,0,0,1] = -1
-        else:
-            self.inter_table["Ising"] = None
-
-        #----------------
-        # PairLift
-        #----------------
-        if 'PairLift' in self.param_ham.keys():
-            jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["PairLift"].items():
-                jab_r[(*irvec, *orbvec)] += v
-
-            # J~ab(r) = Jab(r) + Jba(-r)
-            jba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(jab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs
-            self.inter_table["PairLift"] = (jab_r + jba)/2
-            # spin combination
-            self.spin_table["PairLift"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["PairLift"][0,0,1,1] = 1
-            self.spin_table["PairLift"][1,1,0,0] = 1
-        else:
-            self.inter_table["PairLift"] = None
-
-        #----------------
-        # Exchange
-        #----------------
-        if 'Exchange' in self.param_ham.keys():
-            jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Exchange"].items():
-                jab_r[(*irvec, *orbvec)] += v
-
-            # J~ab(r) = Jab(r) + Jba(-r)
-            jba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(jab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs : -J^{Ex} by convention
-            self.inter_table["Exchange"] = -(jab_r + jba)/2
-            # spin combination
-            self.spin_table["Exchange"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["Exchange"][0,1,0,1] = 1
-            self.spin_table["Exchange"][1,0,1,0] = 1
-        else:
-            self.inter_table["Exchange"] = None
-
-        #----------------
-        # PairHop
-        #----------------
-        if 'PairHop' in self.param_ham.keys():
-            jab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["PairHop"].items():
-                jab_r[(*irvec, *orbvec)] += v
-
-            # J~ab(r) = Jab(r) + Jba(-r)
-            jba = np.conjugate(
-                np.transpose(
-                    reverse_fft_axes(jab_r, (0, 1, 2)),
-                    (0,1,2,4,3)
-                )
-            )
-
-            # interaction coeffs
-            self.inter_table["PairHop"] = (jab_r + jba)/2
-            # spin combination
-            self.spin_table["PairHop"] = np.zeros((2,2,2,2), dtype=int)
-            self.spin_table["PairHop"][0,1,1,0] = 1
-            self.spin_table["PairHop"][1,0,0,1] = 1
-        else:
-            self.inter_table["PairHop"] = None
-
+        norb = self.norb_phys if self.enable_spin_orbital else self.norb
+        try:
+            tables = hartree_fock.build_interaction_tables(
+                self.param_ham, norb, self.shape)
+        except ValueError as exc:
+            logger.error(str(exc))
+            exit(1)
+        self.inter_table = tables.inter_table
+        self.spin_table = tables.spin_table
     @do_profile
     def _detect_blocks(self):
         """Detect block-diagonal structure from transfer and interaction terms.
@@ -1597,79 +1363,87 @@ class UHFk(solver_base):
         ham += self.ham_trans
 
         # interaction term: Coulomb type
-        for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
-            if self.inter_table[type] is not None:
-                logger.debug(type)
+        if not self.enable_spin_orbital:
+            # normal (spin-major) mode: the shared kernel adds every
+            # interaction contribution IN PLACE, in the original order and
+            # with the original expressions (bit-identical; #181 Phase B)
+            hartree_fock.accumulate_hf(
+                ham, gab_r, self.inter_table, self.spin_table, self.shape,
+                include_fock=self.iflag_fock)
+        else:
+            for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
+                if self.inter_table[type] is not None:
+                    logger.debug(type)
 
-                # coefficient of interaction term J_{ab}(r)
-                jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
-                # and its spin combination  Spin(s1,s2,s3,s4)
-                spin = self.spin_table[type]
+                    # coefficient of interaction term J_{ab}(r)
+                    jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
+                    # and its spin combination  Spin(s1,s2,s3,s4)
+                    spin = self.spin_table[type]
 
-                # non-cross term
-                #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
-                hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
-                hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
-                hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb_inter, norb_inter))
-                hh3 = np.sum(hh2, axis=0)  # shape: (2, norb_inter, 2, norb_inter)
-
-                if self.enable_spin_orbital:
-                    hh3_nd = self._virtual_ham_to_so(
-                        np.broadcast_to(hh3.reshape(1, 2, norb_inter, 2, norb_inter),
-                                       (nvol, 2, norb_inter, 2, norb_inter)).copy()
-                    )
-                else:
-                    hh3_nd = np.broadcast_to(hh3.reshape(nd, nd), (nvol, nd, nd))
-
-                ham += hh3_nd
-
-                # cross term
-                #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
-                if self.iflag_fock:
-                    hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin, optimize=True)
-
-                    #   fourier transform: sum_r (*) e^{ikr}
-                    hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
+                    # non-cross term
+                    #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
+                    hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
+                    hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
+                    hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb_inter, norb_inter))
+                    hh3 = np.sum(hh2, axis=0)  # shape: (2, norb_inter, 2, norb_inter)
 
                     if self.enable_spin_orbital:
-                        ham -= self._virtual_ham_to_so(
-                            hh5.reshape(nvol, 2, norb_inter, 2, norb_inter)
+                        hh3_nd = self._virtual_ham_to_so(
+                            np.broadcast_to(hh3.reshape(1, 2, norb_inter, 2, norb_inter),
+                                           (nvol, 2, norb_inter, 2, norb_inter)).copy()
                         )
                     else:
-                        ham -= hh5.reshape(nvol, nd, nd)
+                        hh3_nd = np.broadcast_to(hh3.reshape(nd, nd), (nvol, nd, nd))
 
-        # interaction term: PairHop type
-        for type in ['PairHop']:
-            if self.inter_table[type] is not None:
-                logger.debug(type)
+                    ham += hh3_nd
 
-                # coefficient of interaction term J_{ab}(r)
-                jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
-                # and its spin combination  Spin(s1,s2,s3,s4)
-                spin = self.spin_table[type]
+                    # cross term
+                    #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
+                    if self.iflag_fock:
+                        hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin, optimize=True)
 
-                # non-cross and cross term
-                #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
-                #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
+                        #   fourier transform: sum_r (*) e^{ikr}
+                        hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
 
-                if self.iflag_fock:
-                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                    hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
-                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
-                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
-                else:
-                    hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                    hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
-                    hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
+                        if self.enable_spin_orbital:
+                            ham -= self._virtual_ham_to_so(
+                                hh5.reshape(nvol, 2, norb_inter, 2, norb_inter)
+                            )
+                        else:
+                            ham -= hh5.reshape(nvol, nd, nd)
 
-                if self.enable_spin_orbital:
-                    ham += self._virtual_ham_to_so(
-                        hh4.reshape(nvol, 2, norb_inter, 2, norb_inter)
-                    )
-                else:
-                    ham += hh4.reshape(nvol, nd, nd)
+            # interaction term: PairHop type
+            for type in ['PairHop']:
+                if self.inter_table[type] is not None:
+                    logger.debug(type)
 
-        # Enforce block structure: zero out cross-block entries
+                    # coefficient of interaction term J_{ab}(r)
+                    jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
+                    # and its spin combination  Spin(s1,s2,s3,s4)
+                    spin = self.spin_table[type]
+
+                    # non-cross and cross term
+                    #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
+                    #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
+
+                    if self.iflag_fock:
+                        hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                        hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
+                        hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
+                        hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
+                    else:
+                        hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
+                        hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
+                        hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
+
+                    if self.enable_spin_orbital:
+                        ham += self._virtual_ham_to_so(
+                            hh4.reshape(nvol, 2, norb_inter, 2, norb_inter)
+                        )
+                    else:
+                        ham += hh4.reshape(nvol, nd, nd)
+
+            # Enforce block structure: zero out cross-block entries
         if len(self.block_info) > 1:
             mask = np.zeros((nd, nd), dtype=bool)
             for blk in self.block_info:
