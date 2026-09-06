@@ -7,6 +7,7 @@ the output helpers.
 import numpy as np
 
 from . import backend as _bk
+from . import matsubara as _ms
 from . import bubble as _bubble
 
 
@@ -155,3 +156,66 @@ def dress_and_build_w(store, S, C, *, nb, output_full, nmat, nvol, nd, spatial_s
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
                        cond_min_s=float(cond_s), cond_min_c=float(cond_c))
+
+
+# =============================================================================
+# Bond-aware self-energy transport (spec 3.4)
+# =============================================================================
+
+_TRANSPORT_COST_WARN = 1.0e11
+
+
+def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
+    """Sigma_fluct(k, iw) from the bond-resolved effective interaction ``W``
+    in ``store`` (spec 3.4, normative equation with the momentum phases
+    e^{+ik.R_alpha} e^{-i(k-q).R_beta} realised as real-space rolls):
+
+        Sigma_ab(k) = T/N sum_{q,nu} sum_{alpha,beta,c,d}
+            e^{+ik.R_alpha} W_{(alpha,c,a),(beta,d,b)}(q) e^{-i(k-q).R_beta} G_cd(k-q)
+
+    ``green_kw`` is rank five `(1, nmat, nvol, norb, norb)`; the result has
+    the same shape.  With a single on-site channel this reproduces
+    `FLEX._calc_self_energy_general` byte for byte."""
+    nx, ny, nz = (int(x) for x in shape)
+    nvol = nx * ny * nz
+    nmat = green_kw.shape[1]
+    P = norb
+    nd = norb * norb
+    B = view.n_channels
+    cost = float(B * B) * nmat * nvol * (P ** 2 * np.log2(max(nmat * nvol, 2)) + P ** 3)
+    if cost > _TRANSPORT_COST_WARN:
+        logger.warning("bond self-energy transport cost estimate %.2e exceeds %.0e "
+                       "(B=%d, Nmat=%d, Nvol=%d, norb=%d); expect long iterations",
+                       cost, _TRANSPORT_COST_WARN, B, nmat, nvol, norb)
+    G_kw = green_kw[0]
+    G_rt = _bk.spatial_ifftn(
+        _ms.fermion_to_tau(G_kw.reshape(nmat, nvol * P * P), axis=0).reshape(nmat, nx, ny, nz, P * P),
+        axes=(1, 2, 3), workers=workers).reshape(nmat, nvol, P, P)
+    Sigma_rt = np.zeros((nmat, nvol, P, P), dtype=np.complex128)
+    axes = (1, 2, 3)
+    for alpha in range(B):
+        Ra = np.asarray(view.delta_r[alpha], dtype=int)
+        for bt in range(B):
+            Rb = np.asarray(view.delta_r[bt], dtype=int)
+            blk = np.ascontiguousarray(store.get_pair("W", alpha, bt))               # (nmat, nvol, nd, nd)
+            blk_qt = _ms.boson_to_tau(blk.reshape(nmat, nvol * nd * nd), axis=0)
+            del blk
+            Wab_rt = _bk.spatial_ifftn(blk_qt.reshape(nmat, nx, ny, nz, nd * nd),
+                                       axes=axes, workers=workers)
+            del blk_qt
+            Wab_rt = np.roll(Wab_rt, tuple(-Rb), axis=axes).reshape(nmat, nvol, P, P, P, P)
+            A = np.einsum('frcadb,frcd->frab', Wab_rt, G_rt)
+            del Wab_rt
+            A_rolled = np.roll(A.reshape(nmat, nx, ny, nz, P, P), tuple(Rb - Ra), axis=axes
+                               ).reshape(nmat, nvol, P, P)
+            del A
+            Sigma_rt += A_rolled
+            del A_rolled
+    del G_rt
+    tmp = _bk.spatial_fftn(Sigma_rt.reshape(nmat, nx, ny, nz, P * P), axes=axes, workers=workers)
+    del Sigma_rt
+    sigma = _ms.tau_to_fermion(tmp.reshape(nmat, nvol * P * P), axis=0)
+    del tmp
+    sigma = sigma.reshape(1, nmat, nvol, P, P)
+    sigma *= 1.0 / beta
+    return sigma
