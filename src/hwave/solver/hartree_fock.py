@@ -232,3 +232,107 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
                 hh4 = np.fft.ifftn(hh3.reshape(nx, ny, nz, nd_virt, nd_virt), axes=(0, 1, 2), norm='forward')
             ham += hh4.reshape(nvol, nd, nd)
     return out
+
+
+# =============================================================================
+# The Heff-referenced equal-time density (spec section 2.1)
+# =============================================================================
+
+def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
+    """Fermi function with the overflow guard of ``RPA._find_mu`` /
+    ``FLEX._fermi_occupation`` (same arithmetic)."""
+    w = (ev - mu) / t
+    mask = w < ene_cutoff
+    w1 = np.where(mask, w, 0.0)
+    v1 = 1.0 / (1.0 + np.exp(w1))
+    return np.where(mask, v1, 0.0)
+
+
+@dataclass(frozen=True)
+class DensityResult:
+    """The projected (exactly Hermitian) real-space equal-time density
+    ``rho_r[r, a, b] = <c^dag_a(0) c_b(r)>`` (per spin, per cell), its
+    reciprocal-space form reconstructed from the projected ``rho_r``, and
+    the per-spin particle number ``n_per_spin = Nvol * Re Tr rho_r(0)``.
+    Arrays are private, non-aliased and read-only."""
+    rho_k: np.ndarray
+    rho_r: np.ndarray
+    n_per_spin: float
+
+
+def heff_eigenpairs(H0_k, sigma_static, rel=1e-10):
+    """Eigenpairs of ``Heff(k) = H0(k) + sigma_static(k)``, ``(e (nvol, n),
+    U (nvol, n, n))`` with ``Heff = U diag(e) U^dag``; refused
+    (``ValueError``) unless ``Heff`` is Hermitian to ``rel``."""
+    heff = np.asarray(H0_k) + np.asarray(sigma_static)
+    ok, err = is_hermitian_batch(heff, rel)
+    if not ok:
+        raise ValueError(
+            "H0 + sigma_static is not Hermitian (relative deviation {:.3e} "
+            "> {:.1e}); the static self-energy or the seed is corrupt"
+            .format(err, rel))
+    e, U = np.linalg.eigh(heff)
+    return e, U
+
+
+def equal_time_density(green_kw, heff_eig, mu, beta, shape, *, sym_tol=1e-8):
+    """``rho`` from the dressed Matsubara Green function (spec 2.1):
+
+        D_ab(k) = D^ref_ab(k) + T sum_n [ G_ab(k, i w_n) - G^ref_ab(k, i w_n) ]
+        G^ref   = U diag(1 / (i w_n + mu - e_j)) U^dag,  D^ref_ab = sum_j U_aj conj(U_bj) f(e_j - mu)
+        rho_k   = D^T (last two axes);  rho_r = fftn(rho_k, norm="forward")
+
+    ``green_kw`` is ``(1, nmat, nvol, n, n)`` (the block axis of the SCF
+    state); ``heff_eig`` the pair from :func:`heff_eigenpairs`. The
+    Hermitian symmetry ``rho_ab(r) = conj(rho_ba(-r))`` is validated
+    (relative Frobenius error ``<= sym_tol``, else ``ValueError``) and
+    projected; non-finite input raises :class:`NonFiniteError`.
+    """
+    G = np.asarray(green_kw)
+    if G.ndim != 5 or G.shape[0] != 1:
+        raise ValueError(
+            "equal_time_density: green_kw must be (1, nmat, nvol, n, n), got {}"
+            .format(G.shape))
+    if not np.all(np.isfinite(G)):
+        raise NonFiniteError("equal_time_density: non-finite Green function")
+    nmat, nvol, n = G.shape[1], G.shape[2], G.shape[3]
+    nx, ny, nz = (int(x) for x in shape)
+    if nx * ny * nz != nvol:
+        raise ValueError("equal_time_density: prod(shape) != nvol")
+    e, U = heff_eig
+    T = 1.0 / beta
+    f = masked_fermi(T, mu, e)                                   # (nvol, n)
+    D_ref = np.einsum('kaj,kj,kbj->kab', U, f, U.conj())         # sum_j U_aj f_j conj(U_bj)
+    iw = 1j * (2 * np.arange(nmat) + 1 - nmat) * np.pi / beta
+    inv = 1.0 / (iw[:, None, None] + mu - e[None, :, :])         # (nmat, nvol, n)
+    G_ref = np.einsum('kaj,wkj,kbj->wkab', U, inv, U.conj())     # (nmat, nvol, n, n)
+    D = D_ref + T * (G[0] - G_ref).sum(axis=0)
+    rho_k = np.swapaxes(D, -1, -2)
+    rho_r = np.fft.fftn(rho_k.reshape(nx, ny, nz, n, n), axes=(0, 1, 2),
+                        norm="forward").reshape(nvol, n, n)
+    # Hermitian symmetry rho_ab(r) = conj(rho_ba(-r))
+    rev = np.conj(np.swapaxes(rho_r, -1, -2)).reshape(nx, ny, nz, n, n)
+    for ax in (0, 1, 2):
+        rev = np.flip(np.roll(rev, -1, axis=ax), axis=ax)       # r -> -r on a periodic axis
+    rev = rev.reshape(nvol, n, n)
+    err = float(np.linalg.norm((rho_r - rev).ravel())) / max(1.0, float(np.linalg.norm(rho_r.ravel())))
+    if not np.isfinite(err):
+        raise NonFiniteError("equal_time_density: non-finite density")
+    if err > sym_tol:
+        raise ValueError(
+            "equal_time_density: the equal-time density violates rho_ab(r) = "
+            "conj(rho_ba(-r)) (relative deviation {:.3e} > {:.1e}); the Green "
+            "function is not the Green function of a Hermitian problem"
+            .format(err, sym_tol))
+    rho_r = 0.5 * (rho_r + rev)
+    rho_k = np.fft.ifftn(rho_r.reshape(nx, ny, nz, n, n), axes=(0, 1, 2),
+                         norm="forward").reshape(nvol, n, n)
+    tr0 = complex(np.trace(rho_r[0]))
+    if abs(tr0.imag) > 1e-10 * max(1.0, abs(tr0.real)):
+        raise ValueError(
+            "equal_time_density: Tr rho(0) has a non-negligible imaginary part "
+            "({:.3e})".format(tr0.imag))
+    n_per_spin = float(nvol * tr0.real)
+    rho_k.flags.writeable = False
+    rho_r.flags.writeable = False
+    return DensityResult(rho_k=rho_k, rho_r=rho_r, n_per_spin=n_per_spin)
