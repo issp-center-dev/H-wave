@@ -236,31 +236,136 @@ class FLEX(RPA):
     def __init__(self, param_ham, info_log, info_mode):
         logger.debug(">>> FLEX.__init__")
 
-        # The RPA-only experimental bond-resolved longitudinal gate (#181
-        # Tier 3 Phase A): FLEX has no bond-basis self-consistency yet
-        # (Phase B), so a TRUE key is a configuration error, not a
-        # silently ignored option. Read the RAW (case-insensitive) value
-        # BEFORE the RPA base parses it -- under calc_type='ring+ladder'
-        # the base parser turns a true flag into False with a warning,
-        # which would hide this refusal.
-        _lbc = CaseInsensitiveDict(info_mode.get("param", {})).get(
-            "longitudinal_bond_channels", False)
-        if not isinstance(_lbc, (bool, np.bool_)):
-            raise ValueError(
-                "[mode.param] longitudinal_bond_channels must be a boolean, "
-                "got {!r}".format(_lbc))
-        if bool(_lbc):
-            raise ValueError(
-                "[mode.param] longitudinal_bond_channels=true is RPA-only "
-                "in Phase A (mode='RPA', calc_type='ring'): the FLEX "
-                "self-consistency on the bond basis is Phase B of GitHub "
-                "issue #181. Remove the key for a FLEX run.")
+        # Phase B (#181): the raw Phase B keys are parsed BEFORE the RPA
+        # base runs (refusal precedence steps 1-3 of the spec), because the
+        # base parser would turn a true gate flag into False under
+        # calc_type='ring+ladder' and exits on an odd Nmat.
+        self._phase_b_raw = self._parse_phase_b_keys(info_mode)
 
         # Initialize RPA infrastructure (lattice, interaction, params)
         super().__init__(param_ham, info_log, info_mode)
 
         # FLEX-specific parameters
         self._init_flex_param()
+        self._install_phase_b_keys()
+
+    # ------------------------------------------------------------------
+    # Phase B (#181): configuration surface -- spec 2026-09-06 section 4.1
+    # ------------------------------------------------------------------
+    _accepts_flex_keys = True
+    _PHASE_B_SWITCHES = ("flex_hartree_fock", "longitudinal_bond_channels")
+    _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
+                          "longitudinal_bond_freq_batch",
+                          "longitudinal_bond_max_shells",
+                          "longitudinal_bond_memory_cap_gb")
+
+    @staticmethod
+    def _parse_phase_b_keys(info_mode):
+        """Refusal precedence steps 1-3 on the RAW ``[mode.param]`` (before
+        any numerical state exists). Returns the parsed values as a dict;
+        stale bond-only keys (gate off) are NOT parsed and are listed in
+        one warning."""
+        import numbers
+        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        out = {}
+        # step 1: types of the switches
+        for key in FLEX._PHASE_B_SWITCHES:
+            v = param.get(key, False)
+            if not isinstance(v, (bool, np.bool_)):
+                raise ValueError("[mode.param] {} must be a boolean, got {!r}".format(key, v))
+            out[key] = bool(v)
+        hf_on, gate_on = out["flex_hartree_fock"], out["longitudinal_bond_channels"]
+        active = hf_on or gate_on
+        out["active"] = active
+        stale = [k for k in FLEX._PHASE_B_BOND_KEYS if k in param]
+        if not active:
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but longitudinal_bond_channels is not "
+                    "true; these bond-only options are ignored (not parsed).",
+                    ", ".join(stale))
+            out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0)
+            return out
+        # step 2: domain keys that need no assembly
+        nmat = param.get("Nmat", None)
+        if nmat is None or isinstance(nmat, bool) or not isinstance(nmat, numbers.Integral) or int(nmat) % 2 != 0:
+            raise ValueError(
+                "[mode.param] Nmat must be an even integer when flex_hartree_fock or "
+                "longitudinal_bond_channels is true (the static Matsubara slice is read at "
+                "Nmat//2), got {!r}".format(nmat))
+        scheme = str(info_mode.get("calc_scheme", "auto")).lower()
+        if scheme not in ("general", "auto"):
+            raise ValueError(
+                "flex_hartree_fock / longitudinal_bond_channels require calc_scheme='general' "
+                "(or 'auto' resolving to it), got {!r}".format(scheme))
+        basis = str(param.get("matsubara_basis", "uniform")).lower()
+        if basis != "uniform":
+            raise ValueError(
+                "[mode.param] matsubara_basis='{}' is not supported with flex_hartree_fock / "
+                "longitudinal_bond_channels (uniform Matsubara grid only; the IR fit of bond "
+                "susceptibilities is ill-conditioned)".format(basis))
+        if _bk.as_bool(param.get("gpu", False)):
+            raise ValueError(
+                "[mode.param] gpu=true is not supported with flex_hartree_fock / "
+                "longitudinal_bond_channels in this version (CPU only)")
+        sub = param.get("SubShape", None)
+        if sub is not None and tuple(int(x) for x in sub) != (1, 1, 1):
+            raise ValueError(
+                "[mode.param] a sublattice (SubShape={}) is not supported with flex_hartree_fock / "
+                "longitudinal_bond_channels; run with SubShape=[1,1,1]".format(list(sub)))
+        # step 3: gate-HF coupling
+        if gate_on and not hf_on:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true in FLEX requires "
+                "flex_hartree_fock=true (the bond-resolved channel renormalises the band with "
+                "the self-consistent Hartree-Fock term; set both keys)")
+        if not gate_on and stale:
+            logger.warning(
+                "[mode.param] %s set but longitudinal_bond_channels is not true; these "
+                "bond-only options are ignored (not parsed).", ", ".join(stale))
+            out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0)
+            return out
+        v = param.get("longitudinal_bond_output_full", False)
+        if not isinstance(v, (bool, np.bool_)):
+            raise ValueError("[mode.param] longitudinal_bond_output_full must be a boolean, got {!r}".format(v))
+        out["longitudinal_bond_output_full"] = bool(v)
+        fb = param.get("longitudinal_bond_freq_batch", None)
+        if fb is not None:
+            if isinstance(fb, bool) or not isinstance(fb, numbers.Integral) or not (1 <= int(fb) <= int(nmat)):
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_freq_batch must be an integer in [1, Nmat={}], "
+                    "got {!r}".format(int(nmat), fb))
+            fb = int(fb)
+        out["longitudinal_bond_freq_batch"] = fb
+        ms = param.get("longitudinal_bond_max_shells", None)
+        if ms is not None:
+            if isinstance(ms, bool) or not isinstance(ms, numbers.Integral) or int(ms) < 1:
+                raise ValueError("[mode.param] longitudinal_bond_max_shells must be an integer >= 1, got {!r}".format(ms))
+            ms = int(ms)
+        out["longitudinal_bond_max_shells"] = ms
+        cap = param.get("longitudinal_bond_memory_cap_gb", 8.0)
+        if isinstance(cap, bool) or not isinstance(cap, numbers.Real) or not np.isfinite(cap) or cap <= 0:
+            raise ValueError("[mode.param] longitudinal_bond_memory_cap_gb must be a finite number > 0 (binary GiB), got {!r}".format(cap))
+        out["longitudinal_bond_memory_cap_gb"] = float(cap)
+        return out
+
+    def _install_phase_b_keys(self):
+        raw = self._phase_b_raw
+        self.flex_hartree_fock = raw["flex_hartree_fock"]
+        # the FLEX meaning of the gate key (the RPA base parser's value is
+        # replaced: it is calc_type-scoped and RPA-owned)
+        self.longitudinal_bond_channels = raw["longitudinal_bond_channels"]
+        self.longitudinal_bond_output_full = raw["longitudinal_bond_output_full"]
+        self.longitudinal_bond_freq_batch = raw["longitudinal_bond_freq_batch"]
+        self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
+        self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
+        self._phase_b_active = raw["active"]
+        if self._phase_b_active:
+            logger.info("    flex_hartree_fock = {}".format(self.flex_hartree_fock))
+            logger.info("    longitudinal_bond_channels (FLEX) = {}".format(
+                self.longitudinal_bond_channels))
 
     def _init_flex_param(self):
         """Initialize FLEX-specific parameters."""

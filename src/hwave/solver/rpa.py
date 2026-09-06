@@ -1971,6 +1971,18 @@ class RPA:
         _lbc_keys = ("longitudinal_bond_channels",
                      "longitudinal_bond_max_shells",
                      "longitudinal_bond_memory_cap_gb")
+        # FLEX-only Phase B keys (#181): warned-and-ignored in every other
+        # mode (the FLEX subclass parses them itself, before this runs)
+        if not getattr(self, "_accepts_flex_keys", False):
+            _flex_only = [k for k in ("flex_hartree_fock",
+                                      "longitudinal_bond_output_full",
+                                      "longitudinal_bond_freq_batch")
+                          if k in self.param_mod]
+            if _flex_only:
+                logger.warning(
+                    "[mode.param] %s: FLEX-only key(s), ignored in mode "
+                    "'%s'.", ", ".join(_flex_only),
+                    getattr(self, "_mode_name", "RPA"))
         _flag = self.param_mod.get("longitudinal_bond_channels", False)
         if not isinstance(_flag, (bool, np.bool_)):
             raise ValueError(

@@ -107,7 +107,7 @@ class TestGateConfig(unittest.TestCase):
     def test_flex_rejects_only_a_true_key(self):
         with self.assertRaises(ValueError) as cm:
             _build({"longitudinal_bond_channels": True}, mode="FLEX")
-        self.assertIn("Phase B", str(cm.exception))
+        self.assertIn("flex_hartree_fock", str(cm.exception))   # Phase B: gate needs HF
         _build({"longitudinal_bond_channels": False}, mode="FLEX")
         with self.assertRaises(ValueError):
             _build({"longitudinal_bond_channels": "true"}, mode="FLEX")
@@ -126,7 +126,7 @@ class TestGateConfig(unittest.TestCase):
                 "calc_scheme": "general", "calc_type": "ring+ladder"}
         with self.assertRaises(ValueError) as cm:
             flex_mod.FLEX(r.get_param("ham"), {}, info)
-        self.assertIn("Phase A", str(cm.exception))
+        self.assertIn("flex_hartree_fock", str(cm.exception))
 
 
 _EQ2 = "tests/equivalence_input/orb2"
