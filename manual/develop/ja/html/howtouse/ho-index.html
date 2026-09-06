@@ -164,7 +164,10 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 <p>計算終了後、計算結果が出力ディレクトリに出力されます。
 出力ファイルの詳細については、ファイルフォーマットの章を参照してください。</p>
 <p>また、本パッケージには後処理ツール<code class="docutils literal notranslate"><span class="pre">hwave_dos</span></code>（状態密度）および
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。</p>
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（Eliashberg方程式・超伝導解析）が含まれており、同じ入力ファイルを利用します。
+また、単独で動く変換ツール<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span> <span class="pre">total.npz</span> <span class="pre">out.npz</span> <span class="pre">...</span></code>（位置引数で
+指定し、入力ファイルは使いません）は、FLEX の全自己エネルギーアーカイブを
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算が<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>として受理する分割形式に変換します。</p>
 </li>
 </ol>
 </li>

@@ -213,8 +213,13 @@ TOML形式
   ``chi0q_init``\ なし、\ ``enable_spin_orbital``\ なしが必要で、
   オフサイトの\ ``Exchange``\ または\ ``PairHop``\ の宣言はエラーとして
   拒否されます。\ ``transverse_bond_channels = true``\ とは併用でき
-  ません。\ ``mode = "FLEX"``\ では\ ``true``\ は拒否されます
-  （ボンド基底の自己無撞着 FLEX はまだありません）。
+  ません。\ ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
+  自己無撞着なボンド分解チャネルを有効にします（実験的機能。
+  ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
+  スピンフリー系・一様松原格子・CPU 実行・副格子なし・偶数の\ ``Nmat``
+  が必要。:ref:`flex_bond_hf`\ を参照）。以下のボンド関連の補助キーは
+  同じ意味を持ち、\ ``longitudinal_bond_output_full``\ と
+  ``longitudinal_bond_freq_batch``\ は FLEX 専用です。
 
 - ``longitudinal_bond_max_shells``
 
@@ -239,6 +244,52 @@ TOML形式
   その根拠となる配列形状が示されるので、物理メモリに余裕がある計算機では
   上限を引き上げて実行してください。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
+
+- ``flex_hartree_fock``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 。FLEXモードのみ)
+
+  **説明 :**
+  **実験的機能。** 受理された **全て** の相互作用項（オンサイト・
+  オフサイト）の自己無撞着な Hartree-Fock 自己エネルギー
+  :math:`\Sigma_{\rm HF}[G]`\ を FLEX の自己エネルギーに加えます
+  （:math:`\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}`\ 。毎反復
+  ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
+  スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
+  （``matsubara_basis = "ir"``\ は拒否）、CPU 実行（``gpu = true``\ は
+  拒否）、副格子なし、外場なし、偶数の\ ``Nmat``\ が必要です。
+  ユーザー指定の平均場（``trans_mod`` / ``green_init``\ ）はバンドに
+  折り込まれず、静的自己エネルギーの初期値として扱われます。
+  ``sigma.npz``\ には\ ``sigma_static``\ ・\ ``sigma_fluct``\ ・
+  ``sigma_convention = "split"``\ と来歴ブロックが追加され、
+  ``sigma_init``\ には\ ``"split"``\ 形式のアーカイブのみが受理されます
+  （``sigma_init``\ と\ ``hwave_sigma_split``\ を参照）。FLEX モードで
+  ``longitudinal_bond_channels = true``\ とする場合は\ ``true``\ が必須
+  です。\ ``false``\ では全ての出力が従来と同一です。
+
+- ``longitudinal_bond_output_full``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 。FLEXモードのみ)
+
+  **説明 :**
+  最後の SCF 写像のボンド分解した動的スピン・電荷感受率
+  ``chi_s_w`` / ``chi_c_w``\ （ボソン振動数上の\ ``ndarray(l, q, I, J)``\ ）
+  を、\ ``[file.output] longitudinal_bond``\ で指定した専用アーカイブ
+  （デフォルト\ ``longitudinal_bond.npz``\ ）に書き出します。ボンド分解
+  した解法の常駐メモリが2倍になります。アーカイブのサイズは書き出し前に
+  ログに出力されます。\ ``longitudinal_bond_channels = true``\ でない
+  場合は警告付きで無視されます。
+
+- ``longitudinal_bond_freq_batch``
+
+  **形式 :** int型 (デフォルトは自動選択。FLEXモードのみ)
+
+  **説明 :**
+  ボンド分解 FLEX が一度にドレスするボソン振動数の数（``[1, Nmat]``\ ）
+  です。デフォルトでは推定ピークメモリが
+  ``longitudinal_bond_memory_cap_gb``\ 以下に収まる最大のバッチが
+  選ばれ、明示した値も同じ上限と照合されます。
+  ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``matsubara_frequency``
 
@@ -350,7 +401,7 @@ TOML形式
 
   **形式 :** str型（FLEXモードのみ）
 
-  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。
+  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
 
 
 ``file.input.interaction``\ セクション
@@ -398,3 +449,9 @@ TOML形式
   **形式 :** str型
 
   **説明 :** 感受率行列\ :math:`\chi(\vec{q})`\ を出力するファイル名を指定します。このキーワードがない場合には情報は出力されません。
+
+- ``longitudinal_bond``
+
+  **形式 :** str型 (デフォルトは\ ``longitudinal_bond.npz``\ 。FLEXモードのみ)
+
+  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。

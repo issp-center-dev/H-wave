@@ -293,9 +293,14 @@ declared-zero coefficient counts), real coefficients, an even
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, no sublattice, no <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> and no
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
 declaration is rejected with an error. It cannot be combined with
-<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> a <code class="docutils literal notranslate"><span class="pre">true</span></code>
-value is rejected (the bond basis has no self-consistent FLEX
-treatment yet).</p>
+<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> the same key
+enables the self-consistent bond-resolved channel of the Hartree-Fock
+FLEX (experimental; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
+grid, CPU execution, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
+<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). The bond-specific companions below keep their
+meaning; <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> are FLEX-only.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code></p>
 <p><strong>Type :</strong>
@@ -319,6 +324,49 @@ the run is refused before any expensive step when it exceeds the cap.
 The refusal message reports the estimate and the shapes behind it; on
 a machine with enough physical memory, raise the cap to proceed.
 Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+<strong>Experimental.</strong> Adds the self-consistent Hartree-Fock self-energy
+<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span> of EVERY accepted interaction term (on-site
+and off-site) to the FLEX self-energy, <span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF}
++ \Sigma_{\rm fluct}\)</span>, recomputed from the dressed Green function every
+iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
+<span class="pre">&quot;general&quot;</span></code> on a spin-free system, the uniform Matsubara grid
+(<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), CPU execution (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>
+is refused), no sublattice, no external field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>.
+A user mean field (<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>) is taken as the
+initial static self-energy instead of being folded into the band;
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> gains the members <code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>, <code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code> and a provenance block, and only a
+<code class="docutils literal notranslate"><span class="pre">&quot;split&quot;</span></code> archive is accepted as <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> (see <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
+and <code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>). Mandatory (<code class="docutils literal notranslate"><span class="pre">true</span></code>) when
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> in FLEX mode. With <code class="docutils literal notranslate"><span class="pre">false</span></code>
+every output is unchanged.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Writes the full dynamic bond-resolved spin and charge susceptibilities
+<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code> over the bosonic
+frequencies) of the last SCF map into the dedicated archive named by
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code> (default <code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>).
+Doubles the persistent memory of the bond-resolved solve; the archive
+size is logged before writing. Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
+<p><strong>Type :</strong>
+Integer (default: chosen automatically; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Number of bosonic frequencies dressed at once by the bond-resolved
+FLEX (in <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>). By default the largest batch that keeps the
+estimated peak memory under <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> is
+used; an explicit value is checked against the same cap. Ignored with
+a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>Type :</strong>
@@ -454,7 +502,13 @@ earlier FLEX run) used to seed the FLEX SCF loop instead of Sigma = 0. The
 path is resolved relative to <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>. The recorded <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>
 and the array’s <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must match the current run (a mismatch is a
 fail-fast error). See the FLEX tutorial section “Warm-starting the SCF
-loop” for the sweep workflow.</p>
+loop” for the sweep workflow. With <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> only a
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written by such a run (<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>,
+carrying <code class="docutils literal notranslate"><span class="pre">sigma_static</span></code> and <code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>) is accepted, the two
+components seed the loop exactly as stored, and a mean field
+(<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>) given at the same time is refused; a
+legacy or <code class="docutils literal notranslate"><span class="pre">&quot;total&quot;</span></code> archive is converted with <code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>
+(see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>).</p>
 </li>
 </ul>
 </section>
@@ -508,6 +562,18 @@ String</p>
 This parameter specifies the name of the file to store the susceptibility matrix
 <span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span>.
 If it is not set, no output will be generated.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Name of the dedicated archive of the dynamic bond-resolved
+susceptibilities, written only when <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> in FLEX mode (see
+<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). A name without the <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix gets it
+appended, as for the other <code class="docutils literal notranslate"><span class="pre">.npz</span></code> outputs. It must not resolve to the
+same file as any other output of the run (the collision is refused
+before the calculation starts).</p>
 </li>
 </ul>
 </section>

@@ -162,6 +162,32 @@ chiq のデータ形式
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
   下限に達すると実行は拒否されます）、\ ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
 
+``mode = "FLEX"``\ で\ ``longitudinal_bond_channels = true``\ の場合（:ref:`flex_bond_hf`\ の
+Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写像を記述し
+（``longitudinal_bond_source = "last_map"``\ ）、\ ``[file.output] chiq``\ が
+指定されていれば結合\ ``chiq``\ ファイルに、なければ常に存在する\ ``chiq_s``\ ファイルに
+書き出されます（この場合、電荷チャネルの静的キーも\ ``chiq_s.npz``\ の中にあります。
+INFO ログにその旨が出力されます）。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
+:math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
+アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
+``green``\ ）には来歴ブロック\ ``scf_converged``\ ・\ ``scf_iterations``\ ・
+``map_iteration``\ ・\ ``state_iteration``\ ・\ ``scf_sigma_residual``\ ・
+``scf_green_residual``\ ・\ ``scf_component_residual``\ ・\ ``payload_kind``
+（感受率は\ ``"last_map"``\ 、\ ``sigma`` / ``green``\ は\ ``"final_state"``\ ）・
+``hf_density_error``\ （そのペイロードが記述する状態の密度閉包誤差。
+``hf_density_source``\ 付き）・\ ``density_target_enforced``\ が含まれます。
+``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
+（``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
+``bond_archive_schema``\ （``1``\ ）、動的な\ ``chi_s_w``\ と\ ``chi_c_w``
+（``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
+``beta``\ ・\ ``T``\ ・\ ``nmat``\ ・\ ``cell_shape``\ ・運動量規約マーカー・
+``index_order``\ ・\ ``delta_r``\ ・\ ``reverse``\ ・\ ``types``\ 、16個の静的キー、
+来歴ブロックが格納されます。これらの配列を重複して持つファイルは他にありません。
+``IterationMax = 0``\ では写像は実行されず、最後の写像に属するアーカイブは全て省略され
+（INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
+書き出されます。
+
 
 データ読み込みの例
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

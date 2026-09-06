@@ -168,6 +168,33 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   :math:`q`; the run is refused when it reaches the instability floor) and
   ``longitudinal_bond_schema`` (integer, ``1``).
 
+In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
+Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the
+LAST self-consistent map (``longitudinal_bond_source = "last_map"``) and are
+written into the combined ``chiq`` file when ``[file.output] chiq`` is set,
+otherwise into the ``chiq_s`` file (which always exists; the charge-channel
+static keys are then found in ``chiq_s.npz`` -- an INFO line says so). The
+ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
+:math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
+frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
+``chiq_s``, ``chiq_c``, ``chiq``, ``sigma`` and ``green``) also carries the
+provenance block ``scf_converged``, ``scf_iterations``, ``map_iteration``,
+``state_iteration``, ``scf_sigma_residual``, ``scf_green_residual``,
+``scf_component_residual``, ``payload_kind`` (``"last_map"`` for the
+susceptibilities, ``"final_state"`` for ``sigma`` / ``green``),
+``hf_density_error`` (the density-closure error of the state the payload
+describes, with ``hf_density_source``) and ``density_target_enforced``.
+With ``longitudinal_bond_output_full = true`` the dedicated archive
+(``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
+holds ``bond_archive_schema`` (``1``), the full dynamic ``chi_s_w`` and
+``chi_c_w`` (``ndarray(l, q, I, J)``, ``freq_axis = "bosonic l -> 2l -
+nmat"``), ``beta``, ``T``, ``nmat``, ``cell_shape``, the momentum-convention
+markers, ``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen
+static keys and the provenance block; nothing else duplicates these arrays.
+With ``IterationMax = 0`` no map is executed and every last-map archive is
+omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
+of the seed state are written.
+
 
 Example for reading data
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

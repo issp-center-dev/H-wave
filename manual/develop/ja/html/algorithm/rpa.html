@@ -594,12 +594,73 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 取り込みは今後の予定）。副格子折り畳み・<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>・
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>は非対応。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数である必要が
 あります。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>とは併用できず、
-<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では拒否されます（ボンド基底の自己無撞着計算は
-未実装）。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
+<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の自己無撞着な
+Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>として出力）。推定ピーク
 ホストメモリは高コストな計算の前に<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>
 と照合されます。</p>
+</section>
+<section id="hartree-fock-flex">
+<span id="flex-bond-hf"></span><h3>Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）<a class="headerlink" href="#hartree-fock-flex" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、
+スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-21">
+<span class="eqno">(7.32)<a class="headerlink" href="#equation-algorithm-rpa-21" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n)\]</div>
+<p>になります。ここで<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>は、受理された <strong>全て</strong> の相互作用項
+（オンサイト・オフサイト。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は常磁性密度に対してゼロ）の振動数に依らない
+Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネルにより、ドレスドグリーン関数の
+等時刻密度行列<span class="math notranslate nohighlight">\(\rho_{ab}(r) = T \sum_n G_{ab}(r, i\omega_n) e^{i\omega_n 0^+}\)</span>
+（<span class="math notranslate nohighlight">\(\Sigma\)</span>の静的部分については厳密、それ以外は<span class="math notranslate nohighlight">\(O(N_{\rm mat}^{-3})\)</span>の
+裾で評価）から作られます。<span class="math notranslate nohighlight">\(\Sigma_{\rm fluct}\)</span>は2次以上のゆらぎ自己エネルギー
+です。このオプションなしでは、1つの化学ポテンシャルで吸収できない1次の項（軌道依存の
+オンサイト Hartree シフト、オフサイト相互作用の<span class="math notranslate nohighlight">\(k\)</span>依存 Fock 項）は暗黙に
+落とされます。オプションありでは理論は全ての結合について1次で厳密になり、
+<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}\)</span>は各係数について線形で、ゆらぎを切った計算は常磁性 UHFk の
+固定点を再現します。ユーザー指定の平均場（<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>）はバンドに
+折り込まれません。バンドは裸の移動積分のままで、平均場は静的自己エネルギーの初期値
+<span class="math notranslate nohighlight">\(\Delta H = H_{\rm mod} - H_0\)</span>となるため、二重に数えられることはありません。
+自己無撞着性は、全自己エネルギー・グリーン関数・分割成分の3つの残差が3反復連続で
+<code class="docutils literal notranslate"><span class="pre">EPS</span></code>を下回ったときに受理されます（反復ログには<code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code>カウンタとともに
+出力されます）。化学ポテンシャルは毎反復ドレスドグリーン関数から解き直されます。</p>
+<p>さらに<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とすると、ゆらぎ自己エネルギーは前節の
+ボンド拡張した対基底の上で全てのボソン振動数について構築されます。バブル
+<span class="math notranslate nohighlight">\(\bar\chi_{mm'}(q, i\nu)\)</span>はドレスドグリーン関数からブロックごとに組み立てられ、
+スピン・電荷チャネルは同じ頂点<span class="math notranslate nohighlight">\(S\)</span>・<span class="math notranslate nohighlight">\(C\)</span>（チャネル0ブロック：Hartree 部分
+<span class="math notranslate nohighlight">\(V(q)\)</span>を含む一般経路の頂点、ボンド対角ブロック：交換交差
+<span class="math notranslate nohighlight">\(w_t V^{(t)}_{l_1 l_2}(R_m)\)</span>）で振動数のバッチごとにドレスされ、有効相互作用は</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-22">
+<span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-rpa-22" title="Link to this equation">¶</a></span>\[W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}\]</div>
+<p>すなわち3次以上の ring 級数と厳密な2次項<span class="math notranslate nohighlight">\(W^{(2)}\)</span>の和です。<span class="math notranslate nohighlight">\(W^{(2)}\)</span>は、
+チャネル0ブロックでは<span class="math notranslate nohighlight">\([\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
+- \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})\)</span>
+（一般経路の二重計算補正をオンサイト頂点に限定したもの。オフサイト係数が全てゼロなら
+計算は標準の Hartree-Fock FLEX と同一）、チャネル0とボンドの混合ブロックでは
+<span class="math notranslate nohighlight">\(\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)\)</span>（オフサイト相互作用の交換スケルトンを
+1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
+自己エネルギーは</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-23">
+<span class="eqno">(7.34)<a class="headerlink" href="#equation-algorithm-rpa-23" title="Link to this equation">¶</a></span>\[\Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
+e^{+i(k-q)\cdot(R_{m'} - R_m)}\, W_{(m, c, a), (m', d, b)}(q, i\nu)\,
+G_{cd}(k - q, i\omega_n - i\nu)\]</div>
+<p>で、ボンドの形状因子は<span class="math notranslate nohighlight">\(W\)</span>の両端で内線側に付き（<span class="math notranslate nohighlight">\(W\)</span>のブロック
+<span class="math notranslate nohighlight">\((m, m')\)</span>はバブルのブロック<span class="math notranslate nohighlight">\((m', m)\)</span>の位相と対になります）、実空間では
+<span class="math notranslate nohighlight">\(G\)</span>の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
+スケルトンを<span class="math notranslate nohighlight">\(UV\)</span>交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
+一方、Hartree 部分<span class="math notranslate nohighlight">\(V(q)\)</span>のみを頂点に持つ標準の一般経路は、2次で直接<span class="math notranslate nohighlight">\(V^2\)</span>
+項の半分のみを持ち、<span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。このような計算の通常の
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>出力は、最後の写像のボンド分解した量の
+<span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。前節の16個の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>静的キーも
+書き出され、要求に応じて動的チャネル全体も出力されます
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>）。再開: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は2つの成分を保存し
+（<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>）、<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の初期値には
+このアーカイブのみが使えます。旧形式のアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>で変換します
+（<code class="docutils literal notranslate"><span class="pre">--zero-static</span></code>、<code class="docutils literal notranslate"><span class="pre">--static</span> <span class="pre">static.npz</span></code>、または UHFk 平均場からは
+<code class="docutils literal notranslate"><span class="pre">--uhfk-trans-mod</span> <span class="pre">trans_mod.npz</span> <span class="pre">--bare-transfer</span> <span class="pre">transfer.dat</span></code>）。このバージョンの
+適用範囲: スピンフリーの一般スキーム、一様松原格子、CPU、副格子なし、外場なし、実数の
+オフサイト係数、オフサイト<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> / <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は拒否。解法全体の推定ピーク
+メモリは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>と照合され、振動数バッチはそれに収まる
+ように選ばれます。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id8" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>

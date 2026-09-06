@@ -269,7 +269,9 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``chiq_s.npz``: スピン感受率\ :math:`\chi_s(\mathbf{q}, i\nu_m)`
 - ``chiq_c.npz``: 電荷感受率\ :math:`\chi_c(\mathbf{q}, i\nu_m)`
 - ``chiq.npz``: 結合感受率ファイル
-- ``sigma.npz``: 自己エネルギー\ :math:`\Sigma(\mathbf{k}, i\omega_n)`
+- ``sigma.npz``: 自己エネルギー\ :math:`\Sigma(\mathbf{k}, i\omega_n)`\ （``flex_hartree_fock = true``
+  では2つの成分\ ``sigma_static``\ ・\ ``sigma_fluct``\ 、マーカー\ ``sigma_convention = "split"``\ 、
+  収束の来歴も含みます。:ref:`flex_bond_hf_tutorial`\ を参照）
 - ``green.npz``: ドレスドグリーン関数\ :math:`G(\mathbf{k}, i\omega_n)`
 - ``energy.dat``: 粒子数\ ``NCond``\ 、スピン\ ``Sz``\ 、収束した化学ポテンシャル
   ``ChemicalPotential`` :math:`\mu`\ を記載したテキストファイル。
@@ -327,6 +329,90 @@ continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定して�
       [file.input]
         path_to_input = "."
         sigma_init = "run_T0.50/output/sigma.npz"
+
+.. _flex_bond_hf_tutorial:
+
+Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``flex_hartree_fock = true``\ は全ての相互作用項の自己無撞着な Hartree-Fock
+自己エネルギーを FLEX ループに加え、\ ``longitudinal_bond_channels = true``\ （前者が必須）
+はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
+``CoulombInter`` / ``Hund`` / ``Ising``\ の交換交差を自己無撞着に取り込みます
+（式と適用範囲は\ :ref:`flex_bond_hf`\ を参照）。いずれも\ ``calc_scheme = "general"``\ ・
+スピンフリー・CPU・一様格子のオプションです。オンサイト\ ``U``\ と最近接\ ``V``\ を
+持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
+:ref:`相互作用入力 <Ch:Config_rpa>`\ の Wannier90 形式で、\ ``coulombinter.dat``\ には
+4本のボンド\ ``(+-1, 0, 0)``\ ・\ ``(0, +-1, 0)``\ を列挙します）:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.02
+     filling = 0.35
+     CellShape = [16, 16, 1]
+     Nmat = 2048
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     # longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否
+     # longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き
+     # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     sigma = "sigma"
+     green = "green"
+     chiq = "chiq"         # 静的な longitudinal_bond_* キーはここに書かれます
+     # longitudinal_bond = "longitudinal_bond.npz"   # 動的アーカイブ（output_full のときのみ）
+     energy = "energy.dat"
+
+このような計算では\ ``[file.output] chiq``\ を指定してください。指定がないと、両チャネルの
+静的ボンドキーが\ ``chiq_s.npz``\ に書き出されます。\ ``.npz``\ 拡張子のない出力名には、
+他の\ ``.npz``\ 出力と同様に拡張子が付加されます。
+
+計算は、分割状態の3つの残差が3反復連続で\ ``EPS``\ を下回ったときにのみ収束と
+みなされます。ログには\ ``[pass k/3]``\ カウンタとともに残差が出力され、全ての
+アーカイブに\ ``scf_converged``\ と最後の残差が記録されます（出力ファイルの説明を参照）。
+``hf_density_error``\ は Hartree-Fock 密度が目標の充填にどれだけ閉じているかを示します。
+
+*UHFk の平均場から始める。* 従来どおり UHFk の\ ``trans_mod``\ アーカイブを渡します
+（``[file.input] trans_mod = "trans_mod.npz"``\ ）。\ ``flex_hartree_fock = true``\ では
+平均場はバンドに折り込まれ **ず** 、静的自己エネルギーの初期値になるため、最初の反復は
+UHFk 解から始まり、Hartree-Fock 項が二重に数えられることはありません。この使い方に
+変換ツールは不要です。UHFk 解は常磁性（``2Sz = 0``\ 、等しいスピンブロック、スピン混合なし）
+である必要があります。磁気秩序のある\ ``trans_mod``\ は拒否されます（Hartree-Fock FLEX は
+スピンフリーのため）。
+
+*以前の計算から再開する。* ``flex_hartree_fock = true``\ で出力された\ ``sigma.npz``\ は
+分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ ）。
+その場合は\ ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ を削除（またはコメント
+アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
+``flex_hartree_fock``\ なしの計算の\ ``sigma.npz``\ （や手作りの全自己エネルギー）は
+初期値として拒否されるため、変換が必要です。その計算が平均場なしだった（静的部分が
+化学ポテンシャルに吸収されていた）場合は\ ``--zero-static``\ を、UHFk のバンド修正から
+始めていた場合は\ ``--uhfk-trans-mod``\ を使います::
+
+   hwave_sigma_split total.npz seed.npz --zero-static
+   hwave_sigma_split total.npz seed.npz --static static.npz
+   hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat
+
+最後の形式は、UHFk の\ ``trans_mod``\ アーカイブと計算の裸の Transfer 入力から静的補正を
+作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
+ブロックに縮約します）。\ ``--force``\ で既存の出力を上書きします。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -739,7 +825,8 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    これらのクラスはいずれも RPA ring と要素完全一致が実測されています
    （省かれた交換交差は、RPA ソルバーの実験的なボンド分解縦方向チャネル
    ``longitudinal_bond_channels = true``\ で静的に取り込めます。
-   :ref:`rpa_longitudinal_bond`\ を参照）。
+   :ref:`rpa_longitudinal_bond`\ を参照。Hartree-Fock FLEX では自己無撞着に
+   取り込まれます。:ref:`flex_bond_hf_tutorial`\ を参照）。
    オフサイトの\ ``Exchange``\ と\ ``PairHop``\ は\ ``ValueError``\ と
    なります。オフサイトの\ ``Exchange``\ には、:math:`q` に依存する
    スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。

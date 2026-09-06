@@ -286,7 +286,10 @@ in the ``output`` directory:
 - ``chiq_s.npz``: Spin susceptibility :math:`\chi_s(\mathbf{q}, i\nu_m)`
 - ``chiq_c.npz``: Charge susceptibility :math:`\chi_c(\mathbf{q}, i\nu_m)`
 - ``chiq.npz``: Combined susceptibility file
-- ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`
+- ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)` (with
+  ``flex_hartree_fock = true`` also its two components ``sigma_static`` and
+  ``sigma_fluct``, the marker ``sigma_convention = "split"`` and the
+  convergence provenance; see :ref:`flex_bond_hf_tutorial`)
 - ``green.npz``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
 - ``energy.dat``: Text file with the particle number ``NCond``, spin
   ``Sz``, and the converged ``ChemicalPotential`` :math:`\mu`.
@@ -350,6 +353,98 @@ aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
       [file.input]
         path_to_input = "."
         sigma_init = "run_T0.50/output/sigma.npz"
+
+.. _flex_bond_hf_tutorial:
+
+Hartree-Fock renormalisation and the bond-resolved channel (experimental)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``flex_hartree_fock = true`` adds the self-consistent Hartree-Fock
+self-energy of every interaction term to the FLEX loop, and
+``longitudinal_bond_channels = true`` (which requires it) builds the
+fluctuation part on the bond-resolved pair basis so that the exchange
+crossing of an off-site ``CoulombInter`` / ``Hund`` / ``Ising`` enters
+self-consistently (see :ref:`flex_bond_hf` for the equations and the domain).
+Both are ``calc_scheme = "general"``, spin-free, CPU, uniform-grid options.
+A complete input for a single-band square lattice with an on-site ``U`` and a
+nearest-neighbour ``V`` (the interaction files follow the Wannier90-style
+format of the :ref:`interaction input <Ch:Config_rpa>`; ``coulombinter.dat``
+lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.02
+     filling = 0.35
+     CellShape = [16, 16, 1]
+     Nmat = 2048
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     # longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it
+     # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
+     # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     sigma = "sigma"
+     green = "green"
+     chiq = "chiq"         # the static longitudinal_bond_* keys go here
+     # longitudinal_bond = "longitudinal_bond.npz"   # the dynamic archive (output_full only)
+     energy = "energy.dat"
+
+Set ``[file.output] chiq`` in such runs: without it the static bond keys of
+BOTH channels are written into ``chiq_s.npz``. Output archive names without
+a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
+
+The run is accepted only when the three residuals of the split state stay
+below ``EPS`` for three consecutive iterations; the log prints them with a
+``[pass k/3]`` counter, and every archive records ``scf_converged`` and the
+last residuals (see the output reference). The ``hf_density_error`` field
+reports how well the Hartree-Fock density closes on the target filling.
+
+*Starting from a UHFk mean field.* Pass the UHFk ``trans_mod`` archive as
+today (``[file.input] trans_mod = "trans_mod.npz"``): with
+``flex_hartree_fock = true`` the mean field is NOT folded into the band but
+becomes the initial static self-energy, so the first iteration starts from
+the UHFk solution and the Hartree-Fock term is never counted twice. No
+converter is needed for this workflow. The UHFk solution must be
+paramagnetic (``2Sz = 0``, equal spin blocks, no spin mixing): a
+magnetically ordered ``trans_mod`` is refused, because the Hartree-Fock
+FLEX is spin-free.
+
+*Restarting from a previous run.* A ``sigma.npz`` written with
+``flex_hartree_fock = true`` carries the split components and seeds a new
+run exactly as stored (``[file.input] sigma_init``). Remove (or comment
+out) ``trans_mod`` and ``green_init`` from ``[file.input]`` in that case:
+the archive already contains the static part, and a mean field given at
+the same time is refused. A ``sigma.npz`` from a run without
+``flex_hartree_fock`` (or a hand-made total self-energy) is refused as a
+seed and must be converted; use ``--zero-static`` when that run had no
+mean field (its static part was absorbed by the chemical potential), and
+``--uhfk-trans-mod`` when it was started from a UHFk band modification::
+
+   hwave_sigma_split total.npz seed.npz --zero-static
+   hwave_sigma_split total.npz seed.npz --static static.npz
+   hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat
+
+The last form builds the static correction from a native UHFk ``trans_mod``
+archive and the run's bare Transfer input (the archive is Fourier-transformed
+with the solver's convention, the bare transfer is subtracted and the result
+is reduced to the spin-free block). ``--force`` overwrites an existing output.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -795,7 +890,8 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    measured element-complete equal to the RPA ring. (The omitted
    crossing is available, statically, in the RPA solver's experimental
    bond-resolved longitudinal channel, ``longitudinal_bond_channels =
-   true``; see :ref:`rpa_longitudinal_bond`.) Off-site ``Exchange``
+   true``, see :ref:`rpa_longitudinal_bond`, and self-consistently in the
+   Hartree-Fock FLEX, see :ref:`flex_bond_hf_tutorial`.) Off-site ``Exchange``
    and ``PairHop`` raise a ``ValueError``. An off-site ``Exchange`` has no
    effect a :math:`q`-dependent spin/charge vertex could carry (verified
    by exact diagonalization): its physics is spin-flip (transverse), which

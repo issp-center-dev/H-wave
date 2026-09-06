@@ -335,7 +335,10 @@ in the <code class="docutils literal notranslate"><span class="pre">output</span
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>: Spin susceptibility <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_m)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>: Charge susceptibility <span class="math notranslate nohighlight">\(\chi_c(\mathbf{q}, i\nu_m)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>: Combined susceptibility file</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span> (with
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> also its two components <code class="docutils literal notranslate"><span class="pre">sigma_static</span></code> and
+<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>, the marker <code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code> and the
+convergence provenance; see <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>: Text file with the particle number <code class="docutils literal notranslate"><span class="pre">NCond</span></code>, spin
 <code class="docutils literal notranslate"><span class="pre">Sz</span></code>, and the converged <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span>.</p></li>
@@ -396,6 +399,90 @@ previous output directory with a relative path, e.g.:</p>
 </pre></div>
 </div>
 </div>
+</section>
+<section id="hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental">
+<span id="flex-bond-hf-tutorial"></span><h3>Hartree-Fock renormalisation and the bond-resolved channel (experimental)<a class="headerlink" href="#hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> adds the self-consistent Hartree-Fock
+self-energy of every interaction term to the FLEX loop, and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (which requires it) builds the
+fluctuation part on the bond-resolved pair basis so that the exchange
+crossing of an off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code> enters
+self-consistently (see <a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> for the equations and the domain).
+Both are <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free, CPU, uniform-grid options.
+A complete input for a single-band square lattice with an on-site <code class="docutils literal notranslate"><span class="pre">U</span></code> and a
+nearest-neighbour <code class="docutils literal notranslate"><span class="pre">V</span></code> (the interaction files follow the Wannier90-style
+format of the <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">interaction input</span></a>; <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>
+lists the four bonds <code class="docutils literal notranslate"><span class="pre">(+-1,</span> <span class="pre">0,</span> <span class="pre">0)</span></code>, <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">+-1,</span> <span class="pre">0)</span></code>):</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"general"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.35</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2048</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"anderson"</span>
+<span class="w">  </span><span class="n">anderson_depth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span>
+<span class="w">  </span><span class="n">EPS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # override the automatic frequency batch</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">sigma</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span>
+<span class="w">  </span><span class="n">chiq</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chiq"</span><span class="w">         </span><span class="c1"># the static longitudinal_bond_* keys go here</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond = "longitudinal_bond.npz"   # the dynamic archive (output_full only)</span>
+<span class="w">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"energy.dat"</span>
+</pre></div>
+</div>
+<p>Set <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code> in such runs: without it the static bond keys of
+BOTH channels are written into <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>. Output archive names without
+a <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix get one appended, as for every other <code class="docutils literal notranslate"><span class="pre">.npz</span></code> output.</p>
+<p>The run is accepted only when the three residuals of the split state stay
+below <code class="docutils literal notranslate"><span class="pre">EPS</span></code> for three consecutive iterations; the log prints them with a
+<code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code> counter, and every archive records <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> and the
+last residuals (see the output reference). The <code class="docutils literal notranslate"><span class="pre">hf_density_error</span></code> field
+reports how well the Hartree-Fock density closes on the target filling.</p>
+<p><em>Starting from a UHFk mean field.</em> Pass the UHFk <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> archive as
+today (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span> <span class="pre">=</span> <span class="pre">&quot;trans_mod.npz&quot;</span></code>): with
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> the mean field is NOT folded into the band but
+becomes the initial static self-energy, so the first iteration starts from
+the UHFk solution and the Hartree-Fock term is never counted twice. No
+converter is needed for this workflow. The UHFk solution must be
+paramagnetic (<code class="docutils literal notranslate"><span class="pre">2Sz</span> <span class="pre">=</span> <span class="pre">0</span></code>, equal spin blocks, no spin mixing): a
+magnetically ordered <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> is refused, because the Hartree-Fock
+FLEX is spin-free.</p>
+<p><em>Restarting from a previous run.</em> A <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written with
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> carries the split components and seeds a new
+run exactly as stored (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>). Remove (or comment
+out) <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> from <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> in that case:
+the archive already contains the static part, and a mean field given at
+the same time is refused. A <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> from a run without
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> (or a hand-made total self-energy) is refused as a
+seed and must be converted; use <code class="docutils literal notranslate"><span class="pre">--zero-static</span></code> when that run had no
+mean field (its static part was absorbed by the chemical potential), and
+<code class="docutils literal notranslate"><span class="pre">--uhfk-trans-mod</span></code> when it was started from a UHFk band modification:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>hwave_sigma_split total.npz seed.npz --zero-static
+hwave_sigma_split total.npz seed.npz --static static.npz
+hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat
+</pre></div>
+</div>
+<p>The last form builds the static correction from a native UHFk <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>
+archive and the run’s bare Transfer input (the archive is Fourier-transformed
+with the solver’s convention, the bare transfer is subtracted and the result
+is reduced to the spin-free block). <code class="docutils literal notranslate"><span class="pre">--force</span></code> overwrites an existing output.</p>
 <p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
 <figure class="align-center" id="id22">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
@@ -899,7 +986,8 @@ logs a warning saying so. For every such class the general path is
 measured element-complete equal to the RPA ring. (The omitted
 crossing is available, statically, in the RPA solver’s experimental
 bond-resolved longitudinal channel, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
-<span class="pre">true</span></code>; see <a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>.) Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+<span class="pre">true</span></code>, see <a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>, and self-consistently in the
+Hartree-Fock FLEX, see <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>.) Off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> raise a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> has no
 effect a <span class="math notranslate nohighlight">\(q\)</span>-dependent spin/charge vertex could carry (verified
 by exact diagonalization): its physics is spin-flip (transverse), which

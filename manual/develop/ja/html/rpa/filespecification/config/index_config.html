@@ -246,8 +246,13 @@ exchange 配線は2つのフェルミオン運動量に依存するためこの�
 <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>なし、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>なしが必要で、
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>または<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言はエラーとして
 拒否されます。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とは併用でき
-ません。<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">true</span></code>は拒否されます
-（ボンド基底の自己無撞着 FLEX はまだありません）。</p>
+ません。<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが Hartree-Fock FLEX の
+自己無撞着なボンド分解チャネルを有効にします（実験的機能。
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
+スピンフリー系・一様松原格子・CPU 実行・副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。以下のボンド関連の補助キーは
+同じ意味を持ち、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>は FLEX 専用です。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code></p>
 <p><strong>形式 :</strong> int型 (デフォルトは宣言された全オフサイトシェルを保持)</p>
@@ -268,6 +273,46 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 その根拠となる配列形状が示されるので、物理メモリに余裕がある計算機では
 上限を引き上げて実行してください。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 でない場合は警告付きで無視されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+<strong>実験的機能。</strong> 受理された <strong>全て</strong> の相互作用項（オンサイト・
+オフサイト）の自己無撞着な Hartree-Fock 自己エネルギー
+<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>を FLEX の自己エネルギーに加えます
+（<span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}\)</span>。毎反復
+ドレスドグリーン関数から再計算。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。
+スピンフリー系での<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、一様松原格子
+（<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>は拒否）、CPU 実行（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は
+拒否）、副格子なし、外場なし、偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。
+ユーザー指定の平均場（<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>）はバンドに
+折り込まれず、静的自己エネルギーの初期値として扱われます。
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>には<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>・
+<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>と来歴ブロックが追加され、
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>には<code class="docutils literal notranslate"><span class="pre">&quot;split&quot;</span></code>形式のアーカイブのみが受理されます
+（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>を参照）。FLEX モードで
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とする場合は<code class="docutils literal notranslate"><span class="pre">true</span></code>が必須
+です。<code class="docutils literal notranslate"><span class="pre">false</span></code>では全ての出力が従来と同一です。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+最後の SCF 写像のボンド分解した動的スピン・電荷感受率
+<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>（ボソン振動数上の<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>）
+を、<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>で指定した専用アーカイブ
+（デフォルト<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>）に書き出します。ボンド分解
+した解法の常駐メモリが2倍になります。アーカイブのサイズは書き出し前に
+ログに出力されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない
+場合は警告付きで無視されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
+<p><strong>形式 :</strong> int型 (デフォルトは自動選択。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+ボンド分解 FLEX が一度にドレスするボソン振動数の数（<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>）
+です。デフォルトでは推定ピークメモリが
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>以下に収まる最大のバッチが
+選ばれ、明示した値も同じ上限と照合されます。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>形式 :</strong> int型, list型, または str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
@@ -350,7 +395,7 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code></p>
 <p><strong>形式 :</strong> str型（FLEXモードのみ）</p>
-<p><strong>説明 :</strong> FLEX の SCF ループの初期自己エネルギーとして読み込む<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>（以前の FLEX 計算の出力）のファイル名を指定します。パスは<code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>からの相対で解決されます。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>と<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。</p>
+<p><strong>説明 :</strong> FLEX の SCF ループの初期自己エネルギーとして読み込む<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>（以前の FLEX 計算の出力）のファイル名を指定します。パスは<code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>からの相対で解決されます。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>と<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算では、同じ設定の計算が出力した<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>と<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります。同時に平均場（<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>）を指定すると拒否されます。旧形式または<code class="docutils literal notranslate"><span class="pre">&quot;total&quot;</span></code>形式のアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>で変換してください（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。</p>
 </li>
 </ul>
 </section>
@@ -387,6 +432,10 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code></p>
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> 感受率行列<span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span>を出力するファイル名を指定します。このキーワードがない場合には情報は出力されません。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong> ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>かつ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合にのみ書き出されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のない名前には他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。</p>
 </li>
 </ul>
 </section>

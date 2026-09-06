@@ -319,7 +319,9 @@ FLEX converged after 64 iterations
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>: スピン感受率<span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_m)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>: 電荷感受率<span class="math notranslate nohighlight">\(\chi_c(\mathbf{q}, i\nu_m)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>: 結合感受率ファイル</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: 自己エネルギー<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: 自己エネルギー<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>
+では2つの成分<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>、マーカー<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>、
+収束の来歴も含みます。<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>を参照）</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: ドレスドグリーン関数<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>: 粒子数<code class="docutils literal notranslate"><span class="pre">NCond</span></code>、スピン<code class="docutils literal notranslate"><span class="pre">Sz</span></code>、収束した化学ポテンシャル
 <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span>を記載したテキストファイル。</p></li>
@@ -374,6 +376,82 @@ continuation スイープでは<code class="docutils literal notranslate"><span 
 </pre></div>
 </div>
 </div>
+</section>
+<section id="hartree-fock">
+<span id="flex-bond-hf-tutorial"></span><h3>Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）<a class="headerlink" href="#hartree-fock" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>は全ての相互作用項の自己無撞着な Hartree-Fock
+自己エネルギーを FLEX ループに加え、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（前者が必須）
+はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code>の交換交差を自己無撞着に取り込みます
+（式と適用範囲は<a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。いずれも<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
+スピンフリー・CPU・一様格子のオプションです。オンサイト<code class="docutils literal notranslate"><span class="pre">U</span></code>と最近接<code class="docutils literal notranslate"><span class="pre">V</span></code>を
+持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
+<a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">相互作用入力</span></a>の Wannier90 形式で、<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>には
+4本のボンド<code class="docutils literal notranslate"><span class="pre">(+-1,</span> <span class="pre">0,</span> <span class="pre">0)</span></code>・<code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">+-1,</span> <span class="pre">0)</span></code>を列挙します）:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"general"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.35</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2048</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"anderson"</span>
+<span class="w">  </span><span class="n">anderson_depth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span>
+<span class="w">  </span><span class="n">EPS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">sigma</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span>
+<span class="w">  </span><span class="n">chiq</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chiq"</span><span class="w">         </span><span class="c1"># 静的な longitudinal_bond_* キーはここに書かれます</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond = "longitudinal_bond.npz"   # 動的アーカイブ（output_full のときのみ）</span>
+<span class="w">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"energy.dat"</span>
+</pre></div>
+</div>
+<p>このような計算では<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>を指定してください。指定がないと、両チャネルの
+静的ボンドキーが<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>に書き出されます。<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のない出力名には、
+他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に拡張子が付加されます。</p>
+<p>計算は、分割状態の3つの残差が3反復連続で<code class="docutils literal notranslate"><span class="pre">EPS</span></code>を下回ったときにのみ収束と
+みなされます。ログには<code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code>カウンタとともに残差が出力され、全ての
+アーカイブに<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>と最後の残差が記録されます（出力ファイルの説明を参照）。
+<code class="docutils literal notranslate"><span class="pre">hf_density_error</span></code>は Hartree-Fock 密度が目標の充填にどれだけ閉じているかを示します。</p>
+<p><em>UHFk の平均場から始める。</em> 従来どおり UHFk の<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>アーカイブを渡します
+（<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span> <span class="pre">=</span> <span class="pre">&quot;trans_mod.npz&quot;</span></code>）。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>では
+平均場はバンドに折り込まれ <strong>ず</strong> 、静的自己エネルギーの初期値になるため、最初の反復は
+UHFk 解から始まり、Hartree-Fock 項が二重に数えられることはありません。この使い方に
+変換ツールは不要です。UHFk 解は常磁性（<code class="docutils literal notranslate"><span class="pre">2Sz</span> <span class="pre">=</span> <span class="pre">0</span></code>、等しいスピンブロック、スピン混合なし）
+である必要があります。磁気秩序のある<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>は拒否されます（Hartree-Fock FLEX は
+スピンフリーのため）。</p>
+<p><em>以前の計算から再開する。</em> <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で出力された<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は
+分割成分を含み、そのまま新しい計算の初期値になります（<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>）。
+その場合は<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>の<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と<code class="docutils literal notranslate"><span class="pre">green_init</span></code>を削除（またはコメント
+アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>なしの計算の<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>（や手作りの全自己エネルギー）は
+初期値として拒否されるため、変換が必要です。その計算が平均場なしだった（静的部分が
+化学ポテンシャルに吸収されていた）場合は<code class="docutils literal notranslate"><span class="pre">--zero-static</span></code>を、UHFk のバンド修正から
+始めていた場合は<code class="docutils literal notranslate"><span class="pre">--uhfk-trans-mod</span></code>を使います:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>hwave_sigma_split total.npz seed.npz --zero-static
+hwave_sigma_split total.npz seed.npz --static static.npz
+hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat
+</pre></div>
+</div>
+<p>最後の形式は、UHFk の<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>アーカイブと計算の裸の Transfer 入力から静的補正を
+作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
+ブロックに縮約します）。<code class="docutils literal notranslate"><span class="pre">--force</span></code>で既存の出力を上書きします。</p>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
 <figure class="align-center" id="id42">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
@@ -842,7 +920,8 @@ Hartree（密度）頂点 <span class="math notranslate nohighlight">\(V(q)\)</s
 これらのクラスはいずれも RPA ring と要素完全一致が実測されています
 （省かれた交換交差は、RPA ソルバーの実験的なボンド分解縦方向チャネル
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で静的に取り込めます。
-<a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照）。
+<a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照。Hartree-Fock FLEX では自己無撞着に
+取り込まれます。<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>を参照）。
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>と
 なります。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>には、<span class="math notranslate nohighlight">\(q\)</span> に依存する
 スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。
