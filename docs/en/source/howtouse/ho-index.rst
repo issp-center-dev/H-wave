@@ -129,3 +129,6 @@ Basic usage
 
      The package also provides the post-processing tools ``hwave_dos`` (density of states)
      and ``hwave_sc`` (Eliashberg / superconducting analysis), which take the same input file.
+     The standalone converter ``hwave_sigma_split total.npz out.npz ...`` (positional
+     arguments, no input file) turns a total-form FLEX self-energy archive into the split
+     form that a run with ``flex_hartree_fock = true`` accepts as ``sigma_init``.

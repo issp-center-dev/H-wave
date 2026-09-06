@@ -148,6 +148,10 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         exit(0)
 
     # Execute calculation
+    if mode == "FLEX":
+        # output-path validation before any work (a collision between two
+        # artifacts is refused here, at solve entry and again before writing)
+        solver.validate_output_paths(info_outputfile, path_to_output)
     logger.info("Start UHF calculation")
     solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")

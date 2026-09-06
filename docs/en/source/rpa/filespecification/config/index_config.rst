@@ -261,9 +261,14 @@ Parameters
   ``Nmat``, no sublattice, no ``chi0q_init`` and no
   ``enable_spin_orbital``; an off-site ``Exchange`` or ``PairHop``
   declaration is rejected with an error. It cannot be combined with
-  ``transverse_bond_channels = true``. In ``mode = "FLEX"`` a ``true``
-  value is rejected (the bond basis has no self-consistent FLEX
-  treatment yet).
+  ``transverse_bond_channels = true``. In ``mode = "FLEX"`` the same key
+  enables the self-consistent bond-resolved channel of the Hartree-Fock
+  FLEX (experimental; requires ``flex_hartree_fock = true``,
+  ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
+  grid, CPU execution, no sublattice and an even ``Nmat``; see
+  :ref:`flex_bond_hf`). The bond-specific companions below keep their
+  meaning; ``longitudinal_bond_output_full`` and
+  ``longitudinal_bond_freq_batch`` are FLEX-only.
 
 - ``longitudinal_bond_max_shells``
 
@@ -291,6 +296,55 @@ Parameters
   The refusal message reports the estimate and the shapes behind it; on
   a machine with enough physical memory, raise the cap to proceed.
   Ignored with a warning unless ``longitudinal_bond_channels = true``.
+
+- ``flex_hartree_fock``
+
+  **Type :**
+  Boolean (default value is ``false``; FLEX mode only)
+
+  **Description :**
+  **Experimental.** Adds the self-consistent Hartree-Fock self-energy
+  :math:`\Sigma_{\rm HF}[G]` of EVERY accepted interaction term (on-site
+  and off-site) to the FLEX self-energy, :math:`\Sigma = \Sigma_{\rm HF}
+  + \Sigma_{\rm fluct}`, recomputed from the dressed Green function every
+  iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
+  "general"`` on a spin-free system, the uniform Matsubara grid
+  (``matsubara_basis = "ir"`` is refused), CPU execution (``gpu = true``
+  is refused), no sublattice, no external field and an even ``Nmat``.
+  A user mean field (``trans_mod`` / ``green_init``) is taken as the
+  initial static self-energy instead of being folded into the band;
+  ``sigma.npz`` gains the members ``sigma_static``, ``sigma_fluct``,
+  ``sigma_convention = "split"`` and a provenance block, and only a
+  ``"split"`` archive is accepted as ``sigma_init`` (see ``sigma_init``
+  and ``hwave_sigma_split``). Mandatory (``true``) when
+  ``longitudinal_bond_channels = true`` in FLEX mode. With ``false``
+  every output is unchanged.
+
+- ``longitudinal_bond_output_full``
+
+  **Type :**
+  Boolean (default value is ``false``; FLEX mode only)
+
+  **Description :**
+  Writes the full dynamic bond-resolved spin and charge susceptibilities
+  ``chi_s_w`` / ``chi_c_w`` (``ndarray(l, q, I, J)`` over the bosonic
+  frequencies) of the last SCF map into the dedicated archive named by
+  ``[file.output] longitudinal_bond`` (default ``longitudinal_bond.npz``).
+  Doubles the persistent memory of the bond-resolved solve; the archive
+  size is logged before writing. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
+- ``longitudinal_bond_freq_batch``
+
+  **Type :**
+  Integer (default: chosen automatically; FLEX mode only)
+
+  **Description :**
+  Number of bosonic frequencies dressed at once by the bond-resolved
+  FLEX (in ``[1, Nmat]``). By default the largest batch that keeps the
+  estimated peak memory under ``longitudinal_bond_memory_cap_gb`` is
+  used; an explicit value is checked against the same cap. Ignored with
+  a warning unless ``longitudinal_bond_channels = true``.
 
 - ``matsubara_frequency``
 
@@ -456,7 +510,13 @@ They specify the settings of the input and output files, respectively, on the ty
   path is resolved relative to ``path_to_input``. The recorded ``CellShape``
   and the array's ``Nmat`` must match the current run (a mismatch is a
   fail-fast error). See the FLEX tutorial section "Warm-starting the SCF
-  loop" for the sweep workflow.
+  loop" for the sweep workflow. With ``flex_hartree_fock = true`` only a
+  ``sigma.npz`` written by such a run (``sigma_convention = "split"``,
+  carrying ``sigma_static`` and ``sigma_fluct``) is accepted, the two
+  components seed the loop exactly as stored, and a mean field
+  (``trans_mod`` / ``green_init``) given at the same time is refused; a
+  legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
+  (see :ref:`flex_bond_hf`).
 
 
 ``file.input.interaction`` section
@@ -522,3 +582,17 @@ to the definition files.
   This parameter specifies the name of the file to store the susceptibility matrix
   :math:`\chi(\vec{q})`.
   If it is not set, no output will be generated.
+
+- ``longitudinal_bond``
+
+  **Type :**
+  String (default value is ``longitudinal_bond.npz``; FLEX mode only)
+
+  **Description :**
+  Name of the dedicated archive of the dynamic bond-resolved
+  susceptibilities, written only when ``longitudinal_bond_channels =
+  true`` and ``longitudinal_bond_output_full = true`` in FLEX mode (see
+  :ref:`flex_bond_hf`). A name without the ``.npz`` suffix gets it
+  appended, as for the other ``.npz`` outputs. It must not resolve to the
+  same file as any other output of the run (the collision is refused
+  before the calculation starts).

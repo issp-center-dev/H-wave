@@ -1971,6 +1971,18 @@ class RPA:
         _lbc_keys = ("longitudinal_bond_channels",
                      "longitudinal_bond_max_shells",
                      "longitudinal_bond_memory_cap_gb")
+        # FLEX-only Phase B keys (#181): warned-and-ignored in every other
+        # mode (the FLEX subclass parses them itself, before this runs)
+        if not getattr(self, "_accepts_flex_keys", False):
+            _flex_only = [k for k in ("flex_hartree_fock",
+                                      "longitudinal_bond_output_full",
+                                      "longitudinal_bond_freq_batch")
+                          if k in self.param_mod]
+            if _flex_only:
+                logger.warning(
+                    "[mode.param] %s: FLEX-only key(s), ignored in mode "
+                    "'%s'.", ", ".join(_flex_only),
+                    getattr(self, "_mode_name", "RPA"))
         _flag = self.param_mod.get("longitudinal_bond_channels", False)
         if not isinstance(_flag, (bool, np.bool_)):
             raise ValueError(
@@ -3647,6 +3659,32 @@ class RPA:
         green_sub = green_sub.transpose(0, 3, 1, 4, 2)
 
         return green_sub
+
+    def _calc_trans_mod_copy(self, g0):
+        """``_calc_trans_mod`` on a COPY of ``ham_trans_r`` (the legacy
+        helper adds into a view of the shared array): the HF-on seed path
+        of the FLEX solver (#181 Phase B) uses this so that neither
+        ``ham_trans_r`` nor the user's arrays are mutated. Same arithmetic
+        and result as the legacy helper."""
+        nx, ny, nz = self.lattice.shape
+        nvol = self.lattice.nvol
+        nd = self.nd
+        norb = self.norb
+        gg = np.asarray(g0)[0]
+        ww = self.ham_info.ham_inter_r.reshape(nvol, nd, nd, nd, nd)
+        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
+        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
+        hh3 = np.sum(hh1 + hh2, axis=0) / 2
+        if self.ham_info.enable_spin_orbital:
+            H0r = np.array(self.ham_info.ham_trans_r, copy=True).reshape(nvol, nd, nd)
+        else:
+            H0r = np.einsum('kab,st->ksatb',
+                            np.asarray(self.ham_info.ham_trans_r).reshape(nvol, norb, norb),
+                            np.eye(2)).reshape(nvol, nd, nd)
+        H0r[0] += hh3
+        H0 = (np.fft.ifftn(H0r.reshape(nx, ny, nz, nd, nd), axes=(0, 1, 2))
+              * nvol).reshape(nvol, nd, nd)
+        return H0
 
     def _calc_trans_mod(self, g0):
         logger.debug(">>> RPA._calc_trans_mod")

@@ -641,11 +641,85 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 取り込みは今後の予定）。副格子折り畳み・\ ``chi0q_init``\ ・
 ``enable_spin_orbital``\ は非対応。\ ``Nmat``\ は偶数である必要が
 あります。\ ``transverse_bond_channels``\ とは併用できず、
-``mode = "FLEX"``\ では拒否されます（ボンド基底の自己無撞着計算は
-未実装）。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
+``mode = "FLEX"``\ では同じキーが :ref:`flex_bond_hf`\ の自己無撞着な
+Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 ``longitudinal_bond_cond_min_s`` / ``_c``\ として出力）。推定ピーク
 ホストメモリは高コストな計算の前に\ ``longitudinal_bond_memory_cap_gb``
 と照合されます。
+
+.. _flex_bond_hf:
+
+Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）
+----------------------------------------------------------
+
+``flex_hartree_fock = true``\ （``mode = "FLEX"``\ 、\ ``calc_scheme = "general"``\ 、
+スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和
+
+.. math::
+
+   \Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n)
+
+になります。ここで\ :math:`\Sigma_{\rm HF}[G]`\ は、受理された **全て** の相互作用項
+（オンサイト・オフサイト。\ ``PairLift``\ は常磁性密度に対してゼロ）の振動数に依らない
+Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネルにより、ドレスドグリーン関数の
+等時刻密度行列\ :math:`\rho_{ab}(r) = T \sum_n G_{ab}(r, i\omega_n) e^{i\omega_n 0^+}`
+（:math:`\Sigma`\ の静的部分については厳密、それ以外は\ :math:`O(N_{\rm mat}^{-3})`\ の
+裾で評価）から作られます。\ :math:`\Sigma_{\rm fluct}`\ は2次以上のゆらぎ自己エネルギー
+です。このオプションなしでは、1つの化学ポテンシャルで吸収できない1次の項（軌道依存の
+オンサイト Hartree シフト、オフサイト相互作用の\ :math:`k`\ 依存 Fock 項）は暗黙に
+落とされます。オプションありでは理論は全ての結合について1次で厳密になり、
+:math:`\Sigma_{\rm HF}`\ は各係数について線形で、ゆらぎを切った計算は常磁性 UHFk の
+固定点を再現します。ユーザー指定の平均場（``trans_mod`` / ``green_init``\ ）はバンドに
+折り込まれません。バンドは裸の移動積分のままで、平均場は静的自己エネルギーの初期値
+:math:`\Delta H = H_{\rm mod} - H_0`\ となるため、二重に数えられることはありません。
+自己無撞着性は、全自己エネルギー・グリーン関数・分割成分の3つの残差が3反復連続で
+``EPS``\ を下回ったときに受理されます（反復ログには\ ``[pass k/3]``\ カウンタとともに
+出力されます）。化学ポテンシャルは毎反復ドレスドグリーン関数から解き直されます。
+
+さらに\ ``longitudinal_bond_channels = true``\ とすると、ゆらぎ自己エネルギーは前節の
+ボンド拡張した対基底の上で全てのボソン振動数について構築されます。バブル
+:math:`\bar\chi_{mm'}(q, i\nu)`\ はドレスドグリーン関数からブロックごとに組み立てられ、
+スピン・電荷チャネルは同じ頂点\ :math:`S`\ ・\ :math:`C`\ （チャネル0ブロック：Hartree 部分
+:math:`V(q)`\ を含む一般経路の頂点、ボンド対角ブロック：交換交差
+:math:`w_t V^{(t)}_{l_1 l_2}(R_m)`\ ）で振動数のバッチごとにドレスされ、有効相互作用は
+
+.. math::
+
+   W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}
+
+すなわち3次以上の ring 級数と厳密な2次項\ :math:`W^{(2)}`\ の和です。\ :math:`W^{(2)}`\ は、
+チャネル0ブロックでは\ :math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
+- \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})`
+（一般経路の二重計算補正をオンサイト頂点に限定したもの。オフサイト係数が全てゼロなら
+計算は標準の Hartree-Fock FLEX と同一）、チャネル0とボンドの混合ブロックでは
+:math:`\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)`\ （オフサイト相互作用の交換スケルトンを
+1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
+自己エネルギーは
+
+.. math::
+
+   \Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
+   e^{+i(k-q)\cdot(R_{m'} - R_m)}\, W_{(m, c, a), (m', d, b)}(q, i\nu)\,
+   G_{cd}(k - q, i\omega_n - i\nu)
+
+で、ボンドの形状因子は\ :math:`W`\ の両端で内線側に付き（:math:`W`\ のブロック
+:math:`(m, m')`\ はバブルのブロック\ :math:`(m', m)`\ の位相と対になります）、実空間では
+:math:`G`\ の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
+スケルトンを\ :math:`UV`\ 交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
+一方、Hartree 部分\ :math:`V(q)`\ のみを頂点に持つ標準の一般経路は、2次で直接\ :math:`V^2`
+項の半分のみを持ち、\ :math:`UV`\ 交差項を持ちません。このような計算の通常の
+``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ 出力は、最後の写像のボンド分解した量の
+:math:`(m = 0, m' = 0)`\ ブロックです。前節の16個の\ ``longitudinal_bond_*``\ 静的キーも
+書き出され、要求に応じて動的チャネル全体も出力されます
+（``longitudinal_bond_output_full``\ ）。再開: ``sigma.npz``\ は2つの成分を保存し
+（``sigma_convention = "split"``\ ）、\ ``flex_hartree_fock = true``\ の計算の初期値には
+このアーカイブのみが使えます。旧形式のアーカイブは\ ``hwave_sigma_split``\ で変換します
+（``--zero-static``\ 、\ ``--static static.npz``\ 、または UHFk 平均場からは
+``--uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat``\ ）。このバージョンの
+適用範囲: スピンフリーの一般スキーム、一様松原格子、CPU、副格子なし、外場なし、実数の
+オフサイト係数、オフサイト\ ``Exchange`` / ``PairHop``\ は拒否。解法全体の推定ピーク
+メモリは\ ``longitudinal_bond_memory_cap_gb``\ と照合され、振動数バッチはそれに収まる
+ように選ばれます。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

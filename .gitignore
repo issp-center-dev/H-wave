@@ -419,3 +419,4 @@ tests/rpa/input/*_fixture.npz
 # (test_grid_convergence_16_to_32), which regenerates it here on demand via
 # tests/sc/onari_bond/generate_fixtures.py. Never track this directory.
 tests/sc/onari_bond/_regenerated/
+tests/sc/onari_bond/_regenerated_flexbond/

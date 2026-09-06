@@ -3361,6 +3361,13 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
 # equality with bare_bond_vertices for CoulombInter; Gate G2: exact
 # diagonalization for Hund/Ising, tests/test_bond_longitudinal_ed.py).
 
+def is_real_coefficient(v, imag_tol=1e-12):
+    """True when the interaction coefficient ``v`` is real to ``imag_tol``
+    (the admissibility rule shared by the RPA and FLEX bond gates and by
+    :func:`build_sc_bond_channel`)."""
+    return abs(complex(v).imag) <= imag_tol
+
+
 def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     """One channel (``"S"`` or ``"C"``) of the bond-resolved longitudinal
     vertex, shape ``(nvol, ND, ND)`` complex128, ``ND = B * norb**2``.
@@ -3459,7 +3466,7 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
         arr = topo.coeffs[t]
         for (m, a, b) in orbits:
             v = complex(arr[m, a, b])
-            if abs(v.imag) > imag_tol:
+            if not is_real_coefficient(v, imag_tol=imag_tol):
                 raise ValueError(
                     "build_sc_bond_channel: the off-site {} coefficient at "
                     "channel {} (delta_r={}), orbitals ({}, {}) is complex "
@@ -3481,3 +3488,53 @@ def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
     so that only one ``(nvol, ND, ND)`` vertex is alive)."""
     return (build_sc_bond_channel(topo, S0, "S", imag_tol=imag_tol, types=types),
             build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types))
+
+
+def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR):
+    """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
+    ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
+    over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
+    with BOTH criteria of :func:`_check_bond_conditioning` on the
+    flattened ``(nb * nvol)`` batch and solved with ``numpy.linalg.solve``.
+    Returns ``(chi_b, cond_min)``; a refusal names the bosonic Matsubara
+    index ``2 (l0 + i // nvol) - nmat``, the q point and the channel."""
+    if channel not in _DRESS_CHANNELS:
+        raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
+    sign = _DRESS_CHANNELS[channel]
+    cb = np.asarray(chi_bar_b)
+    W = np.asarray(W)
+    if cb.ndim != 4 or cb.shape[2] != cb.shape[3] or W.shape != cb.shape[1:]:
+        raise ValueError("dress_batch: chi_bar_b must be (nb, nvol, ND, ND) and W (nvol, ND, ND); got {} and {}"
+                         .format(cb.shape, W.shape))
+    nb, nvol, ND = cb.shape[0], cb.shape[1], cb.shape[2]
+    Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    if Nx * Ny * Nz != nvol:
+        raise ValueError("dress_batch: prod(spatial_shape) != nvol")
+    mat = cb @ W[None]
+    if sign < 0:
+        np.negative(mat, out=mat)
+    idx = np.arange(ND)
+    mat[:, :, idx, idx] += 1.0
+    flat = mat.reshape(nb * nvol, ND, ND)
+    try:
+        cond_min = _check_bond_conditioning(channel, flat.reshape(nb * nvol, 1, 1, ND, ND), cond_tol)
+    except ValueError as exc:
+        # decode the flattened index named as "q-point index (i, 0, 0)"
+        import re
+        m = re.search(r"q-point index \((\d+), 0, 0\)", str(exc))
+        if m is None:
+            raise
+        i = int(m.group(1))
+        l = l0 + i // nvol
+        q = i % nvol
+        qx, rem = divmod(q, Ny * Nz)
+        qy, qz = divmod(rem, Nz)
+        raise ValueError(
+            "dress_batch: the {} RPA denominator is singular or nearly singular at "
+            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+            "the bond path has entered the instability region. Reduce the interaction "
+            "strength, raise the temperature, refine or reduce the q grid, or lower "
+            "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz)) from exc
+    chi = np.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    del mat, flat
+    return chi, (None if cond_min is None else float(cond_min))

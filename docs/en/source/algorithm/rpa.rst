@@ -676,12 +676,104 @@ Limitations of this version: real off-site coefficients only; off-site
 ``Exchange`` and ``PairHop`` declarations are rejected (their promotion
 through the bond basis is planned); no sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
-gate cannot be combined with ``transverse_bond_channels``, and ``mode =
-"FLEX"`` refuses it (no bond-basis self-consistency yet). Each RPA
+gate cannot be combined with ``transverse_bond_channels``; in ``mode =
+"FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX
+treatment of :ref:`flex_bond_hf`. Each RPA
 denominator is checked for conditioning at every :math:`q` and the run
 is refused inside the instability region (the smallest scores are
 reported as ``longitudinal_bond_cond_min_s`` / ``_c``); the estimated
 peak host memory is checked against ``longitudinal_bond_memory_cap_gb``
 before any expensive step.
+
+.. _flex_bond_hf:
+
+Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)
+--------------------------------------------------------------------
+
+With ``flex_hartree_fock = true`` (``mode = "FLEX"``, ``calc_scheme =
+"general"``, spin-free system) the FLEX self-energy is the sum of two
+components that are iterated together,
+
+.. math::
+
+   \Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n),
+
+where :math:`\Sigma_{\rm HF}[G]` is the frequency-independent Hartree-Fock
+self-energy of EVERY accepted interaction term (on-site and off-site;
+``PairLift`` contributes zero on a paramagnetic density) built by the same
+kernel the UHFk solver uses, from the equal-time density matrix
+:math:`\rho_{ab}(r) = T \sum_n G_{ab}(r, i\omega_n) e^{i\omega_n 0^+}`
+of the dressed Green function (evaluated exactly for the static part of
+:math:`\Sigma` and with an :math:`O(N_{\rm mat}^{-3})` tail for the rest),
+and :math:`\Sigma_{\rm fluct}` is the second-and-higher-order fluctuation
+self-energy. Without the option the first-order terms a single chemical
+potential cannot absorb (orbital-dependent on-site Hartree shifts, the
+:math:`k`-dependent Fock term of an off-site interaction) are silently
+dropped; with it the theory is exact at first order in every coupling,
+:math:`\Sigma_{\rm HF}` is linear in each coefficient, and a fluctuation-free
+run reproduces the paramagnetic UHFk fixed point. A user mean field
+(``trans_mod`` / ``green_init``) is not folded into the band: the band stays
+the bare transfer and the mean field becomes the initial static self-energy
+:math:`\Delta H = H_{\rm mod} - H_0`, so it is never counted twice. The
+self-consistency is accepted when three residuals -- of the total
+self-energy, of the Green function and of the split components -- all fall
+below ``EPS`` for three consecutive iterations (the iteration log prints
+them with a ``[pass k/3]`` counter); the chemical potential is re-solved from
+the dressed Green function every iteration.
+
+With ``longitudinal_bond_channels = true`` in addition, the fluctuation
+self-energy is built on the bond-enlarged pair basis of the previous
+section at every bosonic frequency: the bubble :math:`\bar\chi_{mm'}(q,
+i\nu)` is assembled block by block from the dressed Green function, the
+spin and charge channels are dressed batch-wise in frequency with the same
+vertices :math:`S`, :math:`C` (channel-0 block: the general path's vertices
+including the Hartree part :math:`V(q)`; bond-diagonal blocks: the exchange
+crossing :math:`w_t V^{(t)}_{l_1 l_2}(R_m)`), and the effective interaction
+is
+
+.. math::
+
+   W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)},
+
+the ring series from third order on plus the exact second order
+:math:`W^{(2)}`: on the channel-0 block :math:`[\tfrac{3}{2} S \bar\chi S +
+\tfrac{1}{2} C \bar\chi C]_{00} - \tfrac{1}{4}(S_{\rm on} + C_{\rm on})
+\bar\chi_{00} (S_{\rm on} + C_{\rm on})` (the general path's double-counting
+subtraction restricted to the on-site vertices, so that with every off-site
+coefficient zero the run is identical to the standard Hartree-Fock FLEX),
+on the mixed channel-0/bond blocks :math:`\tfrac{1}{4}(S \bar\chi S + C
+\bar\chi C)` (the exchange skeleton of the off-site interaction, once) and
+zero on the bond-bond blocks (their ring second order is the direct skeleton
+again). The self-energy is
+
+.. math::
+
+   \Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
+   e^{+i(k-q)\cdot(R_{m'} - R_m)}\, W_{(m, c, a), (m', d, b)}(q, i\nu)\,
+   G_{cd}(k - q, i\omega_n - i\nu),
+
+with the bond form factor on the internal leg at both ends of :math:`W`
+(the block :math:`(m, m')` of :math:`W` pairs with the phase of the bubble
+block :math:`(m', m)`), realised as real-space rolls of :math:`G`. At second
+order in the couplings this reproduces the direct and exchange skeletons of
+the off-site interaction exactly (pinned by an independent real-space
+enumeration), including the :math:`UV` cross term; the standard general path,
+whose vertex is the Hartree part :math:`V(q)` only, keeps half of the direct
+:math:`V^2` term and no :math:`UV` cross term at second order. The ordinary
+``chi0q``, ``chiq_s``, ``chiq_c`` outputs of such a run are the
+:math:`(m = 0, m' = 0)` blocks of the bond-resolved objects of the last map;
+the sixteen ``longitudinal_bond_*`` static keys of the previous section are
+written as well, and the full dynamic channels on request
+(``longitudinal_bond_output_full``). Restarts: ``sigma.npz`` stores the two
+components (``sigma_convention = "split"``) and only such an archive can seed
+a run with ``flex_hartree_fock = true``; a legacy archive is converted with
+``hwave_sigma_split`` (``--zero-static``, ``--static static.npz`` or, for a
+UHFk mean field, ``--uhfk-trans-mod trans_mod.npz --bare-transfer
+transfer.dat``). Domain of this version: spin-free general scheme, uniform
+Matsubara grid, CPU, no sublattice, no external field, real off-site
+coefficients, off-site ``Exchange`` / ``PairHop`` refused; the estimated peak
+memory of the whole solve is checked against
+``longitudinal_bond_memory_cap_gb`` and the frequency batch is chosen to fit
+it.
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
