@@ -374,9 +374,12 @@ class TestFailureClearing(unittest.TestCase):
             s._info_outputfile = {"path_to_output": out, "chiq_s": "same", "sigma": "same"}
             with self.assertRaises(ValueError):
                 s.solve(gi, out)
-            for k in ("sigma", "green", "chiq_s", "physics"):
+            for k in ("sigma", "sigma_static", "sigma_fluct", "green", "physics", "chi0q",
+                      "chiq_s", "chiq_c"):
                 self.assertNotIn(k, gi)
-            for a in attrs + ("sigma", "green_kw", "chi_s", "physics"):
+            self.assertFalse(any(str(k).startswith(("longitudinal_bond_", "scf_")) for k in gi))
+            for a in attrs + ("sigma", "sigma_static", "sigma_fluct", "green_kw", "chi_s",
+                              "chi_c", "physics"):
                 self.assertFalse(hasattr(s, a), a)
 
 
