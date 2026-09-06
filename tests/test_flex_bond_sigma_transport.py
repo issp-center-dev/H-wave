@@ -78,7 +78,7 @@ class TestTransport(unittest.TestCase):
     def test_g1_direct_sum_oracle(self):
         """4x4, norb = 2, nmat = 8, B = 5 (declared +-x, +-y), complex hopping,
         a random non-symmetric W: the (k, q, tau) oracle with the explicit
-        bond form factor e^{+i(k-q).(R_alpha - R_beta)} on the internal leg
+        bond form factor e^{+i(k-q).(R_beta - R_alpha)} on the internal leg
         and k - q reduced modulo the mesh equals the production transport."""
         from hwave.solver import bond_channels as bc
         from hwave.solver.flex_bond import BondBlockStore, calc_self_energy_bond
@@ -115,7 +115,7 @@ class TestTransport(unittest.TestCase):
                 kk = kvec[k]; kq = kvec[kmq]
                 for a_ in range(B):
                     for b_ in range(B):
-                        ph = np.exp(1j * kq @ (R[a_] - R[b_]))
+                        ph = np.exp(1j * kq @ (R[b_] - R[a_]))
                         Wblk = W_t[:, q, a_, :, b_, :].reshape(nmat, norb, norb, norb, norb)   # (t, c, a, d, b)
                         sig_t[:, k] += ph * np.einsum('tcadb,tcd->tab', Wblk, G_t[:, kmq])
         sig_t /= nvol
@@ -164,7 +164,7 @@ class TestFrequencyOracleSanity(unittest.TestCase):
                 kmq = idx[(ik[0] - iq[0]) % nx, (ik[1] - iq[1]) % ny]
                 for a_ in range(B):
                     for b_ in range(B):
-                        ph = np.exp(1j * kvec[kmq] @ (R[a_] - R[b_]))
+                        ph = np.exp(1j * kvec[kmq] @ (R[b_] - R[a_]))
                         for n in range(nmat):
                             for l in range(nmat):
                                 m = n - l + nmat // 2          # w_n - nu_l -> index n - l + nmat/2

@@ -1210,7 +1210,8 @@ class FLEX(RPA):
                 green_info.pop(k, None)
         for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
-                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_types",
+                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on",
+                     "_bond_types",
                      "_bond_last", "_bond_est", "_bond_nb", "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -1409,13 +1410,16 @@ class FLEX(RPA):
     def _phase_b_prepare_vertices(self):
         """S, C on the bond basis, cached once per solve (spec 3.5)."""
         from hwave.solver import bond_channels, hartree_fock as _hf
-        from hwave.solver.offsite import sc_matrices_from_split
+        from hwave.solver.offsite import sc_matrices_from_split, sc_matrices_onsite_from_split
         nx, ny, nz = (int(x) for x in self.lattice.shape)
         nvol, nd = self.lattice.nvol, self.norb ** 2
         S0, C0 = sc_matrices_from_split(self._bond_split, bond_channels._LONGITUDINAL_ACTIVE_TYPES,
                                         self.norb, nx, ny, nz)
         S0 = S0.reshape(nvol, nd, nd)
         C0 = C0.reshape(nvol, nd, nd)
+        S_on, C_on = sc_matrices_onsite_from_split(self._bond_split, self.norb, nx, ny, nz)
+        self._bond_S_on = np.ascontiguousarray(S_on.reshape(nvol, nd, nd))
+        self._bond_C_on = np.ascontiguousarray(C_on.reshape(nvol, nd, nd))
         types = tuple(self._bond_topo.coeffs)
         self._bond_types = types
         self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types)
@@ -1601,7 +1605,8 @@ class FLEX(RPA):
                 beta, self._bond_view, shape, workers)
         with self._traced("dressing"):
             res = flex_bond.dress_and_build_w(
-                store, self._bond_S, self._bond_C, nb=self._bond_nb,
+                store, self._bond_S, self._bond_C, S_on=self._bond_S_on, C_on=self._bond_C_on,
+                nb=self._bond_nb,
                 output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
                 spatial_shape=shape, iteration=iteration)
         with self._traced("transport"):

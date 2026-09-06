@@ -53,12 +53,24 @@ class TestDressAndBuildW(unittest.TestCase):
             names = ("chibar", "W") + (("chi_s_w", "chi_c_w") if output_full else ())
             with BondBlockStore(nmat, nvol, ND, nd, names) as store:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
-                res = dress_and_build_w(store, S, C, nb=4, output_full=output_full, nmat=nmat,
+                S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
+                C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
+                res = dress_and_build_w(store, S, C, S_on=S_on, C_on=C_on, nb=4,
+                                        output_full=output_full, nmat=nmat,
                                         nvol=nvol, nd=nd, spatial_shape=(4, 1, 1))
                 I = np.eye(ND)
                 chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
                 chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
-                W_ref = 1.5 * S @ chi_s @ S + 0.5 * C @ chi_c @ C - 0.25 * (S + C) @ chi_bar @ (S + C)
+                # spec 3.3 rev 19: ring beyond second order + the exact second order
+                W_ref = 1.5 * S @ (chi_s - chi_bar) @ S + 0.5 * C @ (chi_c - chi_bar) @ C
+                A = S @ chi_bar @ S
+                Bc = C @ chi_bar @ C
+                W2 = np.zeros_like(W_ref)
+                W2[:, :, :nd, :nd] = (1.5 * A + 0.5 * Bc)[:, :, :nd, :nd] \
+                    - 0.25 * (S_on + C_on) @ chi_bar[:, :, :nd, :nd] @ (S_on + C_on)
+                W2[:, :, :nd, nd:] = 0.25 * (A + Bc)[:, :, :nd, nd:]
+                W2[:, :, nd:, :nd] = 0.25 * (A + Bc)[:, :, nd:, :nd]
+                W_ref = W_ref + W2
                 np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
                 np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], atol=1e-14)
                 np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], atol=1e-12)

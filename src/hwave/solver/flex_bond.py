@@ -136,14 +136,28 @@ class DressResult:
     cond_min_c: float
 
 
-def dress_and_build_w(store, S, C, *, nb, output_full, nmat, nvol, nd, spatial_shape,
+def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None):
-    """The spec 3.2 loop: per frequency batch, dress spin then charge (one
-    channel batch alive at a time), consume each into W, the channel-0
-    collapses, the static slices (slice assignment into preallocated
-    buffers) and, with ``output_full``, the store's ``chi_s_w``/``chi_c_w``."""
+    """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
+    charge (one channel batch alive at a time) and consume each into the
+    effective interaction
+
+        W = 3/2 S (chi_s - chibar) S + 1/2 C (chi_c - chibar) C + W2
+
+    whose second-order part ``W2`` is exact for the off-site content and
+    reduces to the general path's for the on-site content:
+    channel-0 block ``[3/2 S chibar S + 1/2 C chibar C]_00 - 1/4 (S_on +
+    C_on) chibar_00 (S_on + C_on)`` (the general path's subtraction
+    restricted to the ON-SITE vertices ``S_on``, ``C_on``: a spin-
+    independent density interaction is counted once by the ring),
+    mixed channel-0/bond blocks ``1/4 (S chibar S + C chibar C)`` (the
+    exchange skeleton, once) and bond-bond blocks ``0`` (their ring
+    second order is the direct skeleton again). Also collects the
+    channel-0 collapses, the static slices (slice assignment into
+    preallocated buffers) and, with ``output_full``, the store's
+    ``chi_s_w``/``chi_c_w``."""
     ND = S.shape[-1]
-    SpC = S + C
+    SpC_on = np.asarray(S_on) + np.asarray(C_on)
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
     collapse_s = np.empty_like(collapse0)
     collapse_c = np.empty_like(collapse0)
@@ -151,29 +165,46 @@ def dress_and_build_w(store, S, C, *, nb, output_full, nmat, nvol, nd, spatial_s
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
     l_static = nmat // 2
     cond_s = cond_c = np.inf
+    # block weights of the second-order term: 1 on channel-0, 1/2 on the
+    # mixed blocks, 0 on bond-bond (applied to the half-sum below)
+    mask = np.zeros((ND, ND))
+    mask[:nd, :] = 0.5
+    mask[:, :nd] = 0.5
+    mask[:nd, :nd] = 0.0
     for l0 in range(0, nmat, nb):
         l1 = min(nmat, l0 + nb)
         cb = store.get_freq_batch("chibar", l0, l1)
         collapse0[l0:l1] = cb[:, :, :nd, :nd]
         chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
-        W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         collapse_s[l0:l1] = chi_s_b[:, :, :nd, :nd]
         if l0 <= l_static < l1:
             static_s[...] = chi_s_b[l_static - l0]
         if output_full:
             store.put_freq_batch("chi_s_w", l0, l1, chi_s_b)
+        chi_s_b -= cb
+        W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         del chi_s_b
         chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
-        W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
         collapse_c[l0:l1] = chi_c_b[:, :, :nd, :nd]
         if l0 <= l_static < l1:
             static_c[...] = chi_c_b[l_static - l0]
         if output_full:
             store.put_freq_batch("chi_c_w", l0, l1, chi_c_b)
+        chi_c_b -= cb
+        W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
         del chi_c_b
-        W_b -= 0.25 * (SpC[None] @ cb @ SpC[None])
+        # second-order term
+        A = S[None] @ cb @ S[None]
+        Bc = C[None] @ cb @ C[None]
+        W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
+        W_b[:, :, :nd, :nd] -= 0.25 * (SpC_on[None] @ cb[:, :, :nd, :nd] @ SpC_on[None])
+        A += Bc
+        del Bc
+        A *= 0.5 * mask
+        W_b += A
+        del A
         if not np.all(np.isfinite(W_b)):
             raise _NonFiniteError("non-finite effective interaction W in the frequency batch "
                                   "[{}, {}){}".format(l0, l1, _at(iteration)))
@@ -192,18 +223,23 @@ def dress_and_build_w(store, S, C, *, nb, output_full, nmat, nvol, nd, spatial_s
 
 def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
     """Sigma_fluct(k, iw) from the bond-resolved effective interaction ``W``
-    in ``store`` (spec 3.4, normative equation):
+    in ``store`` (spec 3.4 rev 19, normative equation):
 
         Sigma_ab(k) = T/N sum_{q,nu} sum_{alpha,beta,c,d}
-            e^{+i(k-q).(R_alpha - R_beta)} W_{(alpha,c,a),(beta,d,b)}(q) G_cd(k-q)
+            e^{+i(k-q).(R_beta - R_alpha)} W_{(alpha,c,a),(beta,d,b)}(q) G_cd(k-q)
 
-    The bond form factor sits on the internal leg k - q on BOTH ends of W
-    (the bubble's pair operator carries its phase on the reversed
-    propagator, so chibar_{alpha beta}(q) = -(T/N) sum_k e^{i(k-q).(R_alpha
-    - R_beta)} G(k) G(k-q)); with this assignment chibar(q, i nu)^dagger =
-    chibar(q, -i nu) and W inherit the plain matrix conjugation symmetry
-    and Sigma(k, i w)^dagger = Sigma(k, -i w) holds to round-off.  In real
-    space the phase is G(r + R_alpha - R_beta), a roll of G by R_beta - R_alpha.
+    The bond form factor sits on the internal leg k - q at both ends of W,
+    with the block (alpha, beta) of W paired with the bubble block
+    (beta, alpha)'s phase: the bubble is chibar_{alpha beta}(q) = -(T/N)
+    sum_k e^{i(k-q).(R_alpha - R_beta)} G(k) G(k-q) and both functional
+    derivatives of the ring functional with respect to G carry the phase
+    of the differentiated (transposed) block (pinned by the second-order
+    skeletons: with this transport the channel-0, mixed and bond-bond
+    blocks of 1/2 (S chibar S + C chibar C) are the direct skeleton, twice
+    the exchange skeleton and half the direct skeleton to 1e-15).  With
+    chibar(q, i nu)^dagger = chibar(q, -i nu) the symmetry
+    Sigma(k, i w)^dagger = Sigma(k, -i w) holds to round-off.  In real
+    space the phase is G(r + R_beta - R_alpha), a roll of G by R_alpha - R_beta.
 
     ``green_kw`` is rank five `(1, nmat, nvol, norb, norb)`; the result has
     the same shape.  With a single on-site channel this reproduces
@@ -224,7 +260,7 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
         Ra = np.asarray(view.delta_r[alpha], dtype=int)
         for bt in range(B):
             Rb = np.asarray(view.delta_r[bt], dtype=int)
-            shift = tuple(int(x) for x in (Rb - Ra))   # e^{+ik'.(R_a - R_b)} G(k') = G(r + R_a - R_b)
+            shift = tuple(int(x) for x in (Ra - Rb))   # e^{+ik'.(R_b - R_a)} G(k') = G(r + R_b - R_a)
             if shift == (0, 0, 0):
                 G_sh = G_rt.reshape(nmat, nvol, P, P)
             else:
