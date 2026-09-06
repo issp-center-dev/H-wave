@@ -171,7 +171,7 @@ def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_M
     finally:
         shutil.rmtree(work, ignore_errors=True)
     wall = time.time() - t0
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss      # process high-water mark so far
     if sys.platform != "darwin":
         rss *= 1024
     rec = dict(V=V, seed=seed, green=os.path.basename(gpath), sha256=_sha256(gpath),
@@ -180,7 +180,8 @@ def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_M
                scf_green_residual=float(prov["scf_green_residual"]),
                scf_component_residual=float(prov["scf_component_residual"]),
                hf_density_error=float(prov["hf_density_error"]), mu=mu,
-               symmetrization_residual=float(delta), wall_s=wall, maxrss_mb=rss / 2 ** 20,
+               symmetrization_residual=float(delta), wall_s=wall,
+               maxrss_mb=rss / 2 ** 20,          # process high-water mark up to this run (not per run)
                qlms_result={k: (bool(v) if isinstance(v, (bool, np.bool_)) else int(v))
                             for k, v in result.items()}, **cond)
     return rec, spath

@@ -1,6 +1,6 @@
 """The bond-aware self-energy transport (spec 2026-09-06 section 3.4) and
 gate G1: the B = 1 reduction to the general path and the direct-sum
-oracle in (k, q, tau) space with explicit external-leg phases."""
+oracle in (k, q, tau) space with the explicit internal-leg bond phase."""
 import unittest
 
 import numpy as np

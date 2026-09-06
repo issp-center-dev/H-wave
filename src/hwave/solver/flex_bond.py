@@ -321,7 +321,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     raises ``ValueError`` naming every row when even ``nb = 1`` exceeds
     the cap, or when ``freq_batch`` does."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
-    depth = int(depth) if mixing == "anderson" else 0
+    depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
     P = norb * norb
     ND = B * P
@@ -337,6 +337,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         "state": G + H,
         "seed_envelope": (2 * G + H) if split_seed else 0,
         "anderson_history": 2 * depth * 2 * G,
+        "anderson_work": 2 * max(depth - 1, 0) * 2 * G,       # the mixer's retained dR/dX stacks
         "collapses": 3 * C,
         "eigenpairs_hf": 5 * H,
         "flex_arrays": 5 * G,
@@ -350,12 +351,20 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     def _phase_rows(nb):
         return {
             "green_mu": 6 * G + H,
-            "density_hf": 2 * H + 8 * H + 20 * H + H,
+            # the evaluator's G_ref and G - G_ref (2 G), the Heff eigenpairs and
+            # their workspace (4 H), rho_k/rho_r (2 H), rho_so/out (8 H), the
+            # kernel's spin-major temporaries (20 H), the owning Sigma_HF copy (H)
+            "density_hf": 2 * G + 4 * H + 2 * H + 8 * H + 20 * H + H,
             "bubble": max(prep, pair),
             "dressing": per_batch * nb,
             "transport": 4 * G + 4 * C,
-            "convergence": 6 * G + H,
-            "mixing": (2 * depth * 2 * G + 4 * G) if mixing == "anderson" else 2 * G,
+            # materialised new total, green_inv + inverse + workspace, the G
+            # difference, the two frequency-broadcast static stacks of the
+            # component residual (7 G), the new static pair (H)
+            "convergence": 7 * G + H,
+            # anderson: residual + output (the history and work stacks are
+            # persistent); linear: the difference, the scaled step, the new pair
+            "mixing": 4 * G if mixing == "anderson" else 3 * G + H,
             "post_scf": G + (U if output_full else C),
         }
 

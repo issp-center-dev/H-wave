@@ -300,7 +300,8 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
         out_path += ".npz"          # numpy.savez appends it; check and report the real name
     if os.path.exists(out_path) and not force:
         raise FileExistsError("output '{}' exists; pass --force to overwrite".format(out_path))
-    total = np.load(total_path)
+    with np.load(total_path) as total_npz:
+        total = {k: total_npz[k] for k in total_npz.files}       # materialised; handle closed
     marker = str(total["sigma_convention"]) if "sigma_convention" in total else None
     if marker not in (None, "total"):
         raise ValueError("'{}' carries sigma_convention={!r}; only a total-form archive (no "
@@ -340,12 +341,12 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
                             sigma_fluct=_readonly(fluct), marker="split", ir_meta=None,
                             file_name=out_path)
     validate_split_seed(env, sigma.shape)
-    members = {k: total[k] for k in total.files if k not in _SPLIT_FIELDS and k != "sigma"}
+    members = {k: v for k, v in total.items() if k not in _SPLIT_FIELDS and k != "sigma"}
     members.update(sigma=sigma, sigma_convention=np.str_("split"), sigma_static=static,
                    sigma_fluct=fluct)
     np.savez(out_path, **members)
     # read-back check of the written archive
-    data = np.load(out_path)
-    validate_split_seed(make_seed_envelope(data, out_path, data["sigma"], None), sigma.shape)
+    with np.load(out_path) as data:
+        validate_split_seed(make_seed_envelope(data, out_path, data["sigma"], None), sigma.shape)
     return dict(out=out_path, nmat=nmat, nvol=nvol, norb=norb,
                 static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))))

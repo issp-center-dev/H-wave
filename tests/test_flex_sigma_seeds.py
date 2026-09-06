@@ -202,5 +202,27 @@ class TestSplitTailDiagnostic(unittest.TestCase):
         self.assertLess(emax, 1e-8)
 
 
+class TestMarkerAdmissibilityAtRead(unittest.TestCase):
+
+    def test_unknown_marker_refused_and_split_used_as_total_without_hf(self):
+        import hwave.solver.flex as flex_mod
+        with tempfile.TemporaryDirectory() as out:
+            files = _SeedFiles(out)
+            unknown = files.variant("unknown.npz", sigma_convention=np.str_("weird"))
+            # unknown marker: refused at read time, HF on or off
+            for hf in (False, True):
+                s, r = _build({"flex_hartree_fock": hf})
+                with self.assertRaises(ValueError) as cm:
+                    s.read_init({"path_to_input": out, "sigma_init": os.path.basename(unknown)})
+                self.assertIn("sigma_convention", str(cm.exception))
+            # split archive without HF: one INFO line, the total is the seed
+            s, r = _build({"flex_hartree_fock": False})
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                info = s.read_init({"path_to_input": out, "sigma_init": os.path.basename(files.split)})
+            self.assertTrue(any("used as the one seed" in m for m in cm.output))
+            np.testing.assert_array_equal(info["sigma"] if "sigma" in info else info["sigma_init"],
+                                          np.load(files.split)["sigma"])
+
+
 if __name__ == "__main__":
     unittest.main()

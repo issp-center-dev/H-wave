@@ -289,12 +289,18 @@ class FLEX(RPA):
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0)
             return out
         # step 2: domain keys that need no assembly
-        nmat = param.get("Nmat", None)
-        if nmat is None or isinstance(nmat, bool) or not isinstance(nmat, numbers.Integral) or int(nmat) % 2 != 0:
+        nmat = param.get("Nmat", 1024)          # the solver's default grid
+        if (isinstance(nmat, bool) or not isinstance(nmat, numbers.Integral) or int(nmat) <= 0
+                or int(nmat) % 2 != 0):
             raise ValueError(
-                "[mode.param] Nmat must be an even integer when flex_hartree_fock or "
+                "[mode.param] Nmat must be a positive even integer when flex_hartree_fock or "
                 "longitudinal_bond_channels is true (the static Matsubara slice is read at "
                 "Nmat//2), got {!r}".format(nmat))
+        itmax = param.get("IterationMax", 100)
+        if isinstance(itmax, bool) or not isinstance(itmax, numbers.Integral) or int(itmax) < 0:
+            raise ValueError(
+                "[mode.param] IterationMax must be an integer >= 0 when flex_hartree_fock or "
+                "longitudinal_bond_channels is true, got {!r}".format(itmax))
         scheme = str(info_mode.get("calc_scheme", "auto")).lower()
         if scheme not in ("general", "auto"):
             raise ValueError(
@@ -363,6 +369,12 @@ class FLEX(RPA):
         self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
         self._phase_b_active = raw["active"]
+        if self._phase_b_active and str(self.calc_scheme).lower() != "general":
+            raise ValueError(
+                "[mode.param] flex_hartree_fock / longitudinal_bond_channels require "
+                "calc_scheme='general'; calc_scheme='auto' resolved to {!r} for this "
+                "interaction set -- set calc_scheme = \"general\" explicitly".format(
+                    self.calc_scheme))
         if self._phase_b_active:
             logger.info("    flex_hartree_fock = {}".format(self.flex_hartree_fock))
             logger.info("    longitudinal_bond_channels (FLEX) = {}".format(
@@ -723,6 +735,13 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
             env = self._read_sigma(file_name)
+            if env.marker not in (None, "split", "total"):
+                raise ValueError(
+                    "sigma_init file '{}' carries an unknown sigma_convention {!r} "
+                    "(accepted: \"split\", \"total\", or no marker)".format(file_name, env.marker))
+            if env.marker == "split" and not getattr(self, "_phase_b_active", False):
+                logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
+                            "its total sigma is used as the one seed".format(file_name))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(
@@ -1494,6 +1513,10 @@ class FLEX(RPA):
             heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
             for iteration in range(self.max_iter):
                 logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
+                # the previous map's collapses and static slices are released
+                # before the next map allocates theirs (spec 3.6: one set)
+                chi0q_out = chi_s = chi_c = None
+                self._bond_last = None
                 with self._traced("green_mu"):
                     sigma = xp.asarray(state.total())
                     if self.calc_mu:
@@ -1535,6 +1558,9 @@ class FLEX(RPA):
                             name, iteration + 1))
                 with self._traced("convergence"):
                     g_new = self._calc_dressed_green(beta, mu, xp.asarray(new_state.total()))
+                    if not np.all(np.isfinite(g_new)):
+                        raise _hf.NonFiniteError("non-finite Green function of the new "
+                                                 "self-energy at iteration {}".format(iteration + 1))
                     res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
                                                            _bk.to_host(g_new))
                     del g_new

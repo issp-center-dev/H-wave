@@ -22,6 +22,7 @@ def _build(param_extra=None, mode="FLEX", calc_scheme="general", interactions=No
     par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
            "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
     par.update(param_extra or {})
+    par = {k: v for k, v in par.items() if v is not None}
     info = {"mode": mode, "param": par, "enable_spin_orbital": False, "calc_scheme": calc_scheme}
     info.update(info_extra or {})
     if mode == "FLEX":
@@ -125,6 +126,32 @@ class TestPhaseBConfig(unittest.TestCase):
         finally:
             logger.removeHandler(h)
         self.assertFalse([m for m in records if "longitudinal_bond" in m or "flex_hartree_fock" in m])
+
+
+class TestPhaseBDomainRefusals(unittest.TestCase):
+
+    def test_auto_scheme_resolving_to_reduced_is_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_hartree_fock": True}, calc_scheme="auto",
+                   interactions={"CoulombIntra": "coulombintra.dat"})
+        self.assertIn("general", str(cm.exception))
+        s, _ = _build({"flex_hartree_fock": True}, calc_scheme="auto",
+                      interactions={"CoulombInter": "coulombinter.dat"})   # off-site -> general
+        self.assertEqual(s.calc_scheme, "general")
+
+    def test_nmat_default_and_bounds(self):
+        s, _ = _build({"flex_hartree_fock": True, "Nmat": None})
+        self.assertEqual(s.nmat, 1024)
+        for bad in (0, -2, 7, True, 3.0):
+            with self.subTest(nmat=bad):
+                with self.assertRaises(ValueError):
+                    _build({"flex_hartree_fock": True, "Nmat": bad})
+
+    def test_iteration_max_must_be_non_negative(self):
+        with self.assertRaises(ValueError):
+            _build({"flex_hartree_fock": True, "IterationMax": -1})
+        s, _ = _build({"flex_hartree_fock": True, "IterationMax": 0})
+        self.assertEqual(s.max_iter, 0)
 
 
 if __name__ == "__main__":

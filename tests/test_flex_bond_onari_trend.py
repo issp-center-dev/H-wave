@@ -11,7 +11,9 @@ Setting and generator: ``tests/sc/onari_bond/generate_flex_bond_fixtures.py``
 (``U = 4``, ``n = 0.7``, ``T = 0.02``, ``L = 16``, ``Nmat = 2048``, Anderson
 depth 8, ``Mix = 0.2``, ``EPS = 8``, ``IterationMax = 1500``).  The Green
 functions are NOT committed; the compact observables file
-``tests/sc/onari_bond/flex_bond_observables.json`` is.  By default this
+``tests/sc/onari_bond/flex_bond_observables.json`` is (its per-file SHA-256
+values are informational: neither FLEX nor ``np.savez_compressed`` is
+bit-reproducible, so the physics is pinned by the lambda table, not by hashes).  By default this
 module verifies that file against the pinned tables below; with
 ``HWAVE_RUN_SLOW_FIXTURES=1`` it regenerates every Green function (hours)
 and re-derives the observables.

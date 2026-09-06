@@ -42,6 +42,7 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(pr["state"], G + H)
         self.assertEqual(pr["seed_envelope"], 2 * G + H)
         self.assertEqual(pr["anderson_history"], 2 * 4 * 2 * G)
+        self.assertEqual(pr["anderson_work"], 2 * 3 * 2 * G)
         self.assertEqual(pr["collapses"], 3 * C)
         self.assertEqual(pr["eigenpairs_hf"], 5 * H)
         self.assertEqual(pr["flex_arrays"], 5 * G)
@@ -49,14 +50,14 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(est["persistent"], sum(pr.values()))
         ph = est["phase_rows"]
         self.assertEqual(ph["green_mu"], 6 * G + H)
-        self.assertEqual(ph["density_hf"], 31 * H)
+        self.assertEqual(ph["density_hf"], 2 * G + 35 * H)
         prep = 16 * nvol * (ND ** 2 + 4 * P * (nmat + 2))
         pair = 16 * nvol * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
         self.assertEqual(ph["bubble"], max(prep, pair))
         self.assertEqual(ph["dressing"], 6 * est["nb"] * nvol * ND * ND * 16)
         self.assertEqual(ph["transport"], 4 * G + 4 * C)
-        self.assertEqual(ph["convergence"], 6 * G + H)
-        self.assertEqual(ph["mixing"], 2 * 4 * 2 * G + 4 * G)
+        self.assertEqual(ph["convergence"], 7 * G + H)
+        self.assertEqual(ph["mixing"], 4 * G)
         self.assertEqual(ph["post_scf"], G + U)
         self.assertEqual(est["nb"], nmat)
         self.assertAlmostEqual(est["peak"], 1.25 * (est["persistent"] + max(ph.values())))
@@ -104,11 +105,27 @@ def _solver(param_extra=None, inter=None):
     return flex_mod.FLEX(r.get_param("ham"), {}, info), r
 
 
-class _Tracer:
-    """``solver._phase_tracer``: per-phase tracemalloc peak increments."""
+def _preimport():
+    """Import everything the solve imports lazily, so that module objects do
+    not count as solve memory."""
+    import scipy.fft, scipy.linalg  # noqa: F401
+    from hwave.solver import (flex_bond, flex_hf, flex_mixing, hartree_fock, bubble,  # noqa: F401
+                              bond_channels, offsite, matsubara, backend, vertex_table)
+    from hwave.solver import _sc_matrices_myo  # noqa: F401
+    import hwave.sc  # noqa: F401
 
-    def __init__(self):
+
+class _Tracer:
+    """``solver._phase_tracer``: per-phase tracemalloc peaks measured from
+    the traced memory at SOLVE entry (``base``), so every buffer the solve
+    allocates -- persistent ones included, also those a phase allocates
+    for the first time such as the Anderson stacks -- counts, while the
+    process's pre-solve state does not. The invariant compares each phase
+    with persistent + its row."""
+
+    def __init__(self, base=0):
         self.peaks = {}
+        self.base = base
 
     def __call__(self, name):
         tracer = self
@@ -121,7 +138,7 @@ class _Tracer:
 
             def __exit__(self_, *exc):
                 peak = tracemalloc.get_traced_memory()[1]
-                tracer.peaks[name] = max(tracer.peaks.get(name, 0), peak - self_.start)
+                tracer.peaks[name] = max(tracer.peaks.get(name, 0), peak - tracer.base)
                 return False
         return _Ctx()
 
@@ -147,11 +164,13 @@ class TestSolverPreflight(unittest.TestCase):
         s, r = _solver(param_extra)
         gi = r.get_param("green")
         gi.update(green_extra or {})
+        _preimport()
         tracer = _Tracer()
         s._phase_tracer = tracer
         tracemalloc.start()
         try:
             with tempfile.TemporaryDirectory() as out:
+                tracer.base = tracemalloc.get_traced_memory()[0]
                 s.solve(gi, out)
         finally:
             tracemalloc.stop()
@@ -166,10 +185,10 @@ class TestSolverPreflight(unittest.TestCase):
                 self.assertTrue(tracer.peaks, "no phase was traced")
                 for name, measured in tracer.peaks.items():
                     self.assertIn(name, est["phase_rows"])
-                    bound = est["phase_rows"][name] + est["persistent"]
+                    bound = est["persistent"] + est["phase_rows"][name]
                     self.assertLessEqual(measured, bound,
-                                         "phase {} measured {} > row {} + persistent {}".format(
-                                             name, measured, est["phase_rows"][name], est["persistent"]))
+                                         "phase {} peak since solve entry {} > persistent {} + row {}".format(
+                                             name, measured, est["persistent"], est["phase_rows"][name]))
                 self.assertGreaterEqual(len(tracer.peaks), 7)
 
     def test_tracer_invariant_split_warm_start(self):
@@ -182,17 +201,19 @@ class TestSolverPreflight(unittest.TestCase):
             s2, r2 = _solver({"IterationMax": 1})
             gi2 = r2.get_param("green")
             gi2.update(s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"}))
+            _preimport()
             tracer = _Tracer()
             s2._phase_tracer = tracer
             tracemalloc.start()
             try:
+                tracer.base = tracemalloc.get_traced_memory()[0]
                 s2.solve(gi2, out)
             finally:
                 tracemalloc.stop()
         est = s2._bond_est
         self.assertEqual(est["persistent_rows"]["seed_envelope"] > 0, True)
         for name, measured in tracer.peaks.items():
-            self.assertLessEqual(measured, est["phase_rows"][name] + est["persistent"], name)
+            self.assertLessEqual(measured, est["persistent"] + est["phase_rows"][name], name)
 
 
 _RSS_SCRIPT = r"""
