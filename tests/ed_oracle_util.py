@@ -1021,15 +1021,18 @@ class SectorED:
         return rho
 
 
-def green_function(fx, iws, terms=(), rows=None, cols=None):
+def green_function(fx, iws, terms=()):
     """``G_{PQ}(i w) = -int <T c_P(tau) c^dag_Q(0)>`` in the Lehmann
     representation over the ``(N_up, N_dn)`` sectors of :class:`SectorED`,
     for the free chain of ``fx`` plus the canonical density ``terms``
     (the quartic lists :func:`canonical_density_terms` /
     :func:`h_int_from_terms` consume). ``P``, ``Q`` are ``fx``'s generalised
-    site-orbital-spin modes; ``rows``/``cols`` optionally restrict them.
-    Returns ``(len(iws), len(rows), len(cols))``."""
-    return SectorED(fx, terms).green(iws, rows=rows, cols=cols)
+    site-orbital-spin modes; returns ``(len(iws), nmode, nmode)``.
+
+    A caller that needs only part of the matrix drives
+    :meth:`SectorED.green` directly (it takes ``rows``/``cols`` mode
+    subsets); this wrapper is the whole-matrix convenience."""
+    return SectorED(fx, terms).green(iws)
 
 
 # ---------------------------------------------------------------------------

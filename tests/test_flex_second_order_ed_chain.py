@@ -49,6 +49,22 @@ while the placement above matches at 1e-16. On the single-orbital chain the
 two placements are the same Hamiltonian, which is why only the two-orbital
 fixture can decide it.
 
+SCOPE OF THAT CLAIM, and of every verdict below it. What is adjudicated
+here is the second-order vertex against UHFk's MEAN-FIELD READING of a
+declared row: ``accumulate_hf`` is what defines the orbital placement the
+chain ED implements, and the gate then asks whether the second order is
+consistent with THAT Hamiltonian. It is not an adjudication against a
+file-format definition -- the documentation never fixes the sign of
+``r_ij`` in an interaction row, so "which site the row's first orbital sits
+on" has no independent written answer to appeal to. Both readings are
+internally consistent conventions; this module pins that the solver's
+first-order and second-order paths agree on ONE of them, and says which.
+The k-space bridge the comparison rides on (exponent sign, orbital index
+order) is pinned separately, on a band that can see it, by
+:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`
+-- without that pin a flipped bridge would silently select the opposite
+placement and invert every verdict below.
+
 The mirrored-row HALF weight (each of the two declared orientations of a
 bond carries half of it, ``_MIRRORED_TYPES``) is the convention Task 10
 established on the on-site types; here it is re-pinned two-sidedly by
@@ -98,15 +114,15 @@ from tests import ed_oracle_util as edu
 from tests.heavy_tests import heavy
 from tests.test_flex_second_order_ed_onsite import _coeff2, _coeff11, _quiet, _refine
 from tests.test_second_order_factors import _write_wan
-from tests.test_second_order_oracle import oracle_records, oracle_sigma2
+from tests.test_second_order_oracle import (_MIRRORED_ROW_TYPES as _MIRRORED_TYPES,
+                                             oracle_records, oracle_sigma2)
 
 UP, DN = 0, 1
 
-#: Types whose two declared orientations name the SAME bond, so each
-#: declared row is half of it (``hwave.solver.second_order._MIRRORED_TYPES``
-#: and the oracle's ``_MIRRORED_ROW_TYPES``; pinned two-sidedly by
-#: :meth:`TestFirstOrder.test_first_order_remainder_vanishes`).
-_MIRRORED_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange", "PairLift")
+# ``_MIRRORED_TYPES`` above is the oracle's own list, imported rather than
+# recopied: the types whose two declared orientations name the SAME bond, so
+# each declared row is half of it. Pinned two-sidedly here by
+# :meth:`TestFirstOrder.test_first_order_remainder_vanishes`.
 
 #: Working point of the heavy comparisons (see the module docstring).
 _NMAT = 4096
@@ -146,6 +162,30 @@ def _fx_orbital():
     ``(N_up, N_dn)`` block 400 -- comfortably inside ``SectorED``."""
     return edu.EDFixture(L=3, norb=2,
                          t={(0, 0): -1.0, (1, 1): -0.7, (0, 1): -0.2, (1, 0): -0.2},
+                         eps=(0.0, 0.3), T=0.5, mu=0.2)
+
+
+def _fx_complex():
+    """``L = 3``, two orbitals, COMPLEX hopping in every orbital channel and
+    ``t_01 != conj(t_10)``: a band that is neither inversion-symmetric nor
+    transpose-symmetric.
+
+    The two fixtures the gate itself runs on both have real hopping, so
+    ``eps(k) = eps(-k)`` and ``eps(k) = eps(k)^T`` hold to round-off there
+    and NEITHER the Fourier sign nor the orbital index order of
+    :func:`_to_k` can be seen. This fixture exists only to see them
+    (:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`);
+    it carries no interaction and is never diagonalised beyond the free
+    Green function.
+
+    ``EDFixture.build_h1`` places ``t[(a, b)]`` on ``(j+1, a) <- (j, b)``
+    and ``conj(t[(b, a)])`` on the return hop, so ``h1`` is Hermitian for
+    ANY pair ``t_01``, ``t_10`` -- the asymmetry below is legal, not a
+    broken Hamiltonian, and ``_write_chain_inputs`` writes exactly those
+    two amplitudes into ``transfer.dat``."""
+    return edu.EDFixture(L=3, norb=2,
+                         t={(0, 0): -1.0 + 0.3j, (1, 1): -0.7 - 0.2j,
+                            (0, 1): -0.2 + 0.15j, (1, 0): -0.25 - 0.1j},
                          eps=(0.0, 0.3), T=0.5, mu=0.2)
 
 
@@ -309,7 +349,17 @@ def _production_hf_sigma_k(fx, rows_by_type, rho):
 # Mode space -> the solver's (k, orbital) frame
 # --------------------------------------------------------------------------
 
-def _to_k(fx, M):
+def _k_phases(fx, sign=1.0):
+    """``phase[kx, R] = e^{sign i k R}`` on ``k = 2 pi kx / L``. The ONE
+    place the Fourier sign of this module's real-space-to-k bridge is
+    written; ``sign = -1`` builds the reversed-k candidate that
+    :meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`
+    has to reject."""
+    R = np.arange(fx.L)
+    return np.exp(sign * 2j * np.pi * np.outer(R, R) / fx.L)
+
+
+def _to_k(fx, M, sign=1.0):
     """The UP-spin block of a translation-invariant mode-space matrix, as
     ``A(k)_{ab} = sum_R A[(R, a), (0, b)] e^{i k R}``, ``k = 2 pi kx / L``.
 
@@ -317,27 +367,31 @@ def _to_k(fx, M):
     ``epsilon_k[a,b] += t_ab e^{+ikR}`` share (a ``transfer.dat`` row at
     ``R`` carries ``(j + R, a) <- (j, b)``), and
     :meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
-    pins the whole chain of it end to end."""
+    pins the whole chain of it end to end -- the SIGN of the exponent and
+    the orbital index order specifically by
+    :meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`,
+    which needs a band that is neither inversion- nor transpose-symmetric to
+    see either."""
     norb, L = fx.norb, fx.L
+    phase = _k_phases(fx, sign)
     out = np.zeros((L, norb, norb), dtype=complex)
     for kx in range(L):
         for R in range(L):
-            ph = np.exp(2j * np.pi * kx * R / L)
             for a in range(norb):
                 for b in range(norb):
-                    out[kx, a, b] += ph * M[fx.mode(R, a, UP), fx.mode(0, b, UP)]
+                    out[kx, a, b] += phase[kx, R] * M[fx.mode(R, a, UP), fx.mode(0, b, UP)]
     return out
 
 
-def _g0_k(fx, iws):
+def _g0_k(fx, iws, sign=1.0):
     """``G0(k, i w) = [(i w + mu) - eps(k)]^{-1}`` of the free chain."""
-    ek = _to_k(fx, fx.build_h1())
+    ek = _to_k(fx, fx.build_h1(), sign)
     eye = np.eye(fx.norb)
     return np.array([[np.linalg.inv((iw + fx.mu) * eye - ek[kx]) for kx in range(fx.L)]
                      for iw in iws])
 
 
-def _green_ed_k(ed, fx, iws):
+def _green_ed_k(ed, fx, iws, sign=1.0):
     """The interacting ``G(k, i w)`` of the up spin, from ``SectorED.green``.
 
     Only the ``norb`` columns at site 0 are asked for: the fixture is
@@ -348,10 +402,11 @@ def _green_ed_k(ed, fx, iws):
     rows = [fx.mode(j, a, UP) for j in range(L) for a in range(norb)]
     cols = [fx.mode(0, b, UP) for b in range(norb)]
     gm = ed.green(iws, rows=rows, cols=cols)
+    phase = _k_phases(fx, sign)
     gk = np.zeros((len(iws), L, norb, norb), dtype=complex)
     for kx in range(L):
         for R in range(L):
-            gk[:, kx] += np.exp(2j * np.pi * kx * R / L) * gm[:, R * norb:(R + 1) * norb, :]
+            gk[:, kx] += phase[kx, R] * gm[:, R * norb:(R + 1) * norb, :]
     return gk
 
 
@@ -473,7 +528,6 @@ class _Maps(object):
         self.iws = 1j * (2 * self.idx + 1 - nmat) * np.pi / fx.beta
         self._ed, self._pr = {}, {}
         self._bare = None
-        self.runs = 0
 
     def _zero(self):
         return np.zeros((len(self.idx), self.fx.L, self.fx.norb, self.fx.norb), complex)
@@ -495,7 +549,6 @@ class _Maps(object):
         key = (gate,) + args
         if key not in self._pr:
             self._pr[key] = _production_sigma(self.fx, rows, gate, self.nmat)[0][self.idx]
-            self.runs += 1
         return self._pr[key]
 
     def bare_green(self, rows):
@@ -600,10 +653,14 @@ class TestChainHamiltonian(unittest.TestCase):
         ``transfer.dat`` equals ``_g0_k``'s ``[(i w + mu) - eps(k)]^{-1}``,
         on BOTH fixtures.
 
-        This is the load-bearing pin of the whole k-space frame used here
-        -- the ``(j + R, a) <- (j, b)`` reading of a transfer row, the
-        ``e^{+ikR}`` sign, the ``kx`` ordering and the orbital index order
-        -- and it is checked against production rather than re-derived."""
+        On these two fixtures the band is inversion- and transpose-symmetric
+        (real hopping), so what this pin actually fixes is the
+        ``(j + R, a) <- (j, b)`` reading of a transfer row, the ``kx``
+        ordering and the site-major ``j * norb + a`` row layout -- checked
+        against production rather than re-derived. The exponent SIGN and
+        the orbital index order cannot be seen here and are pinned
+        separately, on a complex-hopping band, by
+        :meth:`test_fourier_sign_and_orbital_order_are_pinned`."""
         nmat = 32
         for fx in (_fx_chain(), _fx_orbital()):
             rows = {"CoulombIntra": [(0, 0, 0, 1, 1, 1e-9, 0.0)]}
@@ -617,6 +674,56 @@ class TestChainHamiltonian(unittest.TestCase):
                 # object, so the Dyson inversion below subtracts like with like
                 np.testing.assert_allclose(_green_ed_k(edu.SectorED(fx), fx, iws),
                                            g0, atol=1e-12)
+
+    def test_fourier_sign_and_orbital_order_are_pinned(self):
+        """On a band that is neither inversion- nor transpose-symmetric, the
+        solver's own bare ``G(k, i w)`` selects ``_to_k``'s exponent SIGN
+        and its orbital index order -- both of which the gate's two
+        fixtures are blind to.
+
+        Why this is load-bearing rather than decorative: ``_fx_chain`` and
+        ``_fx_orbital`` have real hopping, so ``eps(k) = eps(-k)`` to
+        round-off; with the exponent sign flipped every comparison in this
+        module would still pass, and
+        :meth:`test_ed_hamiltonian_is_the_production_mean_field` would then
+        select the OPPOSITE orbital placement for a declared off-site row,
+        inverting every downstream verdict with no pin going red. The same
+        goes for the orbital index order on a real-symmetric ``eps(k)``.
+
+        Three-sided: the ``e^{+ikR}`` convention matches production at
+        1e-12; the reversed-k candidate (``sign = -1``, i.e. the array read
+        at ``-kx``) and the orbital-transposed one both deviate by more
+        than 1e-2. The two asymmetries are asserted to be O(1) first, so
+        neither rejection can be vacuous."""
+        nmat = 32
+        fx = _fx_complex()
+        iws = 1j * (2 * np.arange(nmat) + 1 - nmat) * np.pi / fx.beta
+        eps = _to_k(fx, fx.build_h1())
+        rev_idx = (-np.arange(fx.L)) % fx.L
+        self.assertGreater(np.abs(eps - eps[rev_idx]).max(), 0.1,
+                           "the fixture's band is inversion-symmetric: the Fourier "
+                           "sign cannot be seen on it")
+        self.assertGreater(np.abs(eps - np.swapaxes(eps, -1, -2)).max(), 0.1,
+                           "the fixture's band is transpose-symmetric: the orbital "
+                           "index order cannot be seen on it")
+
+        rows = {"CoulombIntra": [(0, 0, 0, 1, 1, 1e-9, 0.0)]}
+        _sig, G = _production_sigma(fx, rows, False, nmat)
+        good = _g0_k(fx, iws)
+        self.assertGreater(np.abs(good).max(), 1e-3)             # anti-vacuity
+        np.testing.assert_allclose(G[0], good, atol=1e-12)
+        # and the ED engine's own free Green function, through the same
+        # transform, is that same object
+        np.testing.assert_allclose(_green_ed_k(edu.SectorED(fx), fx, iws),
+                                   good, atol=1e-12)
+        reversed_k = _g0_k(fx, iws, sign=-1.0)
+        self.assertGreater(np.abs(reversed_k - G[0]).max(), 1e-2,
+                           "the reversed-k candidate also matches production: the "
+                           "Fourier sign of _to_k is not pinned")
+        transposed = np.swapaxes(good, -1, -2)
+        self.assertGreater(np.abs(transposed - G[0]).max(), 1e-2,
+                           "the orbital-transposed candidate also matches production: "
+                           "the orbital index order of _to_k is not pinned")
 
     def test_ed_hamiltonian_is_the_production_mean_field(self):
         """The first-order functional of :func:`_ed_terms` equals UHFk's own
