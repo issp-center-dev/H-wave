@@ -1476,7 +1476,16 @@ class RPA:
 
     def _set_scheme(self, info_mode):
         # handle calc_scheme: must be called after setting up interactions
-        self.calc_scheme_requested = str(info_mode.get("calc_scheme", "auto"))
+        #
+        # The name is CANONICALISED once, here, and every comparison below --
+        # and in FLEX, which inherits this state -- reads the canonical form.
+        # Case-sensitive comparisons on a raw request used to let a mis-cased
+        # spelling slip past the validations keyed off the name (e.g.
+        # 'Reduced' + Exchange passed the drop check below and then ran the
+        # reduced path, which discards that vertex entirely). ``raw`` keeps
+        # the user's own spelling for the messages that quote it.
+        raw = str(info_mode.get("calc_scheme", "auto"))
+        self.calc_scheme_requested = raw.strip().lower()
         self.calc_scheme = self.calc_scheme_requested
 
         # calc_type: "ring" (default) or "ring+ladder"
@@ -1531,7 +1540,7 @@ class RPA:
                     "only; with enable_spin_orbital or a spin-polarized "
                     "setup no current FLEX scheme supports these "
                     "interactions.)".format(
-                        self.calc_scheme, ", ".join(dropped)))
+                        raw, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
                 logger.warning(PAIRLIFT_INERT_WARNING)
         if self.calc_type == "ring+ladder" and self.calc_scheme != "general":

@@ -567,10 +567,10 @@ class FLEX(RPA):
             # ring+ladder was already rejected as step 0 above, and 'auto'
             # was resolved there too: only a genuinely unsupported scheme
             # name can reach here. The assertion is on the REQUESTED string
-            # (the one FLEX's resolver keys off), so a mis-cased 'AUTO' --
-            # which the inherited _set_scheme also treats as an explicit,
-            # unsupported name -- still reaches the actionable ValueError
-            # below instead of an AssertionError.
+            # (the one FLEX's resolver keys off), which the inherited
+            # _set_scheme canonicalises, so a mis-cased 'AUTO' has taken the
+            # auto path above and an unsupported name reaches the actionable
+            # ValueError below instead of an AssertionError.
             assert self.calc_scheme_requested != "auto", \
                 "auto must be resolved above"
             msg = ("FLEX requires calc_scheme='reduced' or 'general', "

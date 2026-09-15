@@ -2,6 +2,7 @@
 """The flex_second_order key (spec 2026-09-08 D2, section 3): type/value,
 default after auto resolution, applicability refusals, RPA warning, INFO line."""
 import os
+import shutil
 import tempfile
 import unittest
 
@@ -12,10 +13,10 @@ import hwave.qlmsio.read_input_k as read_input_k
 _IN2 = "tests/rpa/input_2orb"
 
 
-def _build(param_extra=None, calc_scheme="general", interactions=None, mode="FLEX"):
-    idict = {"path_to_input": _IN2, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+def _build(param_extra=None, calc_scheme="general", interactions=None, mode="FLEX", path=_IN2):
+    idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
     idict.update({"CoulombInter": "coulombinter.dat"} if interactions is None else interactions)
-    r = read_input_k.QLMSkInput({"path_to_input": _IN2, "interaction": idict})
+    r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
     par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
            "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
     par.update(param_extra or {})
@@ -117,6 +118,41 @@ class TestSchemeSpelling(unittest.TestCase):
     def test_mixed_case_general_accepts_the_key(self):
         s, _ = _build({"flex_second_order": "takimoto"}, calc_scheme="General")
         self.assertEqual(s.flex_second_order, "takimoto")
+
+    def test_mixed_case_reduced_still_refuses_exchange(self):
+        """The inherited RPA validations key off the scheme name too: an
+        Exchange (or PairHop) declaration under a mis-cased "Reduced" must hit
+        the same refusal as under "reduced" -- the reduced scheme drops those
+        vertices entirely, so accepting the request would run a silently
+        different Hamiltonian."""
+        for itype, fname in (("Exchange", "exchange.dat"), ("PairHop", "pairhop.dat")):
+            with tempfile.TemporaryDirectory() as d:
+                for f in ("geom.dat", "transfer.dat", "coulombintra.dat"):
+                    shutil.copy(os.path.join(_IN2, f), d)
+                with open(os.path.join(d, fname), "w") as fw:
+                    fw.write("{} in wannier90-like format for uhfk\n2\n1\n 1\n"
+                             "   0    0    0    1    2  0.3 0.0\n"
+                             "   0    0    0    2    1  0.3 0.0\n".format(itype))
+                inter = {itype: fname, "CoulombIntra": "coulombintra.dat"}
+                msgs = {}
+                for spelling in ("reduced", "Reduced", "REDUCED"):
+                    with self.subTest(itype=itype, spelling=spelling):
+                        with self.assertRaises(ValueError) as cm:
+                            _build(calc_scheme=spelling, interactions=inter, path=d)
+                        msgs[spelling] = str(cm.exception)
+                        self.assertIn("no density-diagonal content", msgs[spelling])
+                        self.assertIn(itype, msgs[spelling])
+
+    def test_mixed_case_auto_resolves_like_auto(self):
+        for spelling in ("auto", "Auto", "AUTO"):
+            with self.subTest(spelling=spelling):
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    s, _ = _build(calc_scheme=spelling)
+                self.assertEqual(s.calc_scheme, "general")
+                self.assertEqual(s.calc_scheme_requested, "auto")
+                self.assertTrue(s._scheme_resolution.startswith("auto:"), s._scheme_resolution)
+                self.assertEqual(
+                    len([m for m in cm.output if "flex_second_order = local" in m]), 1)
 
     def test_mixed_case_reduced_still_refuses_the_key(self):
         for spelling in ("Reduced", "REDUCED"):
