@@ -26,12 +26,21 @@ _BETA = 0.5
 UP, DN = 0, 1
 
 
-def _site(x, y):
-    return (x % 4) * 4 + (y % 4)
+def _site(x, y, z=0, shape=_SHAPE):
+    """Flat site index of a lattice point on ``shape`` (the solver's
+    ``(nx, ny, nz)`` order, x-major). Defaults to the 4x4 torus the G1/G2
+    gates of this module are written on; the chain gate
+    (``tests/test_flex_second_order_ed_chain.py``) passes ``(L, 1, 1)``."""
+    nx, ny, nz = shape
+    return ((x % nx) * ny + (y % ny)) * nz + (z % nz)
 
 
-def _coords(i):
-    return i // 4, i % 4
+def _coords(i, shape=_SHAPE):
+    """Inverse of :func:`_site`: the ``(x, y, z)`` of a flat site index."""
+    nx, ny, nz = shape
+    x, rem = divmod(i, ny * nz)
+    y, z = divmod(rem, nz)
+    return x, y, z
 
 
 def _g(i, a, s, norb):
@@ -52,13 +61,18 @@ def _g(i, a, s, norb):
 _MIRRORED_ROW_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange", "PairLift")
 
 
-def oracle_records(rows_by_type, norb):
+def oracle_records(rows_by_type, norb, shape=_SHAPE):
     """(p, q, r, s, x, offsite) records of x c+_p c+_q c_s c_r, one per
     monomial of the documented operator per DECLARED ROW (spec 2.2 table,
     written independently: n_i n_j expansions, Exchange both directions,
     PairHop one orientation, PairLift both placements, Hund with the code's
     minus, Ising density-difference form), at half weight for the mirrored
-    types (:data:`_MIRRORED_ROW_TYPES`)."""
+    types (:data:`_MIRRORED_ROW_TYPES`).
+
+    ``shape`` is the lattice the records are enumerated on, defaulting to
+    this module's 4x4 torus; the chain exact-diagonalization gate passes
+    ``(L, 1, 1)``. It must be the shape of the ``G_kw`` later handed to
+    :func:`oracle_sigma2`."""
     recs = []
     for itype, rows in rows_by_type.items():
         for (rx, ry, rz, a1, b1, vr, vi) in rows:
@@ -66,9 +80,9 @@ def oracle_records(rows_by_type, norb):
             if itype in _MIRRORED_ROW_TYPES:
                 v = 0.5 * v
             off = (rx, ry, rz) != (0, 0, 0)
-            for i in range(_NVOL):
-                xi, yi = _coords(i)
-                j = _site(xi + rx, yi + ry)
+            for i in range(shape[0] * shape[1] * shape[2]):
+                xi, yi, zi = _coords(i, shape)
+                j = _site(xi + rx, yi + ry, zi + rz, shape)
                 g = lambda site, o, sp: _g(site, o, sp, norb)
                 if itype == "CoulombIntra":
                     recs.append((g(i, a, UP), g(i, a, DN), g(i, a, UP), g(i, a, DN), v, False))
@@ -117,21 +131,26 @@ def _site_of(idx, norb):
     return idx // (2 * norb)
 
 
-def oracle_sigma2(G_kw, beta, recs, norb, which):
+def oracle_sigma2(G_kw, beta, recs, norb, which, shape=_SHAPE):
     """Sigma2 on (k, i w) from the skeleton of spec 2.1 with the weight rule
     of 2.4 ('exact': 1/2 every pair; 'local': 1/2 on/on, 1 when every
     off-site entry in the pair is crossed (s on p's site), 0 otherwise;
-    'dropped': exact - local)."""
+    'dropped': exact - local).
+
+    ``shape`` is the lattice ``G_kw`` lives on (default: this module's 4x4
+    torus) and must be the one ``recs`` was enumerated on."""
+    nx, ny, nz = shape
+    nvol = nx * ny * nz
     nmat = G_kw.shape[1]
-    M = _NVOL * 2 * norb
+    M = nvol * 2 * norb
     g_rt = _bk.spatial_ifftn(
-        _ms.fermion_to_tau(G_kw[0].reshape(nmat, _NVOL * norb * norb), axis=0).reshape(nmat, 4, 4, 1, norb * norb),
-        axes=(1, 2, 3), workers=1).reshape(nmat, _NVOL, norb, norb)
+        _ms.fermion_to_tau(G_kw[0].reshape(nmat, nvol * norb * norb), axis=0).reshape(nmat, nx, ny, nz, norb * norb),
+        axes=(1, 2, 3), workers=1).reshape(nmat, nvol, norb, norb)
     rev = np.zeros_like(g_rt)
     for t in range(nmat):
-        for i in range(_NVOL):
-            xi, yi = _coords(i)
-            rev[t, i] = g_rt[(-t) % nmat, _site(-xi, -yi)]
+        for i in range(nvol):
+            xi, yi, zi = _coords(i, shape)
+            rev[t, i] = g_rt[(-t) % nmat, _site(-xi, -yi, -zi, shape)]
     sgn = -np.ones(nmat); sgn[0] = 1.0
 
     # site-orbital-spin propagators (spin-diagonal, spin-free)
@@ -139,8 +158,8 @@ def oracle_sigma2(G_kw, beta, recs, norb, which):
         i, j = _site_of(P, norb), _site_of(Q, norb)
         if (P // norb) % 2 != (Q // norb) % 2:
             return 0.0
-        xi, yi = _coords(i); xj, yj = _coords(j)
-        return g_rt[t, _site(xi - xj, yi - yj), P % norb, Q % norb]
+        xi, yi, zi = _coords(i, shape); xj, yj, zj = _coords(j, shape)
+        return g_rt[t, _site(xi - xj, yi - yj, zi - zj, shape), P % norb, Q % norb]
 
     def Gr(t, P, Q):   # G_{PQ}(-tau)
         # rev[d] = G(-d, -tau) by construction, so G_{PQ}(-tau) = G(x_P - x_Q,
@@ -148,8 +167,8 @@ def oracle_sigma2(G_kw, beta, recs, norb, which):
         i, j = _site_of(P, norb), _site_of(Q, norb)
         if (P // norb) % 2 != (Q // norb) % 2:
             return 0.0
-        xi, yi = _coords(i); xj, yj = _coords(j)
-        return rev[t, _site(xj - xi, yj - yi), P % norb, Q % norb]
+        xi, yi, zi = _coords(i, shape); xj, yj, zj = _coords(j, shape)
+        return rev[t, _site(xj - xi, yj - yi, zj - zi, shape), P % norb, Q % norb]
 
     Gam = _gamma_entries(recs)
     by_p = {}
@@ -158,7 +177,7 @@ def oracle_sigma2(G_kw, beta, recs, norb, which):
     by_pprime = {}
     for (rp, sp, pp, qp), (x, off) in Gam.items():   # Gamma_{r's',p'q'}
         by_pprime.setdefault(pp, []).append((rp, sp, qp, x, off))
-    sig = np.zeros((nmat, _NVOL, norb, norb), complex)
+    sig = np.zeros((nmat, nvol, norb, norb), complex)
     for p in range(M):
         if (p // norb) % 2 != UP or _site_of(p, norb) != 0:
             continue            # external up spin at site 0 (translation invariance)
@@ -170,8 +189,8 @@ def oracle_sigma2(G_kw, beta, recs, norb, which):
             # Sigma_{p p'} is a matrix element between the row site (p, at 0)
             # and the column site (p', at j2); the solver's spatial index is
             # the row-minus-column displacement R = 0 - j2.
-            xj2, yj2 = _coords(j2)
-            rsite = _site(-xj2, -yj2)
+            xj2, yj2, zj2 = _coords(j2, shape)
+            rsite = _site(-xj2, -yj2, -zj2, shape)
             for (q, r, s, x1, off1) in by_p.get(p, []):
                 crossed1 = (_site_of(s, norb) == _site_of(p, norb))
                 for (rp, sp, qp, x2, off2) in by_pprime.get(pp, []):
@@ -199,9 +218,9 @@ def oracle_sigma2(G_kw, beta, recs, norb, which):
     # is how the Phase B enumeration (_sopt_oracle) normalises the same
     # skeleton -- one explicit 1/beta on the (r, tau) product and one on the
     # transform back to (k, i w).
-    kt = _bk.spatial_fftn(sig.reshape(nmat, 4, 4, 1, norb * norb), axes=(1, 2, 3), workers=1)
-    return (_ms.tau_to_fermion(kt.reshape(nmat, _NVOL * norb * norb), axis=0)
-            .reshape(1, nmat, _NVOL, norb, norb) / (beta * beta))
+    kt = _bk.spatial_fftn(sig.reshape(nmat, nx, ny, nz, norb * norb), axes=(1, 2, 3), workers=1)
+    return (_ms.tau_to_fermion(kt.reshape(nmat, nvol * norb * norb), axis=0)
+            .reshape(1, nmat, nvol, norb, norb) / (beta * beta))
 
 
 def _bare_green(s, beta):
