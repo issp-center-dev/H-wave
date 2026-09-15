@@ -1976,7 +1976,8 @@ class RPA:
         if not getattr(self, "_accepts_flex_keys", False):
             _flex_only = [k for k in ("flex_hartree_fock",
                                       "longitudinal_bond_output_full",
-                                      "longitudinal_bond_freq_batch")
+                                      "longitudinal_bond_freq_batch",
+                                      "flex_second_order")
                           if k in self.param_mod]
             if _flex_only:
                 logger.warning(

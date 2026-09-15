@@ -71,6 +71,14 @@ class TestG0Off(unittest.TestCase):
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             la = open(os.path.join(a, "log.txt")).read().replace(here, "<root>").replace(a, "<out>")
             lb = open(os.path.join(b, "log.txt")).read().replace(develop, "<root>").replace(b, "<out>")
+            # flex_second_order (spec 2026-09-08 D2) is an orthogonal key
+            # added after this gate-off byte-identity guard was written: it
+            # logs one new INFO line on every general-scheme construction,
+            # regardless of the Phase B gates this test guards. Strip it
+            # before comparing so the guard still checks what it means to:
+            # Phase B gate-off output is unchanged.
+            la = "".join(ln for ln in la.splitlines(True)
+                        if "flex_second_order = " not in ln)
             self.assertEqual(la, lb)
 
 

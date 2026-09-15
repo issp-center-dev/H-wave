@@ -241,7 +241,7 @@ class FLEX(RPA):
         # base runs (refusal precedence steps 1-3 of the spec), because the
         # base parser would turn a true gate flag into False under
         # calc_type='ring+ladder' and exits on an odd Nmat.
-        self._phase_b_raw = self._parse_phase_b_keys(info_mode)
+        self._phase_b_raw = self._parse_flex_keys(info_mode)
 
         # Initialize RPA infrastructure (lattice, interaction, params)
         super().__init__(param_ham, info_log, info_mode)
@@ -259,6 +259,26 @@ class FLEX(RPA):
                           "longitudinal_bond_freq_batch",
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb")
+
+    _SECOND_ORDER_VALUES = ("local", "takimoto")
+
+    @staticmethod
+    def _parse_flex_keys(info_mode):
+        """Every FLEX-only raw key, parsed BEFORE the base constructor
+        (spec 2026-09-08 section 3): flex_second_order first (type/value,
+        step 1), then the Phase B keys."""
+        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        out = {"flex_second_order": "local", "flex_second_order_explicit": False}
+        if "flex_second_order" in param:
+            v = param["flex_second_order"]
+            if not isinstance(v, str) or v.strip().lower() not in FLEX._SECOND_ORDER_VALUES:
+                raise ValueError(
+                    "[mode.param] flex_second_order must be one of {} (case-insensitive), "
+                    "got {!r}".format(list(FLEX._SECOND_ORDER_VALUES), v))
+            out["flex_second_order"] = v.strip().lower()
+            out["flex_second_order_explicit"] = True
+        out.update(FLEX._parse_phase_b_keys(info_mode))
+        return out
 
     @staticmethod
     def _parse_phase_b_keys(info_mode):
@@ -493,6 +513,21 @@ class FLEX(RPA):
             self._resolve_flex_auto_scheme()
         else:
             self._emit_flex_reduced_diagnostic()
+
+        # flex_second_order applicability (spec 2026-09-08 D2): after the
+        # scheme is known, still at construction.
+        self.flex_second_order = self._phase_b_raw["flex_second_order"]
+        if self._phase_b_raw["flex_second_order_explicit"] and self.calc_scheme != "general":
+            if self.calc_scheme_requested == "auto":
+                raise ValueError(
+                    '[mode.param] flex_second_order: calc_scheme = "auto" resolved to '
+                    '"reduced" for this interaction set; flex_second_order applies to the '
+                    'general scheme -- set calc_scheme = "general" explicitly or drop the key')
+            raise ValueError(
+                '[mode.param] flex_second_order applies to calc_scheme = "general" only '
+                '(got calc_scheme = {!r})'.format(self.calc_scheme))
+        if self.calc_scheme == "general":
+            logger.info("    flex_second_order = {}".format(self.flex_second_order))
 
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
         # interaction via the density-density diagonal ('kaabb->kab') on the
