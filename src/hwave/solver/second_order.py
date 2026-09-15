@@ -2,9 +2,11 @@
 2026-09-08, rev 10): the on-site interaction compiler, the off-site
 density-slot arrays, the sparse factors and the batched kernel.
 
-This module currently carries the on-site compiler only. It turns the
-reader's on-site interaction rows into the spin-resolved antisymmetrised
-tensor ``Gamma`` of the normal-ordered Hamiltonian
+This module currently carries the on-site compiler, the off-site
+density-slot arrays (:func:`build_offsite`) and the sparse factor pack
+(:func:`build_factors`); the batched kernel is still to come. The
+compiler turns the reader's on-site interaction rows into the
+spin-resolved antisymmetrised tensor ``Gamma`` of the normal-ordered Hamiltonian
 
     H_int = 1/2 sum_{pqrs} V_{pq,rs} c^dag_p c^dag_q c_s c_r ,
     Gamma[p, q, r, s] = V[p, q, r, s] - V[p, q, s, r],
@@ -219,3 +221,95 @@ def density_slots(Gamma, norb):
         if p != q:
             d[s1, s2, a, b] = Gamma[p, q, p, q]
     return d
+
+
+from dataclasses import dataclass as _dataclass
+
+_SPIN_WEIGHT = {   # w[itype][(s, s')]: the density-slot spin structure of spec 2.4
+    "CoulombInter": lambda s1, s2: 1.0,
+    "Hund": lambda s1, s2: -1.0 if s1 == s2 else 0.0,
+    "Ising": lambda s1, s2: 1.0 if s1 == s2 else -1.0,
+}
+
+
+def build_offsite(split, lattice, norb):
+    """vpair[s, s', q, a, b] = v^{pair, s s'}_{(aa),(bb)}(q) = v^{file, s s'}_{ba}(q):
+    the off-site density-slot arrays in the ED-validated pair-space
+    orientation of ``hwave.sc._build_interaction_k`` (transpose=True), with
+    the reader's reversal closure (``symmetrise_k``). None without off-site
+    density types."""
+    from hwave.sc import _build_interaction_k
+    from hwave.solver.declarations import symmetrise_k
+    types = [t for t in OFFSITE_DENSITY_TYPES if t in getattr(split, "offsite_types", ())
+             or t in split.offsite_tbl]
+    types = [t for t in types if split.offsite_tbl.get(t)]
+    if not types:
+        return None
+    nx, ny, nz = (int(x) for x in lattice.shape)
+    nvol = nx * ny * nz
+    kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
+    ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
+    kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
+    inter_k = _build_interaction_k(kx, ky, kz, {t: split.offsite_tbl[t] for t in types}, norb)
+    inter_k = symmetrise_k(inter_k)
+    vpair = np.zeros((2, 2, nvol, norb, norb), dtype=np.complex128)
+    for t in types:
+        M = np.asarray(inter_k[t]).reshape(norb, norb, nvol).transpose(2, 0, 1)   # (nvol, x, y)
+        # _build_interaction_k(transpose=True): M[q, x, y] = v^{file}_{yx}(q) = v^{pair}_{(xx),(yy)}
+        for s1, s2 in itertools.product((UP, DN), repeat=2):
+            w = _SPIN_WEIGHT[t](s1, s2)
+            if w != 0.0:
+                vpair[s1, s2] += w * M
+    return vpair
+
+
+def factor_bytes(norb, nvol, offsite):
+    nd = norb * norb
+    return 16 * (8 * nd * nd + (4 * nvol * norb * norb if offsite else 0))
+
+
+@_dataclass(frozen=True)
+class SecondOrderFactors:
+    norb: int
+    nd: int
+    nvol: int
+    triples: tuple          # (sigma_s, sigma_r, sigma_q) of the nonzero on-site pairs
+    A_on: tuple             # (nd, nd) complex128 each, read-only
+    B_on: tuple
+    vpair: object           # (2, 2, nvol, norb, norb) or None
+    nbytes: int
+
+
+def _readonly(a):
+    a = np.ascontiguousarray(a)
+    a.setflags(write=False)
+    return a
+
+
+def build_factors(split, lattice, norb):
+    """Spec 2.5: the sparse factors of the local kernel, from the locality
+    split (on-site rows -> Gamma_on -> A/B per nonzero spin triple; off-site
+    density rows -> vpair)."""
+    nd = norb * norb
+    nvol = int(np.prod([int(x) for x in lattice.shape]))
+    Gamma = compile_onsite(split.onsite_tbl, norb)
+    triples, As, Bs = [], [], []
+    for ss, sr, sq in itertools.product((UP, DN), repeat=3):
+        A = np.zeros((nd, nd), dtype=np.complex128)
+        B = np.zeros((nd, nd), dtype=np.complex128)
+        for c, a, r, q in itertools.product(range(norb), repeat=4):
+            A[c * norb + a, r * norb + q] = Gamma[gen_index(a, UP, norb), gen_index(q, sq, norb),
+                                                  gen_index(r, sr, norb), gen_index(c, ss, norb)]
+            B[r * norb + q, c * norb + a] = Gamma[gen_index(r, sr, norb), gen_index(c, ss, norb),
+                                                  gen_index(a, UP, norb), gen_index(q, sq, norb)]
+        if np.abs(A).max() == 0.0 and np.abs(B).max() == 0.0:
+            continue
+        triples.append((ss, sr, sq))
+        As.append(_readonly(A))
+        Bs.append(_readonly(B))
+    vpair = build_offsite(split, lattice, norb)
+    if vpair is not None:
+        vpair = _readonly(vpair)
+    nbytes = 16 * (2 * len(triples) * nd * nd + (4 * nvol * norb * norb if vpair is not None else 0))
+    return SecondOrderFactors(norb=norb, nd=nd, nvol=nvol, triples=tuple(triples), A_on=tuple(As),
+                              B_on=tuple(Bs), vpair=vpair, nbytes=nbytes)
