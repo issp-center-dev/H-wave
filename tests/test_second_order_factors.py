@@ -141,6 +141,32 @@ class TestFactors(unittest.TestCase):
         self.assertIsNone(f.vpair)
         self.assertEqual(f.nbytes, 16 * (2 * len(f.triples) * nd * nd))
 
+    def test_offsite_factors_are_packed_read_only(self):
+        """A split with BOTH parts: vpair is packed into the factors,
+        write-locked, and counted in nbytes."""
+        from hwave.solver.second_order import build_factors, build_offsite
+        rows = [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0),
+                (0, 1, 0, 1, 1, 0.2, 0.0), (0, -1, 0, 1, 1, 0.2, 0.0)]
+        s, split = _split_for({"CoulombIntra": [(0, 0, 0, 1, 1, 1.0, 0.0),
+                                                (0, 0, 0, 2, 2, 1.0, 0.0)],
+                               "CoulombInter": rows})
+        f = build_factors(split, s.lattice, 2)
+        self.assertIsNotNone(f.vpair)
+        self.assertEqual(f.vpair.shape, (2, 2, 16, 2, 2))
+        self.assertTrue(np.array_equal(f.vpair, build_offsite(split, s.lattice, 2)))
+        self.assertFalse(f.vpair.flags.writeable)
+        with self.assertRaises(ValueError):
+            f.vpair[0, 0, 0, 0, 0] = 1.0
+        self.assertEqual(f.nbytes, 16 * (2 * len(f.triples) * 16 + 4 * 16 * 4))
+
+    def test_offsite_exchange_alone_carries_no_density_slot(self):
+        """Off-site Exchange is not a density type: no vpair."""
+        from hwave.solver.second_order import build_offsite
+        s, split = _split_for({"Exchange": [(1, 0, 0, 1, 2, 0.3, 0.0),
+                                            (-1, 0, 0, 2, 1, 0.3, 0.0)]})
+        self.assertIn("Exchange", split.offsite_tbl)
+        self.assertIsNone(build_offsite(split, s.lattice, 2))
+
     def test_factor_bytes_formula(self):
         from hwave.solver.second_order import factor_bytes
         self.assertEqual(factor_bytes(2, 16, True), 16 * (8 * 16 + 4 * 16 * 4))
