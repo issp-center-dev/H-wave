@@ -391,6 +391,126 @@ class TestGuards(unittest.TestCase):
                 accumulate_batch(out, cb, 0, f)
                 np.testing.assert_array_equal(out, prefilled)
 
+    def test_low_rank_inputs_are_named_not_indexed(self):
+        """A rank-0/1/2 argument must reach the NAMED refusal, not an
+        ``IndexError`` from the kernel's own ``chibar_b.shape[2]``: the
+        validation runs before anything indexes an axis the array need not
+        have."""
+        from hwave.solver.second_order import accumulate_batch
+        f = self._pack()
+        good = _random_chibar(8, 16, 4, 16)
+        for shape in ((), (4,), (16, 4)):
+            bad = np.zeros(shape, complex)
+            with self.subTest(shape=shape, which="chibar_b"):
+                with self.assertRaises(ValueError) as cm:
+                    accumulate_batch(np.zeros_like(bad), bad, 0, f)
+                self.assertIn("chibar_b", str(cm.exception))
+            with self.subTest(shape=shape, which="out_b"):
+                with self.assertRaises(ValueError) as cm:
+                    accumulate_batch(bad, good, 0, f)
+                self.assertIn("out_b", str(cm.exception))
+
+    def test_byte_extent_spans_the_region_a_view_reaches_across(self):
+        """``_byte_extent`` is the device alias test's notion of "occupied",
+        and it is NOT ``nbytes``.
+
+        The arithmetic is array-module agnostic (shape and strides only), so
+        it is exercised here on numpy stand-ins for the device views it is
+        actually written for. The case that matters is the strided one: a
+        view with half its base's ``nbytes`` still reaches across nearly the
+        whole base, and an overlap test built on ``nbytes`` would call it
+        disjoint from a buffer sitting in the gap it strides over."""
+        from hwave.solver.second_order import _byte_extent
+        base = np.zeros((4, 6), dtype=np.complex128)        # itemsize 16
+        self.assertEqual(_byte_extent(base), (0, base.nbytes))
+        strided = base[:, ::2]
+        self.assertEqual(strided.nbytes, base.nbytes // 2)
+        # spans from the first element to the last one it reaches
+        self.assertEqual(_byte_extent(strided), (0, (3 * 6 + 4) * 16 + 16))
+        self.assertGreater(_byte_extent(strided)[1], strided.nbytes)
+        # a reversed view has a NEGATIVE low offset relative to its own base
+        # pointer (which numpy places at the view's first element)
+        rev = base[::-1]
+        self.assertEqual(_byte_extent(rev), (-3 * 6 * 16, 16 * 6))
+        # one row of the middle: offset is carried by the POINTER, not here
+        row = base[2]
+        self.assertEqual(_byte_extent(row), (0, 6 * 16))
+        # an empty array spans nothing
+        self.assertEqual(_byte_extent(base[:0]), (0, 0))
+        self.assertEqual(_byte_extent(np.zeros((0, 3), complex)), (0, 0))
+
+    def test_device_alias_rule_uses_the_extent_not_nbytes(self):
+        """The device branch of ``_shares_storage`` on a numpy stand-in that
+        exposes a CuPy-style ``.data.ptr``: two views that interleave inside
+        one buffer must be reported as possibly sharing, which an
+        ``nbytes``-based span would miss.
+
+        ``_shares_storage`` short-circuits on real ``numpy.ndarray`` pairs
+        (it can answer exactly there), so the stand-in below is what routes
+        the call through the pointer-extent branch the device path takes."""
+        from hwave.solver.second_order import _shares_storage, _byte_extent
+
+        class _Ptr(object):
+            def __init__(self, ptr):
+                self.ptr = ptr
+
+        class _DeviceLike(object):
+            """Everything the device branch reads: a base pointer, a shape,
+            strides and an itemsize."""
+
+            def __init__(self, arr, base):
+                self.shape, self.strides, self.itemsize = arr.shape, arr.strides, arr.itemsize
+                self.nbytes = arr.nbytes
+                off = arr.__array_interface__["data"][0] - base.__array_interface__["data"][0]
+                self.data = _Ptr(1 << 20)                  # an arbitrary device address
+                self.data.ptr += off
+
+        base = np.zeros((4, 6), dtype=np.complex128)
+        # a widely strided view (columns 0 and 5) and a small buffer sitting
+        # INSIDE the region it strides over
+        wide, inner = base[:, ::5], base[1, 2:3]
+        a, b = _DeviceLike(wide, base), _DeviceLike(inner, base)
+        # the nbytes rule calls them disjoint ...
+        self.assertTrue(a.data.ptr + a.nbytes <= b.data.ptr
+                        or b.data.ptr + b.nbytes <= a.data.ptr)
+        # ... and the extent rule refuses, which is the safe direction for a
+        # guard that cannot do element-level analysis on a device array
+        self.assertTrue(_shares_storage(a, b))
+        # a pair that genuinely shares elements is caught either way
+        self.assertTrue(np.shares_memory(base, base[1]))
+        self.assertTrue(_shares_storage(_DeviceLike(base, base),
+                                        _DeviceLike(base[1], base)))
+        # genuinely separate buffers are still reported disjoint
+        other = np.zeros((4, 6), dtype=np.complex128)
+        far = _DeviceLike(other, other)
+        far.data.ptr = 1 << 24
+        self.assertFalse(_shares_storage(_DeviceLike(base, base), far))
+        # and an empty operand shares nothing
+        empty = _DeviceLike(base[:0], base)
+        self.assertEqual(_byte_extent(empty), (0, 0))
+        self.assertFalse(_shares_storage(_DeviceLike(base, base), empty))
+        # a module that exposes no base pointer cannot say
+        class _Opaque(object):
+            shape, strides, itemsize, nbytes = (1,), (16,), 16, 16
+        self.assertIsNone(_shares_storage(_Opaque(), _Opaque()))
+
+    def test_output_aliasing_the_bubble_is_refused(self):
+        """``out_b`` is ACCUMULATED into while ``chibar_b`` is still being
+        read (every spin triple reads the bubble again, and the off-site
+        terms read its density slots afterwards), so the two sharing storage
+        corrupts the result exactly as a lent buffer overlapping an operand
+        does."""
+        from hwave.solver.second_order import accumulate_batch
+        f = self._pack()
+        cb = _random_chibar(8, 16, 4, 17)
+        for name, out in (("the same array", cb), ("a view of it", cb[...])):
+            with self.subTest(case=name):
+                with self.assertRaises(ValueError) as cm:
+                    accumulate_batch(out, cb, 0, f)
+                self.assertIn("out_b shares memory with chibar_b", str(cm.exception))
+        # a separate output of the same shape is of course fine
+        accumulate_batch(np.zeros_like(cb), cb, 0, f)
+
     def test_aliasing_of_the_lent_buffers_is_refused(self):
         from hwave.solver.second_order import accumulate_batch
         f = self._pack()

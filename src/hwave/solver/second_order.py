@@ -155,20 +155,28 @@ def _records(itype, a, b, v, norb):
     raise ValueError("second_order: unknown interaction type {!r}".format(itype))
 
 
-def _check_rows(itype, tbl, norb):
-    """Row-level validation of one type's on-site table: a usable ``norb``,
-    orbital indices inside it, and finite coefficients.
+def _check_norb(norb):
+    """A usable orbital count. Checked ONCE at the entry of
+    :func:`compile_onsite_v`, not per declared type: an EMPTY table has no
+    type to iterate, so a per-type check would let ``norb = 0`` through and
+    build a degenerate ``(0, 0, 0, 0)`` tensor instead of saying what is
+    wrong."""
+    if isinstance(norb, bool) or not isinstance(norb, (int, np.integer)) or norb < 1:
+        raise ValueError(
+            "flex_second_order = \"local\": norb must be a positive integer, got {!r}"
+            .format(norb))
 
-    All three are refusals a programmatic caller can trigger by bypassing
-    the reader. Without them a negative orbital index wraps silently (numpy
+
+def _check_rows(itype, tbl, norb):
+    """Row-level validation of one type's on-site table: orbital indices
+    inside the model, and finite coefficients.
+
+    Both are refusals a programmatic caller can trigger by bypassing the
+    reader. Without them a negative orbital index wraps silently (numpy
     indexes from the end), a large one raises an ``IndexError`` that names
     no row, and a non-finite coupling propagates into ``Gamma`` and then
     past the Hermiticity guard below -- ``dev > herm_tol * scale`` is FALSE
     when ``dev`` is NaN, so a NaN table would compile without complaint."""
-    if not isinstance(norb, (int, np.integer)) or norb < 1:
-        raise ValueError(
-            "flex_second_order = \"local\": norb must be a positive integer, got {!r}"
-            .format(norb))
     for (a, b), v in tbl.items():
         if not (0 <= a < norb and 0 <= b < norb):
             raise ValueError(
@@ -223,6 +231,7 @@ def compile_onsite_v(onsite_tbl, norb, *, closed=False):
     on-site table ``{type: {((0,0,0),(a,b)): v}}`` (with ``closed=True`` the rows
     are taken as already reversal-closed -- tests only). Refuses degenerate
     ``a == b`` rows of the two-orbital types (spec D7) and unknown types."""
+    _check_norb(norb)
     raw = _raw_onsite_rows(onsite_tbl)
     # validate the DECLARED rows, before the closure touches them: the
     # closure averages a row with its transpose, and a non-finite
@@ -430,17 +439,51 @@ def _carve(T, shape):
     return T.reshape(-1)[:n].reshape(shape)
 
 
+def _byte_extent(arr):
+    """``(lo, hi)`` -- the byte offsets, relative to the array's own base
+    pointer, that ``arr`` actually spans, computed from its shape and
+    strides. ``lo`` is <= 0 for an array with a negative stride.
+
+    ``nbytes`` is NOT this: it counts the bytes the array's ELEMENTS occupy,
+    which for any strided view is smaller than the region the view reaches
+    across. ``a[:, ::2]`` has half the ``nbytes`` of its base but spans
+    nearly all of it, so an overlap test built on ``[ptr, ptr + nbytes)``
+    would call such a view disjoint from a buffer that sits in the gap it
+    strides over -- a false NEGATIVE, which for an aliasing guard is the
+    dangerous direction.
+
+    An empty array spans nothing and is reported as ``(0, 0)``.
+    """
+    shape = tuple(int(x) for x in arr.shape)
+    if any(n == 0 for n in shape):
+        return 0, 0
+    lo = hi = 0
+    for n, stride in zip(shape, tuple(int(x) for x in arr.strides)):
+        step = (n - 1) * stride
+        if step < 0:
+            lo += step
+        else:
+            hi += step
+    return lo, hi + int(arr.itemsize)
+
+
 def _shares_storage(a, b):
-    """``True`` when ``a`` and ``b`` are KNOWN to share memory, ``False``
-    when they are known not to, ``None`` when the array module cannot say.
+    """``True`` when ``a`` and ``b`` MAY share memory, ``False`` when they
+    are known not to, ``None`` when the array module cannot say.
 
     numpy answers exactly (``np.shares_memory``). For a device module the
-    fallback compares the allocation pointer ranges, which CuPy exposes as
-    ``arr.data.ptr``; it is a conservative overlap test on the span
-    ``[ptr, ptr + nbytes)`` and can only be consulted, never trusted to
-    prove disjointness for a strided view. A module that offers neither
-    returns ``None`` and the caller documents the precondition instead of
-    guessing."""
+    fallback is an EXTENT overlap test on the absolute byte ranges
+    ``[ptr + lo, ptr + hi)`` of :func:`_byte_extent`, using the base pointer
+    the module exposes (CuPy: ``arr.data.ptr``, which already includes a
+    view's own offset). The rule is deliberately CONSERVATIVE in one
+    direction: two arrays whose extents overlap need not share a single
+    element (interleaved strides do not), so this can report ``True`` for a
+    disjoint pair -- a refusal the caller can work around by lending
+    contiguous buffers -- but it cannot report ``False`` for a pair that
+    does overlap, which is the answer that would corrupt a result. A module
+    that exposes no base pointer returns ``None`` and the caller documents
+    the precondition instead of guessing.
+    """
     if a is b:
         return True
     if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
@@ -449,7 +492,11 @@ def _shares_storage(a, b):
     pb = getattr(getattr(b, "data", None), "ptr", None)
     if pa is None or pb is None:
         return None
-    return not (pa + a.nbytes <= pb or pb + b.nbytes <= pa)
+    lo_a, hi_a = _byte_extent(a)
+    lo_b, hi_b = _byte_extent(b)
+    if hi_a == lo_a or hi_b == lo_b:
+        return False                      # one of them spans nothing
+    return not (pa + hi_a <= pb + lo_b or pb + hi_b <= pa + lo_a)
 
 
 def _validate_batch(out_b, chibar_b, factors, work):
@@ -485,6 +532,15 @@ def _validate_batch(out_b, chibar_b, factors, work):
         raise ValueError(
             "accumulate_batch: out_b has shape {} but chibar_b has {}; the two must "
             "cover the same frequency batch".format(tuple(out_b.shape), tuple(chibar_b.shape)))
+    # The kernel ACCUMULATES into out_b while still reading chibar_b: the
+    # on-site sandwich reads the bubble again on every spin triple, and the
+    # off-site terms read its density slots after out_b has been written.
+    # Sharing storage between the two is the same silent corruption as a
+    # lent buffer overlapping an operand, so it is refused the same way.
+    if _shares_storage(out_b, chibar_b):
+        raise ValueError(
+            "accumulate_batch: out_b shares memory with chibar_b; the kernel accumulates "
+            "into out_b while it is still reading chibar_b")
     if work is None:
         return
     T1, T2 = work
@@ -554,10 +610,14 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     scratch that does not scale with the batch (matmul's own buffering for
     strided operands, a few KiB).
     """
+    # FIRST: nothing below may index an axis the arrays need not have. A
+    # rank-0/1/2 input used to raise IndexError from the unpacking on the
+    # next line, naming no argument, before the guard could say what was
+    # wrong.
+    _validate_batch(out_b, chibar_b, factors, work)
     xp = _bk.array_module_of(chibar_b)
     norb = factors.norb
     nb, nvol, nd = chibar_b.shape[0], chibar_b.shape[1], chibar_b.shape[2]
-    _validate_batch(out_b, chibar_b, factors, work)
     lent = work is not None
     if lent:
         T1, T2 = work

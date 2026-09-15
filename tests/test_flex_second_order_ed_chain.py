@@ -247,6 +247,86 @@ def _fx_complex():
                          eps=(0.0, 0.3), T=0.5, mu=0.2)
 
 
+def _fx_dense():
+    """``L = 2``, two orbitals, COMPLEX hopping in every orbital channel:
+    ``nmode = 8``, Fock dimension 256 -- small enough to diagonalise DENSELY
+    over the whole Fock space, which is what makes it a reference for the
+    sector engine.
+
+    Complex, transpose-asymmetric hopping is deliberate: on a real symmetric
+    band a sector-pairing or conjugation error in the Lehmann contraction can
+    hide."""
+    return edu.EDFixture(L=2, norb=2,
+                         t={(0, 0): -1.0 + 0.3j, (1, 1): -0.7 - 0.2j,
+                            (0, 1): -0.2 + 0.15j, (1, 0): -0.25 - 0.1j},
+                         eps=(0.0, 0.3), T=0.5, mu=0.2)
+
+
+def _dense_spectrum(fx, terms=()):
+    """``(E, W, w, Z, C, CD, K)`` of the grand-canonical Hamiltonian
+    ``K = H1 + H_int - mu N`` diagonalised on the FULL Fock space.
+
+    Nothing here knows about particle-number sectors, which is the point:
+    ``SectorED`` splits the spectrum by ``(N_up, N_dn)`` and pairs the
+    blocks by hand, and this is the reference that pairing is checked
+    against."""
+    C = fx.annihilators()
+    CD = [c.conj().T for c in C]
+    h1 = fx.build_h1()
+    K = edu.h_int_from_terms(fx, terms) if terms else np.zeros((fx.dim, fx.dim), dtype=complex)
+    for p in range(fx.nmode):
+        for q in range(fx.nmode):
+            if h1[p, q] != 0:
+                K = K + h1[p, q] * (CD[p] @ C[q])
+    K = K - fx.mu * sum(CD[p] @ C[p] for p in range(fx.nmode))
+    ev, W = np.linalg.eigh(K)
+    E = ev - ev.min()
+    w = np.exp(-fx.beta * E)
+    return E, W, w, w.sum(), C, CD, K
+
+
+def _dense_green_and_density(fx, terms, iws):
+    """``(G, rho)`` from the dense Lehmann sums over the full Fock space:
+
+        G_{pq}(i w) = (1/Z) sum_{m n} (w_m + w_n) <m|c_p|n> conj(<m|c_q|n>)
+                                      / (i w - (E_n - E_m))
+        rho_{pq}    = (1/Z) sum_n w_n <n| c^dag_p c_q |n>
+    """
+    E, W, w, Z, C, CD, _K = _dense_spectrum(fx, terms)
+    cm = [W.conj().T @ C[p] @ W for p in range(fx.nmode)]
+    boltz = w[:, None] + w[None, :]
+    dE = E[None, :] - E[:, None]
+    G = np.zeros((len(iws), fx.nmode, fx.nmode), dtype=complex)
+    for p in range(fx.nmode):
+        for q in range(fx.nmode):
+            num = cm[p] * np.conj(cm[q]) * boltz
+            for i, iw in enumerate(iws):
+                G[i, p, q] = (num / (iw - dE)).sum()
+    rho = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+    for p in range(fx.nmode):
+        for q in range(fx.nmode):
+            rho[p, q] = (np.diag(W.conj().T @ (CD[p] @ C[q]) @ W) * w).sum()
+    return G / Z, rho / Z
+
+
+def _dense_first_moment(fx, terms=()):
+    """``M1_{pq} = <{[c_p, K], c^dag_q}>``, the first high-frequency moment of
+    ``G``: ``G(i w) = I / (i w) + M1 / (i w)^2 + O(w^-3)``.
+
+    Built from the operators themselves, not from any expansion. The sign
+    convention (``[c_p, K]``, not ``[K, c_p]``) is not assumed either: at
+    zero interaction this must be ``h1 - mu``, which
+    :meth:`TestGreenFunction.test_high_frequency_moments` asserts."""
+    E, W, w, Z, C, CD, K = _dense_spectrum(fx, terms)
+    M1 = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+    for p in range(fx.nmode):
+        comm = C[p] @ K - K @ C[p]
+        for q in range(fx.nmode):
+            A = comm @ CD[q] + CD[q] @ comm
+            M1[p, q] = (np.diag(W.conj().T @ A @ W) * w).sum()
+    return M1 / Z
+
+
 # --------------------------------------------------------------------------
 # Declared rows -> the exact Hamiltonian
 # --------------------------------------------------------------------------
@@ -776,6 +856,91 @@ class TestGreenFunction(unittest.TestCase):
         ref /= w.sum()
         self.assertGreater(np.abs(ref).max(), 1e-3)            # anti-vacuity
         np.testing.assert_allclose(G, ref, atol=1e-12)
+
+    def test_multiorbital_interacting_green_and_density_equal_the_dense_sum(self):
+        """``SectorED.green`` and ``SectorED.density_matrix`` on an
+        INTERACTING MULTI-ORBITAL fixture, against a dense Lehmann
+        evaluation over the whole 256-dimensional Fock space.
+
+        The two pins above cover the free multi-orbital case and the
+        interacting SINGLE-orbital one; neither can see a sector pairing that
+        goes wrong only when the interaction mixes orbitals -- which is the
+        regime the chain gates actually run in. This fixture has complex,
+        transpose-asymmetric hopping in every orbital channel and both
+        on-site and inter-site inter-ORBITAL density terms."""
+        fx = _fx_dense()
+        rows = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.9, 0.0), (0, 0, 0, 2, 2, 0.5, 0.0)],
+                "CoulombInter": [(0, 0, 0, 1, 2, 0.4, 0.0), (0, 0, 0, 2, 1, 0.4, 0.0),
+                                 (1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]}
+        terms = _ed_terms(fx, rows)
+        self.assertEqual(fx.dim, 256)
+        iws = 1j * (2 * np.arange(8) + 1 - 8) * np.pi / fx.beta
+        G_ref, rho_ref = _dense_green_and_density(fx, terms, iws)
+        ed = edu.SectorED(fx, terms=terms)
+        self.assertGreater(np.abs(G_ref).max(), 1e-3)            # anti-vacuity
+        self.assertGreater(np.abs(rho_ref).max(), 1e-3)
+        # the fixture really is orbital-mixing and complex, so the
+        # comparison is not blind to either
+        self.assertGreater(np.abs(np.asarray(G_ref).imag).max(), 1e-3)
+        off = [(p, q) for p in range(fx.nmode) for q in range(fx.nmode)
+               if p % 2 == q % 2 and (p // 2) != (q // 2)]
+        self.assertGreater(max(abs(rho_ref[p, q]) for p, q in off), 1e-3)
+        np.testing.assert_allclose(ed.green(iws), G_ref, rtol=0, atol=1e-12)
+        np.testing.assert_allclose(ed.density_matrix(), rho_ref, rtol=0, atol=1e-12)
+
+    def test_high_frequency_moments(self):
+        """``i w G(i w) -> I`` and the first moment
+        ``(i w)^2 (G - I / (i w)) -> M1 = <{[c_p, K], c^dag_q}>``.
+
+        These are the two statements the chain gate's Dyson inversion
+        ``G0^{-1} - G^{-1}`` silently relies on: if ``G`` did not carry the
+        free ``1/(i w)`` head with the right normalisation, the subtraction
+        would not remove the free part, and every coefficient downstream
+        would be measured against the wrong reference. Both are checked as
+        LIMITS -- the deviation has to shrink as the grid is extended --
+        rather than at one frequency, where a wrong constant could hide.
+
+        Measured on this fixture: ``max|i w G - I|`` is 4.1e-2, 1.0e-2 and
+        2.5e-3 at the largest frequency of the nmat = 32, 128 and 512 grids
+        (falling as ``|M1| / |w|``, ``|M1| = 2.0``), and the first-moment
+        residual is 6.2e-3 -- 0.3% of ``|M1|`` -- at the largest frequency of
+        the 512 grid, against 1.36 at the middle of it."""
+        fx = _fx_dense()
+        rows = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.9, 0.0)],
+                "CoulombInter": [(0, 0, 0, 1, 2, 0.4, 0.0), (0, 0, 0, 2, 1, 0.4, 0.0)]}
+        terms = _ed_terms(fx, rows)
+        ed = edu.SectorED(fx, terms=terms)
+        eye = np.eye(fx.nmode)
+
+        # the sign convention of M1, pinned where it is known in closed form
+        free = _dense_first_moment(fx)
+        np.testing.assert_allclose(free, fx.build_h1() - fx.mu * eye, rtol=0, atol=1e-10)
+
+        head = []
+        for nmat in (32, 128, 512):
+            iws = 1j * (2 * np.arange(nmat) + 1 - nmat) * np.pi / fx.beta
+            g = ed.green(iws)
+            dev = np.abs(iws[:, None, None] * g - eye[None]).max(axis=(1, 2))
+            head.append((abs(iws[-1]), dev[-1], g, iws))
+        # the head is a LIMIT: extending the grid must shrink the deviation
+        for (w0, d0, _g0, _i0), (w1, d1, _g1, _i1) in zip(head, head[1:]):
+            self.assertGreater(w1, w0)
+            self.assertLess(d1, d0)
+        wmax, dmax, g, iws = head[-1]
+        self.assertLess(dmax, 5.0e-3,
+                        "i w G(i w) does not approach the identity: {:.3e} at |w| = {:.1f}"
+                        .format(dmax, wmax))
+
+        M1 = _dense_first_moment(fx, terms)
+        scale = np.abs(M1).max()
+        self.assertGreater(scale, 1e-3)                          # anti-vacuity
+        est = (iws[:, None, None] ** 2) * (g - eye[None] / iws[:, None, None])
+        far = np.abs(est[-1] - M1).max()
+        near = np.abs(est[len(iws) // 2] - M1).max()
+        self.assertLess(far, 1.0e-2 * scale,
+                        "the first moment does not converge: {:.3e} of |M1| = {:.3e}"
+                        .format(far / scale, scale))
+        self.assertLess(far, 0.05 * near)       # and it really is a limit
 
     def test_free_density_matrix_equals_the_fermi_occupation(self):
         """``SectorED.density_matrix`` at zero coupling is the free

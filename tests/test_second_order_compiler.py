@@ -238,12 +238,21 @@ class TestRowGuards(unittest.TestCase):
                 self.assertIn("outside", msg)
 
     def test_a_nonpositive_norb_is_refused(self):
-        from hwave.solver.second_order import compile_onsite
-        for norb in (0, -1):
-            with self.subTest(norb=norb):
-                with self.assertRaises(ValueError) as cm:
-                    compile_onsite(_tbl("CoulombIntra", [(0, 0, 1.0)]), norb)
-                self.assertIn("norb", str(cm.exception))
+        """Including on an EMPTY table, which has no declared row to reach a
+        per-row check: ``compile_onsite_v({}, 0)`` would otherwise build a
+        degenerate ``(0, 0, 0, 0)`` tensor and return it."""
+        from hwave.solver.second_order import compile_onsite, compile_onsite_v
+        for norb in (0, -1, 2.0, True, "2"):
+            for tbl in (_tbl("CoulombIntra", [(0, 0, 1.0)]), {}):
+                with self.subTest(norb=norb, empty=not tbl):
+                    for fn in (compile_onsite, compile_onsite_v):
+                        with self.assertRaises(ValueError) as cm:
+                            fn(tbl, norb)
+                        self.assertIn("norb", str(cm.exception))
+        # a usable norb on an empty table is still fine (an all-zero Gamma)
+        G = compile_onsite({}, 2)
+        self.assertEqual(G.shape, (4, 4, 4, 4))
+        self.assertEqual(np.abs(G).max(), 0.0)
 
     def test_a_row_that_is_not_hermitian_closed_is_named(self):
         """The closure SYMMETRISES whatever it is given, so a table whose

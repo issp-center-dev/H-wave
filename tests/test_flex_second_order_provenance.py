@@ -25,6 +25,9 @@ class TestProvenance(unittest.TestCase):
     #: them. ``chiq_s``/``chiq_c`` are written alongside ``chiq`` rather than
     #: requested by name.
     _ALL = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz")
+    #: What an RPA run writes from the SAME request: it has no self-energy
+    #: and no dressed Green function, and its channel archives are not split.
+    _ALL_RPA = ("chi0q.npz", "chiq.npz")
     _REQUEST = {"chi0q": "chi0q", "chiq": "chiq", "sigma": "sigma", "green": "green"}
 
     def test_members_in_every_general_archive(self):
@@ -66,7 +69,9 @@ class TestProvenance(unittest.TestCase):
             s.solve(gi, out)
             s.save_results(dict({"path_to_output": out}, **self._REQUEST), gi)
             written = sorted(os.listdir(out))
-            self.assertTrue(written)                          # anti-vacuity
+            # the same anti-vacuity as the reduced leg: the exact expected
+            # set, so an absence check cannot pass by writing nothing
+            self.assertEqual(written, sorted(self._ALL_RPA))
             for f in written:
                 z = np.load(os.path.join(out, f))
                 self.assertNotIn("flex_second_order", z.files, f)
