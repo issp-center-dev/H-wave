@@ -19,7 +19,7 @@ in the random phase approximation,
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
@@ -27,7 +27,21 @@ in the random phase approximation,
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+
+.. note::
+
+   Two of the expressions above were corrected to match what the solvers
+   have always implemented; **no input file needs to be changed**, and no
+   numerical result changes.
+
+   - **Hund**: the implemented convention carries a MINUS sign, as written
+     above. A ferromagnetic (same-spin attractive) Hund coupling is
+     therefore declared with a POSITIVE coefficient
+     :math:`J^{\rm Hund}_{\alpha\beta}(r_{ij})`.
+   - **PairLift**: each declared row enters together with its Hermitian
+     conjugate, exactly as ``PairHop`` does; the ``+ h.c.`` above was
+     missing from earlier editions of this page.
 
 
 An example of the file is shown below.

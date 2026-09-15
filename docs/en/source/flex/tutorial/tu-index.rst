@@ -157,9 +157,10 @@ corroborated by Takimoto, Hotta, and Ueda (THU) [4]_): the full matrix-form
 spin (:math:`\hat{U}^s`) and charge (:math:`\hat{U}^c`) interaction matrices
 are built in the MYO convention, the matrix RPA is solved for
 :math:`\chi_s`/:math:`\chi_c`, and the fluctuation interaction is assembled
-as :math:`V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
-+ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
-- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`.
+as :math:`V = \tfrac{3}{2}\hat{U}^s[\chi_s - \chi_0]\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c[\chi_c - \chi_0]\hat{U}^c + W^{(2)}`, the ring
+series from third order on plus the second-order kernel :math:`W^{(2)}`
+selected by ``flex_second_order`` (see below).
 Under ``"general"`` the off-diagonal vertices are therefore **not** dropped
 and the density--density reduction warning is suppressed. The AL/MT vertex
 corrections noted above remain outside the FLEX class even in the
@@ -177,6 +178,61 @@ corrections noted above remain outside the FLEX class even in the
 .. [4] T. Takimoto, T. Hotta, and K. Ueda,
    Phys. Rev. B **69**, 104504 (2004); cond-mat/0309575.
 
+
+.. _flex_second_order_tutorial:
+
+Second order of the effective interaction (``flex_second_order``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Under ``calc_scheme = "general"`` the second-order part :math:`W^{(2)}` of
+the effective interaction is built by default from the exact LOCAL
+second-order kernel, ``[mode.param] flex_second_order = "local"``. It
+carries the complete second order of every on-site interaction term, the
+direct skeleton of the off-site density terms and every mixed
+on-site/off-site diagram; only the exchange skeleton of two off-site
+vertices is left to ``longitudinal_bond_channels = true`` (see
+:ref:`flex_second_order_kernel` for the formulas and the classification).
+
+Earlier versions used the Takimoto-Hotta-Ueda expression
+:math:`-\tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`,
+which is exact at second order only for a single-band Hubbard
+interaction. Set
+
+.. code-block:: toml
+
+   [mode.param]
+     flex_second_order = "takimoto"
+
+to reproduce results produced with H-wave 2.0.0; the option stays
+available throughout the 2.x series.
+
+**What changes.** Single-band inputs with ``CoulombIntra`` only agree
+under both values to round-off, and so do single-band :math:`U + V` inputs
+run with ``longitudinal_bond_channels = true`` (those bond-resolved
+channels already carried the exact direct :math:`V` second order). Every
+multi-orbital on-site interaction (:math:`U'`, ``Hund``, ``Ising``,
+``Exchange``, ``PairHop``, ``PairLift``) and every off-site interaction
+without the bond gate gives a different general-path result.
+
+**Degenerate rows are now refused.** Under ``"local"`` an on-site
+same-orbital row of ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``,
+``PairHop`` or ``PairLift`` stops the run at start-up: such a row is not a
+two-body term, and the message gives the equivalent declaration for that
+type (usually a ``CoulombIntra`` entry plus a level shift in the transfer
+file). Rewrite the interaction file as the message says, or use
+``flex_second_order = "takimoto"`` as an immediate workaround.
+
+**Convergence.** The SCF trajectory can change with the kernel. On the
+2-orbital self-consistency fixture (on-site :math:`U`, :math:`U'`,
+``Hund`` plus off-site :math:`V`, Anderson mixing) both values needed the
+same iteration count -- 9 without and 11 with ``flex_hartree_fock =
+true`` -- and a full FLEX iteration costs about 1.2x more under
+``"local"``. If a run that used to converge now stalls, raise
+``IterationMax``, lower ``Mix``, keep ``mixing_scheme = "anderson"``, and
+start the loop from :math:`\Sigma = 0` rather than from a ``sigma_init``
+seed written with the other kernel: the solver warns when the seed's
+recorded ``flex_second_order`` differs from the run's (and notes it when
+the seed carries no record, i.e. a reduced-scheme or pre-2.1 archive).
 
 Sample 1: Single-orbital Hubbard model
 -----------------------------------------
@@ -289,8 +345,12 @@ in the ``output`` directory:
 - ``sigma.npz``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)` (with
   ``flex_hartree_fock = true`` also its two components ``sigma_static`` and
   ``sigma_fluct``, the marker ``sigma_convention = "split"`` and the
-  convergence provenance; see :ref:`flex_bond_hf_tutorial`)
+  convergence provenance; see :ref:`flex_bond_hf_tutorial`). Under
+  ``calc_scheme = "general"`` it also records ``flex_second_order`` and
+  ``flex_second_order_schema``.
 - ``green.npz``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`
+  (with the same two ``flex_second_order`` fields under ``calc_scheme =
+  "general"``)
 - ``energy.dat``: Text file with the particle number ``NCond``, spin
   ``Sz``, and the converged ``ChemicalPotential`` :math:`\mu`.
 
@@ -341,6 +401,13 @@ the same ``CellShape`` and ``Nmat`` as the current run (both are fail-fast
 errors: ``sigma.npz`` records its ``CellShape``, so even a same-volume
 aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
 ``Nmat`` and ``CellShape`` fixed across a continuation sweep.
+
+A ``calc_scheme = "general"`` seed also records which second-order kernel
+produced it. Seeding across kernels is allowed, and the solver warns when
+the seed's ``flex_second_order`` differs from the current run's (and notes
+it when the seed carries no such record, i.e. a reduced-scheme or pre-2.1
+archive). If such a run stalls, restart it from :math:`\Sigma = 0` -- see
+:ref:`flex_second_order_tutorial`.
 
 .. note::
 
@@ -677,6 +744,14 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 - ``sigma``: Self-energy :math:`\Sigma(\mathbf{k}, i\omega_n)`,
   shape ``(nblock, nmat, nvol, nd_block, nd_block)``
   where ``nblock`` is the number of spin blocks (1 for spin-free mode).
+- ``flex_second_order`` / ``flex_second_order_schema``: written by
+  ``calc_scheme = "general"`` runs only -- the second-order kernel of the
+  effective interaction (``local`` | ``takimoto``, a 0-d ``<U8`` string
+  array) and the schema version of that record (``1``). Both are absent
+  from reduced-scheme and RPA archives and from files written before
+  version 2.1; readers never require them, and a ``sigma_init`` seed
+  recording a different kernel is accepted with a warning. See
+  :ref:`rpa_chiq_provenance`.
 
 .. note::
 
@@ -692,6 +767,8 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 
 - ``green``: Dressed Green's function :math:`G(\mathbf{k}, i\omega_n)`,
   same shape as ``sigma``.
+- ``flex_second_order`` / ``flex_second_order_schema``: as for
+  ``sigma.npz`` above.
 
 These output files can also be used as input for the
 Eliashberg equation solver (``hwave_sc``) to analyze
@@ -791,6 +868,15 @@ The FLEX solver accepts the following parameters in the
        chaining into another IR FLEX run) read them directly. Uniform-only
        readers (static ``hwave_sc``, ``chi0q_init``, legacy scripts)
        reject such files with an explicit error. See the note below.
+   * - ``flex_second_order``
+     - str
+     - "local"
+     - ``calc_scheme = "general"`` only. Second-order kernel of the
+       effective interaction: ``"local"`` (default) is the exact local
+       second order of every accepted interaction term;
+       ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression and
+       reproduces H-wave 2.0.0 results. See
+       :ref:`flex_second_order_tutorial` and the configuration reference.
    * - ``gpu``
      - bool
      - false
@@ -882,11 +968,15 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"`` and
    rejects ``enable_spin_orbital``. Off-site input is accepted for
    ``CoulombInter``, ``Hund`` and ``Ising`` (same-orbital or inter-orbital,
-   with or without sublattice folding): each enters as its Hartree
-   (density) vertex :math:`V(q)` only — the exchange crossing of an
+   with or without sublattice folding): each enters the RING vertex as its
+   Hartree (density) part :math:`V(q)` only — the exchange crossing of an
    off-site term is not representable by a :math:`q`-only vertex and is
    left out, the same approximation the RPA ring makes, and the solver
-   logs a warning saying so. For every such class the general path is
+   logs a warning saying so. (At SECOND order the default kernel
+   ``flex_second_order = "local"`` is exact for the direct skeleton and for
+   every mixed on-site/off-site diagram of those terms; only the exchange
+   skeleton of two off-site vertices is left out there, see
+   :ref:`flex_second_order_tutorial`.) For every such class the general path is
    measured element-complete equal to the RPA ring. (The omitted
    crossing is available, statically, in the RPA solver's experimental
    bond-resolved longitudinal channel, ``longitudinal_bond_channels =

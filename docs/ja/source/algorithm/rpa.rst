@@ -598,6 +598,164 @@ H-wave はスピン軌道モードをサポートしています。このモー�
    既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
 
+.. _flex_second_order_kernel:
+
+一般 FLEX 経路の2次
+------------------------------------------
+
+``mode = "FLEX"``\ ・\ ``calc_scheme = "general"``\ では、ゆらぎ
+自己エネルギーは有効相互作用
+
+.. math::
+
+   V_{\rm eff}(\mathbf{q}, i\nu)
+   = \tfrac{3}{2}\hat{U}^s \left[\chi_s - \bar\chi\right] \hat{U}^s
+   + \tfrac{1}{2}\hat{U}^c \left[\chi_c - \bar\chi\right] \hat{U}^c
+   + W^{(2)}
+
+から構築されます。ここで\ :math:`\bar\chi`\ は裸のバブル、
+:math:`\hat{U}^s`\ ・\ :math:`\hat{U}^c`\ は ring のスピン・電荷頂点です。
+この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
+:math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ にどの式を使うかは
+``[mode.param]``\ の\ ``flex_second_order``\ で選択します（設定ファイルの
+説明を参照）。
+
+``flex_second_order = "local"``\ （デフォルト）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+一般化した添字\ :math:`p = (\text{サイト}, \text{軌道}, \text{スピン})`
+を用いて相互作用を\ :math:`{\cal H}_{\rm int} = \tfrac{1}{2}\sum
+V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
+:math:`\Gamma_{pq,rs} = V_{pq,rs} - V_{pq,sr}`\ とします。厳密な2次
+（スケルトン）自己エネルギーは
+
+.. math::
+
+   \Sigma^{(2)}_{pp'}(\tau) = -\tfrac{1}{2} \sum_{qrs\,q'r's'}
+   \Gamma_{pq,rs}\,\Gamma_{r's',p'q'}\;
+   G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau)
+
+です。この和のうち、2本の粒子・正孔線が **1サイト上で閉じる** 図は
+移行運動量\ :math:`\mathbf{q}`\ のみに依存する頂点で表現でき、
+したがって\ :math:`W^{(2)}`\ が厳密に含みます。
+
+*オンサイト頂点。* 外線のスピンを固定し、3つの内部スピン
+:math:`\sigma = (\sigma_s, \sigma_r, \sigma_q)`\ を全て和すると
+
+.. math::
+
+   W^{(2),\,\rm on}(\mathbf{q}, i\nu)
+   = \tfrac{1}{2} \sum_{\sigma}
+     A^{\sigma}_{\rm on}\; \bar\chi(\mathbf{q}, i\nu)\; B^{\sigma}_{\rm on}
+
+となります。\ :math:`A^{\sigma}_{\rm on}`\ ・
+:math:`B^{\sigma}_{\rm on}`\ は2つの頂点に対応するオンサイトの
+:math:`\Gamma`\ の切り出しで、\ :math:`\tfrac{1}{2}`\ はスケルトンの
+対称因子です。単一バンドの Hubbard 相互作用ではよく知られた
+:math:`U^2 \bar\chi`\ に帰着します。
+
+*オフサイト頂点。* 一般経路が受理するオフサイト項は密度項です
+（:math:`R \neq 0`\ の\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ 。
+オフサイトの\ ``PairLift``\ は密度成分を持たず寄与しません）。その
+フーリエ変換を\ :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q})`\ と
+書くと、対応する因子は対基底の密度スロット上にあり
+
+.. math::
+
+   A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q})
+
+となります。したがって2次カーネル全体は
+
+.. math::
+
+   W^{(2)} = W^{(2),\,\rm on} + \sum_{\sigma} \Big[
+     A^{\sigma}_{\rm on}\,\bar\chi\,B^{\sigma}_{v}
+   + A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{\rm on}
+   + A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{v} \Big]
+
+です。オフサイトを含む3項には係数\ :math:`\tfrac{1}{2}`\ が **付きません** 。
+理由は数え上げにあります。上の反対称化された和では、個々の物理的な2次の図が
+2回現れます（2つのコピーは\ :math:`r \leftrightarrow s`\ 、
+:math:`r' \leftrightarrow s'`\ の付け替えで移り合い、対称因子
+:math:`\tfrac{1}{2}`\ がこれを相殺します）。ある頂点が
+:math:`\mathbf{q}`\ のみの量で表現できるのは、その内線が外線と同じサイトに
+ある場合です。オンサイト頂点では2つのコピーの双方でこれが成り立ちますが、
+オフサイト頂点では **交差配置** のときにしか成り立ちません。よって
+オフサイト頂点を含む図は2つのコピーのうち高々1つしか残らず、残った側は
+重み\ :math:`2 \times \tfrac{1}{2} = 1`\ を担うことになります。
+
+分類は次のとおりです。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 35 12 28
+
+   * - 頂点
+     - オフサイト頂点の配置
+     - 局所か
+     - :math:`W^{(2)}`\ での重み
+   * - オンサイト / オンサイト（種類・配置によらず）
+     - --
+     - はい
+     - :math:`\tfrac{1}{2}`
+   * - オンサイト（種類によらず）/ オフサイト
+     - 全ての混合図：一方のコピーでは必ずオフサイト頂点が交差配置になる
+     - はい
+     - :math:`1`
+   * - オフサイト / オフサイト
+     - 直接（バブル）トポロジー
+     - はい
+     - :math:`1`
+   * - オフサイト / オフサイト
+     - 交換（交差）トポロジー
+     - いいえ
+     - :math:`0`\ 。\ ``longitudinal_bond_channels``\ を参照
+
+重みがゼロになる唯一のクラス、すなわち **2つのオフサイト頂点** の交換
+スケルトンは、2つのフェルミオン運動量に依存し\ :math:`\mathbf{q}`\ のみでは
+表現できません。これは次節のボンド拡張した対基底の上で足し上げられるため、
+オフサイト相互作用について2次の完全性が必要な計算では
+``longitudinal_bond_channels = true``\ を指定してください。
+
+具体例を2つ挙げます。1軌道でオフサイト\ :math:`V`\ のみの場合、スピン和を
+含む直接スケルトンは\ :math:`2 V(\mathbf{q})^2 \bar\chi`\ となります。また
+オンサイト\ :math:`U`\ とオフサイト\ :math:`V`\ が同時にある場合には交差項
+:math:`2 U V(\mathbf{q}) \bar\chi`\ が生じますが、これは Hartree 部分のみから
+作った\ :math:`q`\ 依存頂点には含まれません。
+
+``flex_second_order = "takimoto"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+この値では、従来の Takimoto-Hotta-Ueda の形の有効相互作用
+
+.. math::
+
+   V_{\rm eff} = \tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s
+   + \tfrac{1}{2}\hat{U}^c \chi_c \hat{U}^c
+   - \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
+     \left(\hat{U}^s + \hat{U}^c\right)
+
+をそのまま使います。すなわち\ :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s
+\bar\chi \hat{U}^s + \tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c -
+\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`\ です。
+これは単一バンドの Hubbard 相互作用については2次で厳密ですが、その他の項に
+ついては近似であり、H-wave 2.0.0 で得られた結果を再現するために残されています。
+
+したがって、\ ``CoulombIntra``\ のみの単一バンド入力では両方の値が丸め誤差の
+範囲で一致し、多軌道のオンサイト相互作用（:math:`U'`\ ・\ ``Hund``\ ・
+``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と
+オフサイト相互作用では一般経路の結果が変わります。
+
+.. note::
+
+   ``longitudinal_bond_channels = true``\ では、ボンド分解した有効相互作用の
+   チャネル0ブロックも同じカーネルで構築されるため、単一バンドの
+   :math:`U + V`\ 入力でも2つの値は一致します（ボンド分解チャネルは
+   もともと直接\ :math:`V`\ の2次を厳密に含んでいました）。このゲートの下で
+   なお小さな2次のずれが残るのは軌道間（軌道非対角）のオフサイトボンドの
+   ボンド分解ブロックだけで、軌道対角のボンドは厳密です。この差の解消は
+   今後の課題です。
+
 .. _rpa_longitudinal_bond:
 
 ボンド分解した縦方向チャネル（実験的機能）
@@ -689,10 +847,13 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
    W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}
 
 すなわち3次以上の ring 級数と厳密な2次項\ :math:`W^{(2)}`\ の和です。\ :math:`W^{(2)}`\ は、
-チャネル0ブロックでは\ :math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
+チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されるため
+同じ\ ``flex_second_order``\ キーで選択されます（:ref:`flex_second_order_kernel`\ を参照）。
+これによりオフサイト係数が全てゼロなら計算は標準の Hartree-Fock FLEX と同一になります。
+``flex_second_order = "takimoto"``\ では、このブロックは従来の
+:math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
 - \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})`
-（一般経路の二重計算補正をオンサイト頂点に限定したもの。オフサイト係数が全てゼロなら
-計算は標準の Hartree-Fock FLEX と同一）、チャネル0とボンドの混合ブロックでは
+になります。チャネル0とボンドの混合ブロックでは
 :math:`\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)`\ （オフサイト相互作用の交換スケルトンを
 1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
 自己エネルギーは
@@ -707,8 +868,11 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 :math:`(m, m')`\ はバブルのブロック\ :math:`(m', m)`\ の位相と対になります）、実空間では
 :math:`G`\ の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
 スケルトンを\ :math:`UV`\ 交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
-一方、Hartree 部分\ :math:`V(q)`\ のみを頂点に持つ標準の一般経路は、2次で直接\ :math:`V^2`
-項の半分のみを持ち、\ :math:`UV`\ 交差項を持ちません。このような計算の通常の
+標準の一般経路も\ ``flex_second_order = "local"``\ では直接スケルトンと
+:math:`UV`\ 交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです。
+従来の\ ``"takimoto"``\ の式では、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
+:math:`UV`\ 交差項を持ちません。（このゲートの下でも、軌道間のオフサイトボンドでは
+ボンド分解ブロックに小さな2次のずれが残ります。軌道対角のボンドは厳密です。）このような計算の通常の
 ``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ 出力は、最後の写像のボンド分解した量の
 :math:`(m = 0, m' = 0)`\ ブロックです。前節の16個の\ ``longitudinal_bond_*``\ 静的キーも
 書き出され、要求に応じて動的チャネル全体も出力されます

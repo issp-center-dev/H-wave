@@ -145,10 +145,10 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 行列形式のスピン相互作用行列\ :math:`\hat{U}^s`\ と
 電荷相互作用行列\ :math:`\hat{U}^c`\ を構成し、行列形式のRPA方程式を解いて
 :math:`\chi_s`/:math:`\chi_c`\ を求め、ゆらぎ相互作用を
-:math:`V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
-+ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
-- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`
-として組み立てます。したがって\ ``"general"``\ ではoff-diagonalの頂点は
+:math:`V = \tfrac{3}{2}\hat{U}^s[\chi_s - \chi_0]\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c[\chi_c - \chi_0]\hat{U}^c + W^{(2)}`\ 、
+すなわち3次以上の ring 級数と\ ``flex_second_order``\ で選択される
+2次カーネル\ :math:`W^{(2)}`\ （後述）の和として組み立てます。したがって\ ``"general"``\ ではoff-diagonalの頂点は
 **無視されず**、密度--密度縮約の警告も抑制されます。なお上記のAL/MT型の
 頂点補正は、``"general"``\ スキームにおいてもFLEXの枠組みの外にあります。
 
@@ -164,6 +164,59 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 .. [4] T. Takimoto, T. Hotta, and K. Ueda,
    Phys. Rev. B **69**, 104504 (2004); cond-mat/0309575.
 
+
+.. _flex_second_order_tutorial:
+
+有効相互作用の2次（``flex_second_order``）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``calc_scheme = "general"``\ では、有効相互作用の2次の部分
+:math:`W^{(2)}`\ はデフォルトで厳密な **局所** 2次カーネル
+（``[mode.param] flex_second_order = "local"``\ ）から構築されます。これは
+全てのオンサイト相互作用項の2次、オフサイト密度項の直接スケルトン、および
+全てのオンサイト・オフサイト混合図を含みます。残るのは2つのオフサイト頂点の
+交換スケルトンだけで、これは\ ``longitudinal_bond_channels = true``\ に
+委ねられます（式と分類は\ :ref:`flex_second_order_kernel`\ を参照）。
+
+従来のバージョンでは Takimoto-Hotta-Ueda の式
+:math:`-\tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`\ を
+使っていました。これは単一バンドの Hubbard 相互作用についてのみ2次で厳密です。
+H-wave 2.0.0 で得られた結果を再現するには
+
+.. code-block:: toml
+
+   [mode.param]
+     flex_second_order = "takimoto"
+
+と指定してください。このオプションは 2.x 系列では常に利用できます。
+
+**何が変わるか。** ``CoulombIntra``\ のみの単一バンド入力では両方の値が
+丸め誤差の範囲で一致します。\ ``longitudinal_bond_channels = true``\ を
+指定した単一バンドの\ :math:`U + V`\ 入力も同様に一致します（ボンド分解
+チャネルはもともと直接\ :math:`V`\ の2次を厳密に含んでいました）。一方、
+多軌道のオンサイト相互作用（:math:`U'`\ ・\ ``Hund``\ ・\ ``Ising``\ ・
+``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と、ボンドゲートを
+使わないオフサイト相互作用では、一般経路の結果が変わります。
+
+**縮退した行は拒否されます。** ``"local"``\ では、\ ``CoulombInter``\ ・
+``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ ・
+``PairLift``\ のオンサイト同一軌道の行があると起動時に停止します。この
+ような行は二体項ではなく、メッセージにはその種類に対する等価な宣言
+（多くは\ ``CoulombIntra``\ の項と transfer ファイルへのレベルシフト）が
+示されます。メッセージに従って相互作用ファイルを書き直すか、当面の回避策
+として\ ``flex_second_order = "takimoto"``\ を指定してください。
+
+**収束について。** SCF の経路はカーネルによって変わり得ます。2軌道の
+自己無撞着テスト系（オンサイト\ :math:`U`\ ・\ :math:`U'`\ ・
+``Hund``\ とオフサイト\ :math:`V`\ 、Anderson 混合）では両方の値で反復
+回数は同じ（``flex_hartree_fock = true``\ なしで 9 回、ありで 11 回）で、
+FLEX の1反復のコストは\ ``"local"``\ で約 1.2 倍です。以前収束していた
+計算が収束しなくなった場合は、\ ``IterationMax``\ を増やし、\ ``Mix``\ を
+小さくし、\ ``mixing_scheme = "anderson"``\ を維持したうえで、別の
+カーネルで作られた\ ``sigma_init``\ からではなく\ :math:`\Sigma = 0`\ から
+開始してください。初期値に記録された\ ``flex_second_order``\ が現在の計算と
+異なる場合、ソルバーは警告を出します（記録が無い場合、すなわち reduced
+スキームや 2.1 より前のアーカイブの場合は情報行を出します）。
 
 サンプル 1: 1軌道Hubbardモデル
 -----------------------------------------
@@ -271,8 +324,12 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 - ``chiq.npz``: 結合感受率ファイル
 - ``sigma.npz``: 自己エネルギー\ :math:`\Sigma(\mathbf{k}, i\omega_n)`\ （``flex_hartree_fock = true``
   では2つの成分\ ``sigma_static``\ ・\ ``sigma_fluct``\ 、マーカー\ ``sigma_convention = "split"``\ 、
-  収束の来歴も含みます。:ref:`flex_bond_hf_tutorial`\ を参照）
+  収束の来歴も含みます。:ref:`flex_bond_hf_tutorial`\ を参照）。
+  ``calc_scheme = "general"``\ では\ ``flex_second_order``\ と
+  ``flex_second_order_schema``\ も記録されます
 - ``green.npz``: ドレスドグリーン関数\ :math:`G(\mathbf{k}, i\omega_n)`
+  （``calc_scheme = "general"``\ では同じ2つの\ ``flex_second_order``\ の
+  フィールドを含みます）
 - ``energy.dat``: 粒子数\ ``NCond``\ 、スピン\ ``Sz``\ 、収束した化学ポテンシャル
   ``ChemicalPotential`` :math:`\mu`\ を記載したテキストファイル。
 
@@ -318,6 +375,13 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 になります。``sigma.npz``\ は\ ``CellShape``\ を記録するため、体積が同じでも
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
+
+``calc_scheme = "general"``\ の種は、どの2次カーネルで作られたかも記録して
+います。異なるカーネルの種を使うことは許されており、種に記録された
+``flex_second_order``\ が現在の計算と異なる場合はソルバーが警告を出します
+（記録が無い場合、すなわち reduced スキームや 2.1 より前のアーカイブの場合は
+情報行を出します）。そのような計算が収束しない場合は\ :math:`\Sigma = 0`
+から再開してください。\ :ref:`flex_second_order_tutorial`\ を参照。
 
 .. note::
 
@@ -636,6 +700,13 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``sigma``: 自己エネルギー\ :math:`\Sigma(\mathbf{k}, i\omega_n)`,
   形状\ ``(nblock, nmat, nvol, nd_block, nd_block)``
   (``nblock``\ はスピンブロック数、spin-freeモードでは1)
+- ``flex_second_order`` / ``flex_second_order_schema``:
+  ``calc_scheme = "general"``\ の計算のみが出力します。有効相互作用の2次
+  カーネル（``local`` | ``takimoto``\ 。0 次元の\ ``<U8``\ 文字列配列）と、
+  その記録のスキーマ版数（``1``\ ）です。reduced スキーム・RPA のアーカイブ、
+  およびバージョン 2.1 より前のファイルには含まれません。読み込み側がこれらを
+  必須とすることはなく、異なるカーネルで作られた\ ``sigma_init``\ も警告付きで
+  受理されます。:ref:`rpa_chiq_provenance`\ を参照してください。
 
 .. note::
 
@@ -651,6 +722,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 
 - ``green``: ドレスドグリーン関数\ :math:`G(\mathbf{k}, i\omega_n)`,
   ``sigma``\ と同じ形状
+- ``flex_second_order`` / ``flex_second_order_schema``: 上の\ ``sigma.npz``
+  と同じです。
 
 これらの出力ファイルはEliashberg方程式ソルバー (``hwave_sc``) の
 入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
@@ -740,6 +813,15 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
        ``sigma_init``\ 連鎖）は直接読めます。一様グリッド前提のリーダー
        （静的\ ``hwave_sc``\ 、``chi0q_init``\ 、旧解析スクリプト）は明示エラーで
        停止します。下の注意も参照してください。
+   * - ``flex_second_order``
+     - str
+     - "local"
+     - ``calc_scheme = "general"``\ のみ。有効相互作用の2次カーネル。
+       ``"local"``\ （デフォルト）は受理された全ての相互作用項の厳密な
+       局所2次、\ ``"takimoto"``\ は従来の Takimoto-Hotta-Ueda の式で
+       H-wave 2.0.0 の結果を再現します。
+       :ref:`flex_second_order_tutorial`\ および設定ファイルの説明を
+       参照してください。
    * - ``gpu``
      - bool
      - false
@@ -819,9 +901,15 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    送出し、``enable_spin_orbital``\ にも対応していません。オフサイト項は
    ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ について受理されます
    （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
-   Hartree（密度）頂点 :math:`V(q)` としてのみ入り、オフサイト項の交換
+   **ring の頂点には** Hartree（密度）部分 :math:`V(q)` としてのみ入り、
+   オフサイト項の交換
    （Fock）交差は :math:`q` のみの頂点では表現できないため含まれません
    （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
+   ただし **2次** については、デフォルトの
+   ``flex_second_order = "local"``\ がこれらの項の直接スケルトンと
+   全てのオンサイト・オフサイト混合図を厳密に含みます。そこで欠けるのは
+   2つのオフサイト頂点の交換スケルトンだけです
+   （:ref:`flex_second_order_tutorial`\ を参照）。
    これらのクラスはいずれも RPA ring と要素完全一致が実測されています
    （省かれた交換交差は、RPA ソルバーの実験的なボンド分解縦方向チャネル
    ``longitudinal_bond_channels = true``\ で静的に取り込めます。
