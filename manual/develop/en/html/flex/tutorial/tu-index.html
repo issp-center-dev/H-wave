@@ -160,9 +160,10 @@ corroborated by Takimoto, Hotta, and Ueda (THU) <a class="footnote-reference bra
 spin (<span class="math notranslate nohighlight">\(\hat{U}^s\)</span>) and charge (<span class="math notranslate nohighlight">\(\hat{U}^c\)</span>) interaction matrices
 are built in the MYO convention, the matrix RPA is solved for
 <span class="math notranslate nohighlight">\(\chi_s\)</span>/<span class="math notranslate nohighlight">\(\chi_c\)</span>, and the fluctuation interaction is assembled
-as <span class="math notranslate nohighlight">\(V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
-+ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
-- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)\)</span>.
+as <span class="math notranslate nohighlight">\(V = \tfrac{3}{2}\hat{U}^s[\chi_s - \chi_0]\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c[\chi_c - \chi_0]\hat{U}^c + W^{(2)}\)</span>, the ring
+series from third order on plus the second-order kernel <span class="math notranslate nohighlight">\(W^{(2)}\)</span>
+selected by <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> (see below).
 Under <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> the off-diagonal vertices are therefore <strong>not</strong> dropped
 and the density–density reduction warning is suppressed. The AL/MT vertex
 corrections noted above remain outside the FLEX class even in the
@@ -192,6 +193,65 @@ J. Phys. Soc. Jpn. (cond-mat/0407094).</p>
 Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 </aside>
 </aside>
+</section>
+<section id="second-order-of-the-effective-interaction-flex-second-order">
+<span id="flex-second-order-tutorial"></span><h3>Second order of the effective interaction (<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>)<a class="headerlink" href="#second-order-of-the-effective-interaction-flex-second-order" title="Link to this heading">¶</a></h3>
+<p>Under <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> the second-order part <span class="math notranslate nohighlight">\(W^{(2)}\)</span> of
+the effective interaction is built by default from the exact LOCAL
+second-order kernel, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>. It
+carries the complete second order of every on-site interaction term, the
+direct skeleton of the off-site density terms and every mixed
+on-site/off-site diagram; only the exchange skeleton of two off-site
+vertices is left to <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (see
+<a class="reference internal" href="../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a> for the formulas and the classification).</p>
+<p>Earlier versions used the Takimoto-Hotta-Ueda expression
+<span class="math notranslate nohighlight">\(-\tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)\)</span>,
+which is exact at second order only for a single-band Hubbard
+interaction. Set</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">flex_second_order</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"takimoto"</span>
+</pre></div>
+</div>
+<p>to reproduce results produced with H-wave 2.0.0 and earlier releases;
+the option stays available throughout the 2.x series.</p>
+<p><strong>What changes.</strong> Single-band inputs containing only <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>
+agree under both kernel choices (<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>) to within
+numerical round-off, and so do single-band <span class="math notranslate nohighlight">\(U + V\)</span> inputs run with
+the bond-resolved channels (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>), which
+already carried the exact direct <span class="math notranslate nohighlight">\(V\)</span> second order. Every
+multi-orbital on-site interaction (<span class="math notranslate nohighlight">\(U'\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>) and every off-site interaction
+run without the bond-resolved channels gives a different
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> result.</p>
+<p><strong>On-site same-orbital rows (degenerate rows) are now refused.</strong> Under
+<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> an on-site same-orbital row of <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> – a row with
+<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code> and identical orbital indices – stops the run at
+start-up: such a row is not a two-body term, because it reduces to a
+one-body level shift, to an effective <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, or to identically
+zero. The message gives the equivalent declaration for that type (usually
+a <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> entry plus a level shift in the transfer file).
+Rewrite the interaction file as the message says, or use
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> as an immediate workaround.</p>
+<p><strong>Convergence.</strong> The SCF trajectory can change with the kernel. On the
+2-orbital self-consistency fixture (on-site <span class="math notranslate nohighlight">\(U\)</span>, <span class="math notranslate nohighlight">\(U'\)</span>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code> plus off-site <span class="math notranslate nohighlight">\(V\)</span>, Anderson mixing) both values needed the
+same iteration count – 9 without and 11 with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span>
+<span class="pre">true</span></code> – and a full FLEX iteration costs about 1.2x more under
+<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>. If a run that used to converge now stalls, raise
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>, lower <code class="docutils literal notranslate"><span class="pre">Mix</span></code>, switch to (or keep) Anderson mixing
+(<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;anderson&quot;</span></code>; the solver default is <code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code>), and
+start the loop from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> – that is, omit <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
+from the <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> section – rather than continuing from a seed
+written with the other kernel: the solver warns when the seed’s recorded
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> differs from the run’s (and notes it when the seed
+carries no record, i.e. a reduced-scheme archive or one written before
+this key was introduced). An archive written by H-wave 2.0.0 or an earlier
+release carries no kernel record at all, so only that informational line is
+logged; if warm-starting such a seed stalls under
+<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>, either restart from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> or set
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> to match the kernel the seed was
+produced with.</p>
 </section>
 </section>
 <section id="sample-1-single-orbital-hubbard-model">
@@ -338,8 +398,12 @@ in the <code class="docutils literal notranslate"><span class="pre">output</span
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span> (with
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> also its two components <code class="docutils literal notranslate"><span class="pre">sigma_static</span></code> and
 <code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>, the marker <code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code> and the
-convergence provenance; see <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
+convergence provenance; see <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>). Under
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> it also records <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> and
+<code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>
+(with the same two <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> fields under <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
+<span class="pre">&quot;general&quot;</span></code>)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>: Text file with the particle number <code class="docutils literal notranslate"><span class="pre">NCond</span></code>, spin
 <code class="docutils literal notranslate"><span class="pre">Sz</span></code>, and the converged <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span>.</p></li>
 </ul>
@@ -386,6 +450,13 @@ the same <code class="docutils literal notranslate"><span class="pre">CellShape<
 errors: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> records its <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, so even a same-volume
 aspect-ratio change like <code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> vs <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> is caught), so keep
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> fixed across a continuation sweep.</p>
+<p>A <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> seed also records which second-order kernel
+produced it. Seeding across kernels is allowed, and the solver warns when
+the seed’s <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> differs from the current run’s (and notes
+it when the seed carries no such record, i.e. a reduced-scheme archive or
+one written before this key was introduced – H-wave 2.0.0 and earlier). If
+such a run stalls, restart it from <span class="math notranslate nohighlight">\(\Sigma = 0\)</span> – see
+<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">Second order of the effective interaction (flex_second_order)</span></a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> path is resolved relative to <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
@@ -714,6 +785,15 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <section id="output-file-format">
 <h2><span class="section-number">6.1.6. </span>Output file format<a class="headerlink" href="#output-file-format" title="Link to this heading">¶</a></h2>
 <p>The FLEX solver produces NumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code> files with the following contents:</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Under <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> every archive a FLEX run writes –
+<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and the dedicated bond archive – records
+the two provenance members <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> and
+<code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code> described below, in addition to the
+contents listed for that file. See <a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">Scheme provenance</span></a>.</p>
+</div>
 <section id="chi0q-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code><a class="headerlink" href="#chi0q-npz" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -759,6 +839,15 @@ misread.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma</span></code>: Self-energy <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>,
 shape <code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
 where <code class="docutils literal notranslate"><span class="pre">nblock</span></code> is the number of spin blocks (1 for spin-free mode).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: written by
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> runs only – the second-order kernel of the
+effective interaction (<code class="docutils literal notranslate"><span class="pre">local</span></code> | <code class="docutils literal notranslate"><span class="pre">takimoto</span></code>, a 0-d <code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code> string
+array) and the schema version of that record (<code class="docutils literal notranslate"><span class="pre">1</span></code>). Both are absent
+from reduced-scheme and RPA archives and from archives written before
+this key was introduced (H-wave 2.0.0 and earlier); readers never require
+them, and a <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed
+recording a different kernel is accepted with a warning. See
+<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">Scheme provenance</span></a>.</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -775,6 +864,8 @@ still being consumed as <code class="docutils literal notranslate"><span class="
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">green</span></code>: Dressed Green’s function <span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>,
 same shape as <code class="docutils literal notranslate"><span class="pre">sigma</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: as for
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> above.</p></li>
 </ul>
 <p>These output files can also be used as input for the
 Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
@@ -887,7 +978,17 @@ chaining into another IR FLEX run) read them directly. Uniform-only
 readers (static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, legacy scripts)
 reject such files with an explicit error. See the note below.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p></td>
+<td><p>str</p></td>
+<td><p>“local”</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only. Second-order kernel of the
+effective interaction: <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> (default) is the exact local
+second order of every accepted interaction term;
+<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> keeps the legacy Takimoto-Hotta-Ueda expression and
+reproduces the results of H-wave 2.0.0 and earlier releases. See
+<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">Second order of the effective interaction (flex_second_order)</span></a> and the configuration reference.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
 <td><p>Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
@@ -899,7 +1000,7 @@ components (single-orbital, or e.g. a spin-reduced two-orbital model);
 only larger blocks fall back to a host non-Hermitian
 eigendecomposition.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
 <td><p>Number of worker threads for the spatial FFTs (parallelized via
@@ -978,11 +1079,15 @@ full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and
 rejects <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. Off-site input is accepted for
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital or inter-orbital,
-with or without sublattice folding): each enters as its Hartree
-(density) vertex <span class="math notranslate nohighlight">\(V(q)\)</span> only — the exchange crossing of an
+with or without sublattice folding): each enters the RING vertex as its
+Hartree (density) part <span class="math notranslate nohighlight">\(V(q)\)</span> only — the exchange crossing of an
 off-site term is not representable by a <span class="math notranslate nohighlight">\(q\)</span>-only vertex and is
 left out, the same approximation the RPA ring makes, and the solver
-logs a warning saying so. For every such class the general path is
+logs a warning saying so. (At SECOND order the default kernel
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code> is exact for the direct skeleton and for
+every mixed on-site/off-site diagram of those terms; only the exchange
+skeleton of two off-site vertices is left out there, see
+<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">Second order of the effective interaction (flex_second_order)</span></a>.) For every such class the general path is
 measured element-complete equal to the RPA ring. (The omitted
 crossing is available, statically, in the RPA solver’s experimental
 bond-resolved longitudinal channel, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>

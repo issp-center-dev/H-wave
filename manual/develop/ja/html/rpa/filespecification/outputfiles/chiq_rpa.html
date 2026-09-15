@@ -66,8 +66,8 @@
 </ul>
 <p>副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code>の出力ファイルは、計算済み既約感受率データとして<code class="docutils literal notranslate"><span class="pre">file.input</span></code>セクションの<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>に指定して使用できます。</p>
-<section id="id1">
-<h2>スキームの来歴<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
+<section id="rpa-chiq-provenance">
+<span id="id1"></span><h2>スキームの来歴<a class="headerlink" href="#rpa-chiq-provenance" title="Link to this heading">¶</a></h2>
 <p>バージョン 2.0 以降、RPA および FLEX が出力するすべての<code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>ファイルには、以下の3つの文字列フィールドが 0 次元配列として格納されます（読み込みには<code class="docutils literal notranslate"><span class="pre">.item()</span></code>を使用してください）。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>: そのファイルの計算に実際に使用されたスキーム（<code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>）。</p></li>
@@ -75,6 +75,28 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">scheme_resolution</span></code>: どのように決定されたかを示します。閉じた語彙です（変更する場合は出力形式の変更として扱います）: <code class="docutils literal notranslate"><span class="pre">explicit</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:ring_ladder</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:general_only</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:no_discarded_content</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:diagonal_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:folded_diagonal</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:extern</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:green_init</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:flex_forcing</span></code>。</p></li>
 </ul>
 <p>1.0.x で出力されたファイルにはこれらのフィールドはありません。読み込み側でもこれらを必須とはしていません。</p>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の FLEX 計算では、出力される全てのアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>とボンド専用アーカイブ。IR ネイティブ出力と
+densified 出力の双方）にさらに2つのフィールドが書き出されます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>: その計算が用いた有効相互作用の2次カーネル
+（<code class="docutils literal notranslate"><span class="pre">local</span></code> | <code class="docutils literal notranslate"><span class="pre">takimoto</span></code>）。0 次元の<code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code>文字列配列として格納されます
+（読み込みには<code class="docutils literal notranslate"><span class="pre">str(...)</span></code>または<code class="docutils literal notranslate"><span class="pre">.item()</span></code>を使用してください）。
+設定ファイルの<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションの<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>、
+および<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照してください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: この記録のスキーマ版数。現在は<code class="docutils literal notranslate"><span class="pre">1</span></code>です
+（0 次元の<code class="docutils literal notranslate"><span class="pre">int64</span></code>）。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>のアーカイブ、RPA のアーカイブ、および本キーの
+導入前（H-wave 2.0.0 以前）に出力されたアーカイブには、これらのフィールドは
+<strong>ありません</strong> 。フィールドが
+無いことがエラーになることはなく、H-wave の読み込み側はそのようなファイルも受理
+します。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>に指定された初期自己エネルギー（シード）が現在の計算と
+異なるカーネルで作られている場合は WARNING レベルの警告が1度出力されます
+（記録自体が無い場合は INFO レベルの情報メッセージが1度出力されます）。
+アーカイブのメンバー一覧（<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>が返すオブジェクトの<code class="docutils literal notranslate"><span class="pre">files</span></code>属性）を
+厳密に比較するスクリプトでは、この2つの名前が増えることを許容してください。</p>
 </section>
 </section>
 <section id="chi0q">

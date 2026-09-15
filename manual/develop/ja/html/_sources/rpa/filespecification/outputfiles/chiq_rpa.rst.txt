@@ -43,6 +43,8 @@ chiq, chi0q
 ``chi0q``\ の出力ファイルは、計算済み既約感受率データとして\ ``file.input``\ セクションの\ ``chi0q_init``\ に指定して使用できます。
 
 
+.. _rpa_chiq_provenance:
+
 スキームの来歴
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -53,6 +55,29 @@ chiq, chi0q
 - ``scheme_resolution``: どのように決定されたかを示します。閉じた語彙です（変更する場合は出力形式の変更として扱います）: ``explicit``, ``auto:ring_ladder``, ``auto:general_only``, ``auto:no_discarded_content``, ``auto:exact:diagonal_transfer``, ``auto:exact:folded_diagonal``, ``auto:mixed:transfer``, ``auto:mixed:extern``, ``auto:mixed:trans_mod``, ``auto:mixed:green_init``, ``auto:flex_forcing``\ 。
 
 1.0.x で出力されたファイルにはこれらのフィールドはありません。読み込み側でもこれらを必須とはしていません。
+
+``calc_scheme = "general"``\ の FLEX 計算では、出力される全てのアーカイブ
+（``chi0q.npz``\ ・\ ``chiq.npz``\ ・\ ``chiq_s.npz``\ ・\ ``chiq_c.npz``\ ・
+``sigma.npz``\ ・\ ``green.npz``\ とボンド専用アーカイブ。IR ネイティブ出力と
+densified 出力の双方）にさらに2つのフィールドが書き出されます。
+
+- ``flex_second_order``: その計算が用いた有効相互作用の2次カーネル
+  （``local`` | ``takimoto``\ ）。0 次元の\ ``<U8``\ 文字列配列として格納されます
+  （読み込みには\ ``str(...)``\ または\ ``.item()``\ を使用してください）。
+  設定ファイルの\ ``[mode.param]``\ セクションの\ ``flex_second_order``\ 、
+  および\ :ref:`flex_second_order_kernel`\ を参照してください。
+- ``flex_second_order_schema``: この記録のスキーマ版数。現在は\ ``1``\ です
+  （0 次元の\ ``int64``\ ）。
+
+``calc_scheme = "reduced"``\ のアーカイブ、RPA のアーカイブ、および本キーの
+導入前（H-wave 2.0.0 以前）に出力されたアーカイブには、これらのフィールドは
+**ありません** 。フィールドが
+無いことがエラーになることはなく、H-wave の読み込み側はそのようなファイルも受理
+します。\ ``sigma_init``\ に指定された初期自己エネルギー（シード）が現在の計算と
+異なるカーネルで作られている場合は WARNING レベルの警告が1度出力されます
+（記録自体が無い場合は INFO レベルの情報メッセージが1度出力されます）。
+アーカイブのメンバー一覧（``numpy.load``\ が返すオブジェクトの\ ``files``\ 属性）を
+厳密に比較するスクリプトでは、この2つの名前が増えることを許容してください。
 
 
 chi0q のデータ形式

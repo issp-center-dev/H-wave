@@ -149,10 +149,10 @@ Kanamori頂点を <strong>保持</strong> します。これはMochizuki--Yanase
 行列形式のスピン相互作用行列<span class="math notranslate nohighlight">\(\hat{U}^s\)</span>と
 電荷相互作用行列<span class="math notranslate nohighlight">\(\hat{U}^c\)</span>を構成し、行列形式のRPA方程式を解いて
 <span class="math notranslate nohighlight">\(\chi_s\)</span>/<span class="math notranslate nohighlight">\(\chi_c\)</span>を求め、ゆらぎ相互作用を
-<span class="math notranslate nohighlight">\(V = \tfrac{3}{2}\hat{U}^s\chi_s\hat{U}^s
-+ \tfrac{1}{2}\hat{U}^c\chi_c\hat{U}^c
-- \tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)\)</span>
-として組み立てます。したがって<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>ではoff-diagonalの頂点は
+<span class="math notranslate nohighlight">\(V = \tfrac{3}{2}\hat{U}^s[\chi_s - \chi_0]\hat{U}^s
++ \tfrac{1}{2}\hat{U}^c[\chi_c - \chi_0]\hat{U}^c + W^{(2)}\)</span>、
+すなわち3次以上の ring 級数と<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>で選択される
+2次カーネル<span class="math notranslate nohighlight">\(W^{(2)}\)</span>（後述）の和として組み立てます。したがって<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>ではoff-diagonalの頂点は
 <strong>無視されず</strong>、密度--密度縮約の警告も抑制されます。なお上記のAL/MT型の
 頂点補正は、<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームにおいてもFLEXの枠組みの外にあります。</p>
 <aside class="footnote-list brackets">
@@ -180,6 +180,62 @@ J. Phys. Soc. Jpn. (cond-mat/0407094).</p>
 Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 </aside>
 </aside>
+</section>
+<section id="flex-second-order">
+<span id="flex-second-order-tutorial"></span><h3>有効相互作用の2次（<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>）<a class="headerlink" href="#flex-second-order" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、有効相互作用の2次の部分
+<span class="math notranslate nohighlight">\(W^{(2)}\)</span>はデフォルトで厳密な <strong>局所</strong> 2次カーネル
+（<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>）から構築されます。これは
+全てのオンサイト相互作用項の2次、オフサイト密度項の直接スケルトン、および
+全てのオンサイト・オフサイト混合図を含みます。残るのは2つのオフサイト頂点の
+交換スケルトンだけで、これは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>に
+委ねられます（式と分類は<a class="reference internal" href="../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照）。</p>
+<p>従来のバージョンでは Takimoto-Hotta-Ueda の式
+<span class="math notranslate nohighlight">\(-\tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)\)</span>を
+使っていました。これは単一バンドの Hubbard 相互作用についてのみ2次で厳密です。
+H-wave 2.0.0 以前のリリースで得られた結果を再現するには</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">flex_second_order</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"takimoto"</span>
+</pre></div>
+</div>
+<p>と指定してください。このオプションは 2.x 系列では常に利用できます。</p>
+<p><strong>何が変わるか。</strong> <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの単一バンド入力では、どちらの
+カーネル設定（<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>）でも結果は丸め誤差の範囲で
+一致します。ボンド分解チャネル（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）を
+有効にした単一バンドの<span class="math notranslate nohighlight">\(U + V\)</span>入力も同様に一致します（ボンド分解
+チャネルはもともと直接<span class="math notranslate nohighlight">\(V\)</span>の2次を厳密に含んでいました）。一方、
+多軌道のオンサイト相互作用（<span class="math notranslate nohighlight">\(U'\)</span>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）と、ボンド分解チャネルを
+使わないオフサイト相互作用では、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の結果が
+変わります。</p>
+<p><strong>オンサイト同一軌道行（縮退行）は拒否されます。</strong> <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>では、
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>のオンサイト同一軌道の行、すなわち
+<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code>かつ軌道添字が等しい行があると起動時に停止します。
+このような行は二体項ではありません。一体のレベルシフト、実質的な
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、あるいは恒等的にゼロのいずれかに帰着するためです。
+メッセージにはその種類に対する等価な宣言
+（多くは<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>の項と transfer ファイルへのレベルシフト）が
+示されます。メッセージに従って相互作用ファイルを書き直すか、当面の回避策
+として<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>を指定してください。</p>
+<p><strong>収束について。</strong> SCF の経路はカーネルによって変わり得ます。2軌道の
+自己無撞着テスト系（オンサイト<span class="math notranslate nohighlight">\(U\)</span>・<span class="math notranslate nohighlight">\(U'\)</span>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>とオフサイト<span class="math notranslate nohighlight">\(V\)</span>、Anderson 混合）では両方の値で反復
+回数は同じ（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>なしで 9 回、ありで 11 回）で、
+FLEX の1反復のコストは<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>で約 1.2 倍です。以前収束していた
+計算が収束しなくなった場合は、<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>を増やし、<code class="docutils literal notranslate"><span class="pre">Mix</span></code>を
+小さくし、Anderson 混合（<code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;anderson&quot;</span></code>。ソルバーの
+デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;linear&quot;</span></code>です）に切り替える（すでに使っている場合はそのまま
+維持する）とともに、別のカーネルで作られたシードからではなく
+<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から開始してください。<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から開始するには
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>セクションから<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>の指定を外します。
+シードに記録された<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>が現在の計算と異なる場合、ソルバーは警告を出します（記録が無い場合、すなわち reduced
+スキームのアーカイブや、本キーの導入前に出力されたアーカイブの場合は情報
+メッセージを出します）。H-wave 2.0.0 以前のリリースが出力したアーカイブには
+カーネルの記録が無いため、出るのは
+この情報メッセージだけです。そのようなシードから<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>で
+ウォームスタートして収束しない場合は、<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から計算し直すか、
+シードに合わせて<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>を指定してください。</p>
 </section>
 </section>
 <section id="hubbard">
@@ -321,8 +377,13 @@ FLEX converged after 64 iterations
 <li><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>: 結合感受率ファイル</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>: 自己エネルギー<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>
 では2つの成分<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>、マーカー<code class="docutils literal notranslate"><span class="pre">sigma_convention</span> <span class="pre">=</span> <span class="pre">&quot;split&quot;</span></code>、
-収束の来歴も含みます。<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>を参照）</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: ドレスドグリーン関数<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span></p></li>
+収束の来歴も含みます。<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>を参照）。
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>と
+<code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>も記録されます</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>: ドレスドグリーン関数<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>
+（<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>と同様に
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>および<code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>の2つの
+フィールドを含みます）</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>: 粒子数<code class="docutils literal notranslate"><span class="pre">NCond</span></code>、スピン<code class="docutils literal notranslate"><span class="pre">Sz</span></code>、収束した化学ポテンシャル
 <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code> <span class="math notranslate nohighlight">\(\mu\)</span>を記載したテキストファイル。</p></li>
 </ul>
@@ -364,6 +425,13 @@ FLEX converged after 64 iterations
 になります。<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を記録するため、体積が同じでも
 <code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code>と<code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code>のようなアスペクト比違いも検出されます）。
 continuation スイープでは<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>と<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を固定してください。</p>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>のシードは、どの2次カーネルで作られたかも記録
+しています。異なるカーネルのシードを使うことは許されており、シードに記録された
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>が現在の計算と異なる場合はソルバーが警告を出します
+（記録が無い場合、すなわち reduced スキームのアーカイブや、本キーの導入前
+（H-wave 2.0.0 以前）に出力されたアーカイブの場合は INFO レベルの情報
+メッセージを出します）。そのような計算が収束しない場合は
+<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から再開してください。<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">有効相互作用の2次（flex_second_order）</span></a>を参照。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>のパスは<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_input</span></code>からの相対で解決され
@@ -678,6 +746,15 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 <section id="id27">
 <h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルを生成します:</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、FLEX 計算が出力する全てのアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>とボンド専用
+アーカイブ）に、各ファイルの内容に加えて後述の2つの来歴フィールド
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>が記録されます。
+<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">スキームの来歴</span></a>を参照してください。</p>
+</div>
 <section id="chi0q-npz">
 <h3><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code><a class="headerlink" href="#chi0q-npz" title="Link to this heading">¶</a></h3>
 <ul class="simple">
@@ -718,6 +795,14 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma</span></code>: 自己エネルギー<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n)\)</span>,
 形状<code class="docutils literal notranslate"><span class="pre">(nblock,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd_block,</span> <span class="pre">nd_block)</span></code>
 (<code class="docutils literal notranslate"><span class="pre">nblock</span></code>はスピンブロック数、spin-freeモードでは1)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>:
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の計算のみが出力します。有効相互作用の2次
+カーネル（<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>；0 次元の<code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code>文字列
+配列）と、その記録のスキーマ版数（<code class="docutils literal notranslate"><span class="pre">1</span></code>）です。reduced スキーム・RPA のアーカイブ、
+および本キーの導入前（H-wave 2.0.0 以前）に出力されたアーカイブには含まれません。
+読み込み側がこれらを
+必須とすることはなく、異なるカーネルで作られた<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>も警告付きで
+受理されます。<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">スキームの来歴</span></a>を参照してください。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
@@ -734,6 +819,8 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">green</span></code>: ドレスドグリーン関数<span class="math notranslate nohighlight">\(G(\mathbf{k}, i\omega_n)\)</span>,
 <code class="docutils literal notranslate"><span class="pre">sigma</span></code>と同じ形状</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: 上の<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
+と同じです。</p></li>
 </ul>
 <p>これらの出力ファイルはEliashberg方程式ソルバー (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の
 入力としても使用できます。詳細は<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>
@@ -836,7 +923,18 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 （静的<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>、旧解析スクリプト）は明示エラーで
 停止します。下の注意も参照してください。</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p></td>
+<td><p>str</p></td>
+<td><p>&quot;local&quot;</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>のみ。有効相互作用の2次カーネルを
+選択します。<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>（デフォルト）は受理された全ての相互作用項
+について厳密な局所2次カーネルを構築し、<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>は従来の
+Takimoto-Hotta-Ueda の式を用いて H-wave 2.0.0 以前のリリースの結果を
+再現します。
+<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">有効相互作用の2次（flex_second_order）</span></a>および設定ファイルの説明を
+参照してください。</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">true</span></code>で SCF ループ（dressed G、chi0q、chiq、V_eff、自己エネルギー）を
@@ -846,7 +944,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 なら閉形式の固有値により GPU 上で実行され、3以上の場合のみ非エルミート
 固有値分解を CPU で実行します。</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
 <td><p>空間 FFT のワーカースレッド数（<code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>による並列化）。デフォルト
@@ -914,9 +1012,15 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>にも対応していません。オフサイト項は
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>について受理されます
 （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
-Hartree（密度）頂点 <span class="math notranslate nohighlight">\(V(q)\)</span> としてのみ入り、オフサイト項の交換
+<strong>ring の頂点には</strong> Hartree（密度）部分 <span class="math notranslate nohighlight">\(V(q)\)</span> としてのみ入り、
+オフサイト項の交換
 （Fock）交差は <span class="math notranslate nohighlight">\(q\)</span> のみの頂点では表現できないため含まれません
 （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
+ただし <strong>2次</strong> については、デフォルトの
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>がこれらの項の直接スケルトンと
+全てのオンサイト・オフサイト混合図を厳密に含みます。そこで欠けるのは
+2つのオフサイト頂点の交換スケルトンだけです
+（<a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">有効相互作用の2次（flex_second_order）</span></a>を参照）。
 これらのクラスはいずれも RPA ring と要素完全一致が実測されています
 （省かれた交換交差は、RPA ソルバーの実験的なボンド分解縦方向チャネル
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で静的に取り込めます。

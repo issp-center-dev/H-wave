@@ -590,6 +590,162 @@ convention as UHFk.</p></li>
 spin-orbital count; double any pre-existing RPA spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
+<section id="second-order-of-the-general-flex-path">
+<span id="flex-second-order-kernel"></span><h3>Second order of the general FLEX path<a class="headerlink" href="#second-order-of-the-general-flex-path" title="Link to this heading">¶</a></h3>
+<p>In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> the fluctuation
+self-energy is built from the effective interaction</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-20">
+<span class="eqno">(7.31)<a class="headerlink" href="#equation-algorithm-rpa-20" title="Link to this equation">¶</a></span>\[V_{\rm eff}(\mathbf{q}, i\nu)
+= \tfrac{3}{2}\hat{U}^s \left[\chi_s - \bar\chi\right] \hat{U}^s
++ \tfrac{1}{2}\hat{U}^c \left[\chi_c - \bar\chi\right] \hat{U}^c
++ W^{(2)},\]</div>
+<p>where <span class="math notranslate nohighlight">\(\bar\chi\)</span> is the bare bubble and <span class="math notranslate nohighlight">\(\hat{U}^s\)</span>,
+<span class="math notranslate nohighlight">\(\hat{U}^c\)</span> are the spin and charge vertices of the ring. Written
+this way the first two terms are the ring series from THIRD order on, and
+the whole second order of the theory sits in <span class="math notranslate nohighlight">\(W^{(2)}\)</span>. Which
+expression is used for <span class="math notranslate nohighlight">\(W^{(2)}\)</span> is selected by <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> (see the configuration reference).</p>
+<section id="flex-second-order-local-the-default">
+<h4><code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code> (the default)<a class="headerlink" href="#flex-second-order-local-the-default" title="Link to this heading">¶</a></h4>
+<p>Write the interaction with a generalised index <span class="math notranslate nohighlight">\(p = (\text{site},
+\text{orbital}, \text{spin})\)</span> as <span class="math notranslate nohighlight">\({\cal H}_{\rm int} =
+\tfrac{1}{2}\sum V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r\)</span> and
+antisymmetrise it,
+<span class="math notranslate nohighlight">\(\Gamma_{pq,rs} = V_{pq,rs} - V_{pq,sr}\)</span>. The exact second-order
+(skeleton) self-energy is</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-21">
+<span class="eqno">(7.32)<a class="headerlink" href="#equation-algorithm-rpa-21" title="Link to this equation">¶</a></span>\[\Sigma^{(2)}_{pp'}(\tau) = -\tfrac{1}{2} \sum_{qrs\,q'r's'}
+\Gamma_{pq,rs}\,\Gamma_{r's',p'q'}\;
+G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau).\]</div>
+<p>Every diagram of that sum whose two particle-hole lines close on ONE site
+is representable by a vertex that depends on the transferred momentum
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span> alone, and is therefore carried exactly by
+<span class="math notranslate nohighlight">\(W^{(2)}\)</span>.</p>
+<p><em>On-site vertices.</em> Fixing the external spin and summing all three
+internal spins <span class="math notranslate nohighlight">\(\sigma = (\sigma_s, \sigma_r, \sigma_q)\)</span> gives</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-22">
+<span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-rpa-22" title="Link to this equation">¶</a></span>\[W^{(2),\,\rm on}(\mathbf{q}, i\nu)
+= \tfrac{1}{2} \sum_{\sigma}
+  A^{\sigma}_{\rm on}\; \bar\chi(\mathbf{q}, i\nu)\; B^{\sigma}_{\rm on},\]</div>
+<p>with <span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span> and <span class="math notranslate nohighlight">\(B^{\sigma}_{\rm on}\)</span> the
+slices of the on-site <span class="math notranslate nohighlight">\(\Gamma\)</span> that carry the two vertices, and
+<span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span> the skeleton symmetry factor. For a single-band
+Hubbard interaction this collapses to the familiar
+<span class="math notranslate nohighlight">\(U^2 \bar\chi\)</span>.</p>
+<p><em>Off-site vertices.</em> The off-site terms the general path accepts are
+density terms (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> at <span class="math notranslate nohighlight">\(R \neq 0\)</span>;
+an off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> has no density content and contributes nothing).
+With <span class="math notranslate nohighlight">\(v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q})\)</span> their Fourier
+transform, the corresponding factors live on the density slots of the
+pair basis and are</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-23">
+<span class="eqno">(7.34)<a class="headerlink" href="#equation-algorithm-rpa-23" title="Link to this equation">¶</a></span>\[A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),\]</div>
+<p>understood as a matrix on the density slots of the pair basis (zero on
+every other slot), so that each product with <span class="math notranslate nohighlight">\(\bar\chi\)</span> below is a
+matrix product in that pair space, exactly as for
+<span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span> and <span class="math notranslate nohighlight">\(B^{\sigma}_{\rm on}\)</span>. The complete
+second-order kernel is then</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-24">
+<span class="eqno">(7.35)<a class="headerlink" href="#equation-algorithm-rpa-24" title="Link to this equation">¶</a></span>\[W^{(2)} = W^{(2),\,\rm on} + \sum_{\sigma} \Big[
+  A^{\sigma}_{\rm on}\,\bar\chi\,B^{\sigma}_{v}
++ A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{\rm on}
++ A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{v} \Big],\]</div>
+<p><strong>without</strong> the factor <span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span> on the three off-site terms.
+The reason is a counting one. Each physical second-order diagram appears
+twice in the antisymmetrised sum above (the two copies differ by the
+relabelling <span class="math notranslate nohighlight">\(r \leftrightarrow s\)</span>, <span class="math notranslate nohighlight">\(r' \leftrightarrow s'\)</span>),
+which is what the symmetry factor <span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span> compensates. A
+vertex is representable by a <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only object when its
+internal line sits on the site of its external line; for an on-site
+vertex that holds for both copies, but an off-site vertex satisfies it in
+its <em>crossed</em> placement only. A diagram containing an off-site vertex
+therefore keeps at most one of its two copies, and the surviving one must
+carry the weight <span class="math notranslate nohighlight">\(2 \times \tfrac{1}{2} = 1\)</span>.</p>
+<p>The resulting classification is:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 35.0%" />
+<col style="width: 12.0%" />
+<col style="width: 28.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Vertices</p></th>
+<th class="head"><p>Placement of the off-site vertex</p></th>
+<th class="head"><p>Local?</p></th>
+<th class="head"><p>Weight in <span class="math notranslate nohighlight">\(W^{(2)}\)</span></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>on-site / on-site (any type, any placement)</p></td>
+<td><p>–</p></td>
+<td><p>yes</p></td>
+<td><p><span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>on-site (any type) / off-site</p></td>
+<td><p>every mixed diagram: one copy always has the off-site vertex
+crossed</p></td>
+<td><p>yes</p></td>
+<td><p><span class="math notranslate nohighlight">\(1\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p>off-site / off-site</p></td>
+<td><p>direct (bubble) topology</p></td>
+<td><p>yes</p></td>
+<td><p><span class="math notranslate nohighlight">\(1\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>off-site / off-site</p></td>
+<td><p>exchange (crossed) topology</p></td>
+<td><p>no</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span>; see <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<p>The single class with weight zero – the exchange skeleton of TWO
+off-site vertices – depends on both fermionic momenta and has no
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only representation. It is resummed on the
+bond-enlarged pair basis of the next section, so a run that needs full
+second-order accuracy for an off-site interaction should set
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+<p>Two consequences worth naming. For an off-site <span class="math notranslate nohighlight">\(V\)</span> alone on one
+orbital the direct skeleton with its spin sum is
+<span class="math notranslate nohighlight">\(2 V(\mathbf{q})^2 \bar\chi\)</span>; and an on-site <span class="math notranslate nohighlight">\(U\)</span> together
+with an off-site <span class="math notranslate nohighlight">\(V\)</span> produces the cross term
+<span class="math notranslate nohighlight">\(2 U V(\mathbf{q}) \bar\chi\)</span>, which no <span class="math notranslate nohighlight">\(q\)</span>-only vertex built
+from the Hartree part alone contains.</p>
+</section>
+<section id="flex-second-order-takimoto">
+<h4><code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code><a class="headerlink" href="#flex-second-order-takimoto" title="Link to this heading">¶</a></h4>
+<p>This value keeps the legacy Takimoto-Hotta-Ueda form of the effective
+interaction verbatim,</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-25">
+<span class="eqno">(7.36)<a class="headerlink" href="#equation-algorithm-rpa-25" title="Link to this equation">¶</a></span>\[V_{\rm eff} = \tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s
++ \tfrac{1}{2}\hat{U}^c \chi_c \hat{U}^c
+- \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
+  \left(\hat{U}^s + \hat{U}^c\right),\]</div>
+<p>i.e. <span class="math notranslate nohighlight">\(W^{(2)} = \tfrac{3}{2}\hat{U}^s \bar\chi \hat{U}^s +
+\tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c - \tfrac{1}{4}(\hat{U}^s +
+\hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)\)</span>. It is exact at second order
+for a single-band Hubbard interaction and approximate for every other
+term; it is kept as the reproduction path for results obtained with
+H-wave 2.0.0 and earlier releases.</p>
+<p>Accordingly, single-band inputs containing only <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code> agree
+under both values to round-off, while every multi-orbital on-site interaction
+(<span class="math notranslate nohighlight">\(U'\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>) and every off-site interaction changes the general-path
+result.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> the channel-0 block of the
+bond-resolved effective interaction is built by the same kernel, so
+the two values agree there as well for a single-band <span class="math notranslate nohighlight">\(U + V\)</span>
+input (the bond-resolved channels already carried the exact direct
+<span class="math notranslate nohighlight">\(V\)</span> second order). Inter-orbital (orbital-off-diagonal) off-site
+bonds are the one case in which the bond-resolved blocks still carry a
+small residual second-order deviation with this option enabled;
+orbital-diagonal bonds are exact. Closing that gap is planned.</p>
+</div>
+</section>
+</section>
 <section id="bond-resolved-longitudinal-channel-experimental">
 <span id="rpa-longitudinal-bond"></span><h3>Bond-resolved longitudinal channel (experimental)<a class="headerlink" href="#bond-resolved-longitudinal-channel-experimental" title="Link to this heading">¶</a></h3>
 <p>The ring resums the longitudinal (spin/charge) channel with a vertex that
@@ -644,8 +800,8 @@ before any expensive step.</p>
 <p>With <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
 <span class="pre">&quot;general&quot;</span></code>, spin-free system) the FLEX self-energy is the sum of two
 components that are iterated together,</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-20">
-<span class="eqno">(7.31)<a class="headerlink" href="#equation-algorithm-rpa-20" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n),\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-26">
+<span class="eqno">(7.37)<a class="headerlink" href="#equation-algorithm-rpa-26" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n),\]</div>
 <p>where <span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span> is the frequency-independent Hartree-Fock
 self-energy of EVERY accepted interaction term (on-site and off-site;
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes zero on a paramagnetic density) built by the same
@@ -677,20 +833,24 @@ vertices <span class="math notranslate nohighlight">\(S\)</span>, <span class="m
 including the Hartree part <span class="math notranslate nohighlight">\(V(q)\)</span>; bond-diagonal blocks: the exchange
 crossing <span class="math notranslate nohighlight">\(w_t V^{(t)}_{l_1 l_2}(R_m)\)</span>), and the effective interaction
 is</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-21">
-<span class="eqno">(7.32)<a class="headerlink" href="#equation-algorithm-rpa-21" title="Link to this equation">¶</a></span>\[W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)},\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-27">
+<span class="eqno">(7.38)<a class="headerlink" href="#equation-algorithm-rpa-27" title="Link to this equation">¶</a></span>\[W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)},\]</div>
 <p>the ring series from third order on plus the exact second order
-<span class="math notranslate nohighlight">\(W^{(2)}\)</span>: on the channel-0 block <span class="math notranslate nohighlight">\([\tfrac{3}{2} S \bar\chi S +
-\tfrac{1}{2} C \bar\chi C]_{00} - \tfrac{1}{4}(S_{\rm on} + C_{\rm on})
-\bar\chi_{00} (S_{\rm on} + C_{\rm on})\)</span> (the general path’s double-counting
-subtraction restricted to the on-site vertices, so that with every off-site
-coefficient zero the run is identical to the standard Hartree-Fock FLEX),
+<span class="math notranslate nohighlight">\(W^{(2)}\)</span>: on the channel-0 block the second-order kernel of the
+standard general path, built by the same accumulator and therefore selected
+by the same <code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> key (see
+<a class="reference internal" href="#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a>), so that with every off-site coefficient
+zero the run is identical to the standard Hartree-Fock FLEX – under
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> that block is the legacy
+<span class="math notranslate nohighlight">\([\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00} -
+\tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm
+on})\)</span> instead;
 on the mixed channel-0/bond blocks <span class="math notranslate nohighlight">\(\tfrac{1}{4}(S \bar\chi S + C
 \bar\chi C)\)</span> (the exchange skeleton of the off-site interaction, once) and
 zero on the bond-bond blocks (their ring second order is the direct skeleton
 again). The self-energy is</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-22">
-<span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-rpa-22" title="Link to this equation">¶</a></span>\[\Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-28">
+<span class="eqno">(7.39)<a class="headerlink" href="#equation-algorithm-rpa-28" title="Link to this equation">¶</a></span>\[\Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
 e^{+i(k-q)\cdot(R_{m'} - R_m)}\, W_{(m, c, a), (m', d, b)}(q, i\nu)\,
 G_{cd}(k - q, i\omega_n - i\nu),\]</div>
 <p>with the bond form factor on the internal leg at both ends of <span class="math notranslate nohighlight">\(W\)</span>
@@ -698,9 +858,14 @@ G_{cd}(k - q, i\omega_n - i\nu),\]</div>
 block <span class="math notranslate nohighlight">\((m', m)\)</span>), realised as real-space rolls of <span class="math notranslate nohighlight">\(G\)</span>. At second
 order in the couplings this reproduces the direct and exchange skeletons of
 the off-site interaction exactly (pinned by an independent real-space
-enumeration), including the <span class="math notranslate nohighlight">\(UV\)</span> cross term; the standard general path,
-whose vertex is the Hartree part <span class="math notranslate nohighlight">\(V(q)\)</span> only, keeps half of the direct
-<span class="math notranslate nohighlight">\(V^2\)</span> term and no <span class="math notranslate nohighlight">\(UV\)</span> cross term at second order. The ordinary
+enumeration), including the <span class="math notranslate nohighlight">\(UV\)</span> cross term. The standard general path
+under <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code> already carries the direct skeleton and
+the <span class="math notranslate nohighlight">\(UV\)</span> cross term exactly and misses only the exchange skeleton of
+two off-site vertices; under the legacy <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> expression it keeps
+half of the direct <span class="math notranslate nohighlight">\(V^2\)</span> term and no <span class="math notranslate nohighlight">\(UV\)</span> cross term at second
+order. (With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, inter-orbital off-site
+bonds keep a small residual second-order deviation of the bond-resolved
+blocks; orbital-diagonal bonds are exact.) The ordinary
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> outputs of such a run are the
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks of the bond-resolved objects of the last map;
 the sixteen <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> static keys of the previous section are

@@ -314,6 +314,75 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 選ばれ、明示した値も同じ上限と照合されます。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>。FLEXモードで
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の場合のみ)</p>
+<p><strong>説明 :</strong>
+一般（フルバーテックス）経路における FLEX 有効相互作用の2次の項を
+選択します。式は<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照してください。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>（デフォルト）は厳密な <strong>局所</strong> 2次カーネルを構築します。
+オンサイト相互作用（<span class="math notranslate nohighlight">\(R = 0\)</span>の<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>・
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）の2次を完全に含み、さらに
+オフサイト密度項（<span class="math notranslate nohighlight">\(R \neq 0\)</span>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）の直接（バブル）スケルトンと、
+全てのオンサイト・オフサイト混合図（混合図ではオフサイト頂点は
+交差配置に入ります。<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照）を
+含みます。含まれない2次のクラスは <strong>2つのオフサイト頂点</strong> の交換
+スケルトンだけで、これは<span class="math notranslate nohighlight">\(q\)</span>のみの頂点では表現できません。
+オフサイト相互作用について2次を完全に取り込むには、さらに
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>が必要です。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>は従来の Takimoto-Hotta-Ueda の式をそのまま保持します。
+その2次（二重計算の差し引き）の項は
+<span class="math notranslate nohighlight">\(-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
+(\hat{U}^s + \hat{U}^c)\)</span>で、<span class="math notranslate nohighlight">\(\bar\chi\)</span>は裸のバブルです
+（式の全体は<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照）。H-wave 2.0.0 で
+得られた結果を再現するための経路であり、2.x 系列では常に利用できます。</p></li>
+</ul>
+<p><strong>適用範囲：</strong> このキーが意味を持つのは<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>かつ
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の場合のみです。デフォルト値は FLEX が
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を解決した <strong>後</strong> に適用されるため、キーを
+指定しない限りどこでもエラーにはなりません。明示的に指定したキーを
+明示的な<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>と併用した場合は起動時に拒否
+されます。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>が宣言された相互作用に対して
+<code class="docutils literal notranslate"><span class="pre">&quot;reduced&quot;</span></code>に解決される場合も、その解決結果を示すメッセージとともに
+拒否されます（明示的なキーが<code class="docutils literal notranslate"><span class="pre">auto</span></code>を<code class="docutils literal notranslate"><span class="pre">general</span></code>に昇格させる
+ことはありません）。値の誤りは適用範囲の判定より前に拒否されます。
+<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;RPA&quot;</span></code>では、明示的に指定しても FLEX 専用キーに対する
+通常の警告が1度出て無視されます。UHF ソルバーは黙って無視します。
+選択された値は起動時に1行ログ出力され、一般スキームの FLEX 計算の
+全ての出力アーカイブに記録されます（<a class="reference internal" href="../outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">出力ファイルの説明</span></a>を参照）。</p>
+<p><strong>縮退した宣言：</strong> <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
+<strong>オンサイト同一軌道</strong> の行、すなわち<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">=</span> <span class="pre">ry</span> <span class="pre">=</span> <span class="pre">rz</span> <span class="pre">=</span> <span class="pre">0</span></code>かつ
+軌道添字が等しい（<span class="math notranslate nohighlight">\(\alpha = \beta\)</span>）行は起動時に拒否されます。
+このような行は二体項ではありません。一体のレベルシフト、実質的な
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、あるいは恒等的にゼロのいずれかに帰着するためです。
+エラーメッセージは該当行と、その種類に対する
+等価な宣言を示します。メッセージに従って相互作用ファイルを書き直すか、
+当面の回避策として<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>を指定して
+ください（従来の式は一般経路がこれまで受理していた全ての行を受理します）。</p>
+<p><strong>計算コストとメモリ：</strong> <code class="docutils literal notranslate"><span class="pre">tests/sc/second_order_cost.py</span></code>（リポジトリの
+ルートで実行。2軌道の<code class="docutils literal notranslate"><span class="pre">tests/rpa/input_2orb</span></code>の格子と飛び移り、および
+スクリプトが生成する合成 3 軌道正方格子、<span class="math notranslate nohighlight">\(L = 8\)</span>、<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">128</span></code>、
+繰り返し実行の最小値、2026-09）による実測では、<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>における
+<span class="math notranslate nohighlight">\(V_{\rm eff}\)</span>の構築コストは従来の式の約 1.3〜1.6 倍（2軌道・3軌道入力。
+比は実行ごとにこの範囲で変動します）、FLEX の1反復全体では約 1.1〜1.25 倍です。メモリは逆で、
+<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>は2次の項を振動数のバッチで加算するのに対し、従来の式は
+フルサイズの項を3つ確保するため、<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>ではこの段階の
+ピークが<code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>の約3倍になります（<span class="math notranslate nohighlight">\(V_{\rm eff} + 3\,C\)</span>
+に対して<span class="math notranslate nohighlight">\(V_{\rm eff} + C/4 + F\)</span>。<span class="math notranslate nohighlight">\(C\)</span>は
+<span class="math notranslate nohighlight">\(V_{\rm eff}\)</span>のサイズ、<span class="math notranslate nohighlight">\(F\)</span>はコンパイル済みの
+小さな相互作用因子）。一時バッファだけを比べると12倍になるため、
+大規模な再現計算ではデフォルトより多くの RAM が必要になることがあります。</p>
+<p><strong>収束：</strong> SCF の経路はカーネルによって変わり得ます。2軌道の自己無撞着
+テスト系（オンサイト<span class="math notranslate nohighlight">\(U\)</span>・<span class="math notranslate nohighlight">\(U'\)</span>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>と
+オフサイト<span class="math notranslate nohighlight">\(V\)</span>、Anderson 混合）では両方の値で反復回数は同じ
+（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>なしで 9 回、ありで 11 回）でしたが、
+これは1例の観測であって保証ではありません。以前収束していた計算が
+収束しなくなった場合の対処は<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-second-order-tutorial"><span class="std std-ref">FLEX チュートリアル</span></a>を参照してください。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>形式 :</strong> int型, list型, または str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
 <p><strong>説明 :</strong> 感受率行列<span class="math notranslate nohighlight">\(\chi(\vec{q})\)</span>を計算する松原振動数のインデックスを指定します。指定方法は以下のいずれかです。</p>

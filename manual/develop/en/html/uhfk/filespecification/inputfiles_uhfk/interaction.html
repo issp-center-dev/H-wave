@@ -52,7 +52,7 @@ in the wave-number space UHF.</p>
 </dd>
 <dt><strong>Coulomb</strong>:</dt><dd><p>A combined form of CoulombIntra and CoulombInter (intended for RESPACK <code class="docutils literal notranslate"><span class="pre">zvo_ur.dat</span></code>). The on-site same-orbital components (<span class="math notranslate nohighlight">\(r=0\)</span> and <span class="math notranslate nohighlight">\(\alpha=\beta\)</span>) are read as CoulombIntra and the rest as CoulombInter; this is equivalent to specifying CoulombIntra and CoulombInter separately.</p>
 </dd>
-<dt><strong>Hund</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)\)</span></p>
+<dt><strong>Hund</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)\)</span></p>
 </dd>
 <dt><strong>Ising</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})\)</span></p>
 </dd>
@@ -60,10 +60,25 @@ in the wave-number space UHF.</p>
 </dd>
 <dt><strong>Exchange</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}\)</span></p>
 </dd>
-<dt><strong>PairLift</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}\)</span></p>
+<dt><strong>PairLift</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}\)</span></p>
 </dd>
 </dl>
 </div></blockquote>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Two of the expressions above were corrected to match what the solvers
+have always implemented; <strong>no input file needs to be changed</strong>, and no
+numerical result changes.</p>
+<ul class="simple">
+<li><p><strong>Hund</strong>: the implemented convention carries a MINUS sign, as written
+above. A ferromagnetic (same-spin attractive) Hund coupling is
+therefore declared with a POSITIVE coefficient
+<span class="math notranslate nohighlight">\(J^{\rm Hund}_{\alpha\beta}(r_{ij})\)</span>.</p></li>
+<li><p><strong>PairLift</strong>: each declared row enters together with its Hermitian
+conjugate, exactly as <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> does; the <code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">h.c.</span></code> above was
+missing from earlier editions of this page.</p></li>
+</ul>
+</div>
 <p>An example of the file is shown below.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry
     10

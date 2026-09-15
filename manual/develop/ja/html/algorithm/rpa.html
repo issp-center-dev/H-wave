@@ -555,6 +555,152 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 <p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>はスピン軌道数になりました。
 既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
+<section id="flex-2">
+<span id="flex-second-order-kernel"></span><h3>一般 FLEX 経路の2次<a class="headerlink" href="#flex-2" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、ゆらぎ
+自己エネルギーは有効相互作用</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-21">
+<span class="eqno">(7.32)<a class="headerlink" href="#equation-algorithm-rpa-21" title="Link to this equation">¶</a></span>\[V_{\rm eff}(\mathbf{q}, i\nu)
+= \tfrac{3}{2}\hat{U}^s \left[\chi_s - \bar\chi\right] \hat{U}^s
++ \tfrac{1}{2}\hat{U}^c \left[\chi_c - \bar\chi\right] \hat{U}^c
++ W^{(2)}\]</div>
+<p>から構築されます。ここで<span class="math notranslate nohighlight">\(\bar\chi\)</span>は裸のバブル、
+<span class="math notranslate nohighlight">\(\hat{U}^s\)</span>・<span class="math notranslate nohighlight">\(\hat{U}^c\)</span>は ring のスピン・電荷頂点です。
+この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
+<span class="math notranslate nohighlight">\(W^{(2)}\)</span>に含まれます。<span class="math notranslate nohighlight">\(W^{(2)}\)</span>にどの式を使うかは
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>の<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>で選択します（設定ファイルの
+説明を参照）。</p>
+<section id="flex-second-order-local">
+<h4><code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>（デフォルト）<a class="headerlink" href="#flex-second-order-local" title="Link to this heading">¶</a></h4>
+<p>一般化した添字<span class="math notranslate nohighlight">\(p = (\text{サイト}, \text{軌道}, \text{スピン})\)</span>
+を用いて相互作用を<span class="math notranslate nohighlight">\({\cal H}_{\rm int} = \tfrac{1}{2}\sum
+V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r\)</span>と書き、反対称化して
+<span class="math notranslate nohighlight">\(\Gamma_{pq,rs} = V_{pq,rs} - V_{pq,sr}\)</span>とします。厳密な2次
+（スケルトン）自己エネルギーは</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-22">
+<span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-rpa-22" title="Link to this equation">¶</a></span>\[\Sigma^{(2)}_{pp'}(\tau) = -\tfrac{1}{2} \sum_{qrs\,q'r's'}
+\Gamma_{pq,rs}\,\Gamma_{r's',p'q'}\;
+G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau)\]</div>
+<p>です。この和のうち、2本の粒子・正孔線が <strong>1サイト上で閉じる</strong> 図は
+移行運動量<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみに依存する頂点で表現でき、
+したがって<span class="math notranslate nohighlight">\(W^{(2)}\)</span>が厳密に含みます。</p>
+<p><em>オンサイト頂点。</em> 外線のスピンを固定し、3つの内部スピン
+<span class="math notranslate nohighlight">\(\sigma = (\sigma_s, \sigma_r, \sigma_q)\)</span>を全て和すると</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-23">
+<span class="eqno">(7.34)<a class="headerlink" href="#equation-algorithm-rpa-23" title="Link to this equation">¶</a></span>\[W^{(2),\,\rm on}(\mathbf{q}, i\nu)
+= \tfrac{1}{2} \sum_{\sigma}
+  A^{\sigma}_{\rm on}\; \bar\chi(\mathbf{q}, i\nu)\; B^{\sigma}_{\rm on}\]</div>
+<p>となります。<span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span>・
+<span class="math notranslate nohighlight">\(B^{\sigma}_{\rm on}\)</span>は2つの頂点に対応するオンサイトの
+<span class="math notranslate nohighlight">\(\Gamma\)</span>の切り出しで、<span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span>はスケルトンの
+対称因子です。単一バンドの Hubbard 相互作用ではよく知られた
+<span class="math notranslate nohighlight">\(U^2 \bar\chi\)</span>に帰着します。</p>
+<p><em>オフサイト頂点。</em> 一般経路が受理するオフサイト項は密度項です
+（<span class="math notranslate nohighlight">\(R \neq 0\)</span>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>。
+オフサイトの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は密度成分を持たず寄与しません）。その
+フーリエ変換を<span class="math notranslate nohighlight">\(v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q})\)</span>と
+書くと、対応する因子は対基底の密度スロット上にあり</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-24">
+<span class="eqno">(7.35)<a class="headerlink" href="#equation-algorithm-rpa-24" title="Link to this equation">¶</a></span>\[A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q})\]</div>
+<p>となります。これは対基底の密度スロット上の行列（それ以外のスロットではゼロ）で
+あり、以下で<span class="math notranslate nohighlight">\(\bar\chi\)</span>と取る積は<span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span>・
+<span class="math notranslate nohighlight">\(B^{\sigma}_{\rm on}\)</span>の場合と同様、この対空間での行列積です。
+したがって2次カーネル全体は</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-25">
+<span class="eqno">(7.36)<a class="headerlink" href="#equation-algorithm-rpa-25" title="Link to this equation">¶</a></span>\[W^{(2)} = W^{(2),\,\rm on} + \sum_{\sigma} \Big[
+  A^{\sigma}_{\rm on}\,\bar\chi\,B^{\sigma}_{v}
++ A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{\rm on}
++ A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{v} \Big]\]</div>
+<p>です。オフサイトを含む3項には係数<span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span>が <strong>付きません</strong> 。
+理由は数え上げにあります。上の反対称化された和では、個々の物理的な2次の図が
+2回現れます（2つのコピーは<span class="math notranslate nohighlight">\(r \leftrightarrow s\)</span>、
+<span class="math notranslate nohighlight">\(r' \leftrightarrow s'\)</span>の付け替えで移り合い、対称因子
+<span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span>がこれを相殺します）。ある頂点が
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの量で表現できるのは、その内線が外線と同じサイトに
+ある場合です。オンサイト頂点では2つのコピーの双方でこれが成り立ちますが、
+オフサイト頂点では <strong>交差配置</strong> のときにしか成り立ちません。よって
+オフサイト頂点を含む図は2つのコピーのうち高々1つしか残らず、残った側は
+重み<span class="math notranslate nohighlight">\(2 \times \tfrac{1}{2} = 1\)</span>を担うことになります。</p>
+<p>分類は次のとおりです。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 35.0%" />
+<col style="width: 12.0%" />
+<col style="width: 28.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>頂点</p></th>
+<th class="head"><p>オフサイト頂点の配置</p></th>
+<th class="head"><p>局所か</p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(W^{(2)}\)</span>での重み</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>オンサイト / オンサイト（種類・配置によらず）</p></td>
+<td><p>--</p></td>
+<td><p>はい</p></td>
+<td><p><span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>オンサイト（種類によらず）/ オフサイト</p></td>
+<td><p>全ての混合図：一方のコピーでは必ずオフサイト頂点が交差配置になる</p></td>
+<td><p>はい</p></td>
+<td><p><span class="math notranslate nohighlight">\(1\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p>オフサイト / オフサイト</p></td>
+<td><p>直接（バブル）トポロジー</p></td>
+<td><p>はい</p></td>
+<td><p><span class="math notranslate nohighlight">\(1\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>オフサイト / オフサイト</p></td>
+<td><p>交換（交差）トポロジー</p></td>
+<td><p>いいえ</p></td>
+<td><p><span class="math notranslate nohighlight">\(0\)</span>。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>を参照</p></td>
+</tr>
+</tbody>
+</table>
+<p>重みがゼロになる唯一のクラス、すなわち <strong>2つのオフサイト頂点</strong> の交換
+スケルトンは、2つのフェルミオン運動量に依存し<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみでは
+表現できません。これは次節のボンド拡張した対基底の上で足し上げられるため、
+オフサイト相互作用について2次の完全性が必要な計算では
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定してください。</p>
+<p>具体例を2つ挙げます。1軌道でオフサイト<span class="math notranslate nohighlight">\(V\)</span>のみの場合、スピン和を
+含む直接スケルトンは<span class="math notranslate nohighlight">\(2 V(\mathbf{q})^2 \bar\chi\)</span>となります。また
+オンサイト<span class="math notranslate nohighlight">\(U\)</span>とオフサイト<span class="math notranslate nohighlight">\(V\)</span>が同時にある場合には交差項
+<span class="math notranslate nohighlight">\(2 U V(\mathbf{q}) \bar\chi\)</span>が生じますが、これは Hartree 部分のみから
+作った<span class="math notranslate nohighlight">\(q\)</span>依存頂点には含まれません。</p>
+</section>
+<section id="flex-second-order-takimoto">
+<h4><code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code><a class="headerlink" href="#flex-second-order-takimoto" title="Link to this heading">¶</a></h4>
+<p>この値では、従来の Takimoto-Hotta-Ueda の形の有効相互作用</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-26">
+<span class="eqno">(7.37)<a class="headerlink" href="#equation-algorithm-rpa-26" title="Link to this equation">¶</a></span>\[V_{\rm eff} = \tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s
++ \tfrac{1}{2}\hat{U}^c \chi_c \hat{U}^c
+- \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
+  \left(\hat{U}^s + \hat{U}^c\right)\]</div>
+<p>をそのまま使います。すなわち<span class="math notranslate nohighlight">\(W^{(2)} = \tfrac{3}{2}\hat{U}^s
+\bar\chi \hat{U}^s + \tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c -
+\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)\)</span>です。
+これは単一バンドの Hubbard 相互作用については2次で厳密ですが、その他の項に
+ついては近似であり、H-wave 2.0.0 以前のリリースで得られた結果を再現するために
+残されています。</p>
+<p>したがって、<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの単一バンド入力では両方の値が丸め誤差の
+範囲で一致し、多軌道のオンサイト相互作用（<span class="math notranslate nohighlight">\(U'\)</span>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）と
+オフサイト相互作用では一般経路の結果が変わります。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>では、ボンド分解した有効相互作用の
+チャネル0ブロックも同じカーネルで構築されるため、単一バンドの
+<span class="math notranslate nohighlight">\(U + V\)</span>入力でも2つの値は一致します（ボンド分解チャネルは
+もともと直接<span class="math notranslate nohighlight">\(V\)</span>の2次を厳密に含んでいました）。このオプション
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）を有効にした場合でも
+なお小さな2次のずれが残るのは軌道間（軌道非対角）のオフサイトボンドの
+ボンド分解ブロックだけで、軌道対角のボンドは厳密です。この差の解消は
+今後の課題です。</p>
+</div>
+</section>
+</section>
 <section id="rpa-longitudinal-bond">
 <span id="id7"></span><h3>ボンド分解した縦方向チャネル（実験的機能）<a class="headerlink" href="#rpa-longitudinal-bond" title="Link to this heading">¶</a></h3>
 <p>ring は縦方向（スピン・電荷）チャネルを、移行運動量<span class="math notranslate nohighlight">\(q\)</span>のみに
@@ -605,8 +751,8 @@ Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての<span class=
 <span id="flex-bond-hf"></span><h3>Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）<a class="headerlink" href="#hartree-fock-flex" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、
 スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-21">
-<span class="eqno">(7.32)<a class="headerlink" href="#equation-algorithm-rpa-21" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n)\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-27">
+<span class="eqno">(7.38)<a class="headerlink" href="#equation-algorithm-rpa-27" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n)\]</div>
 <p>になります。ここで<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>は、受理された <strong>全て</strong> の相互作用項
 （オンサイト・オフサイト。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は常磁性密度に対してゼロ）の振動数に依らない
 Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネルにより、ドレスドグリーン関数の
@@ -629,26 +775,33 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 スピン・電荷チャネルは同じ頂点<span class="math notranslate nohighlight">\(S\)</span>・<span class="math notranslate nohighlight">\(C\)</span>（チャネル0ブロック：Hartree 部分
 <span class="math notranslate nohighlight">\(V(q)\)</span>を含む一般経路の頂点、ボンド対角ブロック：交換交差
 <span class="math notranslate nohighlight">\(w_t V^{(t)}_{l_1 l_2}(R_m)\)</span>）で振動数のバッチごとにドレスされ、有効相互作用は</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-22">
-<span class="eqno">(7.33)<a class="headerlink" href="#equation-algorithm-rpa-22" title="Link to this equation">¶</a></span>\[W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}\]</div>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-28">
+<span class="eqno">(7.39)<a class="headerlink" href="#equation-algorithm-rpa-28" title="Link to this equation">¶</a></span>\[W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}\]</div>
 <p>すなわち3次以上の ring 級数と厳密な2次項<span class="math notranslate nohighlight">\(W^{(2)}\)</span>の和です。<span class="math notranslate nohighlight">\(W^{(2)}\)</span>は、
-チャネル0ブロックでは<span class="math notranslate nohighlight">\([\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
+チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されるため
+同じ<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>キーで選択されます（<a class="reference internal" href="#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照）。
+これによりオフサイト係数が全てゼロなら計算は標準の Hartree-Fock FLEX と同一になります。
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>では、このブロックは従来の
+<span class="math notranslate nohighlight">\([\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
 - \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})\)</span>
-（一般経路の二重計算補正をオンサイト頂点に限定したもの。オフサイト係数が全てゼロなら
-計算は標準の Hartree-Fock FLEX と同一）、チャネル0とボンドの混合ブロックでは
+になります。チャネル0とボンドの混合ブロックでは
 <span class="math notranslate nohighlight">\(\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)\)</span>（オフサイト相互作用の交換スケルトンを
 1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
 自己エネルギーは</p>
-<div class="math notranslate nohighlight" id="equation-algorithm-rpa-23">
-<span class="eqno">(7.34)<a class="headerlink" href="#equation-algorithm-rpa-23" title="Link to this equation">¶</a></span>\[\Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-29">
+<span class="eqno">(7.40)<a class="headerlink" href="#equation-algorithm-rpa-29" title="Link to this equation">¶</a></span>\[\Sigma_{ab}(k, i\omega_n) = \frac{T}{N} \sum_{q, \nu} \sum_{m m'} \sum_{cd}
 e^{+i(k-q)\cdot(R_{m'} - R_m)}\, W_{(m, c, a), (m', d, b)}(q, i\nu)\,
 G_{cd}(k - q, i\omega_n - i\nu)\]</div>
 <p>で、ボンドの形状因子は<span class="math notranslate nohighlight">\(W\)</span>の両端で内線側に付き（<span class="math notranslate nohighlight">\(W\)</span>のブロック
 <span class="math notranslate nohighlight">\((m, m')\)</span>はバブルのブロック<span class="math notranslate nohighlight">\((m', m)\)</span>の位相と対になります）、実空間では
 <span class="math notranslate nohighlight">\(G\)</span>の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
 スケルトンを<span class="math notranslate nohighlight">\(UV\)</span>交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
-一方、Hartree 部分<span class="math notranslate nohighlight">\(V(q)\)</span>のみを頂点に持つ標準の一般経路は、2次で直接<span class="math notranslate nohighlight">\(V^2\)</span>
-項の半分のみを持ち、<span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。このような計算の通常の
+標準の一般経路も<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>では直接スケルトンと
+<span class="math notranslate nohighlight">\(UV\)</span>交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです。
+従来の<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>の式では、2次で直接<span class="math notranslate nohighlight">\(V^2\)</span>項の半分のみを持ち、
+<span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。（このオプション（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）を
+有効にした場合でも、軌道間のオフサイトボンドではボンド分解ブロックに小さな2次のずれが
+残ります。軌道対角のボンドは厳密です。）このような計算の通常の
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>出力は、最後の写像のボンド分解した量の
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。前節の16個の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>静的キーも
 書き出され、要求に応じて動的チャネル全体も出力されます

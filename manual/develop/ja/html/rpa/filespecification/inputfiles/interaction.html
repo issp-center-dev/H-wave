@@ -49,7 +49,7 @@
 </dd>
 <dt><strong>CoulombInter</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}\)</span>, <span class="math notranslate nohighlight">\(\quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}\)</span></p>
 </dd>
-<dt><strong>Hund</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)\)</span></p>
+<dt><strong>Hund</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)\)</span></p>
 </dd>
 <dt><strong>Ising</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})\)</span></p>
 </dd>
@@ -57,10 +57,23 @@
 </dd>
 <dt><strong>Exchange</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}\)</span></p>
 </dd>
-<dt><strong>PairLift</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}\)</span></p>
+<dt><strong>PairLift</strong>:</dt><dd><p><span class="math notranslate nohighlight">\(\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.\)</span></p>
 </dd>
 </dl>
 </div></blockquote>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>上の式のうち2つは、ソルバーが以前から実装している内容に合わせて修正した
+ものです。<strong>入力ファイルを変更する必要はなく</strong>、数値結果も変わりません。</p>
+<ul class="simple">
+<li><p><strong>Hund</strong>: 実装されている規約は上のとおりマイナス符号を伴います。
+したがって強磁性的な（同スピン間で引力的な）Hund 結合は、係数
+<span class="math notranslate nohighlight">\(J^{\rm Hund}_{\alpha\beta}(r_{ij})\)</span>を正の値として宣言します。</p></li>
+<li><p><strong>PairLift</strong>: 宣言した各行はそのエルミート共役とともにハミルトニアンに
+含まれます（<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>と同様）。改訂前の本ページでは<code class="docutils literal notranslate"><span class="pre">+</span> <span class="pre">h.c.</span></code>の
+記載が漏れていました。</p></li>
+</ul>
+</div>
 <p>以下にファイル例を示します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry
     10

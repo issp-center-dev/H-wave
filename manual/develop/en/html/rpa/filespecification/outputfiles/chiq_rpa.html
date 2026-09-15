@@ -71,7 +71,7 @@ regarded as those of the sublattice.</p>
 <p>The output file of <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> can be used as a pre-calculated input of the irreducible
 susceptibility by specifying the file to <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> section.</p>
 <section id="scheme-provenance">
-<h2>Scheme provenance<a class="headerlink" href="#scheme-provenance" title="Link to this heading">¶</a></h2>
+<span id="rpa-chiq-provenance"></span><h2>Scheme provenance<a class="headerlink" href="#scheme-provenance" title="Link to this heading">¶</a></h2>
 <p>Every <code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> file written by RPA and FLEX (2.0 and later) carries three plain-string fields, loaded as 0-d arrays (use <code class="docutils literal notranslate"><span class="pre">.item()</span></code>):</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>: the scheme the file was computed with (<code class="docutils literal notranslate"><span class="pre">reduced</span></code> | <code class="docutils literal notranslate"><span class="pre">general</span></code>).</p></li>
@@ -79,6 +79,29 @@ susceptibility by specifying the file to <code class="docutils literal notransla
 <li><p><code class="docutils literal notranslate"><span class="pre">scheme_resolution</span></code>: how it was decided. Closed vocabulary (changing it is an output-format change): <code class="docutils literal notranslate"><span class="pre">explicit</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:ring_ladder</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:general_only</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:no_discarded_content</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:diagonal_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:exact:folded_diagonal</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:extern</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:mixed:green_init</span></code>, <code class="docutils literal notranslate"><span class="pre">auto:flex_forcing</span></code>.</p></li>
 </ul>
 <p>Files written by 1.0.x lack these fields; readers do not require them.</p>
+<p>A FLEX run with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> writes two further fields into
+every archive it produces (<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and the dedicated bond
+archive; IR-native and densified variants alike):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>: the second-order kernel of the effective
+interaction the run used (<code class="docutils literal notranslate"><span class="pre">local</span></code> | <code class="docutils literal notranslate"><span class="pre">takimoto</span></code>), stored as a 0-d
+<code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code> string array (use <code class="docutils literal notranslate"><span class="pre">str(...)</span></code> or <code class="docutils literal notranslate"><span class="pre">.item()</span></code>). See
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> in the <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> section of the
+configuration reference and <a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: the schema version of that record,
+currently <code class="docutils literal notranslate"><span class="pre">1</span></code> (0-d <code class="docutils literal notranslate"><span class="pre">int64</span></code>).</p></li>
+</ul>
+<p>Both fields are ABSENT from <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> archives, from RPA
+archives, and from any archive written before this key was introduced
+(H-wave 2.0.0 and earlier). A missing field is
+never an error: every H-wave reader accepts such a file. When the initial
+self-energy given by <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> (the seed) records a different kernel
+from the current run, the solver logs one warning at WARNING level (and
+one message at INFO level when the seed carries no record at all); scripts
+that compare the member list of an archive strictly (the <code class="docutils literal notranslate"><span class="pre">files</span></code>
+attribute of the object returned by <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>) must allow the two
+additional names.</p>
 </section>
 </section>
 <section id="data-format-of-chi0q">
