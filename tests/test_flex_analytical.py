@@ -1028,6 +1028,17 @@ class TestFLEXSchemeGuards(unittest.TestCase):
     # transfer-format body that registers as an Exchange interaction
     _EXCHANGE_BODY = ("Exchange\n1\n1\n 1\n"
                       "   0    0    0    1    1   0.500000000000   0.0\n")
+    #: An OFF-SITE Exchange bond. The auto rule reads only the declared TYPES,
+    #: so this selects 'general' exactly like the on-site body above; it is
+    #: used where the solver is actually CONSTRUCTED, because the on-site
+    #: same-orbital row above is the degenerate D7 case
+    #: (v c+_up c_up c+_dn c_dn = v n_up n_dn, a CoulombIntra in disguise) and
+    #: the default second-order kernel refuses it at construction with an
+    #: actionable remedy (spec 2026-09-08 D7). The on-site body stays where the
+    #: construction is EXPECTED to be refused before the kernel is reached.
+    _EXCHANGE_OFFSITE_BODY = ("Exchange\n1\n2\n 1 1\n"
+                              "   1    0    0    1    1   0.500000000000   0.0\n"
+                              "  -1    0    0    1    1   0.500000000000   0.0\n")
     _PAIRHOP_BODY = ("PairHop\n1\n1\n 1\n"
                      "   0    0    0    1    1   0.500000000000   0.0\n")
 
@@ -1073,7 +1084,7 @@ class TestFLEXSchemeGuards(unittest.TestCase):
             interactions={
                 'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
                                 "   0    0    0    1    1   1.0   0.0\n",
-                'Exchange': self._EXCHANGE_BODY,
+                'Exchange': self._EXCHANGE_OFFSITE_BODY,
             })
         self.assertEqual(solver.calc_scheme, 'general')
 

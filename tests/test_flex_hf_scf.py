@@ -42,7 +42,8 @@ p = "tests/rpa/input_2orb"
 idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
 r = read_input_k.QLMSkInput({"path_to_input": p, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson"}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson",
+       "flex_second_order": "takimoto"}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
 s.solve(gi, out)
@@ -52,7 +53,15 @@ s.save_results({"path_to_output": out, "sigma": "sigma.npz", "green": "green.npz
 
 class TestG0Off(unittest.TestCase):
     """Gate-off inputs: every archive member and the complete log stream
-    equal those of develop (the main checkout)."""
+    equal those of develop (the main checkout).
+
+    The run below pins flex_second_order = "takimoto" explicitly: this
+    guard's contract is develop identity, and develop has no second-order
+    key, so the comparison has to be made against the kernel develop
+    implements (spec 2026-09-08 D2). The new default ("local") is compared
+    against this same legacy kernel by
+    tests/test_flex_second_order_compat.py.
+    """
 
     def test_byte_identity_against_develop(self):
         here = os.getcwd()

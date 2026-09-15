@@ -571,6 +571,26 @@ class FLEX(RPA):
         # the schemes would drop them entirely -- the former warning here
         # called that an 'approximation', which for those types it is not.
 
+        # Second-order kernel factors (spec 2026-09-08 section 2.5). Built
+        # once, at CONSTRUCTION, and only for the general scheme under
+        # flex_second_order = "local": the compiler's refusals (the D7
+        # degenerate-row ValueError and the Hermiticity ValueError) must
+        # reach the user before any solve work is done. Deliberately placed
+        # AFTER the scheme block above so the enable_spin_orbital refusal --
+        # which the compiler does not implement and would otherwise hit as
+        # an obscure shape error -- keeps its precedence (#83).
+        self._second_order_factors = None
+        self._second_order_device = None
+        if self.calc_scheme == "general" and self.flex_second_order == "local":
+            from hwave.solver.offsite import split_locality
+            from hwave.solver.second_order import build_factors
+            split = split_locality(self.ham_info, self.lattice)
+            self._second_order_factors = build_factors(split, self.lattice, self.norb)
+            logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
+                len(self._second_order_factors.triples),
+                "yes" if self._second_order_factors.vpair is not None else "no",
+                self._second_order_factors.nbytes / 2 ** 20))
+
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
 
@@ -856,18 +876,31 @@ class FLEX(RPA):
         # _inflate_chi0q_and_ham_general is emitted once per solve, not
         # once per object.
         self._myo_sc_cache = None
-        if getattr(self, "_phase_b_active", False):
-            self._path_to_output = path_to_output
-            try:
-                if getattr(self, "_info_outputfile", None) is not None:
-                    self.validate_output_paths(path_to_output=path_to_output)
-                return self._solve_restoring_host_attrs(green_info, path_to_output)
-            except BaseException:
-                # spec 3.5: after a failed solve nothing is produced -- every
-                # solve-produced member and solver-owned cache is dropped
-                self._phase_b_reset(green_info)
-                raise
-        return self._solve_restoring_host_attrs(green_info, path_to_output)
+        # The device mirror of the second-order factors is solve-scoped too:
+        # _solve_impl builds it on the GPU path only, and it is dropped here
+        # on normal completion AND after an exception, so a reused or
+        # inspected solver never holds another solve's device arrays (the
+        # same discipline as the public array attributes of issue #63). The
+        # reset lives HERE rather than in _solve_restoring_host_attrs because
+        # that helper is single-sourced with RPA on purpose
+        # (tests/test_flex_analytical.py::TestSolveHostRestoreIsSingleSourced)
+        # and _second_order_device is FLEX-only state. The host pack
+        # (_second_order_factors) is untouched and stays authoritative.
+        try:
+            if getattr(self, "_phase_b_active", False):
+                self._path_to_output = path_to_output
+                try:
+                    if getattr(self, "_info_outputfile", None) is not None:
+                        self.validate_output_paths(path_to_output=path_to_output)
+                    return self._solve_restoring_host_attrs(green_info, path_to_output)
+                except BaseException:
+                    # spec 3.5: after a failed solve nothing is produced -- every
+                    # solve-produced member and solver-owned cache is dropped
+                    self._phase_b_reset(green_info)
+                    raise
+            return self._solve_restoring_host_attrs(green_info, path_to_output)
+        finally:
+            self._second_order_device = None
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -976,6 +1009,19 @@ class FLEX(RPA):
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
+            # Per-solve device mirror of the second-order factors (spec
+            # 2.5): the host pack stays intact and authoritative, so a
+            # reused solver never depends on a previous solve's backend.
+            # Dropped in the finally of _solve_restoring_host_attrs.
+            if self._second_order_factors is not None:
+                from hwave.solver.second_order import SecondOrderFactors
+                f = self._second_order_factors
+                self._second_order_device = SecondOrderFactors(
+                    norb=f.norb, nd=f.nd, nvol=f.nvol, triples=f.triples,
+                    A_on=tuple(xp.asarray(a) for a in f.A_on),
+                    B_on=tuple(xp.asarray(b) for b in f.B_on),
+                    vpair=None if f.vpair is None else xp.asarray(f.vpair),
+                    nbytes=f.nbytes)
 
         # Step 2: Compute bare Green's function G0(k, iwn)
         if self.use_ir:
@@ -2687,7 +2733,9 @@ class FLEX(RPA):
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
-        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
+        factors = self._second_order_device or self._second_order_factors
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors,
+                                        second_order=self.flex_second_order)
         # chi0q / chi_s / chi_c are already in the native RPA [a,c,b,d]
         # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
         # what the public output and the Eliashberg loader expect: the loader
@@ -3286,7 +3334,8 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
-    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc):
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc, factors=None,
+                           second_order="takimoto"):
         r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
 
         Implements the fluctuation part of the paramagnetic full-vertex
@@ -3324,14 +3373,87 @@ class FLEX(RPA):
             MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
             MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+        factors : SecondOrderFactors, optional
+            The compiled second-order factor pack
+            (:func:`hwave.solver.second_order.build_factors`), host- or
+            device-backed. Required by ``second_order = "local"`` and ignored
+            by ``"takimoto"``.
+        second_order : str
+            ``"takimoto"`` (the legacy kernel above, unchanged) or ``"local"``
+            (spec 2026-09-08): the ring is taken from THIRD order on and the
+            exact local second order is added instead, see below.
 
         Returns
         -------
         ndarray
             Effective interaction V_eff, shape
             ``(nmat, nvol, norb^2, norb^2)``.
+
+        Notes
+        -----
+        With ``second_order = "local"`` the assembly is
+
+            V(q) = 3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                   + W2(chibar)
+
+        (spec 2026-09-08 section 2.3): subtracting the bare bubble removes the
+        whole second order from the two RPA channels -- what is left of them
+        starts at third order -- and ``W2``, the exact local second-order
+        kernel of :func:`hwave.solver.second_order.accumulate_batch`, replaces
+        it. For a one-band Hubbard interaction the two agree identically; they
+        differ wherever the MYO S/C reduction is not exact at second order
+        (Hund/Exchange/PairHop/PairLift and every off-site type).
+
+        The local assembly runs in frequency batches of ``nb = max(1, nmat //
+        8)``, so besides ``v_eff`` itself no full-size ``(nmat, nvol, ndx,
+        ndx)`` array is ever materialised -- neither ``W2`` nor any product.
+        The batch loop owns exactly TWO ``(nb, nvol, ndx, ndx)`` buffers
+        (``T1``/``T2``, allocated once and reused across batches and across
+        both channels: every product goes through ``matmul(..., out=)``
+        rather than an expression temporary), and
+        :func:`~hwave.solver.second_order.accumulate_batch` allocates two more
+        of the same size per call, so four are live at the peak -- twice the
+        ``T_bytes = 2 nb nvol ndx^2 * 16`` of one such pair.
         """
         logger.debug(">>> FLEX._calc_veff_general")
+
+        if second_order == "local":
+            from hwave.solver.second_order import accumulate_batch
+            if factors is None:
+                raise ValueError('flex_second_order = "local" needs the compiled factors')
+            xp = _bk.array_module_of(chi0q)
+            nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+            ndx = chi0q.shape[2] * chi0q.shape[3]
+            # Same flatten as the takimoto body below: row (l1 * norb + l2),
+            # column (l3 * norb + l4) -- the pair convention accumulate_batch
+            # reads its chibar in (pinned by tests/test_second_order_oracle.py,
+            # which feeds it this very array).
+            chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+            chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+            chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+            UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
+            UcB = Uc[np.newaxis]
+            v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
+            nb = max(1, nmat // 8)
+            T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            for l0 in range(0, nmat, nb):
+                l1 = min(nmat, l0 + nb)
+                n = l1 - l0
+                out = v_eff[l0:l1]
+                # the ring from third order on:
+                #   3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                for chi_2d, UB, w in ((chis_2d, UsB, 1.5), (chic_2d, UcB, 0.5)):
+                    xp.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+                    xp.matmul(UB, T1[:n], out=T2[:n])
+                    xp.matmul(T2[:n], UB, out=T1[:n])
+                    T1[:n] *= w
+                    out += T1[:n]
+                # the exact local second order, added in place into the view
+                accumulate_batch(out, chi0_2d[l0:l1], l0, factors)
+            return v_eff
+        if second_order != "takimoto":
+            raise ValueError("unknown second_order {!r}".format(second_order))
 
         nmat, nvol = chi0q.shape[0], chi0q.shape[1]
         no = chi0q.shape[2]
