@@ -29,20 +29,21 @@ def _factors_norb1(rows_by_type, shape=(4, 4, 1)):
     from hwave.solver.second_order import build_factors
     from tests.test_second_order_factors import _write_wan
 
-    d = tempfile.mkdtemp()
-    for f in ("geom.dat", "transfer.dat"):
-        shutil.copy(os.path.join("tests/rpa/input", f), d)
-    idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
-    for t, rows in rows_by_type.items():
-        _write_wan(os.path.join(d, t.lower() + ".dat"), t, 1, rows)
-        idict[t] = t.lower() + ".dat"
-    r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
-    par = {"T": 2.0, "filling": 0.5, "CellShape": list(shape), "SubShape": [1, 1, 1],
-           "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1, "flex_second_order": "takimoto"}
-    s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
-                                               "enable_spin_orbital": False,
-                                               "calc_scheme": "general"})
-    return build_factors(split_locality(s.ham_info, s.lattice), s.lattice, 1)
+    with tempfile.TemporaryDirectory() as d:
+        for f in ("geom.dat", "transfer.dat"):
+            shutil.copy(os.path.join("tests/rpa/input", f), d)
+        idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        for t, rows in rows_by_type.items():
+            _write_wan(os.path.join(d, t.lower() + ".dat"), t, 1, rows)
+            idict[t] = t.lower() + ".dat"
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": list(shape), "SubShape": [1, 1, 1],
+               "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "flex_second_order": "takimoto"}
+        s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                                   "enable_spin_orbital": False,
+                                                   "calc_scheme": "general"})
+        return build_factors(split_locality(s.ham_info, s.lattice), s.lattice, 1)
 
 
 def _random_chibar(nmat, nvol, nd, seed, hermitian_pair=True):
@@ -163,6 +164,68 @@ class TestKernel(unittest.TestCase):
                 accumulate_batch(np.zeros_like(cb), cb, 0, f, work=bad)
             self.assertIn("accumulate_batch", str(cm.exception))
             self.assertIn("expected chibar_b's (8, 16, 4, 4)", str(cm.exception))
+
+    def test_every_matmul_output_is_contiguous(self):
+        """Portability of the ``out=`` targets: the natural sub-block of a
+        scratch buffer (``T2[:, :, :, :norb]`` and friends) is STRIDED, which
+        numpy accepts as ``matmul(out=)`` but another array module need not,
+        and the GPU path does reach this kernel. Every ``out=`` the kernel
+        passes must therefore be C-contiguous -- asserted here by wrapping the
+        array module's ``matmul`` for the duration of one call -- while the
+        density-slot gathers and scatters stay strided views (no ``out=``).
+
+        A caller that lends NON-contiguous buffers of the right shape is not
+        an error: the kernel ignores the loan and allocates its own, and the
+        result must be the same."""
+        from unittest import mock
+        from hwave.solver import backend as _bk
+        from hwave.solver.second_order import accumulate_batch, dense_w2
+        s, f = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.4, 0.0)],
+                         "Hund": [(0, 0, 0, 1, 2, 0.2, 0.0), (0, 0, 0, 2, 1, 0.2, 0.0)],
+                         "CoulombInter": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]})
+        self.assertGreater(f.norb, 1)          # nd > norb: the sub-blocks are strided
+        self.assertIsNotNone(f.vpair)          # the off-site branch runs
+        cb = _random_chibar(8, 16, 4, 5)
+        ref = dense_w2(cb, f)
+        self.assertGreater(np.abs(ref).max(), 1e-6)            # anti-vacuity
+
+        seen = []
+        real = np.matmul
+
+        def checking_matmul(a, b, out=None, **kw):
+            if out is not None:
+                seen.append(bool(out.flags.c_contiguous))
+                self.assertTrue(out.flags.c_contiguous,
+                                "matmul out= is not contiguous: shape {} strides {}"
+                                .format(out.shape, out.strides))
+            return real(a, b, out=out, **kw) if out is not None else real(a, b, **kw)
+
+        class _Proxy:
+            matmul = staticmethod(checking_matmul)
+
+            def __getattr__(self, name):
+                return getattr(np, name)
+
+        got = np.zeros_like(cb)
+        T1, T2 = np.empty_like(cb), np.empty_like(cb)
+        with mock.patch.object(_bk, "array_module_of", return_value=_Proxy()):
+            accumulate_batch(got, cb, 0, f, work=(T1, T2))
+        self.assertGreater(len(seen), 4)                       # the wrapper really ran
+        self.assertTrue(all(seen))
+        np.testing.assert_array_equal(got, ref)
+
+        # a non-contiguous loan of the right shape: accepted, own buffers used
+        big = np.empty((8, 16, 8, 4), complex)
+        nc1, nc2 = big[:, :, ::2, :], big[:, :, 1::2, :]
+        self.assertFalse(nc1.flags.c_contiguous)
+        got2 = np.zeros_like(cb)
+        with mock.patch.object(_bk, "array_module_of", return_value=_Proxy()):
+            accumulate_batch(got2, cb, 0, f, work=(nc1, nc2))
+        np.testing.assert_array_equal(got2, ref)
+        # a mis-shaped loan is still refused
+        with self.assertRaises(ValueError):
+            accumulate_batch(np.zeros_like(cb), cb, 0, f,
+                             work=(np.empty((7, 16, 4, 4), complex), np.empty_like(cb)))
 
     def test_allocation_peak_with_lent_buffers(self):
         """Spec 2.5's budget, measured: with ``work`` supplied the kernel

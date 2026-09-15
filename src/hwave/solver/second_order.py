@@ -330,6 +330,22 @@ def _dens_slice(norb):
     return slice(None, None, norb + 1)
 
 
+def _carve(T, shape):
+    """A C-contiguous view of ``shape`` carved out of the front of the
+    C-contiguous scratch buffer ``T``.
+
+    The off-site terms need ``(nb, nvol, nd, norb)``-shaped and smaller
+    output arrays, and the natural sub-block of ``T`` -- ``T[:, :, :, :norb]``
+    and friends -- is STRIDED. numpy's ``matmul`` accepts a strided ``out=``,
+    but that is not portable (CuPy's need not), so the scratch is taken from
+    the buffer's flat memory instead: same bytes, no allocation, contiguous.
+    """
+    n = 1
+    for d in shape:
+        n *= int(d)
+    return T.reshape(-1)[:n].reshape(shape)
+
+
 def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     """Add W2 (spec 2.3 + 2.4) for the bosonic frequencies [l0, l0 + nb)
     into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused.
@@ -344,13 +360,20 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     the buffers are allocated per call, as before. The buffers are
     scratch: their contents on entry are irrelevant and are overwritten.
 
+    The lent buffers must be C-contiguous, which is how both production
+    callers allocate them: the off-site terms need sub-blocks of them as
+    ``matmul`` output (:func:`_carve`), and a strided ``out=`` is not
+    portable across array modules (numpy accepts it, CuPy need not). A
+    non-contiguous pair of the right shape is not an error -- the kernel
+    then allocates its own two contiguous buffers and ignores the loan --
+    while a mis-shaped one still raises.
+
     Allocation contract (pinned by
     ``tests/test_second_order_kernel.py::TestKernel::
     test_allocation_peak_with_lent_buffers``): with ``work`` supplied the
     kernel allocates NOTHING that scales with ``nb * nvol * nd^2``. Every
-    product is written with ``matmul(..., out=)`` into the lent buffers
-    (the off-site terms into sub-blocks of them, which are strided views),
-    and every density-slot gather and scatter goes through
+    product is written with ``matmul(..., out=)`` into a CONTIGUOUS view of
+    the lent buffers, and every density-slot gather and scatter goes through
     :func:`_dens_slice`, i.e. basic indexing -- a view, not a fancy-index
     copy. The one allocation left is the boolean mask of the finiteness
     checkpoint below, ``nb * nvol * nd^2`` bytes (a sixteenth of one
@@ -360,17 +383,21 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     """
     xp = _bk.array_module_of(chibar_b)
     norb = factors.norb
-    nb = chibar_b.shape[0]
-    if work is None:
-        T1 = xp.empty_like(chibar_b)
-        T2 = xp.empty_like(chibar_b)
-    else:
+    nb, nvol, nd = chibar_b.shape[0], chibar_b.shape[1], chibar_b.shape[2]
+    lent = work is not None
+    if lent:
         T1, T2 = work
         for name, T in (("work[0]", T1), ("work[1]", T2)):
             if tuple(T.shape) != tuple(chibar_b.shape):
                 raise ValueError(
                     "accumulate_batch: {} has shape {}, expected chibar_b's {}"
                     .format(name, tuple(T.shape), tuple(chibar_b.shape)))
+        # the off-site terms carve contiguous sub-blocks out of these
+        lent = bool(T1.flags.c_contiguous and T2.flags.c_contiguous)
+    if not lent:
+        # xp.empty (not empty_like): C-contiguous whatever chibar_b's layout
+        T1 = xp.empty(tuple(chibar_b.shape), dtype=chibar_b.dtype)
+        T2 = xp.empty(tuple(chibar_b.shape), dtype=chibar_b.dtype)
     ds = _dens_slice(norb)
     vp = None
     if factors.vpair is not None:
@@ -402,23 +429,23 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
         # A_on chibar B_v : (A chibar)[:, :, :, dens] @ (-vpair[sig, up]).
         # T2 is free again (its content is already in out_b); T1 still holds
         # A chibar, whose density-slot columns are the left operand.
-        P = T2[:, :, :, :norb]                                 # (nb, nvol, nd, norb)
+        P = _carve(T2, (nb, nvol, nd, norb))
         xp.matmul(T1[:, :, :, ds], vp[sig, UP][None], out=P)
         out_b[:, :, :, ds] -= P
         # A_v chibar B_on : (-vpair[up, sig]) @ chibar[:, :, dens, :] @ B.
         # The first product lands in T2 (P has been consumed), the second in
         # T1 (A chibar is no longer needed in this iteration).
-        Q = T2[:, :, :norb, :]                                 # (nb, nvol, norb, nd)
+        Q = _carve(T2, (nb, nvol, norb, nd))
         xp.matmul(vp[UP, sig][None], chibar_b[:, :, ds, :], out=Q)
-        R = T1[:, :, :norb, :]
+        R = _carve(T1, (nb, nvol, norb, nd))
         xp.matmul(Q, Bb, out=R)
         out_b[:, :, ds, :] -= R
     if vp is not None:
         # A_v chibar B_v : sum_sig (-vpair[up,sig]) chibar[dens,dens] (-vpair[sig,up]).
         # blk is a view and does not depend on sig.
         blk = chibar_b[:, :, ds, ds]                           # (nb, nvol, norb, norb)
-        X = T1[:, :, :norb, :norb]
-        Y = T2[:, :, :norb, :norb]
+        X = _carve(T1, (nb, nvol, norb, norb))
+        Y = _carve(T2, (nb, nvol, norb, norb))
         for sig in (UP, DN):
             xp.matmul(vp[UP, sig][None], blk, out=X)
             xp.matmul(X, vp[sig, UP][None], out=Y)
