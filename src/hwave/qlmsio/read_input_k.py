@@ -191,7 +191,11 @@ class QLMSkInput():
         """
         info = {}
         try:
-            data = np.loadtxt(file_name, skiprows = 5)
+            # onebodyg output is headerless; retain the legacy five-line header
+            # only when its opening separator is present.
+            with open(file_name) as stream:
+                skiprows = 5 if stream.readline().lstrip().startswith("=") else 0
+            data = np.loadtxt(file_name, skiprows=skiprows)
         except FileNotFoundError:
             logger.error("read_input_k: file not found: {}".format(file_name))
             exit(1)

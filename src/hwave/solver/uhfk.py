@@ -984,7 +984,7 @@ class UHFk(solver_base):
         ns       = self.ns
 
         def _pack_site(ix,iy,iz):
-            return ix + lx * (iy + ly * iz)
+            return iz + lz * (iy + ly * ix)
 
         tbl = {}
         for idx, (ix,iy,iz,a) in geom["site2vec"].items():
@@ -994,9 +994,16 @@ class UHFk(solver_base):
         green_uhf = np.zeros((lvol,lvol,ns,norb,ns,norb),dtype=np.complex128)
         for (i,s,j,t),v in info.items():
             isite, a = tbl[i]
-            jsite, b = tbl[j]
+            _, b = tbl[j]
+            ix,iy,iz,_ = geom["site2vec"][i]
+            jx,jy,jz,_ = geom["site2vec"][j]
+            # G(d) = <c^dag(R+d)c(R)>, with the same sign as _save_greenone.
+            jsite = _pack_site((ix-jx) % lx, (iy-jy) % ly, (iz-jz) % lz)
             green_uhf[isite,jsite,s,a,t,b] = v
 
+        # Primitive-cell translation invariance makes the origin row sufficient
+        # for this initial guess. Sublattice-ordered states need green_sublattice
+        # input instead: a single origin row cannot preserve their site dependence.
         if self.has_sublattice:
             return self._reshape_green(green_uhf[0])
         else:
@@ -2069,7 +2076,7 @@ class UHFk(solver_base):
         tbl = geom["site2vec"]
 
         def _pack_site(ix,iy,iz):
-            return ix + lx * (iy + ly * iz)
+            return iz + lz * (iy + ly * ix)
 
         with open(file_name, "w") as fw:
             # Output <c^dag(i,a,s) c(j,b,t)> for each requested pair.
@@ -2091,9 +2098,10 @@ class UHFk(solver_base):
                     # Match _green's (nx, ny, nz, ...) C-order reshape.
                     idx = kz + nz * (ky + ny * kx)
                 else:
-                    kx = (jx - ix + lx) % lx
-                    ky = (jy - iy + ly) % ly
-                    kz = (jz - iz + lz) % lz
+                    # As in the folded branch, d = R_i - R_j.
+                    kx = (ix - jx) % lx
+                    ky = (iy - jy) % ly
+                    kz = (iz - jz) % lz
                     idx = _pack_site(kx,ky,kz)
 
                 v = gr[idx,s,a,t,b]
