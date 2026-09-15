@@ -101,6 +101,52 @@ class TestCompatibility(unittest.TestCase):
             # anti-vacuity: the kernel actually ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
+    def test_calc_veff_general_local_equals_takimoto_on_hubbard(self):
+        """The Hubbard-only identity of spec section 3 at the METHOD level:
+        with CoulombIntra as the only interaction the local kernel's
+        3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc + W2 equals the
+        legacy assembly element-wise. In-process, no subprocess, and it is the
+        only direct exercise of _calc_veff_general(second_order="local") --
+        every other caller in the suite omits the keyword and takes
+        "takimoto"."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+        beta = 0.5
+        for path, norb in ((_IN1, 1), (_IN2, 2)):
+            with self.subTest(path=path, norb=norb):
+                idict = {"path_to_input": path, "Geometry": "geom.dat",
+                         "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+                r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
+                par = {"T": 1.0 / beta, "mu": 0.1, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+                       "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
+                s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                                            "enable_spin_orbital": False,
+                                                            "calc_scheme": "general"})
+                self.assertEqual(s.flex_second_order, "local")
+                self.assertIsNotNone(s._second_order_factors)
+                self.assertEqual(s.norb, norb)
+                s._calc_epsilon_k({})
+                G = s._calc_dressed_green(
+                    beta, 0.1, np.zeros((1, s.nmat, s.lattice.nvol, norb, norb), complex))
+                chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), beta)[0]
+                chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
+                    chi0q_raw, s.ham_info.ham_inter_q)
+                chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
+                v_thu = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
+                                             second_order="takimoto")
+                v_loc = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
+                                             factors=s._second_order_factors,
+                                             second_order="local")
+                scale = np.abs(v_thu).max()
+                self.assertGreater(scale, 1e-6)        # anti-vacuity
+                self.assertEqual(v_loc.shape, v_thu.shape)
+                np.testing.assert_allclose(v_loc, v_thu, rtol=1e-14, atol=1e-14 * scale)
+                # the two branches really are different code paths
+                with self.assertRaises(ValueError):
+                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="local")
+                with self.assertRaises(ValueError):
+                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="nonsense")
+
     def test_factors_lifecycle_and_d7_at_construction(self):
         from tests.test_second_order_factors import _split_for
         import hwave.solver.flex as flex_mod

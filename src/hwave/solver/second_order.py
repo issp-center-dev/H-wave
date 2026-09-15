@@ -323,14 +323,33 @@ def _dens_idx(norb):
     return np.arange(norb) * norb + np.arange(norb)          # (aa) pair slots
 
 
-def accumulate_batch(out_b, chibar_b, l0, factors):
+def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     """Add W2 (spec 2.3 + 2.4) for the bosonic frequencies [l0, l0 + nb)
-    into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused."""
+    into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused.
+
+    ``work`` optionally supplies those two temporaries as a pair
+    ``(T1, T2)`` of arrays shaped exactly like ``chibar_b``, on the same
+    array module. A caller that already holds scratch of that shape --
+    the general path's batch loop does (:meth:`hwave.solver.flex.FLEX.
+    _calc_veff_general`) -- passes it here so the whole assembly peaks at
+    TWO ``(nb, nvol, nd, nd)`` temporaries rather than four, which is the
+    ``T_bytes = 2 nb nvol nd^2 * 16`` budget of spec 2.5. With ``None``
+    the buffers are allocated per call, as before. The buffers are
+    scratch: their contents on entry are irrelevant and are overwritten.
+    """
     xp = _bk.array_module_of(chibar_b)
     norb = factors.norb
     nb = chibar_b.shape[0]
-    T1 = xp.empty_like(chibar_b)
-    T2 = xp.empty_like(chibar_b)
+    if work is None:
+        T1 = xp.empty_like(chibar_b)
+        T2 = xp.empty_like(chibar_b)
+    else:
+        T1, T2 = work
+        for name, T in (("work[0]", T1), ("work[1]", T2)):
+            if tuple(T.shape) != tuple(chibar_b.shape):
+                raise ValueError(
+                    "accumulate_batch: {} has shape {}, expected chibar_b's {}"
+                    .format(name, tuple(T.shape), tuple(chibar_b.shape)))
     # on-site: 1/2 sum_triples A chibar B
     for A, B in zip(factors.A_on, factors.B_on):
         xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)

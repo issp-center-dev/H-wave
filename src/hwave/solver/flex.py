@@ -1012,7 +1012,8 @@ class FLEX(RPA):
             # Per-solve device mirror of the second-order factors (spec
             # 2.5): the host pack stays intact and authoritative, so a
             # reused solver never depends on a previous solve's backend.
-            # Dropped in the finally of _solve_restoring_host_attrs.
+            # Dropped in the finally of FLEX.solve (see the comment there
+            # for why it is not in the shared _solve_restoring_host_attrs).
             if self._second_order_factors is not None:
                 from hwave.solver.second_order import SecondOrderFactors
                 f = self._second_order_factors
@@ -3407,13 +3408,13 @@ class FLEX(RPA):
         The local assembly runs in frequency batches of ``nb = max(1, nmat //
         8)``, so besides ``v_eff`` itself no full-size ``(nmat, nvol, ndx,
         ndx)`` array is ever materialised -- neither ``W2`` nor any product.
-        The batch loop owns exactly TWO ``(nb, nvol, ndx, ndx)`` buffers
-        (``T1``/``T2``, allocated once and reused across batches and across
-        both channels: every product goes through ``matmul(..., out=)``
-        rather than an expression temporary), and
-        :func:`~hwave.solver.second_order.accumulate_batch` allocates two more
-        of the same size per call, so four are live at the peak -- twice the
-        ``T_bytes = 2 nb nvol ndx^2 * 16`` of one such pair.
+        Exactly TWO ``(nb, nvol, ndx, ndx)`` temporaries are live at the peak
+        (``T1``/``T2``): they are allocated once, reused across batches and
+        across both channels -- every product goes through
+        ``matmul(..., out=)`` rather than an expression temporary -- and then
+        LENT to :func:`~hwave.solver.second_order.accumulate_batch` through
+        its ``work`` argument, so the kernel allocates nothing of its own.
+        That is the ``T_bytes = 2 nb nvol ndx^2 * 16`` budget of spec 2.5.
         """
         logger.debug(">>> FLEX._calc_veff_general")
 
@@ -3449,8 +3450,12 @@ class FLEX(RPA):
                     xp.matmul(T2[:n], UB, out=T1[:n])
                     T1[:n] *= w
                     out += T1[:n]
-                # the exact local second order, added in place into the view
-                accumulate_batch(out, chi0_2d[l0:l1], l0, factors)
+                # the exact local second order, added in place into the view.
+                # The kernel borrows the SAME two buffers (sliced to this
+                # batch's length, exactly like the ring products above), so
+                # the whole assembly peaks at two temporaries, not four.
+                accumulate_batch(out, chi0_2d[l0:l1], l0, factors,
+                                 work=(T1[:n], T2[:n]))
             return v_eff
         if second_order != "takimoto":
             raise ValueError("unknown second_order {!r}".format(second_order))

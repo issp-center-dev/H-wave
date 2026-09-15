@@ -273,11 +273,14 @@ class TestG2(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.on, cls.g_on = _coefficients(1, gate=True)
-        cls.off, cls.g_off = _coefficients(1, gate=False)
-        # The gate-off contrast in test_c below records the LEGACY
+        # test_d needs ONE gate-off grid (the maps at the coarsest scale), not
+        # a Richardson ladder: no gate-off coefficient is extrapolated any
+        # more, so build exactly that grid -- the same one _coefficients would
+        # have returned as grids[0] -- on the production default.
+        cls.g_off = _Grid(1, gate=False, scale=_H / _U0)
+        # The gate-off CONTRAST in test_c records the LEGACY
         # (Takimoto-Hotta-Ueda) second-order content of the general path, so
-        # it is measured with flex_second_order = "takimoto" explicitly; the
-        # pair above stays on the production default (spec 2026-09-08).
+        # it is measured with flex_second_order = "takimoto" explicitly.
         cls.off_thu, _ = _coefficients(1, gate=False, second_order="takimoto")
         beta = 1.0 / _T
         G = cls.g_on.G

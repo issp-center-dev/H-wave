@@ -102,6 +102,38 @@ class TestKernel(unittest.TestCase):
                 accumulate_batch(out[l0:l0 + nb], cb[l0:l0 + nb], l0, f)
             np.testing.assert_allclose(out - 1.0, ref, rtol=0, atol=1e-12)
 
+    def test_caller_supplied_work_buffers(self):
+        """``work`` lends the kernel its two temporaries (spec 2.5: the whole
+        general-path assembly peaks at two, not four). The result must be
+        bit-identical to the self-allocating call, the buffers' contents on
+        entry must not matter, and a mis-shaped buffer must be refused."""
+        from hwave.solver.second_order import accumulate_batch
+        s, f = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.4, 0.0)],
+                         "Hund": [(0, 0, 0, 1, 2, 0.2, 0.0), (0, 0, 0, 2, 1, 0.2, 0.0)],
+                         "CoulombInter": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]})
+        cb = _random_chibar(8, 16, 4, 5)
+        ref = np.zeros_like(cb)
+        accumulate_batch(ref, cb, 0, f)
+        self.assertGreater(np.abs(ref).max(), 1e-6)                    # anti-vacuity
+        # dirty buffers on entry: the kernel must overwrite, never read them
+        T1 = np.full_like(cb, 7.0 - 3.0j)
+        T2 = np.full_like(cb, -11.0 + 2.0j)
+        got = np.zeros_like(cb)
+        accumulate_batch(got, cb, 0, f, work=(T1, T2))
+        np.testing.assert_array_equal(got, ref)
+        # a sliced view of a longer buffer is what the general path lends
+        big1, big2 = np.empty((12, 16, 4, 4), complex), np.empty((12, 16, 4, 4), complex)
+        got2 = np.zeros_like(cb)
+        accumulate_batch(got2, cb, 0, f, work=(big1[:8], big2[:8]))
+        np.testing.assert_array_equal(got2, ref)
+        # wrong shape is refused, naming which buffer and both shapes
+        for bad in ((np.empty((7, 16, 4, 4), complex), np.empty_like(cb)),
+                    (np.empty_like(cb), np.empty((8, 16, 4, 2), complex))):
+            with self.assertRaises(ValueError) as cm:
+                accumulate_batch(np.zeros_like(cb), cb, 0, f, work=bad)
+            self.assertIn("accumulate_batch", str(cm.exception))
+            self.assertIn("expected chibar_b's (8, 16, 4, 4)", str(cm.exception))
+
     def test_hermiticity_without_inversion_symmetry(self):
         from hwave.solver.second_order import dense_w2
         s, f = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0)],
