@@ -404,8 +404,10 @@ Parameters
   ``flex_second_order = "takimoto"`` as an immediate workaround (the
   legacy expression accepts every row the general path accepted before).
 
-  **Cost and memory:** Measured on the pull request's test fixtures
-  (:math:`L = 8`, ``Nmat = 128``), 2026-09; assembling :math:`V_{\rm eff}` under ``"local"`` costs
+  **Cost and memory:** Measured with the one-map timing script of the pull
+  request that introduced the key (the 2-orbital ``tests/rpa/input_2orb``
+  fixture and a synthetic 3-orbital input, :math:`L = 8`, ``Nmat = 128``,
+  minimum of 5 runs, 2026-09); assembling :math:`V_{\rm eff}` under ``"local"`` costs
   about 1.5x the legacy expression (1.59 for a 2-orbital and 1.53 for a
   3-orbital input) and a full FLEX iteration about 1.2x (1.24 and 1.16).
   Memory goes the other way: ``"local"`` accumulates the second order in
