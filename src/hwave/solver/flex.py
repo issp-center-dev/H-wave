@@ -1510,7 +1510,9 @@ class FLEX(RPA):
             depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
             split_seed=split_seed, n_types=n_types,
             freq_batch=self.longitudinal_bond_freq_batch,
-            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme)
+            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
+            factor_bytes=(0 if self._second_order_factors is None
+                          else int(self._second_order_factors.nbytes)))
         gib = flex_bond._GIB
         logger.info(
             "Bond-resolved FLEX preflight (ESTIMATE): B = %d channels %s, ND = %d, nvol = %d, "
@@ -1788,7 +1790,13 @@ class FLEX(RPA):
                 store, self._bond_S, self._bond_C, S_on=self._bond_S_on, C_on=self._bond_C_on,
                 nb=self._bond_nb,
                 output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
-                spatial_shape=shape, iteration=iteration)
+                spatial_shape=shape, iteration=iteration,
+                # the HOST pack, not _second_order_device: flex_bond is a
+                # host-side module (its store is numpy and every array
+                # reaching it goes through _bk.to_host), so a device mirror
+                # would not survive the kernel's numpy.asarray.
+                factors=self._second_order_factors,
+                second_order=self.flex_second_order)
         with self._traced("transport"):
             sigma_fluct = flex_bond.calc_self_energy_bond(
                 store, _bk.to_host(green_kw), beta, self._bond_view, shape, norb, workers)

@@ -76,22 +76,18 @@ class TestG0DeclaredZero(unittest.TestCase):
     def test_g0_declared_zero_equals_standalone_hf(self):
         """Gate on == gate off with every off-site coefficient zero.
 
-        Measured with flex_second_order = "takimoto" on BOTH sides while the
-        second-order work of spec 2026-09-08 is in flight: the general path
-        already builds the exact local second order, and the bond gate's
-        channel-0 block (flex_bond.dress_and_build_w) still builds the legacy
-        one, so the two sides currently disagree under the production default
-        "local". This is the gate property, not a kernel property -- the
-        bond-gate integration (spec D5) restores it under BOTH values and
-        asserts exactly that, at which point this pin is only a redundant
-        legacy-kernel copy of the same claim.
+        Measured at the production default flex_second_order = "local" (both
+        sides build the exact local second order; the bond gate routes its
+        channel-0 block through the same kernel since spec 2026-09-08 D5).
+        tests/test_flex_second_order_bond.py pins the same property under
+        BOTH kernel values explicitly.
         """
         with tempfile.TemporaryDirectory() as inp, tempfile.TemporaryDirectory() as out:
             _zeroed_offsite_copy(inp)
             recs = {}
             gis = {}
             for gate in (True, False):
-                s, r = _flex({"flex_second_order": "takimoto"}, path=inp, gate=gate)
+                s, r = _flex(path=inp, gate=gate)
                 gi = r.get_param("green")
                 recs[gate] = _collect(s, gi, out)
                 gis[gate] = (s, gi)

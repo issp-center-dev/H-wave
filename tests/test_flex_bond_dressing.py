@@ -42,50 +42,76 @@ class TestDressBatch(unittest.TestCase):
         self.assertIn("spin", msg)
 
 
+def _onsite_factors():
+    """A small on-site-only factor pack (vpair = None, so it carries no
+    nvol-dependent array and fits the synthetic nd = 4 problem above)."""
+    from hwave.solver.second_order import build_factors
+    from tests.test_second_order_factors import _split_for
+    s, split = _split_for({"CoulombIntra": [(0, 0, 0, 1, 1, 1.3, 0.0),
+                                            (0, 0, 0, 2, 2, 0.9, 0.0)],
+                           "Exchange": [(0, 0, 0, 1, 2, 0.4, 0.0),
+                                        (0, 0, 0, 2, 1, 0.4, 0.0)]})
+    f = build_factors(split, s.lattice, s.norb)
+    assert f.vpair is None and f.nd == 4
+    return f
+
+
 class TestDressAndBuildW(unittest.TestCase):
 
     def test_w_and_collapses_and_static(self):
+        """The rev-19 channel-0 kernel ("takimoto", explicit) and the exact
+        local one ("local"); the mixed and bond-bond blocks are the same
+        under both."""
         from hwave.solver.flex_bond import BondBlockStore, dress_and_build_w
+        from hwave.solver.second_order import dense_w2
         chi_bar, S, C = _problem(nmat=6, nvol=4, nd=4, B=3)
         nmat, nvol, ND = chi_bar.shape[:3]
         nd = 4
-        for output_full in (False, True):
-            names = ("chibar", "W") + (("chi_s_w", "chi_c_w") if output_full else ())
-            with BondBlockStore(nmat, nvol, ND, nd, names) as store:
-                store.put_freq_batch("chibar", 0, nmat, chi_bar)
-                S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
-                C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
-                res = dress_and_build_w(store, S, C, S_on=S_on, C_on=C_on, nb=4,
-                                        output_full=output_full, nmat=nmat,
-                                        nvol=nvol, nd=nd, spatial_shape=(4, 1, 1))
-                I = np.eye(ND)
-                chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
-                chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
-                # spec 3.3 rev 19: ring beyond second order + the exact second order
-                W_ref = 1.5 * S @ (chi_s - chi_bar) @ S + 0.5 * C @ (chi_c - chi_bar) @ C
-                A = S @ chi_bar @ S
-                Bc = C @ chi_bar @ C
-                W2 = np.zeros_like(W_ref)
-                W2[:, :, :nd, :nd] = (1.5 * A + 0.5 * Bc)[:, :, :nd, :nd] \
-                    - 0.25 * (S_on + C_on) @ chi_bar[:, :, :nd, :nd] @ (S_on + C_on)
-                W2[:, :, :nd, nd:] = 0.25 * (A + Bc)[:, :, :nd, nd:]
-                W2[:, :, nd:, :nd] = 0.25 * (A + Bc)[:, :, nd:, :nd]
-                W_ref = W_ref + W2
-                np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
-                np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], rtol=0, atol=1e-14)
-                np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], rtol=0, atol=1e-12)
-                np.testing.assert_allclose(res.collapse_c, chi_c[:, :, :nd, :nd], rtol=0, atol=1e-12)
-                np.testing.assert_allclose(res.static_s, chi_s[nmat // 2], rtol=0, atol=1e-12)
-                np.testing.assert_allclose(res.static_c, chi_c[nmat // 2], rtol=0, atol=1e-12)
-                self.assertTrue(res.static_s.flags.owndata)
-                self.assertGreater(res.cond_min_s, 0.0)
-                if output_full:
-                    np.testing.assert_allclose(store.get_freq_batch("chi_s_w", 0, nmat), chi_s, rtol=0, atol=1e-12)
-                    np.testing.assert_allclose(store.get_freq_batch("chi_s_w", nmat // 2, nmat // 2 + 1)[0],
-                                               res.static_s, atol=0)
-                else:
-                    with self.assertRaises(KeyError):
-                        store.get_freq_batch("chi_s_w", 0, 1)
+        factors = _onsite_factors()
+        for output_full, second_order in ((False, "takimoto"), (True, "takimoto"),
+                                          (False, "local"), (True, "local")):
+            with self.subTest(output_full=output_full, second_order=second_order):
+                names = ("chibar", "W") + (("chi_s_w", "chi_c_w") if output_full else ())
+                with BondBlockStore(nmat, nvol, ND, nd, names) as store:
+                    store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                    S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
+                    C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
+                    res = dress_and_build_w(store, S, C, S_on=S_on, C_on=C_on, nb=4,
+                                            output_full=output_full, nmat=nmat,
+                                            nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
+                                            factors=factors, second_order=second_order)
+                    I = np.eye(ND)
+                    chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
+                    chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
+                    # spec 3.3 rev 19: ring beyond second order + the exact second order
+                    W_ref = 1.5 * S @ (chi_s - chi_bar) @ S + 0.5 * C @ (chi_c - chi_bar) @ C
+                    A = S @ chi_bar @ S
+                    Bc = C @ chi_bar @ C
+                    W2 = np.zeros_like(W_ref)
+                    if second_order == "takimoto":
+                        W2[:, :, :nd, :nd] = (1.5 * A + 0.5 * Bc)[:, :, :nd, :nd] \
+                            - 0.25 * (S_on + C_on) @ chi_bar[:, :, :nd, :nd] @ (S_on + C_on)
+                    else:
+                        # spec 2026-09-08 D5: the exact local kernel on channel 0
+                        W2[:, :, :nd, :nd] = dense_w2(chi_bar[:, :, :nd, :nd], factors)
+                    W2[:, :, :nd, nd:] = 0.25 * (A + Bc)[:, :, :nd, nd:]
+                    W2[:, :, nd:, :nd] = 0.25 * (A + Bc)[:, :, nd:, :nd]
+                    W_ref = W_ref + W2
+                    np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
+                    np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], rtol=0, atol=1e-14)
+                    np.testing.assert_allclose(res.collapse_s, chi_s[:, :, :nd, :nd], rtol=0, atol=1e-12)
+                    np.testing.assert_allclose(res.collapse_c, chi_c[:, :, :nd, :nd], rtol=0, atol=1e-12)
+                    np.testing.assert_allclose(res.static_s, chi_s[nmat // 2], rtol=0, atol=1e-12)
+                    np.testing.assert_allclose(res.static_c, chi_c[nmat // 2], rtol=0, atol=1e-12)
+                    self.assertTrue(res.static_s.flags.owndata)
+                    self.assertGreater(res.cond_min_s, 0.0)
+                    if output_full:
+                        np.testing.assert_allclose(store.get_freq_batch("chi_s_w", 0, nmat), chi_s, rtol=0, atol=1e-12)
+                        np.testing.assert_allclose(store.get_freq_batch("chi_s_w", nmat // 2, nmat // 2 + 1)[0],
+                                                   res.static_s, atol=0)
+                    else:
+                        with self.assertRaises(KeyError):
+                            store.get_freq_batch("chi_s_w", 0, 1)
 
 
 if __name__ == "__main__":

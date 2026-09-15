@@ -9,6 +9,7 @@ import numpy as np
 from . import backend as _bk
 from . import matsubara as _ms
 from . import bubble as _bubble
+from . import second_order as _so
 
 
 class BondBlockStore:
@@ -141,7 +142,8 @@ class DressResult:
 
 
 def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, nd, spatial_shape,
-                      cond_tol=_bc._BOND_COND_FLOOR, iteration=None):
+                      cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
+                      second_order="takimoto"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -159,7 +161,33 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
     second order is the direct skeleton again). Also collects the
     channel-0 collapses, the static slices (slice assignment into
     preallocated buffers) and, with ``output_full``, the store's
-    ``chi_s_w``/``chi_c_w``."""
+    ``chi_s_w``/``chi_c_w``.
+
+    ``second_order`` selects the CHANNEL-0 second order only (spec
+    2026-09-08 D5), exactly as ``flex_second_order`` does for the
+    standalone general path:
+
+    ``"takimoto"``
+        the rev-19 expression quoted above -- unchanged, byte for byte.
+    ``"local"``
+        the exact local kernel of :mod:`hwave.solver.second_order`
+        instead: the channel-0 block is the ring restricted to channel 0
+        (already in ``W_b``, the bare bubble subtracted from both
+        channels) plus ``W2(chibar_00)`` from
+        :func:`~hwave.solver.second_order.accumulate_batch`, which needs
+        the compiled ``factors`` pack (host-backed: this whole module is
+        host-side). Since the general path's channel-0 flattening is the
+        bond store's, the two agree wherever the off-site content is
+        declared zero -- that is gate G0 under BOTH kernels.
+
+    The mixed and bond-bond blocks are the same under both values: the
+    gate resums the off/off exchange topology the local kernel does not
+    carry, and that is the D4/D5 design."""
+    if second_order not in ("local", "takimoto"):
+        raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
+                         "got {!r}".format(second_order))
+    if second_order == "local" and factors is None:
+        raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
     ND = S.shape[-1]
     SpC_on = np.asarray(S_on) + np.asarray(C_on)
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
@@ -199,11 +227,22 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         chi_c_b -= cb
         W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
         del chi_c_b
-        # second-order term
+        # second-order term. A / Bc carry BOTH the channel-0 block of the
+        # legacy kernel and the mixed blocks of either kernel, so they are
+        # built once, before the channel-0 branch.
         A = S[None] @ cb @ S[None]
         Bc = C[None] @ cb @ C[None]
-        W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
-        W_b[:, :, :nd, :nd] -= 0.25 * (SpC_on[None] @ cb[:, :, :nd, :nd] @ SpC_on[None])
+        if second_order == "local":
+            # the exact local second order on the channel-0 sub-block; the
+            # ring already in W_b starts at third order there (both channels
+            # had the bare bubble subtracted). The kernel allocates its own
+            # two (nb, nvol, nd, nd) temporaries -- this loop holds none of
+            # that shape to lend (A / Bc are (nb, nvol, ND, ND) and are still
+            # needed for the mixed blocks below).
+            _so.accumulate_batch(W_b[:, :, :nd, :nd], cb[:, :, :nd, :nd], l0, factors)
+        else:
+            W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
+            W_b[:, :, :nd, :nd] -= 0.25 * (SpC_on[None] @ cb[:, :, :nd, :nd] @ SpC_on[None])
         A += Bc
         del Bc
         A *= 0.5 * mask
@@ -313,13 +352,22 @@ def transport_ops(B, nmat, nvol, norb):
 
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
-                         freq_batch, cap_gb, mixing):
+                         freq_batch, cap_gb, mixing, factor_bytes=0):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
     selected ``nb``), ``persistent``, ``nb``, ``peak`` and the symbols;
     raises ``ValueError`` naming every row when even ``nb = 1`` exceeds
-    the cap, or when ``freq_batch`` does."""
+    the cap, or when ``freq_batch`` does.
+
+    ``factor_bytes`` is the compiled second-order factor pack's
+    ``SecondOrderFactors.nbytes`` (0 with the legacy
+    ``flex_second_order = takimoto``, which compiles none): the pack is
+    built once per solver and lives for the whole solve, so it is a PERSISTENT row
+    (``second_order_factors``). Its batch temporaries are not a row of
+    their own -- they are two ``(nb, nvol, nd, nd)`` arrays, i.e. 2/B^2
+    of a single ``(nb, nvol, ND, ND)`` buffer, well inside the
+    ``dressing`` row's six."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -342,6 +390,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         "eigenpairs_hf": 5 * H,
         "flex_arrays": 5 * G,
         "hf_tables": int(n_types) * H,
+        "second_order_factors": int(factor_bytes),
     }
     persistent = sum(persistent_rows.values())
     prep = it * nvol * (ND ** 2 + 4 * P * (nmat + 2))
