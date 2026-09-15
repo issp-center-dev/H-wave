@@ -155,13 +155,83 @@ def _records(itype, a, b, v, norb):
     raise ValueError("second_order: unknown interaction type {!r}".format(itype))
 
 
+def _check_rows(itype, tbl, norb):
+    """Row-level validation of one type's on-site table: a usable ``norb``,
+    orbital indices inside it, and finite coefficients.
+
+    All three are refusals a programmatic caller can trigger by bypassing
+    the reader. Without them a negative orbital index wraps silently (numpy
+    indexes from the end), a large one raises an ``IndexError`` that names
+    no row, and a non-finite coupling propagates into ``Gamma`` and then
+    past the Hermiticity guard below -- ``dev > herm_tol * scale`` is FALSE
+    when ``dev`` is NaN, so a NaN table would compile without complaint."""
+    if not isinstance(norb, (int, np.integer)) or norb < 1:
+        raise ValueError(
+            "flex_second_order = \"local\": norb must be a positive integer, got {!r}"
+            .format(norb))
+    for (a, b), v in tbl.items():
+        if not (0 <= a < norb and 0 <= b < norb):
+            raise ValueError(
+                "flex_second_order = \"local\": the on-site {} row (orbitals {}, {}) is "
+                "outside the {} orbitals of the model".format(itype, a + 1, b + 1, norb))
+        if not np.isfinite(complex(v).real) or not np.isfinite(complex(v).imag):
+            raise ValueError(
+                "flex_second_order = \"local\": the on-site {} row (orbitals {}, {}) has a "
+                "non-finite coefficient {!r}".format(itype, a + 1, b + 1, v))
+
+
+def _check_hermitian_closure(raw_rows, herm_tol=1e-12):
+    """Refuse a table whose transposed row is not the Hermitian partner of
+    its row, NAMING the offending type and row.
+
+    Every accepted type's transposed entry carries the adjoint of the row's
+    operator -- the same operator for the mirrored types
+    (:data:`_MIRRORED_TYPES`), the reverse pair hop for ``PairHop`` -- so a
+    Hermitian Hamiltonian means ``v_{ba} = conj(v_{ab})`` per declared pair
+    of ordered rows, which is what the k-space readers have enforced since
+    #93. The reversal closure (:func:`close_onsite_rows`) SYMMETRISES
+    whatever it is given, so a table that violates this is not rejected by
+    the closure: it is quietly replaced by its Hermitian part (a complex
+    same-operator row by its real part, say), and only the tensor-wide guard
+    in :func:`compile_onsite` can notice -- and then only when the
+    replacement happens to leave a non-Hermitian ``Gamma``, with a
+    diagnostic that names no row.
+
+    The check is on the RAW rows and applies only where BOTH ordered rows of
+    a pair are declared: a lone row is legal input, and the closure supplies
+    its conjugate partner (see :func:`close_onsite_rows`). ``a == b`` rows
+    are their own partner, so for them the condition is that the coefficient
+    is real."""
+    for itype, tbl in raw_rows.items():
+        for (a, b), v in tbl.items():
+            if (b, a) not in tbl:
+                continue                    # a lone row: the closure conjugates it
+            w = tbl[(b, a)]
+            dev = abs(complex(v) - np.conj(complex(w)))
+            scale = max(1.0, abs(complex(v)), abs(complex(w)))
+            if dev > herm_tol * scale:
+                raise ValueError(
+                    "flex_second_order = \"local\": the on-site interaction is not "
+                    "Hermitian-closed: the {} row (orbitals {}, {}) is {} but its "
+                    "transposed row is {}, and a Hermitian table needs the complex "
+                    "conjugate {} there".format(itype, a + 1, b + 1, complex(v),
+                                                complex(w), np.conj(complex(v))))
+
+
 def compile_onsite_v(onsite_tbl, norb, *, closed=False):
     """The non-antisymmetrised ``V`` ``(M, M, M, M)``, ``M = 2 norb``, from the
     on-site table ``{type: {((0,0,0),(a,b)): v}}`` (with ``closed=True`` the rows
     are taken as already reversal-closed -- tests only). Refuses degenerate
     ``a == b`` rows of the two-orbital types (spec D7) and unknown types."""
+    raw = _raw_onsite_rows(onsite_tbl)
+    # validate the DECLARED rows, before the closure touches them: the
+    # closure averages a row with its transpose, and a non-finite
+    # coefficient would first surface there as a numpy warning about an
+    # arithmetic the caller never asked for.
+    for itype, tbl in raw.items():
+        _check_rows(itype, tbl, norb)
+    rows = raw if closed else close_onsite_rows(onsite_tbl)
     M = 2 * norb
-    rows = _raw_onsite_rows(onsite_tbl) if closed else close_onsite_rows(onsite_tbl)
     V = np.zeros((M, M, M, M), dtype=np.complex128)
     for itype, tbl in rows.items():
         if itype == "CoulombIntra":
@@ -190,6 +260,11 @@ def compile_onsite(onsite_tbl, norb, *, herm_tol=1e-12, closed=False):
     Refuses degenerate a = b rows of the two-orbital types (D7) and a
     non-Hermitian result."""
     V = compile_onsite_v(onsite_tbl, norb, closed=closed)
+    # Per-row first: it names the type and the row. The tensor-wide guard
+    # below stays as the last resort -- it is the one that would catch a
+    # convention error inside the record table itself, which no row check
+    # can see.
+    _check_hermitian_closure(_raw_onsite_rows(onsite_tbl), herm_tol)
     Gamma = V - V.transpose(0, 1, 3, 2)
     herm = Gamma.conj().transpose(2, 3, 0, 1)
     dev = float(np.max(np.abs(Gamma - herm))) if Gamma.size else 0.0
@@ -203,7 +278,16 @@ def compile_onsite(onsite_tbl, norb, *, herm_tol=1e-12, closed=False):
 
 
 def hf_first_order(tensor, rho):
-    """The first-order (mean-field) self-energy of a rank-4 on-site tensor:
+    """TEST HELPER (host/numpy only, not used by any solve): the first-order
+    (mean-field) self-energy of a rank-4 on-site tensor.
+
+    The production first order is ``hartree_fock.accumulate_hf``; this is the
+    same functional written as one contraction, so the compiler's ``Gamma``
+    can be confronted with it (spec 2.2 contract (i)). It materialises the
+    dense ``(2 norb)^4`` tensor and runs ``np.einsum``, so it is host-side by
+    construction.
+
+    Contraction:
 
         Sigma1[p, r] = sum_{q s} tensor[p, q, r, s] rho[q, s],
         rho[q, s] = <c^dag_q c_s>.
@@ -346,6 +430,85 @@ def _carve(T, shape):
     return T.reshape(-1)[:n].reshape(shape)
 
 
+def _shares_storage(a, b):
+    """``True`` when ``a`` and ``b`` are KNOWN to share memory, ``False``
+    when they are known not to, ``None`` when the array module cannot say.
+
+    numpy answers exactly (``np.shares_memory``). For a device module the
+    fallback compares the allocation pointer ranges, which CuPy exposes as
+    ``arr.data.ptr``; it is a conservative overlap test on the span
+    ``[ptr, ptr + nbytes)`` and can only be consulted, never trusted to
+    prove disjointness for a strided view. A module that offers neither
+    returns ``None`` and the caller documents the precondition instead of
+    guessing."""
+    if a is b:
+        return True
+    if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        return bool(np.shares_memory(a, b))
+    pa = getattr(getattr(a, "data", None), "ptr", None)
+    pb = getattr(getattr(b, "data", None), "ptr", None)
+    if pa is None or pb is None:
+        return None
+    return not (pa + a.nbytes <= pb or pb + b.nbytes <= pa)
+
+
+def _validate_batch(out_b, chibar_b, factors, work):
+    """Shape and aliasing preconditions of :func:`accumulate_batch`.
+
+    Every one of these is a silent-corruption route rather than a crash:
+    a ``chibar_b`` whose pair axes do not match the factors contracts the
+    wrong slots (or raises deep inside a ``matmul`` with a message naming
+    no argument), a mismatched ``out_b`` broadcasts instead of accumulating,
+    and a lent buffer that overlaps an operand is overwritten mid-product.
+    They are checked BEFORE any work is done, including when ``triples`` is
+    empty and no product runs at all."""
+    nd = factors.nd
+    if nd != factors.norb ** 2:
+        raise ValueError(
+            "accumulate_batch: the factor pack is inconsistent, nd = {} but norb^2 = {}"
+            .format(nd, factors.norb ** 2))
+    # The volume axis is constrained only when the pack carries an off-site
+    # vertex: the on-site factors are (nd, nd) matrices broadcast over q, so
+    # an on-site-only pack is usable at ANY nvol (the bond store's synthetic
+    # fixtures rely on that). vpair is indexed by q and must match.
+    nvol = factors.nvol if factors.vpair is not None else None
+    for name, arr in (("chibar_b", chibar_b), ("out_b", out_b)):
+        shape = tuple(int(x) for x in arr.shape)
+        ok = (len(shape) == 4 and shape[2] == nd and shape[3] == nd
+              and (nvol is None or shape[1] == nvol))
+        if not ok:
+            raise ValueError(
+                "accumulate_batch: {} has shape {}, expected (nb, {}, {}, {}) from the "
+                "factor pack (nvol, nd, nd)".format(
+                    name, shape, factors.nvol if nvol is not None else "nvol", nd, nd))
+    if tuple(out_b.shape) != tuple(chibar_b.shape):
+        raise ValueError(
+            "accumulate_batch: out_b has shape {} but chibar_b has {}; the two must "
+            "cover the same frequency batch".format(tuple(out_b.shape), tuple(chibar_b.shape)))
+    if work is None:
+        return
+    T1, T2 = work
+    if T1 is T2:
+        raise ValueError(
+            "accumulate_batch: work[0] and work[1] are the same array; the kernel needs "
+            "two independent scratch buffers")
+    for name, T in (("work[0]", T1), ("work[1]", T2)):
+        if tuple(T.shape) != tuple(chibar_b.shape):
+            raise ValueError(
+                "accumulate_batch: {} has shape {}, expected chibar_b's {}"
+                .format(name, tuple(T.shape), tuple(chibar_b.shape)))
+        for oname, operand in (("chibar_b", chibar_b), ("out_b", out_b)):
+            if _shares_storage(T, operand):
+                raise ValueError(
+                    "accumulate_batch: {} shares memory with {}; the scratch buffers are "
+                    "overwritten while both operands are still being read"
+                    .format(name, oname))
+    if _shares_storage(T1, T2):
+        raise ValueError(
+            "accumulate_batch: work[0] and work[1] share memory; the kernel needs two "
+            "independent scratch buffers")
+
+
 def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     """Add W2 (spec 2.3 + 2.4) for the bosonic frequencies [l0, l0 + nb)
     into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused.
@@ -359,6 +522,14 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     ``T_bytes = 2 nb nvol nd^2 * 16`` budget of spec 2.5. With ``None``
     the buffers are allocated per call, as before. The buffers are
     scratch: their contents on entry are irrelevant and are overwritten.
+
+    Preconditions are validated before any work is done, including when the
+    factor pack has no nonzero spin triple at all (:func:`_validate_batch`):
+    the pair axes of ``chibar_b``/``out_b`` against the factor pack, the two
+    arrays against each other, and the lent buffers against BOTH operands
+    for aliasing (numpy exactly; on a device module the pointer ranges where
+    the module exposes them, and otherwise not at all -- see
+    :func:`_shares_storage`).
 
     The lent buffers must be C-contiguous, which is how both production
     callers allocate them: the off-site terms need sub-blocks of them as
@@ -386,14 +557,10 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     xp = _bk.array_module_of(chibar_b)
     norb = factors.norb
     nb, nvol, nd = chibar_b.shape[0], chibar_b.shape[1], chibar_b.shape[2]
+    _validate_batch(out_b, chibar_b, factors, work)
     lent = work is not None
     if lent:
         T1, T2 = work
-        for name, T in (("work[0]", T1), ("work[1]", T2)):
-            if tuple(T.shape) != tuple(chibar_b.shape):
-                raise ValueError(
-                    "accumulate_batch: {} has shape {}, expected chibar_b's {}"
-                    .format(name, tuple(T.shape), tuple(chibar_b.shape)))
         # the off-site terms carve contiguous sub-blocks out of these
         lent = bool(T1.flags.c_contiguous and T2.flags.c_contiguous)
     if not lent:
@@ -459,7 +626,14 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
 
 
 def dense_w2(chibar, factors):
-    """Test helper: W2 materialised for the whole frequency axis."""
+    """TEST HELPER (host/numpy only, not used by any solve): ``W2``
+    materialised for the WHOLE frequency axis at once.
+
+    Production never does this -- :meth:`hwave.solver.flex.FLEX.
+    _calc_veff_general` accumulates in frequency batches precisely so that no
+    full-size ``W2`` is ever allocated -- so this helper is for tests small
+    enough to hold one. ``np.asarray`` pulls its argument to the host, which
+    is what makes it numpy-only."""
     out = np.zeros_like(np.asarray(chibar))
     accumulate_batch(out, np.asarray(chibar), 0, factors)
     return out

@@ -681,14 +681,27 @@ class TestWickFunctional(unittest.TestCase):
 
         rho = _random_densities(n=1, spin_block_diagonal=False)[0]
         good = _onsite_table([("PairHop", x)], _rows_complex_pairhop)
-        bad = {"PairHop": {((0, 0, 0), (0, 1)): good["PairHop"][((0, 0, 0), (0, 1))],
-                           ((0, 0, 0), (1, 0)): good["PairHop"][((0, 0, 0), (0, 1))]}}
+        z = good["PairHop"][((0, 0, 0), (0, 1))]
+        # the REAL-PART reading: what the compiler would produce if it
+        # treated PairHop's transposed row as the same operator (the
+        # mirrored-row fold) instead of the Hermitian partner. It is a legal
+        # Hermitian-closed table, so the guards below do not intercept it.
+        folded = {"PairHop": {((0, 0, 0), (0, 1)): complex(z.real),
+                              ((0, 0, 0), (1, 0)): complex(z.real)}}
         s_good = hf_first_order(compile_onsite(good, NORB), rho)
-        s_bad = hf_first_order(compile_onsite(bad, NORB), rho)
+        s_folded = hf_first_order(compile_onsite(folded, NORB), rho)
         self.assertGreater(np.abs(s_good).max(), 1e-4)                # anti-vacuity
-        self.assertGreater(np.abs(s_good - s_bad).max(), 0.1 * np.abs(s_good).max(),
-                           "the non-conjugated declaration compiles to the same first order: "
-                           "the Hermitian partner's conjugation is not pinned")
+        self.assertGreater(np.abs(s_good - s_folded).max(), 0.1 * np.abs(s_good).max(),
+                           "the real-part reading compiles to the same first order: the "
+                           "phase of a complex PairHop carries no content here, so the "
+                           "gate above cannot pin the conjugation")
+        # and the table that is NOT Hermitian-closed -- the same value on the
+        # transposed row -- is refused by name
+        unclosed = {"PairHop": {((0, 0, 0), (0, 1)): z, ((0, 0, 0), (1, 0)): z}}
+        with self.assertRaises(ValueError) as cm:
+            compile_onsite(unclosed, NORB)
+        self.assertIn("PairHop", str(cm.exception))
+        self.assertIn("Hermitian", str(cm.exception))
 
 
 class TestG3(unittest.TestCase):

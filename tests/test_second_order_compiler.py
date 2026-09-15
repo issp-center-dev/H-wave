@@ -193,5 +193,90 @@ class TestContracts(unittest.TestCase):
                 self.assertIn(hint, str(cm.exception))
 
 
+
+class TestRowGuards(unittest.TestCase):
+    """Refusals that name the offending ROW.
+
+    These are the diagnostics for a caller that reaches the compiler
+    without the reader -- a programmatic pipeline, a fixture, a future
+    scheme. Every one of them is a route to a silently wrong ``Gamma``
+    rather than a crash, which is why they are refusals and not comments."""
+
+    def test_non_finite_coefficients_are_refused_before_the_hermiticity_guard(self):
+        """A NaN or Inf coupling would otherwise pass BOTH guards: the
+        Hermiticity test is ``dev > herm_tol * scale``, and a comparison
+        against NaN is FALSE, so a NaN table compiled without complaint and
+        the non-finite values reached the kernel."""
+        from hwave.solver.second_order import compile_onsite, compile_onsite_v
+        for bad in (float("nan"), float("inf"), -float("inf"), complex(1.0, float("nan"))):
+            for itype, rows in (("CoulombIntra", [(0, 0, bad)]),
+                                ("CoulombInter", [(0, 1, bad), (1, 0, bad)])):
+                with self.subTest(value=bad, itype=itype):
+                    for fn in (compile_onsite, compile_onsite_v):
+                        with self.assertRaises(ValueError) as cm:
+                            fn(_tbl(itype, rows), 2)
+                        msg = str(cm.exception)
+                        self.assertIn("non-finite", msg)
+                        self.assertIn(itype, msg)
+                        self.assertIn("orbitals", msg)
+
+    def test_a_nan_table_would_otherwise_survive_the_tensor_guard(self):
+        """The reason the check above exists, measured: with the row check
+        bypassed (``closed=True`` still runs it, so this reproduces the
+        comparison directly) a NaN deviation does not exceed any tolerance."""
+        dev = float("nan")
+        self.assertFalse(dev > 1e-12 * 1.0)
+
+    def test_orbital_indices_outside_the_model_are_refused(self):
+        from hwave.solver.second_order import compile_onsite
+        for rows in ([(0, 5, 1.0), (5, 0, 1.0)], [(-1, 0, 1.0), (0, -1, 1.0)]):
+            with self.subTest(rows=rows):
+                with self.assertRaises(ValueError) as cm:
+                    compile_onsite(_tbl("CoulombInter", rows), 2)
+                msg = str(cm.exception)
+                self.assertIn("CoulombInter", msg)
+                self.assertIn("outside", msg)
+
+    def test_a_nonpositive_norb_is_refused(self):
+        from hwave.solver.second_order import compile_onsite
+        for norb in (0, -1):
+            with self.subTest(norb=norb):
+                with self.assertRaises(ValueError) as cm:
+                    compile_onsite(_tbl("CoulombIntra", [(0, 0, 1.0)]), norb)
+                self.assertIn("norb", str(cm.exception))
+
+    def test_a_row_that_is_not_hermitian_closed_is_named(self):
+        """The closure SYMMETRISES whatever it is given, so a table whose
+        transposed row is not the conjugate is not rejected by it -- it is
+        quietly replaced by its Hermitian part. The per-row guard names the
+        type and the row; the tensor-wide guard, which stays, cannot."""
+        from hwave.solver.second_order import compile_onsite
+        v = 1.0 + 0.5j
+        for itype in _TYPES:
+            rows = [(0, 0, v)] if itype == "CoulombIntra" else [(0, 1, v), (1, 0, v)]
+            with self.subTest(itype=itype):
+                with self.assertRaises(ValueError) as cm:
+                    compile_onsite(_tbl(itype, rows), 2)
+                msg = str(cm.exception)
+                self.assertIn("Hermitian-closed", msg)
+                self.assertIn(itype, msg)
+                self.assertIn("orbitals", msg)
+
+    def test_a_lone_row_is_accepted_and_closed(self):
+        """Only a DECLARED pair of ordered rows is checked: a lone row is
+        legal input and the closure supplies its conjugate partner, which is
+        what ``close_onsite_rows`` documents. Without this exemption the
+        guard would refuse a table the solver has always accepted."""
+        from hwave.solver.second_order import compile_onsite, close_onsite_rows
+        v = 1.0 + 0.5j
+        tbl = _tbl("CoulombInter", [(0, 1, v)])
+        closed = close_onsite_rows(tbl)["CoulombInter"]
+        self.assertAlmostEqual(closed[(0, 1)], 0.5 * v)
+        self.assertAlmostEqual(closed[(1, 0)], 0.5 * np.conj(v))
+        G = compile_onsite(tbl, 2)
+        self.assertGreater(np.abs(G).max(), 0.0)                   # anti-vacuity
+        np.testing.assert_allclose(G, G.conj().transpose(2, 3, 0, 1), atol=1e-14)
+
+
 if __name__ == "__main__":
     unittest.main()

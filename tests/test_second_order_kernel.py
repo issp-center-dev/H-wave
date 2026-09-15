@@ -320,5 +320,156 @@ class TestKernel(unittest.TestCase):
         self.assertIn("[0, 4)", str(cm.exception))
 
 
+
+class TestGuards(unittest.TestCase):
+    """Preconditions of :func:`accumulate_batch`.
+
+    Every one of these is a SILENT-corruption route rather than a crash:
+    an array whose pair axes do not match the factor pack contracts the
+    wrong slots, a mismatched output broadcasts instead of accumulating,
+    and a lent buffer that overlaps an operand is overwritten while that
+    operand is still being read."""
+
+    def _pack(self):
+        return _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.4, 0.0)],
+                         "CoulombInter": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]})[1]
+
+    def test_shape_mismatches_are_named(self):
+        from hwave.solver.second_order import accumulate_batch
+        f = self._pack()
+        cb = _random_chibar(8, 16, 4, 11)
+        # out_b of a different batch length
+        with self.assertRaises(ValueError) as cm:
+            accumulate_batch(np.zeros((4, 16, 4, 4), complex), cb, 0, f)
+        self.assertIn("out_b", str(cm.exception))
+        # pair axes that do not match the factor pack
+        for bad in ((8, 16, 2, 2), (8, 16, 4, 2)):
+            with self.assertRaises(ValueError) as cm:
+                accumulate_batch(np.zeros(bad, complex), np.zeros(bad, complex), 0, f)
+            self.assertIn("chibar_b", str(cm.exception))
+            self.assertIn("(nb, 16, 4, 4)", str(cm.exception))
+        # a volume axis that does not match, with an off-site pack
+        self.assertIsNotNone(f.vpair)
+        with self.assertRaises(ValueError) as cm:
+            accumulate_batch(np.zeros((8, 9, 4, 4), complex), np.zeros((8, 9, 4, 4), complex), 0, f)
+        self.assertIn("(nb, 16, 4, 4)", str(cm.exception))
+        # rank, not just extents
+        with self.assertRaises(ValueError):
+            accumulate_batch(np.zeros((16, 4, 4), complex), np.zeros((16, 4, 4), complex), 0, f)
+
+    def test_shape_validation_runs_with_no_nonzero_triple(self):
+        """A pack with nothing to contract still validates: otherwise the
+        guard would be silently disabled exactly where the caller gets no
+        other signal that the arrays are wrong."""
+        from hwave.solver.second_order import accumulate_batch, build_factors
+        s, split = _split_for({})
+        f = build_factors(split, s.lattice, 2)
+        self.assertEqual(f.triples, ())
+        self.assertIsNone(f.vpair)
+        with self.assertRaises(ValueError) as cm:
+            accumulate_batch(np.zeros((8, 16, 3, 3), complex),
+                             np.zeros((8, 16, 3, 3), complex), 0, f)
+        self.assertIn("chibar_b", str(cm.exception))
+
+    def test_empty_and_zero_packs_leave_the_output_untouched(self):
+        """An accumulator adds; with nothing to add it must change nothing --
+        for a pack with no factors at all AND for one whose off-site vertex
+        is declared but zero."""
+        from hwave.solver.second_order import accumulate_batch, build_factors
+        cb = _random_chibar(8, 16, 4, 12)
+        empty_s, empty_split = _split_for({})
+        zero_s, zero_split = _split_for(
+            {"CoulombInter": [(1, 0, 0, 1, 1, 0.0, 0.0), (-1, 0, 0, 1, 1, 0.0, 0.0)]})
+        packs = [("no factors", build_factors(empty_split, empty_s.lattice, 2), False),
+                 ("zero off-site rows", build_factors(zero_split, zero_s.lattice, 2), True)]
+        for name, f, has_vpair in packs:
+            with self.subTest(pack=name):
+                self.assertEqual(f.triples, ())
+                self.assertEqual(f.vpair is not None, has_vpair)
+                prefilled = np.full((8, 16, 4, 4), 3.0 - 2.0j)
+                out = prefilled.copy()
+                accumulate_batch(out, cb, 0, f)
+                np.testing.assert_array_equal(out, prefilled)
+
+    def test_aliasing_of_the_lent_buffers_is_refused(self):
+        from hwave.solver.second_order import accumulate_batch
+        f = self._pack()
+        cb = _random_chibar(8, 16, 4, 13)
+        out = np.zeros_like(cb)
+        T = np.empty_like(cb)
+        # the same object twice
+        with self.assertRaises(ValueError) as cm:
+            accumulate_batch(out, cb, 0, f, work=(T, T))
+        self.assertIn("same array", str(cm.exception))
+        # two views of one buffer
+        big = np.empty((8, 16, 4, 4), complex)
+        with self.assertRaises(ValueError) as cm:
+            accumulate_batch(out, cb, 0, f, work=(big[...], big[...]))
+        self.assertIn("share memory", str(cm.exception))
+        # a buffer that IS an operand, or a view of one
+        for bad, which in (((cb, np.empty_like(cb)), "chibar_b"),
+                           ((np.empty_like(cb), out), "out_b"),
+                           ((out[...], np.empty_like(cb)), "out_b")):
+            with self.assertRaises(ValueError) as cm:
+                accumulate_batch(out, cb, 0, f, work=bad)
+            self.assertIn("shares memory with {}".format(which), str(cm.exception))
+
+    def test_non_contiguous_operands(self):
+        """``out_b`` and ``chibar_b`` may be strided views -- the bond path
+        passes exactly that (``W_b[:, :, :nd, :nd]``). Only the LENT buffers
+        need contiguity, and a non-contiguous loan is discarded rather than
+        refused."""
+        from hwave.solver.second_order import accumulate_batch, dense_w2
+        rows_v = [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]
+        packs = [("on-site only",
+                  _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0),
+                                             (0, 0, 0, 2, 2, 0.4, 0.0)]})[1]),
+                 ("with off-site",
+                  _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0)],
+                            "CoulombInter": rows_v})[1])]
+        for name, f in packs:
+            with self.subTest(pack=name):
+                cb = _random_chibar(8, 16, 4, 14)
+                ref = dense_w2(cb, f)
+                self.assertGreater(np.abs(ref).max(), 1e-6)            # anti-vacuity
+                # strided views of larger arrays, on BOTH operands
+                cb_big = np.zeros((8, 16, 8, 8), complex)
+                cb_big[:, :, :4, :4] = cb
+                cb_view = cb_big[:, :, :4, :4]
+                out_big = np.zeros((8, 16, 8, 8), complex)
+                out_view = out_big[:, :, :4, :4]
+                self.assertFalse(cb_view.flags.c_contiguous)
+                self.assertFalse(out_view.flags.c_contiguous)
+                accumulate_batch(out_view, cb_view, 0, f)
+                np.testing.assert_allclose(out_view, ref, rtol=0, atol=1e-13)
+                # and nothing outside the block was written
+                out_big[:, :, :4, :4] = 0.0
+                self.assertEqual(np.abs(out_big).max(), 0.0)
+
+    def test_norb1_offsite_and_mixed_identities(self):
+        """``norb = 1`` (nd = 1: the density slot IS the whole pair axis) --
+        the two closed-form checks of spec 2.4 written directly on the
+        kernel's output, as the ``norb = 2`` test does on its (00) block."""
+        from hwave.solver.second_order import dense_w2
+        rows_v = [(1, 0, 0, 1, 1, 0.3, 0.0), (-1, 0, 0, 1, 1, 0.3, 0.0)]
+        intra = [(0, 0, 0, 1, 1, 0.5, 0.0)]
+        fv = _factors_norb1({"CoulombInter": rows_v})
+        fu = _factors_norb1({"CoulombIntra": intra})
+        fuv = _factors_norb1({"CoulombInter": rows_v, "CoulombIntra": intra})
+        nvol = fv.nvol
+        cb = _random_chibar(8, nvol, 1, 15)
+        vq = fv.vpair[0, 0, :, 0, 0]
+        self.assertGreater(np.abs(vq).max(), 1e-3)                     # anti-vacuity
+        Wv, Wu, Wuv = dense_w2(cb, fv), dense_w2(cb, fu), dense_w2(cb, fuv)
+        # off-site only: 2 V(q)^2 chibar (the direct skeleton with its spin sum)
+        np.testing.assert_allclose(Wv[:, :, 0, 0], 2.0 * vq[None] ** 2 * cb[:, :, 0, 0],
+                                   rtol=0, atol=1e-13)
+        # on-site only: U^2 chibar
+        np.testing.assert_allclose(Wu[:, :, 0, 0], 0.25 * cb[:, :, 0, 0], rtol=0, atol=1e-13)
+        # mixed: 2 U V(q) chibar
+        np.testing.assert_allclose((Wuv - Wu - Wv)[:, :, 0, 0],
+                                   2.0 * 0.5 * vq[None] * cb[:, :, 0, 0], rtol=0, atol=1e-13)
+
+
 if __name__ == "__main__":
     unittest.main()

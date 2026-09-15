@@ -26,22 +26,34 @@ def _write_wan(path, name, norb, rows):
 
 def _split_for(rows_by_type, norb=2):
     """A FLEX general solver on input_2orb's geometry/transfer with the
-    given off-site rows; returns (solver, split)."""
+    given interaction rows; returns (solver, split).
+
+    The temporary input directory is removed before returning: the solver
+    has read the whole Hamiltonian at construction, and the gates that use
+    this helper call it hundreds of times."""
     from hwave.solver.offsite import split_locality
     import hwave.solver.flex as flex_mod
     d = tempfile.mkdtemp()
-    for f in ("geom.dat", "transfer.dat"):
-        shutil.copy(os.path.join(_IN2, f), d)
-    idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
-    for t, rows in rows_by_type.items():
-        _write_wan(os.path.join(d, t.lower() + ".dat"), t, norb, rows)
-        idict[t] = t.lower() + ".dat"
-    r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
-    par = {"T": 2.0, "filling": 0.5, "CellShape": list(_SHAPE), "SubShape": [1, 1, 1], "Nmat": 8,
-           "IterationMax": 1, "Mix": 1.0, "EPS": 1, "flex_second_order": "takimoto"}
-    s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
-                                                "enable_spin_orbital": False, "calc_scheme": "general"})
-    return s, split_locality(s.ham_info, s.lattice)
+    try:
+        for f in ("geom.dat", "transfer.dat"):
+            shutil.copy(os.path.join(_IN2, f), d)
+        idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        for t, rows in rows_by_type.items():
+            _write_wan(os.path.join(d, t.lower() + ".dat"), t, norb, rows)
+            idict[t] = t.lower() + ".dat"
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": list(_SHAPE), "SubShape": [1, 1, 1],
+               "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "flex_second_order": "takimoto"}
+        s = flex_mod.FLEX(r.get_param("ham"), {},
+                          {"mode": "FLEX", "param": par, "enable_spin_orbital": False,
+                           "calc_scheme": "general"})
+        return s, split_locality(s.ham_info, s.lattice)
+    finally:
+        # the solver has read everything it needs at construction; the
+        # gates below call this helper hundreds of times, and a leaked
+        # directory per call is a leak per call
+        shutil.rmtree(d, ignore_errors=True)
 
 
 class TestOffsite(unittest.TestCase):
