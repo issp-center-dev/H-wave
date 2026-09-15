@@ -75,7 +75,8 @@ archive; IR-native and densified variants alike):
   currently ``1`` (0-d ``int64``).
 
 Both fields are ABSENT from ``calc_scheme = "reduced"`` archives, from RPA
-archives, and from any file written before version 2.1. A missing field is
+archives, and from any archive written before this key was introduced
+(H-wave 2.0.0 and earlier). A missing field is
 never an error: every H-wave reader accepts such a file. When the initial
 self-energy given by ``sigma_init`` (the seed) records a different kernel
 from the current run, the solver logs one warning at WARNING level (and

@@ -203,8 +203,8 @@ interaction. Set
    [mode.param]
      flex_second_order = "takimoto"
 
-to reproduce results produced with H-wave 2.0.0; the option stays
-available throughout the 2.x series.
+to reproduce results produced with H-wave 2.0.0 and earlier releases;
+the option stays available throughout the 2.x series.
 
 **What changes.** Single-band inputs containing only ``CoulombIntra``
 agree under both kernel choices (``"local"`` and ``"takimoto"``) to within
@@ -239,9 +239,10 @@ start the loop from :math:`\Sigma = 0` -- that is, omit ``sigma_init``
 from the ``[file.input]`` section -- rather than continuing from a seed
 written with the other kernel: the solver warns when the seed's recorded
 ``flex_second_order`` differs from the run's (and notes it when the seed
-carries no record, i.e. a reduced-scheme or pre-2.1 archive). An archive
-written by H-wave 2.0.0 carries no kernel record at all, so only that
-informational line is logged; if warm-starting such a seed stalls under
+carries no record, i.e. a reduced-scheme archive or one written before
+this key was introduced). An archive written by H-wave 2.0.0 or an earlier
+release carries no kernel record at all, so only that informational line is
+logged; if warm-starting such a seed stalls under
 ``"local"``, either restart from :math:`\Sigma = 0` or set
 ``flex_second_order = "takimoto"`` to match the kernel the seed was
 produced with.
@@ -417,8 +418,9 @@ aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
 A ``calc_scheme = "general"`` seed also records which second-order kernel
 produced it. Seeding across kernels is allowed, and the solver warns when
 the seed's ``flex_second_order`` differs from the current run's (and notes
-it when the seed carries no such record, i.e. a reduced-scheme or pre-2.1
-archive). If such a run stalls, restart it from :math:`\Sigma = 0` -- see
+it when the seed carries no such record, i.e. a reduced-scheme archive or
+one written before this key was introduced -- H-wave 2.0.0 and earlier). If
+such a run stalls, restart it from :math:`\Sigma = 0` -- see
 :ref:`flex_second_order_tutorial`.
 
 .. note::
@@ -769,8 +771,9 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   ``calc_scheme = "general"`` runs only -- the second-order kernel of the
   effective interaction (``local`` | ``takimoto``, a 0-d ``<U8`` string
   array) and the schema version of that record (``1``). Both are absent
-  from reduced-scheme and RPA archives and from files written before
-  version 2.1; readers never require them, and a ``sigma_init`` seed
+  from reduced-scheme and RPA archives and from archives written before
+  this key was introduced (H-wave 2.0.0 and earlier); readers never require
+  them, and a ``sigma_init`` seed
   recording a different kernel is accepted with a warning. See
   :ref:`rpa_chiq_provenance`.
 
@@ -896,7 +899,7 @@ The FLEX solver accepts the following parameters in the
        effective interaction: ``"local"`` (default) is the exact local
        second order of every accepted interaction term;
        ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression and
-       reproduces H-wave 2.0.0 results. See
+       reproduces the results of H-wave 2.0.0 and earlier releases. See
        :ref:`flex_second_order_tutorial` and the configuration reference.
    * - ``gpu``
      - bool

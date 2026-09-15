@@ -786,7 +786,7 @@ i.e. :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s \bar\chi \hat{U}^s +
 \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`. It is exact at second order
 for a single-band Hubbard interaction and approximate for every other
 term; it is kept as the reproduction path for results obtained with
-H-wave 2.0.0.
+H-wave 2.0.0 and earlier releases.
 
 Accordingly, single-band inputs containing only ``CoulombIntra`` agree
 under both values to round-off, while every multi-orbital on-site interaction
