@@ -930,17 +930,22 @@ class TestFLEXAutoResolution(_Case):
 
     def test_unsupported_scheme_name_still_raises_the_actionable_valueerror(self):
         """The step-0 restructuring must not turn an unsupported scheme
-        name into an AssertionError. 'AUTO' is the sharp case: the
-        inherited _set_scheme compares case-SENSITIVELY, so it never routes
-        a mis-cased request through the auto path, and FLEX must report it
-        the way it always did."""
-        for name in ("bogus", "AUTO"):
+        name into an AssertionError. A mis-cased spelling of a SUPPORTED name
+        is no longer such a case: the inherited _set_scheme canonicalises the
+        request, so 'AUTO' takes the auto path like 'auto' (a mis-cased
+        request used to slip past the validations keyed off the name)."""
+        for name in ("bogus", "AUTOMATIC"):
             with self.subTest(calc_scheme=name):
                 with self.assertRaises(ValueError) as cm:
                     self._build(name, {"CoulombIntra": "coulombintra.dat"},
                                 False, mode="FLEX")
                 self.assertIn("FLEX requires calc_scheme='reduced' or "
                               "'general'", str(cm.exception))
+        solver, _ = self._build("AUTO", {"CoulombIntra": "coulombintra.dat"},
+                                False, mode="FLEX")
+        self.assertEqual(solver.calc_scheme_requested, "auto")
+        self.assertTrue(solver._scheme_resolution.startswith("auto:"),
+                        solver._scheme_resolution)
 
     def test_read_init_and_solve_are_no_ops_for_the_resolved_state(self):
         solver, green_info = self._build("auto", {"CoulombIntra": "coulombintra.dat"}, True, mode="FLEX")

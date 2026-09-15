@@ -42,7 +42,8 @@ p = "tests/rpa/input_2orb"
 idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
 r = read_input_k.QLMSkInput({"path_to_input": p, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson"}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson",
+       "flex_second_order": "takimoto"}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
 s.solve(gi, out)
@@ -52,25 +53,57 @@ s.save_results({"path_to_output": out, "sigma": "sigma.npz", "green": "green.npz
 
 class TestG0Off(unittest.TestCase):
     """Gate-off inputs: every archive member and the complete log stream
-    equal those of develop (the main checkout)."""
+    equal those of develop (the main checkout).
+
+    The run below pins flex_second_order = "takimoto" explicitly: this
+    guard's contract is develop identity, and develop has no second-order
+    key, so the comparison has to be made against the kernel develop
+    implements (spec 2026-09-08 D2). The new default ("local") is compared
+    against this same legacy kernel by
+    tests/test_flex_second_order_compat.py.
+
+    The npz comparison allows this side's archives to carry additional
+    members beyond develop's (task 7 stamps flex_second_order /
+    flex_second_order_schema on every general-scheme archive, sigma.npz and
+    green.npz included, which develop predates and never writes) -- every
+    member develop DOES have must still match exactly.
+    """
 
     def test_byte_identity_against_develop(self):
+        from tests.test_flex_second_order_compat import develop_checkout
         here = os.getcwd()
-        develop = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
-                                 os.path.abspath(os.path.join(here, "..", "..", "..")))
-        if not os.path.isdir(os.path.join(develop, "src", "hwave")):
-            self.skipTest("develop checkout not found at {}".format(develop))
+        # one shared rule with the other develop-comparison harnesses: the
+        # reference tree must be at the NAMED revision and clean, or the
+        # comparison is against something nobody can name
+        develop, why = develop_checkout()
+        if develop is None:
+            self.skipTest(why)
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             for root, out in ((here, a), (develop, b)):
                 subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out], check=True, cwd=here)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
                 da, db = np.load(os.path.join(a, name), allow_pickle=True), np.load(os.path.join(b, name), allow_pickle=True)
-                self.assertEqual(da.files, db.files, name)
-                for k in da.files:
+                # #181 follow-up: this side now stamps flex_second_order /
+                # flex_second_order_schema on every general-scheme archive
+                # (task 7); develop predates that provenance pair and has
+                # neither key. Same treatment as
+                # test_flex_second_order_compat.py's _members() comparison:
+                # every develop member must still be present and equal, new
+                # members on this side are allowed.
+                self.assertEqual(set(db.files) - set(da.files), set(), name)
+                for k in db.files:
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             la = open(os.path.join(a, "log.txt")).read().replace(here, "<root>").replace(a, "<out>")
             lb = open(os.path.join(b, "log.txt")).read().replace(develop, "<root>").replace(b, "<out>")
+            # flex_second_order (spec 2026-09-08 D2) is an orthogonal key
+            # added after this gate-off byte-identity guard was written: it
+            # logs one new INFO line on every general-scheme construction,
+            # regardless of the Phase B gates this test guards. Strip it
+            # before comparing so the guard still checks what it means to:
+            # Phase B gate-off output is unchanged.
+            la = "".join(ln for ln in la.splitlines(True)
+                        if "flex_second_order = " not in ln)
             self.assertEqual(la, lb)
 
 

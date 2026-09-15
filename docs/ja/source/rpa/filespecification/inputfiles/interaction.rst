@@ -16,7 +16,7 @@
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}`, :math:`\quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
@@ -24,7 +24,19 @@
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
+
+.. note::
+
+   上の式のうち2つは、ソルバーが以前から実装している内容に合わせて修正した
+   ものです。\ **入力ファイルを変更する必要はなく**\ 、数値結果も変わりません。
+
+   - **Hund**: 実装されている規約は上のとおりマイナス符号を伴います。
+     したがって強磁性的な（同スピン間で引力的な）Hund 結合は、係数
+     :math:`J^{\rm Hund}_{\alpha\beta}(r_{ij})`\ を正の値として宣言します。
+   - **PairLift**: 宣言した各行はそのエルミート共役とともにハミルトニアンに
+     含まれます（``PairHop``\ と同様）。改訂前の本ページでは\ ``+ h.c.``\ の
+     記載が漏れていました。
 
 
 以下にファイル例を示します。

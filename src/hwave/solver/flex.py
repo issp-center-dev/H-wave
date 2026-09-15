@@ -34,7 +34,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
-                  PAIRLIFT_INERT_WARNING)
+                  PAIRLIFT_INERT_WARNING, canonical_scheme_name)
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
@@ -196,12 +196,20 @@ def _scheme_stamp(solver):
     # identical so neither can drift into the mislabel.)
     res = getattr(solver, "_scheme_resolution", "explicit")
     res = "unresolved" if res is None else res
-    return {
+    stamp = {
         "calc_scheme": str(scheme),
         "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
                                              scheme)),
         "scheme_resolution": str(res),
     }
+    # #181 follow-up: which second-order kernel this general-scheme run
+    # used ("local" | "takimoto"). Reduced-scheme and RPA/UHF archives never
+    # carry this -- the kernel choice is meaningless outside FLEX general.
+    so = getattr(solver, "flex_second_order", None)
+    if str(scheme).lower() == "general" and so is not None:
+        stamp["flex_second_order"] = np.array(str(so), dtype="<U8")
+        stamp["flex_second_order_schema"] = np.int64(1)
+    return stamp
 
 
 class FLEX(RPA):
@@ -241,7 +249,7 @@ class FLEX(RPA):
         # base runs (refusal precedence steps 1-3 of the spec), because the
         # base parser would turn a true gate flag into False under
         # calc_type='ring+ladder' and exits on an odd Nmat.
-        self._phase_b_raw = self._parse_phase_b_keys(info_mode)
+        self._phase_b_raw = self._parse_flex_keys(info_mode)
 
         # Initialize RPA infrastructure (lattice, interaction, params)
         super().__init__(param_ham, info_log, info_mode)
@@ -259,6 +267,26 @@ class FLEX(RPA):
                           "longitudinal_bond_freq_batch",
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb")
+
+    _SECOND_ORDER_VALUES = ("local", "takimoto")
+
+    @staticmethod
+    def _parse_flex_keys(info_mode):
+        """Every FLEX-only raw key, parsed BEFORE the base constructor
+        (spec 2026-09-08 section 3): flex_second_order first (type/value,
+        step 1), then the Phase B keys."""
+        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        out = {"flex_second_order": "local", "flex_second_order_explicit": False}
+        if "flex_second_order" in param:
+            v = param["flex_second_order"]
+            if not isinstance(v, str) or v.strip().lower() not in FLEX._SECOND_ORDER_VALUES:
+                raise ValueError(
+                    "[mode.param] flex_second_order must be one of {} (case-insensitive), "
+                    "got {!r}".format(list(FLEX._SECOND_ORDER_VALUES), v))
+            out["flex_second_order"] = v.strip().lower()
+            out["flex_second_order_explicit"] = True
+        out.update(FLEX._parse_phase_b_keys(info_mode))
+        return out
 
     @staticmethod
     def _parse_phase_b_keys(info_mode):
@@ -301,7 +329,11 @@ class FLEX(RPA):
             raise ValueError(
                 "[mode.param] IterationMax must be an integer >= 0 when flex_hartree_fock or "
                 "longitudinal_bond_channels is true, got {!r}".format(itmax))
-        scheme = str(info_mode.get("calc_scheme", "auto")).lower()
+        # the SAME canonicalisation the solver itself applies later
+        # (hwave.solver.rpa.canonical_scheme_name): this pre-parser runs
+        # before any solver exists, so it cannot read the resolved state,
+        # and a second spelling rule here is a second accepted input domain
+        scheme = canonical_scheme_name(info_mode.get("calc_scheme", "auto"))
         if scheme not in ("general", "auto"):
             raise ValueError(
                 "flex_hartree_fock / longitudinal_bond_channels require calc_scheme='general' "
@@ -494,12 +526,30 @@ class FLEX(RPA):
         else:
             self._emit_flex_reduced_diagnostic()
 
+        # flex_second_order applicability (spec 2026-09-08 D2): after the
+        # scheme is known, still at construction. RPA canonicalises the scheme
+        # name to lower case once at construction; the local below re-applies
+        # the same normalisation defensively so every site that keys off the
+        # general scheme reads one canonical name.
+        scheme = str(self.calc_scheme).lower()
+        self.flex_second_order = self._phase_b_raw["flex_second_order"]
+        if self._phase_b_raw["flex_second_order_explicit"] and scheme != "general":
+            if self.calc_scheme_requested == "auto":
+                raise ValueError(
+                    '[mode.param] flex_second_order: calc_scheme = "auto" resolved to '
+                    '"reduced" for this interaction set; flex_second_order applies to the '
+                    'general scheme -- set calc_scheme = "general" explicitly or drop the key')
+            raise ValueError(
+                '[mode.param] flex_second_order applies to calc_scheme = "general" only '
+                '(got calc_scheme = {!r})'.format(self.calc_scheme))
+        if scheme == "general":
+            logger.info("    flex_second_order = {}".format(self.flex_second_order))
+
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
         # interaction via the density-density diagonal ('kaabb->kab') on the
         # reduced path.  The 'general' scheme selects the paramagnetic
         # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
         # guard is enforced in solve(), where spin_mode is determined).
-        scheme = self.calc_scheme.lower()
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
             # RPA *ring* (bubble) series with the full rank-4 vertex.
@@ -520,10 +570,10 @@ class FLEX(RPA):
             # ring+ladder was already rejected as step 0 above, and 'auto'
             # was resolved there too: only a genuinely unsupported scheme
             # name can reach here. The assertion is on the REQUESTED string
-            # (the one FLEX's resolver keys off), so a mis-cased 'AUTO' --
-            # which the inherited _set_scheme also treats as an explicit,
-            # unsupported name -- still reaches the actionable ValueError
-            # below instead of an AssertionError.
+            # (the one FLEX's resolver keys off), which the inherited
+            # _set_scheme canonicalises, so a mis-cased 'AUTO' has taken the
+            # auto path above and an unsupported name reaches the actionable
+            # ValueError below instead of an AssertionError.
             assert self.calc_scheme_requested != "auto", \
                 "auto must be resolved above"
             msg = ("FLEX requires calc_scheme='reduced' or 'general', "
@@ -535,6 +585,26 @@ class FLEX(RPA):
         # solvers, #107): their vertex has no density-diagonal content, so
         # the schemes would drop them entirely -- the former warning here
         # called that an 'approximation', which for those types it is not.
+
+        # Second-order kernel factors (spec 2026-09-08 section 2.5). Built
+        # once, at CONSTRUCTION, and only for the general scheme under
+        # flex_second_order = "local": the compiler's refusals (the D7
+        # degenerate-row ValueError and the Hermiticity ValueError) must
+        # reach the user before any solve work is done. Deliberately placed
+        # AFTER the scheme block above so the enable_spin_orbital refusal --
+        # which the compiler does not implement and would otherwise hit as
+        # an obscure shape error -- keeps its precedence (#83).
+        self._second_order_factors = None
+        self._second_order_device = None
+        if scheme == "general" and self.flex_second_order == "local":
+            from hwave.solver.offsite import split_locality
+            from hwave.solver.second_order import build_factors
+            split = split_locality(self.ham_info, self.lattice)
+            self._second_order_factors = build_factors(split, self.lattice, self.norb)
+            logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
+                len(self._second_order_factors.triples),
+                "yes" if self._second_order_factors.vpair is not None else "no",
+                self._second_order_factors.nbytes / 2 ** 20))
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
@@ -742,6 +812,45 @@ class FLEX(RPA):
             if env.marker == "split" and not getattr(self, "_phase_b_active", False):
                 logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
                             "its total sigma is used as the one seed".format(file_name))
+            if str(getattr(self, "calc_scheme", "")).lower() == "general":
+                # The provenance pair is refused when this version cannot
+                # interpret it: a member that is not ONE canonical value (the
+                # kernel name exactly as written by the stamp, the schema an
+                # integer this version reads), or a schema from a later
+                # version whose members may mean something else. Nothing is
+                # coerced -- 1.5, True, "1" and a two-element member are all
+                # unreadable, not "schema 1". Only a MISMATCH between two
+                # kernel names this version knows is a warning (below): that
+                # seed is still usable.
+                seed_so = None
+                raw = env.second_order
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    unreadable = raw.size != 1 or raw.dtype.kind != "U"
+                    if not unreadable:
+                        seed_so = str(value)
+                        unreadable = seed_so not in ("local", "takimoto")
+                    if unreadable:
+                        raise ValueError(
+                            "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
+                            "\"local\", \"takimoto\")".format(file_name, value))
+                raw = env.second_order_schema
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    if (raw.size != 1 or raw.dtype == np.bool_
+                            or not np.issubdtype(raw.dtype, np.integer)
+                            or int(value) != 1):
+                        raise ValueError(
+                            "sigma_init '{}': unsupported flex_second_order_schema {!r} (this "
+                            "version reads schema 1)".format(file_name, value))
+                if seed_so is None:
+                    logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
+                                "(a reduced-scheme archive, or one written before this key "
+                                "was introduced -- H-wave 2.0.0 and earlier)".format(file_name))
+                elif seed_so != self.flex_second_order:
+                    logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
+                                   "uses {} -- if the SCF stalls, restart from Sigma = 0".format(
+                                       file_name, seed_so, self.flex_second_order))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(
@@ -821,18 +930,31 @@ class FLEX(RPA):
         # _inflate_chi0q_and_ham_general is emitted once per solve, not
         # once per object.
         self._myo_sc_cache = None
-        if getattr(self, "_phase_b_active", False):
-            self._path_to_output = path_to_output
-            try:
-                if getattr(self, "_info_outputfile", None) is not None:
-                    self.validate_output_paths(path_to_output=path_to_output)
-                return self._solve_restoring_host_attrs(green_info, path_to_output)
-            except BaseException:
-                # spec 3.5: after a failed solve nothing is produced -- every
-                # solve-produced member and solver-owned cache is dropped
-                self._phase_b_reset(green_info)
-                raise
-        return self._solve_restoring_host_attrs(green_info, path_to_output)
+        # The device mirror of the second-order factors is solve-scoped too:
+        # _solve_impl builds it on the GPU path only, and it is dropped here
+        # on normal completion AND after an exception, so a reused or
+        # inspected solver never holds another solve's device arrays (the
+        # same discipline as the public array attributes of issue #63). The
+        # reset lives HERE rather than in _solve_restoring_host_attrs because
+        # that helper is single-sourced with RPA on purpose
+        # (tests/test_flex_analytical.py::TestSolveHostRestoreIsSingleSourced)
+        # and _second_order_device is FLEX-only state. The host pack
+        # (_second_order_factors) is untouched and stays authoritative.
+        try:
+            if getattr(self, "_phase_b_active", False):
+                self._path_to_output = path_to_output
+                try:
+                    if getattr(self, "_info_outputfile", None) is not None:
+                        self.validate_output_paths(path_to_output=path_to_output)
+                    return self._solve_restoring_host_attrs(green_info, path_to_output)
+                except BaseException:
+                    # spec 3.5: after a failed solve nothing is produced -- every
+                    # solve-produced member and solver-owned cache is dropped
+                    self._phase_b_reset(green_info)
+                    raise
+            return self._solve_restoring_host_attrs(green_info, path_to_output)
+        finally:
+            self._second_order_device = None
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -941,6 +1063,20 @@ class FLEX(RPA):
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
+            # Per-solve device mirror of the second-order factors (spec
+            # 2.5): the host pack stays intact and authoritative, so a
+            # reused solver never depends on a previous solve's backend.
+            # Dropped in the finally of FLEX.solve (see the comment there
+            # for why it is not in the shared _solve_restoring_host_attrs).
+            if self._second_order_factors is not None:
+                from hwave.solver.second_order import SecondOrderFactors
+                f = self._second_order_factors
+                self._second_order_device = SecondOrderFactors(
+                    norb=f.norb, nd=f.nd, nvol=f.nvol, triples=f.triples,
+                    A_on=tuple(xp.asarray(a) for a in f.A_on),
+                    B_on=tuple(xp.asarray(b) for b in f.B_on),
+                    vpair=None if f.vpair is None else xp.asarray(f.vpair),
+                    nbytes=f.nbytes)
 
         # Step 2: Compute bare Green's function G0(k, iwn)
         if self.use_ir:
@@ -1279,6 +1415,18 @@ class FLEX(RPA):
             "density_target_enforced": bool(self.calc_mu),
         }
 
+    def _second_order_members(self):
+        """The flex_second_order / flex_second_order_schema provenance pair
+        (#181 follow-up), for the archive blocks that do NOT already go
+        through :func:`_scheme_stamp` (sigma, green, and the dedicated bond
+        archive). General scheme only; empty on reduced (and for any
+        __new__-built stub missing the attributes)."""
+        if (str(getattr(self, "calc_scheme", "")).lower() != "general"
+                or getattr(self, "flex_second_order", None) is None):
+            return {}
+        return {"flex_second_order": np.array(self.flex_second_order, dtype="<U8"),
+                "flex_second_order_schema": np.int64(1)}
+
     def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target):
         """rho, the density-closure check and Sigma_HF for one map."""
         from hwave.solver import flex_hf, hartree_fock as _hf
@@ -1400,7 +1548,9 @@ class FLEX(RPA):
             depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
             split_seed=split_seed, n_types=n_types,
             freq_batch=self.longitudinal_bond_freq_batch,
-            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme)
+            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
+            factor_bytes=(0 if self._second_order_factors is None
+                          else int(self._second_order_factors.nbytes)))
         gib = flex_bond._GIB
         logger.info(
             "Bond-resolved FLEX preflight (ESTIMATE): B = %d channels %s, ND = %d, nvol = %d, "
@@ -1678,7 +1828,13 @@ class FLEX(RPA):
                 store, self._bond_S, self._bond_C, S_on=self._bond_S_on, C_on=self._bond_C_on,
                 nb=self._bond_nb,
                 output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
-                spatial_shape=shape, iteration=iteration)
+                spatial_shape=shape, iteration=iteration,
+                # the HOST pack, not _second_order_device: flex_bond is a
+                # host-side module (its store is numpy and every array
+                # reaching it goes through _bk.to_host), so a device mirror
+                # would not survive the kernel's numpy.asarray.
+                factors=self._second_order_factors,
+                second_order=self.flex_second_order)
         with self._traced("transport"):
             sigma_fluct = flex_bond.calc_self_energy_bond(
                 store, _bk.to_host(green_kw), beta, self._bond_view, shape, norb, workers)
@@ -2652,7 +2808,9 @@ class FLEX(RPA):
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
-        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
+        factors = self._second_order_device or self._second_order_factors
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors,
+                                        second_order=self.flex_second_order)
         # chi0q / chi_s / chi_c are already in the native RPA [a,c,b,d]
         # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
         # what the public output and the Eliashberg loader expect: the loader
@@ -3023,7 +3181,15 @@ class FLEX(RPA):
                             if t in _OFFSITE_DENSITY_TYPES]
 
             if offsite_used:
-                if getattr(self, "flex_hartree_fock", False):
+                if getattr(self, "flex_second_order", "takimoto") == "local":
+                    _msg = ("FLEX calc_scheme='general' (flex_second_order = local): the direct "
+                            "skeleton and every local mixed term of the off-site entries of {} are "
+                            "exact at second order; their exchange skeleton is included only with "
+                            "longitudinal_bond_channels = true.")
+                    if getattr(self, "flex_hartree_fock", False):
+                        _msg += (" Their first-order exchange is carried by the "
+                                 "Hartree-Fock self-energy.")
+                elif getattr(self, "flex_hartree_fock", False):
                     _msg = ("FLEX calc_scheme='general' with flex_hartree_fock=true: the "
                             "off-site entries of {} enter the fluctuation vertex through "
                             "their Hartree (density-slot) part V(q); their first-order "
@@ -3251,7 +3417,8 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
-    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc):
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc, factors=None,
+                           second_order="takimoto"):
         r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
 
         Implements the fluctuation part of the paramagnetic full-vertex
@@ -3289,14 +3456,98 @@ class FLEX(RPA):
             MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
             MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+        factors : SecondOrderFactors, optional
+            The compiled second-order factor pack
+            (:func:`hwave.solver.second_order.build_factors`), host- or
+            device-backed. Required by ``second_order = "local"`` and ignored
+            by ``"takimoto"``.
+        second_order : str
+            ``"takimoto"`` (the legacy kernel above, unchanged) or ``"local"``
+            (spec 2026-09-08): the ring is taken from THIRD order on and the
+            exact local second order is added instead, see below.
 
         Returns
         -------
         ndarray
             Effective interaction V_eff, shape
             ``(nmat, nvol, norb^2, norb^2)``.
+
+        Notes
+        -----
+        With ``second_order = "local"`` the assembly is
+
+            V(q) = 3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                   + W2(chibar)
+
+        (spec 2026-09-08 section 2.3): subtracting the bare bubble removes the
+        whole second order from the two RPA channels -- what is left of them
+        starts at third order -- and ``W2``, the exact local second-order
+        kernel of :func:`hwave.solver.second_order.accumulate_batch`, replaces
+        it. For a one-band Hubbard interaction the two agree identically; they
+        differ wherever the MYO S/C reduction is not exact at second order
+        (Hund/Exchange/PairHop/PairLift and every off-site type).
+
+        The local assembly runs in frequency batches of ``nb = max(1, nmat //
+        8)``, so besides ``v_eff`` itself no full-size ``(nmat, nvol, ndx,
+        ndx)`` array is ever materialised -- neither ``W2`` nor any product.
+        Exactly TWO ``(nb, nvol, ndx, ndx)`` temporaries are live at the peak
+        (``T1``/``T2``): they are allocated once, reused across batches and
+        across both channels -- every product goes through
+        ``matmul(..., out=)`` rather than an expression temporary -- and then
+        LENT to :func:`~hwave.solver.second_order.accumulate_batch` through
+        its ``work`` argument, so the kernel allocates nothing of the batch
+        shape either (its own contract: the density-slot gathers and scatters
+        are strided views, and the only per-call allocation left is the
+        boolean mask of its finiteness checkpoint, a sixteenth of one batch
+        array, plus constant array-module buffering). That is the
+        ``T_bytes = 2 nb nvol ndx^2 * 16`` budget of spec 2.5.
         """
         logger.debug(">>> FLEX._calc_veff_general")
+
+        if second_order == "local":
+            from hwave.solver.second_order import accumulate_batch
+            if factors is None:
+                raise ValueError('flex_second_order = "local" needs the compiled factors')
+            xp = _bk.array_module_of(chi0q)
+            nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+            ndx = chi0q.shape[2] * chi0q.shape[3]
+            # Same flatten as the takimoto body below: row (l1 * norb + l2),
+            # column (l3 * norb + l4) -- the pair convention accumulate_batch
+            # reads its chibar in (pinned by tests/test_second_order_oracle.py,
+            # which feeds it this very array).
+            chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+            chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+            chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+            UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
+            UcB = Uc[np.newaxis]
+            v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
+            # batch length: the peak above v_eff is T_bytes = 2 * nb * nvol *
+            # ndx^2 * 16 bytes (T1, T2), plus accumulate_batch's finiteness
+            # mask (T_bytes / 32) and constant buffering -- see its docstring.
+            nb = max(1, nmat // 8)
+            T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            for l0 in range(0, nmat, nb):
+                l1 = min(nmat, l0 + nb)
+                n = l1 - l0
+                out = v_eff[l0:l1]
+                # the ring from third order on:
+                #   3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                for chi_2d, UB, w in ((chis_2d, UsB, 1.5), (chic_2d, UcB, 0.5)):
+                    xp.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+                    xp.matmul(UB, T1[:n], out=T2[:n])
+                    xp.matmul(T2[:n], UB, out=T1[:n])
+                    T1[:n] *= w
+                    out += T1[:n]
+                # the exact local second order, added in place into the view.
+                # The kernel borrows the SAME two buffers (sliced to this
+                # batch's length, exactly like the ring products above), so
+                # the whole assembly peaks at two temporaries, not four.
+                accumulate_batch(out, chi0_2d[l0:l1], l0, factors,
+                                 work=(T1[:n], T2[:n]))
+            return v_eff
+        if second_order != "takimoto":
+            raise ValueError("unknown second_order {!r}".format(second_order))
 
         nmat, nvol = chi0q.shape[0], chi0q.shape[1]
         no = chi0q.shape[2]
@@ -3775,8 +4026,11 @@ class FLEX(RPA):
         # Save self-energy
         if "sigma" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
-            # #167: no scheme stamp here -- sigma/green are outside the
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
             # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
             sigma_extra = {}
             if getattr(self, "_phase_b_active", False):
                 sigma_extra = dict(sigma_convention="split",
@@ -3790,14 +4044,18 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
                      momentum_convention=MOMENTUM_CONVENTION,
-                     **_freq_meta("F"))
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save sigma in file {}".format(file_name))
 
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
-            # #167: no scheme stamp here -- sigma/green are outside the
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
             # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
             green_extra = {}
             if ir_native:
                 # native-only provenance key (the densified green.npz key
@@ -3817,7 +4075,8 @@ class FLEX(RPA):
                      beta=1.0 / self.T,
                      momentum_convention=MOMENTUM_CONVENTION,
                      **green_extra,
-                     **_freq_meta("F"))
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save green in file {}".format(file_name))
 
         # Dedicated bond archive (spec 4.2, longitudinal_bond_output_full)
@@ -3846,5 +4105,6 @@ class FLEX(RPA):
                      reverse=green_info["longitudinal_bond_reverse"],
                      types=green_info["longitudinal_bond_types"],
                      **_bond_static,
-                     **self._provenance_block("last_map"))
+                     **self._provenance_block("last_map"),
+                     **self._second_order_members())
             logger.info("save_results: save the bond archive in file {}".format(file_name))

@@ -17,6 +17,28 @@ bit-reproducible, so the physics is pinned by the lambda table, not by hashes). 
 module verifies that file against the pinned tables below; with
 ``HWAVE_RUN_SLOW_FIXTURES=1`` it regenerates every Green function (hours)
 and re-derives the observables.
+
+Second-order kernel (#181 follow-up, spec 2026-09-08).  The milestone is
+generated under the production default ``flex_second_order = "local"``, and
+:data:`LAMBDA_FLEX_BOND_16` is UNCHANGED from the ``"takimoto"`` table it was
+first recorded with: on this SINGLE-BAND setting with the bond gate on the two
+kernels are the same W.  The bond-resolved S/C already carry the exact direct
+``V^2`` and ``UV`` second order into channel 0 through the bond channels, and
+the local kernel subtracts precisely that ring second order and adds it back
+as ``W2``; the two assemblies were measured to agree to 7e-15 here, and the
+regenerated lambda table agrees with the committed one to 4.3e-9 relative (mu
+to 1e-11), four orders inside ``LAMBDA_RTOL``.  The identity is a property of
+this setting, not of the kernels, so one ``"takimoto"`` point is committed
+alongside as a live witness: ``lambda_t_takimoto`` at ``V = 0.8``, produced by
+``generate_flex_bond_fixtures.py --only 0.8 --no-warm --second-order
+takimoto`` (the whole chain, legacy seed included, under ``"takimoto"``), and
+asserted below against the value the milestone was first pinned at.  That run
+writes its own suffixed observables file, which the milestone run -- executed
+afterwards in the same directory -- folds into the committed file as
+``lambda_t_takimoto`` / ``records_takimoto``
+(``generate_flex_bond_fixtures._takimoto_witness``); the keys are never edited
+in by hand, and regenerating the milestone without the witness present drops
+them.
 """
 import json
 import os
@@ -38,6 +60,9 @@ OBSERVABLES = os.path.join(FIXTURE_DIR, "flex_bond_observables.json")
 #: recorded from the generator run of 2026-09-06 (see the observables file;
 #: every point converged in 10-25 iterations from the legacy seed, the warm
 #: starts at V = 1.0 and 1.2 agree with the cold ones to 1e-9 relative).
+#: Unchanged by the #181 follow-up: the 2026-09-15 regeneration under
+#: ``flex_second_order = "local"`` reproduces every entry to <= 4.3e-9
+#: relative (see the module docstring for why the two kernels coincide here).
 LAMBDA_FLEX_BOND_16 = {
     "0.00": 0.07975703202716758,
     "0.40": 0.08178290472738786,
@@ -45,6 +70,11 @@ LAMBDA_FLEX_BOND_16 = {
     "1.00": 0.13084753641943114,
     "1.20": 0.20422236554811116,
 }
+#: ``lambda_t`` of the one committed ``"takimoto"`` point (V = 0.8), the value
+#: the milestone was first pinned at.  Kept as a literal rather than read from
+#: :data:`LAMBDA_FLEX_BOND_16` so that a future edit of that table cannot
+#: silently redefine what "the legacy kernel gave" means.
+LAMBDA_TAKIMOTO_V080 = 0.09940861974554759
 HF_DENSITY_TOL = 1.0e-6
 
 
@@ -116,9 +146,92 @@ class TestFlexBondOnariTrend(unittest.TestCase):
         with open(OBSERVABLES) as f:
             obs = json.load(f)
         lam, v_grid = _accept(obs, self)
+        self.assertEqual(obs["settings"]["flex_second_order"], "local")
         for V, value in zip(v_grid, lam):
             ref = LAMBDA_FLEX_BOND_16["{:.2f}".format(V)]
             self.assertLess(abs(value - ref), LAMBDA_RTOL * abs(ref), "V={}".format(V))
+        # the committed "takimoto" witness (see the module docstring): the
+        # legacy kernel, run end to end at V = 0.8, still gives the value the
+        # milestone was pinned at.
+        lam_t = obs["lambda_t_takimoto"]["0.80"]
+        self.assertLess(abs(lam_t - LAMBDA_TAKIMOTO_V080),
+                        LAMBDA_RTOL * abs(LAMBDA_TAKIMOTO_V080), lam_t)
+        rec = obs["records_takimoto"][0]
+        self.assertEqual(rec["V"], 0.8)
+        self.assertTrue(rec["scf_converged"], rec)
+        eps = 10.0 ** (-obs["settings"]["EPS"])
+        for k in ("scf_sigma_residual", "scf_green_residual", "scf_component_residual"):
+            self.assertLess(rec[k], eps, k)
+        self.assertLess(rec["hf_density_error"], HF_DENSITY_TOL, rec)
+
+    def test_the_generator_folds_the_takimoto_witness_into_the_observables(self):
+        """The two ``*_takimoto`` keys this module reads above are not typed in
+        by hand: a ``--second-order takimoto`` run leaves its own observables
+        file beside the milestone's, and the milestone run folds it in."""
+        import json as _json
+        import tempfile
+        from tests.sc.onari_bond import generate_flex_bond_fixtures as gen
+        with open(OBSERVABLES) as f:
+            committed = _json.load(f)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(gen._takimoto_witness(d), {})       # no witness: no keys
+            witness = {"lambda_t": {"cold": committed["lambda_t_takimoto"], "warm": {}},
+                       "records": committed["records_takimoto"],
+                       "settings": dict(gen.SETTINGS, flex_second_order="takimoto")}
+            with open(os.path.join(d, gen.OBSERVABLES.replace(".json", "_takimoto.json")),
+                      "w") as f:
+                _json.dump(witness, f)
+            folded = gen._takimoto_witness(d)
+        self.assertEqual(set(folded), {"lambda_t_takimoto", "records_takimoto"})
+        self.assertEqual(folded["lambda_t_takimoto"], committed["lambda_t_takimoto"])
+        self.assertEqual(folded["records_takimoto"], committed["records_takimoto"])
+
+    def test_a_witness_that_does_not_belong_here_is_refused(self):
+        """The witness is FOLDED into the milestone's observables under the
+        keys the acceptance above reads, so a witness from another run would
+        be committed as if it were this milestone's legacy comparison. Four
+        ways it can be wrong, each refused by name."""
+        import json as _json
+        import tempfile
+        from tests.sc.onari_bond import generate_flex_bond_fixtures as gen
+        with open(OBSERVABLES) as f:
+            committed = _json.load(f)
+
+        def witness(**over):
+            w = {"lambda_t": {"cold": dict(committed["lambda_t_takimoto"]), "warm": {}},
+                 "records": list(committed["records_takimoto"]),
+                 "settings": dict(gen.SETTINGS, flex_second_order="takimoto")}
+            w.update(over)
+            return w
+
+        # the good one is accepted, so none of the rejections below is vacuous
+        gen.validate_witness(witness())
+
+        cases = {
+            "local kernel": (witness(settings=dict(gen.SETTINGS)), "flex_second_order"),
+            "mismatched setting": (
+                witness(settings=dict(gen.SETTINGS, flex_second_order="takimoto", Nmat=1024)),
+                "'Nmat'"),
+            "unknown setting": (
+                witness(settings=dict(gen.SETTINGS, flex_second_order="takimoto", extra=1)),
+                "unknown setting"),
+            "missing record": (witness(records=[]), "no cold record"),
+            "missing lambda": (witness(lambda_t={"cold": {}, "warm": {}}), "no cold lambda"),
+            "no settings": (witness(settings=None), "no settings block"),
+        }
+        for name, (w, needle) in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(gen.WitnessError) as cm:
+                    gen.validate_witness(w, "witness.json")
+                self.assertIn(needle, str(cm.exception))
+                self.assertIn("witness.json", str(cm.exception))
+        # and the refusal happens where it matters: on the fold itself
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, gen.OBSERVABLES.replace(".json", "_takimoto.json"))
+            with open(path, "w") as f:
+                _json.dump(witness(settings=dict(gen.SETTINGS)), f)
+            with self.assertRaises(gen.WitnessError):
+                gen._takimoto_witness(d)
 
     @heavy
     def test_regenerated_greens_reproduce_the_pinned_lambda(self):

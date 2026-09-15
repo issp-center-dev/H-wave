@@ -566,6 +566,105 @@ def test_general_ir_gpu_matches_cpu():
         np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-8)
 
 
+def _make_offsite_general_solver(nmat, matsubara_basis, iteration_max=3, T=1.0):
+    """A general-scheme FLEX solver on the 2-orbital ON-SITE (U, U', Hund)
+    plus OFF-SITE (V) fixture under ``flex_second_order = "local"``.
+
+    ``_make_general_solver``'s fixture is on-site only, so its factor pack
+    carries no ``vpair`` and the off-site half of the kernel never runs.
+    This one does -- it is the fixture ``tests/test_flex_gpu.py`` uses for
+    the same reason -- which is what makes the operand checks below cover
+    the off-site vertex."""
+    import shutil
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    from tests.test_flex_second_order_scf import _write_inputs
+    d = tempfile.mkdtemp(prefix="hwave_ir_so_offsite_")
+    try:
+        idict = _write_inputs(d)
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        param = {'T': T, 'filling': 0.5, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                 'Nmat': nmat, 'IterationMax': iteration_max, 'Mix': 0.5, 'EPS': 8,
+                 'flex_second_order': 'local', 'matsubara_basis': matsubara_basis}
+        info_mode = {'mode': 'FLEX', 'param': param, 'enable_spin_orbital': False,
+                     'calc_scheme': 'general'}
+        return solver_flex.FLEX(r.get_param("ham"), {}, info_mode), r.get_param("green")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _run_ir_local_with_operand_check(expect_module, gpu, monkeypatch, nmat=64):
+    """Solve the IR-node off-site ``"local"`` case with the operand-checking
+    wrapper of ``tests/test_flex_gpu.py`` in place; returns the solver.
+
+    The wrapper is shared rather than reimplemented: it already asserts the
+    backend of every operand -- the output view, the bubble batch, both
+    factor matrices of every spin triple, the off-site ``vpair`` and both
+    lent scratch buffers -- and its host spelling is what lets the same
+    logic be exercised on a machine with no CUDA device."""
+    import hwave.solver.second_order as so_mod
+    from tests.test_flex_gpu import _operand_checking_accumulate_batch
+    seen = {"calls": 0}
+    s, gi = _make_offsite_general_solver(nmat, "ir")
+    assert s.use_ir
+    assert s._second_order_factors is not None
+    assert s._second_order_factors.vpair is not None     # the off-site half runs
+    s.use_gpu = gpu
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch(expect_module, seen))
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s.solve(gi, 'tests/flex/output')
+    assert seen["calls"] > 0, "accumulate_batch was never called on the IR path"
+    return s
+
+
+def test_second_order_local_ir_operands_follow_the_backend_cpu(monkeypatch):
+    """Host twin of the GPU case below, and the only one that can run on a
+    machine without CUDA: on the IR path with an OFF-SITE factor pack, every
+    operand of every ``accumulate_batch`` call is a host array, and the
+    wrapper really does reach the call site (a device expectation on the
+    same host run fails on the first operand)."""
+    import hwave.solver.second_order as so_mod
+    from tests.test_flex_gpu import _operand_checking_accumulate_batch
+    s = _run_ir_local_with_operand_check("numpy", False, monkeypatch)
+    assert s.flex_second_order == "local"
+    assert np.abs(s.sigma).max() > 1e-6                  # anti-vacuity
+    seen = {"calls": 0}
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch("cupy", seen))
+    s2, gi2 = _make_offsite_general_solver(64, "ir")
+    with pytest.raises(AssertionError, match="expected cupy"):
+        s2.solve(gi2, 'tests/flex/output')
+    assert seen["calls"] == 0
+
+
+def test_second_order_local_ir_gpu_matches_cpu(monkeypatch):
+    """``flex_second_order = "local"`` on the IR nodes WITH off-site factors,
+    on a real CUDA device: the self-energy reproduces the CPU run to fp64
+    round-off, and every kernel operand -- the off-site ``vpair`` included --
+    is a device array.
+
+    ``tests/test_flex_gpu.py`` covers the same contract on the uniform grid;
+    the IR path builds and consumes its effective interaction through a
+    different transport, so the device residency of the factor pack is not
+    implied by that case."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+    s_c, gi_c = _make_offsite_general_solver(64, "ir")
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_c.solve(gi_c, 'tests/flex/output')
+    s_g = _run_ir_local_with_operand_check("cupy", True, monkeypatch)
+    assert isinstance(s_g.sigma, np.ndarray), "solver.sigma must be a host array"
+    scale = np.abs(s_c.sigma).max()
+    assert scale > 1e-6                                  # anti-vacuity
+    np.testing.assert_allclose(s_g.sigma, s_c.sigma, rtol=0, atol=1e-10 * scale,
+                               err_msg="gpu/cpu sigma mismatch on the IR local kernel")
+
+
 def test_general_ir_chi0_dtype_is_complex128():
     T = 2.0
     beta = 1.0 / T
@@ -597,3 +696,136 @@ def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
                   "mode": {}}
     with pytest.raises(ValueError, match="write_densified"):
         sc._load_chi0q(input_dict)
+
+
+# --- #181 follow-up: the second-order kernel on the IR path ---------------
+# tests/test_flex_second_order_compat.py pins the two kernels against each
+# other (and "takimoto" against develop) on the UNIFORM grid. The two cases
+# below carry that contract onto the IR path: the exact local kernel must be
+# a property of the interaction, not of the Matsubara representation, and
+# "takimoto" must still be develop's code path there.
+
+_IR_ARCHIVE_RUN = r'''
+import json, os, sys
+import hwave.qlmsio.read_input_k as read_input_k
+import hwave.solver.flex as flex_mod
+path, out, so = sys.argv[1:4]
+idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+         "CoulombIntra": "coulombintra.dat", "CoulombInter": "coulombinter.dat"}
+r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
+par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 256,
+       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir"}
+if so != "absent":
+    par["flex_second_order"] = so
+s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                            "enable_spin_orbital": False, "calc_scheme": "general"})
+gi = r.get_param("green")
+s.solve(gi, out)
+s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq", "sigma": "sigma",
+                "green": "green", "energy": "energy.dat"}, gi)
+'''
+
+
+def _develop_checkout():
+    """``(path, None)`` when the reference checkout is usable, ``(None,
+    reason)`` otherwise -- one shared rule with the uniform-grid harness
+    (:func:`tests.test_flex_second_order_compat.develop_checkout`), which
+    also pins the REVISION it compares against and refuses a dirty tree."""
+    from tests.test_flex_second_order_compat import develop_checkout
+    return develop_checkout()
+
+
+def test_second_order_local_ir_matches_uniform_onsite_uprime():
+    """``flex_second_order = "local"`` on the on-site U + U' fixture: the IR
+    run and the uniform run must agree at this module's e2e tolerance.
+
+    The recipe is ``test_e2e_general_flex_ir_vs_uniform`` above with the
+    kernel requested explicitly. The fixture's on-site inter-orbital
+    CoulombInter (U' = 1, written by ``_write_2d_2orb_onsite_fixture``) is
+    what makes the case non-trivial: with CoulombIntra alone the local
+    kernel reduces to the legacy assembly identically (spec section 3), so
+    the anti-vacuity leg below -- the same uniform run under ``"takimoto"``
+    landing on a visibly different sigma -- would be empty.
+
+    Cost: three converged ``Nmat = 1024`` solves, 5.1 s measured on its own.
+    That is at the opt-in threshold of ``tests/heavy_tests.py`` rather than
+    over it, and the registry is keyed by ``(module, class, method)`` -- it
+    cannot name a module-level pytest function -- so this case stays in the
+    fast gate, with the measurement recorded here.
+    """
+    T = 2.0
+    local = {'flex_second_order': 'local'}
+    s_ir, gi_ir = _make_general_solver(1024, "ir", T=T, iteration_max=60,
+                                       extra_param=local)
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_ir.solve(gi_ir, 'tests/flex/output')
+    s_u, gi_u = _make_general_solver(1024, "uniform", T=T, iteration_max=60,
+                                     extra_param=local)
+    s_u.solve(gi_u, 'tests/flex/output')
+    for s in (s_ir, s_u):
+        # the requested kernel is the one that ran
+        assert s.flex_second_order == "local"
+        assert s._second_order_factors is not None
+    _assert_converged(s_ir)
+    _assert_converged(s_u)
+    for key in ("sigma", "chi_s", "chi_c"):
+        a = getattr(s_ir, key)
+        b = getattr(s_u, key)
+        scale = np.abs(b).max()
+        assert np.abs(a - b).max() / scale < 3e-2, key
+    # anti-vacuity: the local kernel is not the legacy one on this fixture
+    s_t, gi_t = _make_general_solver(1024, "uniform", T=T, iteration_max=60,
+                                     extra_param={'flex_second_order': 'takimoto'})
+    s_t.solve(gi_t, 'tests/flex/output')
+    _assert_converged(s_t)
+    gap = np.abs(s_u.sigma - s_t.sigma).max() / np.abs(s_t.sigma).max()
+    assert gap > 1e-3, "local and takimoto agree on this fixture ({}); the " \
+                       "IR parity case would be vacuous".format(gap)
+
+
+def test_second_order_takimoto_ir_numerically_identical_to_develop():
+    """``"takimoto"`` on the IR path is still develop's code path: every
+    numerical archive member of a general+IR run with the key set to
+    ``"takimoto"`` is ``np.array_equal`` to the same run on the develop
+    checkout, where the key does not exist.
+
+    The uniform-grid half of this contract lives in
+    ``tests/test_flex_second_order_compat.py``; this is its IR twin, run
+    through the same subprocess harness (the develop checkout is a second
+    source tree, so it can only be exercised out of process)."""
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    from tests.test_flex_general import _write_2d_2orb_onsite_fixture
+    from tests.test_flex_second_order_compat import _members
+    dev, why = _develop_checkout()
+    if dev is None:
+        pytest.skip(why)
+    here = os.getcwd()
+    fixture = tempfile.mkdtemp(prefix="hwave_ir_so_fixture_")
+    a = tempfile.mkdtemp(prefix="hwave_ir_so_dev_")
+    b = tempfile.mkdtemp(prefix="hwave_ir_so_here_")
+    try:
+        _write_2d_2orb_onsite_fixture(fixture)
+        for checkout, out, so in ((dev, a, "absent"), (here, b, "takimoto")):
+            env = dict(os.environ,
+                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
+                           env=env, check=True, capture_output=True, cwd=checkout)
+        ma, mb = _members(a), _members(b)
+        compared = 0
+        for f in ma:
+            for k, v in ma[f].items():
+                assert k in mb[f], (f, k)
+                # "b" too: boolean members such as density_target_enforced
+                # are part of the archive and must not drift either
+                if np.asarray(v).dtype.kind in "fciub":
+                    np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
+                                                  err_msg=str((f, k)))
+                    compared += 1
+        assert compared > 10, compared            # anti-vacuity: members really compared
+        assert np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max() > 1e-6
+    finally:
+        for d in (fixture, a, b):
+            shutil.rmtree(d, ignore_errors=True)

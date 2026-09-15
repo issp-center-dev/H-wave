@@ -632,6 +632,179 @@ in the input TOML file. In this mode:
    ``Norbit``.
 
 
+.. _flex_second_order_kernel:
+
+Second order of the general FLEX path
+--------------------------------------
+
+In ``mode = "FLEX"`` with ``calc_scheme = "general"`` the fluctuation
+self-energy is built from the effective interaction
+
+.. math::
+
+   V_{\rm eff}(\mathbf{q}, i\nu)
+   = \tfrac{3}{2}\hat{U}^s \left[\chi_s - \bar\chi\right] \hat{U}^s
+   + \tfrac{1}{2}\hat{U}^c \left[\chi_c - \bar\chi\right] \hat{U}^c
+   + W^{(2)},
+
+where :math:`\bar\chi` is the bare bubble and :math:`\hat{U}^s`,
+:math:`\hat{U}^c` are the spin and charge vertices of the ring. Written
+this way the first two terms are the ring series from THIRD order on, and
+the whole second order of the theory sits in :math:`W^{(2)}`. Which
+expression is used for :math:`W^{(2)}` is selected by ``[mode.param]``
+``flex_second_order`` (see the configuration reference).
+
+``flex_second_order = "local"`` (the default)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Write the interaction with a generalised index :math:`p = (\text{site},
+\text{orbital}, \text{spin})` as :math:`{\cal H}_{\rm int} =
+\tfrac{1}{2}\sum V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r` and
+antisymmetrise it,
+:math:`\Gamma_{pq,rs} = V_{pq,rs} - V_{pq,sr}`. The exact second-order
+(skeleton) self-energy is
+
+.. math::
+
+   \Sigma^{(2)}_{pp'}(\tau) = -\tfrac{1}{2} \sum_{qrs\,q'r's'}
+   \Gamma_{pq,rs}\,\Gamma_{r's',p'q'}\;
+   G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau).
+
+Every diagram of that sum whose two particle-hole lines close on ONE site
+is representable by a vertex that depends on the transferred momentum
+:math:`\mathbf{q}` alone, and is therefore carried exactly by
+:math:`W^{(2)}`.
+
+*On-site vertices.* Fixing the external spin and summing all three
+internal spins :math:`\sigma = (\sigma_s, \sigma_r, \sigma_q)` gives
+
+.. math::
+
+   W^{(2),\,\rm on}(\mathbf{q}, i\nu)
+   = \tfrac{1}{2} \sum_{\sigma}
+     A^{\sigma}_{\rm on}\; \bar\chi(\mathbf{q}, i\nu)\; B^{\sigma}_{\rm on},
+
+with :math:`A^{\sigma}_{\rm on}` and :math:`B^{\sigma}_{\rm on}` the
+slices of the on-site :math:`\Gamma` that carry the two vertices, and
+:math:`\tfrac{1}{2}` the skeleton symmetry factor. For a single-band
+Hubbard interaction this collapses to the familiar
+:math:`U^2 \bar\chi`.
+
+*Off-site vertices.* The off-site terms the general path accepts are
+density terms (``CoulombInter``, ``Hund``, ``Ising`` at :math:`R \neq 0`;
+an off-site ``PairLift`` has no density content and contributes nothing).
+With :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q})` their Fourier
+transform, the corresponding factors live on the density slots of the
+pair basis and are
+
+.. math::
+
+   A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),
+
+understood as a matrix on the density slots of the pair basis (zero on
+every other slot), so that each product with :math:`\bar\chi` below is a
+matrix product in that pair space, exactly as for
+:math:`A^{\sigma}_{\rm on}` and :math:`B^{\sigma}_{\rm on}`. The complete
+second-order kernel is then
+
+.. math::
+
+   W^{(2)} = W^{(2),\,\rm on} + \sum_{\sigma} \Big[
+     A^{\sigma}_{\rm on}\,\bar\chi\,B^{\sigma}_{v}
+   + A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{\rm on}
+   + A^{\sigma}_{v}\,\bar\chi\,B^{\sigma}_{v} \Big],
+
+**without** the factor :math:`\tfrac{1}{2}` on the three off-site terms.
+The reason is a counting one. Each physical second-order diagram appears
+twice in the antisymmetrised sum above (the two copies differ by the
+relabelling :math:`r \leftrightarrow s`, :math:`r' \leftrightarrow s'`),
+which is what the symmetry factor :math:`\tfrac{1}{2}` compensates. A
+vertex is representable by a :math:`\mathbf{q}`-only object when its
+internal line sits on the site of its external line; for an on-site
+vertex that holds for both copies, but an off-site vertex satisfies it in
+its *crossed* placement only. A diagram containing an off-site vertex
+therefore keeps at most one of its two copies, and the surviving one must
+carry the weight :math:`2 \times \tfrac{1}{2} = 1`.
+
+The resulting classification is:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 35 12 28
+
+   * - Vertices
+     - Placement of the off-site vertex
+     - Local?
+     - Weight in :math:`W^{(2)}`
+   * - on-site / on-site (any type, any placement)
+     - --
+     - yes
+     - :math:`\tfrac{1}{2}`
+   * - on-site (any type) / off-site
+     - every mixed diagram: one copy always has the off-site vertex
+       crossed
+     - yes
+     - :math:`1`
+   * - off-site / off-site
+     - direct (bubble) topology
+     - yes
+     - :math:`1`
+   * - off-site / off-site
+     - exchange (crossed) topology
+     - no
+     - :math:`0`; see ``longitudinal_bond_channels``
+
+The single class with weight zero -- the exchange skeleton of TWO
+off-site vertices -- depends on both fermionic momenta and has no
+:math:`\mathbf{q}`-only representation. It is resummed on the
+bond-enlarged pair basis of the next section, so a run that needs full
+second-order accuracy for an off-site interaction should set
+``longitudinal_bond_channels = true``.
+
+Two consequences worth naming. For an off-site :math:`V` alone on one
+orbital the direct skeleton with its spin sum is
+:math:`2 V(\mathbf{q})^2 \bar\chi`; and an on-site :math:`U` together
+with an off-site :math:`V` produces the cross term
+:math:`2 U V(\mathbf{q}) \bar\chi`, which no :math:`q`-only vertex built
+from the Hartree part alone contains.
+
+``flex_second_order = "takimoto"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This value keeps the legacy Takimoto-Hotta-Ueda form of the effective
+interaction verbatim,
+
+.. math::
+
+   V_{\rm eff} = \tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s
+   + \tfrac{1}{2}\hat{U}^c \chi_c \hat{U}^c
+   - \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
+     \left(\hat{U}^s + \hat{U}^c\right),
+
+i.e. :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s \bar\chi \hat{U}^s +
+\tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c - \tfrac{1}{4}(\hat{U}^s +
+\hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`. It is exact at second order
+for a single-band Hubbard interaction and approximate for every other
+term; it is kept as the reproduction path for results obtained with
+H-wave 2.0.0 and earlier releases.
+
+Accordingly, single-band inputs containing only ``CoulombIntra`` agree
+under both values to round-off, while every multi-orbital on-site interaction
+(:math:`U'`, ``Hund``, ``Ising``, ``Exchange``, ``PairHop``,
+``PairLift``) and every off-site interaction changes the general-path
+result.
+
+.. note::
+
+   With ``longitudinal_bond_channels = true`` the channel-0 block of the
+   bond-resolved effective interaction is built by the same kernel, so
+   the two values agree there as well for a single-band :math:`U + V`
+   input (the bond-resolved channels already carried the exact direct
+   :math:`V` second order). Inter-orbital (orbital-off-diagonal) off-site
+   bonds are the one case in which the bond-resolved blocks still carry a
+   small residual second-order deviation with this option enabled;
+   orbital-diagonal bonds are exact. Closing that gap is planned.
+
 .. _rpa_longitudinal_bond:
 
 Bond-resolved longitudinal channel (experimental)
@@ -736,11 +909,15 @@ is
    W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)},
 
 the ring series from third order on plus the exact second order
-:math:`W^{(2)}`: on the channel-0 block :math:`[\tfrac{3}{2} S \bar\chi S +
-\tfrac{1}{2} C \bar\chi C]_{00} - \tfrac{1}{4}(S_{\rm on} + C_{\rm on})
-\bar\chi_{00} (S_{\rm on} + C_{\rm on})` (the general path's double-counting
-subtraction restricted to the on-site vertices, so that with every off-site
-coefficient zero the run is identical to the standard Hartree-Fock FLEX),
+:math:`W^{(2)}`: on the channel-0 block the second-order kernel of the
+standard general path, built by the same accumulator and therefore selected
+by the same ``flex_second_order`` key (see
+:ref:`flex_second_order_kernel`), so that with every off-site coefficient
+zero the run is identical to the standard Hartree-Fock FLEX -- under
+``flex_second_order = "takimoto"`` that block is the legacy
+:math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00} -
+\tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm
+on})` instead;
 on the mixed channel-0/bond blocks :math:`\tfrac{1}{4}(S \bar\chi S + C
 \bar\chi C)` (the exchange skeleton of the off-site interaction, once) and
 zero on the bond-bond blocks (their ring second order is the direct skeleton
@@ -757,9 +934,14 @@ with the bond form factor on the internal leg at both ends of :math:`W`
 block :math:`(m', m)`), realised as real-space rolls of :math:`G`. At second
 order in the couplings this reproduces the direct and exchange skeletons of
 the off-site interaction exactly (pinned by an independent real-space
-enumeration), including the :math:`UV` cross term; the standard general path,
-whose vertex is the Hartree part :math:`V(q)` only, keeps half of the direct
-:math:`V^2` term and no :math:`UV` cross term at second order. The ordinary
+enumeration), including the :math:`UV` cross term. The standard general path
+under ``flex_second_order = "local"`` already carries the direct skeleton and
+the :math:`UV` cross term exactly and misses only the exchange skeleton of
+two off-site vertices; under the legacy ``"takimoto"`` expression it keeps
+half of the direct :math:`V^2` term and no :math:`UV` cross term at second
+order. (With ``longitudinal_bond_channels = true``, inter-orbital off-site
+bonds keep a small residual second-order deviation of the bond-resolved
+blocks; orbital-diagonal bonds are exact.) The ordinary
 ``chi0q``, ``chiq_s``, ``chiq_c`` outputs of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects of the last map;
 the sixteen ``longitudinal_bond_*`` static keys of the previous section are

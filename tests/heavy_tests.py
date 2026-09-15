@@ -47,6 +47,16 @@ actually breaks, and these four are also what fixes issue #110 in place;
 losing them from the per-push gate would be losing the guard, not deferring
 a re-measurement. Their cost is accepted knowingly.
 
+And the inverse: two tests BELOW the 5 s rule are registered anyway --
+``test_flex_second_order_ed_chain.TestG4``'s ``test_coulombinter_chain``
+(~2.6 s) and ``test_hund_ising_chain_recorded`` (~1.9 s). They are the same
+exact-diagonalization content, on the same two chain fixtures and at the
+same Matsubara working point, as their ~18 s sibling
+``test_interorbital_bond_chain``, which is over the rule; splitting the
+three between the two shapes of the suite would mean a fast gate that
+re-derives most of a chain ED without ever reaching the verdict the module
+exists for. Their cost is deferred knowingly, with the sibling.
+
 CONSISTENCY IS ENFORCED, NOT TRUSTED
 ------------------------------------
 ``tests/test_heavy_tests_registry.py`` fails the FAST gate when this file
@@ -159,6 +169,47 @@ HEAVY_TESTS = (
      "test_regenerated_greens_reproduce_the_pinned_lambda",
      "regenerate the Hartree-Fock bond FLEX greens of the Onari-type trend "
      "milestone (hours; HWAVE_RUN_SLOW_FIXTURES=1) and re-derive lambda_t"),
+    # --- tests/test_flex_second_order_ed_chain.py -- #181 second-order G4 --
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_coulombinter_chain",
+     "G4: exact diagonalisation of the L = 4 single-orbital chain pins the "
+     "off-site second order of CoulombInter (O(V^2), O(U V), O(U^2)) for "
+     "the local path plus the dropped class and for the bond gate"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_hund_ising_chain_recorded",
+     "G4 (recorded): off-site Hund and Ising on the L = 4 chain against "
+     "exact diagonalisation, printed rather than asserted"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_hund_times_offsite_v_chain",
+     "G4: the mixed O(J V) coefficient of on-site Hund against the "
+     "asymmetric inter-orbital off-site bond on the L = 3 two-orbital "
+     "chain, and the vanishing of the mixed dropped class"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_interorbital_bond_chain",
+     "G4: the L = 3 two-orbital chain with an orbital-asymmetric "
+     "inter-orbital off-site bond adjudicates the off-site vertex "
+     "orientation (asserted) and the bond gate's deviation (recorded)"),
+    # --- tests/test_flex_second_order_ed_onsite.py -- #181 second-order G3 --
+    ("test_flex_second_order_ed_onsite", "TestG3",
+     "test_every_type_and_pair",
+     "G3: exact diagonalisation of the single-site three-orbital model pins "
+     "the on-site second order of all seven interaction types and seven "
+     "mixed pairs (~35 production maps at Nmat = 4096)"),
+    # --- tests/test_flex_second_order_sopt.py -- #181 second-order gates --
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_covering_set_equals_the_local_oracle",
+     "G2 (b): end-to-end second-order coefficients of the general path over "
+     "the covering set of 10 pure types and 12 mixed pairs, against the "
+     "independent real-space oracle (Richardson ladder, ~600 maps)"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_dropped_class_load_bearing_for_v",
+     "G2 (b): the off/off uncrossed class the local weighting drops is not "
+     "negligible for the off-site V, so the covering-set gate really pins "
+     "the local weighting"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_c_gate_on_reproduces_the_full_oracle",
+     "G2 (c): with the bond gate on the second order is the FULL oracle for "
+     "off-site CoulombInter; the off-site Hund/Ising outcome is recorded"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

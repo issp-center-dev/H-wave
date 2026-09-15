@@ -59,7 +59,12 @@ def _make_inputs(d, norb, U, V, uprime=0.0, pairlift=None):
     return inter
 
 
-def _solver(d, inter, gate):
+def _solver(d, inter, gate, second_order=None):
+    """One FLEX general solver on the temporary input directory.
+
+    ``second_order`` selects the general path's second-order kernel; ``None``
+    leaves it at the production default (``"local"``), and ``"takimoto"`` pins
+    the legacy kernel for the tests that record ITS second-order content."""
     import hwave.solver.flex as flex_mod
     idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
     idict.update(inter)
@@ -67,6 +72,8 @@ def _solver(d, inter, gate):
     par = {"T": _T, "mu": _MU, "CellShape": list(_SHAPE), "SubShape": [1, 1, 1], "Nmat": _NMAT,
            "IterationMax": 1, "Mix": 1.0, "EPS": 1e-12, "flex_hartree_fock": True,
            "longitudinal_bond_channels": gate}
+    if second_order is not None:
+        par["flex_second_order"] = second_order
     info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"}
     return flex_mod.FLEX(r.get_param("ham"), {}, info), r.get_param("green")
 
@@ -91,9 +98,14 @@ def _one_map(s, gi, gate):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, green0_tail, beta, s._bond_view, _SHAPE, 1)
+            # the SAME kernel the solver was configured with (the production
+            # call in flex.py passes both of these): without them the harness
+            # would silently measure the legacy kernel under a "local" solver.
             flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
                                         C_on=s._bond_C_on, nb=nmat, output_full=False,
-                                        nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE)
+                                        nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
+                                        factors=s._second_order_factors,
+                                        second_order=s.flex_second_order)
             sig = flex_bond.calc_self_energy_bond(store, G, beta, s._bond_view, _SHAPE, norb, 1)
     else:
         chi0q_raw = s._calc_chi0q(G, green0_tail, beta)[0]
@@ -214,14 +226,14 @@ def _rel(a, b):
 class _Grid:
     """One map per grid point on a temporary input directory."""
 
-    def __init__(self, norb, gate, u0=0.5, v0=0.5, scale=1.0, uprime=0.0):
+    def __init__(self, norb, gate, u0=0.5, v0=0.5, scale=1.0, uprime=0.0, second_order=None):
         self.norb, self.gate = norb, gate
         self.points = [(u * scale, v * scale) for u in (0.0, u0 / 2, u0) for v in (0.0, v0 / 2, v0)]
         self.hf, self.fluct = [], []
         with tempfile.TemporaryDirectory() as d:
             for (U, V) in self.points:
                 inter = _make_inputs(d, norb, U, V, uprime=uprime * (U / u0 if u0 else 0.0))
-                s, gi = _solver(d, inter, gate)
+                s, gi = _solver(d, inter, gate, second_order=second_order)
                 hf, fl, G = _one_map(s, gi, gate)
                 self.hf.append(hf)
                 self.fluct.append(fl)
@@ -250,8 +262,9 @@ def _richardson(cs):
     return (8.0 * cs[2] - 6.0 * cs[1] + cs[0]) / 3.0
 
 
-def _coefficients(norb, gate, uprime=0.0):
-    grids = [_Grid(norb, gate=gate, scale=_H / _U0 * f, uprime=uprime) for f in (1.0, 0.5, 0.25)]
+def _coefficients(norb, gate, uprime=0.0, second_order=None):
+    grids = [_Grid(norb, gate=gate, scale=_H / _U0 * f, uprime=uprime, second_order=second_order)
+             for f in (1.0, 0.5, 0.25)]
     out = {k: _richardson([g.coeffs[k] for g in grids]) for k in ("c20", "c11", "c02")}
     return out, grids[0]
 
@@ -265,7 +278,15 @@ class TestG2(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.on, cls.g_on = _coefficients(1, gate=True)
-        cls.off, cls.g_off = _coefficients(1, gate=False)
+        # test_d needs ONE gate-off grid (the maps at the coarsest scale), not
+        # a Richardson ladder: no gate-off coefficient is extrapolated any
+        # more, so build exactly that grid -- the same one _coefficients would
+        # have returned as grids[0] -- on the production default.
+        cls.g_off = _Grid(1, gate=False, scale=_H / _U0)
+        # The gate-off CONTRAST in test_c records the LEGACY
+        # (Takimoto-Hotta-Ueda) second-order content of the general path, so
+        # it is measured with flex_second_order = "takimoto" explicitly.
+        cls.off_thu, _ = _coefficients(1, gate=False, second_order="takimoto")
         beta = 1.0 / _T
         G = cls.g_on.G
         rows = cls.g_on.rows
@@ -340,10 +361,32 @@ class TestG2(unittest.TestCase):
         Takimoto-Hotta-Ueda subtraction -1/4 (S+C) chi (S+C) with the
         density-slot placement (S, C) = (0, 2 V(q)) of a spin-independent
         off-site V removes half of the direct V^2 skeleton and the whole
-        U V cross term at second order, and carries no exchange skeleton."""
-        self.assertLess(_rel(self.off["c02"], 0.5 * self.oracle["d_v"]), 1e-8)
-        self.assertLess(np.abs(self.off["c11"]).max(), 1e-8 * np.abs(self.oracle["c11"]).max())
-        self.assertLess(_rel(self.off["c20"], self.oracle["c20"]), 1e-8)
+        U V cross term at second order, and carries no exchange skeleton.
+
+        This is a property of the LEGACY kernel, so it is measured with
+        flex_second_order = "takimoto" explicitly (the production default is
+        "local" since spec 2026-09-08, which replaces exactly this
+        subtraction)."""
+        self.assertLess(_rel(self.off_thu["c02"], 0.5 * self.oracle["d_v"]), 1e-8)
+        self.assertLess(np.abs(self.off_thu["c11"]).max(), 1e-8 * np.abs(self.oracle["c11"]).max())
+        self.assertLess(_rel(self.off_thu["c20"], self.oracle["c20"]), 1e-8)
+
+    def test_the_gate_harness_drives_the_configured_kernel(self):
+        """``_one_map``'s gate branch must pass the solver's kernel choice and
+        factor pack to the bond dressing. With a two-orbital fixture carrying
+        off-site V the two kernels give DIFFERENT channel-0 second orders, so
+        the two maps must differ -- if the harness dropped the arguments both
+        runs would take the legacy kernel and the maps would be identical."""
+        maps = {}
+        for so in ("local", "takimoto"):
+            with tempfile.TemporaryDirectory() as d:
+                inter = _make_inputs(d, 2, 0.4, 0.3, uprime=0.2)
+                s, gi = _solver(d, inter, gate=True, second_order=so)
+                self.assertEqual(s.flex_second_order, so)
+                maps[so] = _one_map(s, gi, gate=True)[1]
+        scale = np.abs(maps["takimoto"]).max()
+        self.assertGreater(scale, 1e-6)
+        self.assertGreater(np.abs(maps["local"] - maps["takimoto"]).max(), 1e-8 * scale)
 
     def test_d_declared_zero_reproduces_the_general_path(self):
         g_on, g_off = self.g_on, self.g_off

@@ -74,6 +74,14 @@ def _collect(s, gi, out):
 class TestG0DeclaredZero(unittest.TestCase):
 
     def test_g0_declared_zero_equals_standalone_hf(self):
+        """Gate on == gate off with every off-site coefficient zero.
+
+        Measured at the production default flex_second_order = "local" (both
+        sides build the exact local second order; the bond gate routes its
+        channel-0 block through the same kernel since spec 2026-09-08 D5).
+        tests/test_flex_second_order_bond.py pins the same property under
+        BOTH kernel values explicitly.
+        """
         with tempfile.TemporaryDirectory() as inp, tempfile.TemporaryDirectory() as out:
             _zeroed_offsite_copy(inp)
             recs = {}

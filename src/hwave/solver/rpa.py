@@ -47,6 +47,25 @@ PAIRLIFT_INERT_WARNING = (
     "susceptibility channels in any scheme.")
 
 
+def canonical_scheme_name(raw):
+    """The canonical spelling of a ``calc_scheme`` request: CASE ONLY.
+
+    ONE place, so that every site keyed off the scheme name -- the removed
+    ``squashed`` refusal, ``RPA._set_scheme`` (whose result the whole of RPA
+    and FLEX then reads) and FLEX's Phase B pre-parser, which runs before
+    any solver exists and so cannot read the resolved state -- accepts
+    exactly the same set of spellings. They did not: two of them lowercased
+    and one also stripped surrounding whitespace, so ``" general "`` was a
+    valid scheme for one check and an unknown one for the next.
+
+    Case folding is the whole of it deliberately. Trimming whitespace would
+    WIDEN the accepted input domain rather than normalise it -- a scheme
+    name with spaces around it is a typo, and it is better refused by name
+    than silently repaired.
+    """
+    return str(raw).lower()
+
+
 def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
     """Reject a stored chi0q whose spin-orbital index convention is unknown.
 
@@ -1444,7 +1463,7 @@ class RPA:
                 "coexistence under ring+ladder is a recorded follow-up of "
                 "GitHub issue #181). Enable one of the two.")
 
-        if str(info_mode.get("calc_scheme", "auto")).lower() == "squashed":
+        if canonical_scheme_name(info_mode.get("calc_scheme", "auto")) == "squashed":
             # Removed in 2.0 (issue #144): squashed computed the same
             # susceptibility as reduced at several times the cost, and the
             # spin-off-diagonal slots of its 8-axis output were structurally
@@ -1476,7 +1495,16 @@ class RPA:
 
     def _set_scheme(self, info_mode):
         # handle calc_scheme: must be called after setting up interactions
-        self.calc_scheme_requested = str(info_mode.get("calc_scheme", "auto"))
+        #
+        # The name is CANONICALISED once, here, and every comparison below --
+        # and in FLEX, which inherits this state -- reads the canonical form.
+        # Case-sensitive comparisons on a raw request used to let a mis-cased
+        # spelling slip past the validations keyed off the name (e.g.
+        # 'Reduced' + Exchange passed the drop check below and then ran the
+        # reduced path, which discards that vertex entirely). ``raw`` keeps
+        # the user's own spelling for the messages that quote it.
+        raw = str(info_mode.get("calc_scheme", "auto"))
+        self.calc_scheme_requested = canonical_scheme_name(raw)
         self.calc_scheme = self.calc_scheme_requested
 
         # calc_type: "ring" (default) or "ring+ladder"
@@ -1531,7 +1559,7 @@ class RPA:
                     "only; with enable_spin_orbital or a spin-polarized "
                     "setup no current FLEX scheme supports these "
                     "interactions.)".format(
-                        self.calc_scheme, ", ".join(dropped)))
+                        raw, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
                 logger.warning(PAIRLIFT_INERT_WARNING)
         if self.calc_type == "ring+ladder" and self.calc_scheme != "general":
@@ -1976,7 +2004,8 @@ class RPA:
         if not getattr(self, "_accepts_flex_keys", False):
             _flex_only = [k for k in ("flex_hartree_fock",
                                       "longitudinal_bond_output_full",
-                                      "longitudinal_bond_freq_batch")
+                                      "longitudinal_bond_freq_batch",
+                                      "flex_second_order")
                           if k in self.param_mod]
             if _flex_only:
                 logger.warning(

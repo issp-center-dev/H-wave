@@ -404,6 +404,10 @@ class SectorED:
                                    # it per cell (review finding, #151 Task
                                    # 4 fix loop: was previously rebuilt
                                    # O(nd^4) times per q on case M).
+        self._ann_cache = {}      # parity -> _annihilator_blocks result; the
+                                   # eigenbasis rotation of the one-body
+                                   # annihilation operators is shared by
+                                   # green() and density_matrix().
         self._build_sectors()
 
     # -- sector bookkeeping ------------------------------------------------
@@ -861,6 +865,174 @@ class SectorED:
                     val -= fx.beta * avgA * np.conj(avgB)
                     out[qi, i, j] = val
         return out / fx.L
+
+    # -- single-particle observables ---------------------------------------
+
+    def _annihilator_blocks(self, parity):
+        """Cached ``[(key_m, key_n, A, ev_m, ev_n, w_m, w_n), ...]`` for the
+        modes of one SPIN PARITY (``p % 2``, i.e. ``0`` = up, ``1`` = down in
+        ``EDFixture.mode``'s interleaved ``2*orb + spin`` order).
+
+        ``A[k, m, n] = <m| c_{P_k} |n>`` in the SECTOR EIGENBASIS, with
+        ``P_k`` the ``k``-th mode of that parity (ascending), ``n`` indexing
+        the HIGHER sector ``key_n`` and ``m`` the lower one
+        ``key_m = key_n + delta``, ``delta = (-1, 0)`` for up modes and
+        ``(0, -1)`` for down ones (one annihilation operator removes exactly
+        one particle of its own spin). Sector pairs whose lower partner is
+        absent from the fixture are skipped, exactly as
+        ``_build_operator`` does.
+
+        The Fock-basis matrix of ``c_P`` restricted to one sector pair has AT
+        MOST ONE nonzero per column and is injective on the columns it acts
+        on, so ``c_P V_n`` is assembled by a scatter of the rows of ``V_n``
+        (no dense ``(M, M)`` product) and only the eigenbasis rotation
+        ``V_m^dagger (c_P V_n)`` is a matrix product.
+
+        Cached on the instance because :meth:`green` and
+        :meth:`density_matrix` are the same contraction of the same blocks
+        (a Lehmann sum over ``(m, n)``), and a caller that wants both -- the
+        self-energy gates do, one for the Dyson inversion and one for the
+        Hartree-Fock subtraction -- would otherwise pay the eigenbasis
+        rotation twice.
+        """
+        cached = self._ann_cache.get(parity)
+        if cached is not None:
+            return cached
+        fx = self.fx
+        modes = [p for p in range(fx.nmode) if p % 2 == parity]
+        delta = (-1, 0) if parity == 0 else (0, -1)
+        blocks = []
+        for key_n, states_n in self._sector_states.items():
+            key_m = (key_n[0] + delta[0], key_n[1] + delta[1])
+            states_m = self._sector_states.get(key_m)
+            if states_m is None:
+                continue
+            V_n, V_m = self._V[key_n], self._V[key_m]
+            idx_m = self._sector_index[key_m]
+            A = np.zeros((len(modes), len(states_m), len(states_n)), dtype=complex)
+            for k, p in enumerate(modes):
+                cols, target, signs = [], [], []
+                for col, state in enumerate(states_n):
+                    r = _apply_ops(state, ((p, False),))
+                    if r is None:
+                        continue
+                    new_state, sign = r
+                    cols.append(col)
+                    target.append(idx_m[new_state])
+                    signs.append(sign)
+                if not cols:
+                    continue
+                cV = np.zeros((len(states_m), len(states_n)), dtype=complex)
+                cV[np.asarray(target)] = (np.asarray(signs, dtype=float)[:, None]
+                                          * V_n[np.asarray(cols)])
+                A[k] = V_m.conj().T @ cV
+            blocks.append((key_m, key_n, A, self._ev[key_m], self._ev[key_n],
+                           self._w[key_m], self._w[key_n]))
+        self._ann_cache[parity] = blocks
+        return blocks
+
+    def green(self, iws, rows=None, cols=None):
+        """The single-particle Matsubara Green function
+
+            G_{PQ}(i w) = -int_0^beta d tau e^{i w tau} <T c_P(tau) c^dag_Q(0)>
+
+        in the Lehmann representation over the (N_up, N_dn) sectors::
+
+            G_{PQ}(i w) = (1/Z) sum_{n, m} (e^{-beta E_n} + e^{-beta E_m})
+                          <m|c_P|n> <n|c^dag_Q|m> / (i w - (E_n - E_m))
+
+        with ``n`` running over the HIGHER sector of every pair connected by
+        one annihilation operator and ``m`` over the lower one; ``E`` are the
+        GRAND-CANONICAL eigenvalues ``H - mu N`` measured from the global
+        ground state (so ``mu`` enters the ``Delta-N = 1`` denominators, as it
+        must) and ``Z`` runs over the FULL Fock space -- the same spectrum
+        and normalization ``_build_sectors`` prepares for every other
+        correlator here.
+
+        ``<n|c^dag_Q|m> = conj(<m|c_Q|n>)``, so both matrix elements come
+        from the one set of blocks :meth:`_annihilator_blocks` builds.
+
+        Parameters
+        ----------
+        iws : array_like
+            Complex frequencies (the fermionic Matsubara points; nothing
+            here assumes they lie on a grid).
+        rows, cols : sequence[int], optional
+            Mode subsets for the two indices (default: every mode). A
+            translation-invariant fixture needs only one column site, and
+            restricting the columns is the difference between an
+            ``nmode^2`` and an ``nmode * norb`` Lehmann contraction.
+
+        Returns
+        -------
+        ndarray, shape ``(len(iws), len(rows), len(cols))``
+            Blocks mixing the two spin parities are exactly zero (the
+            sector shift of ``c_P`` differs), and are never computed.
+        """
+        fx = self.fx
+        iws = np.asarray(iws, dtype=complex).ravel()
+        rows = list(range(fx.nmode)) if rows is None else [int(p) for p in rows]
+        cols = list(range(fx.nmode)) if cols is None else [int(q) for q in cols]
+        out = np.zeros((len(iws), len(rows), len(cols)), dtype=complex)
+        widx = np.arange(len(iws))
+        for parity in (0, 1):
+            r_pos = np.asarray([i for i, p in enumerate(rows) if p % 2 == parity], dtype=int)
+            c_pos = np.asarray([j for j, q in enumerate(cols) if q % 2 == parity], dtype=int)
+            if r_pos.size == 0 or c_pos.size == 0:
+                continue
+            slot = {p: k for k, p in enumerate(
+                [p for p in range(fx.nmode) if p % 2 == parity])}
+            r_slot = np.asarray([slot[rows[i]] for i in r_pos], dtype=int)
+            c_slot = np.asarray([slot[cols[j]] for j in c_pos], dtype=int)
+            buf = np.zeros((len(iws), r_pos.size, c_pos.size), dtype=complex)
+            for (_key_m, _key_n, A, ev_m, ev_n, w_m, w_n) in self._annihilator_blocks(parity):
+                flat = A.reshape(A.shape[0], -1)
+                Ar = flat[r_slot]
+                Ac = np.conj(flat[c_slot])
+                weight = (w_m[:, None] + w_n[None, :]).ravel()
+                dE = (ev_n[None, :] - ev_m[:, None]).ravel()
+                for i, iw in enumerate(iws):
+                    buf[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+            out[np.ix_(widx, r_pos, c_pos)] += buf
+        return out
+
+    def density_matrix(self):
+        """``rho[p, q] = <c^dag_p c_q>`` over every mode pair, from the SAME
+        cross-sector blocks :meth:`green` contracts::
+
+            <c^dag_p c_q> = sum_{n} w_n <n|c^dag_p c_q|n>
+                          = sum_{m, n} w_n conj(<m|c_p|n>) <m|c_q|n>
+
+        (the resolution of the identity between the two operators lands
+        entirely in the one lower sector ``m``, since ``c_q|n>`` has a
+        definite particle number). Mixed-parity entries are exactly zero by
+        the same sector argument :meth:`green` uses and are not computed."""
+        fx = self.fx
+        rho = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+        for parity in (0, 1):
+            modes = [p for p in range(fx.nmode) if p % 2 == parity]
+            for (_key_m, _key_n, A, _ev_m, _ev_n, _w_m, w_n) in self._annihilator_blocks(parity):
+                flat = A.reshape(A.shape[0], -1)
+                wf = np.broadcast_to(w_n[None, :], A.shape[1:]).ravel()
+                block = np.conj(flat) @ (flat * wf).T
+                for i, p in enumerate(modes):
+                    for j, q in enumerate(modes):
+                        rho[p, q] += block[i, j]
+        return rho
+
+
+def green_function(fx, iws, terms=()):
+    """``G_{PQ}(i w) = -int <T c_P(tau) c^dag_Q(0)>`` in the Lehmann
+    representation over the ``(N_up, N_dn)`` sectors of :class:`SectorED`,
+    for the free chain of ``fx`` plus the canonical density ``terms``
+    (the quartic lists :func:`canonical_density_terms` /
+    :func:`h_int_from_terms` consume). ``P``, ``Q`` are ``fx``'s generalised
+    site-orbital-spin modes; returns ``(len(iws), nmode, nmode)``.
+
+    A caller that needs only part of the matrix drives
+    :meth:`SectorED.green` directly (it takes ``rows``/``cols`` mode
+    subsets); this wrapper is the whole-matrix convenience."""
+    return SectorED(fx, terms).green(iws)
 
 
 # ---------------------------------------------------------------------------

@@ -43,6 +43,30 @@ or directly with ``python3 tests/sc/onari_bond/generate_flex_bond_fixtures.py``.
 Neither FLEX nor ``np.savez_compressed`` is bit-reproducible, so regenerated
 files are not hash-pinned; the physics is pinned by the lambda table in the
 test at ``LAMBDA_RTOL``.
+
+Second-order kernel (#181 follow-up): the milestone runs under the production
+default ``flex_second_order = "local"`` (:data:`SECOND_ORDER`).  ``--second-order
+takimoto`` reruns the whole chain -- the legacy seed included -- under the legacy
+kernel and suffixes every file it writes (greens, sigmas, seeds and its own
+observables file), so it can never overwrite the milestone's own outputs.  That
+is how the single committed ``"takimoto"`` witness at ``V = 0.8`` is produced.
+Regenerate the witness FIRST and the milestone second, in the same output
+directory::
+
+    python3 tests/sc/onari_bond/generate_flex_bond_fixtures.py \
+        --only 0.8 --no-warm --second-order takimoto
+    python3 tests/sc/onari_bond/generate_flex_bond_fixtures.py
+
+The second run folds the witness file left by the first into its own
+observables as ``lambda_t_takimoto`` / ``records_takimoto``
+(:func:`_takimoto_witness`) -- the two keys ``tests/test_flex_bond_onari_trend.py``
+reads -- so the committed file needs no hand editing.  Without the witness file
+the milestone simply writes its own keys and those two are absent.  A witness
+file that IS present is VALIDATED before it is folded in
+(:func:`validate_witness`): it must be the legacy kernel, carry this
+milestone's settings in every other respect, and hold the ``V = 0.8`` cold
+point.  Anything else is refused rather than committed as if it belonged
+here.
 """
 import argparse
 import hashlib
@@ -70,11 +94,17 @@ EPS = 8
 ITERATION_MAX = 1500
 MIX = 0.2
 DEPTH = 8
+#: Second-order kernel of the general path (#181 follow-up, spec 2026-09-08).
+#: The milestone is generated under the production default; the one
+#: ``"takimoto"`` point committed alongside it (V = 0.8) is produced by
+#: ``--second-order takimoto`` and is stored under its own observables key.
+SECOND_ORDER = "local"
 
 SETTINGS = dict(U=U, T=T, filling=FILLING, L=L, Nmat=NMAT, V_grid=list(V_GRID),
                 warm_from={str(k): v for k, v in WARM_FROM.items()}, EPS=EPS,
                 IterationMax=ITERATION_MAX, Mix=MIX, anderson_depth=DEPTH,
-                scheme="general", flex_hartree_fock=True, longitudinal_bond_channels=True)
+                scheme="general", flex_hartree_fock=True, longitudinal_bond_channels=True,
+                flex_second_order=SECOND_ORDER)
 
 OBSERVABLES = "flex_bond_observables.json"
 DEFAULT_DIR = os.environ.get("HWAVE_FLEXBOND_DIR",
@@ -82,11 +112,91 @@ DEFAULT_DIR = os.environ.get("HWAVE_FLEXBOND_DIR",
                                           "_regenerated_flexbond"))
 
 
-def green_name(V, seed):
-    return "green_flexbond_L{}_V{:.2f}_{}.npz".format(L, V, seed)
+#: The one V the witness run is generated at (``--only 0.8``).
+WITNESS_V = 0.8
 
 
-def _flex_input(indir, outdir, sigma_init=None, iteration_max=ITERATION_MAX, phase_b=True):
+class WitnessError(ValueError):
+    """The ``"takimoto"`` witness file is not a witness of THIS milestone."""
+
+
+def validate_witness(witness, path="<witness>"):
+    """Refuse a witness file that does not belong to this milestone.
+
+    The witness is FOLDED into the milestone's own observables, under keys
+    the trend test then compares against pinned lambdas. Anything wrong with
+    it -- the wrong kernel, a different setting, a missing point -- would
+    therefore be committed as if it were this milestone's legacy comparison,
+    and the only thing that could notice is the pinned lambda itself, which
+    is exactly the number the witness is supposed to establish. So it is
+    checked here, before the fold, and refused rather than warned about."""
+    settings = witness.get("settings")
+    if not isinstance(settings, dict):
+        raise WitnessError("{}: no settings block".format(path))
+    got = settings.get("flex_second_order")
+    if got != "takimoto":
+        raise WitnessError(
+            "{}: flex_second_order is {!r}, but the witness of this milestone is the "
+            "LEGACY kernel ('takimoto'). Regenerate it with --second-order takimoto."
+            .format(path, got))
+    expected = dict(SETTINGS)
+    expected.pop("flex_second_order")
+    for key, want in sorted(expected.items()):
+        if settings.get(key) != want:
+            raise WitnessError(
+                "{}: setting {!r} is {!r}, but this milestone's is {!r}; the witness must "
+                "differ from the milestone in the second-order kernel ALONE"
+                .format(path, key, settings.get(key), want))
+    extra = sorted(set(settings) - set(SETTINGS))
+    if extra:
+        raise WitnessError(
+            "{}: unknown setting(s) {}; the witness must carry this milestone's settings"
+            .format(path, ", ".join(repr(k) for k in extra)))
+    records = witness.get("records") or []
+    if not any(r.get("seed") == "cold" and float(r.get("V", float("nan"))) == WITNESS_V
+               for r in records):
+        raise WitnessError(
+            "{}: no cold record at V = {}; the witness is generated with "
+            "--only {} --no-warm".format(path, WITNESS_V, WITNESS_V))
+    cold = (witness.get("lambda_t") or {}).get("cold") or {}
+    if "{:.2f}".format(WITNESS_V) not in cold:
+        raise WitnessError(
+            "{}: no cold lambda at V = {:.2f}".format(path, WITNESS_V))
+    return witness
+
+
+def _takimoto_witness(outdir):
+    """The ``"takimoto"`` witness of ``outdir``, as the two keys the trend test
+    reads from the committed observables: ``lambda_t_takimoto`` (the cold
+    lambdas of the witness run) and ``records_takimoto`` (its convergence
+    records). Read from the suffixed observables file a ``--second-order
+    takimoto`` run leaves in the same directory; ``{}`` when that file is
+    absent, so a milestone run without a witness simply writes its own keys.
+
+    A witness file that IS present is validated before it is folded in
+    (:func:`validate_witness`) and refused if it does not belong here."""
+    path = os.path.join(outdir, OBSERVABLES.replace(".json", "_takimoto.json"))
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        witness = json.load(f)
+    validate_witness(witness, path)
+    return {"lambda_t_takimoto": witness["lambda_t"]["cold"],
+            "records_takimoto": witness["records"]}
+
+
+def _tag(second_order):
+    """File-name suffix of a non-default second-order kernel ("" for the
+    default, so the committed milestone's names are unchanged)."""
+    return "" if second_order == SECOND_ORDER else "_" + second_order
+
+
+def green_name(V, seed, second_order=SECOND_ORDER):
+    return "green_flexbond_L{}_V{:.2f}_{}{}.npz".format(L, V, seed, _tag(second_order))
+
+
+def _flex_input(indir, outdir, sigma_init=None, iteration_max=ITERATION_MAX, phase_b=True,
+                second_order=SECOND_ORDER):
     inp = {"path_to_input": "",
            "interaction": {"path_to_input": indir, "Geometry": "geom.dat",
                            "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat",
@@ -96,7 +206,8 @@ def _flex_input(indir, outdir, sigma_init=None, iteration_max=ITERATION_MAX, pha
         inp["sigma_init"] = os.path.basename(sigma_init)
     param = {"T": T, "filling": FILLING, "CellShape": [L, L, 1], "SubShape": [1, 1, 1],
              "Nmat": NMAT, "IterationMax": iteration_max, "Mix": MIX, "EPS": EPS,
-             "mixing_scheme": "anderson", "anderson_depth": DEPTH}
+             "mixing_scheme": "anderson", "anderson_depth": DEPTH,
+             "flex_second_order": second_order}
     if phase_b:
         param.update(flex_hartree_fock=True, longitudinal_bond_channels=True)
     return {
@@ -108,7 +219,7 @@ def _flex_input(indir, outdir, sigma_init=None, iteration_max=ITERATION_MAX, pha
     }
 
 
-def legacy_seed(V, outdir, iteration_max=ITERATION_MAX):
+def legacy_seed(V, outdir, iteration_max=ITERATION_MAX, second_order=SECOND_ORDER):
     """The 'cold' start of the Phase B run: at U = 4, beta = 50 the BARE
     Green function sits inside the RPA spin instability (the bond path's
     conditioning check refuses the very first map), so every V point is
@@ -122,10 +233,12 @@ def legacy_seed(V, outdir, iteration_max=ITERATION_MAX):
     try:
         indir = os.path.join(work, "in")
         _write_inputs(indir, V)
-        result = qlms.run(input_dict=_flex_input(indir, work, None, iteration_max, phase_b=False))
+        result = qlms.run(input_dict=_flex_input(indir, work, None, iteration_max, phase_b=False,
+                                                 second_order=second_order))
         assert result.get("scf_converged"), "legacy FLEX did not converge at V={}".format(V)
         os.makedirs(outdir, exist_ok=True)
-        seed = os.path.join(outdir, "seed_legacy_L{}_V{:.2f}.npz".format(L, V))
+        seed = os.path.join(outdir, "seed_legacy_L{}_V{:.2f}{}.npz".format(
+            L, V, _tag(second_order)))
         sigma_split_convert(os.path.join(work, "sigma.npz"), seed, zero_static=True, force=True)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -140,7 +253,8 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_MAX):
+def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_MAX,
+              second_order=SECOND_ORDER):
     """One FLEX run; writes the symmetrised green and returns (record, sigma_path)."""
     import hwave.qlms as qlms
     work = tempfile.mkdtemp(prefix="flexbond_")
@@ -148,7 +262,8 @@ def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_M
     try:
         indir = os.path.join(work, "in")
         _write_inputs(indir, V)
-        result = qlms.run(input_dict=_flex_input(indir, work, sigma_init, iteration_max))
+        result = qlms.run(input_dict=_flex_input(indir, work, sigma_init, iteration_max,
+                                                 second_order=second_order))
         raw = np.load(os.path.join(work, "green.npz"))
         prov = {k: raw[k] for k in ("scf_converged", "scf_iterations", "scf_sigma_residual",
                                     "scf_green_residual", "scf_component_residual",
@@ -163,10 +278,11 @@ def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_M
                     mu = float(ln.split("=")[1])
         green, delta = _symmetrize(raw["green"], L)
         os.makedirs(outdir, exist_ok=True)
-        gpath = os.path.join(outdir, green_name(V, seed))
+        gpath = os.path.join(outdir, green_name(V, seed, second_order))
         np.savez_compressed(gpath, green=green, L=L, V=V, U=U, T=T, filling=FILLING, nmat=NMAT,
                             seed=seed, symmetrization_residual=delta, **prov)
-        spath = os.path.join(outdir, "sigma_L{}_V{:.2f}_{}.npz".format(L, V, seed))
+        spath = os.path.join(outdir, "sigma_L{}_V{:.2f}_{}{}.npz".format(
+            L, V, seed, _tag(second_order)))
         shutil.copy(os.path.join(work, "sigma.npz"), spath)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -187,14 +303,21 @@ def run_point(V, outdir, seed="cold", sigma_init=None, iteration_max=ITERATION_M
     return rec, spath
 
 
-def generate(outdir=DEFAULT_DIR, iteration_max=ITERATION_MAX, v_grid=V_GRID, warm=True):
-    """Run every point (cold, then the warm starts) and write the observables."""
+def generate(outdir=DEFAULT_DIR, iteration_max=ITERATION_MAX, v_grid=V_GRID, warm=True,
+             second_order=SECOND_ORDER):
+    """Run every point (cold, then the warm starts) and write the observables.
+
+    ``second_order`` selects the general path's second-order kernel; with
+    anything but the default :data:`SECOND_ORDER` the whole chain (the
+    legacy seed run included) uses it and every output file carries the
+    kernel name as a suffix, so a non-default run cannot overwrite the
+    milestone's own files."""
     from tests.test_flex_bond_onari_trend import lambda_sweep
     records = []
     sigmas = {}
     for V in v_grid:
-        seed, legacy_iterations = legacy_seed(V, outdir, iteration_max)
-        rec, spath = run_point(V, outdir, "cold", seed, iteration_max)
+        seed, legacy_iterations = legacy_seed(V, outdir, iteration_max, second_order)
+        rec, spath = run_point(V, outdir, "cold", seed, iteration_max, second_order)
         rec["legacy_seed_iterations"] = legacy_iterations
         assert rec["scf_converged"], "FLEX did not converge at V={} ({} iterations)".format(
             V, rec["scf_iterations"])
@@ -206,24 +329,31 @@ def generate(outdir=DEFAULT_DIR, iteration_max=ITERATION_MAX, v_grid=V_GRID, war
         for V, V0 in WARM_FROM.items():
             if V not in v_grid or V0 not in sigmas:
                 continue
-            rec, _ = run_point(V, outdir, "warm_from_V{:.2f}".format(V0), sigmas[V0], iteration_max)
+            rec, _ = run_point(V, outdir, "warm_from_V{:.2f}".format(V0), sigmas[V0],
+                               iteration_max, second_order)
             assert rec["scf_converged"], "warm FLEX did not converge at V={}".format(V)
             records.append(rec)
             print("V={:.2f} warm from {:.2f}: {} iterations, {:.0f} s".format(
                 V, V0, rec["scf_iterations"], rec["wall_s"]), flush=True)
-    lam_cold = lambda_sweep([os.path.join(outdir, green_name(V, "cold")) for V in v_grid], list(v_grid))
+    lam_cold = lambda_sweep([os.path.join(outdir, green_name(V, "cold", second_order))
+                             for V in v_grid], list(v_grid))
     lam = {"cold": {"{:.2f}".format(V): lam_cold["lambda"][i] for i, V in enumerate(v_grid)},
            "warm": {}}
     for rec in records:
         if rec["seed"] != "cold":
             V = rec["V"]
             # track the warm green as the last point of the sweep up to V
-            seq = [os.path.join(outdir, green_name(v, "cold")) for v in v_grid if v < V]
+            seq = [os.path.join(outdir, green_name(v, "cold", second_order))
+                   for v in v_grid if v < V]
             seq.append(os.path.join(outdir, rec["green"]))
             vs = [v for v in v_grid if v < V] + [V]
             lam["warm"]["{:.2f}".format(V)] = lambda_sweep(seq, vs)["lambda"][-1]
-    obs = dict(settings=SETTINGS, records=records, lambda_t=lam, tracking=lam_cold["tracking"])
-    with open(os.path.join(outdir, OBSERVABLES), "w") as f:
+    obs = dict(settings=dict(SETTINGS, flex_second_order=second_order), records=records,
+               lambda_t=lam, tracking=lam_cold["tracking"])
+    if second_order == SECOND_ORDER:
+        obs.update(_takimoto_witness(outdir))
+    obs_name = OBSERVABLES.replace(".json", _tag(second_order) + ".json")
+    with open(os.path.join(outdir, obs_name), "w") as f:
         json.dump(obs, f, indent=1, sort_keys=True)
     print(json.dumps(lam, indent=1))
     return obs
@@ -235,5 +365,8 @@ if __name__ == "__main__":
     parser.add_argument("--iteration-max", type=int, default=ITERATION_MAX)
     parser.add_argument("--only", type=float, nargs="*", default=None, help="restrict the V grid")
     parser.add_argument("--no-warm", action="store_true")
+    parser.add_argument("--second-order", default=SECOND_ORDER, choices=("local", "takimoto"),
+                        help="general-path second-order kernel (non-default runs are suffixed)")
     a = parser.parse_args()
-    generate(a.outdir, a.iteration_max, tuple(a.only) if a.only else V_GRID, warm=not a.no_warm)
+    generate(a.outdir, a.iteration_max, tuple(a.only) if a.only else V_GRID, warm=not a.no_warm,
+             second_order=a.second_order)
