@@ -53,6 +53,50 @@ class TestProvenance(unittest.TestCase):
             self.assertTrue(any("not recorded" in m and "reduced scheme or pre-2.1" in m for m in cm.output))
             self.assertFalse(any("WARNING" in m and "seed computed" in m for m in cm.output))
 
+    def test_seed_mismatch_warns_in_both_directions(self):
+        with tempfile.TemporaryDirectory() as out:
+            for seed_so, run_so in (("takimoto", "local"), ("local", "takimoto")):
+                with self.subTest(seed=seed_so, run=run_so):
+                    s, r = _build({"flex_second_order": seed_so, "Nmat": 8})
+                    _solve_save(s, r, out, {"sigma": "sigma"})
+                    os.replace(os.path.join(out, "sigma.npz"),
+                               os.path.join(out, "seed_{}.npz".format(seed_so)))
+                    s2, _ = _build({"flex_second_order": run_so, "Nmat": 8})
+                    with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                        s2.read_init({"path_to_input": out,
+                                      "sigma_init": "seed_{}.npz".format(seed_so)})
+                    self.assertTrue(any(
+                        "seed computed with flex_second_order = {}; this run uses {}".format(
+                            seed_so, run_so) in m for m in cm.output), cm.output)
+
+    def test_unreadable_seed_provenance_is_refused(self):
+        """A member outside {"local", "takimoto"} or a schema this version does
+        not read is a file this run cannot interpret, so it is refused by name
+        and value instead of being warned about (or silently accepted)."""
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _build({"flex_second_order": "local", "Nmat": 8})
+            _solve_save(s, r, out, {"sigma": "sigma"})
+            z = dict(np.load(os.path.join(out, "sigma.npz")))
+            np.savez(os.path.join(out, "bad_value.npz"),
+                     **dict(z, flex_second_order=np.array("exact", dtype="<U8")))
+            np.savez(os.path.join(out, "bad_schema.npz"),
+                     **dict(z, flex_second_order_schema=np.int64(2)))
+            s2, _ = _build({"flex_second_order": "local", "Nmat": 8})
+            with self.assertRaises(ValueError) as cm:
+                s2.read_init({"path_to_input": out, "sigma_init": "bad_value.npz"})
+            self.assertIn("bad_value.npz", str(cm.exception))
+            self.assertIn("unknown flex_second_order", str(cm.exception))
+            self.assertIn("exact", str(cm.exception))
+            with self.assertRaises(ValueError) as cm:
+                s2.read_init({"path_to_input": out, "sigma_init": "bad_schema.npz"})
+            self.assertIn("bad_schema.npz", str(cm.exception))
+            self.assertIn("unsupported flex_second_order_schema 2", str(cm.exception))
+            self.assertIn("this version reads schema 1", str(cm.exception))
+            # a reduced-scheme run does not read the members at all
+            s3, _ = _build({"Nmat": 8}, calc_scheme="reduced")
+            s3.read_init({"path_to_input": out, "sigma_init": "bad_value.npz"})
+            s3.read_init({"path_to_input": out, "sigma_init": "bad_schema.npz"})
+
     def test_seed_check_runs_under_a_mixed_case_scheme(self):
         """read_init's seed-provenance branch keys off calc_scheme as well, so
         a ``calc_scheme = "General"`` run must still compare the seed's kernel

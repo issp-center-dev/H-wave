@@ -810,6 +810,24 @@ class FLEX(RPA):
                 logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
                             "its total sigma is used as the one seed".format(file_name))
             if str(getattr(self, "calc_scheme", "")).lower() == "general":
+                # The provenance pair is refused when this version cannot
+                # interpret it: an unknown kernel name, or a schema written by
+                # a later version whose members may mean something else. Only
+                # a MISMATCH between two names this version knows is a
+                # warning (below) -- that seed is still usable.
+                if env.second_order is not None and env.second_order not in ("local", "takimoto"):
+                    raise ValueError(
+                        "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
+                        "\"local\", \"takimoto\")".format(file_name, env.second_order))
+                if env.second_order_schema is not None:
+                    try:
+                        known = int(env.second_order_schema) == 1
+                    except (TypeError, ValueError):
+                        known = False
+                    if not known:
+                        raise ValueError(
+                            "sigma_init '{}': unsupported flex_second_order_schema {} (this "
+                            "version reads schema 1)".format(file_name, env.second_order_schema))
                 if env.second_order is None:
                     logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
                                 "(reduced scheme or pre-2.1 archive)".format(file_name))
