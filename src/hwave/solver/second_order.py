@@ -2,10 +2,11 @@
 2026-09-08, rev 10): the on-site interaction compiler, the off-site
 density-slot arrays, the sparse factors and the batched kernel.
 
-This module currently carries the on-site compiler, the off-site
-density-slot arrays (:func:`build_offsite`) and the sparse factor pack
-(:func:`build_factors`); the batched kernel is still to come. The
-compiler turns the reader's on-site interaction rows into the
+This module carries the on-site compiler, the off-site density-slot
+arrays (:func:`build_offsite`), the sparse factor pack
+(:func:`build_factors`) and the batched kernel (:func:`accumulate_batch`,
+plus the test helper :func:`dense_w2`). The compiler turns the reader's
+on-site interaction rows into the
 spin-resolved antisymmetrised tensor ``Gamma`` of the normal-ordered Hamiltonian
 
     H_int = 1/2 sum_{pqrs} V_{pq,rs} c^dag_p c^dag_q c_s c_r ,
@@ -29,6 +30,8 @@ import itertools
 import logging
 
 import numpy as np
+
+from hwave.solver.hartree_fock import NonFiniteError
 
 logger = logging.getLogger(__name__)
 
@@ -313,3 +316,58 @@ def build_factors(split, lattice, norb):
     nbytes = 16 * (2 * len(triples) * nd * nd + (4 * nvol * norb * norb if vpair is not None else 0))
     return SecondOrderFactors(norb=norb, nd=nd, nvol=nvol, triples=tuple(triples), A_on=tuple(As),
                               B_on=tuple(Bs), vpair=vpair, nbytes=nbytes)
+
+
+def _dens_idx(norb):
+    return np.arange(norb) * norb + np.arange(norb)          # (aa) pair slots
+
+
+def accumulate_batch(out_b, chibar_b, l0, factors):
+    """Add W2 (spec 2.3 + 2.4) for the bosonic frequencies [l0, l0 + nb)
+    into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused."""
+    xp = np  # numpy or cupy: dispatch on the array module of chibar_b
+    try:
+        import cupy
+        if isinstance(chibar_b, cupy.ndarray):
+            xp = cupy
+    except ImportError:
+        pass
+    nd, norb = factors.nd, factors.norb
+    nb = chibar_b.shape[0]
+    T1 = xp.empty_like(chibar_b)
+    T2 = xp.empty_like(chibar_b)
+    # on-site: 1/2 sum_triples A chibar B
+    for A, B in zip(factors.A_on, factors.B_on):
+        xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
+        xp.matmul(T1, xp.asarray(B)[None, None], out=T2)
+        out_b += 0.5 * T2
+    if factors.vpair is not None:
+        di = _dens_idx(norb)
+        vp = xp.asarray(factors.vpair)                            # (2, 2, nvol, norb, norb)
+        for (ss, sr, sq), A, B in zip(factors.triples, factors.A_on, factors.B_on):
+            if ss != UP or sr != sq:
+                continue
+            sig = sq
+            # A_on chibar B_v : (A chibar)[:, :, :, dens] @ (-vpair[sig, up])
+            xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
+            Td = T1[:, :, :, di]                                   # (nb, nvol, nd, norb)
+            out_b[:, :, :, di] += -xp.matmul(Td, vp[sig, UP][None])
+            # A_v chibar B_on : (-vpair[up, sig]) @ chibar[:, :, dens, :] @ B
+            Tr = -xp.matmul(vp[UP, sig][None], chibar_b[:, :, di, :])   # (nb, nvol, norb, nd)
+            out_b[:, :, di, :] += xp.matmul(Tr, xp.asarray(B)[None, None])
+        # A_v chibar B_v : sum_sig (-vpair[up,sig]) chibar[dens,dens] (-vpair[sig,up])
+        for sig in (UP, DN):
+            blk = chibar_b[:, :, di][:, :, :, di]                   # (nb, nvol, norb, norb)
+            out_b[:, :, di[:, None], di[None, :]] += xp.matmul(
+                xp.matmul(vp[UP, sig][None], blk), vp[sig, UP][None])
+    if not bool(xp.all(xp.isfinite(out_b))):
+        raise NonFiniteError("non-finite second-order kernel W2 in the frequency batch [{}, {})"
+                             .format(l0, l0 + nb))
+    return out_b
+
+
+def dense_w2(chibar, factors):
+    """Test helper: W2 materialised for the whole frequency axis."""
+    out = np.zeros_like(np.asarray(chibar))
+    accumulate_batch(out, np.asarray(chibar), 0, factors)
+    return out
