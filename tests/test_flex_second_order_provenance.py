@@ -86,8 +86,47 @@ class TestProvenance(unittest.TestCase):
             np.savez(os.path.join(out, "legacy.npz"), **z)
             with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
                 s2.read_init({"path_to_input": out, "sigma_init": "legacy.npz"})
-            self.assertTrue(any("not recorded" in m and "reduced scheme or pre-2.1" in m for m in cm.output))
+            self.assertTrue(any("not recorded" in m and "H-wave 2.0.0 and earlier" in m
+                                for m in cm.output), cm.output)
             self.assertFalse(any("WARNING" in m and "seed computed" in m for m in cm.output))
+
+    def test_warm_start_from_a_provenance_free_seed(self):
+        """A seed with NO provenance pair -- what H-wave 2.0.0 and earlier
+        wrote -- is usable under either kernel: the solve completes, the
+        absence is reported at INFO (not warned about, and not refused), and
+        the archives the new run writes carry the pair.
+
+        The end-to-end leg is the point: the seed reader is unit-tested above,
+        but nothing else pins that such a seed actually drives a solve to
+        completion and that the run stamps its OWN kernel on what it then
+        writes."""
+        for so in ("local", "takimoto"):
+            with self.subTest(kernel=so), tempfile.TemporaryDirectory() as out:
+                s, r = _build({"flex_second_order": so, "Nmat": 8})
+                _solve_save(s, r, out, {"sigma": "sigma"})
+                z = dict(np.load(os.path.join(out, "sigma.npz")))
+                self.assertIn("flex_second_order", z)             # anti-vacuity
+                z.pop("flex_second_order"); z.pop("flex_second_order_schema")
+                legacy = os.path.join(out, "legacy.npz")
+                np.savez(legacy, **z)
+                s2, r2 = _build({"flex_second_order": so, "Nmat": 8})
+                gi = r2.get_param("green")
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    gi.update(s2.read_init({"path_to_input": out,
+                                            "sigma_init": "legacy.npz"}))
+                self.assertTrue(any("not recorded" in m and "H-wave 2.0.0 and earlier" in m
+                                    for m in cm.output), cm.output)
+                self.assertFalse(any(m.startswith("WARNING") and "seed computed" in m
+                                     for m in cm.output), cm.output)
+                np.testing.assert_array_equal(np.asarray(gi["sigma_init"]),
+                                              np.asarray(z["sigma"]))
+                with tempfile.TemporaryDirectory() as out2:
+                    s2.solve(gi, out2)
+                    s2.save_results(dict({"path_to_output": out2}, **self._REQUEST), gi)
+                    for f in self._ALL:
+                        zz = np.load(os.path.join(out2, f))
+                        self.assertEqual(str(zz["flex_second_order"]), so, f)
+                        self.assertEqual(int(zz["flex_second_order_schema"]), 1, f)
 
     def test_seed_mismatch_warns_in_both_directions(self):
         with tempfile.TemporaryDirectory() as out:

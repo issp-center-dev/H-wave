@@ -139,10 +139,27 @@ class TestSCF(unittest.TestCase):
                 sigma0 = np.array(sl.sigma)
                 scale = np.abs(sigma0).max()
                 self.assertGreater(scale, 1e-6)                   # non-vacuous |sigma0| floor
-                s1, _ = _run("local", hf, itmax=1, sigma_init=seed)
+                s1, gi1 = _run("local", hf, itmax=1, sigma_init=seed)
+                # the warm start really happened, and it started from THIS
+                # archive: without these the "fixed point" leg would pass just
+                # as well on a run that silently ignored the seed and
+                # re-converged from Sigma = 0 within its one iteration.
+                self.assertIn("sigma_init", gi1)
+                archived = np.array(np.load(seed, allow_pickle=True)["sigma"])
+                np.testing.assert_array_equal(np.array(gi1["sigma_init"]), archived)
+                np.testing.assert_allclose(archived, sigma0, rtol=0, atol=1e-12 * scale)
+                self.assertEqual(s1.scf_iterations, 1)
                 change = np.abs(np.array(s1.sigma) - sigma0).max() / scale
                 print("RECORDED fixed-point relative change: {:.3e} (hf={})".format(change, hf))
                 self.assertLess(change, 1.0e-8)
+                # and the bound is a statement about the SEED: one iteration
+                # from Sigma = 0 lands nowhere near it.
+                s_cold, gi_cold = _run("local", hf, itmax=1)
+                self.assertNotIn("sigma_init", gi_cold)
+                self.assertEqual(s_cold.scf_iterations, 1)
+                cold = np.abs(np.array(s_cold.sigma) - sigma0).max() / scale
+                print("RECORDED cold one-step relative change: {:.3e} (hf={})".format(cold, hf))
+                self.assertGreater(cold, 1.0e-3)
 
 
 if __name__ == "__main__":

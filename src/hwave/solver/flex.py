@@ -845,7 +845,8 @@ class FLEX(RPA):
                             "version reads schema 1)".format(file_name, value))
                 if seed_so is None:
                     logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
-                                "(reduced scheme or pre-2.1 archive)".format(file_name))
+                                "(a reduced-scheme archive, or one written before this key "
+                                "was introduced -- H-wave 2.0.0 and earlier)".format(file_name))
                 elif seed_so != self.flex_second_order:
                     logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
                                    "uses {} -- if the SCF stalls, restart from Sigma = 0".format(

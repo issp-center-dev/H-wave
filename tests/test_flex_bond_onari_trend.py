@@ -186,6 +186,53 @@ class TestFlexBondOnariTrend(unittest.TestCase):
         self.assertEqual(folded["lambda_t_takimoto"], committed["lambda_t_takimoto"])
         self.assertEqual(folded["records_takimoto"], committed["records_takimoto"])
 
+    def test_a_witness_that_does_not_belong_here_is_refused(self):
+        """The witness is FOLDED into the milestone's observables under the
+        keys the acceptance above reads, so a witness from another run would
+        be committed as if it were this milestone's legacy comparison. Four
+        ways it can be wrong, each refused by name."""
+        import json as _json
+        import tempfile
+        from tests.sc.onari_bond import generate_flex_bond_fixtures as gen
+        with open(OBSERVABLES) as f:
+            committed = _json.load(f)
+
+        def witness(**over):
+            w = {"lambda_t": {"cold": dict(committed["lambda_t_takimoto"]), "warm": {}},
+                 "records": list(committed["records_takimoto"]),
+                 "settings": dict(gen.SETTINGS, flex_second_order="takimoto")}
+            w.update(over)
+            return w
+
+        # the good one is accepted, so none of the rejections below is vacuous
+        gen.validate_witness(witness())
+
+        cases = {
+            "local kernel": (witness(settings=dict(gen.SETTINGS)), "flex_second_order"),
+            "mismatched setting": (
+                witness(settings=dict(gen.SETTINGS, flex_second_order="takimoto", Nmat=1024)),
+                "'Nmat'"),
+            "unknown setting": (
+                witness(settings=dict(gen.SETTINGS, flex_second_order="takimoto", extra=1)),
+                "unknown setting"),
+            "missing record": (witness(records=[]), "no cold record"),
+            "missing lambda": (witness(lambda_t={"cold": {}, "warm": {}}), "no cold lambda"),
+            "no settings": (witness(settings=None), "no settings block"),
+        }
+        for name, (w, needle) in cases.items():
+            with self.subTest(case=name):
+                with self.assertRaises(gen.WitnessError) as cm:
+                    gen.validate_witness(w, "witness.json")
+                self.assertIn(needle, str(cm.exception))
+                self.assertIn("witness.json", str(cm.exception))
+        # and the refusal happens where it matters: on the fold itself
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, gen.OBSERVABLES.replace(".json", "_takimoto.json"))
+            with open(path, "w") as f:
+                _json.dump(witness(settings=dict(gen.SETTINGS)), f)
+            with self.assertRaises(gen.WitnessError):
+                gen._takimoto_witness(d)
+
     @heavy
     def test_regenerated_greens_reproduce_the_pinned_lambda(self):
         if os.environ.get(_SLOW_ENV, "").strip().lower() in ("", "0", "false", "no", "off"):

@@ -746,6 +746,12 @@ def test_second_order_local_ir_matches_uniform_onsite_uprime():
     kernel reduces to the legacy assembly identically (spec section 3), so
     the anti-vacuity leg below -- the same uniform run under ``"takimoto"``
     landing on a visibly different sigma -- would be empty.
+
+    Cost: three converged ``Nmat = 1024`` solves, 5.1 s measured on its own.
+    That is at the opt-in threshold of ``tests/heavy_tests.py`` rather than
+    over it, and the registry is keyed by ``(module, class, method)`` -- it
+    cannot name a module-level pytest function -- so this case stays in the
+    fast gate, with the measurement recorded here.
     """
     T = 2.0
     local = {'flex_second_order': 'local'}

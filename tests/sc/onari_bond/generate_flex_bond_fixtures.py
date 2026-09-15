@@ -61,7 +61,12 @@ The second run folds the witness file left by the first into its own
 observables as ``lambda_t_takimoto`` / ``records_takimoto``
 (:func:`_takimoto_witness`) -- the two keys ``tests/test_flex_bond_onari_trend.py``
 reads -- so the committed file needs no hand editing.  Without the witness file
-the milestone simply writes its own keys and those two are absent.
+the milestone simply writes its own keys and those two are absent.  A witness
+file that IS present is VALIDATED before it is folded in
+(:func:`validate_witness`): it must be the legacy kernel, carry this
+milestone's settings in every other respect, and hold the ``V = 0.8`` cold
+point.  Anything else is refused rather than committed as if it belonged
+here.
 """
 import argparse
 import hashlib
@@ -107,18 +112,75 @@ DEFAULT_DIR = os.environ.get("HWAVE_FLEXBOND_DIR",
                                           "_regenerated_flexbond"))
 
 
+#: The one V the witness run is generated at (``--only 0.8``).
+WITNESS_V = 0.8
+
+
+class WitnessError(ValueError):
+    """The ``"takimoto"`` witness file is not a witness of THIS milestone."""
+
+
+def validate_witness(witness, path="<witness>"):
+    """Refuse a witness file that does not belong to this milestone.
+
+    The witness is FOLDED into the milestone's own observables, under keys
+    the trend test then compares against pinned lambdas. Anything wrong with
+    it -- the wrong kernel, a different setting, a missing point -- would
+    therefore be committed as if it were this milestone's legacy comparison,
+    and the only thing that could notice is the pinned lambda itself, which
+    is exactly the number the witness is supposed to establish. So it is
+    checked here, before the fold, and refused rather than warned about."""
+    settings = witness.get("settings")
+    if not isinstance(settings, dict):
+        raise WitnessError("{}: no settings block".format(path))
+    got = settings.get("flex_second_order")
+    if got != "takimoto":
+        raise WitnessError(
+            "{}: flex_second_order is {!r}, but the witness of this milestone is the "
+            "LEGACY kernel ('takimoto'). Regenerate it with --second-order takimoto."
+            .format(path, got))
+    expected = dict(SETTINGS)
+    expected.pop("flex_second_order")
+    for key, want in sorted(expected.items()):
+        if settings.get(key) != want:
+            raise WitnessError(
+                "{}: setting {!r} is {!r}, but this milestone's is {!r}; the witness must "
+                "differ from the milestone in the second-order kernel ALONE"
+                .format(path, key, settings.get(key), want))
+    extra = sorted(set(settings) - set(SETTINGS))
+    if extra:
+        raise WitnessError(
+            "{}: unknown setting(s) {}; the witness must carry this milestone's settings"
+            .format(path, ", ".join(repr(k) for k in extra)))
+    records = witness.get("records") or []
+    if not any(r.get("seed") == "cold" and float(r.get("V", float("nan"))) == WITNESS_V
+               for r in records):
+        raise WitnessError(
+            "{}: no cold record at V = {}; the witness is generated with "
+            "--only {} --no-warm".format(path, WITNESS_V, WITNESS_V))
+    cold = (witness.get("lambda_t") or {}).get("cold") or {}
+    if "{:.2f}".format(WITNESS_V) not in cold:
+        raise WitnessError(
+            "{}: no cold lambda at V = {:.2f}".format(path, WITNESS_V))
+    return witness
+
+
 def _takimoto_witness(outdir):
     """The ``"takimoto"`` witness of ``outdir``, as the two keys the trend test
     reads from the committed observables: ``lambda_t_takimoto`` (the cold
     lambdas of the witness run) and ``records_takimoto`` (its convergence
     records). Read from the suffixed observables file a ``--second-order
     takimoto`` run leaves in the same directory; ``{}`` when that file is
-    absent, so a milestone run without a witness simply writes its own keys."""
+    absent, so a milestone run without a witness simply writes its own keys.
+
+    A witness file that IS present is validated before it is folded in
+    (:func:`validate_witness`) and refused if it does not belong here."""
     path = os.path.join(outdir, OBSERVABLES.replace(".json", "_takimoto.json"))
     if not os.path.exists(path):
         return {}
     with open(path) as f:
         witness = json.load(f)
+    validate_witness(witness, path)
     return {"lambda_t_takimoto": witness["lambda_t"]["cold"],
             "records_takimoto": witness["records"]}
 
