@@ -159,6 +159,21 @@ HEAVY_TESTS = (
      "test_regenerated_greens_reproduce_the_pinned_lambda",
      "regenerate the Hartree-Fock bond FLEX greens of the Onari-type trend "
      "milestone (hours; HWAVE_RUN_SLOW_FIXTURES=1) and re-derive lambda_t"),
+    # --- tests/test_flex_second_order_sopt.py -- #181 second-order gates --
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_covering_set_equals_the_local_oracle",
+     "G2 (b): end-to-end second-order coefficients of the general path over "
+     "the covering set of 10 pure types and 12 mixed pairs, against the "
+     "independent real-space oracle (Richardson ladder, ~600 maps)"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_dropped_class_load_bearing_for_v",
+     "G2 (b): the off/off uncrossed class the local weighting drops is not "
+     "negligible for the off-site V, so the covering-set gate really pins "
+     "the local weighting"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_c_gate_on_reproduces_the_full_oracle",
+     "G2 (c): with the bond gate on the second order is the FULL oracle for "
+     "off-site CoulombInter; the off-site Hund/Ising outcome is recorded"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

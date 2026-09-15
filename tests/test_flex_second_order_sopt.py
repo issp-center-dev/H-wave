@@ -1,0 +1,324 @@
+"""G2 (b)-(d) of spec 2026-09-08: END-TO-END second-order coefficients of the
+production ``Sigma_fluct`` (frozen bare G at a fixed mu, quadratic fit on a
+3 x 3 coupling grid with three-level Richardson extrapolation at h = 2e-3)
+equal the independent real-space oracle's for a covering set of pure
+interaction types and mixed pairs; the dropped (off/off uncrossed) class is
+load-bearing for an off-site V; and the bond gate reproduces the FULL
+(exact) oracle for an ORBITAL-DIAGONAL off-site CoulombInter bond.
+
+What is asserted and what is recorded: the whole covering set of (b) and
+the dropped-class ratio are ASSERTED, and so is the bond gate against the
+exact oracle on the orbital-DIAGONAL off-site bond; the gate's deviation on
+an ORBITAL-OFF-DIAGONAL off-site bond and on off-site Hund/Ising is
+RECORDED by a print (spec G2 (c)), because that class is adjudicated by the
+chain exact-diagonalization gate, not here.
+
+Relation to the neighbouring gates
+----------------------------------
+``tests/test_second_order_oracle.py`` (G2 (a)) compares the production
+KERNEL (``dense_w2`` on the solver's chibar) with the oracle for all 55
+type pairs at one coupling. This module instead drives the production
+SOLVER end to end -- ``_flex_compute_veff_general`` (which resums the RPA
+ladders, so its self-energy carries third and higher orders too) and the
+bond gate's ``dress_and_build_w`` / ``calc_self_energy_bond`` -- and
+isolates the second order by fitting. It is therefore the gate that would
+catch a second-order kernel that is correct in isolation but mis-wired,
+mis-weighted or double-counted inside the production assembly.
+
+Why a frozen G: the coefficient of U^2 is only defined once the propagator
+is held fixed. Every map here is built from ``_bare_green`` at mu = 0.1 --
+no SCF, no density update -- on BOTH sides of the comparison, so the two
+sides differ only in how the second order is assembled.
+"""
+import contextlib
+import logging
+import os
+import shutil
+import tempfile
+import unittest
+
+import numpy as np
+
+import hwave.qlmsio.read_input_k as read_input_k
+from tests.heavy_tests import heavy
+from tests.test_second_order_oracle import (_ONSITE, _OFFSITE, _merge, _scaled, _bare_green,
+                                            _BETA, oracle_records, oracle_sigma2)
+from tests.test_flex_bond_sopt import _fit, _richardson, _rel
+
+_IN2 = "tests/rpa/input_2orb"
+_SHAPE = (4, 4, 1)
+_NMAT = 8
+_NORB = 2
+_MU = 0.1
+
+#: Coupling scale of the coarsest extraction grid; the Richardson ladder
+#: adds the grids at h/2 and h/4 (the same ladder as
+#: ``tests/test_flex_bond_sopt.py``, whose ``_fit``/``_richardson`` this
+#: module reuses).
+_H = 2.0e-3
+
+#: The covering set. Pure types exercise every diagonal of the second-order
+#: kernel; the pairs exercise every mixed class that the locality split can
+#: produce -- on/on (the first seven), and on/off with the asymmetric
+#: off-site bond ``_OFFSITE["V"]`` (the last five).
+_PAIRS = [("U", "Up"), ("U", "J"), ("U", "I"), ("U", "X"), ("U", "PH"), ("U", "PL"), ("Up", "J"),
+          ("U", "V"), ("J", "V"), ("I", "V"), ("X", "V"), ("PH", "V")]
+_PURE = ["U", "Up", "J", "I", "X", "PH", "PL", "V", "JV", "IV"]
+
+#: Anti-vacuity floors on the ORACLE coefficient that each assertion
+#: compares against: a relative comparison against a numerically zero
+#: reference would pass for any production value at all.
+_FLOOR_PURE = 1e-6
+_FLOOR_PAIR = 1e-8
+
+#: Covering-set entries whose second-order coefficient is STRUCTURALLY zero
+#: in both production and the oracle, with the symmetry that makes it so.
+#: An entry listed here is checked for a TWO-SIDED zero instead of a
+#: relative agreement (a relative check against a zero reference is
+#: vacuous, and its "relative deviation" is pure round-off).
+#:
+#: Both entries vanish by SPIN algebra alone -- no property of this
+#: fixture's geometry or band structure enters, so they are zero for every
+#: input, not merely small here. ``CoulombIntra``'s only monomial is
+#: ``n_{a up} n_{a dn}``, so at second order the U vertex enters the
+#: skeleton with one up and one down leg on EACH side; the partner vertex
+#: must therefore supply an (up, dn) pair on each side too. On-site
+#: ``Hund`` has only all-same-spin monomials ``n_{a s} n_{b s}``, and
+#: on-site ``PairLift`` only spin-paired ones (``c+_{a up} c+_{b up} c_{b
+#: dn} c_{a dn}``, both legs up on one side and both down on the other);
+#: neither has an (up, dn) entry on both sides, so the U x J and U x PL
+#: cross terms are identically zero. Measured: oracle 2.1e-17 at unit
+#: couplings (the oracle is exactly quadratic, so that is the exact cross
+#: term), production 5.8e-13 after the Richardson ladder -- against pure
+#: coefficients of 3.6e-2 and the smallest NONZERO cross term of the
+#: covering set at 3.3e-4.
+_KNOWN_ZERO = frozenset({("U", "J"), ("U", "PL")})
+
+#: An ORBITAL-DIAGONAL off-site CoulombInter bond (``v_ab(R) = 0`` for
+#: ``a != b``), on two different shells so the two orbitals are not
+#: symmetry-equivalent. This is the fixture G2 (c) asserts on: the bond
+#: gate reproduces the exact oracle here to 3e-11, and the class it has to
+#: recover to do so -- the off/off uncrossed one the local weighting drops
+#: -- is 2.1e-2 of the coefficient, so the assertion distinguishes the
+#: exact from the local weighting by four orders more than the tolerance.
+_V_DIAG = {"CoulombInter": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0),
+                            (0, 1, 0, 2, 2, 0.6, 0.0), (0, -1, 0, 2, 2, 0.6, 0.0)]}
+
+_TABLE = dict(_ONSITE, **_OFFSITE)
+_TABLE["Vd"] = _V_DIAG      # not in the covering set; used by G2 (c) only
+
+
+def _write_wan(path, name, norb, rows):
+    rvecs = sorted({tuple(r[:3]) for r in rows})
+    with open(path, "w") as fw:
+        fw.write("{} in wannier90-like format for uhfk\n{}\n{}\n".format(name, norb, len(rvecs)))
+        fw.write(" ".join("1" for _ in rvecs) + "\n")
+        for r in rows:
+            fw.write("{:4d} {:4d} {:4d} {:4d} {:4d} {: .15e} {: .15e}\n".format(*r))
+
+
+@contextlib.contextmanager
+def _quiet():
+    """Silence the solver's per-map INFO/WARNING narration.
+
+    Every general-scheme map with an off-site declaration logs one WARNING
+    naming what the q-only vertex does and does not carry, and the bond
+    gate's preflight logs its memory table at INFO. Both are correct and
+    both are pinned by their own tests; here they would emit some two
+    thousand lines over the grids of one test method and bury the RECORDED
+    lines this module does mean to print."""
+    lg = logging.getLogger("hwave")
+    old = lg.level
+    lg.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        lg.setLevel(old)
+
+
+def _solver(d, rows_by_type, gate):
+    """A FLEX general solver on ``input_2orb``'s geometry/transfer with the
+    given interaction rows written into the temporary directory ``d``.
+
+    ``flex_second_order = "local"`` is passed as a PARAMETER rather than
+    stamped onto the instance afterwards, so the solver compiles its own
+    ``_second_order_factors`` through the production code path; likewise the
+    gate is switched on through its own two parameters, so the Phase B
+    preflight and vertex preparation run exactly as in a real solve."""
+    import hwave.solver.flex as flex_mod
+    for f in ("geom.dat", "transfer.dat"):
+        shutil.copy(os.path.join(_IN2, f), d)
+    idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+    for t, rows in rows_by_type.items():
+        _write_wan(os.path.join(d, t.lower() + ".dat"), t, _NORB, rows)
+        idict[t] = t.lower() + ".dat"
+    r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+    par = {"T": 1.0 / _BETA, "filling": 0.5, "CellShape": list(_SHAPE), "SubShape": [1, 1, 1],
+           "Nmat": _NMAT, "IterationMax": 1, "Mix": 1.0, "EPS": 1e-12,
+           "flex_second_order": "local"}
+    if gate:
+        par["flex_hartree_fock"] = True
+        par["longitudinal_bond_channels"] = True
+    info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"}
+    return flex_mod.FLEX(r.get_param("ham"), {}, info)
+
+
+def _one_map_sigma(rows, gate):
+    """Production ``Sigma_fluct`` of ONE map from the frozen bare G.
+
+    Returns ``(sigma, G)``. Both branches feed the bubble an explicitly
+    ZERO tail (``np.zeros_like(G)``), which the dense kernel treats exactly
+    as ``None``: the frozen G here is the full Green function, not a
+    tail-deflated one."""
+    from hwave.solver import flex_bond
+    with tempfile.TemporaryDirectory() as d, _quiet():
+        s = _solver(d, rows, gate)
+        if not gate:
+            G = _bare_green(s, _BETA)
+            chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), _BETA)[0]
+            _, v_eff, _, _ = s._flex_compute_veff_general(chi0q_raw, s.ham_info.ham_inter_q)
+            return s._calc_self_energy_general(G, v_eff, _BETA), G
+        green_info = {}
+        s._phase_b_reset(green_info)
+        s._phase_b_preflight(green_info)
+        G = _bare_green(s, _BETA)
+        nmat, nvol, norb = s.nmat, s.lattice.nvol, s.norb
+        nd = norb * norb
+        B = s._bond_view.n_channels
+        with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
+            s._phase_b_prepare_vertices()
+            flex_bond.assemble_bubble(store, G, np.zeros_like(G), _BETA, s._bond_view, _SHAPE, 1)
+            flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
+                                        C_on=s._bond_C_on, nb=nmat, output_full=False, nmat=nmat,
+                                        nvol=nvol, nd=nd, spatial_shape=_SHAPE,
+                                        factors=s._second_order_factors, second_order="local")
+            return flex_bond.calc_self_energy_bond(store, G, _BETA, s._bond_view, _SHAPE, norb, 1), G
+
+
+def _grid_points(h):
+    return [(x, y) for x in (0.0, h / 2, h) for y in (0.0, h / 2, h)]
+
+
+def _rows_at(name_x, name_y, x, y):
+    if name_x == name_y:
+        # one type on a single ray: Sigma is a function of (x + y), so the
+        # 3 x 3 fit returns c20 = c11 = c02 = the pure coefficient.
+        return _scaled(_TABLE[name_x], x + y)
+    return _merge(_scaled(_TABLE[name_x], x), _scaled(_TABLE[name_y], y))
+
+
+def _coefficients(name_x, name_y, gate, which):
+    """Richardson-extrapolated (c20, c11, c02) of production and oracle.
+
+    Returns ``(out, residual)`` where ``out[k] = (production, oracle)`` and
+    ``residual`` is the largest RELATIVE least-squares residual (rss over
+    the nine grid points divided by the norm of the fitted values) seen on
+    either side over the three grids -- the number that says whether the
+    quadratic fit actually describes the sampled maps."""
+    cs_prod, cs_orc, res = [], [], 0.0
+    for f in (1.0, 0.5, 0.25):
+        pts = _grid_points(_H * f)
+        vals_p, vals_o = [], []
+        for (x, y) in pts:
+            rows = _rows_at(name_x, name_y, x, y)
+            sig, G = _one_map_sigma(rows, gate)
+            vals_p.append(sig)
+            vals_o.append(oracle_sigma2(G, _BETA, oracle_records(rows, _NORB), _NORB, which))
+        cp, rp = _fit(pts, vals_p)
+        co, ro = _fit(pts, vals_o)
+        for vals, rss in ((vals_p, rp), (vals_o, ro)):
+            nrm = np.linalg.norm(np.asarray(vals).ravel())
+            if nrm > 0.0:
+                res = max(res, rss / nrm)
+        cs_prod.append(cp)
+        cs_orc.append(co)
+    out = {k: (_richardson([c[k] for c in cs_prod]), _richardson([c[k] for c in cs_orc]))
+           for k in ("c20", "c11", "c02")}
+    return out, res
+
+
+class TestG2Heavy(unittest.TestCase):
+    """The covering set is ~700 maps of the production solver plus the same
+    number of oracle evaluations; every method here is opt-in (see
+    ``tests/heavy_tests.py``)."""
+
+    def _check(self, entry, key, coeffs, floor):
+        prod, orc = coeffs[key]
+        if entry in _KNOWN_ZERO:
+            self.assertLess(np.abs(orc).max(), floor, "{}: listed as a symmetry zero".format(entry))
+            self.assertLess(np.abs(prod).max(), floor,
+                            "{}: oracle is zero but production is not".format(entry))
+            return
+        self.assertGreater(np.abs(orc).max(), floor,        # anti-vacuity
+                           "{}: oracle {} is at the floor; add it to _KNOWN_ZERO with the "
+                           "symmetry that makes it vanish".format(entry, key))
+        self.assertLess(_rel(prod, orc), 1e-8, "{} {}".format(entry, key))
+
+    @heavy
+    def test_b_covering_set_equals_the_local_oracle(self):
+        """G2 (b): the standalone general path's second order equals the
+        oracle's LOCAL weighting for every pure type and every mixed pair
+        of the covering set."""
+        for x in _PURE:
+            with self.subTest(pure=x):
+                c, _res = _coefficients(x, x, False, "local")
+                self._check(x, "c20", c, _FLOOR_PURE)
+        for x, y in _PAIRS:
+            with self.subTest(pair=(x, y)):
+                c, _res = _coefficients(x, y, False, "local")
+                self._check((x, y), "c11", c, _FLOOR_PAIR)
+
+    @heavy
+    def test_b_dropped_class_load_bearing_for_v(self):
+        """The off/off UNCROSSED class that the local weighting drops is not
+        numerically negligible for the off-site V of the covering set: were
+        it tiny, ``test_b_covering_set_equals_the_local_oracle`` would pass
+        against the exact oracle too and would not be pinning the local
+        weighting at all."""
+        dropped, _ = _coefficients("V", "V", False, "dropped")
+        local, _ = _coefficients("V", "V", False, "local")
+        self.assertGreater(np.abs(local["c20"][1]).max(), _FLOOR_PURE)       # anti-vacuity
+        self.assertGreater(np.abs(dropped["c20"][1]).max(),
+                           1e-3 * np.abs(local["c20"][1]).max())
+
+    @heavy
+    def test_c_gate_on_reproduces_the_full_oracle(self):
+        """G2 (c): with the bond gate on, the off-site exchange crossing the
+        local kernel drops is resummed too, so the second order must be the
+        FULL (exact) oracle -- asserted here on an ORBITAL-DIAGONAL off-site
+        CoulombInter bond (:data:`_V_DIAG`).
+
+        The deviation on an ORBITAL-OFF-DIAGONAL off-site bond
+        (``_OFFSITE["V"]``, whose leading rows are ``v_12(+x)``) and on
+        off-site Hund/Ising is RECORDED by a print rather than asserted:
+        the inter-orbital off-site second-order self-energy is adjudicated
+        by the chain exact-diagonalization gate
+        (``tests/test_flex_second_order_ed_chain.py``) for both the
+        standalone path and the bond gate; a deviation there is a bond-gate
+        follow-up, not a kernel finding."""
+        c, _res = _coefficients("Vd", "Vd", True, "exact")
+        prod, orc = c["c20"]
+        self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)                   # anti-vacuity
+        self.assertLess(_rel(prod, orc), 1e-8, "Vd")
+        # and the exact-vs-local distinction is load-bearing on this fixture:
+        # without recovering the dropped class the assertion above would miss
+        # by 2.1e-2, four orders above the tolerance.
+        d, _ = _coefficients("Vd", "Vd", True, "dropped")
+        l, _ = _coefficients("Vd", "Vd", True, "local")
+        self.assertGreater(np.abs(l["c20"][1]).max(), _FLOOR_PURE)           # anti-vacuity
+        self.assertGreater(np.abs(d["c20"][1]).max(), 1e-3 * np.abs(l["c20"][1]).max())
+        for name in ("V", "JV", "IV"):
+            c, _res = _coefficients(name, name, True, "exact")
+            prod, orc = c["c20"]
+            self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)               # anti-vacuity
+            rel = _rel(prod, orc)
+            print("RECORDED gate-on second order for {}: relative deviation {:.3e}".format(name, rel))
+            # recorded, not asserted (spec G2 (c)); the inter-orbital off-site
+            # second-order self-energy is adjudicated by the chain
+            # exact-diagonalization gate (tests/test_flex_second_order_ed_chain.py)
+            # for both the standalone path and the bond gate -- a deviation
+            # there is a bond-gate follow-up, not a kernel finding.
+
+
+if __name__ == "__main__":
+    unittest.main()
