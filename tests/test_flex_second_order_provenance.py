@@ -53,6 +53,19 @@ class TestProvenance(unittest.TestCase):
             self.assertTrue(any("not recorded" in m and "reduced scheme or pre-2.1" in m for m in cm.output))
             self.assertFalse(any("WARNING" in m and "seed computed" in m for m in cm.output))
 
+    def test_seed_check_runs_under_a_mixed_case_scheme(self):
+        """read_init's seed-provenance branch keys off calc_scheme as well, so
+        a ``calc_scheme = "General"`` run must still compare the seed's kernel
+        with this run's."""
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _build({"flex_second_order": "takimoto", "Nmat": 8})
+            _solve_save(s, r, out, {"sigma": "sigma"})
+            s2, _ = _build({"flex_second_order": "local", "Nmat": 8}, calc_scheme="General")
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"})
+            self.assertTrue(any("seed computed with flex_second_order = takimoto" in m
+                                for m in cm.output), cm.output)
+
     def test_offsite_warning_wording(self):
         for so, needle in (("local", "exact at second order"), ("takimoto", "is omitted (the same approximation")):
             with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:

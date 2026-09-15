@@ -206,7 +206,7 @@ def _scheme_stamp(solver):
     # used ("local" | "takimoto"). Reduced-scheme and RPA/UHF archives never
     # carry this -- the kernel choice is meaningless outside FLEX general.
     so = getattr(solver, "flex_second_order", None)
-    if str(scheme) == "general" and so is not None:
+    if str(scheme).lower() == "general" and so is not None:
         stamp["flex_second_order"] = np.array(str(so), dtype="<U8")
         stamp["flex_second_order_schema"] = np.int64(1)
     return stamp
@@ -523,9 +523,14 @@ class FLEX(RPA):
             self._emit_flex_reduced_diagnostic()
 
         # flex_second_order applicability (spec 2026-09-08 D2): after the
-        # scheme is known, still at construction.
+        # scheme is known, still at construction. The scheme name is compared
+        # case-insensitively everywhere below: RPA stores the REQUESTED string
+        # verbatim (a "General" request reaches FLEX unchanged) and FLEX's own
+        # dispatch normalises it, so every site that keys off the general
+        # scheme reads this one normalised name.
+        scheme = str(self.calc_scheme).lower()
         self.flex_second_order = self._phase_b_raw["flex_second_order"]
-        if self._phase_b_raw["flex_second_order_explicit"] and self.calc_scheme != "general":
+        if self._phase_b_raw["flex_second_order_explicit"] and scheme != "general":
             if self.calc_scheme_requested == "auto":
                 raise ValueError(
                     '[mode.param] flex_second_order: calc_scheme = "auto" resolved to '
@@ -534,7 +539,7 @@ class FLEX(RPA):
             raise ValueError(
                 '[mode.param] flex_second_order applies to calc_scheme = "general" only '
                 '(got calc_scheme = {!r})'.format(self.calc_scheme))
-        if self.calc_scheme == "general":
+        if scheme == "general":
             logger.info("    flex_second_order = {}".format(self.flex_second_order))
 
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
@@ -542,7 +547,6 @@ class FLEX(RPA):
         # reduced path.  The 'general' scheme selects the paramagnetic
         # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
         # guard is enforced in solve(), where spin_mode is determined).
-        scheme = self.calc_scheme.lower()
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
             # RPA *ring* (bubble) series with the full rank-4 vertex.
@@ -589,7 +593,7 @@ class FLEX(RPA):
         # an obscure shape error -- keeps its precedence (#83).
         self._second_order_factors = None
         self._second_order_device = None
-        if self.calc_scheme == "general" and self.flex_second_order == "local":
+        if scheme == "general" and self.flex_second_order == "local":
             from hwave.solver.offsite import split_locality
             from hwave.solver.second_order import build_factors
             split = split_locality(self.ham_info, self.lattice)
@@ -805,7 +809,7 @@ class FLEX(RPA):
             if env.marker == "split" and not getattr(self, "_phase_b_active", False):
                 logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
                             "its total sigma is used as the one seed".format(file_name))
-            if getattr(self, "calc_scheme", None) == "general":
+            if str(getattr(self, "calc_scheme", "")).lower() == "general":
                 if env.second_order is None:
                     logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
                                 "(reduced scheme or pre-2.1 archive)".format(file_name))
@@ -1383,7 +1387,7 @@ class FLEX(RPA):
         through :func:`_scheme_stamp` (sigma, green, and the dedicated bond
         archive). General scheme only; empty on reduced (and for any
         __new__-built stub missing the attributes)."""
-        if (getattr(self, "calc_scheme", None) != "general"
+        if (str(getattr(self, "calc_scheme", "")).lower() != "general"
                 or getattr(self, "flex_second_order", None) is None):
             return {}
         return {"flex_second_order": np.array(self.flex_second_order, dtype="<U8"),

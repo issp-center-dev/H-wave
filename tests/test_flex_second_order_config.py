@@ -2,7 +2,11 @@
 """The flex_second_order key (spec 2026-09-08 D2, section 3): type/value,
 default after auto resolution, applicability refusals, RPA warning, INFO line."""
 import logging
+import os
+import tempfile
 import unittest
+
+import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
 
@@ -77,6 +81,56 @@ class TestKey(unittest.TestCase):
         with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
             _build({"flex_second_order": "takimoto"})
         self.assertTrue(any("flex_second_order = takimoto" in m for m in cm.output))
+
+
+class TestSchemeSpelling(unittest.TestCase):
+    """calc_scheme is compared case-insensitively everywhere the key acts:
+    RPA stores the raw request and FLEX's own dispatch normalises it, so a
+    ``calc_scheme = "General"`` run IS a general-scheme run and must build the
+    factors, log the INFO line, solve and stamp the provenance exactly like
+    the lower-case spelling."""
+
+    def _archives(self, spelling, so):
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s, r = _build({"flex_second_order": so, "Nmat": 8}, calc_scheme=spelling)
+            self.assertEqual(
+                len([m for m in cm.output if "flex_second_order = {}".format(so) in m]), 1)
+            if so == "local":
+                self.assertIsNotNone(s._second_order_factors)
+            else:
+                self.assertIsNone(s._second_order_factors)
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq",
+                            "sigma": "sigma", "green": "green"}, gi)
+            return {f: dict(np.load(os.path.join(out, f)))
+                    for f in ("chi0q.npz", "chiq_s.npz", "sigma.npz", "green.npz")}
+
+    def test_mixed_case_general_builds_solves_and_stamps(self):
+        for spelling in ("General", "GENERAL"):
+            for so in ("local", "takimoto"):
+                with self.subTest(spelling=spelling, second_order=so):
+                    for f, z in self._archives(spelling, so).items():
+                        self.assertEqual(str(z["flex_second_order"]), so, f)
+                        self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
+
+    def test_mixed_case_general_accepts_the_key(self):
+        s, _ = _build({"flex_second_order": "takimoto"}, calc_scheme="General")
+        self.assertEqual(s.flex_second_order, "takimoto")
+
+    def test_mixed_case_reduced_still_refuses_the_key(self):
+        for spelling in ("Reduced", "REDUCED"):
+            with self.subTest(spelling=spelling):
+                with self.assertRaises(ValueError) as cm:
+                    _build({"flex_second_order": "local"}, calc_scheme=spelling)
+                self.assertIn('applies to calc_scheme = "general" only', str(cm.exception))
+        # auto -> reduced keeps its own message (the resolver writes the
+        # canonical lower-case name, so only the explicit spelling varies)
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_second_order": "local"}, calc_scheme="auto",
+                   interactions={"CoulombIntra": "coulombintra.dat"})
+        self.assertIn('resolved to "reduced"', str(cm.exception))
 
 
 if __name__ == "__main__":
