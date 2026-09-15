@@ -110,6 +110,40 @@ class TestProvenance(unittest.TestCase):
             self.assertTrue(any("seed computed with flex_second_order = takimoto" in m
                                 for m in cm.output), cm.output)
 
+    def test_members_in_the_dedicated_bond_archive(self):
+        """The bond archive is written by its own branch of save_results, so it
+        carries the provenance pair separately from sigma/green."""
+        from tests.test_flex_bond_gate import _flex
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _flex({"longitudinal_bond_output_full": True, "IterationMax": 1,
+                          "flex_second_order": "local"}, gate=True)
+            self.assertEqual(s.flex_second_order, "local")
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "sigma": "sigma", "green": "green"}, gi)
+            for f in ("longitudinal_bond.npz", "sigma.npz", "green.npz"):
+                z = np.load(os.path.join(out, f))
+                self.assertEqual(str(z["flex_second_order"]), "local", f)
+                self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
+
+    def test_members_in_an_ir_basis_general_run(self):
+        """The IR-native general path writes its own sigma/green blocks."""
+        try:
+            import sparse_ir           # noqa: F401
+        except ImportError:
+            self.skipTest("sparse-ir not installed")
+        from tests.test_flex_ir_general import _make_general_solver
+        with tempfile.TemporaryDirectory() as out:
+            s, gi = _make_general_solver(64, matsubara_basis="ir", iteration_max=1,
+                                         extra_param={"flex_second_order": "local"})
+            self.assertTrue(s.use_ir)
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "sigma": "sigma", "green": "green"}, gi)
+            for f in ("sigma.npz", "green.npz"):
+                z = np.load(os.path.join(out, f))
+                self.assertEqual(str(z["flex_second_order"]), "local", f)
+                self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
+
     def test_offsite_warning_wording(self):
         for so, needle in (("local", "exact at second order"), ("takimoto", "is omitted (the same approximation")):
             with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:

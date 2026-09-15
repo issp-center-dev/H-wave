@@ -20,13 +20,14 @@ _RUN = r'''
 import json, os, sys, numpy as np
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.flex as flex_mod
-path, inter_json, out, so = sys.argv[1:5]
+path, inter_json, out, so, extra_json = sys.argv[1:6]
 inter = json.loads(inter_json)
 idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
 idict.update(inter)
 r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 16,
        "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12}
+par.update(json.loads(extra_json))
 if so != "absent":
     par["flex_second_order"] = so
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
@@ -37,16 +38,25 @@ s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq", "sigma"
                 "green": "green", "energy": "energy.dat"}, gi)
 '''
 
+_FILES = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz")
+#: the bond gate adds its dedicated archive to the comparison
+_BOND_FILES = _FILES + ("longitudinal_bond.npz",)
+#: gate-on parameters: the Hartree-Fock term, the bond channels and the
+#: dynamic archive (all three exist on develop as well, #181 Phase B)
+_GATE = {"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+         "longitudinal_bond_output_full": True}
 
-def _run(checkout, path, inter, out, so):
+
+def _run(checkout, path, inter, out, so, extra=None):
     env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
-    subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so],
+    subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so,
+                    json.dumps(extra or {})],
                    env=env, check=True, capture_output=True, cwd=checkout)
 
 
-def _members(d):
+def _members(d, files=_FILES):
     out = {}
-    for f in ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz"):
+    for f in files:
         z = np.load(os.path.join(d, f))
         out[f] = {k: z[k] for k in z.files}
     return out
@@ -65,13 +75,19 @@ class TestCompatibility(unittest.TestCase):
         dev = self._develop()
         here = os.getcwd()
         compared = 0
-        for path, inter in ((_IN2, {"CoulombInter": "coulombinter.dat"}),
-                            (_IN2, {"CoulombInter": "onsite_inter.dat",
-                                    "CoulombIntra": "coulombintra.dat"})):
+        for path, inter, extra, files in (
+                (_IN2, {"CoulombInter": "coulombinter.dat"}, None, _FILES),
+                (_IN2, {"CoulombInter": "onsite_inter.dat",
+                        "CoulombIntra": "coulombintra.dat"}, None, _FILES),
+                # the bond gate (flex_hartree_fock + longitudinal_bond_channels):
+                # its channel-0 second order is selected by flex_second_order
+                # too, so "takimoto" must keep the whole gate-on archive set --
+                # the dedicated bond archive included -- equal to develop's
+                (_IN2, {"CoulombInter": "coulombinter.dat"}, _GATE, _BOND_FILES)):
             with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-                _run(dev, os.path.abspath(path), inter, a, "absent")
-                _run(here, os.path.abspath(path), inter, b, "takimoto")
-                ma, mb = _members(a), _members(b)
+                _run(dev, os.path.abspath(path), inter, a, "absent", extra)
+                _run(here, os.path.abspath(path), inter, b, "takimoto", extra)
+                ma, mb = _members(a, files), _members(b, files)
                 for f in ma:
                     for k, v in ma[f].items():
                         self.assertIn(k, mb[f], (f, k))
@@ -146,6 +162,57 @@ class TestCompatibility(unittest.TestCase):
                     s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="local")
                 with self.assertRaises(ValueError):
                     s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="nonsense")
+
+    def test_calc_veff_general_batch_path_equals_the_dense_assembly(self):
+        """The local branch's frequency batching (spec 2.3): whatever nb the
+        batch loop picks, the result must equal the dense assembly
+
+            3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc + W2(chibar)
+
+        formed on the FULL frequency axis. Two batch shapes are exercised --
+        nmat = 28 gives nb = 3 and a final batch of length 1, nmat = 6 gives
+        nb = 1 -- on a two-orbital input WITH off-site V (the kernel's
+        off-site branch runs) and on one without (on-site factors only)."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+        from hwave.solver.second_order import dense_w2
+        beta = 0.5
+        for inter, offsite in (({"CoulombInter": "coulombinter.dat"}, True),
+                               ({"CoulombIntra": "coulombintra.dat",
+                                 "CoulombInter": "onsite_inter.dat"}, False)):
+            for nmat in (28, 6):
+                with self.subTest(offsite=offsite, nmat=nmat):
+                    idict = {"path_to_input": _IN2, "Geometry": "geom.dat",
+                             "Transfer": "transfer.dat"}
+                    idict.update(inter)
+                    r = read_input_k.QLMSkInput({"path_to_input": _IN2, "interaction": idict})
+                    par = {"T": 1.0 / beta, "mu": 0.1, "CellShape": [4, 4, 1],
+                           "SubShape": [1, 1, 1], "Nmat": nmat, "IterationMax": 1,
+                           "Mix": 1.0, "EPS": 1}
+                    s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                                                "enable_spin_orbital": False,
+                                                                "calc_scheme": "general"})
+                    f = s._second_order_factors
+                    self.assertEqual(f.vpair is not None, offsite)
+                    self.assertEqual(max(1, s.nmat // 8), 3 if nmat == 28 else 1)
+                    s._calc_epsilon_k({})
+                    G = s._calc_dressed_green(
+                        beta, 0.1, np.zeros((1, s.nmat, s.lattice.nvol, s.norb, s.norb), complex))
+                    chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
+                        s._calc_chi0q(G, np.zeros_like(G), beta)[0], s.ham_info.ham_inter_q)
+                    chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
+                    v = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=f,
+                                             second_order="local")
+                    ndx = s.norb ** 2
+                    shape = (s.nmat, s.lattice.nvol, ndx, ndx)
+                    c0 = chi0q.reshape(shape)
+                    UsB, UcB = Us[np.newaxis], Uc[np.newaxis]
+                    ref = (1.5 * (UsB @ (chi_s.reshape(shape) - c0) @ UsB)
+                           + 0.5 * (UcB @ (chi_c.reshape(shape) - c0) @ UcB)
+                           + dense_w2(c0, f))
+                    scale = np.abs(ref).max()
+                    self.assertGreater(scale, 1e-6)                 # anti-vacuity
+                    np.testing.assert_allclose(v, ref, rtol=0, atol=1e-13 * scale)
 
     def test_factors_lifecycle_and_d7_at_construction(self):
         from tests.test_second_order_factors import _split_for
