@@ -88,6 +88,12 @@ class SigmaSeedEnvelope:
     marker: object
     ir_meta: object
     file_name: str
+    # #181 follow-up: the flex_second_order kernel ("local" | "takimoto")
+    # this seed was computed with, or None when the archive predates 2.1 or
+    # was written by the reduced scheme (which never stamps it). Kept LAST
+    # with a default so every existing positional-adjacent keyword
+    # construction of this dataclass stays valid.
+    second_order: object = None
 
 
 def _readonly(a):
@@ -104,8 +110,11 @@ def make_seed_envelope(data, file_name, sigma, ir_meta):
         marker = str(np.asarray(data["sigma_convention"]).ravel()[0])
     st = _readonly(data["sigma_static"]) if "sigma_static" in data.files else None
     fl = _readonly(data["sigma_fluct"]) if "sigma_fluct" in data.files else None
+    so = (str(np.asarray(data["flex_second_order"]).ravel()[0])
+          if "flex_second_order" in data.files else None)
     return SigmaSeedEnvelope(sigma=_readonly(sigma), sigma_static=st, sigma_fluct=fl,
-                             marker=marker, ir_meta=ir_meta, file_name=str(file_name))
+                             marker=marker, ir_meta=ir_meta, file_name=str(file_name),
+                             second_order=so)
 
 
 def split_tail_diagnostic(fluct, nmat):

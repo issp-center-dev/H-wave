@@ -61,6 +61,12 @@ class TestG0Off(unittest.TestCase):
     implements (spec 2026-09-08 D2). The new default ("local") is compared
     against this same legacy kernel by
     tests/test_flex_second_order_compat.py.
+
+    The npz comparison allows this side's archives to carry additional
+    members beyond develop's (task 7 stamps flex_second_order /
+    flex_second_order_schema on every general-scheme archive, sigma.npz and
+    green.npz included, which develop predates and never writes) -- every
+    member develop DOES have must still match exactly.
     """
 
     def test_byte_identity_against_develop(self):
@@ -74,8 +80,15 @@ class TestG0Off(unittest.TestCase):
                 subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out], check=True, cwd=here)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
                 da, db = np.load(os.path.join(a, name), allow_pickle=True), np.load(os.path.join(b, name), allow_pickle=True)
-                self.assertEqual(da.files, db.files, name)
-                for k in da.files:
+                # #181 follow-up: this side now stamps flex_second_order /
+                # flex_second_order_schema on every general-scheme archive
+                # (task 7); develop predates that provenance pair and has
+                # neither key. Same treatment as
+                # test_flex_second_order_compat.py's _members() comparison:
+                # every develop member must still be present and equal, new
+                # members on this side are allowed.
+                self.assertEqual(set(db.files) - set(da.files), set(), name)
+                for k in db.files:
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             la = open(os.path.join(a, "log.txt")).read().replace(here, "<root>").replace(a, "<out>")

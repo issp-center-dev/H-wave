@@ -196,12 +196,20 @@ def _scheme_stamp(solver):
     # identical so neither can drift into the mislabel.)
     res = getattr(solver, "_scheme_resolution", "explicit")
     res = "unresolved" if res is None else res
-    return {
+    stamp = {
         "calc_scheme": str(scheme),
         "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
                                              scheme)),
         "scheme_resolution": str(res),
     }
+    # #181 follow-up: which second-order kernel this general-scheme run
+    # used ("local" | "takimoto"). Reduced-scheme and RPA/UHF archives never
+    # carry this -- the kernel choice is meaningless outside FLEX general.
+    so = getattr(solver, "flex_second_order", None)
+    if str(scheme) == "general" and so is not None:
+        stamp["flex_second_order"] = np.array(str(so), dtype="<U8")
+        stamp["flex_second_order_schema"] = np.int64(1)
+    return stamp
 
 
 class FLEX(RPA):
@@ -797,6 +805,14 @@ class FLEX(RPA):
             if env.marker == "split" and not getattr(self, "_phase_b_active", False):
                 logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
                             "its total sigma is used as the one seed".format(file_name))
+            if getattr(self, "calc_scheme", None) == "general":
+                if env.second_order is None:
+                    logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
+                                "(reduced scheme or pre-2.1 archive)".format(file_name))
+                elif env.second_order != self.flex_second_order:
+                    logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
+                                   "uses {} -- if the SCF stalls, restart from Sigma = 0".format(
+                                       file_name, env.second_order, self.flex_second_order))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(
@@ -1360,6 +1376,18 @@ class FLEX(RPA):
             "hf_density_source": payload_kind,
             "density_target_enforced": bool(self.calc_mu),
         }
+
+    def _second_order_members(self):
+        """The flex_second_order / flex_second_order_schema provenance pair
+        (#181 follow-up), for the archive blocks that do NOT already go
+        through :func:`_scheme_stamp` (sigma, green, and the dedicated bond
+        archive). General scheme only; empty on reduced (and for any
+        __new__-built stub missing the attributes)."""
+        if (getattr(self, "calc_scheme", None) != "general"
+                or getattr(self, "flex_second_order", None) is None):
+            return {}
+        return {"flex_second_order": np.array(self.flex_second_order, dtype="<U8"),
+                "flex_second_order_schema": np.int64(1)}
 
     def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target):
         """rho, the density-closure check and Sigma_HF for one map."""
@@ -3107,7 +3135,15 @@ class FLEX(RPA):
                             if t in _OFFSITE_DENSITY_TYPES]
 
             if offsite_used:
-                if getattr(self, "flex_hartree_fock", False):
+                if getattr(self, "flex_second_order", "takimoto") == "local":
+                    _msg = ("FLEX calc_scheme='general' (flex_second_order = local): the direct "
+                            "skeleton and every local mixed term of the off-site entries of {} are "
+                            "exact at second order; their exchange skeleton is included only with "
+                            "longitudinal_bond_channels = true.")
+                    if getattr(self, "flex_hartree_fock", False):
+                        _msg += (" Their first-order exchange is carried by the "
+                                 "Hartree-Fock self-energy.")
+                elif getattr(self, "flex_hartree_fock", False):
                     _msg = ("FLEX calc_scheme='general' with flex_hartree_fock=true: the "
                             "off-site entries of {} enter the fluctuation vertex through "
                             "their Hartree (density-slot) part V(q); their first-order "
@@ -3937,8 +3973,11 @@ class FLEX(RPA):
         # Save self-energy
         if "sigma" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
-            # #167: no scheme stamp here -- sigma/green are outside the
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
             # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
             sigma_extra = {}
             if getattr(self, "_phase_b_active", False):
                 sigma_extra = dict(sigma_convention="split",
@@ -3952,14 +3991,18 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
                      momentum_convention=MOMENTUM_CONVENTION,
-                     **_freq_meta("F"))
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save sigma in file {}".format(file_name))
 
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
-            # #167: no scheme stamp here -- sigma/green are outside the
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
             # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
             green_extra = {}
             if ir_native:
                 # native-only provenance key (the densified green.npz key
@@ -3979,7 +4022,8 @@ class FLEX(RPA):
                      beta=1.0 / self.T,
                      momentum_convention=MOMENTUM_CONVENTION,
                      **green_extra,
-                     **_freq_meta("F"))
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save green in file {}".format(file_name))
 
         # Dedicated bond archive (spec 4.2, longitudinal_bond_output_full)
@@ -4008,5 +4052,6 @@ class FLEX(RPA):
                      reverse=green_info["longitudinal_bond_reverse"],
                      types=green_info["longitudinal_bond_types"],
                      **_bond_static,
-                     **self._provenance_block("last_map"))
+                     **self._provenance_block("last_map"),
+                     **self._second_order_members())
             logger.info("save_results: save the bond archive in file {}".format(file_name))
