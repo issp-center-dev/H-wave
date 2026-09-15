@@ -523,11 +523,10 @@ class FLEX(RPA):
             self._emit_flex_reduced_diagnostic()
 
         # flex_second_order applicability (spec 2026-09-08 D2): after the
-        # scheme is known, still at construction. The scheme name is compared
-        # case-insensitively everywhere below: RPA stores the REQUESTED string
-        # verbatim (a "General" request reaches FLEX unchanged) and FLEX's own
-        # dispatch normalises it, so every site that keys off the general
-        # scheme reads this one normalised name.
+        # scheme is known, still at construction. RPA canonicalises the scheme
+        # name to lower case once at construction; the local below re-applies
+        # the same normalisation defensively so every site that keys off the
+        # general scheme reads one canonical name.
         scheme = str(self.calc_scheme).lower()
         self.flex_second_order = self._phase_b_raw["flex_second_order"]
         if self._phase_b_raw["flex_second_order_explicit"] and scheme != "general":
