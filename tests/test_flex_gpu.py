@@ -132,3 +132,115 @@ def test_flex_fft_workers_matches_serial():
     serial = _run_flex(fft_workers=1)
     par = _run_flex(fft_workers=-1)
     _assert_results_close(par, serial, atol=1e-11)
+
+
+# --- #181 follow-up: the local second-order kernel on the GPU -------------
+
+def _run_flex_second_order_local(gpu=False, Nmat=32, iteration_max=3):
+    """A general-scheme FLEX solve of the 2-orbital ON-SITE (U, U', Hund) plus
+    OFF-SITE (V) input under ``flex_second_order = "local"``; returns
+    ``(green_info, solver)``. The off-site rows are what make ``factors.vpair``
+    non-None, so the device check below covers the off-site operand too."""
+    import shutil
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    from tests.test_flex_second_order_scf import _write_inputs
+    d = tempfile.mkdtemp(prefix="hwave_gpu_so_")
+    try:
+        idict = _write_inputs(d)
+        read_io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        param = {'T': 1.0, 'filling': 0.5, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                 'Nmat': Nmat, 'IterationMax': iteration_max, 'Mix': 0.5, 'EPS': 8,
+                 'flex_second_order': 'local', 'gpu': gpu}
+        info_mode = {'mode': 'FLEX', 'param': param, 'enable_spin_orbital': False,
+                     'calc_scheme': 'general'}
+        solver = solver_flex.FLEX(read_io.get_param("ham"), {}, info_mode)
+        green_info = read_io.get_param("green")
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return green_info, solver
+
+
+def _operand_checking_accumulate_batch(module_prefix, seen):
+    """A drop-in for :func:`hwave.solver.second_order.accumulate_batch` that
+    asserts EVERY array operand lives on the expected backend before doing the
+    real work: the output view, the bubble batch, both factor matrices of every
+    spin triple, and the off-site ``vpair``.
+
+    ``module_prefix`` is ``"cupy"`` for a device run and ``"numpy"`` for a host
+    run -- the host spelling is what makes this wrapper itself testable without
+    a CUDA device (see the CPU twin below), since the only difference between
+    the two is the string.
+    """
+    import hwave.solver.second_order as so_mod
+    orig = so_mod.accumulate_batch          # captured NOW: build every wrapper
+                                            # before the first monkeypatch, or a
+                                            # second one would wrap the first.
+
+    def _check(name, x):
+        assert type(x).__module__.split(".")[0] == module_prefix, \
+            "{} is a {} array, expected {}".format(name, type(x).__module__, module_prefix)
+
+    def wrapper(out_b, chibar_b, l0, factors, work=None):
+        _check("out_b", out_b)
+        _check("chibar_b", chibar_b)
+        for i, (A, B) in enumerate(zip(factors.A_on, factors.B_on)):
+            _check("factors.A_on[{}]".format(i), A)
+            _check("factors.B_on[{}]".format(i), B)
+        assert factors.vpair is not None, "the off-site fixture must produce a vpair"
+        _check("factors.vpair", factors.vpair)
+        seen["calls"] += 1
+        return orig(out_b, chibar_b, l0, factors, work=work)
+
+    return wrapper
+
+
+def test_flex_second_order_local_operands_follow_the_backend_cpu(monkeypatch):
+    """CPU twin of the GPU case below: the very same operand-checking wrapper,
+    with the expected backend spelled ``"numpy"``, must see every operand of
+    every ``accumulate_batch`` call on a host run. This is what makes the
+    device assertion above meaningful -- it pins that the wrapper reaches the
+    production call site, reads the right operands and really would fire, on a
+    machine with no CUDA device."""
+    import hwave.solver.second_order as so_mod
+    seen, seen_device = {"calls": 0}, {"calls": 0}
+    host_wrapper = _operand_checking_accumulate_batch("numpy", seen)
+    device_wrapper = _operand_checking_accumulate_batch("cupy", seen_device)
+    monkeypatch.setattr(so_mod, "accumulate_batch", host_wrapper)
+    _run_flex_second_order_local(gpu=False)
+    assert seen["calls"] > 0, "accumulate_batch was never called"
+    # and the wrapper is not vacuous: asking for the device backend on this
+    # host run must fail on the first operand.
+    monkeypatch.setattr(so_mod, "accumulate_batch", device_wrapper)
+    with pytest.raises(AssertionError, match="expected cupy"):
+        _run_flex_second_order_local(gpu=False)
+    assert seen_device["calls"] == 0
+
+
+def test_flex_gpu_second_order_local_matches_cpu(monkeypatch):
+    """``flex_second_order = "local"`` on a real CUDA device must reproduce the
+    CPU self-energy to fp64 round-off, and every operand of the second-order
+    kernel must be a device array (no silent host round trip of the factor
+    pack, the bubble batch or the off-site vpair)."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+
+    ref, _ = _run_flex_second_order_local(gpu=False)
+    import hwave.solver.second_order as so_mod
+    seen = {"calls": 0}
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch("cupy", seen))
+    out, solver = _run_flex_second_order_local(gpu=True)
+    assert seen["calls"] > 0, "accumulate_batch was never called on the device run"
+    assert solver.flex_second_order == "local"
+    assert isinstance(out["sigma"], np.ndarray), "green_info['sigma'] must be a host array"
+    scale = np.abs(ref["sigma"]).max()
+    assert scale > 1e-6                                   # anti-vacuity
+    np.testing.assert_allclose(out["sigma"], ref["sigma"], rtol=0, atol=1e-10 * scale,
+                               err_msg="gpu/cpu sigma mismatch under the local kernel")
