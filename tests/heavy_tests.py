@@ -180,6 +180,11 @@ HEAVY_TESTS = (
      "G4 (recorded): off-site Hund and Ising on the L = 4 chain against "
      "exact diagonalisation, printed rather than asserted"),
     ("test_flex_second_order_ed_chain", "TestG4",
+     "test_hund_times_offsite_v_chain",
+     "G4: the mixed O(J V) coefficient of on-site Hund against the "
+     "asymmetric inter-orbital off-site bond on the L = 3 two-orbital "
+     "chain, and the vanishing of the mixed dropped class"),
+    ("test_flex_second_order_ed_chain", "TestG4",
      "test_interorbital_bond_chain",
      "G4: the L = 3 two-orbital chain with an orbital-asymmetric "
      "inter-orbital off-site bond adjudicates the off-site vertex "

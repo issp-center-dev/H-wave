@@ -11,7 +11,22 @@ the dropped-class ratio are ASSERTED, and so is the bond gate against the
 exact oracle on the orbital-DIAGONAL off-site bond; the gate's deviation on
 an ORBITAL-OFF-DIAGONAL off-site bond and on off-site Hund/Ising is
 RECORDED by a print (spec G2 (c)), because that class is adjudicated by the
-chain exact-diagonalization gate, not here.
+chain exact-diagonalization gate, not here. The records are nonetheless
+PINNED (:data:`_PINNED_GATE`): the inter-orbital deviation -- the Phase B
+defect of issue #192 -- is held inside a band in both directions, and the
+two round-off-level records to a ceiling, so neither can drift unnoticed.
+
+The EXTRACTION is checked too, not only its outcome
+---------------------------------------------------
+Production and oracle are fitted on the same grids and alias the same way,
+so their agreement survives an extraction that has stopped measuring a
+second-order coefficient at all. :meth:`TestG2Heavy._check_extraction`
+therefore holds the fit itself to account on every entry: the relative
+least-squares residual stays under :data:`_RESIDUAL_BOUND` and improves as
+the grid is refined, every fitted quantity is finite, and the three-level
+Richardson estimate agrees with the two-level one from the finer pair
+(:data:`_LADDER_BOUND`) -- i.e. the ladder has settled rather than merely
+been applied.
 
 Relation to the neighbouring gates
 ----------------------------------
@@ -103,6 +118,45 @@ _KNOWN_ZERO = frozenset({("U", "J"), ("U", "PL")})
 #: exact from the local weighting by four orders more than the tolerance.
 _V_DIAG = {"CoulombInter": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0),
                             (0, 1, 0, 2, 2, 0.6, 0.0), (0, -1, 0, 2, 2, 0.6, 0.0)]}
+
+#: Bound on the quadratic fit's RELATIVE least-squares residual on any of
+#: the three Richardson grids. Measured: 3.3e-5 at the coarsest grid, and
+#: exactly halving at each refinement -- the residual is the cubic term of
+#: the map, which is what the ladder then extrapolates away. A residual
+#: above this bound means the 3 x 3 quadratic fit no longer describes the
+#: sampled maps, and the coefficients it returns are not the ones the gate
+#: thinks it is comparing.
+_RESIDUAL_BOUND = 1.0e-4
+
+#: Bound on the relative difference between the THREE-level Richardson
+#: estimate this module uses and the TWO-level one from the two finer grids
+#: alone. Measured: 2.5e-6 at worst over the entries checked. It is much
+#: larger than the 1e-8 at which production and oracle agree, because the
+#: residual aliasing is the SAME on both sides and cancels in that
+#: comparison; what this bound checks is that the ladder itself has settled.
+_LADDER_BOUND = 1.0e-4
+
+#: Below this the fit residual is round-off, not the map's cubic term, and
+#: neither its size nor its scaling says anything about the extraction.
+#: ``PairLift`` alone (whose first order vanishes identically, so the fitted
+#: map is tiny) lands here, at 5e-11 falling to 2e-10 -- pure noise, and
+#: three orders below every other entry's 1e-6 ... 3e-5.
+_RESIDUAL_FLOOR = 1.0e-9
+
+#: RECORDED gate-on deviations, pinned. ``V`` is the inter-orbital off-site
+#: bond whose bond-gate deviation is issue #192 (the chain
+#: exact-diagonalization gate adjudicates it against ED and measures
+#: 4.0e-2 there); ``JV``/``IV`` are off-site Hund/Ising, where the gate
+#: does reproduce the exact oracle and the recorded number is round-off.
+_PINNED_GATE = {"V": 1.629e-3, "JV": 3.5e-11, "IV": 3.0e-11}
+
+#: Relative band for the ``V`` entry of :data:`_PINNED_GATE`. The other two
+#: entries are at the round-off floor of a 1e-1-sized coefficient, so only
+#: their CEILING is meaningful (a lower bound there would be asserting the
+#: exact bit pattern of a BLAS reduction); they are held below
+#: :data:`_ROUNDOFF_CEIL` instead.
+_PINNED_BAND = 0.20
+_ROUNDOFF_CEIL = 1.0e-9
 
 _TABLE = dict(_ONSITE, **_OFFSITE)
 _TABLE["Vd"] = _V_DIAG      # not in the covering set; used by G2 (c) only
@@ -201,8 +255,9 @@ def _grid_points(h):
 
 def _rows_at(name_x, name_y, x, y):
     if name_x == name_y:
-        # one type on a single ray: Sigma is a function of (x + y), so the
-        # 3 x 3 fit returns c20 = c11 = c02 = the pure coefficient.
+        # one type on a single ray: Sigma is a function of (x + y), so a
+        # pure coefficient c appears in the 3 x 3 fit as c20 = c02 = c and
+        # c11 = 2 c (the cross term of (x + y)^2). Only c20 is read back.
         return _scaled(_TABLE[name_x], x + y)
     return _merge(_scaled(_TABLE[name_x], x), _scaled(_TABLE[name_y], y))
 
@@ -210,12 +265,22 @@ def _rows_at(name_x, name_y, x, y):
 def _coefficients(name_x, name_y, gate, which):
     """Richardson-extrapolated (c20, c11, c02) of production and oracle.
 
-    Returns ``(out, residual)`` where ``out[k] = (production, oracle)`` and
-    ``residual`` is the largest RELATIVE least-squares residual (rss over
-    the nine grid points divided by the norm of the fitted values) seen on
-    either side over the three grids -- the number that says whether the
-    quadratic fit actually describes the sampled maps."""
-    cs_prod, cs_orc, res = [], [], 0.0
+    Returns ``(out, diag)`` where ``out[k] = (production, oracle)`` and
+    ``diag`` carries what the extraction itself has to be held to:
+
+    ``diag["residuals"]``
+        the largest RELATIVE least-squares residual (rss over the nine grid
+        points divided by the norm of the fitted values) seen on either
+        side, ONE PER GRID, coarsest first -- the number that says whether
+        the quadratic fit actually describes the sampled maps, and whether
+        it improves as the grid is refined.
+    ``diag["two_level"][k]``
+        the TWO-level extrapolation ``2 c(h/4) - c(h/2)`` from the two
+        finer grids alone, as ``(production, oracle)``. Comparing it with
+        the three-level ``out[k]`` is what says the ladder has settled
+        rather than merely been applied.
+    """
+    cs_prod, cs_orc, res = [], [], []
     for f in (1.0, 0.5, 0.25):
         pts = _grid_points(_H * f)
         vals_p, vals_o = [], []
@@ -226,15 +291,19 @@ def _coefficients(name_x, name_y, gate, which):
             vals_o.append(oracle_sigma2(G, _BETA, oracle_records(rows, _NORB), _NORB, which))
         cp, rp = _fit(pts, vals_p)
         co, ro = _fit(pts, vals_o)
+        r = 0.0
         for vals, rss in ((vals_p, rp), (vals_o, ro)):
             nrm = np.linalg.norm(np.asarray(vals).ravel())
             if nrm > 0.0:
-                res = max(res, rss / nrm)
+                r = max(r, rss / nrm)
+        res.append(r)
         cs_prod.append(cp)
         cs_orc.append(co)
     out = {k: (_richardson([c[k] for c in cs_prod]), _richardson([c[k] for c in cs_orc]))
            for k in ("c20", "c11", "c02")}
-    return out, res
+    two = {k: (2.0 * cs_prod[2][k] - cs_prod[1][k], 2.0 * cs_orc[2][k] - cs_orc[1][k])
+           for k in ("c20", "c11", "c02")}
+    return out, {"residuals": res, "two_level": two}
 
 
 class TestG2Heavy(unittest.TestCase):
@@ -254,6 +323,42 @@ class TestG2Heavy(unittest.TestCase):
                            "symmetry that makes it vanish".format(entry, key))
         self.assertLess(_rel(prod, orc), 1e-8, "{} {}".format(entry, key))
 
+    def _check_extraction(self, entry, key, coeffs, diag, floor):
+        """The extraction itself: the quadratic fit describes the maps, its
+        residual improves as the grid is refined, every fitted quantity is
+        finite, and the Richardson ladder has SETTLED (the two-level
+        estimate from the finer pair agrees with the three-level one).
+
+        Without this, a fit that had stopped describing the sampled maps --
+        or a ladder still moving between levels -- would be invisible: the
+        production and oracle sides alias the same way, so their AGREEMENT
+        survives an extraction that no longer measures a second-order
+        coefficient."""
+        res = diag["residuals"]
+        self.assertTrue(all(np.isfinite(r) for r in res),
+                        "{}: the fit residual is not finite".format(entry))
+        self.assertLess(max(res), _RESIDUAL_BOUND,
+                        "{}: the quadratic fit does not describe the sampled maps "
+                        "(relative residuals {})".format(entry, ["{:.2e}".format(r) for r in res]))
+        for coarse, fine in zip(res, res[1:]):
+            if coarse <= _RESIDUAL_FLOOR:
+                continue                # round-off, not the map's cubic term
+            self.assertLess(fine, coarse * 0.9,
+                            "{}: the fit residual does not improve with the grid "
+                            "({:.2e} -> {:.2e})".format(entry, coarse, fine))
+        for side, label in ((0, "production"), (1, "oracle")):
+            three = coeffs[key][side]
+            two = diag["two_level"][key][side]
+            self.assertTrue(np.all(np.isfinite(three)) and np.all(np.isfinite(two)),
+                            "{}: a fitted coefficient is not finite".format(entry))
+            if np.abs(three).max() <= floor:
+                # a structural zero (_KNOWN_ZERO): "has the ladder settled"
+                # is a question about round-off there, not about the fit
+                continue
+            self.assertLess(_rel(two, three), _LADDER_BOUND,
+                            "{} {}: the Richardson ladder has not settled on the {} "
+                            "side".format(entry, key, label))
+
     @heavy
     def test_b_covering_set_equals_the_local_oracle(self):
         """G2 (b): the standalone general path's second order equals the
@@ -261,11 +366,13 @@ class TestG2Heavy(unittest.TestCase):
         of the covering set."""
         for x in _PURE:
             with self.subTest(pure=x):
-                c, _res = _coefficients(x, x, False, "local")
+                c, diag = _coefficients(x, x, False, "local")
+                self._check_extraction(x, "c20", c, diag, _FLOOR_PURE)
                 self._check(x, "c20", c, _FLOOR_PURE)
         for x, y in _PAIRS:
             with self.subTest(pair=(x, y)):
-                c, _res = _coefficients(x, y, False, "local")
+                c, diag = _coefficients(x, y, False, "local")
+                self._check_extraction((x, y), "c11", c, diag, _FLOOR_PAIR)
                 self._check((x, y), "c11", c, _FLOOR_PAIR)
 
     @heavy
@@ -296,7 +403,8 @@ class TestG2Heavy(unittest.TestCase):
         (``tests/test_flex_second_order_ed_chain.py``) for both the
         standalone path and the bond gate; a deviation there is a bond-gate
         follow-up, not a kernel finding."""
-        c, _res = _coefficients("Vd", "Vd", True, "exact")
+        c, diag = _coefficients("Vd", "Vd", True, "exact")
+        self._check_extraction("Vd", "c20", c, diag, _FLOOR_PURE)
         prod, orc = c["c20"]
         self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)                   # anti-vacuity
         self.assertLess(_rel(prod, orc), 1e-8, "Vd")
@@ -308,16 +416,39 @@ class TestG2Heavy(unittest.TestCase):
         self.assertGreater(np.abs(l["c20"][1]).max(), _FLOOR_PURE)           # anti-vacuity
         self.assertGreater(np.abs(d["c20"][1]).max(), 1e-3 * np.abs(l["c20"][1]).max())
         for name in ("V", "JV", "IV"):
-            c, _res = _coefficients(name, name, True, "exact")
+            c, diag = _coefficients(name, name, True, "exact")
+            self._check_extraction(name, "c20", c, diag, _FLOOR_PURE)
             prod, orc = c["c20"]
             self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)               # anti-vacuity
             rel = _rel(prod, orc)
-            print("RECORDED gate-on second order for {}: relative deviation {:.3e}".format(name, rel))
-            # recorded, not asserted (spec G2 (c)); the inter-orbital off-site
-            # second-order self-energy is adjudicated by the chain
-            # exact-diagonalization gate (tests/test_flex_second_order_ed_chain.py)
-            # for both the standalone path and the bond gate -- a deviation
-            # there is a bond-gate follow-up, not a kernel finding.
+            expect = _PINNED_GATE[name]
+            print("RECORDED gate-on second order for {}: relative deviation {:.3e} "
+                  "(pinned {:.3e})".format(name, rel, expect))
+            self.assertTrue(np.isfinite(rel), "{}: the recorded deviation is not finite".format(name))
+            # The deviation is RECORDED, not asserted as an agreement (spec
+            # G2 (c)): the inter-orbital off-site second-order self-energy is
+            # adjudicated against exact diagonalisation by
+            # tests/test_flex_second_order_ed_chain.py, for both the
+            # standalone path and the bond gate, and the deviation there is a
+            # Phase B defect (issue #192), not a kernel finding. But the
+            # record is PINNED, so it cannot drift unnoticed in either
+            # direction.
+            if name == "V":
+                self.assertGreater(rel, expect * (1.0 - _PINNED_BAND),
+                                   "{}: measured {:.3e}, pinned {:.3e}. A SMALLER deviation "
+                                   "means the bond gate's inter-orbital behaviour has changed "
+                                   "for the better -- update the expectation and issue #192."
+                                   .format(name, rel, expect))
+                self.assertLess(rel, expect * (1.0 + _PINNED_BAND),
+                                "{}: measured {:.3e}, pinned {:.3e} -- a regression in the "
+                                "bond gate on inter-orbital off-site bonds (issue #192)."
+                                .format(name, rel, expect))
+            else:
+                # at the round-off floor of a 1e-1-sized coefficient: only the
+                # ceiling is a statement about the code (see _ROUNDOFF_CEIL)
+                self.assertLess(rel, _ROUNDOFF_CEIL,
+                                "{}: the bond gate no longer reproduces the exact oracle "
+                                "(measured {:.3e}, recorded {:.3e})".format(name, rel, expect))
 
 
 if __name__ == "__main__":

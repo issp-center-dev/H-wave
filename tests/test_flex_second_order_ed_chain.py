@@ -28,8 +28,27 @@ Two fixtures, and what each adjudicates
   inter-orbital bond (``v_01(+x) = v``, ``v_10(+x) = 0.6 v``). This is the
   fixture that adjudicates the two open ledger items of the campaign: the
   orientation of the off-site density vertex (Task 5) and the bond gate's
-  deviation on inter-orbital bonds (Task 9). Its verdicts are in
-  :class:`TestG4`'s two methods and in the module's measured table below.
+  deviation on inter-orbital bonds (Task 9, issue #192). Its verdicts are in
+  :class:`TestG4`'s methods and in the module's measured table below. The
+  same fixture also carries the MIXED on-site/off-site entry (on-site
+  ``Hund`` against the off-site ``V`` rows,
+  :meth:`TestG4.test_hund_times_offsite_v_chain`).
+
+Which first order is subtracted
+-------------------------------
+The remainder the gates compare is built with the TEST SIDE's own
+first-order functional (:func:`_hf_sigma`, the Wick derivative of the ED
+term list, shared with Task 10), never with production's -- so it is not
+built with any part of the object under test. UHFk's own mean-field kernel
+appears only as a CONVENTION PIN, in
+:meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_mean_field`
+(which is what fixes the orbital placement and the mirrored-row weight),
+:meth:`TestChainHamiltonian.test_independent_functional_equals_production_on_random_densities`
+(the two functionals agree away from the free density too) and
+:meth:`TestFirstOrder.test_first_order_remainder_vanishes` (which subtracts
+the production kernel precisely so that it can be two-sided in the weight;
+the test-side functional tracks whichever Hamiltonian it is handed and
+cannot discriminate one).
 
 Which Hamiltonian the chain ED must be
 --------------------------------------
@@ -91,18 +110,25 @@ maximum over the window; tolerance 2e-3):
     L=4 norb=1  V^2                2.3e-4              2.4e-4
     L=4 norb=1  U V                4.8e-4              --
     L=4 norb=1  U^2                3.2e-4              --
-    L=4 norb=1  Hund   (recorded)  2.5e-4              2.5e-4
+    L=4 norb=1  Hund   (recorded)  2.6e-4              2.6e-4
     L=4 norb=1  Ising  (recorded)  2.2e-4              2.2e-4
     L=3 norb=2  v^2 (asymmetric)   3.5e-4              4.0e-2  <-- recorded
+    L=3 norb=2  J V (mixed)        4.5e-4              --
 
-The last row is the campaign's open item: the STANDALONE local path plus
+The v^2 row is the campaign's open item: the STANDALONE local path plus
 the dropped class reproduces the exact inter-orbital off-site second order
 (so the Task 5 orientation of the off-site density vertex is confirmed by
 exact diagonalisation), while the BOND GATE misses it by 4.0e-2 -- twenty
 times the tolerance, and nearly twice the whole off/off uncrossed class it
 is supposed to be resumming (2.2e-2 of the coefficient). That deviation is
-RECORDED by a print and routed to a Phase B follow-up; it is not asserted
-here, and it is not a second-order kernel finding.
+a Phase B defect, tracked as issue #192; it is not a second-order kernel
+finding and this module does not try to fix it.
+
+It is RECORDED rather than asserted as an agreement -- but the record is
+PINNED (:data:`_PINNED`): every printed quantity is held to its measured
+value within :data:`_PINNED_BAND` and checked for finiteness, so it cannot
+drift in either direction unnoticed. A value that moves OUT of the band is
+a finding whichever way it moves.
 """
 import os
 import tempfile
@@ -112,7 +138,8 @@ import numpy as np
 
 from tests import ed_oracle_util as edu
 from tests.heavy_tests import heavy
-from tests.test_flex_second_order_ed_onsite import _coeff2, _coeff11, _quiet, _refine
+from tests.test_flex_second_order_ed_onsite import (_coeff2, _coeff11, _quiet, _refine,
+                                                    wick_hf_sigma)
 from tests.test_second_order_factors import _write_wan
 from tests.test_second_order_oracle import (_MIRRORED_ROW_TYPES as _MIRRORED_TYPES,
                                              oracle_records, oracle_sigma2)
@@ -141,6 +168,37 @@ _FLOOR = 1.0e-6
 #: at all. Measured: 1.2e-1 for V^2 and 2.3e-1 for Hund on the
 #: single-orbital chain, 2.2e-2 on the inter-orbital one.
 _DROPPED_FLOOR = 1.0e-3
+
+#: RECORDED quantities, pinned. These are outcomes this gate does not
+#: ASSERT as agreements -- the bond gate's deviation on an inter-orbital
+#: off-site bond (issue #192) and the off-site Hund/Ising results, which
+#: belong to a follow-up class of issue #181 -- but a recorded number that
+#: nothing checks is a number that can drift in either direction unnoticed.
+#: Each entry is the measured value at this module's working point; the
+#: band below is what a re-measurement may move it by.
+#:
+#: A change OUTSIDE the band is a finding either way: a larger deviation
+#: means a regression, a smaller one means the defect has been partly fixed
+#: (in which case the expectation, and issue #192, want updating).
+_PINNED = {
+    # inter-orbital off-site bond, L = 3 two-orbital chain
+    "interorbital gate vs ED": 4.020e-2,          # issue #192
+    "interorbital dropped class": 2.222e-2,
+    # off-site Hund / Ising, L = 4 single-orbital chain
+    "Hund local+dropped vs ED": 2.560e-4,
+    "Hund gate vs ED": 2.560e-4,
+    "Hund dropped class": 2.311e-1,
+    "Ising local+dropped vs ED": 2.170e-4,
+    "Ising gate vs ED": 2.170e-4,
+    "Ising dropped class": 1.156e-1,
+}
+
+#: Relative band of :data:`_PINNED`. The pinned numbers are set by stencil
+#: truncation and the finite Matsubara window, both deterministic, so the
+#: band only has to absorb a different BLAS's round-off; it is deliberately
+#: far tighter than the factor 20 that separates the issue-#192 deviation
+#: from this module's tolerance.
+_PINNED_BAND = 0.20
 
 
 def _inner():
@@ -228,6 +286,25 @@ def _rows_interorbital_one(v):
     return {"CoulombInter": [(1, 0, 0, 1, 2, v, 0.0), (-1, 0, 0, 2, 1, v, 0.0)]}
 
 
+def _rows_hund_offsite_v(j, v):
+    """On-site ``Hund`` BETWEEN the two orbitals plus the asymmetric
+    inter-orbital off-site ``V`` rows of :func:`_rows_interorbital`, both
+    orientations of each.
+
+    This is the fixture of the mixed on-site/off-site class: the kernel's
+    ``A_on chibar B_v + A_v chibar B_on`` products, with an on-site vertex
+    that is NOT a plain density (``Hund`` is same-spin only), against the
+    off-site density vertex. Every such diagram is local by the weight rule
+    of spec 2.4 -- which
+    :meth:`TestG4.test_hund_times_offsite_v_chain` asserts directly."""
+    rows = {}
+    if j != 0.0:
+        rows["Hund"] = [(0, 0, 0, 1, 2, j, 0.0), (0, 0, 0, 2, 1, j, 0.0)]
+    if v != 0.0:
+        rows.update(_rows_interorbital(v))
+    return rows
+
+
 def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
     """The quartic term list (``(p, q, r, s, coeff)`` for
     ``coeff c^dag_p c_q c^dag_r c_s``, the form ``SectorED`` consumes) of
@@ -290,25 +367,19 @@ def _hf_sigma(fx, terms, rho):
     ``rho[p, q] = <c^dag_p c_q>``, in mode space.
 
     The Wick engine is ``ed_oracle_util.hf_h1_from_terms``'s ``add()``
-    verbatim (``E = c [rho_pq rho_rs + rho_ps (delta_qr - rho_rq)]`` and
+    (``E = c [rho_pq rho_rs + rho_ps (delta_qr - rho_rq)]`` and
     ``H_MF = sum dE/d rho_xy c^dag_x c_y``), evaluated at an ARBITRARY
     density rather than the free one -- which is the only difference, and
-    the reason it is written here: the gates need the functional at the
-    EXACT density. :meth:`TestChainHamiltonian
-    .test_ed_hamiltonian_is_the_production_mean_field` checks the result
-    against UHFk's own kernel, so this is not a second private derivation
-    of the mean field but a bridge to the production one."""
-    S = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+    the reason the gates need it: the subtraction has to be made at the
+    EXACT density. The engine itself is Task 10's
+    :func:`tests.test_flex_second_order_ed_onsite.wick_hf_sigma`, shared
+    rather than copied, so both exact-diagonalization gates subtract the
+    same functional.
 
-    def add(p, q, r, s, c_):
-        S[p, q] += c_ * rho[r, s]
-        S[r, s] += c_ * rho[p, q]
-        S[p, s] += c_ * ((1.0 if q == r else 0.0) - rho[r, q])
-        S[r, q] += -c_ * rho[p, s]
-
-    for (p, q, r, s, coeff) in terms:
-        add(p, q, r, s, coeff)
-    return 0.5 * (S + S.conj().T)
+    This IS the functional the gates subtract; UHFk's own mean-field kernel
+    is compared against it separately, as a convention pin, by
+    :meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_mean_field`."""
+    return wick_hf_sigma(fx.nmode, terms, rho)
 
 
 def _production_hf_sigma_k(fx, rows_by_type, rho):
@@ -383,6 +454,59 @@ def _to_k(fx, M, sign=1.0):
     return out
 
 
+def _to_k_so(fx, M):
+    """:func:`_to_k` on the FULL spin-orbital block: ``A(k)[(s a), (t b)]``
+    in the ``s * norb + a`` order of ``hartree_fock.accumulate_hf``'s
+    output, so a mode-space matrix can be compared with UHFk's own
+    mean-field kernel on every spin block rather than only the up one."""
+    norb, L = fx.norb, fx.L
+    phase = _k_phases(fx)
+    out = np.zeros((L, 2 * norb, 2 * norb), dtype=complex)
+    for kx in range(L):
+        for R in range(L):
+            for s in range(2):
+                for a in range(norb):
+                    for t in range(2):
+                        for b in range(norb):
+                            out[kx, s * norb + a, t * norb + b] += (
+                                phase[kx, R] * M[fx.mode(R, a, s), fx.mode(0, b, t)])
+    return out
+
+
+def _random_translation_invariant_density(fx, n=3, seed=20260915):
+    """``n`` deterministic random Hermitian, translation-invariant,
+    spin-block-diagonal densities in mode space.
+
+    Translation invariance is required by UHFk's kernel (it reads one
+    reference site's row), Hermiticity by the functional; the spin blocks
+    are independent, so the densities are magnetic as well as
+    orbital-coherent -- everything the free density of the pin below is
+    not."""
+    rng = np.random.default_rng(seed)
+    norb, L = fx.norb, fx.L
+    out = []
+    for _ in range(n):
+        A = (rng.normal(size=(L, 2, norb, norb))
+             + 1j * rng.normal(size=(L, 2, norb, norb)))
+        g = np.zeros_like(A)
+        for R in range(L):
+            for s in range(2):
+                # g[R] = conj(g[-R]^T) makes rho Hermitian
+                g[R, s] = 0.5 * (A[R, s] + np.conj(A[(-R) % L, s].T))
+        g *= 0.15
+        for s in range(2):
+            g[0, s] += 0.5 * np.eye(norb)
+        rho = np.zeros((fx.nmode, fx.nmode), dtype=complex)
+        for j in range(L):
+            for j2 in range(L):
+                for s in range(2):
+                    for a in range(norb):
+                        for b in range(norb):
+                            rho[fx.mode(j, a, s), fx.mode(j2, b, s)] = g[(j - j2) % L, s, a, b]
+        out.append(rho)
+    return out
+
+
 def _g0_k(fx, iws, sign=1.0):
     """``G0(k, i w) = [(i w + mu) - eps(k)]^{-1}`` of the free chain."""
     ek = _to_k(fx, fx.build_h1(), sign)
@@ -410,20 +534,41 @@ def _green_ed_k(ed, fx, iws, sign=1.0):
     return gk
 
 
-def _sigma_ed(fx, rows_by_type, iws, mirrored_weight=0.5):
+def _sigma_ed(fx, rows_by_type, iws, mirrored_weight=0.5, hf_source="wick"):
     """``(Sigma_ED, Sigma_HF)`` on ``iws``: the exact self-energy of the
-    chain from the Dyson inversion ``G0^{-1} - G^{-1}``, and UHFk's
-    first-order functional evaluated with the EXACT density."""
+    chain from the Dyson inversion ``G0^{-1} - G^{-1}``, and a first-order
+    functional evaluated with the EXACT density.
+
+    ``hf_source`` selects WHOSE first order is subtracted:
+
+    ``"wick"`` (the default, and what the second-order gates use)
+        the TEST SIDE's own :func:`_hf_sigma` on the ED term list, carried
+        to ``(k, orbital)`` by :func:`_to_k`. The remainder the gates then
+        compare is production-free.
+    ``"production"``
+        UHFk's own mean-field kernel (:func:`_production_hf_sigma_k`). Used
+        only by :meth:`TestFirstOrder.test_first_order_remainder_vanishes`,
+        where confronting the production kernel with this Hamiltonian is
+        the point -- and the reason that gate can be two-sided in the
+        mirrored-row weight at all (the ``"wick"`` functional tracks
+        whatever weight it is handed, so it cannot discriminate one).
+    """
     ed = edu.SectorED(fx, terms=_ed_terms(fx, rows_by_type, mirrored_weight))
     sigma = np.linalg.inv(_g0_k(fx, iws)) - np.linalg.inv(_green_ed_k(ed, fx, iws))
-    hf = _production_hf_sigma_k(fx, rows_by_type, ed.density_matrix())
-    return sigma, hf[:, :fx.norb, :fx.norb]
+    rho = ed.density_matrix()
+    if hf_source == "production":
+        return sigma, _production_hf_sigma_k(fx, rows_by_type, rho)[:, :fx.norb, :fx.norb]
+    if hf_source != "wick":
+        raise ValueError("hf_source must be 'wick' or 'production'")
+    terms = _ed_terms(fx, rows_by_type, mirrored_weight)
+    return sigma, _to_k(fx, _hf_sigma(fx, terms, rho))
 
 
-def _sigma_fluct_ed(fx, rows_by_type, iws, mirrored_weight=0.5):
+def _sigma_fluct_ed(fx, rows_by_type, iws, mirrored_weight=0.5, hf_source="wick"):
     """``Sigma_ED - Sigma_HF[rho_ED]`` -- the exact fluctuation remainder,
-    whose O(v^2) coefficient is the bare second-order skeleton."""
-    sigma, hf = _sigma_ed(fx, rows_by_type, iws, mirrored_weight)
+    whose O(v^2) coefficient is the bare second-order skeleton. See
+    :func:`_sigma_ed` for ``hf_source``."""
+    sigma, hf = _sigma_ed(fx, rows_by_type, iws, mirrored_weight, hf_source)
     return sigma - hf[None]
 
 
@@ -784,6 +929,34 @@ class TestChainHamiltonian(unittest.TestCase):
                                        "production mean field -- the mirrored-row weight is "
                                        "not pinned".format(name))
 
+    def test_independent_functional_equals_production_on_random_densities(self):
+        """The test side's own first-order functional (:func:`_hf_sigma`,
+        which is what the gates SUBTRACT) equals UHFk's mean-field kernel on
+        several deterministic random Hermitian densities -- not only on the
+        free one the placement pin above uses.
+
+        The free density is paramagnetic, real and highly symmetric; an
+        agreement there leaves room for a functional that differs on the
+        orbital coherences, on a magnetic density, or on a complex one. The
+        densities here are translation-invariant (which UHFk's kernel needs)
+        and spin-block-diagonal, but otherwise generic: independent spin
+        blocks, complex orbital coherences, every displacement populated."""
+        cases = [("chain U+V", _fx_chain(), _rows_u_v(0.3, 0.2)),
+                 ("chain Hund", _fx_chain(), _rows_offsite("Hund", 0.3)),
+                 ("chain Ising", _fx_chain(), _rows_offsite("Ising", 0.3)),
+                 ("orbital asymmetric", _fx_orbital(), _rows_interorbital(0.3)),
+                 ("orbital Hund + V", _fx_orbital(), _rows_hund_offsite_v(0.25, 0.3))]
+        for (name, fx, rows) in cases:
+            terms = _ed_terms(fx, rows)
+            for k, rho in enumerate(_random_translation_invariant_density(fx)):
+                self.assertLess(np.abs(rho - rho.conj().T).max(), 1e-14)   # Hermitian
+                ref = _production_hf_sigma_k(fx, rows, rho)
+                mine = _to_k_so(fx, _hf_sigma(fx, terms, rho))
+                scale = np.abs(ref).max()
+                with self.subTest(case=name, density=k):
+                    self.assertGreater(scale, 1e-3)                        # anti-vacuity
+                    self.assertLess(np.abs(mine - ref).max(), 1e-11 * scale)
+
     def test_onsite_block_matches_the_second_order_compiler(self):
         """For the on-site rows alone, UHFk's mean field is
         ``hf_first_order(compile_onsite(...))`` -- the object Task 10's gate
@@ -840,8 +1013,9 @@ class TestFirstOrder(unittest.TestCase):
             for weight, must_vanish in ((0.5, True), (1.0, False)):
                 if weight == 1.0 and not mirrored:
                     continue      # the two conventions build the same Hamiltonian
-                lin = _refine(lambda h: _sigma_fluct_ed(fx, rows_of(h), iws, weight) / h, x)
-                sig, _hf = _sigma_ed(fx, rows_of(x), iws, weight)
+                lin = _refine(lambda h: _sigma_fluct_ed(fx, rows_of(h), iws, weight,
+                                                       "production") / h, x)
+                sig, _hf = _sigma_ed(fx, rows_of(x), iws, weight, "production")
                 scale = np.abs(sig).max() / x      # the self-energy's own linear size
                 with self.subTest(case=name, mirrored_weight=weight):
                     self.assertGreater(scale, 1e-3)              # anti-vacuity
@@ -864,14 +1038,35 @@ class TestG4(unittest.TestCase):
     def _compare(self, label, ed, prod, dropped, gate=None):
         scale = np.abs(ed).max()
         self.assertGreater(scale, _FLOOR, "{}: the ED coefficient is at the floor".format(label))
-        np.testing.assert_allclose(prod + dropped, ed, rtol=_TOL, atol=_TOL * scale,
-                                   err_msg="{}: local + dropped vs exact diagonalisation"
-                                   .format(label))
+        # max-norm RELATIVE error against the coefficient's own size: an
+        # rtol+atol pair would let a large entry hide a proportionally large
+        # error in a small one
+        self.assertLess(np.abs(prod + dropped - ed).max() / scale, _TOL,
+                        "{}: local + dropped vs exact diagonalisation".format(label))
         if gate is not None:
-            np.testing.assert_allclose(gate, ed, rtol=_TOL, atol=_TOL * scale,
-                                       err_msg="{}: bond gate vs exact diagonalisation"
-                                       .format(label))
+            self.assertLess(np.abs(gate - ed).max() / scale, _TOL,
+                            "{}: bond gate vs exact diagonalisation".format(label))
         return scale
+
+    def _record(self, key, value):
+        """Print a RECORDED quantity and hold it to its pinned value.
+
+        The value is not an agreement this gate claims -- it is an outcome
+        it measures and routes elsewhere -- but pinning it is what turns the
+        record into something a regression can fail."""
+        expect = _PINNED[key]
+        print("RECORDED {}: {:.3e} (pinned {:.3e} +- {:.0%})"
+              .format(key, value, expect, _PINNED_BAND))
+        self.assertTrue(np.isfinite(value), "{}: not finite".format(key))
+        self.assertGreater(value, expect * (1.0 - _PINNED_BAND),
+                           "{}: measured {:.3e}, pinned {:.3e}. A SMALLER value means the "
+                           "recorded behaviour has changed for the better -- update the "
+                           "expectation (and issue #192) rather than widening the band."
+                           .format(key, value, expect))
+        self.assertLess(value, expect * (1.0 + _PINNED_BAND),
+                        "{}: measured {:.3e}, pinned {:.3e}. A LARGER value is a "
+                        "regression in the recorded behaviour (issue #192 for the "
+                        "inter-orbital bond gate).".format(key, value, expect))
 
     @heavy
     def test_coulombinter_chain(self):
@@ -944,10 +1139,59 @@ class TestG4(unittest.TestCase):
             scale = self._compare("inter-orbital v^2", ed, pr, dr)
             self.assertGreater(np.abs(dr).max(), _DROPPED_FLOOR * scale,
                                "the dropped class is negligible on this fixture")
-            print("RECORDED bond gate on the inter-orbital off-site bond: relative "
-                  "deviation from exact diagonalisation {:.3e} (dropped class {:.3e} of "
-                  "the coefficient) -- Phase B follow-up, issue #181"
-                  .format(np.abs(gate - ed).max() / scale, np.abs(dr).max() / scale))
+            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"), (gate, "gate")):
+                self.assertTrue(np.all(np.isfinite(arr)),
+                                "the {} coefficient is not finite".format(what))
+            # Phase B follow-up of issue #181, tracked as issue #192
+            self._record("interorbital gate vs ED", np.abs(gate - ed).max() / scale)
+            self._record("interorbital dropped class", np.abs(dr).max() / scale)
+
+    @heavy
+    def test_hund_times_offsite_v_chain(self):
+        """``L = 3``, two orbitals: the MIXED O(J V) coefficient of on-site
+        ``Hund`` against the asymmetric inter-orbital off-site ``V``.
+
+        The pure entries of this campaign exercise the on-site kernel and
+        the off-site one; this is the mixed class -- the cross products
+        ``A_on chibar B_v + A_v chibar B_on`` -- with an on-site vertex that
+        is not a plain density (on-site ``Hund`` carries same-spin monomials
+        only), which is the shape the weight rule of spec 2.4 says is local
+        with weight 1 regardless of the off-site vertex's placement.
+
+        Two statements:
+
+        * the mixed coefficient of ``local + dropped`` equals the exact
+          remainder's, at this module's tolerance and above its floor;
+        * the mixed part of the DROPPED class is identically zero -- every
+          mixed on/off diagram has a representable copy, so the local
+          kernel drops none of them. This is asserted rather than assumed:
+          were it nonzero, the first statement would be comparing against a
+          correction the kernel is not supposed to need.
+
+        Measured at this module's working point: the ED coefficient is
+        1.07e-1, ``local + dropped`` reproduces it to 4.5e-4 of it (a factor
+        4.4 inside the tolerance) and the mixed dropped part is 4.1e-18 of
+        it -- zero to round-off.
+        """
+        maps = _Maps(_fx_orbital(), _rows_hund_offsite_v)
+        with _quiet():
+            ed = _refine(lambda h: _coeff11(lambda j, v: maps.ed(j, v), h, h), _X)
+            pr = _refine(lambda h: _coeff11(lambda j, v: maps.prod(j, v), h, h), _X)
+            # the oracle's skeleton is exactly quadratic, so the mixed part of
+            # the dropped class is the unit-coupling value minus the two pure ones
+            dr = maps.dropped(1.0, 1.0) - maps.dropped(1.0, 0.0) - maps.dropped(0.0, 1.0)
+        scale = np.abs(ed).max()
+        self.assertGreater(scale, _FLOOR,                        # anti-vacuity
+                           "the mixed Hund x V coefficient is at the floor")
+        for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped")):
+            self.assertTrue(np.all(np.isfinite(arr)),
+                            "the mixed {} coefficient is not finite".format(what))
+        # every mixed on/off diagram is local: nothing is dropped
+        self.assertLess(np.abs(dr).max(), _FLOOR * scale,
+                        "the mixed on/off class has a dropped part: the weight rule of "
+                        "spec 2.4 says every mixed diagram is local")
+        self.assertLess(np.abs(pr + dr - ed).max() / scale, _TOL,
+                        "Hund x off-site V: local + dropped vs exact diagonalisation")
 
     @heavy
     def test_hund_ising_chain_recorded(self):
@@ -966,10 +1210,13 @@ class TestG4(unittest.TestCase):
                 dr = maps.dropped(1.0)
             scale = np.abs(ed).max()
             self.assertGreater(scale, _FLOOR)                    # anti-vacuity
-            print("RECORDED off-site {} on the L = 4 chain: local + dropped {:.3e}, "
-                  "gate on {:.3e} (dropped class {:.3e} of the coefficient)"
-                  .format(itype, np.abs(pr + dr - ed).max() / scale,
-                          np.abs(gate - ed).max() / scale, np.abs(dr).max() / scale))
+            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"), (gate, "gate")):
+                self.assertTrue(np.all(np.isfinite(arr)),
+                                "the {} coefficient of {} is not finite".format(what, itype))
+            self._record("{} local+dropped vs ED".format(itype),
+                         np.abs(pr + dr - ed).max() / scale)
+            self._record("{} gate vs ED".format(itype), np.abs(gate - ed).max() / scale)
+            self._record("{} dropped class".format(itype), np.abs(dr).max() / scale)
 
 
 if __name__ == "__main__":
