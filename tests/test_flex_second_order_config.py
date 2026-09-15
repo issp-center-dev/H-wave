@@ -1,7 +1,6 @@
 # tests/test_flex_second_order_config.py
 """The flex_second_order key (spec 2026-09-08 D2, section 3): type/value,
 default after auto resolution, applicability refusals, RPA warning, INFO line."""
-import logging
 import os
 import tempfile
 import unittest
@@ -75,12 +74,12 @@ class TestKey(unittest.TestCase):
         self.assertEqual(len(hits), 1)
 
     def test_info_line_for_general_runs(self):
-        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
-            _build()
-        self.assertTrue(any("flex_second_order = local" in m for m in cm.output))
-        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
-            _build({"flex_second_order": "takimoto"})
-        self.assertTrue(any("flex_second_order = takimoto" in m for m in cm.output))
+        for so in ("local", "takimoto"):
+            with self.subTest(second_order=so):
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    _build(None if so == "local" else {"flex_second_order": so})
+                self.assertEqual(
+                    len([m for m in cm.output if "flex_second_order = {}".format(so) in m]), 1)
 
 
 class TestSchemeSpelling(unittest.TestCase):
