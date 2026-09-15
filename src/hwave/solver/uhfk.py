@@ -2055,10 +2055,7 @@ class UHFk(solver_base):
                 "supported in spin-orbital mode")
             return None
 
-        if self.has_sublattice:
-            gr = self._deflate_green(self.Green)
-        else:
-            gr = self.Green
+        gr = self.Green
 
         geom = green_info["geometry_uhf"]
         greenone = green_info["onebodyg_uhf"]
@@ -2075,15 +2072,29 @@ class UHFk(solver_base):
             return ix + lx * (iy + ly * iz)
 
         with open(file_name, "w") as fw:
-            # G(i,a,s; j,b,t) := G(a,s;b,t;j-i)
+            # Output <c^dag(i,a,s) c(j,b,t)> for each requested pair.
             for (i,s,j,t) in greenone:
                 (ix,iy,iz,a) = tbl[i]
                 (jx,jy,jz,b) = tbl[j]
 
-                kx = (jx - ix + lx) % lx
-                ky = (jy - iy + ly) % ly
-                kz = (jz - iz + lz) % lz
-                idx = _pack_site(kx,ky,kz)
+                if self.has_sublattice:
+                    bx,by,bz = self.subshape
+                    nx,ny,nz = self.shape
+                    a += self.norb_orig * (ix % bx + bx * (iy % by + by * (iz % bz)))
+                    b += self.norb_orig * (jx % bx + bx * (jy % by + by * (jz % bz)))
+
+                    # _green uses exp(-ik.r), so the creation site supplies
+                    # the positive displacement: G(r) = <c^dag(R+r)c(R)>.
+                    kx = (ix // bx - jx // bx) % nx
+                    ky = (iy // by - jy // by) % ny
+                    kz = (iz // bz - jz // bz) % nz
+                    # Match _green's (nx, ny, nz, ...) C-order reshape.
+                    idx = kz + nz * (ky + ny * kx)
+                else:
+                    kx = (jx - ix + lx) % lx
+                    ky = (jy - iy + ly) % ly
+                    kz = (jz - iz + lz) % lz
+                    idx = _pack_site(kx,ky,kz)
 
                 v = gr[idx,s,a,t,b]
 
