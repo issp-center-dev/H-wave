@@ -362,19 +362,23 @@ Parameters
     ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairHop``,
     ``PairLift`` at :math:`R = 0`), the direct (bubble) skeleton of the
     off-site density terms (``CoulombInter``, ``Hund``, ``Ising`` at
-    :math:`R \neq 0`) and every mixed on-site/off-site diagram in which
-    the off-site vertex sits in its direct placement. The only
+    :math:`R \neq 0`) and every mixed on-site/off-site diagram (the
+    off-site vertex enters those in its crossed placement; see
+    :ref:`flex_second_order_kernel`). The only
     second-order class it does not carry is the exchange skeleton of TWO
     off-site vertices, which is not representable by a
     :math:`q`-only vertex: full second-order accuracy for an off-site
     interaction additionally needs ``longitudinal_bond_channels = true``.
   - ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression
-    :math:`-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\chi_0\,
-    (\hat{U}^s + \hat{U}^c)` verbatim. It is the reproduction path for
+    verbatim; its second-order (double-counting subtraction) term is
+    :math:`-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
+    (\hat{U}^s + \hat{U}^c)`, with :math:`\bar\chi` the bare bubble
+    (the full expression is given in
+    :ref:`flex_second_order_kernel`). It is the reproduction path for
     results produced with H-wave 2.0.0 and remains available throughout
     the 2.x series.
 
-  Applicability. The key is meaningful for ``mode = "FLEX"`` with
+  **Applicability:** The key is meaningful for ``mode = "FLEX"`` with
   ``calc_scheme = "general"`` only. The default is applied AFTER FLEX
   resolves ``calc_scheme = "auto"``, so an absent key never raises
   anywhere. An explicit key with an explicit ``calc_scheme = "reduced"``
@@ -388,17 +392,19 @@ Parameters
   start-up and recorded in every output archive of a general-scheme FLEX
   run (see :ref:`the output reference <rpa_chiq_provenance>`).
 
-  Degenerate declarations. Under ``"local"`` an ON-SITE same-orbital row
+  **Degenerate declarations:** Under ``"local"`` an ON-SITE same-orbital row
   (:math:`R = 0`, :math:`\alpha = \beta`) of ``CoulombInter``, ``Hund``,
   ``Ising``, ``Exchange``, ``PairHop`` or ``PairLift`` is refused at
-  start-up: such a row is not a two-body term (it is a one-body level
-  shift, a disguised ``CoulombIntra``, or identically zero). The error
+  start-up -- a row with ``rx = ry = rz = 0`` and identical orbital
+  indices :math:`\alpha = \beta`. Such a row is not a two-body term: it
+  reduces to a one-body level shift, to an effective ``CoulombIntra``, or
+  to identically zero. The error
   message names the row and gives the equivalent declaration for that
   type. Rewrite the interaction file as the message says, or set
   ``flex_second_order = "takimoto"`` as an immediate workaround (the
   legacy expression accepts every row the general path accepted before).
 
-  Cost and memory. Measured on the test fixtures (:math:`L = 8`,
+  **Cost and memory:** Measured on the test fixtures (:math:`L = 8`,
   ``Nmat = 128``), assembling :math:`V_{\rm eff}` under ``"local"`` costs
   about 1.5x the legacy expression (1.59 for a 2-orbital and 1.53 for a
   3-orbital input) and a full FLEX iteration about 1.2x (1.24 and 1.16).
@@ -412,7 +418,7 @@ Parameters
   large reproduction run may need more RAM than the same run under the
   default.
 
-  Convergence. The SCF trajectory can change with the kernel. On the
+  **Convergence:** The SCF trajectory can change with the kernel. On the
   2-orbital self-consistency fixture (on-site :math:`U`, :math:`U'`,
   ``Hund`` plus off-site :math:`V`, Anderson mixing) both values needed
   the same number of iterations (9 without and 11 with

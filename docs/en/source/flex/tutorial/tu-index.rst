@@ -206,20 +206,25 @@ interaction. Set
 to reproduce results produced with H-wave 2.0.0; the option stays
 available throughout the 2.x series.
 
-**What changes.** Single-band inputs with ``CoulombIntra`` only agree
-under both values to round-off, and so do single-band :math:`U + V` inputs
-run with ``longitudinal_bond_channels = true`` (those bond-resolved
-channels already carried the exact direct :math:`V` second order). Every
+**What changes.** Single-band inputs containing only ``CoulombIntra``
+agree under both kernel choices (``"local"`` and ``"takimoto"``) to within
+numerical round-off, and so do single-band :math:`U + V` inputs run with
+the bond-resolved channels (``longitudinal_bond_channels = true``), which
+already carried the exact direct :math:`V` second order. Every
 multi-orbital on-site interaction (:math:`U'`, ``Hund``, ``Ising``,
 ``Exchange``, ``PairHop``, ``PairLift``) and every off-site interaction
-without the bond gate gives a different general-path result.
+run without the bond-resolved channels gives a different
+``calc_scheme = "general"`` result.
 
-**Degenerate rows are now refused.** Under ``"local"`` an on-site
-same-orbital row of ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``,
-``PairHop`` or ``PairLift`` stops the run at start-up: such a row is not a
-two-body term, and the message gives the equivalent declaration for that
-type (usually a ``CoulombIntra`` entry plus a level shift in the transfer
-file). Rewrite the interaction file as the message says, or use
+**On-site same-orbital rows (degenerate rows) are now refused.** Under
+``"local"`` an on-site same-orbital row of ``CoulombInter``, ``Hund``,
+``Ising``, ``Exchange``, ``PairHop`` or ``PairLift`` -- a row with
+``rx = ry = rz = 0`` and identical orbital indices -- stops the run at
+start-up: such a row is not a two-body term, because it reduces to a
+one-body level shift, to an effective ``CoulombIntra``, or to identically
+zero. The message gives the equivalent declaration for that type (usually
+a ``CoulombIntra`` entry plus a level shift in the transfer file).
+Rewrite the interaction file as the message says, or use
 ``flex_second_order = "takimoto"`` as an immediate workaround.
 
 **Convergence.** The SCF trajectory can change with the kernel. On the
@@ -228,11 +233,18 @@ file). Rewrite the interaction file as the message says, or use
 same iteration count -- 9 without and 11 with ``flex_hartree_fock =
 true`` -- and a full FLEX iteration costs about 1.2x more under
 ``"local"``. If a run that used to converge now stalls, raise
-``IterationMax``, lower ``Mix``, keep ``mixing_scheme = "anderson"``, and
-start the loop from :math:`\Sigma = 0` rather than from a ``sigma_init``
-seed written with the other kernel: the solver warns when the seed's
-recorded ``flex_second_order`` differs from the run's (and notes it when
-the seed carries no record, i.e. a reduced-scheme or pre-2.1 archive).
+``IterationMax``, lower ``Mix``, switch to (or keep) Anderson mixing
+(``mixing_scheme = "anderson"``; the solver default is ``"linear"``), and
+start the loop from :math:`\Sigma = 0` -- that is, omit ``sigma_init``
+from the ``[file.input]`` section -- rather than continuing from a seed
+written with the other kernel: the solver warns when the seed's recorded
+``flex_second_order`` differs from the run's (and notes it when the seed
+carries no record, i.e. a reduced-scheme or pre-2.1 archive). An archive
+written by H-wave 2.0.0 carries no kernel record at all, so only that
+informational line is logged; if warm-starting such a seed stalls under
+``"local"``, either restart from :math:`\Sigma = 0` or set
+``flex_second_order = "takimoto"`` to match the kernel the seed was
+produced with.
 
 Sample 1: Single-orbital Hubbard model
 -----------------------------------------
@@ -700,6 +712,15 @@ Output file format
 ----------------------------
 
 The FLEX solver produces NumPy ``.npz`` files with the following contents:
+
+.. note::
+
+   Under ``calc_scheme = "general"`` every archive a FLEX run writes --
+   ``chi0q.npz``, ``chiq.npz``, ``chiq_s.npz``, ``chiq_c.npz``,
+   ``sigma.npz``, ``green.npz`` and the dedicated bond archive -- records
+   the two provenance members ``flex_second_order`` and
+   ``flex_second_order_schema`` described below, in addition to the
+   contents listed for that file. See :ref:`rpa_chiq_provenance`.
 
 ``chi0q.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

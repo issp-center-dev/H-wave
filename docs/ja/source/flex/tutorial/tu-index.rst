@@ -190,18 +190,23 @@ H-wave 2.0.0 で得られた結果を再現するには
 
 と指定してください。このオプションは 2.x 系列では常に利用できます。
 
-**何が変わるか。** ``CoulombIntra``\ のみの単一バンド入力では両方の値が
-丸め誤差の範囲で一致します。\ ``longitudinal_bond_channels = true``\ を
-指定した単一バンドの\ :math:`U + V`\ 入力も同様に一致します（ボンド分解
+**何が変わるか。** ``CoulombIntra``\ のみの単一バンド入力では、どちらの
+カーネル設定（``"local"`` / ``"takimoto"``\ ）でも結果は丸め誤差の範囲で
+一致します。ボンド分解チャネル（``longitudinal_bond_channels = true``\ ）を
+有効にした単一バンドの\ :math:`U + V`\ 入力も同様に一致します（ボンド分解
 チャネルはもともと直接\ :math:`V`\ の2次を厳密に含んでいました）。一方、
 多軌道のオンサイト相互作用（:math:`U'`\ ・\ ``Hund``\ ・\ ``Ising``\ ・
-``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と、ボンドゲートを
-使わないオフサイト相互作用では、一般経路の結果が変わります。
+``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と、ボンド分解チャネルを
+使わないオフサイト相互作用では、\ ``calc_scheme = "general"``\ の結果が
+変わります。
 
-**縮退した行は拒否されます。** ``"local"``\ では、\ ``CoulombInter``\ ・
-``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ ・
-``PairLift``\ のオンサイト同一軌道の行があると起動時に停止します。この
-ような行は二体項ではなく、メッセージにはその種類に対する等価な宣言
+**オンサイト同一軌道行（縮退行）は拒否されます。** ``"local"``\ では、
+``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・
+``PairHop``\ ・\ ``PairLift``\ のオンサイト同一軌道の行、すなわち
+``rx = ry = rz = 0``\ かつ軌道添字が等しい行があると起動時に停止します。
+このような行は二体項ではありません。一体のレベルシフト、実質的な
+``CoulombIntra``\ 、あるいは恒等的にゼロのいずれかに帰着するためです。
+メッセージにはその種類に対する等価な宣言
 （多くは\ ``CoulombIntra``\ の項と transfer ファイルへのレベルシフト）が
 示されます。メッセージに従って相互作用ファイルを書き直すか、当面の回避策
 として\ ``flex_second_order = "takimoto"``\ を指定してください。
@@ -212,11 +217,17 @@ H-wave 2.0.0 で得られた結果を再現するには
 回数は同じ（``flex_hartree_fock = true``\ なしで 9 回、ありで 11 回）で、
 FLEX の1反復のコストは\ ``"local"``\ で約 1.2 倍です。以前収束していた
 計算が収束しなくなった場合は、\ ``IterationMax``\ を増やし、\ ``Mix``\ を
-小さくし、\ ``mixing_scheme = "anderson"``\ を維持したうえで、別の
-カーネルで作られた\ ``sigma_init``\ からではなく\ :math:`\Sigma = 0`\ から
-開始してください。初期値に記録された\ ``flex_second_order``\ が現在の計算と
-異なる場合、ソルバーは警告を出します（記録が無い場合、すなわち reduced
-スキームや 2.1 より前のアーカイブの場合は情報行を出します）。
+小さくし、Anderson 混合（``mixing_scheme = "anderson"``\ 。ソルバーの
+デフォルトは\ ``"linear"``\ です）に切り替える（すでに使っている場合はそのまま
+維持する）とともに、別のカーネルで作られたシードからではなく
+:math:`\Sigma = 0`\ から開始してください。\ :math:`\Sigma = 0`\ から開始するには
+``[file.input]``\ セクションから\ ``sigma_init``\ の指定を外します。
+シードに記録された\ ``flex_second_order``\ が現在の計算と異なる場合、ソルバーは警告を出します（記録が無い場合、すなわち reduced
+スキームや 2.1 より前のアーカイブの場合は情報メッセージを出します）。
+H-wave 2.0.0 が出力したアーカイブにはカーネルの記録が無いため、出るのは
+この情報メッセージだけです。そのようなシードから\ ``"local"``\ で
+ウォームスタートして収束しない場合は、\ :math:`\Sigma = 0`\ から計算し直すか、
+シードに合わせて\ ``flex_second_order = "takimoto"``\ を指定してください。
 
 サンプル 1: 1軌道Hubbardモデル
 -----------------------------------------
@@ -328,7 +339,8 @@ FLEX の1反復のコストは\ ``"local"``\ で約 1.2 倍です。以前収束
   ``calc_scheme = "general"``\ では\ ``flex_second_order``\ と
   ``flex_second_order_schema``\ も記録されます
 - ``green.npz``: ドレスドグリーン関数\ :math:`G(\mathbf{k}, i\omega_n)`
-  （``calc_scheme = "general"``\ では同じ2つの\ ``flex_second_order``\ の
+  （``calc_scheme = "general"``\ では\ ``sigma.npz``\ と同様に
+  ``flex_second_order``\ および\ ``flex_second_order_schema``\ の2つの
   フィールドを含みます）
 - ``energy.dat``: 粒子数\ ``NCond``\ 、スピン\ ``Sz``\ 、収束した化学ポテンシャル
   ``ChemicalPotential`` :math:`\mu`\ を記載したテキストファイル。
@@ -376,12 +388,12 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
 
-``calc_scheme = "general"``\ の種は、どの2次カーネルで作られたかも記録して
-います。異なるカーネルの種を使うことは許されており、種に記録された
+``calc_scheme = "general"``\ のシードは、どの2次カーネルで作られたかも記録
+しています。異なるカーネルのシードを使うことは許されており、シードに記録された
 ``flex_second_order``\ が現在の計算と異なる場合はソルバーが警告を出します
 （記録が無い場合、すなわち reduced スキームや 2.1 より前のアーカイブの場合は
-情報行を出します）。そのような計算が収束しない場合は\ :math:`\Sigma = 0`
-から再開してください。\ :ref:`flex_second_order_tutorial`\ を参照。
+INFO レベルの情報メッセージを出します）。そのような計算が収束しない場合は
+:math:`\Sigma = 0`\ から再開してください。\ :ref:`flex_second_order_tutorial`\ を参照。
 
 .. note::
 
@@ -661,6 +673,15 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 
 FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成します:
 
+.. note::
+
+   ``calc_scheme = "general"``\ では、FLEX 計算が出力する全てのアーカイブ
+   （``chi0q.npz``\ ・\ ``chiq.npz``\ ・\ ``chiq_s.npz``\ ・
+   ``chiq_c.npz``\ ・\ ``sigma.npz``\ ・\ ``green.npz``\ とボンド専用
+   アーカイブ）に、各ファイルの内容に加えて後述の2つの来歴フィールド
+   ``flex_second_order``\ と\ ``flex_second_order_schema``\ が記録されます。
+   :ref:`rpa_chiq_provenance`\ を参照してください。
+
 ``chi0q.npz``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -702,8 +723,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   (``nblock``\ はスピンブロック数、spin-freeモードでは1)
 - ``flex_second_order`` / ``flex_second_order_schema``:
   ``calc_scheme = "general"``\ の計算のみが出力します。有効相互作用の2次
-  カーネル（``local`` | ``takimoto``\ 。0 次元の\ ``<U8``\ 文字列配列）と、
-  その記録のスキーマ版数（``1``\ ）です。reduced スキーム・RPA のアーカイブ、
+  カーネル（``"local"``\ または\ ``"takimoto"``\ ；0 次元の\ ``<U8``\ 文字列
+  配列）と、その記録のスキーマ版数（``1``\ ）です。reduced スキーム・RPA のアーカイブ、
   およびバージョン 2.1 より前のファイルには含まれません。読み込み側がこれらを
   必須とすることはなく、異なるカーネルで作られた\ ``sigma_init``\ も警告付きで
   受理されます。:ref:`rpa_chiq_provenance`\ を参照してください。
@@ -816,10 +837,10 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    * - ``flex_second_order``
      - str
      - "local"
-     - ``calc_scheme = "general"``\ のみ。有効相互作用の2次カーネル。
-       ``"local"``\ （デフォルト）は受理された全ての相互作用項の厳密な
-       局所2次、\ ``"takimoto"``\ は従来の Takimoto-Hotta-Ueda の式で
-       H-wave 2.0.0 の結果を再現します。
+     - ``calc_scheme = "general"``\ のみ。有効相互作用の2次カーネルを
+       選択します。\ ``"local"``\ （デフォルト）は受理された全ての相互作用項
+       について厳密な局所2次カーネルを構築し、\ ``"takimoto"``\ は従来の
+       Takimoto-Hotta-Ueda の式を用いて H-wave 2.0.0 の結果を再現します。
        :ref:`flex_second_order_tutorial`\ および設定ファイルの説明を
        参照してください。
    * - ``gpu``

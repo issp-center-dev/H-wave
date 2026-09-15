@@ -62,25 +62,27 @@ Every ``chiq``/``chi0q`` file written by RPA and FLEX (2.0 and later) carries th
 Files written by 1.0.x lack these fields; readers do not require them.
 
 A FLEX run with ``calc_scheme = "general"`` writes two further fields into
-every archive it produces (``chi0q``, ``chiq``, ``chiq_s``, ``chiq_c``,
-``sigma.npz``, ``green.npz`` and the dedicated bond archive; IR-native and
-densified variants alike):
+every archive it produces (``chi0q.npz``, ``chiq.npz``, ``chiq_s.npz``,
+``chiq_c.npz``, ``sigma.npz``, ``green.npz`` and the dedicated bond
+archive; IR-native and densified variants alike):
 
 - ``flex_second_order``: the second-order kernel of the effective
   interaction the run used (``local`` | ``takimoto``), stored as a 0-d
   ``<U8`` string array (use ``str(...)`` or ``.item()``). See
-  ``flex_second_order`` in the configuration reference and
-  :ref:`flex_second_order_kernel`.
+  ``flex_second_order`` in the ``[mode.param]`` section of the
+  configuration reference and :ref:`flex_second_order_kernel`.
 - ``flex_second_order_schema``: the schema version of that record,
   currently ``1`` (0-d ``int64``).
 
 Both fields are ABSENT from ``calc_scheme = "reduced"`` archives, from RPA
 archives, and from any file written before version 2.1. A missing field is
-never an error: every H-wave reader accepts such a file. When a
-``sigma_init`` seed records a different kernel from the current run, the
-solver logs one warning (and one informational line when the seed carries
-no record at all); scripts that compare ``.files`` strictly must allow the
-two additional names.
+never an error: every H-wave reader accepts such a file. When the initial
+self-energy given by ``sigma_init`` (the seed) records a different kernel
+from the current run, the solver logs one warning at WARNING level (and
+one message at INFO level when the seed carries no record at all); scripts
+that compare the member list of an archive strictly (the ``files``
+attribute of the object returned by ``numpy.load``) must allow the two
+additional names.
 
 
 Data format of chi0q

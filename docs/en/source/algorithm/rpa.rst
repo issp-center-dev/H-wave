@@ -701,7 +701,11 @@ pair basis and are
 
    A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),
 
-so that the complete second-order kernel is
+understood as a matrix on the density slots of the pair basis (zero on
+every other slot), so that each product with :math:`\bar\chi` below is a
+matrix product in that pair space, exactly as for
+:math:`A^{\sigma}_{\rm on}` and :math:`B^{\sigma}_{\rm on}`. The complete
+second-order kernel is then
 
 .. math::
 
@@ -784,8 +788,8 @@ for a single-band Hubbard interaction and approximate for every other
 term; it is kept as the reproduction path for results obtained with
 H-wave 2.0.0.
 
-Accordingly, single-band inputs with ``CoulombIntra`` only agree under
-both values to round-off, while every multi-orbital on-site interaction
+Accordingly, single-band inputs containing only ``CoulombIntra`` agree
+under both values to round-off, while every multi-orbital on-site interaction
 (:math:`U'`, ``Hund``, ``Ising``, ``Exchange``, ``PairHop``,
 ``PairLift``) and every off-site interaction changes the general-path
 result.
@@ -798,8 +802,8 @@ result.
    input (the bond-resolved channels already carried the exact direct
    :math:`V` second order). Inter-orbital (orbital-off-diagonal) off-site
    bonds are the one case in which the bond-resolved blocks still carry a
-   small residual second-order deviation under the gate; orbital-diagonal
-   bonds are exact. Closing that gap is planned.
+   small residual second-order deviation with this option enabled;
+   orbital-diagonal bonds are exact. Closing that gap is planned.
 
 .. _rpa_longitudinal_bond:
 
@@ -935,9 +939,9 @@ under ``flex_second_order = "local"`` already carries the direct skeleton and
 the :math:`UV` cross term exactly and misses only the exchange skeleton of
 two off-site vertices; under the legacy ``"takimoto"`` expression it keeps
 half of the direct :math:`V^2` term and no :math:`UV` cross term at second
-order. (Inter-orbital off-site bonds keep a small residual second-order
-deviation of the bond-resolved blocks under the gate; orbital-diagonal bonds
-are exact.) The ordinary
+order. (With ``longitudinal_bond_channels = true``, inter-orbital off-site
+bonds keep a small residual second-order deviation of the bond-resolved
+blocks; orbital-diagonal bonds are exact.) The ordinary
 ``chi0q``, ``chiq_s``, ``chiq_c`` outputs of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects of the last map;
 the sixteen ``longitudinal_bond_*`` static keys of the previous section are
