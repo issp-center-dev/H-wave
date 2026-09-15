@@ -31,7 +31,8 @@ import logging
 
 import numpy as np
 
-from hwave.solver.hartree_fock import NonFiniteError
+from . import backend as _bk
+from .hartree_fock import NonFiniteError
 
 logger = logging.getLogger(__name__)
 
@@ -325,14 +326,8 @@ def _dens_idx(norb):
 def accumulate_batch(out_b, chibar_b, l0, factors):
     """Add W2 (spec 2.3 + 2.4) for the bosonic frequencies [l0, l0 + nb)
     into out_b in place. Two (nb, nvol, nd, nd) temporaries, reused."""
-    xp = np  # numpy or cupy: dispatch on the array module of chibar_b
-    try:
-        import cupy
-        if isinstance(chibar_b, cupy.ndarray):
-            xp = cupy
-    except ImportError:
-        pass
-    nd, norb = factors.nd, factors.norb
+    xp = _bk.array_module_of(chibar_b)
+    norb = factors.norb
     nb = chibar_b.shape[0]
     T1 = xp.empty_like(chibar_b)
     T2 = xp.empty_like(chibar_b)
@@ -340,7 +335,8 @@ def accumulate_batch(out_b, chibar_b, l0, factors):
     for A, B in zip(factors.A_on, factors.B_on):
         xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
         xp.matmul(T1, xp.asarray(B)[None, None], out=T2)
-        out_b += 0.5 * T2
+        T2 *= 0.5
+        out_b += T2
     if factors.vpair is not None:
         di = _dens_idx(norb)
         vp = xp.asarray(factors.vpair)                            # (2, 2, nvol, norb, norb)

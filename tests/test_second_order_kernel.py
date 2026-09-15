@@ -33,13 +33,10 @@ class TestKernel(unittest.TestCase):
         s, f = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.7, 0.0)]})
         cb = _random_chibar(8, 16, 4, 0)
         W2 = dense_w2(cb, f)
-        U2 = np.zeros((4, 4)); U2[0, 0] = U2[3, 3] = 0.49       # density slots (aa),(aa)
-        # explicit: W2[(aa),(bb)] = U^2 chibar[(aa),(bb)] for a == b, zero elsewhere
+        # the (aa),(bb) density block is scaled by U^2, zero elsewhere
         for i in range(4):
             for j in range(4):
-                if i in (0, 3) and j in (0, 3) and i == j:
-                    np.testing.assert_allclose(W2[:, :, i, j], 0.49 * cb[:, :, i, j], atol=1e-13)
-                elif i in (0, 3) and j in (0, 3):
+                if i in (0, 3) and j in (0, 3):
                     np.testing.assert_allclose(W2[:, :, i, j], 0.49 * cb[:, :, i, j], atol=1e-13)
                 else:
                     self.assertLess(np.abs(W2[:, :, i, j]).max(), 1e-13)
@@ -60,6 +57,37 @@ class TestKernel(unittest.TestCase):
         Wu = dense_w2(cb, fu)
         cross = Wuv - Wu - Wv
         np.testing.assert_allclose(cross[:, :, 0, 0], 2.0 * 0.5 * vq[None] * cb[:, :, 0, 0], atol=1e-13)
+
+    def test_offsite_spin_selection_pinned_by_ising(self):
+        """Ising's opposite-spin density weight (-1, vs CoulombInter's +1) pins
+        the mixed term's spin selection sig = sq (spec 2.3-2.4): for Hubbard U
+        the only surviving on-site triple under the accumulate_batch gate is
+        (UP, DN, DN), so the mixed term uses vpair[UP, DN] = vpair[DN, UP],
+        which for Ising is -I(q) (vpair[UP, UP] is +I(q)); a mutation
+        sig = UP would instead read vpair[UP, UP] = +I(q) and flip the sign
+        below. Hund has no opposite-spin density coupling, so its U-Hund
+        cross term is zero -- no sign pressure from that type."""
+        from hwave.solver.second_order import dense_w2
+        rows_i = [(1, 0, 0, 1, 1, 0.3, 0.0), (-1, 0, 0, 1, 1, 0.3, 0.0)]
+        s, fi = _factors({"Ising": rows_i})
+        s, fui = _factors({"Ising": rows_i, "CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]})
+        s, fu = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]})
+        cb = _random_chibar(8, 16, 4, 5)
+        iq = fi.vpair[0, 0, :, 0, 0]                                  # +I(q) on (00),(00)
+        np.testing.assert_allclose(fi.vpair[0, 1, :, 0, 0], -iq, atol=1e-13)
+        Wui = dense_w2(cb, fui)
+        Wu = dense_w2(cb, fu)
+        Wi = dense_w2(cb, fi)
+        cross = Wui - Wu - Wi
+        # note the NEGATIVE of the CoulombInter cross term of test_offsite_v_and_uv_checks
+        np.testing.assert_allclose(cross[:, :, 0, 0], -2.0 * 0.5 * iq[None] * cb[:, :, 0, 0], atol=1e-13)
+
+        s, fh = _factors({"Hund": rows_i})
+        s, fuh = _factors({"Hund": rows_i, "CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]})
+        Wuh = dense_w2(cb, fuh)
+        Wh = dense_w2(cb, fh)
+        cross_h = Wuh - Wu - Wh
+        self.assertLess(np.abs(cross_h[:, :, 0, 0]).max(), 1e-13)
 
     def test_batch_independence_and_in_place(self):
         from hwave.solver.second_order import accumulate_batch, dense_w2
