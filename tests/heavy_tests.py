@@ -159,6 +159,12 @@ HEAVY_TESTS = (
      "test_regenerated_greens_reproduce_the_pinned_lambda",
      "regenerate the Hartree-Fock bond FLEX greens of the Onari-type trend "
      "milestone (hours; HWAVE_RUN_SLOW_FIXTURES=1) and re-derive lambda_t"),
+    # --- tests/test_flex_second_order_ed_onsite.py -- #181 second-order G3 --
+    ("test_flex_second_order_ed_onsite", "TestG3",
+     "test_every_type_and_pair",
+     "G3: exact diagonalisation of the single-site three-orbital model pins "
+     "the on-site second order of all seven interaction types and seven "
+     "mixed pairs (~35 production maps at Nmat = 4096)"),
     # --- tests/test_flex_second_order_sopt.py -- #181 second-order gates --
     ("test_flex_second_order_sopt", "TestG2Heavy",
      "test_b_covering_set_equals_the_local_oracle",
