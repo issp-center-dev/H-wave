@@ -370,8 +370,10 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
 
     Allocation contract (pinned by
     ``tests/test_second_order_kernel.py::TestKernel::
-    test_allocation_peak_with_lent_buffers``): with ``work`` supplied the
-    kernel allocates NOTHING that scales with ``nb * nvol * nd^2``. Every
+    test_allocation_peak_with_lent_buffers``): with C-contiguous ``work``
+    supplied (a non-contiguous loan is discarded and two buffers allocated,
+    see above) the kernel allocates NOTHING that scales with
+    ``nb * nvol * nd^2``. Every
     product is written with ``matmul(..., out=)`` into a CONTIGUOUS view of
     the lent buffers, and every density-slot gather and scatter goes through
     :func:`_dens_slice`, i.e. basic indexing -- a view, not a fancy-index

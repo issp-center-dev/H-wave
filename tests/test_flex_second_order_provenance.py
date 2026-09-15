@@ -97,6 +97,44 @@ class TestProvenance(unittest.TestCase):
             s3.read_init({"path_to_input": out, "sigma_init": "bad_value.npz"})
             s3.read_init({"path_to_input": out, "sigma_init": "bad_schema.npz"})
 
+    def test_malformed_seed_provenance_is_refused(self):
+        """The provenance pair must be a single canonical value each: one
+        selector string exactly "local" or "takimoto", and one integer schema
+        equal to 1. A member that merely converts to those (1.5, True, "1"),
+        one that cannot be converted (inf), and one that is not a single value
+        (a vector, an empty array) are all files this version cannot
+        interpret."""
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _build({"flex_second_order": "local", "Nmat": 8})
+            _solve_save(s, r, out, {"sigma": "sigma"})
+            z = dict(np.load(os.path.join(out, "sigma.npz")))
+            s2, _ = _build({"flex_second_order": "local", "Nmat": 8})
+            cases = {
+                "schema_float": dict(flex_second_order_schema=np.float64(1.5)),
+                "schema_bool": dict(flex_second_order_schema=np.bool_(True)),
+                "schema_str": dict(flex_second_order_schema=np.array("1")),
+                "schema_inf": dict(flex_second_order_schema=np.float64(np.inf)),
+                "schema_vector": dict(flex_second_order_schema=np.array([1, 2])),
+                "schema_empty": dict(flex_second_order_schema=np.array([], dtype=np.int64)),
+                "selector_vector": dict(
+                    flex_second_order=np.array(["local", "unknown"], dtype="<U8")),
+                "selector_case": dict(flex_second_order=np.array("Local", dtype="<U8")),
+                "selector_empty": dict(flex_second_order=np.array([], dtype="<U8")),
+                "selector_number": dict(flex_second_order=np.int64(1)),
+            }
+            for name, members in cases.items():
+                with self.subTest(case=name):
+                    f = name + ".npz"
+                    np.savez(os.path.join(out, f), **dict(z, **members))
+                    with self.assertRaises(ValueError) as cm:
+                        s2.read_init({"path_to_input": out, "sigma_init": f})
+                    needle = ("unsupported flex_second_order_schema"
+                              if name.startswith("schema") else "unknown flex_second_order")
+                    self.assertIn(needle, str(cm.exception))
+                    self.assertIn(f, str(cm.exception))
+            # the canonical pair is still accepted
+            s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"})
+
     def test_seed_check_runs_under_a_mixed_case_scheme(self):
         """read_init's seed-provenance branch keys off calc_scheme as well, so
         a ``calc_scheme = "General"`` run must still compare the seed's kernel

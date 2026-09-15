@@ -811,30 +811,42 @@ class FLEX(RPA):
                             "its total sigma is used as the one seed".format(file_name))
             if str(getattr(self, "calc_scheme", "")).lower() == "general":
                 # The provenance pair is refused when this version cannot
-                # interpret it: an unknown kernel name, or a schema written by
-                # a later version whose members may mean something else. Only
-                # a MISMATCH between two names this version knows is a
-                # warning (below) -- that seed is still usable.
-                if env.second_order is not None and env.second_order not in ("local", "takimoto"):
-                    raise ValueError(
-                        "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
-                        "\"local\", \"takimoto\")".format(file_name, env.second_order))
-                if env.second_order_schema is not None:
-                    try:
-                        known = int(env.second_order_schema) == 1
-                    except (TypeError, ValueError):
-                        known = False
-                    if not known:
+                # interpret it: a member that is not ONE canonical value (the
+                # kernel name exactly as written by the stamp, the schema an
+                # integer this version reads), or a schema from a later
+                # version whose members may mean something else. Nothing is
+                # coerced -- 1.5, True, "1" and a two-element member are all
+                # unreadable, not "schema 1". Only a MISMATCH between two
+                # kernel names this version knows is a warning (below): that
+                # seed is still usable.
+                seed_so = None
+                raw = env.second_order
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    unreadable = raw.size != 1 or raw.dtype.kind != "U"
+                    if not unreadable:
+                        seed_so = str(value)
+                        unreadable = seed_so not in ("local", "takimoto")
+                    if unreadable:
                         raise ValueError(
-                            "sigma_init '{}': unsupported flex_second_order_schema {} (this "
-                            "version reads schema 1)".format(file_name, env.second_order_schema))
-                if env.second_order is None:
+                            "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
+                            "\"local\", \"takimoto\")".format(file_name, value))
+                raw = env.second_order_schema
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    if (raw.size != 1 or raw.dtype == np.bool_
+                            or not np.issubdtype(raw.dtype, np.integer)
+                            or int(value) != 1):
+                        raise ValueError(
+                            "sigma_init '{}': unsupported flex_second_order_schema {!r} (this "
+                            "version reads schema 1)".format(file_name, value))
+                if seed_so is None:
                     logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
                                 "(reduced scheme or pre-2.1 archive)".format(file_name))
-                elif env.second_order != self.flex_second_order:
+                elif seed_so != self.flex_second_order:
                     logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
                                    "uses {} -- if the SCF stalls, restart from Sigma = 0".format(
-                                       file_name, env.second_order, self.flex_second_order))
+                                       file_name, seed_so, self.flex_second_order))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(

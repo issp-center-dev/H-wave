@@ -93,8 +93,10 @@ class SigmaSeedEnvelope:
     # or None when the archive predates 2.1 or was written by the reduced
     # scheme (which never stamps either). Kept LAST with defaults so every
     # existing positional-adjacent keyword construction of this dataclass
-    # stays valid. Both are raw file content: the general path validates
-    # them when it reads a seed (FLEX.read_init).
+    # stays valid. Both are the RAW arrays as found in the file -- not
+    # flattened to an element and not converted: the general path is the one
+    # that decides what is a readable value (FLEX.read_init), and it must be
+    # able to refuse a member that is not a single canonical one.
     second_order: object = None
     second_order_schema: object = None
 
@@ -113,9 +115,9 @@ def make_seed_envelope(data, file_name, sigma, ir_meta):
         marker = str(np.asarray(data["sigma_convention"]).ravel()[0])
     st = _readonly(data["sigma_static"]) if "sigma_static" in data.files else None
     fl = _readonly(data["sigma_fluct"]) if "sigma_fluct" in data.files else None
-    so = (str(np.asarray(data["flex_second_order"]).ravel()[0])
+    so = (np.asarray(data["flex_second_order"])
           if "flex_second_order" in data.files else None)
-    schema = (np.asarray(data["flex_second_order_schema"]).ravel()[0]
+    schema = (np.asarray(data["flex_second_order_schema"])
               if "flex_second_order_schema" in data.files else None)
     return SigmaSeedEnvelope(sigma=_readonly(sigma), sigma_static=st, sigma_fluct=fl,
                              marker=marker, ir_meta=ir_meta, file_name=str(file_name),
