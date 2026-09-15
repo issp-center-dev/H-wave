@@ -54,6 +54,49 @@ def _run(checkout, path, inter, out, so, extra=None):
                    env=env, check=True, capture_output=True, cwd=checkout)
 
 
+#: The commit the compatibility harnesses compare against: the merge that
+#: precedes this branch (``develop`` at the time the branch was cut). The
+#: contract these harnesses assert is BYTE identity with that revision, so
+#: the revision has to be named -- comparing against "whatever the reference
+#: directory happens to contain" turns a failed comparison into a puzzle and
+#: a passing one into nothing at all.
+DEVELOP_COMMIT = "59ac623810f2cff841d96bc721c9312b7ad912f7"
+
+
+def develop_checkout(run=None):
+    """``(path, None)`` when the reference checkout is usable, ``(None,
+    reason)`` otherwise.
+
+    Usable means: it exists, it is at :data:`DEVELOP_COMMIT`, and its tree
+    is clean. A checkout at another revision -- or with local edits -- is
+    NOT a reference: the comparison would either fail for reasons that have
+    nothing to do with this branch, or pass against a tree nobody can name.
+    Either way the answer is to skip and say what was expected.
+
+    ``run`` is the subprocess runner, injectable so the rejections can be
+    unit-tested without a second checkout."""
+    run = run or subprocess.run
+    dev = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
+                         os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..")))
+    if not os.path.exists(os.path.join(dev, "src", "hwave", "solver", "flex.py")):
+        return None, ("reference checkout not found at {} (set HWAVE_DEVELOP_CHECKOUT)"
+                      .format(dev))
+    try:
+        head = run(["git", "-C", dev, "rev-parse", "HEAD"],
+                   check=True, capture_output=True, text=True).stdout.strip()
+        dirty = run(["git", "-C", dev, "status", "--porcelain"],
+                    check=True, capture_output=True, text=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "cannot read the revision of the reference checkout {}: {}".format(dev, exc)
+    if head != DEVELOP_COMMIT:
+        return None, ("the reference checkout {} is at {}, but this comparison is against {}"
+                      .format(dev, head or "<unknown>", DEVELOP_COMMIT))
+    if dirty:
+        return None, ("the reference checkout {} has local modifications; this comparison "
+                      "needs a clean tree at {}".format(dev, DEVELOP_COMMIT))
+    return dev, None
+
+
 def _members(d, files=_FILES):
     out = {}
     for f in files:
@@ -65,10 +108,9 @@ def _members(d, files=_FILES):
 class TestCompatibility(unittest.TestCase):
 
     def _develop(self):
-        dev = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
-                             os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..")))
-        if not os.path.exists(os.path.join(dev, "src", "hwave", "solver", "flex.py")):
-            self.skipTest("develop checkout not found (set HWAVE_DEVELOP_CHECKOUT)")
+        dev, why = develop_checkout()
+        if dev is None:
+            self.skipTest(why)
         return dev
 
     def test_takimoto_numerical_members_equal_develop(self):
@@ -91,7 +133,9 @@ class TestCompatibility(unittest.TestCase):
                 for f in ma:
                     for k, v in ma[f].items():
                         self.assertIn(k, mb[f], (f, k))
-                        if np.asarray(v).dtype.kind in "fciu":
+                        # "b" too: boolean members such as density_target_enforced
+                        # are part of the archive and must not drift either
+                        if np.asarray(v).dtype.kind in "fciub":
                             np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
                                                           err_msg=str((f, k)))
                             compared += 1
@@ -251,6 +295,60 @@ class TestCompatibility(unittest.TestCase):
                                                          "enable_spin_orbital": False,
                                                          "calc_scheme": "general"})
             self.assertIsNone(s2._second_order_factors)
+
+
+
+class TestDevelopCheckoutGuard(unittest.TestCase):
+    """:func:`develop_checkout` refuses a reference tree it cannot name.
+
+    The refusals are unit-tested with a stubbed runner rather than a second
+    checkout: what matters is that a wrong revision and a dirty tree both
+    STOP the comparison and say what was expected, not that git works."""
+
+    class _Result(object):
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def _runner(self, head, dirty):
+        def run(cmd, **kw):
+            return self._Result(head if "rev-parse" in cmd else dirty)
+        return run
+
+    def test_accepts_the_named_revision_with_a_clean_tree(self):
+        dev, why = develop_checkout(run=self._runner(DEVELOP_COMMIT + "\n", ""))
+        if dev is None:
+            # the reference directory itself is missing; that is the one
+            # rejection this stub cannot bypass
+            self.assertIn("not found", why)
+            self.skipTest(why)
+        self.assertIsNone(why)
+
+    def test_rejects_a_wrong_revision(self):
+        wrong = "0" * 40
+        dev, why = develop_checkout(run=self._runner(wrong, ""))
+        if dev is None and "not found" in (why or ""):
+            self.skipTest(why)
+        self.assertIsNone(dev)
+        self.assertIn(wrong, why)
+        self.assertIn(DEVELOP_COMMIT, why)
+
+    def test_rejects_a_dirty_tree(self):
+        dev, why = develop_checkout(
+            run=self._runner(DEVELOP_COMMIT, " M src/hwave/solver/flex.py"))
+        if dev is None and "not found" in (why or ""):
+            self.skipTest(why)
+        self.assertIsNone(dev)
+        self.assertIn("local modifications", why)
+        self.assertIn(DEVELOP_COMMIT, why)
+
+    def test_rejects_a_checkout_git_cannot_read(self):
+        def run(cmd, **kw):
+            raise OSError("git not found")
+        dev, why = develop_checkout(run=run)
+        if dev is None and "not found at" in (why or ""):
+            self.skipTest(why)
+        self.assertIsNone(dev)
+        self.assertIn("cannot read the revision", why)
 
 
 if __name__ == "__main__":

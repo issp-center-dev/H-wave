@@ -139,6 +139,48 @@ class TestPhaseBDomainRefusals(unittest.TestCase):
                       interactions={"CoulombInter": "coulombinter.dat"})   # off-site -> general
         self.assertEqual(s.calc_scheme, "general")
 
+    def test_mixed_case_schemes_reach_the_gate(self):
+        """The Phase B pre-parser runs BEFORE any solver exists, so it cannot
+        read the resolved ``calc_scheme`` and has to canonicalise the request
+        itself. It must do so exactly as the solver does
+        (``hwave.solver.rpa.canonical_scheme_name``): case only.
+
+        Without one shared rule the two disagree, and the disagreement is
+        silent in the direction that matters -- a mis-cased scheme refused
+        here but accepted there (or the reverse) leaves the gate's domain
+        check keyed off a spelling the solver never sees."""
+        from hwave.solver.rpa import canonical_scheme_name
+        gates = ({"flex_hartree_fock": True},
+                 {"flex_hartree_fock": True, "longitudinal_bond_channels": True})
+        for gate in gates:
+            for spelling in ("general", "General", "GENERAL", "gEnErAl"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    s, _ = _build(dict(gate), calc_scheme=spelling)
+                    self.assertEqual(s.calc_scheme, "general")
+                    self.assertEqual(s.calc_scheme_requested, "general")
+                    for k in gate:
+                        self.assertTrue(getattr(s, k))
+            for spelling in ("Auto", "AUTO"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    s, _ = _build(dict(gate), calc_scheme=spelling)
+                    self.assertEqual(s.calc_scheme_requested, "auto")
+            # and a mis-cased scheme the gate does NOT accept is still refused
+            for spelling in ("Reduced", "REDUCED"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    with self.assertRaises(ValueError) as cm:
+                        _build(dict(gate), calc_scheme=spelling)
+                    self.assertIn("calc_scheme='general'", str(cm.exception))
+        # the canonicalisation is case ONLY: surrounding whitespace is a typo,
+        # refused rather than repaired, and refused the SAME way by the
+        # pre-parser and by the solver
+        self.assertEqual(canonical_scheme_name(" General "), " general ")
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_hartree_fock": True}, calc_scheme=" general ")
+        self.assertIn("calc_scheme='general'", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            _build({}, calc_scheme=" general ")
+        self.assertIn("' general '", str(cm.exception))
+
     def test_nmat_default_and_bounds(self):
         s, _ = _build({"flex_hartree_fock": True, "Nmat": None})
         self.assertEqual(s.nmat, 1024)

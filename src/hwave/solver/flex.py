@@ -34,7 +34,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
-                  PAIRLIFT_INERT_WARNING)
+                  PAIRLIFT_INERT_WARNING, canonical_scheme_name)
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
@@ -329,7 +329,11 @@ class FLEX(RPA):
             raise ValueError(
                 "[mode.param] IterationMax must be an integer >= 0 when flex_hartree_fock or "
                 "longitudinal_bond_channels is true, got {!r}".format(itmax))
-        scheme = str(info_mode.get("calc_scheme", "auto")).lower()
+        # the SAME canonicalisation the solver itself applies later
+        # (hwave.solver.rpa.canonical_scheme_name): this pre-parser runs
+        # before any solver exists, so it cannot read the resolved state,
+        # and a second spelling rule here is a second accepted input domain
+        scheme = canonical_scheme_name(info_mode.get("calc_scheme", "auto"))
         if scheme not in ("general", "auto"):
             raise ValueError(
                 "flex_hartree_fock / longitudinal_bond_channels require calc_scheme='general' "

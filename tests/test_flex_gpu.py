@@ -136,11 +136,15 @@ def test_flex_fft_workers_matches_serial():
 
 # --- #181 follow-up: the local second-order kernel on the GPU -------------
 
-def _run_flex_second_order_local(gpu=False, Nmat=32, iteration_max=3):
-    """A general-scheme FLEX solve of the 2-orbital ON-SITE (U, U', Hund) plus
-    OFF-SITE (V) input under ``flex_second_order = "local"``; returns
-    ``(green_info, solver)``. The off-site rows are what make ``factors.vpair``
-    non-None, so the device check below covers the off-site operand too."""
+def _make_flex_second_order_local(gpu=False, Nmat=32, iteration_max=3):
+    """A general-scheme FLEX solver on the 2-orbital ON-SITE (U, U', Hund)
+    plus OFF-SITE (V) input under ``flex_second_order = "local"``, NOT yet
+    solved; returns ``(solver, green_info)``.
+
+    The off-site rows are what make ``factors.vpair`` non-None, so the
+    device checks below cover the off-site operand too. The temporary input
+    directory is removed before returning: the solver has read the whole
+    Hamiltonian at construction."""
     import shutil
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
@@ -156,24 +160,37 @@ def _run_flex_second_order_local(gpu=False, Nmat=32, iteration_max=3):
         info_mode = {'mode': 'FLEX', 'param': param, 'enable_spin_orbital': False,
                      'calc_scheme': 'general'}
         solver = solver_flex.FLEX(read_io.get_param("ham"), {}, info_mode)
-        green_info = read_io.get_param("green")
-        os.makedirs('tests/flex/output', exist_ok=True)
-        solver.solve(green_info, 'tests/flex/output')
+        return solver, read_io.get_param("green")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _run_flex_second_order_local(gpu=False, Nmat=32, iteration_max=3):
+    """:func:`_make_flex_second_order_local`, solved; returns
+    ``(green_info, solver)``."""
+    solver, green_info = _make_flex_second_order_local(gpu, Nmat, iteration_max)
+    os.makedirs('tests/flex/output', exist_ok=True)
+    solver.solve(green_info, 'tests/flex/output')
     return green_info, solver
 
 
-def _operand_checking_accumulate_batch(module_prefix, seen):
+def _operand_checking_accumulate_batch(module_prefix, seen, only=None):
     """A drop-in for :func:`hwave.solver.second_order.accumulate_batch` that
     asserts EVERY array operand lives on the expected backend before doing the
     real work: the output view, the bubble batch, both factor matrices of every
-    spin triple, and the off-site ``vpair``.
+    spin triple, the off-site ``vpair``, and BOTH lent scratch buffers.
+
+    The scratch buffers are the general path's own (spec 2.5: the assembly
+    lends them so the kernel allocates nothing of the batch shape). A host
+    buffer lent into a device kernel is exactly the silent host round trip
+    this wrapper exists to catch, and it would not be visible on any of the
+    other operands.
 
     ``module_prefix`` is ``"cupy"`` for a device run and ``"numpy"`` for a host
     run -- the host spelling is what makes this wrapper itself testable without
     a CUDA device (see the CPU twin below), since the only difference between
-    the two is the string.
+    the two is the string. ``only`` restricts the check to the named operands,
+    which is how the CPU twin shows that the work-buffer leg fires on its own.
     """
     import hwave.solver.second_order as so_mod
     orig = so_mod.accumulate_batch          # captured NOW: build every wrapper
@@ -181,6 +198,8 @@ def _operand_checking_accumulate_batch(module_prefix, seen):
                                             # second one would wrap the first.
 
     def _check(name, x):
+        if only is not None and name not in only:
+            return
         assert type(x).__module__.split(".")[0] == module_prefix, \
             "{} is a {} array, expected {}".format(name, type(x).__module__, module_prefix)
 
@@ -192,6 +211,9 @@ def _operand_checking_accumulate_batch(module_prefix, seen):
             _check("factors.B_on[{}]".format(i), B)
         assert factors.vpair is not None, "the off-site fixture must produce a vpair"
         _check("factors.vpair", factors.vpair)
+        assert work is not None, "the general path must lend its two scratch buffers"
+        _check("work[0]", work[0])
+        _check("work[1]", work[1])
         seen["calls"] += 1
         return orig(out_b, chibar_b, l0, factors, work=work)
 
@@ -218,6 +240,76 @@ def test_flex_second_order_local_operands_follow_the_backend_cpu(monkeypatch):
     with pytest.raises(AssertionError, match="expected cupy"):
         _run_flex_second_order_local(gpu=False)
     assert seen_device["calls"] == 0
+    # and the WORK-BUFFER leg fires on its own: with every other operand
+    # accepted, a host-backed work[0] still fails the device expectation.
+    # (Without this, a wrapper that never reached the buffers would look
+    # exactly the same as one that checks them.)
+    seen_work = {"calls": 0}
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch(
+                            "cupy", seen_work, only=("work[0]", "work[1]")))
+    with pytest.raises(AssertionError, match=r"work\[0\] is a numpy"):
+        _run_flex_second_order_local(gpu=False)
+    assert seen_work["calls"] == 0
+
+
+def test_second_order_device_mirror_lifecycle(monkeypatch):
+    """The per-solve device mirror of the factor pack (spec 2.5) is created
+    for the solve, used by the kernel, and dropped afterwards -- after a
+    successful solve AND after one that raises -- with a FRESH mirror on the
+    next solve of the same solver.
+
+    Driven on the host: ``backend.get_backend`` is monkeypatched to report an
+    active GPU with numpy as the array module, which is the one decision the
+    mirror branch keys off. That exercises the LIFECYCLE (creation, use,
+    release, recreation) without a CUDA device; what it cannot check is that
+    the mirror's arrays are device arrays, which is
+    :func:`test_flex_gpu_second_order_local_matches_cpu`'s job."""
+    import hwave.solver.flex as flex_mod
+    import hwave.solver.second_order as so_mod
+    from hwave.solver import backend
+    orig = so_mod.accumulate_batch
+    monkeypatch.setattr(backend, "get_backend", lambda *a, **kw: (np, True))
+
+    solver, green_info = _make_flex_second_order_local()
+    assert solver._second_order_factors is not None
+    assert solver._second_order_device is None            # nothing before a solve
+    os.makedirs('tests/flex/output', exist_ok=True)
+
+    def spy(record):
+        def wrapper(out_b, chibar_b, l0, factors, work=None):
+            record.append((solver._second_order_device, factors))
+            return orig(out_b, chibar_b, l0, factors, work=work)
+        return wrapper
+
+    first = []
+    monkeypatch.setattr(so_mod, "accumulate_batch", spy(first))
+    solver.solve(green_info, 'tests/flex/output')
+    assert first, "accumulate_batch was never called"
+    mirror = first[0][0]
+    assert mirror is not None, "the device mirror was never created"
+    assert mirror is not solver._second_order_factors, "the mirror IS the host pack"
+    for seen_mirror, factors in first:
+        assert seen_mirror is mirror                      # one mirror per solve
+        assert factors is mirror, "the kernel ran on the host pack, not the mirror"
+    assert solver._second_order_device is None, "the mirror survived a successful solve"
+
+    # a solve that RAISES after the mirror was created
+    def boom(out_b, chibar_b, l0, factors, work=None):
+        raise RuntimeError("deliberate failure inside the second-order kernel")
+
+    monkeypatch.setattr(so_mod, "accumulate_batch", boom)
+    with pytest.raises(RuntimeError, match="deliberate failure"):
+        solver.solve(green_info, 'tests/flex/output')
+    assert solver._second_order_device is None, "the mirror survived a failed solve"
+
+    # and the next solve builds a fresh one
+    second = []
+    monkeypatch.setattr(so_mod, "accumulate_batch", spy(second))
+    solver.solve(green_info, 'tests/flex/output')
+    assert second and second[0][0] is not None
+    assert second[0][0] is not mirror, "the second solve reused the first solve's mirror"
+    assert solver._second_order_device is None
 
 
 def test_flex_gpu_second_order_local_matches_cpu(monkeypatch):

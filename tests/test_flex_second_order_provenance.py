@@ -21,20 +21,56 @@ def _solve_save(s, r, out, files):
 
 class TestProvenance(unittest.TestCase):
 
-    def test_members_in_every_general_archive_and_absent_on_reduced(self):
+    #: Every archive a general-scheme FLEX run writes when asked for all of
+    #: them. ``chiq_s``/``chiq_c`` are written alongside ``chiq`` rather than
+    #: requested by name.
+    _ALL = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz")
+    _REQUEST = {"chi0q": "chi0q", "chiq": "chiq", "sigma": "sigma", "green": "green"}
+
+    def test_members_in_every_general_archive(self):
         with tempfile.TemporaryDirectory() as out:
             for so in ("local", "takimoto"):
                 s, r = _build({"flex_second_order": so, "Nmat": 8})
-                _solve_save(s, r, out, {"chi0q": "chi0q", "chiq": "chiq", "sigma": "sigma", "green": "green"})
-                for f in ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz"):
+                _solve_save(s, r, out, dict(self._REQUEST))
+                for f in self._ALL:
                     z = np.load(os.path.join(out, f))
                     self.assertEqual(str(z["flex_second_order"]), so, f)
                     self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
                     self.assertEqual(z["flex_second_order"].dtype.kind, "U")
+
+    def test_absent_on_reduced_and_rpa_archives(self):
+        """The members belong to the general FLEX kernel, so no reduced-scheme
+        and no RPA archive may carry them.
+
+        Each case runs in its OWN output directory and asks for EVERY archive
+        it can write. An absence check that reads a directory a previous run
+        has written into is only as good as the assumption that the second run
+        rewrites every file the first one left -- which happens to hold here
+        (a reduced FLEX solve rewrites ``chiq_s``/``chiq_c`` even though only
+        ``sigma``/``green`` were requested) but is not something this test
+        should depend on: a stale archive from the general run would otherwise
+        be read, and the assertion would fail for a reason that has nothing to
+        do with the run under test."""
+        with tempfile.TemporaryDirectory() as out:
             s, r = _build({"Nmat": 8}, calc_scheme="reduced")
-            _solve_save(s, r, out, {"sigma": "sigma", "green": "green"})
-            for f in ("sigma.npz", "green.npz", "chiq_s.npz"):
-                self.assertNotIn("flex_second_order", np.load(os.path.join(out, f)).files, f)
+            _solve_save(s, r, out, dict(self._REQUEST))
+            written = sorted(os.listdir(out))
+            self.assertEqual(written, sorted(self._ALL))      # anti-vacuity: all present
+            for f in written:
+                z = np.load(os.path.join(out, f))
+                self.assertNotIn("flex_second_order", z.files, f)
+                self.assertNotIn("flex_second_order_schema", z.files, f)
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _build({"Nmat": 8}, mode="RPA")
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            s.save_results(dict({"path_to_output": out}, **self._REQUEST), gi)
+            written = sorted(os.listdir(out))
+            self.assertTrue(written)                          # anti-vacuity
+            for f in written:
+                z = np.load(os.path.join(out, f))
+                self.assertNotIn("flex_second_order", z.files, f)
+                self.assertNotIn("flex_second_order_schema", z.files, f)
 
     def test_seed_warning_and_info(self):
         with tempfile.TemporaryDirectory() as out:

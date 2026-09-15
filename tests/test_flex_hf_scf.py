@@ -70,11 +70,14 @@ class TestG0Off(unittest.TestCase):
     """
 
     def test_byte_identity_against_develop(self):
+        from tests.test_flex_second_order_compat import develop_checkout
         here = os.getcwd()
-        develop = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
-                                 os.path.abspath(os.path.join(here, "..", "..", "..")))
-        if not os.path.isdir(os.path.join(develop, "src", "hwave")):
-            self.skipTest("develop checkout not found at {}".format(develop))
+        # one shared rule with the other develop-comparison harnesses: the
+        # reference tree must be at the NAMED revision and clean, or the
+        # comparison is against something nobody can name
+        develop, why = develop_checkout()
+        if develop is None:
+            self.skipTest(why)
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             for root, out in ((here, a), (develop, b)):
                 subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out], check=True, cwd=here)
