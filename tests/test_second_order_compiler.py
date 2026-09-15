@@ -107,7 +107,8 @@ class TestLiteralFixtures(unittest.TestCase):
 class TestContracts(unittest.TestCase):
 
     def _random_rho(self, norb, seed):
-        """Generic Hermitian spin-block-diagonal density with orbital coherences."""
+        """Generic Hermitian spin-block-diagonal density with orbital coherences.
+        This is the sector the solver actually runs in."""
         rng = np.random.default_rng(seed)
         M = 2 * norb
         rho = np.zeros((M, M), complex)
@@ -116,6 +117,15 @@ class TestContracts(unittest.TestCase):
             blk = 0.5 * (X + X.conj().T) * 0.1 + 0.4 * np.eye(norb)
             rho[s * norb:(s + 1) * norb, s * norb:(s + 1) * norb] = blk
         return rho
+
+    def _general_rho(self, norb, seed):
+        """Generic Hermitian density with spin OFF-DIAGONAL blocks. Without
+        these the kernel's spin-flip channels are identically zero and the
+        Exchange (Hartree) and PairLift subtests compare 0 against 0."""
+        rng = np.random.default_rng(seed)
+        M = 2 * norb
+        X = rng.normal(size=(M, M)) + 1j * rng.normal(size=(M, M))
+        return 0.1 * (X + X.conj().T) + 0.4 * np.eye(M)
 
     def test_first_derivative_equals_accumulate_hf(self):
         from hwave.solver import hartree_fock as hf
@@ -126,25 +136,28 @@ class TestContracts(unittest.TestCase):
             rows = [(0, 0, 0.7), (1, 1, 0.3)] if itype == "CoulombIntra" else [(0, 1, 0.7), (1, 0, 0.7)]
             param_ham = {itype: {((0, 0, 0), (a, b)): v for (a, b, v) in rows}}
             G = compile_onsite(_tbl(itype, rows), norb)
+            V = compile_onsite_v(_tbl(itype, rows), norb)
             tabs = hf.build_interaction_tables(param_ham, norb, shape)
-            rho = self._random_rho(norb, 3)
-            # kernel density: rho_so[r, s, a, t, b] = <c+_{sa}(0) c_{tb}(r)>
-            rho_so = rho.reshape(2, norb, 2, norb)[None]
-            for fock in (True, False):
-                with self.subTest(itype=itype, fock=fock):
-                    out = np.zeros((1, 2 * norb, 2 * norb), complex)
-                    hf.accumulate_hf(out, rho_so, tabs.inter_table, tabs.spin_table, shape,
-                                     include_fock=fock)
-                    if fock:
-                        sig = hf_first_order(G, rho)
-                    else:
-                        # Hartree part: the direct records only (V, not Gamma)
-                        sig = hf_first_order(compile_onsite_v(_tbl(itype, rows), norb), rho,
-                                             hartree_only=True)
-                    np.testing.assert_allclose(sig, out[0], atol=1e-14,
-                                               err_msg="if this fails only by complex conjugation, "
-                                                       "the kernel's density is <c+_{tb} c_{sa}>: "
-                                                       "transpose rho in THIS test, not Gamma")
+            for dens, rho in (("block", self._random_rho(norb, 3)),
+                              ("general", self._general_rho(norb, 5))):
+                # kernel density: rho_so[r, s, a, t, b] = <c+_{sa}(0) c_{tb}(r)>
+                rho_so = rho.reshape(2, norb, 2, norb)[None]
+                for fock in (True, False):
+                    with self.subTest(itype=itype, dens=dens, fock=fock):
+                        out = np.zeros((1, 2 * norb, 2 * norb), complex)
+                        hf.accumulate_hf(out, rho_so, tabs.inter_table, tabs.spin_table, shape,
+                                         include_fock=fock)
+                        if dens == "general":
+                            # anti-vacuity: a general density leaves no channel
+                            # of any type in the kernel's zero sector
+                            self.assertGreater(np.abs(out).max(), 0.0)
+                        # Hartree + Fock from Gamma; the Hartree part alone from
+                        # the non-antisymmetrised V (same contraction)
+                        sig = hf_first_order(G if fock else V, rho)
+                        np.testing.assert_allclose(sig, out[0], atol=1e-14,
+                                                   err_msg="if this fails only by complex conjugation, "
+                                                           "the kernel's density is <c+_{tb} c_{sa}>: "
+                                                           "transpose rho in THIS test, not Gamma")
 
     def test_density_slots_reproduce_the_adjudicated_sc_table(self):
         from hwave.solver.second_order import compile_onsite, density_slots

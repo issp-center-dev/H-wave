@@ -195,18 +195,19 @@ def compile_onsite(onsite_tbl, norb, *, herm_tol=1e-12, closed=False):
     return Gamma
 
 
-def hf_first_order(Gamma_or_V, rho, *, hartree_only=False):
+def hf_first_order(tensor, rho):
     """The first-order (mean-field) self-energy of a rank-4 on-site tensor:
 
-        Sigma1[p, r] = sum_{q s} T[p, q, r, s] rho[q, s],  rho[q, s] = <c^dag_q c_s>.
+        Sigma1[p, r] = sum_{q s} tensor[p, q, r, s] rho[q, s],
+        rho[q, s] = <c^dag_q c_s>.
 
-    Pass ``Gamma`` (from :func:`compile_onsite`) for Hartree + Fock; pass the
-    non-antisymmetrised ``V`` (from :func:`compile_onsite_v`) together with
-    ``hartree_only=True`` for the Hartree (direct) part alone. The flag only
-    declares which tensor the caller passed -- the contraction is the same.
+    Which contribution comes out is chosen by WHICH tensor the caller passes:
+    ``Gamma`` from :func:`compile_onsite` gives Hartree + Fock (it carries the
+    exchange placement), the non-antisymmetrised ``V`` from
+    :func:`compile_onsite_v` gives the Hartree (direct) part alone. The
+    contraction itself is the same, so there is no flag to get wrong.
     """
-    T = np.asarray(Gamma_or_V)
-    return np.einsum('pqrs,qs->pr', T, rho)
+    return np.einsum('pqrs,qs->pr', np.asarray(tensor), rho)
 
 
 def density_slots(Gamma, norb):
