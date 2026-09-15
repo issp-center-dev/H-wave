@@ -98,9 +98,14 @@ def _one_map(s, gi, gate):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, green0_tail, beta, s._bond_view, _SHAPE, 1)
+            # the SAME kernel the solver was configured with (the production
+            # call in flex.py passes both of these): without them the harness
+            # would silently measure the legacy kernel under a "local" solver.
             flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
                                         C_on=s._bond_C_on, nb=nmat, output_full=False,
-                                        nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE)
+                                        nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
+                                        factors=s._second_order_factors,
+                                        second_order=s.flex_second_order)
             sig = flex_bond.calc_self_energy_bond(store, G, beta, s._bond_view, _SHAPE, norb, 1)
     else:
         chi0q_raw = s._calc_chi0q(G, green0_tail, beta)[0]
@@ -365,6 +370,23 @@ class TestG2(unittest.TestCase):
         self.assertLess(_rel(self.off_thu["c02"], 0.5 * self.oracle["d_v"]), 1e-8)
         self.assertLess(np.abs(self.off_thu["c11"]).max(), 1e-8 * np.abs(self.oracle["c11"]).max())
         self.assertLess(_rel(self.off_thu["c20"], self.oracle["c20"]), 1e-8)
+
+    def test_the_gate_harness_drives_the_configured_kernel(self):
+        """``_one_map``'s gate branch must pass the solver's kernel choice and
+        factor pack to the bond dressing. With a two-orbital fixture carrying
+        off-site V the two kernels give DIFFERENT channel-0 second orders, so
+        the two maps must differ -- if the harness dropped the arguments both
+        runs would take the legacy kernel and the maps would be identical."""
+        maps = {}
+        for so in ("local", "takimoto"):
+            with tempfile.TemporaryDirectory() as d:
+                inter = _make_inputs(d, 2, 0.4, 0.3, uprime=0.2)
+                s, gi = _solver(d, inter, gate=True, second_order=so)
+                self.assertEqual(s.flex_second_order, so)
+                maps[so] = _one_map(s, gi, gate=True)[1]
+        scale = np.abs(maps["takimoto"]).max()
+        self.assertGreater(scale, 1e-6)
+        self.assertGreater(np.abs(maps["local"] - maps["takimoto"]).max(), 1e-8 * scale)
 
     def test_d_declared_zero_reproduces_the_general_path(self):
         g_on, g_off = self.g_on, self.g_off
