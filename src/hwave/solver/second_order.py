@@ -339,7 +339,18 @@ def accumulate_batch(out_b, chibar_b, l0, factors):
         out_b += T2
     if factors.vpair is not None:
         di = _dens_idx(norb)
-        vp = xp.asarray(factors.vpair)                            # (2, 2, nvol, norb, norb)
+        # The off-site vertex enters the LOCAL second order in its FILE
+        # orientation: A_v is the crossed entry
+        # Gamma_{(a up)(q sigma),(q sigma)(a up)} = -v^{file, up sigma}_{a q},
+        # i.e. the orbital of the EXTERNAL leg indexes the row. :func:`build_offsite`
+        # stores the ring's pair-space orientation v^{pair}_{(aa),(bb)} = v^{file}_{ba}
+        # (the ED-validated placement of the S/C channel vertex, pinned by
+        # tests/test_second_order_factors.py), so the kernel transposes the orbital
+        # axes here. On a bond with v_{ab}(R) != v_{ba}(R) the two orientations
+        # differ (they are related by q -> -q); the orientation below is the one
+        # the independent real-space oracle requires on every pair of coupling
+        # types (tests/test_second_order_oracle.py, gate G2 (a)).
+        vp = xp.asarray(factors.vpair).swapaxes(-1, -2)            # (2, 2, nvol, norb, norb)
         for (ss, sr, sq), A, B in zip(factors.triples, factors.A_on, factors.B_on):
             if ss != UP or sr != sq:
                 continue
