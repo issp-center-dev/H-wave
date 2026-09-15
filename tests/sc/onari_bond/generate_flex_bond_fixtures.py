@@ -49,10 +49,19 @@ default ``flex_second_order = "local"`` (:data:`SECOND_ORDER`).  ``--second-orde
 takimoto`` reruns the whole chain -- the legacy seed included -- under the legacy
 kernel and suffixes every file it writes (greens, sigmas, seeds and its own
 observables file), so it can never overwrite the milestone's own outputs.  That
-is how the single committed ``"takimoto"`` witness at ``V = 0.8`` was produced::
+is how the single committed ``"takimoto"`` witness at ``V = 0.8`` is produced.
+Regenerate the witness FIRST and the milestone second, in the same output
+directory::
 
     python3 tests/sc/onari_bond/generate_flex_bond_fixtures.py \
         --only 0.8 --no-warm --second-order takimoto
+    python3 tests/sc/onari_bond/generate_flex_bond_fixtures.py
+
+The second run folds the witness file left by the first into its own
+observables as ``lambda_t_takimoto`` / ``records_takimoto``
+(:func:`_takimoto_witness`) -- the two keys ``tests/test_flex_bond_onari_trend.py``
+reads -- so the committed file needs no hand editing.  Without the witness file
+the milestone simply writes its own keys and those two are absent.
 """
 import argparse
 import hashlib
@@ -96,6 +105,22 @@ OBSERVABLES = "flex_bond_observables.json"
 DEFAULT_DIR = os.environ.get("HWAVE_FLEXBOND_DIR",
                              os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                           "_regenerated_flexbond"))
+
+
+def _takimoto_witness(outdir):
+    """The ``"takimoto"`` witness of ``outdir``, as the two keys the trend test
+    reads from the committed observables: ``lambda_t_takimoto`` (the cold
+    lambdas of the witness run) and ``records_takimoto`` (its convergence
+    records). Read from the suffixed observables file a ``--second-order
+    takimoto`` run leaves in the same directory; ``{}`` when that file is
+    absent, so a milestone run without a witness simply writes its own keys."""
+    path = os.path.join(outdir, OBSERVABLES.replace(".json", "_takimoto.json"))
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        witness = json.load(f)
+    return {"lambda_t_takimoto": witness["lambda_t"]["cold"],
+            "records_takimoto": witness["records"]}
 
 
 def _tag(second_order):
@@ -263,6 +288,8 @@ def generate(outdir=DEFAULT_DIR, iteration_max=ITERATION_MAX, v_grid=V_GRID, war
             lam["warm"]["{:.2f}".format(V)] = lambda_sweep(seq, vs)["lambda"][-1]
     obs = dict(settings=dict(SETTINGS, flex_second_order=second_order), records=records,
                lambda_t=lam, tracking=lam_cold["tracking"])
+    if second_order == SECOND_ORDER:
+        obs.update(_takimoto_witness(outdir))
     obs_name = OBSERVABLES.replace(".json", _tag(second_order) + ".json")
     with open(os.path.join(outdir, obs_name), "w") as f:
         json.dump(obs, f, indent=1, sort_keys=True)

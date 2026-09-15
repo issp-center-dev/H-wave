@@ -32,7 +32,13 @@ this setting, not of the kernels, so one ``"takimoto"`` point is committed
 alongside as a live witness: ``lambda_t_takimoto`` at ``V = 0.8``, produced by
 ``generate_flex_bond_fixtures.py --only 0.8 --no-warm --second-order
 takimoto`` (the whole chain, legacy seed included, under ``"takimoto"``), and
-asserted below against the value the milestone was first pinned at.
+asserted below against the value the milestone was first pinned at.  That run
+writes its own suffixed observables file, which the milestone run -- executed
+afterwards in the same directory -- folds into the committed file as
+``lambda_t_takimoto`` / ``records_takimoto``
+(``generate_flex_bond_fixtures._takimoto_witness``); the keys are never edited
+in by hand, and regenerating the milestone without the witness present drops
+them.
 """
 import json
 import os
@@ -157,6 +163,28 @@ class TestFlexBondOnariTrend(unittest.TestCase):
         for k in ("scf_sigma_residual", "scf_green_residual", "scf_component_residual"):
             self.assertLess(rec[k], eps, k)
         self.assertLess(rec["hf_density_error"], HF_DENSITY_TOL, rec)
+
+    def test_the_generator_folds_the_takimoto_witness_into_the_observables(self):
+        """The two ``*_takimoto`` keys this module reads above are not typed in
+        by hand: a ``--second-order takimoto`` run leaves its own observables
+        file beside the milestone's, and the milestone run folds it in."""
+        import json as _json
+        import tempfile
+        from tests.sc.onari_bond import generate_flex_bond_fixtures as gen
+        with open(OBSERVABLES) as f:
+            committed = _json.load(f)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(gen._takimoto_witness(d), {})       # no witness: no keys
+            witness = {"lambda_t": {"cold": committed["lambda_t_takimoto"], "warm": {}},
+                       "records": committed["records_takimoto"],
+                       "settings": dict(gen.SETTINGS, flex_second_order="takimoto")}
+            with open(os.path.join(d, gen.OBSERVABLES.replace(".json", "_takimoto.json")),
+                      "w") as f:
+                _json.dump(witness, f)
+            folded = gen._takimoto_witness(d)
+        self.assertEqual(set(folded), {"lambda_t_takimoto", "records_takimoto"})
+        self.assertEqual(folded["lambda_t_takimoto"], committed["lambda_t_takimoto"])
+        self.assertEqual(folded["records_takimoto"], committed["records_takimoto"])
 
     @heavy
     def test_regenerated_greens_reproduce_the_pinned_lambda(self):
