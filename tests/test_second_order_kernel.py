@@ -15,6 +15,36 @@ def _factors(rows_by_type):
     return s, build_factors(split, s.lattice, 2)
 
 
+def _factors_norb1(rows_by_type, shape=(4, 4, 1)):
+    """Factors of a ONE-orbital fixture (nd = 1: the density slot is the whole
+    pair axis, the worst case for the kernel's slot handling) on a lattice of
+    the given shape."""
+    import os
+    import shutil
+    import tempfile
+
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as flex_mod
+    from hwave.solver.offsite import split_locality
+    from hwave.solver.second_order import build_factors
+    from tests.test_second_order_factors import _write_wan
+
+    d = tempfile.mkdtemp()
+    for f in ("geom.dat", "transfer.dat"):
+        shutil.copy(os.path.join("tests/rpa/input", f), d)
+    idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+    for t, rows in rows_by_type.items():
+        _write_wan(os.path.join(d, t.lower() + ".dat"), t, 1, rows)
+        idict[t] = t.lower() + ".dat"
+    r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+    par = {"T": 2.0, "filling": 0.5, "CellShape": list(shape), "SubShape": [1, 1, 1],
+           "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1, "flex_second_order": "takimoto"}
+    s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                               "enable_spin_orbital": False,
+                                               "calc_scheme": "general"})
+    return build_factors(split_locality(s.ham_info, s.lattice), s.lattice, 1)
+
+
 def _random_chibar(nmat, nvol, nd, seed, hermitian_pair=True):
     rng = np.random.default_rng(seed)
     X = rng.normal(size=(nmat, nvol, nd, nd)) + 1j * rng.normal(size=(nmat, nvol, nd, nd))
@@ -133,6 +163,75 @@ class TestKernel(unittest.TestCase):
                 accumulate_batch(np.zeros_like(cb), cb, 0, f, work=bad)
             self.assertIn("accumulate_batch", str(cm.exception))
             self.assertIn("expected chibar_b's (8, 16, 4, 4)", str(cm.exception))
+
+    def test_allocation_peak_with_lent_buffers(self):
+        """Spec 2.5's budget, measured: with ``work`` supplied the kernel
+        allocates NOTHING that scales with the batch. Every product goes
+        through ``matmul(..., out=)`` into the lent buffers and every
+        density-slot gather and scatter is a strided VIEW (the (a, a) pair
+        slots are the arithmetic sequence a * (norb + 1), so basic slicing
+        selects them), so what is left is the boolean mask of the finiteness
+        checkpoint -- one byte per complex element, a sixteenth of the batch
+        -- plus numpy's own buffering for the strided in-place updates, which
+        is capped by its buffer size (8192 elements per operand) and does NOT
+        grow with the batch.
+
+        Both facts are asserted: an absolute bound at one size, and -- the
+        assertion that actually catches a batch-shaped allocation -- that
+        quadrupling the batch grows the peak by no more than the mask does (a
+        batch-shaped array would add sixteen times that).
+
+        Measured around the ``accumulate_batch`` call ALONE: the output, the
+        chibar and both work buffers are built before the window, and a
+        warm-up call precedes it. The one-orbital cases are the worst case
+        (nd = 1: a density slot IS the whole pair axis, so a slot-shaped copy
+        would be full-size)."""
+        import tracemalloc
+        from hwave.solver.second_order import accumulate_batch, dense_w2
+        _ALLOW = 1 << 20            # numpy's strided-operand buffers, constant
+        rows_v = [(1, 0, 0, 1, 1, 0.3, 0.0), (-1, 0, 0, 1, 1, 0.3, 0.0)]
+        intra1 = [(0, 0, 0, 1, 1, 0.5, 0.0)]
+        _, f2 = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.4, 0.0)],
+                          "Hund": [(0, 0, 0, 1, 2, 0.2, 0.0), (0, 0, 0, 2, 1, 0.2, 0.0)],
+                          "CoulombInter": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)]})
+        cases = [
+            ("norb=2, on-site + off-site", f2, 16, 4),
+            ("norb=1, off-site only",
+             _factors_norb1({"CoulombInter": rows_v}, shape=(16, 16, 1)), 256, 1),
+            ("norb=1, off-site + U",
+             _factors_norb1({"CoulombInter": rows_v, "CoulombIntra": intra1},
+                            shape=(16, 16, 1)), 256, 1),
+        ]
+
+        def _peak(f, nmat, nvol, nd):
+            cb = _random_chibar(nmat, nvol, nd, 7)
+            ref = dense_w2(cb, f)                              # self-allocating call
+            out = np.zeros_like(cb)
+            T1, T2 = np.empty_like(cb), np.empty_like(cb)
+            accumulate_batch(out, cb, 0, f, work=(T1, T2))      # warm-up
+            out[...] = 0.0
+            tracing = tracemalloc.is_tracing()
+            if not tracing:
+                tracemalloc.start()
+            tracemalloc.reset_peak()
+            base = tracemalloc.get_traced_memory()[0]
+            accumulate_batch(out, cb, 0, f, work=(T1, T2))
+            peak = tracemalloc.get_traced_memory()[1]
+            if not tracing:
+                tracemalloc.stop()
+            self.assertGreater(np.abs(ref).max(), 1e-6)         # anti-vacuity
+            np.testing.assert_array_equal(out, ref)             # work must not change it
+            return peak - base, cb.nbytes, cb.nbytes // 16
+
+        for name, f, nvol, nd in cases:
+            with self.subTest(case=name):
+                small, batch_s, mask_s = _peak(f, 128, nvol, nd)
+                big, batch_b, mask_b = _peak(f, 512, nvol, nd)
+                print("\naccumulate_batch [{}]: batch {} B peak extra {} B (mask {} B); "
+                      "batch {} B peak extra {} B (mask {} B); growth {} B"
+                      .format(name, batch_s, small, mask_s, batch_b, big, mask_b, big - small))
+                self.assertLess(small, mask_s + _ALLOW)
+                self.assertLess(big - small, (mask_b - mask_s) + (1 << 16))
 
     def test_hermiticity_without_inversion_symmetry(self):
         from hwave.solver.second_order import dense_w2

@@ -3461,8 +3461,12 @@ class FLEX(RPA):
         across both channels -- every product goes through
         ``matmul(..., out=)`` rather than an expression temporary -- and then
         LENT to :func:`~hwave.solver.second_order.accumulate_batch` through
-        its ``work`` argument, so the kernel allocates nothing of its own.
-        That is the ``T_bytes = 2 nb nvol ndx^2 * 16`` budget of spec 2.5.
+        its ``work`` argument, so the kernel allocates nothing of the batch
+        shape either (its own contract: the density-slot gathers and scatters
+        are strided views, and the only per-call allocation left is the
+        boolean mask of its finiteness checkpoint, a sixteenth of one batch
+        array, plus constant array-module buffering). That is the
+        ``T_bytes = 2 nb nvol ndx^2 * 16`` budget of spec 2.5.
         """
         logger.debug(">>> FLEX._calc_veff_general")
 
@@ -3483,6 +3487,9 @@ class FLEX(RPA):
             UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
             UcB = Uc[np.newaxis]
             v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
+            # batch length: the peak above v_eff is T_bytes = 2 * nb * nvol *
+            # ndx^2 * 16 bytes (T1, T2), plus accumulate_batch's finiteness
+            # mask (T_bytes / 32) and constant buffering -- see its docstring.
             nb = max(1, nmat // 8)
             T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
             T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)

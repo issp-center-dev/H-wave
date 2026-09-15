@@ -28,6 +28,7 @@ against ``accumulate_hf`` by
 """
 import itertools
 import logging
+from dataclasses import dataclass as _dataclass
 
 import numpy as np
 
@@ -227,8 +228,6 @@ def density_slots(Gamma, norb):
     return d
 
 
-from dataclasses import dataclass as _dataclass
-
 _SPIN_WEIGHT = {   # w[itype][(s, s')]: the density-slot spin structure of spec 2.4
     "CoulombInter": lambda s1, s2: 1.0,
     "Hund": lambda s1, s2: -1.0 if s1 == s2 else 0.0,
@@ -244,9 +243,7 @@ def build_offsite(split, lattice, norb):
     density types."""
     from hwave.sc import _build_interaction_k
     from hwave.solver.declarations import symmetrise_k
-    types = [t for t in OFFSITE_DENSITY_TYPES if t in getattr(split, "offsite_types", ())
-             or t in split.offsite_tbl]
-    types = [t for t in types if split.offsite_tbl.get(t)]
+    types = [t for t in OFFSITE_DENSITY_TYPES if split.offsite_tbl.get(t)]
     if not types:
         return None
     nx, ny, nz = (int(x) for x in lattice.shape)
@@ -319,8 +316,18 @@ def build_factors(split, lattice, norb):
                               B_on=tuple(Bs), vpair=vpair, nbytes=nbytes)
 
 
-def _dens_idx(norb):
-    return np.arange(norb) * norb + np.arange(norb)          # (aa) pair slots
+def _dens_slice(norb):
+    """The ``(a, a)`` density pair slots as a BASIC slice.
+
+    Slot ``(a, a)`` sits at pair index ``a * norb + a = a * (norb + 1)``, so
+    the density slots of the ``nd = norb^2`` pair axis are the arithmetic
+    sequence ``0, norb + 1, ..., (norb - 1) (norb + 1)``: a regular stride.
+    Selecting them with this slice is BASIC indexing, so every gather is a
+    view and every ``out[..., slots] +=`` is a genuine in-place update --
+    no copy of the gathered block and no scatter temporary, which is what
+    keeps :func:`accumulate_batch` inside its documented budget.
+    """
+    return slice(None, None, norb + 1)
 
 
 def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
@@ -336,6 +343,20 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     ``T_bytes = 2 nb nvol nd^2 * 16`` budget of spec 2.5. With ``None``
     the buffers are allocated per call, as before. The buffers are
     scratch: their contents on entry are irrelevant and are overwritten.
+
+    Allocation contract (pinned by
+    ``tests/test_second_order_kernel.py::TestKernel::
+    test_allocation_peak_with_lent_buffers``): with ``work`` supplied the
+    kernel allocates NOTHING that scales with ``nb * nvol * nd^2``. Every
+    product is written with ``matmul(..., out=)`` into the lent buffers
+    (the off-site terms into sub-blocks of them, which are strided views),
+    and every density-slot gather and scatter goes through
+    :func:`_dens_slice`, i.e. basic indexing -- a view, not a fancy-index
+    copy. The one allocation left is the boolean mask of the finiteness
+    checkpoint below, ``nb * nvol * nd^2`` bytes (a sixteenth of one
+    complex batch array, ``T_bytes / 32``); on top of that only array-module
+    scratch that does not scale with the batch (matmul's own buffering for
+    strided operands, a few KiB).
     """
     xp = _bk.array_module_of(chibar_b)
     norb = factors.norb
@@ -350,14 +371,9 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
                 raise ValueError(
                     "accumulate_batch: {} has shape {}, expected chibar_b's {}"
                     .format(name, tuple(T.shape), tuple(chibar_b.shape)))
-    # on-site: 1/2 sum_triples A chibar B
-    for A, B in zip(factors.A_on, factors.B_on):
-        xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
-        xp.matmul(T1, xp.asarray(B)[None, None], out=T2)
-        T2 *= 0.5
-        out_b += T2
+    ds = _dens_slice(norb)
+    vp = None
     if factors.vpair is not None:
-        di = _dens_idx(norb)
         # The off-site vertex enters the LOCAL second order in its FILE
         # orientation: A_v is the crossed entry
         # Gamma_{(a up)(q sigma),(q sigma)(a up)} = -v^{file, up sigma}_{a q},
@@ -369,23 +385,44 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
         # differ (they are related by q -> -q); the orientation below is the one
         # the independent real-space oracle requires on every pair of coupling
         # types (tests/test_second_order_oracle.py, gate G2 (a)).
-        vp = xp.asarray(factors.vpair).swapaxes(-1, -2)            # (2, 2, nvol, norb, norb)
-        for (ss, sr, sq), A, B in zip(factors.triples, factors.A_on, factors.B_on):
-            if ss != UP or sr != sq:
-                continue
-            sig = sq
-            # A_on chibar B_v : (A chibar)[:, :, :, dens] @ (-vpair[sig, up])
-            xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
-            Td = T1[:, :, :, di]                                   # (nb, nvol, nd, norb)
-            out_b[:, :, :, di] += -xp.matmul(Td, vp[sig, UP][None])
-            # A_v chibar B_on : (-vpair[up, sig]) @ chibar[:, :, dens, :] @ B
-            Tr = -xp.matmul(vp[UP, sig][None], chibar_b[:, :, di, :])   # (nb, nvol, norb, nd)
-            out_b[:, :, di, :] += xp.matmul(Tr, xp.asarray(B)[None, None])
-        # A_v chibar B_v : sum_sig (-vpair[up,sig]) chibar[dens,dens] (-vpair[sig,up])
+        vp = xp.asarray(factors.vpair).swapaxes(-1, -2)        # (2, 2, nvol, norb, norb)
+    # on-site: 1/2 sum_triples A chibar B, and -- for the triples the mixed
+    # term selects -- the two on-site/off-site cross terms of the SAME
+    # triple, which reuse the ``A chibar`` product in T1 instead of
+    # recomputing it.
+    for (ss, sr, sq), A, B in zip(factors.triples, factors.A_on, factors.B_on):
+        Bb = xp.asarray(B)[None, None]
+        xp.matmul(xp.asarray(A)[None, None], chibar_b, out=T1)
+        xp.matmul(T1, Bb, out=T2)
+        T2 *= 0.5
+        out_b += T2
+        if vp is None or ss != UP or sr != sq:
+            continue
+        sig = sq
+        # A_on chibar B_v : (A chibar)[:, :, :, dens] @ (-vpair[sig, up]).
+        # T2 is free again (its content is already in out_b); T1 still holds
+        # A chibar, whose density-slot columns are the left operand.
+        P = T2[:, :, :, :norb]                                 # (nb, nvol, nd, norb)
+        xp.matmul(T1[:, :, :, ds], vp[sig, UP][None], out=P)
+        out_b[:, :, :, ds] -= P
+        # A_v chibar B_on : (-vpair[up, sig]) @ chibar[:, :, dens, :] @ B.
+        # The first product lands in T2 (P has been consumed), the second in
+        # T1 (A chibar is no longer needed in this iteration).
+        Q = T2[:, :, :norb, :]                                 # (nb, nvol, norb, nd)
+        xp.matmul(vp[UP, sig][None], chibar_b[:, :, ds, :], out=Q)
+        R = T1[:, :, :norb, :]
+        xp.matmul(Q, Bb, out=R)
+        out_b[:, :, ds, :] -= R
+    if vp is not None:
+        # A_v chibar B_v : sum_sig (-vpair[up,sig]) chibar[dens,dens] (-vpair[sig,up]).
+        # blk is a view and does not depend on sig.
+        blk = chibar_b[:, :, ds, ds]                           # (nb, nvol, norb, norb)
+        X = T1[:, :, :norb, :norb]
+        Y = T2[:, :, :norb, :norb]
         for sig in (UP, DN):
-            blk = chibar_b[:, :, di][:, :, :, di]                   # (nb, nvol, norb, norb)
-            out_b[:, :, di[:, None], di[None, :]] += xp.matmul(
-                xp.matmul(vp[UP, sig][None], blk), vp[sig, UP][None])
+            xp.matmul(vp[UP, sig][None], blk, out=X)
+            xp.matmul(X, vp[sig, UP][None], out=Y)
+            out_b[:, :, ds, ds] += Y
     if not bool(xp.all(xp.isfinite(out_b))):
         raise NonFiniteError("non-finite second-order kernel W2 in the frequency batch [{}, {})"
                              .format(l0, l0 + nb))
