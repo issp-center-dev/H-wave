@@ -426,6 +426,10 @@ class TestOffsiteGeneralFLEX(unittest.TestCase):
         records = []
         handler = logging.Handler()
         handler.emit = records.append
+        # WARNING-and-above only: the intent is "no such warning", not "no
+        # INFO record contains 'off-site'" -- immune to whatever an earlier
+        # test leaves the root logger's level at.
+        handler.setLevel(logging.WARNING)
         logger.addHandler(handler)
         try:
             _solve('tests/rpa/input_2orb', {'CoulombInter': 'onsite_inter.dat'})
