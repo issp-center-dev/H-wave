@@ -33,9 +33,10 @@ identical, the whole SCF trajectory is identical: same initial Green
 iteration count. A tolerance here would hide a real difference in the
 mean field. The only thing that could separate the two processes is a
 different numpy/BLAS on the two ``PYTHONPATH``s, which is not a thing on
-one machine; if a member ever does differ at round-off, the comparison
-below falls back to 1e-12 relative and SAYS which member it was, rather
-than quietly widening for everything.
+one machine. The comparison below therefore carries NO tolerance at all,
+not even a round-off fallback: there is no measurement such a fallback
+could be calibrated from, and it would be exactly the place where a real
+difference in the mean field could hide.
 
 WHICH CASES THE ORIENTATION ACTUALLY MOVES (and why the rest cannot)
 --------------------------------------------------------------------
@@ -84,8 +85,21 @@ really are different Hamiltonians. ``coulombinter.dat`` carries an
 ASYMMETRIC inter-orbital bond (``v_12(+x) = 0.4 != v_21(+x) = 0.25``),
 ``hund.dat`` an inter-orbital ``J``, ``pairhop.dat`` a COMPLEX off-site
 amplitude; every case also runs an on-site ``coulombintra.dat`` so the
-mean field is nontrivial. The ``*_so`` directories hold the same band
-written in spin-orbital indices (``so = 2a + s``, spin-diagonal) for the
+mean field is nontrivial. ``ising.dat``, ``exchange.dat`` and
+``pairlift.dat`` carry the same inter-orbital bond for the three types the
+bond and PairHop cases never reach -- their mean-field expressions are
+separate lines of ``hartree_fock.accumulate_hf``, duplicated again in the
+spin-orbital branch of ``uhfk.UHFk._make_ham``. ``pairlift.dat``'s
+amplitude is deliberately LARGE (3.5, against a bandwidth of order 1):
+PairLift contracts only the SPIN-OFF-DIAGONAL part of the density, UHFk's
+spin-collinear solution is a fixed point of the loop, and below the
+symmetry-breaking threshold the term contributes exactly zero however it
+is oriented (measured: 2.6e-28 at 0.16, 0.39 at 3.5). The declaration is a
+test fixture, not a physical model; what it has to do is make the
+contraction run.
+
+The ``*_so`` directories hold the same band written in spin-orbital
+indices (``so = 2a + s``, spin-diagonal) for the
 ``enable_spin_orbital = true`` twin of each case: UHFk supports every
 two-body type there (``uhfk._check_spin_orbital_compatibility``), the
 interaction files keep PHYSICAL orbital indices, and ``Ncond`` counts
@@ -124,6 +138,17 @@ _BOND = {"CoulombIntra": "coulombintra.dat",
 _BOND_FILES = ("coulombinter.dat", "hund.dat")
 _PAIRHOP = {"CoulombIntra": "coulombintra.dat", "PairHop": "pairhop.dat"}
 _PAIRHOP_FILES = ("pairhop.dat",)
+#: the three types whose spin-orbital contraction is a SEPARATE piece of
+#: code from the CoulombInter/Hund one (``uhfk.UHFk._make_ham``'s virtual
+#: branch duplicates the normal-mode expressions per type), declared
+#: together on inter-orbital off-site bonds so that one case covers them.
+_ALL_TYPES = {"CoulombIntra": "coulombintra.dat", "Ising": "ising.dat",
+              "Exchange": "exchange.dat", "PairLift": "pairlift.dat"}
+_ALL_TYPES_FILES = ("ising.dat", "exchange.dat", "pairlift.dat")
+#: Types that contribute NOTHING to a spin-collinear density, so that a case
+#: declaring one needs a spin-mixing initial Green to be non-vacuous for it.
+#: See the comment in :func:`_params`.
+_NEEDS_SPIN_MIXING = frozenset({"PairLift"})
 
 _HARTREE_ONLY = ("Hartree-only: the mean field reads the table as "
                  "sum_r J_ab(r), which the Hermitian closure makes "
@@ -132,8 +157,8 @@ _ONE_ORBITAL = ("norb = 1 with a real transfer: F^rev's Hamiltonian is the "
                 "complex conjugate of F's, and energy.dat's observables are "
                 "conjugation-invariant")
 
-#: The ten cases of the gate, keyed by label. ``moves`` says whether the
-#: orientation is visible in ``energy_total`` at all -- see the module
+#: The fourteen cases of the gate, keyed by label. ``moves`` says whether
+#: the orientation is visible in ``energy_total`` at all -- see the module
 #: docstring; ``why`` is the derivation for the ones where it is not.
 CASES = {c.label: c for c in (
     Case("bond/norb2/fock=on", "norb2", 2, _BOND, _BOND_FILES,
@@ -154,8 +179,16 @@ CASES = {c.label: c for c in (
          True, False, True, None),
     Case("pairhop/norb1/fock=on", "norb1", 1, _PAIRHOP, _PAIRHOP_FILES,
          False, True, False, _ONE_ORBITAL),
+    Case("pairhop/norb1/fock=off", "norb1", 1, _PAIRHOP, _PAIRHOP_FILES,
+         False, False, False, _ONE_ORBITAL),
     Case("pairhop/norb1/fock=on/so", "norb1_so", 1, _PAIRHOP, _PAIRHOP_FILES,
          True, True, False, _ONE_ORBITAL),
+    Case("pairhop/norb1/fock=off/so", "norb1_so", 1, _PAIRHOP, _PAIRHOP_FILES,
+         True, False, False, _ONE_ORBITAL),
+    Case("alltypes/norb2/fock=on", "norb2", 2, _ALL_TYPES, _ALL_TYPES_FILES,
+         False, True, True, None),
+    Case("alltypes/norb2/fock=on/so", "norb2_so", 2, _ALL_TYPES,
+         _ALL_TYPES_FILES, True, True, True, None),
 )}
 
 
@@ -172,6 +205,19 @@ def _params(case):
     interaction = {"path_to_input": ".", "Geometry": "geom.dat",
                    "Transfer": "transfer.dat"}
     interaction.update(case.files)
+    green_input = {"path_to_input": "", "interaction": interaction}
+    if _NEEDS_SPIN_MIXING & set(case.files):
+        # PairLift reads ONLY the spin-off-diagonal part of the density (its
+        # spin table is ``spin[0,0,1,1] = spin[1,1,0,0] = 1``, so both legs
+        # of its w1/w2 contractions cross the two spins). UHFk's default
+        # initial Green is ZERO, and the loop never leaves its
+        # spin-off-diagonal block: the term would contribute exactly 0.0 for
+        # ever and the case would be vacuous for it -- which is what
+        # ``_assert_offsite_energy_is_live`` below measured. Seeding the
+        # random initial Green (``RndSeed`` is pinned, so both sides of
+        # every comparison start from the same one) puts the spin mixing
+        # there.
+        green_input["initial_mode"] = "random"
     return {
         "log": {"print_level": 0, "print_step": 1000},
         "mode": {"mode": "UHFk",
@@ -182,7 +228,7 @@ def _params(case):
                            "IterationMax": 1000, "EPS": 12, "Mix": 0.5,
                            "RndSeed": 1,
                            "CellShape": [4, 1, 1], "SubShape": [1, 1, 1]}},
-        "file": {"input": {"path_to_input": "", "interaction": interaction},
+        "file": {"input": green_input,
                  "output": {"path_to_output": "output",
                             "energy": "energy.dat", "green": "green.dat"}},
     }
@@ -261,50 +307,68 @@ class _OrientationMixin:
     """Shared assertions, mixed into the two gates below (a plain mixin, so
     that no empty ``TestCase`` is discovered for it)."""
 
-    def _assert_same_run(self, a, b, what):
-        """Every member of two runs is equal: the key sets, every
-        ``energy.dat`` number and every ``green.dat.npz`` array, at
-        ``np.array_equal``.
+    def _assert_offsite_energy_is_live(self, case, energy, what):
+        """The OFF-SITE interaction of ``case`` actually contributes to the
+        energy this run reports.
 
-        A member that is merely equal to 1e-12 relative is accepted and
-        REPORTED (see the module docstring on why exactness is what is
-        expected); anything beyond that fails and names the member.
+        This is the anti-vacuity leg of every comparison below, and it has
+        to be the off-site term rather than the Green function: the free
+        Green function of a metal is nonzero whatever the interaction does,
+        so "the Green function is not zero" would be satisfied by a run
+        that never read ``coulombinter.dat`` at all. ``energy.dat`` carries
+        one member PER INTERACTION TYPE (``uhfk.UHFk._calc_energy`` fills
+        ``physics["Ene"][type]``, ``save_results`` prints it as
+        ``Energy_<type>``), so the off-site types of the case can be asked
+        for directly.
+
+        Asserted in EVERY case, the structurally blind ones included:
+        "blind" means ``F`` and ``F^rev`` give the same answer, not that
+        the interaction is absent -- a blind case whose off-site term had
+        silently dropped out would agree with everything and prove
+        nothing."""
+        for t in sorted(case.files):
+            if t == "CoulombIntra":
+                continue                    # on-site by construction
+            key = "Energy_" + t
+            self.assertIn(key, energy,
+                          "{}: energy.dat carries no {} member, so the "
+                          "off-site interaction is not in the energy at all"
+                          .format(what, key))
+            self.assertGreater(
+                abs(energy[key]), 1e-6,
+                "{}: the off-site {} contributes {:.3e} to the energy, i.e. "
+                "nothing -- the comparison would hold for a run that never "
+                "read the interaction".format(what, t, energy[key]))
+            print("\n{}: {} = {:.6e}".format(what, key, energy[key]))
+
+    def _assert_same_run(self, a, b, what, case):
+        """Every member of two runs is EXACTLY equal: the key sets, every
+        ``energy.dat`` number and every ``green.dat.npz`` array, at
+        ``np.array_equal`` -- no tolerance, not even at round-off.
+
+        The two runs do the same arithmetic on the same machine (see the
+        module docstring): the oriented table of ``F`` and the reference
+        revision's table of ``F^rev`` are bit-identical, so the whole SCF
+        trajectory is. A round-off fallback here would be a place for a
+        real difference in the mean field to hide, and there is no
+        measurement it could be calibrated from.
         """
         (ea, ga), (eb, gb) = a, b
         self.assertEqual(sorted(ea), sorted(eb),
                          "{}: energy.dat key sets differ".format(what))
         self.assertEqual(sorted(ga), sorted(gb),
                          "{}: green.dat.npz member names differ".format(what))
-        self.assertGreater(np.abs(ga["green"]).max(), 1e-6,
-                           "{}: the Green function is zero, so comparing it "
-                           "proves nothing".format(what))
-        rounded = []
+        self._assert_offsite_energy_is_live(case, ea, what)
         for key in sorted(ea):
-            if ea[key] == eb[key]:
-                continue
-            scale = max(abs(ea[key]), 1e-30)
-            self.assertLessEqual(
-                abs(ea[key] - eb[key]) / scale, 1e-12,
-                "{}: energy.dat member {} differs by {:.3e} relative"
-                .format(what, key, abs(ea[key] - eb[key]) / scale))
-            rounded.append("{} ({:.3e} rel)".format(
-                key, abs(ea[key] - eb[key]) / scale))
+            self.assertEqual(
+                ea[key], eb[key],
+                "{}: energy.dat member {} differs by {:.3e} absolute"
+                .format(what, key, abs(ea[key] - eb[key])))
         for key in sorted(ga):
-            if np.array_equal(ga[key], gb[key]):
-                continue
-            x, y = np.asarray(ga[key]), np.asarray(gb[key])
-            self.assertIn(x.dtype.kind, "fc",
-                          "{}: non-numeric member {} differs".format(what, key))
-            scale = max(float(np.abs(x).max()), 1e-30)
-            residual = float(np.abs(x - y).max()) / scale
-            self.assertLessEqual(
-                residual, 1e-12,
-                "{}: green.dat.npz member {} differs by {:.3e} of its own "
-                "size".format(what, key, residual))
-            rounded.append("{} ({:.3e} rel)".format(key, residual))
-        if rounded:
-            print("\nNOTE {}: bit-identical except at round-off: {}"
-                  .format(what, ", ".join(rounded)))
+            self.assertTrue(
+                np.array_equal(ga[key], gb[key]),
+                "{}: green.dat.npz member {} is not bit-identical"
+                .format(what, key))
 
     def _relative_energy_gap(self, a, b):
         ea, eb = a[0], b[0]
@@ -371,7 +435,7 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                 control = _run(reference, source, case)
             finally:
                 shutil.rmtree(reversed_dir, ignore_errors=True)
-            self._assert_same_run(mine, theirs, "case {}".format(label))
+            self._assert_same_run(mine, theirs, "case {}".format(label), case)
             gap = self._relative_energy_gap(mine, control)
             green_gap = self._relative_green_gap(mine, control)
             if case.moves:
@@ -427,10 +491,26 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
     @heavy
     def test_pairhop_complex(self):
         """The complex off-site ``PairHop`` amplitude, two orbitals and one,
-        Fock term on and off, normal and spin-orbital mode."""
+        Fock term on and off, normal and spin-orbital mode -- the full
+        2 x 2 x 2 matrix of (norb, Fock, spin-orbital)."""
         self._check("pairhop/norb2/fock=on", "pairhop/norb2/fock=off",
                     "pairhop/norb2/fock=on/so", "pairhop/norb2/fock=off/so",
-                    "pairhop/norb1/fock=on", "pairhop/norb1/fock=on/so")
+                    "pairhop/norb1/fock=on", "pairhop/norb1/fock=off",
+                    "pairhop/norb1/fock=on/so", "pairhop/norb1/fock=off/so")
+
+    @heavy
+    def test_all_types_bond(self):
+        """``Ising`` + ``Exchange`` + ``PairLift`` on inter-orbital off-site
+        bonds, normal and spin-orbital mode.
+
+        Every other case of this module exercises the ``CoulombInter`` /
+        ``Hund`` contraction or the ``PairHop`` one. These three are
+        separate expressions in ``hartree_fock.accumulate_hf`` (different
+        ``spin_table`` patterns) and separate expressions again in the
+        spin-orbital branch of ``uhfk.UHFk._make_ham``, which duplicates
+        them; this case is what says the orientation reaches those
+        duplicates too."""
+        self._check("alltypes/norb2/fock=on", "alltypes/norb2/fock=on/so")
 
 
 class TestFixturesAreOrientationSensitive(_OrientationMixin,
@@ -459,6 +539,10 @@ class TestFixturesAreOrientationSensitive(_OrientationMixin,
             reversed_run = _run(here, reversed_dir, case)
         finally:
             shutil.rmtree(reversed_dir, ignore_errors=True)
+        # the same anti-vacuity leg the gate above applies: an off-site term
+        # that contributed nothing would make every gap below meaningless,
+        # the "blind" verdicts most of all
+        self._assert_offsite_energy_is_live(case, mine[0], "case {}".format(label))
         return (self._relative_energy_gap(mine, reversed_run),
                 self._relative_green_gap(mine, reversed_run))
 
@@ -498,6 +582,13 @@ class TestFixturesAreOrientationSensitive(_OrientationMixin,
 
     def test_norb2_so_bond(self):
         self._assert_moves("bond/norb2/fock=on/so")
+
+    def test_norb2_all_types(self):
+        """The ``Ising`` + ``Exchange`` + ``PairLift`` declaration, normal
+        and spin-orbital mode: three contractions the bond and PairHop
+        fixtures never reach."""
+        self._assert_moves("alltypes/norb2/fock=on")
+        self._assert_moves("alltypes/norb2/fock=on/so")
 
     def test_hartree_only_is_blind(self):
         """``flag_fock = false``: the Hartree term reads the table only

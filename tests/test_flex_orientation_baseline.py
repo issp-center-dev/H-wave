@@ -31,10 +31,18 @@ unintended change (fix the code) or an intended one whose ED/oracle gates
 above were updated first and pass (regenerate the vectors, in the same
 commit as the change, and say so).
 
-Regeneration (deliberate, never automatic)::
+Regeneration (deliberate, never automatic) -- this module run as a SCRIPT,
+with the variable set::
 
     HWAVE_REGENERATE_ORIENTATION_VECTORS=1 PYTHONPATH=src:. \\
-        python3 -B -m pytest tests/test_flex_orientation_baseline.py -q
+        python3 -B tests/test_flex_orientation_baseline.py
+
+Nothing else rewrites the vectors. In particular, IMPORTING this module
+with the variable set -- which any ``pytest``/``unittest`` collection of
+the suite does -- writes nothing: see :func:`_regeneration_requested`. The
+script prints the files it wrote and runs no test, because verifying the
+code against a file it has just written proves nothing; re-run the suite
+afterwards to see the new pins pass.
 
 The fixture is the committed ``tests/rpa/input_2orb`` + ``coulombinter.dat``
 at ``CellShape = [4, 4, 1]``, ``norb = 2``, ``Nmat = 16`` (the two batch
@@ -267,22 +275,31 @@ def regenerate():
     return sorted(os.listdir(_VECTORS))
 
 
-if os.environ.get(_REGENERATE_ENV, "").strip() not in ("", "0", "false", "no", "off"):
-    # regeneration happens at IMPORT, so one run of this module rewrites the
-    # vectors and then verifies the code against what it just wrote
-    regenerate()
+def _regeneration_requested():
+    """True when ``HWAVE_REGENERATE_ORIENTATION_VECTORS`` asks for a rewrite.
+
+    Read only by the ``__main__`` entry point below -- never at import
+    time. Importing this module with the variable set (which every
+    ``pytest``/``unittest`` collection of the whole suite would do once an
+    operator exported it) must not overwrite the committed vectors: a
+    rewrite is a deliberate, single act, and a regeneration that happened
+    as a side effect of collecting an unrelated test would replace the pins
+    with whatever the working tree currently produces and then "verify"
+    the code against it."""
+    return os.environ.get(_REGENERATE_ENV, "").strip() not in ("", "0", "false", "no", "off")
 
 
 class TestOrientationVectors(unittest.TestCase):
     """The moved paths against their committed fixed state.
 
-    The only skip these tests may take is a MISSING vector file, and that
-    is a broken checkout, not a configuration: the files are committed."""
+    These tests take no skip at all. A MISSING vector file is a broken
+    checkout, not a configuration: the files are committed, so the only
+    honest verdict for an absent one is a failure."""
 
     def _load(self, name):
         p = _path(name)
         if not os.path.exists(p):
-            self.skipTest(
+            self.fail(
                 "the committed fixed-state vector {} is missing; it is part of "
                 "the repository -- restore it, or regenerate deliberately with "
                 "{}=1".format(p, _REGENERATE_ENV))
@@ -335,4 +352,10 @@ class TestOrientationVectors(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    if _regeneration_requested():
+        # the ONLY route that rewrites the vectors: this module run as a
+        # script, with the variable set. It then exits -- verifying the code
+        # against the file it has just written would say nothing.
+        print("\n".join(regenerate()))
+    else:
+        unittest.main()

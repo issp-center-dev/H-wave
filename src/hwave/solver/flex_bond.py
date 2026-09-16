@@ -130,7 +130,7 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration):
     return chi_b, cond
 
 
-def mixed_pair_permutation(B, nd, norb):
+def _mixed_pair_permutation(B, nd, norb):
     """Index vector on the ``(B nd)`` pair axis: the IDENTITY on channel 0,
     the orbital-pair transpose ``(l1, l2) -> (l2, l1)`` inside every
     ``m != 0`` block.
@@ -183,7 +183,7 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
     independent density interaction is counted once by the ring),
     mixed channel-0/bond blocks ``1/4 (S chibar S + C chibar C)`` read at
     the PERMUTED pair index on both axes (the exchange skeleton, once:
-    :func:`mixed_pair_permutation` -- identity on channel 0, the
+    :func:`_mixed_pair_permutation` -- identity on channel 0, the
     orbital-pair transpose inside every bond block, so that the bond-side
     leg of the bubble and the bond vertex are taken at the transposed
     orbital pair; identity at ``norb = 1`` and on orbital-diagonal bonds)
@@ -222,9 +222,18 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
     if norb * norb != nd:
         raise ValueError("dress_and_build_w: nd = {} is not a square of an orbital "
                          "count".format(nd))
+    # the pair axis is a whole number of channel blocks, or the block layout
+    # the permutation below assumes (pair index m * nd + a * norb + b) does
+    # not describe this matrix and B = ND // nd would silently truncate.
+    # BondBlockStore makes the same check on ITS ND; this one is on the
+    # VERTEX's, which is a separate argument and need not be the store's
+    if ND % nd != 0:
+        raise ValueError("dress_and_build_w: the vertex pair dimension ND = {} is not a "
+                         "multiple of the channel block size nd = {}, so it does not carry "
+                         "whole bond-channel blocks".format(ND, nd))
     # the pair permutation of the mixed second-order blocks, built once (it
     # depends on the block layout only, not on the frequency batch)
-    perm = mixed_pair_permutation(ND // nd, nd, norb)
+    perm = _mixed_pair_permutation(ND // nd, nd, norb)
     SpC_on = np.asarray(S_on) + np.asarray(C_on)
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
     collapse_s = np.empty_like(collapse0)
@@ -323,7 +332,7 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
     skeleton, twice the exchange skeleton and half the direct skeleton to
     1e-15.  At norb > 1 the "twice the exchange skeleton" reading of the
     mixed blocks holds only once their pair index is permuted -- see
-    :func:`mixed_pair_permutation`, which dress_and_build_w applies and
+    :func:`_mixed_pair_permutation`, which dress_and_build_w applies and
     which is the identity at norb = 1; with it the mixed blocks are the
     exact mixed on-site x bond second order on every bond).  With
     chibar(q, i nu)^dagger = chibar(q, -i nu) the symmetry

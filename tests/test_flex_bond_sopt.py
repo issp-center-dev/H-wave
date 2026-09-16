@@ -419,7 +419,7 @@ class TestG2(unittest.TestCase):
         orc = oracle_sigma2(grid.G, beta, oracle_records(rows, 2), 2, "exact")[0]
         self.assertGreater(np.abs(orc).max(), 1e-6)                      # anti-vacuity
         self.assertLess(_rel(c_gate["c02"], orc), 1e-8)
-        with mock.patch.object(flex_bond, "mixed_pair_permutation",
+        with mock.patch.object(flex_bond, "_mixed_pair_permutation",
                                lambda B, nd, norb: np.arange(B * nd)):
             c_identity, _ = _coefficients(2, gate=True, inter_rows=_INTERORBITAL_ROWS)
         self.assertGreater(_rel(c_identity["c02"], orc), 1e-3,

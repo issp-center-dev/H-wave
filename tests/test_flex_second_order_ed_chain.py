@@ -143,7 +143,7 @@ Phase B defect on inter-orbital off-site bonds (issue #192): the mixed
 (channel-0 x bond) second-order blocks read the bond-side leg of the
 bubble and the bond vertex at the UNTRANSPOSED orbital pair. Since the
 pair permutation of spec 2026-09-16 R3
-(:func:`hwave.solver.flex_bond.mixed_pair_permutation`) the gate lands on
+(:func:`hwave.solver.flex_bond._mixed_pair_permutation`) the gate lands on
 3.5e-4 -- the same place as ``local + dropped``, which is the FLOOR of
 this working point -- and :meth:`TestG4.test_interorbital_bond_chain`
 asserts it there, in a band around a floor it measures itself and against

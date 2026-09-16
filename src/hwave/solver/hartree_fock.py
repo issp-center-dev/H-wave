@@ -41,15 +41,15 @@ HF_TYPE_ORDER = ("CoulombIntra", "CoulombInter", "Hund", "Ising",
                  "PairLift", "Exchange", "PairHop")
 
 # The types whose displacement table is read in the documented orientation
-# (spec 2026-09-16 D-1, :func:`orient_documented`): every two-body type that
+# (spec 2026-09-16 D-1, :func:`_orient_documented`): every two-body type that
 # can carry an OFF-SITE row. ``CoulombIntra`` is not one of them -- the
 # builder keeps only its on-site, orbital-diagonal entries and discards the
 # rest -- so the step would be a no-op there. Named here, rather than spelled
 # out at the loop below, because the compatibility tests have to undo exactly
 # this set (tests/test_flex_second_order_compat.py::_legacy_tables); a type
 # added to one list and not the other would undo too little in silence.
-ORIENTED_TYPES = ("CoulombInter", "Hund", "Ising", "PairLift", "Exchange",
-                  "PairHop")
+_ORIENTED_TYPES = ("CoulombInter", "Hund", "Ising", "PairLift", "Exchange",
+                   "PairHop")
 
 
 class NonFiniteError(FloatingPointError):
@@ -77,7 +77,7 @@ def _reverse_closed(tab_r):
     return (tab_r + tba) / 2
 
 
-def orient_documented(tab_r):
+def _orient_documented(tab_r):
     """Read every OFF-SITE displacement table in the documented orientation
     (spec 2026-09-16 D-1): a row (r, a, b, v) means v n_{j,a} n_{j+r,b}.
 
@@ -216,11 +216,11 @@ def build_interaction_tables(param_ham, norb, shape):
         inter_table["PairHop"] = None
 
     changed = 0
-    for t in ORIENTED_TYPES:
+    for t in _ORIENTED_TYPES:
         tab = inter_table.get(t)
         if tab is None:
             continue
-        new = orient_documented(tab)
+        new = _orient_documented(tab)
         diff = np.any(new != tab, axis=(-1, -2))
         diff[0, 0, 0] = False
         changed += int(np.count_nonzero(diff))

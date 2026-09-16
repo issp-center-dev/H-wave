@@ -127,7 +127,7 @@ def _legacy_tables(tables):
     """``tables`` with the documented-orientation step UNDONE, i.e. the
     tables the reference revision builds from the same declaration.
 
-    :func:`hwave.solver.hartree_fock.orient_documented` is an involution
+    :func:`hwave.solver.hartree_fock._orient_documented` is an involution
     (the conjugate transpose at fixed ``r``, with ``r = 0`` untouched), so
     applying it a second time to each oriented type restores the reference
     revision's table exactly -- no second source tree and no
@@ -135,10 +135,10 @@ def _legacy_tables(tables):
     from hwave.solver import hartree_fock as hf
     inter = dict(tables.inter_table)
     # the source's own list, not a copy of it: the undo has to cover exactly
-    # the set the builder orients (hartree_fock.ORIENTED_TYPES)
-    for t in hf.ORIENTED_TYPES:
+    # the set the builder orients (hartree_fock._ORIENTED_TYPES)
+    for t in hf._ORIENTED_TYPES:
         if inter.get(t) is not None:
-            inter[t] = hf.orient_documented(inter[t])
+            inter[t] = hf._orient_documented(inter[t])
     return hf.InteractionTables(inter, tables.spin_table, tables.discarded)
 
 
@@ -367,7 +367,7 @@ class TestCompatibility(unittest.TestCase):
         The reference map is reproduced in process rather than through a
         second source tree: it is today's map on the LEGACY tables of
         ``F^rev``, i.e. ``build_flex_hf_tables(F^rev)`` with the orientation
-        step undone (:func:`_legacy_tables`; ``orient_documented`` is an
+        step undone (:func:`_legacy_tables`; ``_orient_documented`` is an
         involution). The end-to-end version of the same statement, against
         the real reference tree and through ``solve``, is
         ``tests/test_flex_hf_scf.py::TestG0Off::
