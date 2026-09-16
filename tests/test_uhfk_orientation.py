@@ -94,9 +94,14 @@ amplitude is deliberately LARGE (3.5, against a bandwidth of order 1):
 PairLift contracts only the SPIN-OFF-DIAGONAL part of the density, UHFk's
 spin-collinear solution is a fixed point of the loop, and below the
 symmetry-breaking threshold the term contributes exactly zero however it
-is oriented (measured: 2.6e-28 at 0.16, 0.39 at 3.5). The declaration is a
-test fixture, not a physical model; what it has to do is make the
-contraction run.
+is oriented (measured: 2.6e-28 at 0.16, 0.39 at 3.5). ``ising.dat`` is
+raised for the same reason and a weaker one (2.0): in the broken-symmetry
+state PairLift produces, the Ising contribution is suppressed, and at 0.3 it
+cleared the anti-vacuity floor by only 2.6x (2.57e-06, i.e. 4e-07 of the
+total energy); at 2.0 it is 5.97e-04, and the reference control's gap on the
+unreversed declaration widens from 1.93e-03 to 3.93e-03. The declaration is
+a test fixture, not a physical model; what it has to do is make the
+contraction run and leave a margin worth measuring.
 
 The ``*_so`` directories hold the same band written in spin-orbital
 indices (``so = 2a + s``, spin-diagonal) for the

@@ -162,11 +162,13 @@ class TestOrientation(unittest.TestCase):
 
         ``accumulate_hf`` on a fixed density gives the same matrix from the
         oriented tables and from the un-oriented ones, bit for bit, on a
-        real orbital-diagonal declaration. The control on the next lines is
-        what makes that mean something: the same comparison on the
-        INTER-ORBITAL declaration of ``_ham`` moves the mean field, so the
-        equality above is a property of the declaration and not of
-        ``accumulate_hf`` ignoring its tables."""
+        real orbital-diagonal declaration. Taken alone that leg is close to
+        a tautology -- on this class the orientation IS the identity, so the
+        two table sets are the same arrays and ``accumulate_hf`` cannot tell
+        them apart. What the method actually pins is the pair: that the mean
+        field of the declared-invariant class does not move WHILE the same
+        comparison on the INTER-ORBITAL declaration of ``_ham`` does, which
+        is the control on the next lines."""
         nvol = int(np.prod(self.shape))
         rho = _random_density(nvol, self.norb)
 
@@ -198,9 +200,15 @@ class TestOrientation(unittest.TestCase):
         ``build_interaction_tables`` is where ``Coulomb`` is split
         (``wan90.split_coulomb``: the ``r = 0`` orbital-diagonal entries are
         ``CoulombIntra``, everything else ``CoulombInter``), i.e. the split
-        happens INSIDE the function whose last step orients. A user who
-        declares one aggregate file must therefore get exactly what the
-        explicitly split declaration gives -- the orientation step included,
+        happens INSIDE the function whose last step orients. The orientation
+        loop itself is shared, not per-route, so this is not a route-specific
+        step being checked: what the method pins is the COMPOSITION of the
+        split with it in the aggregate branch -- a branch that builds its own
+        ``uab_r``/``vab_r`` and fills ``inter_table`` separately from the
+        explicit one, and could therefore drift from it (a different
+        closure, a table written after the loop) without any other test
+        noticing. A user who declares one aggregate file must get exactly
+        what the explicitly split declaration gives, orientation included,
         which is what the second leg checks."""
         intra = {((0, 0, 0), (0, 0)): 2.0, ((0, 0, 0), (1, 1)): 1.5}
         inter = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4,

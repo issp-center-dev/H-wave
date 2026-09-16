@@ -57,6 +57,11 @@ three between the two shapes of the suite would mean a fast gate that
 re-derives most of a chain ED without ever reaching the verdict the module
 exists for. Their cost is deferred knowingly, with the sibling.
 
+Every OTHER entry below is over the rule on its own, measured. Two of them
+sit close to it and carry the measurement in their reason string, so that a
+reader who wants to re-check the selection does not have to re-time them
+blind.
+
 CONSISTENCY IS ENFORCED, NOT TRUSTED
 ------------------------------------
 ``tests/test_heavy_tests_registry.py`` fails the FAST gate when this file
@@ -252,11 +257,11 @@ HEAVY_TESTS = (
     ("test_uhfk_orientation", "TestUHFkOrientation", "test_all_types_bond",
      "three UHFk runs per case x two inter-orbital Ising/Exchange/PairLift "
      "cases (normal and spin-orbital) against the reference revision on "
-     "the reversed declaration (4.7 s measured -- at the rule, and the "
-     "three contractions it covers move only when a vertex is edited)"),
+     "the reversed declaration (6.1-6.3 s measured)"),
     ("test_uhfk_orientation", "TestUHFkOrientation", "test_bond_variants",
      "three UHFk runs per case x three cases (Fock off, spin-orbital) "
-     "against the reference revision on the reversed declaration"),
+     "against the reference revision on the reversed declaration "
+     "(5.7 s measured -- the closest entry to the rule)"),
     ("test_uhfk_orientation", "TestUHFkOrientation", "test_pairhop_complex",
      "three UHFk runs per case x eight complex-PairHop cases (norb 2 and "
      "1, Fock on and off, normal and spin-orbital) against the reference "
