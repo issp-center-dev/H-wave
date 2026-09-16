@@ -4,17 +4,20 @@ production ``Sigma_fluct`` (frozen bare G at a fixed mu, quadratic fit on a
 equal the independent real-space oracle's for a covering set of pure
 interaction types and mixed pairs; the dropped (off/off uncrossed) class is
 load-bearing for an off-site V; and the bond gate reproduces the FULL
-(exact) oracle for an ORBITAL-DIAGONAL off-site CoulombInter bond.
+(exact) oracle for an off-site CoulombInter bond, orbital-diagonal and
+inter-orbital alike.
 
 What is asserted and what is recorded: the whole covering set of (b) and
 the dropped-class ratio are ASSERTED, and so is the bond gate against the
-exact oracle on the orbital-DIAGONAL off-site bond; the gate's deviation on
-an ORBITAL-OFF-DIAGONAL off-site bond and on off-site Hund/Ising is
-RECORDED by a print (spec G2 (c)), because that class is adjudicated by the
-chain exact-diagonalization gate, not here. The records are nonetheless
-PINNED (:data:`_PINNED_GATE`): the inter-orbital deviation -- the Phase B
-defect of issue #192 -- is held inside a band in both directions, and the
-two round-off-level records to a ceiling, so neither can drift unnoticed.
+exact oracle on BOTH off-site CoulombInter bonds -- the orbital-diagonal
+one and the orbital-off-diagonal one, the latter since the pair
+permutation of spec 2026-09-16 R3 closed issue #192 (it used to miss by
+1.6e-3, and is adjudicated against exact diagonalisation by the chain
+gate, ``tests/test_flex_second_order_ed_chain.py``). The gate's deviation
+on off-site Hund/Ising is RECORDED by a print (spec G2 (c)), because that
+class is adjudicated by the chain gate rather than here; the two records
+are held to a ceiling (:data:`_ROUNDOFF_CEIL`) so they cannot drift
+unnoticed.
 
 The EXTRACTION is checked too, not only its outcome
 ---------------------------------------------------
@@ -143,19 +146,23 @@ _LADDER_BOUND = 1.0e-4
 #: three orders below every other entry's 1e-6 ... 3e-5.
 _RESIDUAL_FLOOR = 1.0e-9
 
-#: RECORDED gate-on deviations, pinned. ``V`` is the inter-orbital off-site
-#: bond whose bond-gate deviation is issue #192 (the chain
-#: exact-diagonalization gate adjudicates it against ED and measures
-#: 4.0e-2 there); ``JV``/``IV`` are off-site Hund/Ising, where the gate
-#: does reproduce the exact oracle and the recorded number is round-off.
-_PINNED_GATE = {"V": 1.629e-3, "JV": 3.5e-11, "IV": 3.0e-11}
+#: RECORDED gate-on deviations -- a MEASURED REFERENCE, not a pin. These
+#: are the numbers this module measured when it was written; they are
+#: printed alongside the fresh measurement so a reader can see whether it
+#: moved, and the only thing ASSERTED about either is the common ceiling
+#: :data:`_ROUNDOFF_CEIL`. Holding them to a band would be asserting the
+#: exact bit pattern of a BLAS reduction: they sit at the round-off floor
+#: of a 1e-1-sized coefficient.
+#:
+#: ``JV``/``IV`` are off-site Hund/Ising, where the gate reproduces the
+#: exact oracle. (``V``, the inter-orbital off-site CoulombInter bond of
+#: issue #192, is not among them: since the pair permutation of spec
+#: 2026-09-16 R3 the gate reproduces the exact oracle there too, so it is
+#: ASSERTED alongside the orbital-diagonal ``Vd``.)
+_MEASURED_GATE_REFERENCE = {"JV": 3.5e-11, "IV": 3.0e-11}
 
-#: Relative band for the ``V`` entry of :data:`_PINNED_GATE`. The other two
-#: entries are at the round-off floor of a 1e-1-sized coefficient, so only
-#: their CEILING is meaningful (a lower bound there would be asserting the
-#: exact bit pattern of a BLAS reduction); they are held below
-#: :data:`_ROUNDOFF_CEIL` instead.
-_PINNED_BAND = 0.20
+#: The ceiling that IS asserted, on every entry of
+#: :data:`_MEASURED_GATE_REFERENCE` and on the fresh measurement beside it.
 _ROUNDOFF_CEIL = 1.0e-9
 
 _TABLE = dict(_ONSITE, **_OFFSITE)
@@ -393,16 +400,15 @@ class TestG2Heavy(unittest.TestCase):
         """G2 (c): with the bond gate on, the off-site exchange crossing the
         local kernel drops is resummed too, so the second order must be the
         FULL (exact) oracle -- asserted here on an ORBITAL-DIAGONAL off-site
-        CoulombInter bond (:data:`_V_DIAG`).
+        CoulombInter bond (:data:`_V_DIAG`) and on the ORBITAL-OFF-DIAGONAL
+        one (``_OFFSITE["V"]``, whose leading rows are ``v_12(+x)``).
 
-        The deviation on an ORBITAL-OFF-DIAGONAL off-site bond
-        (``_OFFSITE["V"]``, whose leading rows are ``v_12(+x)``) and on
-        off-site Hund/Ising is RECORDED by a print rather than asserted:
-        the inter-orbital off-site second-order self-energy is adjudicated
-        by the chain exact-diagonalization gate
-        (``tests/test_flex_second_order_ed_chain.py``) for both the
-        standalone path and the bond gate; a deviation there is a bond-gate
-        follow-up, not a kernel finding."""
+        The inter-orbital entry was RECORDED rather than asserted while the
+        bond gate's mixed second-order blocks missed it (issue #192); the
+        pair permutation of spec 2026-09-16 R3 closed that, and the
+        adjudication against exact diagonalisation lives in the chain gate
+        ``tests/test_flex_second_order_ed_chain.py``. Off-site Hund/Ising
+        stay RECORDED: that class belongs to the chain gate too."""
         c, diag = _coefficients("Vd", "Vd", True, "exact")
         self._check_extraction("Vd", "c20", c, diag, _FLOOR_PURE)
         prod, orc = c["c20"]
@@ -415,40 +421,36 @@ class TestG2Heavy(unittest.TestCase):
         l, _ = _coefficients("Vd", "Vd", True, "local")
         self.assertGreater(np.abs(l["c20"][1]).max(), _FLOOR_PURE)           # anti-vacuity
         self.assertGreater(np.abs(d["c20"][1]).max(), 1e-3 * np.abs(l["c20"][1]).max())
-        for name in ("V", "JV", "IV"):
+        # the ORBITAL-OFF-DIAGONAL off-site bond (_OFFSITE["V"], whose
+        # leading rows are v_12(+x)) is asserted the same way since the pair
+        # permutation of spec 2026-09-16 R3 closed issue #192: the mixed
+        # (channel-0 x bond) second-order blocks now read the bond-side leg
+        # and the bond vertex at the transposed orbital pair, which is the
+        # exact mixed class on an inter-orbital bond. It used to miss the
+        # exact oracle by 1.6e-3 here (4.0e-2 against exact diagonalisation
+        # in tests/test_flex_second_order_ed_chain.py, which adjudicates it).
+        c, diag = _coefficients("V", "V", True, "exact")
+        self._check_extraction("V", "c20", c, diag, _FLOOR_PURE)
+        prod, orc = c["c20"]
+        self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)                   # anti-vacuity
+        self.assertLess(_rel(prod, orc), 1e-8, "V (inter-orbital off-site bond, issue #192)")
+        for name in ("JV", "IV"):
             c, diag = _coefficients(name, name, True, "exact")
             self._check_extraction(name, "c20", c, diag, _FLOOR_PURE)
             prod, orc = c["c20"]
             self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)               # anti-vacuity
             rel = _rel(prod, orc)
-            expect = _PINNED_GATE[name]
+            reference = _MEASURED_GATE_REFERENCE[name]
             print("RECORDED gate-on second order for {}: relative deviation {:.3e} "
-                  "(pinned {:.3e})".format(name, rel, expect))
+                  "(measured reference {:.3e})".format(name, rel, reference))
             self.assertTrue(np.isfinite(rel), "{}: the recorded deviation is not finite".format(name))
-            # The deviation is RECORDED, not asserted as an agreement (spec
-            # G2 (c)): the inter-orbital off-site second-order self-energy is
-            # adjudicated against exact diagonalisation by
-            # tests/test_flex_second_order_ed_chain.py, for both the
-            # standalone path and the bond gate, and the deviation there is a
-            # Phase B defect (issue #192), not a kernel finding. But the
-            # record is PINNED, so it cannot drift unnoticed in either
-            # direction.
-            if name == "V":
-                self.assertGreater(rel, expect * (1.0 - _PINNED_BAND),
-                                   "{}: measured {:.3e}, pinned {:.3e}. A SMALLER deviation "
-                                   "means the bond gate's inter-orbital behaviour has changed "
-                                   "for the better -- update the expectation and issue #192."
-                                   .format(name, rel, expect))
-                self.assertLess(rel, expect * (1.0 + _PINNED_BAND),
-                                "{}: measured {:.3e}, pinned {:.3e} -- a regression in the "
-                                "bond gate on inter-orbital off-site bonds (issue #192)."
-                                .format(name, rel, expect))
-            else:
-                # at the round-off floor of a 1e-1-sized coefficient: only the
-                # ceiling is a statement about the code (see _ROUNDOFF_CEIL)
-                self.assertLess(rel, _ROUNDOFF_CEIL,
-                                "{}: the bond gate no longer reproduces the exact oracle "
-                                "(measured {:.3e}, recorded {:.3e})".format(name, rel, expect))
+            # at the round-off floor of a 1e-1-sized coefficient: only the
+            # ceiling is a statement about the code (see _ROUNDOFF_CEIL);
+            # the reference above is printed for comparison, not asserted
+            self.assertLess(rel, _ROUNDOFF_CEIL,
+                            "{}: the bond gate no longer reproduces the exact oracle "
+                            "(measured {:.3e}, measured reference {:.3e})"
+                            .format(name, rel, reference))
 
 
 if __name__ == "__main__":

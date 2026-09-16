@@ -4,6 +4,14 @@ Mirrors tests/test_flex_ir.py but for calc_scheme='general' on a norb=2
 ON-SITE fixture. Equivalence is convergence of the uniform result toward the
 IR result as Nmat grows (the uniform path carries the O(beta/Nmat) artifact).
 Run from the repository root.
+
+One test here compares against a SECOND source tree at
+tests/test_flex_second_order_compat.DEVELOP_COMMIT. CI provisions that
+reference revision (a detached worktree under RUNNER_TEMP; see
+.github/workflows/ci-python39.yml) and sets
+HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so the comparison RUNS there and a
+missing or unusable reference fails rather than skips. Locally it skips
+with a reason when no such checkout is at hand.
 """
 import os
 import unittest
@@ -730,7 +738,9 @@ def _develop_checkout():
     """``(path, None)`` when the reference checkout is usable, ``(None,
     reason)`` otherwise -- one shared rule with the uniform-grid harness
     (:func:`tests.test_flex_second_order_compat.develop_checkout`), which
-    also pins the REVISION it compares against and refuses a dirty tree."""
+    also pins the REVISION it compares against, refuses a dirty tree, and
+    RAISES instead of returning a reason when the comparison is declared
+    mandatory (``HWAVE_REQUIRE_DEVELOP_COMPARISON``, which CI sets)."""
     from tests.test_flex_second_order_compat import develop_checkout
     return develop_checkout()
 
@@ -784,21 +794,25 @@ def test_second_order_local_ir_matches_uniform_onsite_uprime():
 
 
 def test_second_order_takimoto_ir_numerically_identical_to_develop():
-    """``"takimoto"`` on the IR path is still develop's code path: every
-    numerical archive member of a general+IR run with the key set to
-    ``"takimoto"`` is ``np.array_equal`` to the same run on the develop
-    checkout, where the key does not exist.
+    """``"takimoto"`` on the IR path is still the reference revision's code
+    path: every numerical archive member of a general+IR run with the key
+    set to ``"takimoto"`` is ``np.array_equal`` to the same run, same key,
+    on the reference source tree.
 
-    The uniform-grid half of this contract lives in
-    ``tests/test_flex_second_order_compat.py``; this is its IR twin, run
-    through the same subprocess harness (the develop checkout is a second
-    source tree, so it can only be exercised out of process)."""
+    The fixture is ON-SITE only (``_write_2d_2orb_onsite_fixture``), so the
+    interaction-row orientation change (issue #193) does not reach it: the
+    identity is expected to hold unchanged. The uniform-grid half of this
+    contract, including the off-site fixture and the paths that DID move,
+    lives in ``tests/test_flex_second_order_compat.py``; this is its IR
+    twin, run through the same subprocess harness (the reference revision
+    is a second source tree, so it can only be exercised out of
+    process)."""
     import shutil
     import subprocess
     import sys
     import tempfile
     from tests.test_flex_general import _write_2d_2orb_onsite_fixture
-    from tests.test_flex_second_order_compat import _members
+    from tests.test_flex_second_order_compat import _members, reference_subprocess_env
     dev, why = _develop_checkout()
     if dev is None:
         pytest.skip(why)
@@ -808,9 +822,17 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     b = tempfile.mkdtemp(prefix="hwave_ir_so_here_")
     try:
         _write_2d_2orb_onsite_fixture(fixture)
-        for checkout, out, so in ((dev, a, "absent"), (here, b, "takimoto")):
-            env = dict(os.environ,
-                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+        # "takimoto" on BOTH sides: the reference revision is the merge that
+        # added flex_second_order and defaults it to "local", so leaving the
+        # key out there would compare two different kernels rather than two
+        # revisions (see tests/test_flex_second_order_compat.DEVELOP_COMMIT)
+        for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
+            if checkout == here:
+                # this tree's own run: keep it measured
+                env = dict(os.environ,
+                           PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            else:
+                env = reference_subprocess_env(checkout)
             subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
                            env=env, check=True, capture_output=True, cwd=checkout)
         ma, mb = _members(a), _members(b)

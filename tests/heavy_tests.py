@@ -57,6 +57,11 @@ three between the two shapes of the suite would mean a fast gate that
 re-derives most of a chain ED without ever reaching the verdict the module
 exists for. Their cost is deferred knowingly, with the sibling.
 
+Every OTHER entry below is over the rule on its own, measured. Two of them
+sit close to it and carry the measurement in their reason string, so that a
+reader who wants to re-check the selection does not have to re-time them
+blind.
+
 CONSISTENCY IS ENFORCED, NOT TRUSTED
 ------------------------------------
 ``tests/test_heavy_tests_registry.py`` fails the FAST gate when this file
@@ -188,7 +193,8 @@ HEAVY_TESTS = (
      "test_interorbital_bond_chain",
      "G4: the L = 3 two-orbital chain with an orbital-asymmetric "
      "inter-orbital off-site bond adjudicates the off-site vertex "
-     "orientation (asserted) and the bond gate's deviation (recorded)"),
+     "orientation and the bond gate, both asserted -- the gate against a "
+     "floor the test measures itself and against the exact oracle"),
     # --- tests/test_flex_second_order_ed_onsite.py -- #181 second-order G3 --
     ("test_flex_second_order_ed_onsite", "TestG3",
      "test_every_type_and_pair",
@@ -247,6 +253,19 @@ HEAVY_TESTS = (
     ("test_spinful_transverse_ed", "TestTask4TsoZeroControl",
      "test_pairlift_returns_to_pass_zero_at_tso_zero",
      "t_so=0 isolation control for PairLift"),
+    # --- tests/test_uhfk_orientation.py -- #193 end-to-end UHFk gate -----
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_all_types_bond",
+     "three UHFk runs per case x two inter-orbital Ising/Exchange/PairLift "
+     "cases (normal and spin-orbital) against the reference revision on "
+     "the reversed declaration (6.1-6.4 s measured)"),
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_bond_variants",
+     "three UHFk runs per case x three cases (Fock off, spin-orbital) "
+     "against the reference revision on the reversed declaration "
+     "(5.7 s measured -- the closest entry to the rule)"),
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_pairhop_complex",
+     "three UHFk runs per case x eight complex-PairHop cases (norb 2 and "
+     "1, Fock on and off, normal and spin-orbital) against the reference "
+     "revision on the reversed declaration"),
 )
 
 #: The four fast-gate tests that exceed the 5 s rule by documented

@@ -61,7 +61,15 @@ class TestDressAndBuildW(unittest.TestCase):
     def test_w_and_collapses_and_static(self):
         """The rev-19 channel-0 kernel ("takimoto", explicit) and the exact
         local one ("local"); the mixed and bond-bond blocks are the same
-        under both."""
+        under both.
+
+        The mixed (channel-0 x bond) blocks are read at the PERMUTED pair
+        index on both axes -- the orbital-pair transpose inside every bond
+        block, spec 2026-09-16 R3 (issue #192) -- and the permutation is
+        built here independently of the production helper, from the block
+        layout alone. The synthetic problem has ``nd = 4`` (norb = 2) and a
+        random, orbital-asymmetric ``chi_bar``/``S``/``C``, so it sees the
+        permutation."""
         from hwave.solver.flex_bond import BondBlockStore, dress_and_build_w
         from hwave.solver.second_order import dense_w2
         chi_bar, S, C = _problem(nmat=6, nvol=4, nd=4, B=3)
@@ -94,8 +102,19 @@ class TestDressAndBuildW(unittest.TestCase):
                     else:
                         # spec 2026-09-08 D5: the exact local kernel on channel 0
                         W2[:, :, :nd, :nd] = dense_w2(chi_bar[:, :, :nd, :nd], factors)
-                    W2[:, :, :nd, nd:] = 0.25 * (A + Bc)[:, :, :nd, nd:]
-                    W2[:, :, nd:, :nd] = 0.25 * (A + Bc)[:, :, nd:, :nd]
+                    # the pair permutation of the mixed blocks: identity on
+                    # channel 0 (never reached below, which only reads the
+                    # bond half), the orbital-pair transpose (l1, l2) ->
+                    # (l2, l1) inside every bond block
+                    norb = int(round(nd ** 0.5))
+                    pb = np.arange(nd, ND)
+                    for m in range(1, ND // nd):
+                        for l1 in range(norb):
+                            for l2 in range(norb):
+                                pb[m * nd + l1 * norb + l2 - nd] = m * nd + l2 * norb + l1
+                    AB = 0.25 * (A + Bc)
+                    W2[:, :, :nd, nd:] = AB[:, :, :nd, pb]
+                    W2[:, :, nd:, :nd] = AB[:, :, pb, :nd]
                     W_ref = W_ref + W2
                     np.testing.assert_allclose(store.get_freq_batch("W", 0, nmat), W_ref, rtol=1e-12, atol=1e-13)
                     np.testing.assert_allclose(res.collapse0, chi_bar[:, :, :nd, :nd], rtol=0, atol=1e-14)

@@ -249,7 +249,7 @@ def _h_int_terms(itype, a, b, v):
     raise ValueError(itype)
 
 
-def wick_hf_sigma(nmode, terms, rho):
+def wick_hf_sigma(nmode, terms, rho, include_fock=True):
     """The first-order (Hartree-Fock) self-energy of a quartic term list at
     an arbitrary density ``rho[p, q] = <c^dag_p c_q>``, from the Wick
     derivative alone.
@@ -266,13 +266,21 @@ def wick_hf_sigma(nmode, terms, rho):
     remainder built with it is independent of ``hwave.solver.second_order``.
     The production functional is compared against it separately
     (:class:`TestWickFunctional`), as a convention pin rather than as part
-    of the subtraction."""
+    of the subtraction.
+
+    ``include_fock=False`` keeps only the two HARTREE (direct) lines and
+    drops the two EXCHANGE ones -- the test-side counterpart of
+    ``hwave.solver.hartree_fock.accumulate_hf``'s own ``include_fock``
+    switch (UHFk's ``flag_fock = false``), so the mean-field gates can be
+    two-sided in that flag as well. Every caller that does not ask keeps
+    the full Hartree-Fock functional."""
     S = np.zeros((nmode, nmode), dtype=complex)
     for (p, q, r, s, c_) in terms:
         S[p, q] += c_ * rho[r, s]
         S[r, s] += c_ * rho[p, q]
-        S[p, s] += c_ * ((1.0 if q == r else 0.0) - rho[r, q])
-        S[r, q] += -c_ * rho[p, s]
+        if include_fock:
+            S[p, s] += c_ * ((1.0 if q == r else 0.0) - rho[r, q])
+            S[r, q] += -c_ * rho[p, s]
     return 0.5 * (S + S.conj().T)
 
 

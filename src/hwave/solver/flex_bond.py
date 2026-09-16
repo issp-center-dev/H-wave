@@ -130,6 +130,31 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration):
     return chi_b, cond
 
 
+def _mixed_pair_permutation(B, nd, norb):
+    """Index vector on the ``(B nd)`` pair axis: the IDENTITY on channel 0,
+    the orbital-pair transpose ``(l1, l2) -> (l2, l1)`` inside every
+    ``m != 0`` block.
+
+    Applied to BOTH pair axes of the masked second-order product, it reads
+    the bond-side leg of the bubble and the bond vertex at the transposed
+    orbital pair -- the exact mixed on-site x bond second order (spec
+    2026-09-16 R3, issue #192). It is the identity at ``norb = 1`` and on
+    orbital-diagonal bonds, so no single-orbital or orbital-diagonal result
+    moves under it.
+
+    ``B = ND // nd`` is the channel count and ``nd = norb * norb`` the pair
+    dimension of one channel block; the pair index inside block ``m`` is
+    ``m * nd + a * norb + b`` (the flattening
+    :func:`~hwave.solver.bond_channels.build_sc_bond_channel` places the
+    bond coefficients in)."""
+    perm = np.arange(B * nd)
+    for m in range(1, B):
+        for l1 in range(norb):
+            for l2 in range(norb):
+                perm[m * nd + l1 * norb + l2] = m * nd + l2 * norb + l1
+    return perm
+
+
 @_dataclass(frozen=True)
 class DressResult:
     collapse0: np.ndarray      # (nmat, nvol, nd, nd)  channel-0 block of chibar
@@ -156,12 +181,16 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
     C_on) chibar_00 (S_on + C_on)`` (the general path's subtraction
     restricted to the ON-SITE vertices ``S_on``, ``C_on``: a spin-
     independent density interaction is counted once by the ring),
-    mixed channel-0/bond blocks ``1/4 (S chibar S + C chibar C)`` (the
-    exchange skeleton, once) and bond-bond blocks ``0`` (their ring
-    second order is the direct skeleton again). Also collects the
-    channel-0 collapses, the static slices (slice assignment into
-    preallocated buffers) and, with ``output_full``, the store's
-    ``chi_s_w``/``chi_c_w``.
+    mixed channel-0/bond blocks ``1/4 (S chibar S + C chibar C)`` read at
+    the PERMUTED pair index on both axes (the exchange skeleton, once:
+    :func:`_mixed_pair_permutation` -- identity on channel 0, the
+    orbital-pair transpose inside every bond block, so that the bond-side
+    leg of the bubble and the bond vertex are taken at the transposed
+    orbital pair; identity at ``norb = 1`` and on orbital-diagonal bonds)
+    and bond-bond blocks ``0`` (their ring second order is the direct
+    skeleton again). Also collects the channel-0 collapses, the static
+    slices (slice assignment into preallocated buffers) and, with
+    ``output_full``, the store's ``chi_s_w``/``chi_c_w``.
 
     ``second_order`` selects the CHANNEL-0 second order only (spec
     2026-09-08 D5), exactly as ``flex_second_order`` does for the
@@ -189,6 +218,22 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
     if second_order == "local" and factors is None:
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
     ND = S.shape[-1]
+    norb = int(round(nd ** 0.5))
+    if norb * norb != nd:
+        raise ValueError("dress_and_build_w: nd = {} is not a square of an orbital "
+                         "count".format(nd))
+    # the pair axis is a whole number of channel blocks, or the block layout
+    # the permutation below assumes (pair index m * nd + a * norb + b) does
+    # not describe this matrix and B = ND // nd would silently truncate.
+    # BondBlockStore makes the same check on ITS ND; this one is on the
+    # VERTEX's, which is a separate argument and need not be the store's
+    if ND % nd != 0:
+        raise ValueError("dress_and_build_w: the vertex pair dimension ND = {} is not a "
+                         "multiple of the channel block size nd = {}, so it does not carry "
+                         "whole bond-channel blocks".format(ND, nd))
+    # the pair permutation of the mixed second-order blocks, built once (it
+    # depends on the block layout only, not on the frequency batch)
+    perm = _mixed_pair_permutation(ND // nd, nd, norb)
     SpC_on = np.asarray(S_on) + np.asarray(C_on)
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
     collapse_s = np.empty_like(collapse0)
@@ -246,6 +291,11 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         A += Bc
         del Bc
         A *= 0.5 * mask
+        if norb > 1:
+            # at norb = 1 the pair permutation is the identity, and the
+            # fancy-index copy would allocate a whole batch-shaped temporary
+            # to reproduce A
+            A = A[:, :, perm[:, None], perm[None, :]]
         W_b += A
         del A
         if not np.all(np.isfinite(W_b)):
@@ -277,9 +327,14 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
     sum_k e^{i(k-q).(R_alpha - R_beta)} G(k) G(k-q) and both functional
     derivatives of the ring functional with respect to G carry the phase
     of the differentiated (transposed) block (pinned by the second-order
-    skeletons: with this transport the channel-0, mixed and bond-bond
-    blocks of 1/2 (S chibar S + C chibar C) are the direct skeleton, twice
-    the exchange skeleton and half the direct skeleton to 1e-15).  With
+    skeletons: with this transport, AT norb = 1, the channel-0, mixed and
+    bond-bond blocks of 1/2 (S chibar S + C chibar C) are the direct
+    skeleton, twice the exchange skeleton and half the direct skeleton to
+    1e-15.  At norb > 1 the "twice the exchange skeleton" reading of the
+    mixed blocks holds only once their pair index is permuted -- see
+    :func:`_mixed_pair_permutation`, which dress_and_build_w applies and
+    which is the identity at norb = 1; with it the mixed blocks are the
+    exact mixed on-site x bond second order on every bond).  With
     chibar(q, i nu)^dagger = chibar(q, -i nu) the symmetry
     Sigma(k, i w)^dagger = Sigma(k, -i w) holds to round-off.  In real
     space the phase is G(r + R_beta - R_alpha), a roll of G by R_alpha - R_beta.

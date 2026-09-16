@@ -26,13 +26,14 @@ Two fixtures, and what each adjudicates
   (spec G2 (c) / G4), not asserted.
 * ``_fx_orbital()`` -- ``L = 3``, TWO orbitals, and an ORBITAL-ASYMMETRIC
   inter-orbital bond (``v_01(+x) = v``, ``v_10(+x) = 0.6 v``). This is the
-  fixture that adjudicates the two open ledger items of the campaign: the
-  orientation of the off-site density vertex (Task 5) and the bond gate's
-  deviation on inter-orbital bonds (Task 9, issue #192). Its verdicts are in
-  :class:`TestG4`'s methods and in the module's measured table below. The
-  same fixture also carries the MIXED on-site/off-site entry (on-site
-  ``Hund`` against the off-site ``V`` rows,
-  :meth:`TestG4.test_hund_times_offsite_v_chain`).
+  fixture that adjudicated the two ledger items of the campaign: the
+  orientation of the off-site density vertex (the documented reading, the
+  orientation fix of issue #193) and the bond gate on inter-orbital bonds
+  (issue #192, closed by the pair permutation of spec 2026-09-16 R3). Both
+  are ASSERTED here now. Its verdicts are in :class:`TestG4`'s methods and
+  in the module's measured table below. The same fixture also carries the
+  MIXED on-site/off-site entry (on-site ``Hund`` against the off-site ``V``
+  rows, :meth:`TestG4.test_hund_times_offsite_v_chain`).
 
 Which first order is subtracted
 -------------------------------
@@ -52,34 +53,60 @@ cannot discriminate one).
 
 Which Hamiltonian the chain ED must be
 --------------------------------------
-The declared row ``(R, a, b, v)`` of an off-site density type places
-orbital ``a`` on the DISPLACED site and orbital ``b`` on the reference one,
+The declared row ``(R, a, b, v)`` of an off-site two-body type places
+orbital ``a`` in the ORIGINAL cell and orbital ``b`` in the cell displaced
+by ``R``,
 
-    v n_{j+R, a} n_{j, b}
+    v n_{j, a} n_{j+R, b}
 
--- the same ``(j + R, a) <- (j, b)`` reading a ``transfer.dat`` row gets
-(``EDFixture.build_h1``). This is NOT assumed here: :meth:`TestChain
+-- the DOCUMENTED reading (``docs/en`` UHFk interaction file page:
+"``[alpha]`` corresponds to the orbital alpha in the original cell, and
+``[beta]`` corresponds to the orbital beta in the cell displaced by r"),
+which the mean-field kernel implements since the orientation fix of issue
+#193. Note that this is the OPPOSITE placement from the one a
+``transfer.dat`` row gets in this code base -- ``EDFixture.build_h1`` puts
+``t[(a, b)]`` on ``(j + R, a) <- (j, b)``, which
+:meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
+pins against the solver's own band.
+
+READ THAT ASYMMETRY CAREFULLY, because it invites the wrong repair. It is
+a statement about the SOLVER'S INTERNAL MATRIX FRAME and nothing else: the
+one-body Hamiltonian is carried as the matrix of ``c^dag_{r,a} c_{0,b}``,
+whose two index slots are placed the other way round from the two density
+slots of a two-body row. There is no second public file convention here --
+``transfer.dat`` and the two-body files are each read exactly as their
+documentation says, and a user writing either file never meets this. So do
+NOT "fix" it by flipping the one-body reading, or by re-flipping the
+two-body one to match it: both are already right, the frames simply differ
+inside the code, and the ED fixture has to reproduce BOTH of them to be
+comparable with production at all.
+
+This is NOT assumed here. :meth:`TestChain
 Hamiltonian.test_ed_hamiltonian_is_the_production_mean_field` compares the
 first-order functional of the ED term list against UHFk's OWN mean-field
 kernel (``hwave.solver.hartree_fock.accumulate_hf``, Hartree AND Fock, at
 the same density) and fails with the opposite (orbital-swapped) placement
 by 5.4e-2 / 1.4e-2 of the mean field on the two inter-orbital fixtures,
-while the placement above matches at 1e-16. On the single-orbital chain the
-two placements are the same Hamiltonian, which is why only the two-orbital
-fixture can decide it.
+while the documented placement matches at 1e-16. On the single-orbital
+chain the two placements are the same Hamiltonian, which is why only the
+two-orbital fixture can decide it.
+:meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`
+extends that adjudication to EVERY off-site type the kernel accepts
+(``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``,
+``PairHop``) and to both settings of the kernel's ``include_fock`` switch,
+on spin-coherent densities -- which the spin-flip types need in order to
+have a mean field at all.
 
 SCOPE OF THAT CLAIM, and of every verdict below it. What is adjudicated
 here is the second-order vertex against UHFk's MEAN-FIELD READING of a
 declared row: ``accumulate_hf`` is what defines the orbital placement the
 chain ED implements, and the gate then asks whether the second order is
-consistent with THAT Hamiltonian. It is not an adjudication against a
-file-format definition -- the documentation never fixes the sign of
-``r_ij`` in an interaction row, so "which site the row's first orbital sits
-on" has no independent written answer to appeal to. Both readings are
-internally consistent conventions; this module pins that the solver's
-first-order and second-order paths agree on ONE of them, and says which.
-The k-space bridge the comparison rides on (exponent sign, orbital index
-order) is pinned separately, on a band that can see it, by
+consistent with THAT Hamiltonian. Since the orientation fix that reading
+IS the documented one, so the pin is now anchored to the file-format
+definition and not only to internal consistency; what the module still
+cannot decide on its own is whether the DOCUMENTATION is the intended
+convention. The k-space bridge the comparison rides on (exponent sign,
+orbital index order) is pinned separately, on a band that can see it, by
 :meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`
 -- without that pin a flipped bridge would silently select the opposite
 placement and invert every verdict below.
@@ -112,23 +139,42 @@ maximum over the window; tolerance 2e-3):
     L=4 norb=1  U^2                3.2e-4              --
     L=4 norb=1  Hund   (recorded)  2.6e-4              2.6e-4
     L=4 norb=1  Ising  (recorded)  2.2e-4              2.2e-4
-    L=3 norb=2  v^2 (asymmetric)   3.5e-4              4.0e-2  <-- recorded
+    L=3 norb=2  v^2 (asymmetric)   3.5e-4              3.5e-4
     L=3 norb=2  J V (mixed)        4.5e-4              --
 
-The v^2 row is the campaign's open item: the STANDALONE local path plus
-the dropped class reproduces the exact inter-orbital off-site second order
-(so the Task 5 orientation of the off-site density vertex is confirmed by
-exact diagonalisation), while the BOND GATE misses it by 4.0e-2 -- twenty
-times the tolerance, and nearly twice the whole off/off uncrossed class it
-is supposed to be resumming (2.2e-2 of the coefficient). That deviation is
-a Phase B defect, tracked as issue #192; it is not a second-order kernel
-finding and this module does not try to fix it.
+The inter-orbital row's 3.5e-4 is also the FLOOR of that working point
+(the exact oracle's own distance from the ED remainder). It is measured
+inside :meth:`TestG4.test_interorbital_bond_chain` -- printed as MEASURED
+and held to the broad band :data:`_FLOOR_BAND` -- because the gate's upper
+bound is expressed in it.
 
-It is RECORDED rather than asserted as an agreement -- but the record is
-PINNED (:data:`_PINNED`): every printed quantity is held to its measured
-value within :data:`_PINNED_BAND` and checked for finiteness, so it cannot
-drift in either direction unnoticed. A value that moves OUT of the band is
-a finding whichever way it moves.
+The v^2 row was the campaign's open item, and both halves of it are now
+settled. The STANDALONE local path plus the dropped class reproduces the
+exact inter-orbital off-site second order (so the DOCUMENTED orientation
+of the off-site density vertex -- orbital ``a`` in the original cell -- is
+confirmed by exact diagonalisation). The BOND GATE used to miss it by
+4.0e-2 -- twenty times the tolerance, and nearly twice the whole off/off
+uncrossed class it is supposed to be resumming (2.2e-2 of the
+coefficient), so the deviation was not that class being mishandled but a
+Phase B defect on inter-orbital off-site bonds (issue #192): the mixed
+(channel-0 x bond) second-order blocks read the bond-side leg of the
+bubble and the bond vertex at the UNTRANSPOSED orbital pair. Since the
+pair permutation of spec 2026-09-16 R3
+(:func:`hwave.solver.flex_bond._mixed_pair_permutation`) the gate lands on
+3.5e-4 -- the same place as ``local + dropped``, which is the FLOOR of
+this working point -- and :meth:`TestG4.test_interorbital_bond_chain`
+asserts it there: BELOW twice a floor it measures itself (no lower bound;
+see the method), with that measured floor held to a broad stability band
+(:data:`_FLOOR_BAND`), and against the exact oracle directly
+(:data:`_GATE_ORACLE_CEIL`).
+
+What remains RECORDED is the off-site Hund/Ising class and the size of the
+dropped class on the inter-orbital fixture -- outcomes this gate measures
+and routes to a follow-up of issue #181 rather than asserting as
+agreements. Each record is PINNED (:data:`_PINNED`): every printed
+quantity is held to its measured value within :data:`_PINNED_BAND` and
+checked for finiteness, so it cannot drift in either direction unnoticed.
+A value that moves OUT of the band is a finding whichever way it moves.
 """
 import os
 import tempfile
@@ -151,6 +197,40 @@ UP, DN = 0, 1
 # each declared row is half of it. Pinned two-sidedly here by
 # :meth:`TestFirstOrder.test_first_order_remainder_vanishes`.
 
+#: The off-site rows of the per-type first-order gate
+#: (:meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`):
+#: ONE inter-orbital nearest-neighbour bond per type, declared in both
+#: orientations as a reader delivers it. Orbital 1 sits in the original
+#: cell and orbital 2 in the cell displaced by ``+x``, so the orbital swap
+#: maps each declaration onto a DIFFERENT Hamiltonian. ``PairHop`` carries a
+#: complex amplitude (its mirrored row is the conjugate), which is the only
+#: type whose orientation the kernel can get wrong on a REAL declaration.
+_GATE_ROWS = {
+    "CoulombInter": [(1, 0, 0, 1, 2, 0.4, 0.0), (-1, 0, 0, 2, 1, 0.4, 0.0)],
+    "Hund": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)],
+    "Ising": [(1, 0, 0, 1, 2, 0.25, 0.0), (-1, 0, 0, 2, 1, 0.25, 0.0)],
+    "Exchange": [(1, 0, 0, 1, 2, 0.2, 0.0), (-1, 0, 0, 2, 1, 0.2, 0.0)],
+    "PairLift": [(1, 0, 0, 1, 2, 0.15, 0.0), (-1, 0, 0, 2, 1, 0.15, 0.0)],
+    "PairHop": [(1, 0, 0, 1, 2, 0.1, 0.04), (-1, 0, 0, 2, 1, 0.1, -0.04)],
+}
+
+#: The on-site row the gate always carries alongside, so that every case
+#: also exercises the mixed on-site/off-site accumulation.
+_GATE_ONSITE = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]}
+
+#: Types whose HARTREE-ONLY mean field cannot see the orientation of a
+#: declared row at all. For each of them UHFk's direct term is built from
+#: the EQUAL-SITE density ``gbb`` alone (``accumulate_hf``'s ``hh0``), so
+#: on a translation-invariant density it is independent of the
+#: displacement ``r`` -- and a Hermitian-closed declaration is invariant
+#: under the orbital swap once ``r`` is dropped. The gate therefore asserts
+#: EQUALITY of the two placements there instead of a miss; with the Fock
+#: term on, every type including these misses by 9.4e-2 ... 4.5e-1.
+#: ``PairHop`` is absent because its direct term reads the INTER-SITE
+#: density, so it sees the orientation in both Fock settings.
+_HARTREE_ORIENTATION_BLIND = ("CoulombInter", "Hund", "Ising", "Exchange",
+                              "PairLift")
+
 #: Working point of the heavy comparisons (see the module docstring).
 _NMAT = 4096
 _X = 3.125e-3
@@ -170,19 +250,17 @@ _FLOOR = 1.0e-6
 _DROPPED_FLOOR = 1.0e-3
 
 #: RECORDED quantities, pinned. These are outcomes this gate does not
-#: ASSERT as agreements -- the bond gate's deviation on an inter-orbital
-#: off-site bond (issue #192) and the off-site Hund/Ising results, which
-#: belong to a follow-up class of issue #181 -- but a recorded number that
-#: nothing checks is a number that can drift in either direction unnoticed.
-#: Each entry is the measured value at this module's working point; the
-#: band below is what a re-measurement may move it by.
+#: ASSERT as agreements -- the size of the dropped class on the
+#: inter-orbital fixture, and the off-site Hund/Ising results, which belong
+#: to a follow-up class of issue #181 -- but a recorded number that nothing
+#: checks is a number that can drift in either direction unnoticed. Each
+#: entry is the measured value at this module's working point; the band
+#: below is what a re-measurement may move it by.
 #:
-#: A change OUTSIDE the band is a finding either way: a larger deviation
-#: means a regression, a smaller one means the defect has been partly fixed
-#: (in which case the expectation, and issue #192, want updating).
+#: A change OUTSIDE the band is a finding either way, and wants the
+#: expectation updating rather than the band widening.
 _PINNED = {
     # inter-orbital off-site bond, L = 3 two-orbital chain
-    "interorbital gate vs ED": 4.020e-2,          # issue #192
     "interorbital dropped class": 2.222e-2,
     # off-site Hund / Ising, L = 4 single-orbital chain
     "Hund local+dropped vs ED": 2.560e-4,
@@ -193,12 +271,50 @@ _PINNED = {
     "Ising dropped class": 1.156e-1,
 }
 
+#: Ceiling on the distance between the bond gate's inter-orbital O(v^2)
+#: coefficient and the real-space oracle's EXACT one (both relative to the
+#: ED coefficient's own maximum over the window). These two are the SAME
+#: analytic object once the mixed second-order blocks read the bond-side
+#: leg and the bond vertex at the transposed orbital pair (spec 2026-09-16
+#: R3), so what is left is the EXTRACTION's own noise on the production
+#: side -- the coefficient stencil's truncation beyond the O(x) refinement,
+#: and round-off. The oracle needs no stencil (its skeleton is exactly
+#: quadratic), so it contributes none.
+#:
+#: MEASURED at this module's working point: 1.72e-5. The ceiling carries a
+#: factor 10 of margin over that. That the number IS the extraction's noise
+#: and not a residual error of the gate is calibrated inside the test,
+#: which prints the same distance for the STANDALONE path: ``local +
+#: dropped`` is the exact second order by construction (the weight rule of
+#: spec 2.4 defines ``dropped`` as ``exact - local``), and it sits at
+#: 1.47e-5 from the oracle through the identical extraction, with the gate
+#: and it agreeing to 3.2e-6 of each other.
+#:
+#: This is what turns the floor-band assertion below into a statement about
+#: the gate: the band alone only says "as close to ED as an exact second
+#: order gets", which a different error of that size would also satisfy.
+#: The ceiling is still a factor 2 below the floor, so it discriminates.
+_GATE_ORACLE_CEIL = 1.7e-4
+
 #: Relative band of :data:`_PINNED`. The pinned numbers are set by stencil
 #: truncation and the finite Matsubara window, both deterministic, so the
-#: band only has to absorb a different BLAS's round-off; it is deliberately
-#: far tighter than the factor 20 that separates the issue-#192 deviation
-#: from this module's tolerance.
+#: band only has to absorb a different BLAS's round-off.
 _PINNED_BAND = 0.20
+
+#: BROAD stability band on the FLOOR that
+#: :meth:`TestG4.test_interorbital_bond_chain` measures -- the distance
+#: between the exact oracle's coefficient and the ED remainder at this
+#: working point. MEASURED: 3.5e-4, i.e. a factor 3.5 above the lower bound
+#: and a factor 28 below the upper one.
+#:
+#: The floor is the yardstick the gate is banded against, so a floor that
+#: moved by orders of magnitude would silently rescale that band -- a gate
+#: error could then hide inside a band that had grown to accommodate it,
+#: and an improved extraction could shrink the band until round-off broke
+#: it. Broad on purpose: this is a sanity bound on the working point
+#: (stencil truncation plus the finite Matsubara window), not a pin, and it
+#: must not fail for a different BLAS or a slightly different numpy.
+_FLOOR_BAND = (1.0e-4, 1.0e-2)
 
 
 def _inner():
@@ -231,10 +347,18 @@ def _fx_complex():
     The two fixtures the gate itself runs on both have real hopping, so
     ``eps(k) = eps(-k)`` and ``eps(k) = eps(k)^T`` hold to round-off there
     and NEITHER the Fourier sign nor the orbital index order of
-    :func:`_to_k` can be seen. This fixture exists only to see them
-    (:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`);
-    it carries no interaction and is never diagonalised beyond the free
-    Green function.
+    :func:`_to_k` can be seen. This fixture was introduced to see them
+    (:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`).
+
+    It has a second consumer:
+    :meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`
+    runs the per-type first-order gate on it with the off-site rows of
+    :data:`_GATE_ROWS`, because the same asymmetry that makes the Fourier
+    sign visible also makes ``+x`` differ from its reverse, so the two
+    orbital placements of a declared row are genuinely different
+    Hamiltonians here. Neither consumer diagonalises it: the gate needs
+    only the mean-field functional at a supplied density, so this fixture
+    is still never handed to ``SectorED``.
 
     ``EDFixture.build_h1`` places ``t[(a, b)]`` on ``(j+1, a) <- (j, b)``
     and ``conj(t[(b, a)])`` on the return hop, so ``h1`` is Hermitian for
@@ -390,17 +514,54 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
     ``coeff c^dag_p c_q c^dag_r c_s``, the form ``SectorED`` consumes) of
     the Hamiltonian the DECLARED rows describe.
 
-    A row ``(R, a, b, v)`` of a density type contributes
-    ``w v sum_j sum_{s1 s2} sigma(s1, s2) n_{j+R, a, s1} n_{j, b, s2}`` --
-    orbital ``a`` on the DISPLACED site (see the module docstring; pinned
-    against UHFk's mean-field kernel, not assumed) -- with ``w`` the
-    mirrored-row weight and ``sigma`` the type's spin structure: all four
-    pairings for ``CoulombInter``, only the same-spin ones with a minus for
-    ``Hund``, and the density-DIFFERENCE signs for ``Ising``.
-    ``CoulombIntra`` is the on-site ``v n_{j,a,up} n_{j,a,dn}``.
+    A row ``(R, a, b, v)`` places orbital ``a`` in the ORIGINAL cell ``j``
+    and orbital ``b`` in the cell displaced by ``R`` -- the DOCUMENTED
+    reading of an interaction row (``docs/en`` UHFk interaction file page:
+    "``[alpha]`` corresponds to the orbital alpha in the original cell, and
+    ``[beta]`` ... in the cell displaced by r"), which the mean-field
+    kernel implements since the orientation fix of issue #193. ``w`` is the
+    mirrored-row weight.
 
-    ``swap_orbitals`` builds the OPPOSITE placement (``a`` on the reference
-    site) and exists only so the orientation can be checked two-sidedly.
+    Writing ``j' = j + R``, the monomials are the ``docs/en`` definitions
+    with ``i -> j`` (orbital ``a``) and ``j -> j'`` (orbital ``b``):
+
+    ``CoulombIntra``
+        ``v n_{j,a,up} n_{j,a,dn}`` (on-site, same orbital).
+    density types
+        ``w v sum_j sum_{s1 s2} sigma(s1, s2) n_{j,a,s1} n_{j',b,s2}`` with
+        ``sigma`` the type's spin structure: all four pairings for
+        ``CoulombInter``, only the same-spin ones with a MINUS for
+        ``Hund``, the density-DIFFERENCE signs for ``Ising``.
+    ``Exchange``
+        ``w v sum_j sum_s c^dag_{j,a,s} c_{j',b,s} c^dag_{j',b,-s} c_{j,a,-s}``
+        -- the doc's ``up/dn`` monomial plus its ``dn/up`` partner --
+        written here in the ANTICOMMUTED form
+        ``- w v sum_j sum_s (c^dag_{j,a,s} c_{j,a,-s})(c^dag_{j',b,-s} c_{j',b,s})``,
+        i.e. as a product of the two ON-SITE spin-flip bilinears. The four
+        modes are distinct (the two sites differ, and so do the spins), so
+        the reordering costs two transpositions and one overall sign and is
+        the SAME operator --
+        :meth:`TestChainHamiltonian.test_the_exchange_monomial_is_the_documented_one`
+        multiplies both writings out and compares them at zero tolerance.
+        The grouping matters only for the SPLIT: the Wick functional's
+        direct lines are the ones that pair the operators as they are
+        written, and UHFk's ``flag_fock = false`` keeps exactly the
+        on-site-grouped pair for this type (its ``hh0``/``hh3`` block reads
+        the equal-site density ``gbb``). Writing the monomial in UHFk's own
+        grouping is what makes :func:`_hf_sigma`'s ``include_fock`` switch
+        mean the same thing as the kernel's, for every type at once.
+    ``PairLift``
+        ``w v sum_j c^dag_{j,a,up} c_{j,a,dn} c^dag_{j',b,up} c_{j',b,dn}
+        + h.c.`` -- the ``+ h.c.`` of the definition, per declared row.
+    ``PairHop``
+        ``v sum_j c^dag_{j,a,up} c_{j',b,up} c^dag_{j,a,dn} c_{j',b,dn}``
+        with NO ``+ h.c.`` and no mirrored halving: ``PairHop`` is absent
+        from :data:`_MIRRORED_TYPES` because its mirrored row
+        ``(-R, b, a, conj v)`` IS the Hermitian conjugate of this one, so a
+        Hermitian-closed declaration already carries the ``h.c.``.
+
+    ``swap_orbitals`` builds the OPPOSITE placement (``a`` in the displaced
+    cell) and exists only so the orientation can be checked two-sidedly.
     """
     terms = []
     for itype, rows in rows_by_type.items():
@@ -419,6 +580,7 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
                     terms.append((fx.mode(j, a, UP), fx.mode(j, a, UP),
                                   fx.mode(j, a, DN), fx.mode(j, a, DN), v))
                 continue
+            sigma = None
             if itype == "CoulombInter":
                 def sigma(s1, s2, v=v):
                     return v
@@ -428,21 +590,33 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
             elif itype == "Ising":
                 def sigma(s1, s2, v=v):
                     return v if s1 == s2 else -v
-            else:
+            elif itype not in ("Exchange", "PairLift", "PairHop"):
                 raise ValueError("chain ED: unsupported interaction type {!r}".format(itype))
             for j in range(fx.L):
                 jp = (j + R) % fx.L
-                for s1 in range(2):
-                    for s2 in range(2):
-                        c = sigma(s1, s2)
-                        if c == 0.0:
-                            continue
-                        terms.append((fx.mode(jp, a, s1), fx.mode(jp, a, s1),
-                                      fx.mode(j, b, s2), fx.mode(j, b, s2), c))
+                ma = [fx.mode(j, a, s) for s in (UP, DN)]     # orbital a, ORIGINAL cell
+                mb = [fx.mode(jp, b, s) for s in (UP, DN)]    # orbital b, cell displaced by R
+                if sigma is not None:
+                    for s1 in range(2):
+                        for s2 in range(2):
+                            c = sigma(s1, s2)
+                            if c == 0.0:
+                                continue
+                            terms.append((ma[s1], ma[s1], mb[s2], mb[s2], c))
+                elif itype == "Exchange":
+                    for s in (UP, DN):
+                        # the documented monomial, anticommuted into the
+                        # product of the two ON-SITE spin-flip bilinears
+                        terms.append((ma[s], ma[1 - s], mb[1 - s], mb[s], -v))
+                elif itype == "PairLift":
+                    terms.append((ma[UP], ma[DN], mb[UP], mb[DN], v))
+                    terms.append((mb[DN], mb[UP], ma[DN], ma[UP], np.conj(v)))
+                else:                                          # PairHop
+                    terms.append((ma[UP], mb[UP], ma[DN], mb[DN], v))
     return terms
 
 
-def _hf_sigma(fx, terms, rho):
+def _hf_sigma(fx, terms, rho, include_fock=True):
     """First-order (Hartree-Fock) self-energy of ``terms`` at the density
     ``rho[p, q] = <c^dag_p c_q>``, in mode space.
 
@@ -456,13 +630,17 @@ def _hf_sigma(fx, terms, rho):
     rather than copied, so both exact-diagonalization gates subtract the
     same functional.
 
+    ``include_fock=False`` keeps only the Hartree (direct) contractions, so
+    the mean-field gate can confront the production kernel in BOTH of its
+    Fock settings.
+
     This IS the functional the gates subtract; UHFk's own mean-field kernel
     is compared against it separately, as a convention pin, by
     :meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_mean_field`."""
-    return wick_hf_sigma(fx.nmode, terms, rho)
+    return wick_hf_sigma(fx.nmode, terms, rho, include_fock=include_fock)
 
 
-def _production_hf_sigma_k(fx, rows_by_type, rho):
+def _production_hf_sigma_k(fx, rows_by_type, rho, include_fock=True):
     """UHFk's OWN mean-field Hamiltonian for the declared rows at the
     density ``rho``, as ``Sigma_HF(k)[(s, a), (t, b)]``.
 
@@ -471,7 +649,9 @@ def _production_hf_sigma_k(fx, rows_by_type, rho):
     Hamiltonian the solver implements, Hartree AND Fock, for on-site and
     off-site rows alike. It is what makes the first-order gate below
     two-sided in both the mirrored-row weight and the orbital placement,
-    exactly as Task 10's gate is two-sided through ``compile_onsite``."""
+    exactly as Task 10's gate is two-sided through ``compile_onsite``.
+    ``include_fock`` is forwarded to the kernel, so the gate can pin the
+    Hartree-only setting (UHFk's ``flag_fock = false``) as well."""
     from hwave.solver.hartree_fock import accumulate_hf, build_interaction_tables
     norb, L = fx.norb, fx.L
     shape = (L, 1, 1)
@@ -492,7 +672,7 @@ def _production_hf_sigma_k(fx, rows_by_type, rho):
                         rho_so_r[r, s, a, t, b] = rho[fx.mode(0, a, s), fx.mode(r, b, t)]
     out = np.zeros((L, 2 * norb, 2 * norb), dtype=complex)
     accumulate_hf(out, rho_so_r, tabs.inter_table, tabs.spin_table, shape,
-                  include_fock=True)
+                  include_fock=include_fock)
     return out
 
 
@@ -553,36 +733,51 @@ def _to_k_so(fx, M):
     return out
 
 
-def _random_translation_invariant_density(fx, n=3, seed=20260915):
-    """``n`` deterministic random Hermitian, translation-invariant,
-    spin-block-diagonal densities in mode space.
+def _random_translation_invariant_density(fx, n=3, seed=20260915,
+                                          spin_coherent=False):
+    """``n`` deterministic random Hermitian, translation-invariant densities
+    in mode space; spin-block-DIAGONAL by default.
 
     Translation invariance is required by UHFk's kernel (it reads one
     reference site's row), Hermiticity by the functional; the spin blocks
     are independent, so the densities are magnetic as well as
     orbital-coherent -- everything the free density of the pin below is
-    not."""
+    not.
+
+    ``spin_coherent=True`` populates the off-diagonal SPIN blocks
+    ``<c^dag_up c_dn>`` too. That is not a refinement but a requirement for
+    three of the types: ``PairLift``'s whole mean field, and the spin-flip
+    contractions of ``Exchange`` and ``PairHop``, are proportional to a
+    spin coherence and vanish identically on any spin-block-diagonal
+    density -- so a gate run on such a density would be comparing zero with
+    zero for them. The spin-diagonal default is kept so that the existing
+    callers, which pin the density types, are unchanged."""
     rng = np.random.default_rng(seed)
     norb, L = fx.norb, fx.L
+    nd = 2 * norb
     out = []
     for _ in range(n):
-        A = (rng.normal(size=(L, 2, norb, norb))
-             + 1j * rng.normal(size=(L, 2, norb, norb)))
+        A = rng.normal(size=(L, nd, nd)) + 1j * rng.normal(size=(L, nd, nd))
+        if not spin_coherent:
+            blk = A.copy()
+            A = np.zeros_like(A)
+            A[:, :norb, :norb] = blk[:, :norb, :norb]
+            A[:, norb:, norb:] = blk[:, norb:, norb:]
         g = np.zeros_like(A)
         for R in range(L):
-            for s in range(2):
-                # g[R] = conj(g[-R]^T) makes rho Hermitian
-                g[R, s] = 0.5 * (A[R, s] + np.conj(A[(-R) % L, s].T))
+            # g[R] = conj(g[-R]^T) makes rho Hermitian
+            g[R] = 0.5 * (A[R] + np.conj(A[(-R) % L].T))
         g *= 0.15
-        for s in range(2):
-            g[0, s] += 0.5 * np.eye(norb)
+        g[0] += 0.5 * np.eye(nd)
         rho = np.zeros((fx.nmode, fx.nmode), dtype=complex)
         for j in range(L):
             for j2 in range(L):
                 for s in range(2):
                     for a in range(norb):
-                        for b in range(norb):
-                            rho[fx.mode(j, a, s), fx.mode(j2, b, s)] = g[(j - j2) % L, s, a, b]
+                        for t in range(2):
+                            for b in range(norb):
+                                rho[fx.mode(j, a, s), fx.mode(j2, b, t)] = (
+                                    g[(j - j2) % L, s * norb + a, t * norb + b])
         out.append(rho)
     return out
 
@@ -785,8 +980,8 @@ class _Maps(object):
             self._bare = _production_sigma(self.fx, rows, False, self.nmat)[1]
         return self._bare
 
-    def dropped(self, *args):
-        """The oracle's off/off UNCROSSED class at the given couplings. The
+    def _oracle(self, which, args):
+        """One weighting of the real-space oracle at the given couplings. The
         oracle's skeleton is EXACTLY quadratic in the couplings, so a
         coefficient needs no stencil: the value at unit coupling IS it."""
         rows = self.rows_of(*args)
@@ -794,7 +989,20 @@ class _Maps(object):
             return self._zero()
         recs = oracle_records(rows, self.fx.norb, (self.fx.L, 1, 1))
         return oracle_sigma2(self.bare_green(rows), self.fx.beta, recs, self.fx.norb,
-                             "dropped", (self.fx.L, 1, 1))[0][self.idx]
+                             which, (self.fx.L, 1, 1))[0][self.idx]
+
+    def dropped(self, *args):
+        """The oracle's off/off UNCROSSED class at the given couplings."""
+        return self._oracle("dropped", args)
+
+    def oracle_exact(self, *args):
+        """The oracle's EXACT second-order coefficient at the given couplings
+        -- the full skeleton at weight 1/2 per record pair, the same object
+        the ED remainder is compared against. Its distance from the ED
+        coefficient is the FLOOR of this module's working point: the residual
+        of an exact second order against the exact remainder, set by the
+        stencil truncation and the finite Matsubara window."""
+        return self._oracle("exact", args)
 
 
 # --------------------------------------------------------------------------
@@ -1044,15 +1252,24 @@ class TestChainHamiltonian(unittest.TestCase):
         This is what fixes the chain Hamiltonian, and it is two-sided in
         both conventions at once:
 
-        * the ORBITAL PLACEMENT of an off-site row. Measured deviation from
+        * the ORBITAL PLACEMENT of an off-site row -- now the DOCUMENTED
+          one (orbital ``a`` in the original cell). Measured deviation from
           the production mean field with the opposite placement: 0 on the
           single-orbital chain (where the two are the same Hamiltonian),
-          5.4e-2 of the mean field on the symmetric inter-orbital bond and
-          1.4e-2 on the asymmetric one. This is the convention the
-          campaign's second-order comparison rests on, and it is measured
-          here rather than assumed.
+          5.434e-2 of the mean field on the single inter-orbital bond and
+          1.359e-2 on the asymmetric pair, while the documented placement
+          matches at 2.1e-16 / 3.9e-16 (every case here is at or below
+          2.8e-15). This is the convention the campaign's second-order
+          comparison rests on, and it is measured here rather than assumed.
         * the MIRRORED-ROW weight: at the full weight the off-site part of
-          the mean field is doubled, 0.5 ... 1.0 of it.
+          the mean field is doubled -- 1.000 of the mean field's own size
+          on each of the four off-site cases.
+
+        The free density used here is paramagnetic and spin-block-diagonal,
+        which is enough for the density types but leaves ``Exchange``,
+        ``PairLift`` and ``PairHop`` with no mean field at all;
+        :meth:`test_first_order_gate_every_type_documented_reading` carries
+        those, on spin-coherent densities.
         """
         cases = [("chain U", _fx_chain(), _rows_u_v(0.3, 0.0), False),
                  ("chain V", _fx_chain(), _rows_u_v(0.0, 0.3), False),
@@ -1093,6 +1310,148 @@ class TestChainHamiltonian(unittest.TestCase):
                                        "{}: the FULL-weight Hamiltonian also matches the "
                                        "production mean field -- the mirrored-row weight is "
                                        "not pinned".format(name))
+
+    def test_the_exchange_monomial_is_the_documented_one(self):
+        """:func:`_ed_terms` writes ``Exchange`` in UHFk's own grouping --
+        the product of the two ON-SITE spin-flip bilinears -- and that is
+        the SAME operator as the documentation's
+
+            J c^dag_{i a up} c_{j b up} c^dag_{j b dn} c_{i a dn}
+
+        (``docs/en`` UHFk interaction file page), not a different vertex
+        that happens to agree on the mean field.
+
+        Multiplied out on the dense ``L = 2`` fixture and compared at ZERO
+        tolerance, because the regrouping is an exact anticommutation (two
+        transpositions and one sign) and nothing else. The grouping is what
+        makes :func:`_hf_sigma`'s ``include_fock`` switch select the same
+        pair of contractions as the kernel's, so it has to be checked
+        rather than asserted in a comment."""
+        fx = _fx_dense()
+        v, R, a, b = 0.2, 1, 0, 1
+        documented, grouped = [], []
+        for j in range(fx.L):
+            jp = (j + R) % fx.L
+            ma = [fx.mode(j, a, s) for s in (UP, DN)]
+            mb = [fx.mode(jp, b, s) for s in (UP, DN)]
+            for s in (UP, DN):
+                documented.append((ma[s], mb[s], mb[1 - s], ma[1 - s], v))
+                grouped.append((ma[s], ma[1 - s], mb[1 - s], mb[s], -v))
+        hd = edu.h_int_from_terms(fx, documented)
+        hg = edu.h_int_from_terms(fx, grouped)
+        self.assertGreater(np.abs(hd).max(), 1e-3)               # anti-vacuity
+        self.assertTrue(np.array_equal(hd, hg),
+                        "the grouped Exchange monomial is not the documented one")
+        # and it is what _ed_terms actually emits
+        rows = {"Exchange": [(R, 0, 0, a + 1, b + 1, v, 0.0)]}
+        emitted = _ed_terms(fx, rows, mirrored_weight=1.0)
+
+        def by_modes(ts):
+            """``{(p, q, r, s): coeff}`` -- the term list as a multiset
+            keyed on the mode indices alone. Sorting the raw tuples would
+            compare their COMPLEX last element, which raises; and the
+            mapping is only faithful if no two monomials share the four
+            indices, which is asserted rather than assumed so that a future
+            fixture fails here and not silently."""
+            out = {}
+            for (p, q, r, s, c_) in ts:
+                self.assertNotIn((p, q, r, s), out,
+                                 "two monomials share the mode indices "
+                                 "{}".format((p, q, r, s)))
+                out[(p, q, r, s)] = complex(c_)
+            return out
+
+        self.assertEqual(by_modes(emitted), by_modes(grouped))
+
+    def test_first_order_gate_every_type_documented_reading(self):
+        """G-HF, every type: for each off-site interaction type the kernel
+        accepts, the production Hartree-Fock self-energy on a spin-coherent
+        density equals the Wick derivative of the DOCUMENTED-reading ED
+        Hamiltonian -- in BOTH of the kernel's Fock settings, on the FULL
+        spin-orbital matrix -- and the opposite orbital placement does not.
+
+        Why this fixture and this density. ``_fx_complex`` is the
+        inversion- and transpose-asymmetric two-orbital ``L = 3`` band, so
+        ``+x`` is not its own reverse and the two placements are genuinely
+        different Hamiltonians. The densities are deterministic random
+        Hermitian translation-invariant ones WITH SPIN COHERENCES: without
+        them the whole ``PairLift`` mean field, and the spin-flip
+        contractions of ``Exchange`` and ``PairHop``, vanish identically
+        and the gate would be comparing zero with zero. Each case also
+        carries an on-site ``CoulombIntra`` row, so the mixed on-site /
+        off-site accumulation is exercised too -- and the type's OWN share
+        of the mean field is measured (against the same case with the
+        off-site rows removed) and required to be non-negligible, so the
+        on-site row cannot make the comparison vacuous.
+
+        Measured, relative to the mean field's own maximum, and in each
+        column the value that is WORST for the assertion it supports: the
+        LARGEST match residual over the two densities, and the SMALLEST
+        swapped miss:
+
+            type           flag_fock=true            flag_fock=false
+                           match     miss (min)      match     miss (min)
+            CoulombInter   2.0e-16   1.4e-1          1.4e-16   blind
+            Hund           2.0e-16   4.5e-1          1.3e-16   blind
+            Ising          2.3e-16   2.1e-1          1.7e-16   blind
+            Exchange       8.0e-17   1.8e-1          0.0       blind
+            PairLift       1.7e-16   1.3e-1          0.0       blind
+            PairHop        1.3e-16   9.4e-2          4.1e-17   9.0e-2
+
+        The tightest cell of the whole table is therefore ``PairHop``'s
+        9.0e-2, ninety times the 1e-3 the gate demands; the largest match
+        residual anywhere is 2.3e-16, four orders inside the 1e-12 it
+        demands.
+
+        "blind" is not a weaker check but a different one, asserted as an
+        EQUALITY: see :data:`_HARTREE_ORIENTATION_BLIND` -- with the Fock
+        term off, those types' direct contribution is built from the
+        equal-site density alone and cannot depend on the displacement, so
+        the two placements are the same mean field and the gate pins that
+        they are. ``PairHop`` is the one type whose direct term reads the
+        inter-site density, so it discriminates in both settings."""
+        fx = _fx_complex()
+        rhos = _random_translation_invariant_density(fx, n=2, seed=20260916,
+                                                     spin_coherent=True)
+        for itype, rows in _GATE_ROWS.items():
+            rows_by_type = dict(_GATE_ONSITE)
+            rows_by_type[itype] = rows
+            terms = _ed_terms(fx, rows_by_type)
+            swap_terms = _ed_terms(fx, rows_by_type, swap_orbitals=True)
+            onsite_terms = _ed_terms(fx, _GATE_ONSITE)
+            for fock in (True, False):
+                for k, rho in enumerate(rhos):
+                    with self.subTest(type=itype, include_fock=fock, density=k):
+                        self.assertLess(np.abs(rho - rho.conj().T).max(), 1e-14)
+                        ref = _to_k_so(fx, _hf_sigma(fx, terms, rho, include_fock=fock))
+                        prod = _production_hf_sigma_k(fx, rows_by_type, rho,
+                                                      include_fock=fock)
+                        scale = max(np.abs(ref).max(), 1e-300)
+                        self.assertGreater(scale, 1e-3)          # anti-vacuity
+                        # ... and the type under test really carries part of it
+                        onsite = _to_k_so(fx, _hf_sigma(fx, onsite_terms, rho,
+                                                        include_fock=fock))
+                        self.assertGreater(np.abs(ref - onsite).max() / scale, 1e-2,
+                                           "{}: the off-site rows contribute nothing to "
+                                           "the mean field on this density -- the "
+                                           "comparison is vacuous".format(itype))
+                        self.assertLess(np.abs(prod - ref).max() / scale, 1e-12,
+                                        "{}: the production mean field is not the Wick "
+                                        "derivative of the documented-reading "
+                                        "Hamiltonian".format(itype))
+                        swapped = _to_k_so(fx, _hf_sigma(fx, swap_terms, rho,
+                                                         include_fock=fock))
+                        if fock or itype not in _HARTREE_ORIENTATION_BLIND:
+                            self.assertGreater(np.abs(prod - swapped).max() / scale, 1e-3,
+                                               "{}: the opposite orbital placement also "
+                                               "matches the production mean field -- the "
+                                               "orientation is not pinned".format(itype))
+                        else:
+                            self.assertLess(np.abs(swapped - ref).max() / scale, 1e-12,
+                                            "{}: the Hartree-only mean field DOES see the "
+                                            "orientation -- _HARTREE_ORIENTATION_BLIND is "
+                                            "wrong and this case must assert a miss"
+                                            .format(itype))
 
     def test_independent_functional_equals_production_on_random_densities(self):
         """The test side's own first-order functional (:func:`_hf_sigma`,
@@ -1224,14 +1583,11 @@ class TestG4(unittest.TestCase):
               .format(key, value, expect, _PINNED_BAND))
         self.assertTrue(np.isfinite(value), "{}: not finite".format(key))
         self.assertGreater(value, expect * (1.0 - _PINNED_BAND),
-                           "{}: measured {:.3e}, pinned {:.3e}. A SMALLER value means the "
-                           "recorded behaviour has changed for the better -- update the "
-                           "expectation (and issue #192) rather than widening the band."
-                           .format(key, value, expect))
+                           "{}: measured {:.3e}, pinned {:.3e}. Update the expectation "
+                           "rather than widening the band.".format(key, value, expect))
         self.assertLess(value, expect * (1.0 + _PINNED_BAND),
-                        "{}: measured {:.3e}, pinned {:.3e}. A LARGER value is a "
-                        "regression in the recorded behaviour (issue #192 for the "
-                        "inter-orbital bond gate).".format(key, value, expect))
+                        "{}: measured {:.3e}, pinned {:.3e}. Update the expectation "
+                        "rather than widening the band.".format(key, value, expect))
 
     @heavy
     def test_coulombinter_chain(self):
@@ -1281,34 +1637,129 @@ class TestG4(unittest.TestCase):
         Hamiltonian is pinned to UHFk's own mean field
         (:meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_
         mean_field`), this is an independent confirmation of the ORIENTATION
-        of the off-site density vertex: the OPPOSITE orbital placement of
+        of the off-site density vertex -- the DOCUMENTED reading, orbital
+        ``a`` in the original cell: the OPPOSITE orbital placement of
         the same declaration, run through the identical recipe, misses
-        ``local + dropped`` by 5.5e-2 -- twenty-seven times the tolerance,
-        and the assertion below would fail loudly on it.
+        ``local + dropped`` by 2.2e-2 -- eleven times the tolerance, and the
+        assertion below does fail loudly on it (that is exactly the value it
+        failed by while the local kernel still read the reversed
+        orientation, before the fix of issue #193).
 
-        RECORDED -- the bond gate's deviation. Phase B's bond-resolved path
-        is supposed to resum exactly the class the local kernel drops
-        (2.2e-2 of the coefficient here), and on the single-orbital chain it
-        does (2.4e-4). On this inter-orbital bond it misses by 4.0e-2 --
-        twenty times the tolerance, and nearly twice the class it is
-        recovering, so the deviation is not that class being mishandled but
-        a bond-gate defect on inter-orbital off-site bonds. It is printed
-        and routed to a Phase B follow-up of issue #181; it is NOT a
-        second-order kernel finding, and it is not asserted here."""
+        ASSERTED -- the bond gate too (issue #192, fixed by spec 2026-09-16
+        R3). Phase B's bond-resolved path is supposed to resum exactly the
+        class the local kernel drops (2.2e-2 of the coefficient here), and
+        on the single-orbital chain it does (2.4e-4). On this inter-orbital
+        bond it used to miss by 4.0e-2 -- twenty times the tolerance, and
+        nearly twice the class it is recovering, so the deviation was not
+        that class being mishandled but a bond-gate defect on inter-orbital
+        off-site bonds: the mixed (channel-0 x bond) second-order blocks
+        read the bond-side leg of the bubble and the bond vertex at the
+        UNTRANSPOSED orbital pair. Since the pair permutation of spec R3 the
+        gate lands on the exact second order, and this method asserts it in
+        two independent ways:
+
+        * against the FLOOR -- the distance between the oracle's EXACT
+          coefficient and the ED remainder at this working point, which is
+          what a correct second order can achieve here and no more. The
+          floor is MEASURED in the test rather than hard-coded (it is the
+          stencil truncation plus the finite Matsubara window, both of which
+          move with the working point), and the gate is held BELOW ``2 x``
+          it: above that there is a systematic error again.
+
+          Only the upper bound. There is deliberately no lower one: an
+          approximate result may legitimately land CLOSER to the ED
+          remainder than the exact-oracle floor, by cancellation between
+          its own error and the extraction's, and a numerical improvement
+          that produced exactly that would fail a lower bound while being
+          right. What the floor itself is held to is a BROAD stability band
+          (:data:`_FLOOR_BAND`), because it is the yardstick the upper
+          bound is measured in: a floor that had moved by orders of
+          magnitude would rescale that bound without anything saying so.
+        * against the ORACLE itself, at :data:`_GATE_ORACLE_CEIL`. The upper
+          bound above says "no farther from ED than about what an exact
+          second order gets", which a different error of the same size
+          would also satisfy; this one says the gate IS that exact second
+          order, to the production side's stencil round-off. It is the
+          assertion that carries the verdict, and it is two-sided in
+          substance: the companion ``gate_orc < 3 * local_orc`` says what
+          separates the gate from the oracle is the extraction and not the
+          gate."""
         maps = _Maps(_fx_orbital(), _rows_interorbital)
         with _quiet():
             ed = _refine(lambda h: _coeff2(lambda v: maps.ed(v), h), _X)
             pr = _refine(lambda h: _coeff2(lambda v: maps.prod(v), h), _X)
             dr = maps.dropped(1.0)
+            orc = maps.oracle_exact(1.0)
             gate = _refine(lambda h: _coeff2(lambda v: maps.prod(v, gate=True), h), _X)
             scale = self._compare("inter-orbital v^2", ed, pr, dr)
             self.assertGreater(np.abs(dr).max(), _DROPPED_FLOOR * scale,
                                "the dropped class is negligible on this fixture")
-            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"), (gate, "gate")):
+            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"),
+                              (orc, "exact oracle"), (gate, "gate")):
                 self.assertTrue(np.all(np.isfinite(arr)),
                                 "the {} coefficient is not finite".format(what))
-            # Phase B follow-up of issue #181, tracked as issue #192
-            self._record("interorbital gate vs ED", np.abs(gate - ed).max() / scale)
+            # the floor: what an EXACT second order leaves against the ED
+            # remainder at this working point (stencil truncation + the
+            # finite Matsubara window). The oracle skeleton is exactly
+            # quadratic in the coupling, so its unit-coupling value IS its
+            # coefficient and it carries no stencil error of its own.
+            floor = np.abs(orc - ed).max() / scale
+            self.assertGreater(floor, _FLOOR,
+                               "the exact oracle reproduces the ED remainder to round-off: "
+                               "there is no floor to band the gate against")
+            gate_dev = np.abs(gate - ed).max() / scale
+            gate_orc = np.abs(gate - orc).max() / scale
+            # the floor is the yardstick every band below is measured in, so
+            # it is itself held to a BROAD stability range (see _FLOOR_BAND):
+            # a working point whose truncation had moved by orders of
+            # magnitude would rescale the gate's band without failing it
+            self.assertGreater(floor, _FLOOR_BAND[0],
+                               "the MEASURED floor (exact oracle vs ED) has fallen to {:.3e}; "
+                               "the working point's extraction error was 3.5e-4 when this "
+                               "gate was calibrated, and the band the gate is held in is "
+                               "measured in it".format(floor))
+            self.assertLess(floor, _FLOOR_BAND[1],
+                            "the MEASURED floor (exact oracle vs ED) has risen to {:.3e}; "
+                            "the working point's extraction error was 3.5e-4 when this gate "
+                            "was calibrated, and a band that wide would admit a systematic "
+                            "error in the gate".format(floor))
+            # the same distance for the STANDALONE path, which is the exact
+            # second order by construction once the dropped class is added:
+            # that is the extraction's own noise, the yardstick
+            # _GATE_ORACLE_CEIL is calibrated against
+            local_orc = np.abs(pr + dr - orc).max() / scale
+            print("MEASURED inter-orbital bond gate: vs ED {:.3e}, MEASURED floor (exact "
+                  "oracle vs ED) {:.3e} (band {:.0e} ... {:.0e}), vs exact oracle {:.3e} "
+                  "(extraction noise, from local + dropped vs the same oracle: {:.3e})"
+                  .format(gate_dev, floor, _FLOOR_BAND[0], _FLOOR_BAND[1], gate_orc,
+                          local_orc))
+            # NO lower bound on gate_dev: an approximate result can land
+            # closer to the ED remainder than the exact-oracle floor by
+            # cancellation with the extraction's own error, and a numerical
+            # improvement doing exactly that must not fail this gate. What
+            # says the gate IS the exact second order is the oracle
+            # comparison below, not its distance from ED.
+            self.assertLess(gate_dev, 2.0 * floor,
+                            "the bond gate misses the ED remainder on the inter-orbital bond "
+                            "by {:.3e} (floor {:.3e}); issue #192".format(gate_dev, floor))
+            self.assertLess(gate_orc, _GATE_ORACLE_CEIL,
+                            "the bond gate is not the exact second order on the inter-orbital "
+                            "bond: {:.3e} from the oracle (ceiling {:.3e}); issue #192"
+                            .format(gate_orc, _GATE_ORACLE_CEIL))
+            # and the CEILING's justification, asserted rather than printed:
+            # _GATE_ORACLE_CEIL is a constant, so on its own it only says the
+            # gate is close to the oracle, not that what separates them is
+            # the extraction rather than the gate. ``local + dropped`` is the
+            # exact second order by construction and goes through the
+            # identical stencil, so its own distance from the oracle IS that
+            # extraction noise; the gate must not exceed it by more than a
+            # small factor. Measured ratio: 1.720e-5 / 1.475e-5 = 1.17.
+            self.assertLess(gate_orc, 3.0 * local_orc,
+                            "the bond gate is {:.3e} from the exact oracle while the exactly "
+                            "weighted standalone path is only {:.3e} from it through the same "
+                            "extraction (ratio {:.2f}, measured 1.17): what separates the gate "
+                            "from the oracle is no longer the stencil"
+                            .format(gate_orc, local_orc, gate_orc / max(local_orc, 1e-300)))
             self._record("interorbital dropped class", np.abs(dr).max() / scale)
 
     @heavy
@@ -1335,7 +1786,7 @@ class TestG4(unittest.TestCase):
 
         Measured at this module's working point: the ED coefficient is
         1.07e-1, ``local + dropped`` reproduces it to 4.5e-4 of it (a factor
-        4.4 inside the tolerance) and the mixed dropped part is 4.1e-18 of
+        4.4 inside the tolerance) and the mixed dropped part is 4.6e-18 of
         it -- zero to round-off.
         """
         maps = _Maps(_fx_orbital(), _rows_hund_offsite_v)

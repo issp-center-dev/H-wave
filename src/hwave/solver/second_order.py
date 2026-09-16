@@ -630,18 +630,20 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
     ds = _dens_slice(norb)
     vp = None
     if factors.vpair is not None:
-        # The off-site vertex enters the LOCAL second order in its FILE
-        # orientation: A_v is the crossed entry
-        # Gamma_{(a up)(q sigma),(q sigma)(a up)} = -v^{file, up sigma}_{a q},
-        # i.e. the orbital of the EXTERNAL leg indexes the row. :func:`build_offsite`
-        # stores the ring's pair-space orientation v^{pair}_{(aa),(bb)} = v^{file}_{ba}
-        # (the ED-validated placement of the S/C channel vertex, pinned by
-        # tests/test_second_order_factors.py), so the kernel transposes the orbital
-        # axes here. On a bond with v_{ab}(R) != v_{ba}(R) the two orientations
-        # differ (they are related by q -> -q); the orientation below is the one
-        # the independent real-space oracle requires on every pair of coupling
-        # types (tests/test_second_order_oracle.py, gate G2 (a)).
-        vp = xp.asarray(factors.vpair).swapaxes(-1, -2)        # (2, 2, nvol, norb, norb)
+        # A_v is the crossed entry Gamma_{(a up)(q sigma),(q sigma)(a up)} =
+        # -v^{up sigma}_{a q}(q-vector), i.e. the orbital of the EXTERNAL leg
+        # indexes the ROW. :func:`build_offsite` stores the ring's pair-space
+        # placement v^{pair}_{(aa),(bb)} = v^{file}_{ba} -- the row index is the
+        # orbital of the row's DISPLACED cell. Once a file row (r, a, b, v) is
+        # read as v n_{j,a} n_{j+r,b} (the DOCUMENTED orientation, which the
+        # mean-field kernel also implements since spec 2026-09-16, #193), those
+        # two are the same matrix, so the kernel uses the stored array as it is
+        # -- no transpose here. On a bond with v_{ab}(R) != v_{ba}(R) the
+        # reversed reading is a different matrix (the two differ by q -> -q);
+        # the one below is what the independent real-space oracle requires on
+        # every pair of coupling types (tests/test_second_order_oracle.py,
+        # gate G2 (a)).
+        vp = xp.asarray(factors.vpair)                          # (2, 2, nvol, norb, norb)
     # on-site: 1/2 sum_triples A chibar B, and -- for the triples the mixed
     # term selects -- the two on-site/off-site cross terms of the SAME
     # triple, which reuse the ``A chibar`` product in T1 instead of
