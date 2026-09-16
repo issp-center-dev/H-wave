@@ -565,20 +565,20 @@ class TestDocumentedOrientationOnAThreeSiteChain(unittest.TestCase):
     def test_tables_equal_legacy_of_the_reversed_declaration(self):
         from hwave.solver import hartree_fock as hf
         shape = (3, 1, 1)
-        for ham in (offsite3,):
-            rev = {t: {((-r[0], -r[1], -r[2]) if r != (0, 0, 0) else r, o): v
-                       for (r, o), v in tbl.items()} for t, tbl in ham.items()}
-            new = hf.build_interaction_tables(ham, 2, shape)
-            leg_rev = _LegacyUHFk(rev, 2, shape, True)
-            leg_rev._make_ham_inter()
-            leg_same = _LegacyUHFk(ham, 2, shape, True)
-            leg_same._make_ham_inter()
-            for t in ("CoulombInter", "Hund", "PairHop"):
-                self.assertGreater(np.abs(new.inter_table[t]).max(), 1e-3, t)
-                np.testing.assert_array_equal(new.inter_table[t],
-                                              leg_rev.inter_table[t], t)
-                self.assertFalse(np.array_equal(new.inter_table[t],
-                                                leg_same.inter_table[t]), t)
+        ham = offsite3
+        rev = {t: {((-r[0], -r[1], -r[2]) if r != (0, 0, 0) else r, o): v
+                   for (r, o), v in tbl.items()} for t, tbl in ham.items()}
+        new = hf.build_interaction_tables(ham, 2, shape)
+        leg_rev = _LegacyUHFk(rev, 2, shape, True)
+        leg_rev._make_ham_inter()
+        leg_same = _LegacyUHFk(ham, 2, shape, True)
+        leg_same._make_ham_inter()
+        for t in ("CoulombInter", "Hund", "PairHop"):
+            self.assertGreater(np.abs(new.inter_table[t]).max(), 1e-3, t)
+            np.testing.assert_array_equal(new.inter_table[t],
+                                          leg_rev.inter_table[t], t)
+            self.assertFalse(np.array_equal(new.inter_table[t],
+                                            leg_same.inter_table[t]), t)
 
 
 class TestUHFkSolverBitIdentity(unittest.TestCase):

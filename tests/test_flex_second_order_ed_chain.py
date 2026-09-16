@@ -280,10 +280,18 @@ def _fx_complex():
     The two fixtures the gate itself runs on both have real hopping, so
     ``eps(k) = eps(-k)`` and ``eps(k) = eps(k)^T`` hold to round-off there
     and NEITHER the Fourier sign nor the orbital index order of
-    :func:`_to_k` can be seen. This fixture exists only to see them
-    (:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`);
-    it carries no interaction and is never diagonalised beyond the free
-    Green function.
+    :func:`_to_k` can be seen. This fixture was introduced to see them
+    (:meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`).
+
+    It has a second consumer:
+    :meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`
+    runs the per-type first-order gate on it with the off-site rows of
+    :data:`_GATE_ROWS`, because the same asymmetry that makes the Fourier
+    sign visible also makes ``+x`` differ from its reverse, so the two
+    orbital placements of a declared row are genuinely different
+    Hamiltonians here. Neither consumer diagonalises it: the gate needs
+    only the mean-field functional at a supplied density, so this fixture
+    is still never handed to ``SectorED``.
 
     ``EDFixture.build_h1`` places ``t[(a, b)]`` on ``(j+1, a) <- (j, b)``
     and ``conj(t[(b, a)])`` on the return hop, so ``h1`` is Hermitian for
@@ -1257,7 +1265,23 @@ class TestChainHamiltonian(unittest.TestCase):
         # and it is what _ed_terms actually emits
         rows = {"Exchange": [(R, 0, 0, a + 1, b + 1, v, 0.0)]}
         emitted = _ed_terms(fx, rows, mirrored_weight=1.0)
-        self.assertEqual(sorted(emitted), sorted(grouped))
+
+        def by_modes(ts):
+            """``{(p, q, r, s): coeff}`` -- the term list as a multiset
+            keyed on the mode indices alone. Sorting the raw tuples would
+            compare their COMPLEX last element, which raises; and the
+            mapping is only faithful if no two monomials share the four
+            indices, which is asserted rather than assumed so that a future
+            fixture fails here and not silently."""
+            out = {}
+            for (p, q, r, s, c_) in ts:
+                self.assertNotIn((p, q, r, s), out,
+                                 "two monomials share the mode indices "
+                                 "{}".format((p, q, r, s)))
+                out[(p, q, r, s)] = complex(c_)
+            return out
+
+        self.assertEqual(by_modes(emitted), by_modes(grouped))
 
     def test_first_order_gate_every_type_documented_reading(self):
         """G-HF, every type: for each off-site interaction type the kernel
@@ -1280,17 +1304,24 @@ class TestChainHamiltonian(unittest.TestCase):
         off-site rows removed) and required to be non-negligible, so the
         on-site row cannot make the comparison vacuous.
 
-        Measured (worst over the two densities; relative to the mean
-        field's own maximum):
+        Measured, relative to the mean field's own maximum, and in each
+        column the value that is WORST for the assertion it supports: the
+        LARGEST match residual over the two densities, and the SMALLEST
+        swapped miss:
 
             type           flag_fock=true            flag_fock=false
-                           match   swapped miss      match   swapped miss
-            CoulombInter   2.0e-16   2.5e-1          1.4e-16   blind
-            Hund           2.0e-16   4.6e-1          1.3e-16   blind
-            Ising          2.3e-16   2.9e-1          1.7e-16   blind
-            Exchange       8.0e-17   2.2e-1          0.0       blind
-            PairLift       1.7e-16   2.2e-1          0.0       blind
-            PairHop        1.3e-16   1.6e-1          4.1e-17   9.0e-2
+                           match     miss (min)      match     miss (min)
+            CoulombInter   2.0e-16   1.4e-1          1.4e-16   blind
+            Hund           2.0e-16   4.5e-1          1.3e-16   blind
+            Ising          2.3e-16   2.1e-1          1.7e-16   blind
+            Exchange       8.0e-17   1.8e-1          0.0       blind
+            PairLift       1.7e-16   1.3e-1          0.0       blind
+            PairHop        1.3e-16   9.4e-2          4.1e-17   9.0e-2
+
+        The tightest cell of the whole table is therefore ``PairHop``'s
+        9.0e-2, ninety times the 1e-3 the gate demands; the largest match
+        residual anywhere is 2.3e-16, four orders inside the 1e-12 it
+        demands.
 
         "blind" is not a weaker check but a different one, asserted as an
         EQUALITY: see :data:`_HARTREE_ORIENTATION_BLIND` -- with the Fock
