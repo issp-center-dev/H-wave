@@ -666,7 +666,10 @@ V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
 
 となります。ここで\ :math:`v_{\alpha\beta}(\mathbf{q}) = \sum_R V_{\alpha\beta}(R)\,
 e^{i\mathbf{q}\cdot R}`\ は相互作用ファイルの向き（:math:`\alpha`\ が元のセル）
-でのフーリエ変換であり、ring の頂点が使うものと同じ行列です。
+でのフーリエ変換です。密度スロット上には、ring の頂点が担うのと同じ対の転置を
+伴って\ :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v_{\beta\alpha}(\mathbf{q})`\ として入ります（ring の頂点が使うものと
+同じ行列です）。
 これは対基底の密度スロット上の行列（それ以外のスロットではゼロ）で
 あり、以下で\ :math:`\bar\chi`\ と取る積は\ :math:`A^{\sigma}_{\rm on}`\ ・
 :math:`B^{\sigma}_{\rm on}`\ の場合と同様、この対空間での行列積です。

@@ -702,8 +702,11 @@ pair basis and are
    A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),
 
 with :math:`v_{\alpha\beta}(\mathbf{q}) = \sum_R V_{\alpha\beta}(R)\,
-e^{i\mathbf{q}\cdot R}` in the orientation of the interaction file
-(:math:`\alpha` in the original cell), the same matrix the ring vertex
+e^{i\mathbf{q}\cdot R}` the Fourier transform of the interaction file in its
+own orientation (:math:`\alpha` in the original cell), placed on the density
+slots with the pair transpose the ring vertex also carries,
+:math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v_{\beta\alpha}(\mathbf{q})`; it is the same matrix the ring vertex
 uses, understood as a matrix on the density slots of the pair basis (zero on
 every other slot), so that each product with :math:`\bar\chi` below is a
 matrix product in that pair space, exactly as for

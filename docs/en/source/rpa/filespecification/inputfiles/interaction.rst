@@ -43,6 +43,8 @@ in the random phase approximation,
      conjugate, exactly as ``PairHop`` does; the ``+ h.c.`` above was
      missing from earlier editions of this page.
 
+.. _rpa_interaction_orientation:
+
 .. note::
 
    In every expression above :math:`r_{ij} = R_j - R_i`: a row
@@ -57,7 +59,11 @@ in the random phase approximation,
    change only for off-site rows with two different orbitals or a complex
    coefficient; every on-site interaction, every real orbital-diagonal
    off-site row, every real single-orbital input, and every RPA or Eliashberg
-   result are unchanged. **No input file needs to be changed.** To reproduce a
+   result are unchanged. A ring run with ``longitudinal_bond_channels = true``
+   on real inter-orbital off-site bonds changes as well: its mixed
+   second-order blocks are now exact (issue #192). Runs under
+   ``flex_second_order = "takimoto"`` without the Hartree-Fock term are
+   unchanged. **No input file needs to be changed.** To reproduce a
    2.0.0 ``UHFk`` number, negate the displacement of every off-site two-body
    row (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the ``Transfer`` rows,
    not the on-site rows; do not swap the orbital indices, which is wrong for
@@ -65,7 +71,10 @@ in the random phase approximation,
    and Eliashberg solvers compute, whose 2.0.0 results on the original file
    were already correct. Remove any workaround you added for the old
    discrepancy, and restart affected self-consistent runs from scratch rather
-   than from 2.0.0 seeds.
+   than from 2.0.0 seeds. A 2.0.0 pipeline that fed ``UHFk`` output into the
+   RPA or Eliashberg solvers is reproduced only by running ``UHFk`` on the
+   negated file and the later stages on the original one, because 2.0.0
+   solved a different Hamiltonian in the two stages.
 
 
 An example of the file is shown below.
