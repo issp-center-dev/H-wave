@@ -4,6 +4,14 @@ Mirrors tests/test_flex_ir.py but for calc_scheme='general' on a norb=2
 ON-SITE fixture. Equivalence is convergence of the uniform result toward the
 IR result as Nmat grows (the uniform path carries the O(beta/Nmat) artifact).
 Run from the repository root.
+
+One test here compares against a SECOND source tree at
+tests/test_flex_second_order_compat.DEVELOP_COMMIT. CI provisions that
+reference revision (a detached worktree under RUNNER_TEMP; see
+.github/workflows/ci-python39.yml) and sets
+HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so the comparison RUNS there and a
+missing or unusable reference fails rather than skips. Locally it skips
+with a reason when no such checkout is at hand.
 """
 import os
 import unittest
@@ -730,7 +738,9 @@ def _develop_checkout():
     """``(path, None)`` when the reference checkout is usable, ``(None,
     reason)`` otherwise -- one shared rule with the uniform-grid harness
     (:func:`tests.test_flex_second_order_compat.develop_checkout`), which
-    also pins the REVISION it compares against and refuses a dirty tree."""
+    also pins the REVISION it compares against, refuses a dirty tree, and
+    RAISES instead of returning a reason when the comparison is declared
+    mandatory (``HWAVE_REQUIRE_DEVELOP_COMPARISON``, which CI sets)."""
     from tests.test_flex_second_order_compat import develop_checkout
     return develop_checkout()
 

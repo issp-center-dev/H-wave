@@ -67,8 +67,19 @@ which the mean-field kernel implements since the orientation fix of issue
 ``transfer.dat`` row gets in this code base -- ``EDFixture.build_h1`` puts
 ``t[(a, b)]`` on ``(j + R, a) <- (j, b)``, which
 :meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
-pins against the solver's own band. The one-body and two-body readings
-therefore do not agree, and that asymmetry is what the fix makes explicit.
+pins against the solver's own band.
+
+READ THAT ASYMMETRY CAREFULLY, because it invites the wrong repair. It is
+a statement about the SOLVER'S INTERNAL MATRIX FRAME and nothing else: the
+one-body Hamiltonian is carried as the matrix of ``c^dag_{r,a} c_{0,b}``,
+whose two index slots are placed the other way round from the two density
+slots of a two-body row. There is no second public file convention here --
+``transfer.dat`` and the two-body files are each read exactly as their
+documentation says, and a user writing either file never meets this. So do
+NOT "fix" it by flipping the one-body reading, or by re-flipping the
+two-body one to match it: both are already right, the frames simply differ
+inside the code, and the ED fixture has to reproduce BOTH of them to be
+comparable with production at all.
 
 This is NOT assumed here. :meth:`TestChain
 Hamiltonian.test_ed_hamiltonian_is_the_production_mean_field` compares the
@@ -131,6 +142,12 @@ maximum over the window; tolerance 2e-3):
     L=3 norb=2  v^2 (asymmetric)   3.5e-4              3.5e-4
     L=3 norb=2  J V (mixed)        4.5e-4              --
 
+The inter-orbital row's 3.5e-4 is also the FLOOR of that working point
+(the exact oracle's own distance from the ED remainder). It is measured
+inside :meth:`TestG4.test_interorbital_bond_chain` -- printed as MEASURED
+and held to the broad band :data:`_FLOOR_BAND` -- because the gate's upper
+bound is expressed in it.
+
 The v^2 row was the campaign's open item, and both halves of it are now
 settled. The STANDALONE local path plus the dropped class reproduces the
 exact inter-orbital off-site second order (so the DOCUMENTED orientation
@@ -146,8 +163,10 @@ pair permutation of spec 2026-09-16 R3
 (:func:`hwave.solver.flex_bond._mixed_pair_permutation`) the gate lands on
 3.5e-4 -- the same place as ``local + dropped``, which is the FLOOR of
 this working point -- and :meth:`TestG4.test_interorbital_bond_chain`
-asserts it there, in a band around a floor it measures itself and against
-the exact oracle directly (:data:`_GATE_ORACLE_CEIL`).
+asserts it there: BELOW twice a floor it measures itself (no lower bound;
+see the method), with that measured floor held to a broad stability band
+(:data:`_FLOOR_BAND`), and against the exact oracle directly
+(:data:`_GATE_ORACLE_CEIL`).
 
 What remains RECORDED is the off-site Hund/Ising class and the size of the
 dropped class on the inter-orbital fixture -- outcomes this gate measures
@@ -281,6 +300,21 @@ _GATE_ORACLE_CEIL = 1.7e-4
 #: truncation and the finite Matsubara window, both deterministic, so the
 #: band only has to absorb a different BLAS's round-off.
 _PINNED_BAND = 0.20
+
+#: BROAD stability band on the FLOOR that
+#: :meth:`TestG4.test_interorbital_bond_chain` measures -- the distance
+#: between the exact oracle's coefficient and the ED remainder at this
+#: working point. MEASURED: 3.5e-4, i.e. a factor 3.5 above the lower bound
+#: and a factor 28 below the upper one.
+#:
+#: The floor is the yardstick the gate is banded against, so a floor that
+#: moved by orders of magnitude would silently rescale that band -- a gate
+#: error could then hide inside a band that had grown to accommodate it,
+#: and an improved extraction could shrink the band until round-off broke
+#: it. Broad on purpose: this is a sanity bound on the working point
+#: (stencil truncation plus the finite Matsubara window), not a pin, and it
+#: must not fail for a different BLAS or a slightly different numpy.
+_FLOOR_BAND = (1.0e-4, 1.0e-2)
 
 
 def _inner():
@@ -1629,15 +1663,27 @@ class TestG4(unittest.TestCase):
           what a correct second order can achieve here and no more. The
           floor is MEASURED in the test rather than hard-coded (it is the
           stencil truncation plus the finite Matsubara window, both of which
-          move with the working point), and the gate is held inside
-          ``[0.5, 2] x`` it: below the band the gate would be closer to ED
-          than an exact second order is, above it there is a systematic
-          error again.
-        * against the ORACLE itself, at :data:`_GATE_ORACLE_CEIL`. The band
-          above says "as close to ED as an exact second order gets", which a
-          different error of the same size would also satisfy; this one says
-          the gate IS that exact second order, to the production side's
-          stencil round-off."""
+          move with the working point), and the gate is held BELOW ``2 x``
+          it: above that there is a systematic error again.
+
+          Only the upper bound. There is deliberately no lower one: an
+          approximate result may legitimately land CLOSER to the ED
+          remainder than the exact-oracle floor, by cancellation between
+          its own error and the extraction's, and a numerical improvement
+          that produced exactly that would fail a lower bound while being
+          right. What the floor itself is held to is a BROAD stability band
+          (:data:`_FLOOR_BAND`), because it is the yardstick the upper
+          bound is measured in: a floor that had moved by orders of
+          magnitude would rescale that bound without anything saying so.
+        * against the ORACLE itself, at :data:`_GATE_ORACLE_CEIL`. The upper
+          bound above says "no farther from ED than about what an exact
+          second order gets", which a different error of the same size
+          would also satisfy; this one says the gate IS that exact second
+          order, to the production side's stencil round-off. It is the
+          assertion that carries the verdict, and it is two-sided in
+          substance: the companion ``gate_orc < 3 * local_orc`` says what
+          separates the gate from the oracle is the extraction and not the
+          gate."""
         maps = _Maps(_fx_orbital(), _rows_interorbital)
         with _quiet():
             ed = _refine(lambda h: _coeff2(lambda v: maps.ed(v), h), _X)
@@ -1663,18 +1709,36 @@ class TestG4(unittest.TestCase):
                                "there is no floor to band the gate against")
             gate_dev = np.abs(gate - ed).max() / scale
             gate_orc = np.abs(gate - orc).max() / scale
+            # the floor is the yardstick every band below is measured in, so
+            # it is itself held to a BROAD stability range (see _FLOOR_BAND):
+            # a working point whose truncation had moved by orders of
+            # magnitude would rescale the gate's band without failing it
+            self.assertGreater(floor, _FLOOR_BAND[0],
+                               "the MEASURED floor (exact oracle vs ED) has fallen to {:.3e}; "
+                               "the working point's extraction error was 3.5e-4 when this "
+                               "gate was calibrated, and the band the gate is held in is "
+                               "measured in it".format(floor))
+            self.assertLess(floor, _FLOOR_BAND[1],
+                            "the MEASURED floor (exact oracle vs ED) has risen to {:.3e}; "
+                            "the working point's extraction error was 3.5e-4 when this gate "
+                            "was calibrated, and a band that wide would admit a systematic "
+                            "error in the gate".format(floor))
             # the same distance for the STANDALONE path, which is the exact
             # second order by construction once the dropped class is added:
             # that is the extraction's own noise, the yardstick
             # _GATE_ORACLE_CEIL is calibrated against
             local_orc = np.abs(pr + dr - orc).max() / scale
-            print("MEASURED inter-orbital bond gate: vs ED {:.3e}, floor (exact oracle vs ED) "
-                  "{:.3e}, vs exact oracle {:.3e} (extraction noise, from local + dropped vs "
-                  "the same oracle: {:.3e})".format(gate_dev, floor, gate_orc, local_orc))
-            self.assertGreater(gate_dev, 0.5 * floor,
-                               "the bond gate is CLOSER to the ED remainder ({:.3e}) than the "
-                               "exact second order is ({:.3e}): the comparison is no longer "
-                               "measuring what it thinks".format(gate_dev, floor))
+            print("MEASURED inter-orbital bond gate: vs ED {:.3e}, MEASURED floor (exact "
+                  "oracle vs ED) {:.3e} (band {:.0e} ... {:.0e}), vs exact oracle {:.3e} "
+                  "(extraction noise, from local + dropped vs the same oracle: {:.3e})"
+                  .format(gate_dev, floor, _FLOOR_BAND[0], _FLOOR_BAND[1], gate_orc,
+                          local_orc))
+            # NO lower bound on gate_dev: an approximate result can land
+            # closer to the ED remainder than the exact-oracle floor by
+            # cancellation with the extraction's own error, and a numerical
+            # improvement doing exactly that must not fail this gate. What
+            # says the gate IS the exact second order is the oracle
+            # comparison below, not its distance from ED.
             self.assertLess(gate_dev, 2.0 * floor,
                             "the bond gate misses the ED remainder on the inter-orbital bond "
                             "by {:.3e} (floor {:.3e}); issue #192".format(gate_dev, floor))

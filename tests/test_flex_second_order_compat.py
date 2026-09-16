@@ -13,7 +13,15 @@ What is NOT here: the paths the interaction-row orientation change moved
 They cannot be compared to the reference revision on the same declaration
 by construction; their numerical state is pinned as committed fixed state
 by tests/test_flex_orientation_baseline.py, and their CORRECTNESS by the
-ED/oracle modules that file names."""
+ED/oracle modules that file names.
+
+THE REFERENCE CHECKOUT IS PROVISIONED IN CI. Both test jobs of
+.github/workflows/ci-python39.yml materialise DEVELOP_COMMIT as a detached
+git worktree under RUNNER_TEMP and export HWAVE_DEVELOP_CHECKOUT and
+HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so these comparisons RUN there and a
+missing, wrong-revision or dirty reference is a failure rather than a skip
+(see develop_checkout below). Locally the flag is unset and the comparison
+skips with a reason when no such checkout is at hand."""
 import json
 import os
 import shutil
@@ -21,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -75,15 +84,47 @@ def _run(checkout, path, inter, out, so, extra=None):
 DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 
 
+#: When this is set to a true-ish value, a reference checkout that is
+#: missing, at the wrong revision or dirty is a FAILURE instead of a skip.
+#: CI sets it (``.github/workflows/ci-python39.yml`` provisions the
+#: reference revision as a detached worktree under ``RUNNER_TEMP`` and
+#: exports both variables), so a comparison that stops running there is
+#: reported rather than silently dropped. An ordinary local run leaves it
+#: unset and keeps the informative skip.
+_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON"
+
+
+def _comparison_is_required():
+    return os.environ.get(_REQUIRE_ENV, "").strip() not in ("", "0", "false", "no", "off")
+
+
+def _unusable(reason):
+    """The single refusal site of :func:`develop_checkout`: a skip reason
+    normally, an ``AssertionError`` when the comparison is required.
+
+    One place rather than four skip sites in the four harnesses: the rule is
+    a property of the reference checkout, not of the individual comparison,
+    and a rule spelled out four times is a rule three of them can drift
+    from."""
+    if _comparison_is_required():
+        raise AssertionError(
+            "{} is set, so this comparison must run against the reference "
+            "revision: {}".format(_REQUIRE_ENV, reason))
+    return None, reason
+
+
 def develop_checkout(run=None):
     """``(path, None)`` when the reference checkout is usable, ``(None,
-    reason)`` otherwise.
+    reason)`` otherwise -- or an ``AssertionError`` when
+    :data:`_REQUIRE_ENV` is set (CI).
 
     Usable means: it exists, it is at :data:`DEVELOP_COMMIT`, and its tree
     is clean. A checkout at another revision -- or with local edits -- is
     NOT a reference: the comparison would either fail for reasons that have
     nothing to do with this branch, or pass against a tree nobody can name.
-    Either way the answer is to skip and say what was expected.
+    Either way the answer is to skip and say what was expected -- unless
+    the caller has declared the comparison mandatory, which is what
+    :data:`_REQUIRE_ENV` does.
 
     ``run`` is the subprocess runner, injectable so the rejections can be
     unit-tested without a second checkout."""
@@ -91,21 +132,22 @@ def develop_checkout(run=None):
     dev = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
                          os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..")))
     if not os.path.exists(os.path.join(dev, "src", "hwave", "solver", "flex.py")):
-        return None, ("reference checkout not found at {} (set HWAVE_DEVELOP_CHECKOUT)"
-                      .format(dev))
+        return _unusable("reference checkout not found at {} (set HWAVE_DEVELOP_CHECKOUT)"
+                         .format(dev))
     try:
         head = run(["git", "-C", dev, "rev-parse", "HEAD"],
                    check=True, capture_output=True, text=True).stdout.strip()
         dirty = run(["git", "-C", dev, "status", "--porcelain"],
                     check=True, capture_output=True, text=True).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, "cannot read the revision of the reference checkout {}: {}".format(dev, exc)
+        return _unusable("cannot read the revision of the reference checkout {}: {}"
+                         .format(dev, exc))
     if head != DEVELOP_COMMIT:
-        return None, ("the reference checkout {} is at {}, but this comparison is against {}"
-                      .format(dev, head or "<unknown>", DEVELOP_COMMIT))
+        return _unusable("the reference checkout {} is at {}, but this comparison is against {}"
+                         .format(dev, head or "<unknown>", DEVELOP_COMMIT))
     if dirty:
-        return None, ("the reference checkout {} has local modifications; this comparison "
-                      "needs a clean tree at {}".format(dev, DEVELOP_COMMIT))
+        return _unusable("the reference checkout {} has local modifications; this comparison "
+                         "needs a clean tree at {}".format(dev, DEVELOP_COMMIT))
     return dev, None
 
 
@@ -456,7 +498,19 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
 
     The refusals are unit-tested with a stubbed runner rather than a second
     checkout: what matters is that a wrong revision and a dirty tree both
-    STOP the comparison and say what was expected, not that git works."""
+    STOP the comparison and say what was expected, not that git works.
+
+    This class is about the SKIP path, so it clears
+    :data:`_REQUIRE_ENV` for the duration -- otherwise it would fail in CI,
+    where the flag is set and the very rejections it stubs are supposed to
+    raise. The raising path is
+    :class:`TestDevelopComparisonIsRequiredInCI`."""
+
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop(_REQUIRE_ENV, None)
 
     class _Result(object):
         def __init__(self, stdout):
@@ -502,6 +556,102 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
             self.skipTest(why)
         self.assertIsNone(dev)
         self.assertIn("cannot read the revision", why)
+
+
+class TestDevelopComparisonIsRequiredInCI(unittest.TestCase):
+    """With :data:`_REQUIRE_ENV` set, every rejection of
+    :func:`develop_checkout` FAILS instead of returning a skip reason.
+
+    This is what makes the CI provisioning step load-bearing: without it a
+    typo in the workflow (a wrong path, a fetch that silently did not bring
+    the revision in) would leave the comparisons skipping in CI exactly as
+    they do on a laptop, and nothing would say so. The reference directory
+    is pointed at THIS checkout so that the test needs no second tree: the
+    revision and the dirty flag come from the injected runner, which is
+    also the only thing the missing-directory case has to avoid.
+    """
+
+    def _runner(self, head, dirty=""):
+        class _Result(object):
+            def __init__(self, stdout):
+                self.stdout = stdout
+
+        def run(cmd, **kw):
+            return _Result(head if "rev-parse" in cmd else dirty)
+        return run
+
+    def _env(self, checkout, require=True):
+        env = {"HWAVE_DEVELOP_CHECKOUT": checkout}
+        if require:
+            env[_REQUIRE_ENV] = "1"
+        return mock.patch.dict(os.environ, env)
+
+    def test_a_missing_reference_fails(self):
+        missing = os.path.join(tempfile.gettempdir(), "hwave-no-such-reference-checkout")
+        with self._env(missing):
+            with self.assertRaises(AssertionError) as cm:
+                develop_checkout(run=self._runner(DEVELOP_COMMIT))
+        self.assertIn(_REQUIRE_ENV, str(cm.exception))
+        self.assertIn("not found", str(cm.exception))
+
+    def test_a_wrong_revision_fails(self):
+        wrong = "0" * 40
+        with self._env(os.getcwd()):
+            with self.assertRaises(AssertionError) as cm:
+                develop_checkout(run=self._runner(wrong))
+        self.assertIn(wrong, str(cm.exception))
+        self.assertIn(DEVELOP_COMMIT, str(cm.exception))
+
+    def test_a_dirty_reference_fails(self):
+        with self._env(os.getcwd()):
+            with self.assertRaises(AssertionError) as cm:
+                develop_checkout(
+                    run=self._runner(DEVELOP_COMMIT, " M src/hwave/solver/flex.py"))
+        self.assertIn("local modifications", str(cm.exception))
+
+    def test_an_unreadable_reference_fails(self):
+        def run(cmd, **kw):
+            raise OSError("git not found")
+        with self._env(os.getcwd()):
+            with self.assertRaises(AssertionError) as cm:
+                develop_checkout(run=run)
+        self.assertIn("cannot read the revision", str(cm.exception))
+
+    def test_a_good_reference_is_accepted(self):
+        """The flag does not turn a USABLE reference into a failure: it is a
+        refusal-to-skip switch, not a second gate."""
+        with self._env(os.getcwd()):
+            dev, why = develop_checkout(run=self._runner(DEVELOP_COMMIT))
+        self.assertEqual(dev, os.getcwd())
+        self.assertIsNone(why)
+
+    def test_without_the_flag_the_same_rejection_skips(self):
+        """The control: the SAME rejection that fails above returns a skip
+        reason when the flag is unset, so the failure is the flag's doing
+        and not the stub's."""
+        missing = os.path.join(tempfile.gettempdir(), "hwave-no-such-reference-checkout")
+        with mock.patch.dict(os.environ, {"HWAVE_DEVELOP_CHECKOUT": missing}):
+            os.environ.pop(_REQUIRE_ENV, None)
+            dev, why = develop_checkout(run=self._runner(DEVELOP_COMMIT))
+        self.assertIsNone(dev)
+        self.assertIn("not found", why)
+
+    def test_the_flag_is_read_as_a_switch(self):
+        """``0``/``false``/empty are OFF, anything else is ON -- the same
+        reading :mod:`tests.test_flex_orientation_baseline` gives its
+        regeneration switch, so an operator who exported ``=0`` to turn the
+        requirement off gets what they asked for."""
+        missing = os.path.join(tempfile.gettempdir(), "hwave-no-such-reference-checkout")
+        for value, required in (("1", True), ("true", True), ("yes", True),
+                                ("0", False), ("false", False), ("off", False), ("", False)):
+            with self.subTest(value=value):
+                with mock.patch.dict(os.environ, {"HWAVE_DEVELOP_CHECKOUT": missing,
+                                                  _REQUIRE_ENV: value}):
+                    if required:
+                        with self.assertRaises(AssertionError):
+                            develop_checkout(run=self._runner(DEVELOP_COMMIT))
+                    else:
+                        self.assertIsNone(develop_checkout(run=self._runner(DEVELOP_COMMIT))[0])
 
 
 if __name__ == "__main__":

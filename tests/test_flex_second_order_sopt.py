@@ -146,18 +146,23 @@ _LADDER_BOUND = 1.0e-4
 #: three orders below every other entry's 1e-6 ... 3e-5.
 _RESIDUAL_FLOOR = 1.0e-9
 
-#: RECORDED gate-on deviations. ``JV``/``IV`` are off-site Hund/Ising,
-#: where the gate reproduces the exact oracle and the recorded number is
-#: round-off. (``V``, the inter-orbital off-site CoulombInter bond of issue
-#: #192, is no longer recorded: since the pair permutation of spec
+#: RECORDED gate-on deviations -- a MEASURED REFERENCE, not a pin. These
+#: are the numbers this module measured when it was written; they are
+#: printed alongside the fresh measurement so a reader can see whether it
+#: moved, and the only thing ASSERTED about either is the common ceiling
+#: :data:`_ROUNDOFF_CEIL`. Holding them to a band would be asserting the
+#: exact bit pattern of a BLAS reduction: they sit at the round-off floor
+#: of a 1e-1-sized coefficient.
+#:
+#: ``JV``/``IV`` are off-site Hund/Ising, where the gate reproduces the
+#: exact oracle. (``V``, the inter-orbital off-site CoulombInter bond of
+#: issue #192, is not among them: since the pair permutation of spec
 #: 2026-09-16 R3 the gate reproduces the exact oracle there too, so it is
 #: ASSERTED alongside the orbital-diagonal ``Vd``.)
-_PINNED_GATE = {"JV": 3.5e-11, "IV": 3.0e-11}
+_MEASURED_GATE_REFERENCE = {"JV": 3.5e-11, "IV": 3.0e-11}
 
-#: Ceiling for the entries of :data:`_PINNED_GATE`. They sit at the
-#: round-off floor of a 1e-1-sized coefficient, so only their CEILING is
-#: meaningful (a lower bound there would be asserting the exact bit pattern
-#: of a BLAS reduction).
+#: The ceiling that IS asserted, on every entry of
+#: :data:`_MEASURED_GATE_REFERENCE` and on the fresh measurement beside it.
 _ROUNDOFF_CEIL = 1.0e-9
 
 _TABLE = dict(_ONSITE, **_OFFSITE)
@@ -435,15 +440,17 @@ class TestG2Heavy(unittest.TestCase):
             prod, orc = c["c20"]
             self.assertGreater(np.abs(orc).max(), _FLOOR_PURE)               # anti-vacuity
             rel = _rel(prod, orc)
-            expect = _PINNED_GATE[name]
+            reference = _MEASURED_GATE_REFERENCE[name]
             print("RECORDED gate-on second order for {}: relative deviation {:.3e} "
-                  "(recorded {:.3e})".format(name, rel, expect))
+                  "(measured reference {:.3e})".format(name, rel, reference))
             self.assertTrue(np.isfinite(rel), "{}: the recorded deviation is not finite".format(name))
             # at the round-off floor of a 1e-1-sized coefficient: only the
-            # ceiling is a statement about the code (see _ROUNDOFF_CEIL)
+            # ceiling is a statement about the code (see _ROUNDOFF_CEIL);
+            # the reference above is printed for comparison, not asserted
             self.assertLess(rel, _ROUNDOFF_CEIL,
                             "{}: the bond gate no longer reproduces the exact oracle "
-                            "(measured {:.3e}, recorded {:.3e})".format(name, rel, expect))
+                            "(measured {:.3e}, measured reference {:.3e})"
+                            .format(name, rel, reference))
 
 
 if __name__ == "__main__":

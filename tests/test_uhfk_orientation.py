@@ -21,6 +21,15 @@ in-process, table-level version of the same statement is
 ``hwave.qlms.run`` processes, the two source trees, the shipped
 ``energy.dat`` and ``green.dat.npz``.
 
+CI provisions the reference revision (a detached worktree at
+``DEVELOP_COMMIT`` under ``RUNNER_TEMP``; see
+``.github/workflows/ci-python39.yml``) and sets
+``HWAVE_REQUIRE_DEVELOP_COMPARISON=1``, so this gate RUNS there and a
+missing, wrong-revision or dirty reference is a failure rather than a
+skip. Locally the flag is unset and the gate skips with a reason when no
+such checkout is at hand; ``TestFixturesAreOrientationSensitive`` below
+needs no reference tree and runs either way.
+
 WHY THE COMPARISON IS ``np.array_equal`` AND NOT A TOLERANCE
 ------------------------------------------------------------
 Because the two runs do the SAME arithmetic. The orientation step is a
@@ -29,11 +38,13 @@ and the reversal of the declaration produces that same table out of the
 reference revision's builder -- bit for bit, not to round-off (Task 2's
 kernel test pins exactly that with ``np.array_equal``). The tables being
 identical, the whole SCF trajectory is identical: same initial Green
-(``RndSeed`` is pinned), same mixing, same eigen-decompositions, same
-iteration count. A tolerance here would hide a real difference in the
-mean field. The only thing that could separate the two processes is a
-different numpy/BLAS on the two ``PYTHONPATH``s, which is not a thing on
-one machine. The comparison below therefore carries NO tolerance at all,
+(zero, or the COMMITTED seed :data:`_SEED` -- a file both source trees
+read, not a draw from a random generator they would each have to agree
+about), same mixing, same eigen-decompositions, same iteration count. A
+tolerance here would hide a real difference in the mean field. The only
+thing that could separate the two processes is a different numpy/BLAS on
+the two ``PYTHONPATH``s, which is not a thing on one machine. The
+comparison below therefore carries NO tolerance at all,
 not even a round-off fallback: there is no measurement such a fallback
 could be calibrated from, and it would be exactly the place where a real
 difference in the mean field could hide.
@@ -94,8 +105,14 @@ amplitude is deliberately LARGE (3.5, against a bandwidth of order 1):
 PairLift contracts only the SPIN-OFF-DIAGONAL part of the density, UHFk's
 spin-collinear solution is a fixed point of the loop, and below the
 symmetry-breaking threshold the term contributes exactly zero however it
-is oriented (measured: 2.6e-28 at 0.16, 0.39 at 3.5). ``ising.dat`` is
-raised for the same reason and a weaker one (2.0): in the broken-symmetry
+is oriented. Those two cases therefore start from a COMMITTED
+spin-mixing initial Green function (:data:`_SEED`, built by
+:func:`_spin_mixed_seed`) rather than from UHFk's zero density -- and the
+amplitude still has to clear the threshold: MEASURED from that seed,
+PairLift contributes 2.3e-22 at 1.0 (the transverse component decays and
+the case is vacuous for it), 2.15e-01 at 2.0 and 3.91e-01 at 3.5.
+``ising.dat`` is raised for the same reason and a weaker one (2.0): in the
+broken-symmetry
 state PairLift produces, the Ising contribution is suppressed, and at 0.3 it
 cleared the anti-vacuity floor by only 2.6x (2.57e-06, i.e. 4e-07 of the
 total energy); at 2.0 it is 5.97e-04, and the reference control's gap on the
@@ -155,6 +172,25 @@ _ALL_TYPES_FILES = ("ising.dat", "exchange.dat", "pairlift.dat")
 #: See the comment in :func:`_params`.
 _NEEDS_SPIN_MIXING = frozenset({"PairLift"})
 
+#: The COMMITTED initial Green function those cases start from, one per
+#: fixture directory (the two write the same physical state in the two index
+#: conventions; see :func:`_spin_mixed_seed`). A file rather than
+#: ``initial_mode = "random"``: the random route goes through numpy's global
+#: legacy generator, so the state both sides of the comparison start from
+#: would be whatever that generator produces on the day -- and the two sides
+#: are TWO SOURCE TREES, which need not agree about it. A committed file is
+#: read by both, so the end-to-end identity stays exact for a reason that is
+#: in the repository.
+_SEED = "initial_green_spin_mixed.npz"
+
+#: Transverse amplitude of that seed, in units of the on-site density it is
+#: added to (0.25 here). MEASURED: every value from 0.02 to 0.25 sends both
+#: all-types fixtures to the same broken solution, so 0.05 sits in the
+#: middle of a decade-wide working range rather than on its edge.
+_SEED_AMPLITUDE = 0.05
+
+_REGENERATE_SEED_ENV = "HWAVE_REGENERATE_UHFK_SEED"
+
 _HARTREE_ONLY = ("Hartree-only: the mean field reads the table as "
                  "sum_r J_ab(r), which the Hermitian closure makes "
                  "Hermitian and the orientation therefore leaves alone")
@@ -197,6 +233,93 @@ CASES = {c.label: c for c in (
 )}
 
 
+def _spin_mixed_seed(nvol, ns, norb, ncond, amplitude=_SEED_AMPLITUDE):
+    """The committed initial Green function of the all-types cases, in the
+    layout ``uhfk.UHFk._read_green_from_data`` expects: a ``(nvol, ns, norb,
+    ns, norb)`` complex array of ``G_ab(r)``, member name ``green``.
+
+    Two terms, and nothing random:
+
+    * the UNIFORM on-site density, ``Ncond / (nvol * ns * norb)`` on the
+      diagonal of ``r = 0`` and zero at every other displacement. That is a
+      normalised, featureless density -- it carries the right electron count
+      and no structure for the SCF to be steered by;
+    * a TRANSVERSE admixture ``amplitude * sigma_y`` on the same
+      displacement, i.e. ``-i a`` on the (up, down) entry of each orbital
+      and ``+i a`` on its (down, up) partner. Hermitian, so the seed is
+      still a density matrix.
+
+    Why sigma_y and not sigma_x: ``PairLift``'s spin table pairs
+    ``<c^dag_up c_down>`` with itself rather than with its conjugate, so the
+    term is sensitive to the PHASE of the transverse density and the
+    instability it drives lies along one transverse direction. MEASURED: the
+    real (sigma_x) admixture decays back to the collinear fixed point at
+    several amplitudes -- PairLift then contributes 1e-20, i.e. the case is
+    vacuous for it -- while the sigma_y admixture reaches the broken
+    solution at every amplitude tried, in normal and spin-orbital mode
+    alike.
+
+    ``ns == 2`` is the normal mode, where spin is its own axis; ``ns == 1``
+    is spin-orbital mode, where the orbital index already carries it as
+    ``so = 2 * orbital + spin`` (``uhfk.UHFk._init_lattice``). The two
+    fixtures get the SAME physical state written in those two conventions,
+    which is why the spin-orbital twin of every case reproduces its normal
+    -mode numbers."""
+    green = np.zeros((nvol, ns, norb, ns, norb), dtype=np.complex128)
+    filling = ncond / float(nvol * ns * norb)
+    for s in range(ns):
+        for a in range(norb):
+            green[0, s, a, s, a] = filling
+    if ns == 2:
+        for a in range(norb):
+            green[0, 0, a, 1, a] = -1j * amplitude
+            green[0, 1, a, 0, a] = 1j * amplitude
+    else:
+        for a in range(norb // 2):
+            green[0, 0, 2 * a, 0, 2 * a + 1] = -1j * amplitude
+            green[0, 0, 2 * a + 1, 0, 2 * a] = 1j * amplitude
+    return green
+
+
+def _spin_off_diagonal(green, spin_orbital):
+    """``max |G|`` over the SPIN-OFF-DIAGONAL entries of a
+    ``(nvol, ns, norb, ns, norb)`` Green function -- the part ``PairLift``
+    contracts, and the one a collinear state has none of.
+
+    Written for both index conventions because the two fixtures use both:
+    in normal mode the spin axes are separate and the block is
+    ``G[:, 0, :, 1, :]`` with its partner; in spin-orbital mode spin lives
+    in the orbital index as ``so = 2 * orbital + spin``, so the entries
+    whose two spin bits differ have to be picked out one by one."""
+    green = np.asarray(green)
+    ns, norb = green.shape[1], green.shape[2]
+    if not spin_orbital:
+        return max(float(np.abs(green[:, 0, :, 1, :]).max()),
+                   float(np.abs(green[:, 1, :, 0, :]).max()))
+    worst = 0.0
+    for a in range(norb):
+        for b in range(norb):
+            if a % 2 != b % 2:                       # different spin bit
+                worst = max(worst, float(np.abs(green[:, 0, a, 0, b]).max()))
+    return worst
+
+
+def _seed_path(fixture):
+    return os.path.join(_FIXTURES, fixture, _SEED)
+
+
+def regenerate_seed():
+    """Write the committed seed of both all-types fixtures from
+    :func:`_spin_mixed_seed`. Deliberate only -- see the module's ``__main__``
+    entry point."""
+    written = []
+    for fixture, ns, norb in (("norb2", 2, 2), ("norb2_so", 1, 4)):
+        green = _spin_mixed_seed(nvol=4, ns=ns, norb=norb, ncond=4)
+        np.savez_compressed(_seed_path(fixture), green=green)
+        written.append(_seed_path(fixture))
+    return written
+
+
 def _params(case):
     """The input a user would write for ``case``, as the parsed dict
     ``hwave.qlms.run`` takes.
@@ -218,11 +341,14 @@ def _params(case):
         # initial Green is ZERO, and the loop never leaves its
         # spin-off-diagonal block: the term would contribute exactly 0.0 for
         # ever and the case would be vacuous for it -- which is what
-        # ``_assert_offsite_energy_is_live`` below measured. Seeding the
-        # random initial Green (``RndSeed`` is pinned, so both sides of
-        # every comparison start from the same one) puts the spin mixing
-        # there.
-        green_input["initial_mode"] = "random"
+        # ``_assert_offsite_energy_is_live`` below measured. The committed
+        # seed (:data:`_SEED`, written by :func:`_spin_mixed_seed`) puts the
+        # spin mixing there, and puts it there IDENTICALLY on both sides of
+        # every comparison -- the two sides are two source trees, and a seed
+        # drawn from numpy's global legacy generator is a shared starting
+        # point only for as long as the two trees agree about that
+        # generator.
+        green_input["initial"] = _SEED
     return {
         "log": {"print_level": 0, "print_step": 1000},
         "mode": {"mode": "UHFk",
@@ -300,12 +426,19 @@ def _reversed_dir(case):
     not two. Its ``copy`` argument carries ``coulombintra.dat`` across
     verbatim: an on-site file has no row whose displacement could be
     negated, so passing it as a file to REVERSE would (rightly) be refused
-    as vacuous.
+    as vacuous. For the cases that start from the committed seed it also
+    carries :data:`_SEED`: ``F`` and ``F^rev`` are two declarations of the
+    same Hamiltonian, so the two runs have to start from the same state --
+    a reversed directory without the seed would fall back to UHFk's zero
+    initial Green and the identity would be comparing two different
+    calculations.
     """
     from tests.test_flex_hf_scf import _reversed_interaction_dir
+    copy = ["geom.dat", "transfer.dat", "coulombintra.dat"]
+    if _NEEDS_SPIN_MIXING & set(case.files):
+        copy.append(_SEED)
     return _reversed_interaction_dir(
-        os.path.join(_FIXTURES, case.fixture), case.twobody,
-        copy=("geom.dat", "transfer.dat", "coulombintra.dat"))
+        os.path.join(_FIXTURES, case.fixture), case.twobody, copy=tuple(copy))
 
 
 class _OrientationMixin:
@@ -609,5 +742,115 @@ class TestFixturesAreOrientationSensitive(_OrientationMixin,
         self._assert_blind("pairhop/norb1/fock=on/so")
 
 
+class TestCommittedSeed(unittest.TestCase):
+    """The committed initial Green function of the all-types cases is what
+    it claims to be.
+
+    Needs no reference tree and no UHFk run, so it stands even when the gate
+    above skips. Its job is to tell a FIXTURE defect apart from an
+    orientation failure: if the seed ever lost its spin-off-diagonal part --
+    a regeneration with the wrong amplitude, a file truncated in transit --
+    ``PairLift`` would contribute exactly zero, the anti-vacuity leg of the
+    gate would fail, and the failure would read like a problem with the
+    reading of the declaration. This test names the real cause first."""
+
+    _SEEDED = (("norb2", False, (4, 2, 2, 2, 2)),
+               ("norb2_so", True, (4, 1, 4, 1, 4)))
+
+    def test_the_committed_seed_breaks_spin_collinearity(self):
+        for fixture, spin_orbital, shape in self._SEEDED:
+            with self.subTest(fixture=fixture):
+                path = _seed_path(fixture)
+                self.assertTrue(os.path.exists(path),
+                                "the committed seed {} is missing; it is part of "
+                                "the repository -- restore it, or regenerate "
+                                "deliberately with {}=1"
+                                .format(path, _REGENERATE_SEED_ENV))
+                with np.load(path) as archive:
+                    self.assertIn("green", archive.files,
+                                  "{}: UHFk reads the member named 'green' "
+                                  "(uhfk.UHFk._read_green_from_data)".format(path))
+                    green = np.array(archive["green"])
+                self.assertEqual(green.shape, shape, path)
+                self.assertEqual(green.dtype, np.complex128, path)
+                off = _spin_off_diagonal(green, spin_orbital)
+                self.assertGreater(
+                    off, 1e-3,
+                    "{}: the seed's spin-off-diagonal density is {:.3e}, i.e. it "
+                    "is spin-collinear. PairLift contracts only that block, so "
+                    "the all-types case would be vacuous for it -- this is a "
+                    "fixture defect, not an orientation failure".format(path, off))
+                # and it really is the TRANSVERSE (sigma_y) admixture the
+                # generator documents, not a stray real part: a real
+                # admixture decays back to the collinear fixed point
+                if spin_orbital:
+                    entry = green[0, 0, 0, 0, 1]
+                else:
+                    entry = green[0, 0, 0, 1, 0]
+                self.assertAlmostEqual(entry.real, 0.0, places=15, msg=path)
+                self.assertAlmostEqual(abs(entry.imag), _SEED_AMPLITUDE, places=15, msg=path)
+
+    def test_the_seed_matches_the_generator(self):
+        """The committed bytes are what :func:`_spin_mixed_seed` produces
+        today: a pin on the file, so that an edit to the generator that was
+        never regenerated (or a regeneration that was never committed) is a
+        failure rather than a silent divergence between the recipe in the
+        module and the file the runs actually read."""
+        for fixture, _so, shape in self._SEEDED:
+            with self.subTest(fixture=fixture):
+                with np.load(_seed_path(fixture)) as archive:
+                    green = np.array(archive["green"])
+                want = _spin_mixed_seed(nvol=shape[0], ns=shape[1], norb=shape[2], ncond=4)
+                self.assertTrue(
+                    np.array_equal(green, want),
+                    "{} differs from _spin_mixed_seed() by {:.3e}; regenerate it "
+                    "with {}=1".format(_seed_path(fixture),
+                                       np.abs(green - want).max(), _REGENERATE_SEED_ENV))
+
+    def test_the_two_fixtures_hold_the_same_physical_state(self):
+        """The normal-mode and spin-orbital seeds are the same density in
+        the two index conventions (``so = 2 * orbital + spin``).
+
+        This is what entitles the ``/so`` twin of each all-types case to
+        reproduce its normal-mode numbers: if the two files drifted apart,
+        the twins would be solving different problems and the agreement of
+        their energies would be a coincidence."""
+        with np.load(_seed_path("norb2")) as archive:
+            plain = np.array(archive["green"])
+        with np.load(_seed_path("norb2_so")) as archive:
+            folded = np.array(archive["green"])
+        norb = plain.shape[2]
+        want = np.zeros(folded.shape, dtype=np.complex128)
+        for a in range(norb):
+            for b in range(norb):
+                for s in range(2):
+                    for t in range(2):
+                        want[:, 0, 2 * a + s, 0, 2 * b + t] = plain[:, s, a, t, b]
+        self.assertTrue(np.array_equal(folded, want),
+                        "the two committed seeds differ by {:.3e} once folded into "
+                        "the same convention".format(np.abs(folded - want).max()))
+        self.assertGreater(np.abs(want).max(), 1e-3)          # anti-vacuity
+
+
+def _seed_regeneration_requested():
+    """True when :data:`_REGENERATE_SEED_ENV` asks for a rewrite of the
+    committed seeds. Read only by the ``__main__`` entry point below --
+    never at import time, so that collecting this module with the variable
+    exported writes nothing (the same rule
+    ``tests/test_flex_orientation_baseline.py`` gives its own vectors)."""
+    return os.environ.get(_REGENERATE_SEED_ENV, "").strip() not in (
+        "", "0", "false", "no", "off")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if _seed_regeneration_requested():
+        # the ONLY route that rewrites the committed seeds:
+        #
+        #     HWAVE_REGENERATE_UHFK_SEED=1 PYTHONPATH=src:. \
+        #         python3 -B tests/test_uhfk_orientation.py
+        #
+        # It then exits and runs no test: verifying the fixture against a
+        # file it has just written would say nothing.
+        print("\n".join(regenerate_seed()))
+    else:
+        unittest.main()

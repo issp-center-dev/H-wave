@@ -3,7 +3,15 @@ sections 1, 2, 4.2-4.3, 5.6; gates G0-off, G5, D7): gate-off inputs are
 byte-identical to develop, the single-band Hubbard HF term is a chemical-
 potential shift, the mean-field seed follows the initial-value
 trajectory, the W-disabled fixed point equals paramagnetic UHFk, the
-reset set, IterationMax = 0 and the provenance block."""
+reset set, IterationMax = 0 and the provenance block.
+
+TestG0Off's two comparisons need a SECOND source tree at
+tests/test_flex_second_order_compat.DEVELOP_COMMIT. CI provisions that
+reference revision (a detached worktree under RUNNER_TEMP; see
+.github/workflows/ci-python39.yml) and sets
+HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so they RUN there and a missing or
+unusable reference fails rather than skips. Locally they skip with a
+reason when no such checkout is at hand."""
 import os
 import shutil
 import subprocess

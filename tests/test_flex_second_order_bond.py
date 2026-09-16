@@ -3,7 +3,9 @@
 off-site = standalone Hartree-Fock FLEX) holds under both values; the
 effective interaction keeps the frequency-reflection Hermiticity D-7 once
 the mixed second-order blocks carry the pair permutation of spec
-2026-09-16 R3 (issue #192); the memory table carries the factor row."""
+2026-09-16 R3 (issue #192); those mixed strips equal the index-loop
+formula of that permutation at norb = 3; the memory table carries the
+factor row."""
 import contextlib
 import tempfile
 import unittest
@@ -172,6 +174,102 @@ class TestBondGate(unittest.TestCase):
             w00, 1e-6 * np.abs(W_local[:, :, :nd, :nd]).max(),
             "the two kernels give the same channel-0 block on this fixture "
             "({:.3e}), so the equality of the mixed strips says nothing".format(w00))
+
+    def test_mixed_strips_equal_the_index_loop_formula_at_norb_3(self):
+        """The two mixed strips of ``W`` against the DEFINITION, written out
+        index by index, on a synthetic ``norb = 3`` problem.
+
+        Every other check of the pair permutation in this repository either
+        runs on the two-orbital fixture (where the ``(norb, norb)`` blocks
+        are 2x2 and the swap has one off-diagonal pair to act on) or reads
+        the result through a physical quantity. This one is algebraic and
+        cheap: random Hermitian ``chibar`` at ``nmat = 3``, ``nvol = 2``,
+        three orbitals and three bond channels, diagonal bond vertices, and
+        the legacy channel-0 kernel (``"takimoto"``, so no factor pack is
+        needed -- the channel-0 block is not what is compared).
+
+        The expected strip is assembled from the two terms
+        ``dress_and_build_w`` adds there:
+
+        * the RPA ring ``3/2 S (chi_s - chibar) S + 1/2 C (chi_c - chibar)
+          C`` at the SAME pair index, with ``chi_s = (1 - chibar S)^-1
+          chibar`` and ``chi_c = (1 + chibar C)^-1 chibar`` -- the dressing
+          this module already re-derives in
+          :meth:`test_channel0_block_equals_the_standalone_kernel`;
+        * the second-order term, at weight ``1/4`` on the mixed blocks
+          (mask ``1/2``, applied to the half-sum), read from
+          ``A = S chibar S + C chibar C`` at the PERMUTED pair index -- and
+          that is the part written as an explicit loop over
+          ``(m, l1, l2) -> (m, l2, l1)`` for ``m != 0``, from
+          :func:`hwave.solver.flex_bond._mixed_pair_permutation`'s
+          definition rather than by calling it.
+
+        Both pair axes, so a permutation applied to only ONE of them fails
+        here: the rows strip ``W[:, :, :nd, nd:]`` reads the permutation on
+        its COLUMN index (channel 0 is the identity on the row one) and the
+        cols strip ``W[:, :, nd:, :nd]`` reads it on its ROW index. VERIFIED
+        by scratch mutation: patching ``dress_and_build_w`` to permute the
+        row axis alone fails this test on the rows strip, and the column
+        axis alone fails it on the cols strip. It is also the shape of
+        problem that discriminates at all -- an orbital-diagonal bond or
+        ``norb = 1`` makes the permutation the identity."""
+        from hwave.solver import flex_bond
+        nmat, nvol, norb, B = 3, 2, 3, 3
+        nd, shape = norb * norb, (2, 1, 1)
+        ND = B * nd
+        rng = np.random.default_rng(20260916)
+        cb = (rng.normal(size=(nmat, nvol, ND, ND))
+              + 1j * rng.normal(size=(nmat, nvol, ND, ND)))
+        # Hermitian at each (frequency, q): the dressing solves with it, and
+        # a bubble is Hermitian; the strips compared below do not need it,
+        # but a well-conditioned denominator does
+        cb = 0.5 * (cb + np.conjugate(np.swapaxes(cb, -1, -2)))
+        # diagonal bond vertices, small enough that 1 -/+ chibar V stays far
+        # from singular. The diagonal entries are DISTINCT under the orbital
+        # -pair swap (that is what makes the permutation visible on the
+        # vertex as well as on the bubble)
+        diag = 0.002 * (1.0 + np.arange(ND, dtype=float))
+        S = np.broadcast_to(np.diag(diag), (nvol, ND, ND)).copy()
+        C = np.broadcast_to(np.diag(0.7 * diag[::-1]), (nvol, ND, ND)).copy()
+        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
+            store.put_freq_batch("chibar", 0, nmat, cb)
+            flex_bond.dress_and_build_w(store, S, C, S_on=zero_on, C_on=zero_on, nb=nmat,
+                                        output_full=False, nmat=nmat, nvol=nvol, nd=nd,
+                                        spatial_shape=shape, factors=None,
+                                        second_order="takimoto")
+            W = np.array(store.get_freq_batch("W", 0, nmat))
+        eye = np.eye(ND)
+        chi_s = np.linalg.solve(eye - cb @ S[None], cb)
+        chi_c = np.linalg.solve(eye + cb @ C[None], cb)
+        ring = (1.5 * (S[None] @ (chi_s - cb) @ S[None])
+                + 0.5 * (C[None] @ (chi_c - cb) @ C[None]))
+        A = S[None] @ cb @ S[None] + C[None] @ cb @ C[None]
+        want_rows = np.zeros((nmat, nvol, nd, ND - nd), dtype=np.complex128)
+        want_cols = np.zeros((nmat, nvol, ND - nd, nd), dtype=np.complex128)
+        for m in range(1, B):
+            for l1 in range(norb):
+                for l2 in range(norb):
+                    j = m * nd + l1 * norb + l2          # pair index in block m
+                    jp = m * nd + l2 * norb + l1         # its orbital-pair transpose
+                    for i in range(nd):                  # channel 0: perm is the identity
+                        want_rows[:, :, i, j - nd] = ring[:, :, i, j] + 0.25 * A[:, :, i, jp]
+                        want_cols[:, :, j - nd, i] = ring[:, :, j, i] + 0.25 * A[:, :, jp, i]
+        rows, cols = W[:, :, :nd, nd:], W[:, :, nd:, :nd]
+        scale = max(np.abs(want_rows).max(), np.abs(want_cols).max())
+        self.assertGreater(scale, 1e-6)                  # anti-vacuity: the strips are not empty
+        # and the permutation is not the identity on this problem, or the
+        # loop above would be comparing the unpermuted expression with itself
+        unpermuted = np.zeros_like(want_rows)
+        for m in range(1, B):
+            for j in range(m * nd, (m + 1) * nd):
+                unpermuted[:, :, :, j - nd] = ring[:, :, :nd, j] + 0.25 * A[:, :, :nd, j]
+        moved = np.abs(want_rows - unpermuted).max() / scale
+        self.assertGreater(moved, 1e-3,
+                           "the pair permutation does not change the expected rows strip on "
+                           "this synthetic problem ({:.3e} of its own size)".format(moved))
+        np.testing.assert_allclose(rows, want_rows, rtol=0, atol=1e-12 * scale)
+        np.testing.assert_allclose(cols, want_cols, rtol=0, atol=1e-12 * scale)
 
     def test_non_multiple_pair_dimension_is_refused(self):
         """``ND`` that is not a whole number of ``nd``-sized channel blocks

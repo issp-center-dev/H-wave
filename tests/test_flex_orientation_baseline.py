@@ -50,8 +50,17 @@ vectors record a shorter frequency axis, see :data:`_NMAT_VEC`): its
 off-site content includes the INTER-ORBITAL rows ``v_12(-x) = 1`` /
 ``v_21(+x) = 1``, which is exactly the content the orientation change moves
 (it is the identity on orbital-diagonal bonds).
+
+Every vector file also carries a ``metadata`` member (see
+:func:`_metadata`): the library versions, the platform and the revision the
+numbers were recorded on. It is provenance, never a tolerance -- the
+comparisons read it only to PRINT it in a failure message, so that "this
+pin no longer holds" arrives together with "and it was recorded here".
 """
+import json
 import os
+import platform
+import subprocess
 import tempfile
 import unittest
 
@@ -95,6 +104,86 @@ _RTOL = 1e-12
 #: state, so the replay reproduces it to the convergence threshold rather
 #: than exactly (measured replay residual: see the module's report)
 _RTOL_SMOKE = 1e-10
+
+
+#: Schema version of the ``metadata`` member. Bumped when the KEY SET
+#: below changes, so that a vector recorded under an older generator can be
+#: told apart from one whose provenance is simply missing.
+_METADATA_SCHEMA = 1
+
+#: The keys :func:`_metadata` always writes (the per-file extras of
+#: ``smoke`` come on top). Asserted on every committed file by
+#: :meth:`TestOrientationVectors.test_every_vector_carries_its_provenance`.
+_METADATA_KEYS = ("schema", "numpy", "scipy", "sparse_ir", "platform",
+                  "python", "revision")
+
+
+def _version(module_name, distribution=None):
+    """The version of an OPTIONAL dependency, ``"absent"`` when it is not
+    installed and ``"unknown"`` when it is installed but names no version.
+
+    sparse-ir is the reason this is not a plain ``module.__version__``: it
+    is optional here (``tests/test_flex_ir_general.py`` skips without it),
+    it exports no ``__version__`` attribute at all, and "the vectors were
+    recorded on a tree that did not have it" is itself provenance worth
+    recording. The installed-distribution metadata is asked second, which
+    is where sparse-ir's version actually lives."""
+    import importlib.metadata
+
+    try:
+        module = __import__(module_name)
+    except ImportError:
+        return "absent"
+    version = getattr(module, "__version__", None)
+    if version:
+        return str(version)
+    try:
+        return str(importlib.metadata.version(distribution or module_name))
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _metadata(**extra):
+    """The provenance stamp of a vector file, as a JSON string.
+
+    Recorded at REGENERATION time, in the process that writes the file --
+    which is a script (see the module docstring), so reading the revision
+    out of the repository is a plain subprocess call. A failure to read it
+    is not a failure to regenerate: the revision falls back to
+    ``"unknown"`` and the rest of the stamp still says which libraries and
+    which platform produced the numbers.
+
+    ``extra`` carries the per-file additions (``smoke`` records the
+    iteration count and the final residual of each converged run)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        revision = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"],
+                                  check=True, capture_output=True,
+                                  text=True).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        revision = "unknown"
+    stamp = {"schema": _METADATA_SCHEMA,
+             "numpy": np.__version__,
+             "scipy": _version("scipy"),
+             "sparse_ir": _version("sparse_ir", "sparse-ir"),
+             "platform": platform.platform(),
+             "python": platform.python_version(),
+             "revision": revision}
+    stamp.update(extra)
+    return json.dumps(stamp, sort_keys=True)
+
+
+def _provenance(archive):
+    """The ``metadata`` member of a loaded vector as a readable one-liner,
+    for a failure message. Never raises: a file without the member is a
+    finding of its own test, not a reason for another one to blow up with a
+    KeyError instead of its own diagnosis."""
+    if "metadata" not in getattr(archive, "files", ()):
+        return "no metadata member (recorded before the provenance stamp)"
+    try:
+        return json.dumps(json.loads(str(archive["metadata"])), sort_keys=True)
+    except (ValueError, TypeError):
+        return "unreadable metadata member"
 
 
 def _reader(inter=None):
@@ -221,7 +310,7 @@ def _mixed_w(chibar=None):
 
 
 def _smoke_state(second_order):
-    """``(sigma, green)`` of a gate-on run: 4x4x1, ``Nmat = 16``, run to
+    """``(sigma, green, run)`` of a gate-on run: 4x4x1, ``Nmat = 16``, run to
     CONVERGENCE (Anderson mixing, ``EPS = 1e-12``, reached in 16-17
     iterations and 0.4 s; ``IterationMax`` is a ceiling, not the recipe).
 
@@ -236,7 +325,13 @@ def _smoke_state(second_order):
 
     The solver refuses to be reused, so the convergence is asserted here:
     a pin recorded from a run that silently stopped at the ceiling would
-    be a different quantity from the one this function documents."""
+    be a different quantity from the one this function documents.
+
+    ``run`` is the third element: the iteration count and final residual
+    that convergence check produced. The generator stamps them into the
+    ``smoke`` file's provenance -- "converged" is a property of the run, and
+    a later regeneration that needed four times the iterations to reach the
+    same fixed point is worth seeing."""
     s, r = _solver({"flex_second_order": second_order, "IterationMax": 200,
                     "mixing_scheme": "anderson", "EPS": 1e-12, **_GATE})
     gi = r.get_param("green")
@@ -247,7 +342,9 @@ def _smoke_state(second_order):
             "the smoke baseline did not converge in {} iterations (residual "
             "{:.3e}); the vector would pin a mixer trajectory, not a fixed "
             "point".format(s.scf_iterations, s.scf_sigma_residual))
-    return np.asarray(gi["sigma"]), np.asarray(gi["green"])
+    run = {"iterations_" + second_order: int(s.scf_iterations),
+           "residual_" + second_order: float(s.scf_sigma_residual)}
+    return np.asarray(gi["sigma"]), np.asarray(gi["green"]), run
 
 
 # --- the committed files ---------------------------------------------------
@@ -262,16 +359,19 @@ def regenerate():
     modules named in the module docstring."""
     os.makedirs(_VECTORS, exist_ok=True)
     rho_r, sigma_hf = _hf_map_state()
-    np.savez_compressed(_path("hf_map"), rho_r=rho_r, sigma_hf=sigma_hf)
+    np.savez_compressed(_path("hf_map"), rho_r=rho_r, sigma_hf=sigma_hf,
+                        metadata=_metadata())
     chibar, w2 = _w2_state()
-    np.savez_compressed(_path("w2"), chibar=chibar, w2=w2)
+    np.savez_compressed(_path("w2"), chibar=chibar, w2=w2, metadata=_metadata())
     cb, rows, cols = _mixed_w()
-    np.savez_compressed(_path("mixed_w"), chibar=cb, w_mixed_rows=rows, w_mixed_cols=cols)
-    payload = {}
+    np.savez_compressed(_path("mixed_w"), chibar=cb, w_mixed_rows=rows, w_mixed_cols=cols,
+                        metadata=_metadata())
+    payload, run = {}, {}
     for so in ("local", "takimoto"):
-        sigma, green = _smoke_state(so)
+        sigma, green, info = _smoke_state(so)
         payload["sigma_" + so], payload["green_" + so] = sigma, green
-    np.savez_compressed(_path("smoke"), **payload)
+        run.update(info)
+    np.savez_compressed(_path("smoke"), metadata=_metadata(**run), **payload)
     return sorted(os.listdir(_VECTORS))
 
 
@@ -305,24 +405,34 @@ class TestOrientationVectors(unittest.TestCase):
                 "{}=1".format(p, _REGENERATE_ENV))
         return np.load(p)
 
-    def _compare(self, got, want, rtol, what):
+    def _compare(self, got, want, rtol, what, archive=None):
+        """``got`` against the recorded ``want``.
+
+        ``archive`` is the loaded vector file: its provenance stamp goes
+        into the failure message, so that a pin that stops holding says in
+        the same breath WHERE it was recorded -- which numpy, which
+        platform, which revision. It is a diagnostic only; no tolerance
+        here reads it."""
         want = np.asarray(want)
         scale = float(np.abs(want).max())
-        self.assertGreater(scale, 1e-8, "the recorded vector {} is empty".format(what))
-        self.assertEqual(np.asarray(got).shape, want.shape, what)
-        np.testing.assert_allclose(got, want, rtol=0, atol=rtol * scale, err_msg=what)
+        where = "" if archive is None else " [recorded on: {}]".format(_provenance(archive))
+        self.assertGreater(scale, 1e-8,
+                           "the recorded vector {} is empty{}".format(what, where))
+        self.assertEqual(np.asarray(got).shape, want.shape, what + where)
+        np.testing.assert_allclose(got, want, rtol=0, atol=rtol * scale,
+                                   err_msg=what + where)
 
     def test_hf_map_matches_the_committed_vector(self):
         """The FLEX Hartree-Fock map at the recorded density."""
         d = self._load("hf_map")
         _rho, sigma = _hf_map_state(d["rho_r"])
-        self._compare(sigma, d["sigma_hf"], _RTOL, "hf_map/sigma_hf")
+        self._compare(sigma, d["sigma_hf"], _RTOL, "hf_map/sigma_hf", d)
 
     def test_w2_matches_the_committed_vector(self):
         """The local kernel's second order at the recorded random batch."""
         d = self._load("w2")
         _cb, w2 = _w2_state(d["chibar"])
-        self._compare(w2, d["w2"], _RTOL, "w2/w2")
+        self._compare(w2, d["w2"], _RTOL, "w2/w2", d)
 
     def test_mixed_bond_w_matches_the_committed_vector(self):
         """The bond gate's mixed (channel-0 x bond) blocks of W at the
@@ -330,8 +440,40 @@ class TestOrientationVectors(unittest.TestCase):
         2026-09-16 R3 acts on."""
         d = self._load("mixed_w")
         _cb, rows, cols = _mixed_w(d["chibar"])
-        self._compare(rows, d["w_mixed_rows"], _RTOL, "mixed_w/w_mixed_rows")
-        self._compare(cols, d["w_mixed_cols"], _RTOL, "mixed_w/w_mixed_cols")
+        self._compare(rows, d["w_mixed_rows"], _RTOL, "mixed_w/w_mixed_rows", d)
+        self._compare(cols, d["w_mixed_cols"], _RTOL, "mixed_w/w_mixed_cols", d)
+
+    def test_every_vector_carries_its_provenance(self):
+        """Every committed vector has a ``metadata`` member, it is JSON, and
+        it carries :data:`_METADATA_KEYS` at :data:`_METADATA_SCHEMA`; the
+        ``smoke`` file also carries the iteration count and final residual
+        of each converged run.
+
+        A vector without provenance is still a valid pin -- which is
+        exactly why this has to be a test of its own: nothing else in the
+        module would notice its absence, and a regeneration that quietly
+        stopped stamping the files would leave the next reader of a failure
+        with no way to tell which tree produced the numbers."""
+        for name in ("hf_map", "w2", "mixed_w", "smoke"):
+            with self.subTest(vector=name):
+                d = self._load(name)
+                self.assertIn("metadata", d.files,
+                              "the committed vector {}.npz carries no provenance "
+                              "stamp".format(name))
+                stamp = json.loads(str(d["metadata"]))
+                for key in _METADATA_KEYS:
+                    self.assertIn(key, stamp, (name, key))
+                    self.assertTrue(str(stamp[key]),
+                                    "{}.npz records an empty {}".format(name, key))
+                self.assertEqual(stamp["schema"], _METADATA_SCHEMA, name)
+                # the versions really are versions and not the fallback of a
+                # generator that could not read anything at all
+                self.assertNotEqual(stamp["numpy"], "absent", name)
+                if name == "smoke":
+                    for so in ("local", "takimoto"):
+                        self.assertGreater(stamp["iterations_" + so], 0, so)
+                        self.assertGreater(stamp["residual_" + so], 0.0, so)
+                        self.assertLess(stamp["residual_" + so], 1e-11, so)
 
     def test_gate_on_smoke_matches_the_committed_vector(self):
         """End to end: sigma and green of a CONVERGED gate-on run under both
@@ -346,9 +488,9 @@ class TestOrientationVectors(unittest.TestCase):
         d = self._load("smoke")
         for so in ("local", "takimoto"):
             with self.subTest(second_order=so):
-                sigma, green = _smoke_state(so)
-                self._compare(sigma, d["sigma_" + so], _RTOL_SMOKE, "smoke/sigma_" + so)
-                self._compare(green, d["green_" + so], _RTOL_SMOKE, "smoke/green_" + so)
+                sigma, green, _run = _smoke_state(so)
+                self._compare(sigma, d["sigma_" + so], _RTOL_SMOKE, "smoke/sigma_" + so, d)
+                self._compare(green, d["green_" + so], _RTOL_SMOKE, "smoke/green_" + so, d)
 
 
 if __name__ == "__main__":
