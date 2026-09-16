@@ -253,11 +253,11 @@ HEAVY_TESTS = (
     ("test_spinful_transverse_ed", "TestTask4TsoZeroControl",
      "test_pairlift_returns_to_pass_zero_at_tso_zero",
      "t_so=0 isolation control for PairLift"),
-    # --- tests/test_uhfk_orientation.py -- #192 end-to-end UHFk gate -----
+    # --- tests/test_uhfk_orientation.py -- #193 end-to-end UHFk gate -----
     ("test_uhfk_orientation", "TestUHFkOrientation", "test_all_types_bond",
      "three UHFk runs per case x two inter-orbital Ising/Exchange/PairLift "
      "cases (normal and spin-orbital) against the reference revision on "
-     "the reversed declaration (6.1-6.3 s measured)"),
+     "the reversed declaration (6.1-6.4 s measured)"),
     ("test_uhfk_orientation", "TestUHFkOrientation", "test_bond_variants",
      "three UHFk runs per case x three cases (Fock off, spin-orbital) "
      "against the reference revision on the reversed declaration "

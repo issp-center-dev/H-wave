@@ -790,7 +790,7 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     on the reference source tree.
 
     The fixture is ON-SITE only (``_write_2d_2orb_onsite_fixture``), so the
-    interaction-row orientation change (issue #192) does not reach it: the
+    interaction-row orientation change (issue #193) does not reach it: the
     identity is expected to hold unchanged. The uniform-grid half of this
     contract, including the off-site fixture and the paths that DID move,
     lives in ``tests/test_flex_second_order_compat.py``; this is its IR

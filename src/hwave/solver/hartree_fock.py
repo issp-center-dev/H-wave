@@ -88,7 +88,7 @@ def _orient_documented(tab_r):
     Identity for real orbital-diagonal entries and for real single-orbital
     tables; NOT the identity for complex ones (e.g. an off-site PairHop
     amplitude with an imaginary part)."""
-    out = np.conjugate(np.swapaxes(tab_r, -1, -2))
+    out = np.ascontiguousarray(np.conjugate(np.swapaxes(tab_r, -1, -2)))
     out[0, 0, 0] = tab_r[0, 0, 0]
     return out
 

@@ -51,9 +51,11 @@ def _random_density(nvol, norb, seed=7):
     """A fixed ``(nvol, 2, norb, 2, norb)`` density for ``accumulate_hf``.
 
     Seeded, and Hermitian in the combined ``(spin, orbital)`` index at each
-    displacement, so that the mean field it produces is a physical one --
-    the comparison below is between two TABLE sets on the SAME density, so
-    the density itself only has to be fixed and nontrivial."""
+    displacement separately. That is NOT the Hermiticity a physical
+    real-space density obeys (which relates ``rho(r)`` to ``rho(-r)^H``),
+    and it does not have to be: the comparison below is between two TABLE
+    sets on the SAME density, so the density itself only has to be fixed
+    and nontrivial."""
     rng = np.random.default_rng(seed)
     nd = 2 * norb
     a = (rng.normal(size=(nvol, nd, nd)) + 1j * rng.normal(size=(nvol, nd, nd)))
@@ -254,6 +256,10 @@ class TestOrientation(unittest.TestCase):
             # Exchange +-y (2), PairHop +-x (2); the +-y CoulombInter rows are real and
             # orbital-diagonal -> unchanged
             self.assertIn("12 off-site displacement table(s)", hits[0].getMessage())
+            # the user-facing tail, verbatim: it is what points a 2.0.0 user at
+            # the migration text, so it is part of the contract of this INFO
+            self.assertIn("differ from H-wave 2.0.0 -- see the release note",
+                          hits[0].getMessage())
             records.clear()
             diag = {"PairHop": {((1, 0, 0), (0, 0)): 0.1 + 0.05j, ((-1, 0, 0), (0, 0)): 0.1 - 0.05j}}
             hf.build_interaction_tables(diag, 1, self.shape)

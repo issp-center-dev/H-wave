@@ -2,7 +2,7 @@
 reversed declaration.
 
 An off-site two-body row ``(r, a, b, v)`` is read in the DOCUMENTED
-orientation since issue #192 -- ``v n_{j,a} n_{j+r,b}``, orbital ``a`` in
+orientation since issue #193 -- ``v n_{j,a} n_{j+r,b}``, orbital ``a`` in
 the original cell and ``b`` in the cell displaced by ``r``. The previous
 release (H-wave 2.0.0, the reference revision pinned by
 ``tests/test_flex_second_order_compat.DEVELOP_COMMIT``) read the two cells
@@ -344,7 +344,8 @@ class _OrientationMixin:
                 "{}: the off-site {} contributes {:.3e} to the energy, i.e. "
                 "nothing -- the comparison would hold for a run that never "
                 "read the interaction".format(what, t, energy[key]))
-            print("\n{}: {} = {:.6e}".format(what, key, energy[key]))
+            print("\nRECORDED off-site energy {}: {} = {:.6e}"
+                  .format(what, key, energy[key]))
 
     def _assert_same_run(self, a, b, what, case):
         """Every member of two runs is EXACTLY equal: the key sets, every

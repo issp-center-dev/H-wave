@@ -1,5 +1,5 @@
 """Fixed-state regression vectors for the paths the interaction-row
-orientation change (issue #192, spec 2026-09-16 section 2.4 / D-5)
+orientation change (issue #193, spec 2026-09-16 section 2.4 / D-5)
 legitimately MOVED.
 
 Those paths -- the FLEX Hartree-Fock map, the local second-order kernel's

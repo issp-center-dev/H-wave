@@ -164,7 +164,7 @@ class TestCompatibility(unittest.TestCase):
         ``np.array_equal`` to the reference revision's, on a fixture with
         INTER-ORBITAL off-site rows and on an on-site one.
 
-        Scope, after the interaction-row orientation change (issue #192,
+        Scope, after the interaction-row orientation change (issue #193,
         spec 2026-09-16 section 2.4): reading an off-site row ``(r, a, b, v)``
         in the documented orientation changes three paths -- the FLEX
         Hartree-Fock term (``flex_hartree_fock``), the local second-order

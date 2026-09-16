@@ -61,11 +61,16 @@ in the random phase approximation,
    ``flex_second_order = "local"``) change only for off-site rows with two
    different orbitals or a complex coefficient; every on-site interaction,
    every real orbital-diagonal off-site row, every real single-orbital input,
-   and every RPA or Eliashberg result are unchanged. An RPA/FLEX calculation with
+   and every RPA or Eliashberg result without the bond-resolved channels
+   (``longitudinal_bond_channels = false``, the default) and computed from an
+   unaffected susceptibility are unchanged (an Eliashberg run with
+   ``chi0q_mode = "flex"`` moves together with the FLEX run that produced its
+   susceptibility). An RPA/FLEX calculation with
    ``calc_type = "ring"`` and ``longitudinal_bond_channels = true`` on real
    inter-orbital off-site bonds changes as well: its mixed second-order blocks
    are now exact (issue #192). Runs under ``flex_second_order = "takimoto"``
-   without the Hartree-Fock term are unchanged.
+   without the Hartree-Fock term and without the bond-resolved channels are
+   unchanged.
    **No input file needs to be changed.**
 
    **Reproduction recipe and composite pipelines.** To reproduce a 2.0.0

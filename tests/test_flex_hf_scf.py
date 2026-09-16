@@ -153,7 +153,7 @@ class TestG0Off(unittest.TestCase):
     The declaration it runs is ON-SITE only (onsite_inter.dat +
     coulombintra.dat). Not because an off-site one would fail: this guard
     runs with the Hartree-Fock gate OFF, and the orientation step (issue
-    #192, spec 2026-09-16 section 2.4) is reached only through
+    #193, spec 2026-09-16 section 2.4) is reached only through
     flex_hf.build_flex_hf_tables, i.e. only under flex_hartree_fock = true
     -- measured, the previous off-site fixture (coulombinter.dat) is still
     byte-identical to the reference revision here, archives and log alike.
