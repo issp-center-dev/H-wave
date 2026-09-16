@@ -109,12 +109,6 @@ def develop_checkout(run=None):
     return dev, None
 
 
-#: the two-body types whose displacement tables ``build_interaction_tables``
-#: reads in the documented orientation (spec 2026-09-16 D-1); ``CoulombIntra``
-#: is on-site by construction and is not one of them
-_ORIENTED_TYPES = ("CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop")
-
-
 def _hermitian_density(shape, norb, seed):
     """A deterministic per-spin real-space density ``rho_ab(r)`` obeying the
     convention the Hartree-Fock map requires, ``rho_ab(r) = conj(rho_ba(-r))``
@@ -140,7 +134,9 @@ def _legacy_tables(tables):
     re-implementation of the old builder."""
     from hwave.solver import hartree_fock as hf
     inter = dict(tables.inter_table)
-    for t in _ORIENTED_TYPES:
+    # the source's own list, not a copy of it: the undo has to cover exactly
+    # the set the builder orients (hartree_fock.ORIENTED_TYPES)
+    for t in hf.ORIENTED_TYPES:
         if inter.get(t) is not None:
             inter[t] = hf.orient_documented(inter[t])
     return hf.InteractionTables(inter, tables.spin_table, tables.discarded)

@@ -89,7 +89,9 @@ def _reversed_interaction_dir(src_dir, files):
     touched; ``r = 0`` rows are copied as they are.
 
     The wannier90-like header is four lines (title, norb, n_rvec,
-    degeneracies) and the rows follow; only the rows are rewritten. Every
+    degeneracies) and the rows follow; only the OFF-SITE rows are rewritten,
+    in place and column by column, so that a hand diff of F against F^rev
+    shows exactly the rows whose displacement was negated. Every
     declared degeneracy must be 1, which is what H-wave's own files write
     and what makes the row order irrelevant -- a file with a real
     Wannier90 degeneracy block would need its header permuted too, so this
@@ -107,14 +109,21 @@ def _reversed_interaction_dir(src_dir, files):
         out, reversed_rows = list(header), 0
         for ln in body:
             parts = ln.split()
-            if len(parts) < 7:
-                out.append(ln)
+            if len(parts) < 7 or not any(int(x) for x in parts[:3]):
+                out.append(ln)             # unchanged rows go through verbatim
                 continue
-            r = [int(x) for x in parts[:3]]
-            if any(r):
-                parts[:3] = ["{:4d}".format(-x) for x in r]
-                reversed_rows += 1
-            out.append(" ".join(parts))
+            # rewrite the three displacement columns IN PLACE, each into the
+            # same FIELD (its leading whitespace included, so a longer value
+            # such as -1 for 1 eats a space instead of shifting the line), so
+            # that a hand diff of F against F^rev shows the negated rows and
+            # nothing else
+            rewritten, cursor = "", 0
+            for x in parts[:3]:
+                end = ln.index(x, cursor) + len(x)
+                rewritten += str(-int(x)).rjust(end - cursor)
+                cursor = end
+            out.append(rewritten + ln[cursor:])
+            reversed_rows += 1
         if reversed_rows == 0:
             raise ValueError("_reversed_interaction_dir: {} has no off-site row, so "
                              "F^rev == F and the comparison would be vacuous".format(f))
@@ -135,16 +144,21 @@ class TestG0Off(unittest.TestCase):
     tests/test_flex_second_order_compat.py.
 
     The declaration it runs is ON-SITE only (onsite_inter.dat +
-    coulombintra.dat). That is deliberate since the interaction-row
-    orientation change (issue #192, spec 2026-09-16 section 2.4): reading an
-    off-site row (r, a, b, v) as v n_{j,a} n_{j+r,b} moves the Hartree-Fock
-    term, so no off-site declaration can be byte-identical to the reference
-    revision under the Hartree-Fock gate, and an off-site fixture would
-    reduce this guard to "the paths that ignore the rows' orientation are
-    unchanged" -- which is already
-    tests/test_flex_second_order_compat.py's job. What the off-site half
-    became is the EQUIVALENCE below: the same run reproduces the reference
-    revision exactly on the reversed declaration F^rev.
+    coulombintra.dat). Not because an off-site one would fail: this guard
+    runs with the Hartree-Fock gate OFF, and the orientation step (issue
+    #192, spec 2026-09-16 section 2.4) is reached only through
+    flex_hf.build_flex_hf_tables, i.e. only under flex_hartree_fock = true
+    -- measured, the previous off-site fixture (coulombinter.dat) is still
+    byte-identical to the reference revision here, archives and log alike.
+    The on-site fixture is what keeps that TRUE BY CONSTRUCTION rather than
+    by where the orientation step happens to sit today: an on-site
+    declaration has no row whose orientation could be read at all, so this
+    guard stays a statement about the Phase B gates even if the step ever
+    moves earlier into construction.
+
+    The gate-ON half of the off-site story is the EQUIVALENCE below, where
+    the two revisions cannot agree on the same declaration and agree exactly
+    on the reversed one, F^rev.
 
     The npz comparison allows this side's archives to carry additional
     members beyond the reference revision's -- every member the reference

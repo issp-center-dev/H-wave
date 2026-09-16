@@ -83,8 +83,9 @@ _REGENERATE_ENV = "HWAVE_REGENERATE_ORIENTATION_VECTORS"
 #: recorded INPUT through the same arithmetic, so only run-to-run
 #: reassociation (BLAS threading) can separate the two
 _RTOL = 1e-12
-#: relative tolerance of the smoke baseline: three self-consistent
-#: iterations amplify the same reassociation
+#: relative tolerance of the smoke baseline: a converged self-consistent
+#: state, so the replay reproduces it to the convergence threshold rather
+#: than exactly (measured replay residual: see the module's report)
 _RTOL_SMOKE = 1e-10
 
 
@@ -212,14 +213,32 @@ def _mixed_w(chibar=None):
 
 
 def _smoke_state(second_order):
-    """``(sigma, green)`` of a gate-on run: 4x4x1, ``Nmat = 16``, three
-    iterations. The end-to-end pin: it is the state the dropped develop
-    identity case used to cover (``"takimoto"`` with the bond gate), plus
-    the production default (``"local"``)."""
-    s, r = _solver({"flex_second_order": second_order, "IterationMax": 3, **_GATE})
+    """``(sigma, green)`` of a gate-on run: 4x4x1, ``Nmat = 16``, run to
+    CONVERGENCE (Anderson mixing, ``EPS = 1e-12``, reached in 16-17
+    iterations and 0.4 s; ``IterationMax`` is a ceiling, not the recipe).
+
+    The end-to-end pin: the state the dropped develop identity case used to
+    cover (``"takimoto"`` with the bond gate), plus the production default
+    (``"local"``). A converged state is pinned rather than a fixed number of
+    iterations because a fixed point is defined by the equations alone --
+    the mid-trajectory state of a non-converged run carries the mixer's
+    history as well, which makes it both noisier under re-association and
+    less meaningful to compare. It also keeps the run free of the
+    non-convergence and linear-mixing warnings.
+
+    The solver refuses to be reused, so the convergence is asserted here:
+    a pin recorded from a run that silently stopped at the ceiling would
+    be a different quantity from the one this function documents."""
+    s, r = _solver({"flex_second_order": second_order, "IterationMax": 200,
+                    "mixing_scheme": "anderson", "EPS": 1e-12, **_GATE})
     gi = r.get_param("green")
     with tempfile.TemporaryDirectory() as out:
         s.solve(gi, out)
+    if not s.scf_converged:
+        raise AssertionError(
+            "the smoke baseline did not converge in {} iterations (residual "
+            "{:.3e}); the vector would pin a mixer trajectory, not a fixed "
+            "point".format(s.scf_iterations, s.scf_sigma_residual))
     return np.asarray(gi["sigma"]), np.asarray(gi["green"])
 
 
@@ -298,8 +317,8 @@ class TestOrientationVectors(unittest.TestCase):
         self._compare(cols, d["w_mixed_cols"], _RTOL, "mixed_w/w_mixed_cols")
 
     def test_gate_on_smoke_matches_the_committed_vector(self):
-        """End to end: sigma and green of a three-iteration gate-on run
-        under both kernels (0.15 s measured: below the 5 s opt-in rule of
+        """End to end: sigma and green of a CONVERGED gate-on run under both
+        kernels (0.8 s measured for the pair: below the 5 s opt-in rule of
         ``tests/heavy_tests.py``, so it stays in the fast gate).
 
         The ``"takimoto"`` half is the case that left
