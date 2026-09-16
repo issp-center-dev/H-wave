@@ -145,6 +145,13 @@ the coefficients depend only on the translation vectors :math:`r_{ij}=r_j - r_i`
 It is noted that InterAll type of interaction is not considered in the
 wave-number space UHF mode.
 
+The interaction tables are read in the documented orientation -- a row
+``[rx] [ry] [rz] [alpha] [beta] ...`` places the orbital ``[alpha]`` in the
+original cell and ``[beta]`` in the cell displaced by :math:`\vec{r}`, the
+same rule the transfer table follows -- and the note of the interaction
+definition file section records what this changed with respect to H-wave
+2.0.0.
+
 As the Hamiltonian is diagonal with respect to the wave number :math:`k`,
 the calculation of the eigenvalues and eigenvectors reduces from
 diagonalization of a matrix of the size

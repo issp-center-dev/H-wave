@@ -43,6 +43,30 @@ in the wave-number space UHF.
      conjugate, exactly as ``PairHop`` does; the ``+ h.c.`` above was
      missing from earlier editions of this page.
 
+.. note::
+
+   In every expression above :math:`r_{ij} = R_j - R_i`: a row
+   ``[rx] [ry] [rz] [alpha] [beta] ...`` places the orbital ``[alpha]`` in the
+   original cell and ``[beta]`` in the cell displaced by
+   :math:`\vec{r} = (r_x, r_y, r_z)`, for the one-body and the two-body files
+   alike. Up to H-wave 2.0.0 the mean-field solvers (``UHFk``; the
+   Hartree-Fock term of ``FLEX``) read an off-site two-body row with the two
+   cells swapped, while the RPA, FLEX and Eliashberg vertices used the rule
+   above; the mean field now follows it too. Results of ``UHFk`` (and of
+   ``FLEX`` with ``flex_hartree_fock = true`` or ``flex_second_order = "local"``)
+   change only for off-site rows with two different orbitals or a complex
+   coefficient; every on-site interaction, every real orbital-diagonal
+   off-site row, every real single-orbital input, and every RPA or Eliashberg
+   result are unchanged. **No input file needs to be changed.** To reproduce a
+   2.0.0 ``UHFk`` number, negate the displacement of every off-site two-body
+   row (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the ``Transfer`` rows,
+   not the on-site rows; do not swap the orbital indices, which is wrong for
+   complex couplings) -- and note that this negated file changes what the RPA
+   and Eliashberg solvers compute, whose 2.0.0 results on the original file
+   were already correct. Remove any workaround you added for the old
+   discrepancy, and restart affected self-consistent runs from scratch rather
+   than from 2.0.0 seeds.
+
 
 An example of the file is shown below.
 
