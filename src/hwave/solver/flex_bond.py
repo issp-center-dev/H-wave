@@ -219,8 +219,9 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
     ND = S.shape[-1]
     norb = int(round(nd ** 0.5))
-    assert norb * norb == nd, \
-        "dress_and_build_w: nd = {} is not a square (norb = {})".format(nd, norb)
+    if norb * norb != nd:
+        raise ValueError("dress_and_build_w: nd = {} is not a square of an orbital "
+                         "count".format(nd))
     # the pair permutation of the mixed second-order blocks, built once (it
     # depends on the block layout only, not on the frequency batch)
     perm = mixed_pair_permutation(ND // nd, nd, norb)
@@ -281,7 +282,11 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         A += Bc
         del Bc
         A *= 0.5 * mask
-        A = A[:, :, perm[:, None], perm[None, :]]
+        if norb > 1:
+            # at norb = 1 the pair permutation is the identity, and the
+            # fancy-index copy would allocate a whole batch-shaped temporary
+            # to reproduce A
+            A = A[:, :, perm[:, None], perm[None, :]]
         W_b += A
         del A
         if not np.all(np.isfinite(W_b)):

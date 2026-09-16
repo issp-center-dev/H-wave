@@ -188,7 +188,8 @@ HEAVY_TESTS = (
      "test_interorbital_bond_chain",
      "G4: the L = 3 two-orbital chain with an orbital-asymmetric "
      "inter-orbital off-site bond adjudicates the off-site vertex "
-     "orientation (asserted) and the bond gate's deviation (recorded)"),
+     "orientation and the bond gate, both asserted -- the gate against a "
+     "floor the test measures itself and against the exact oracle"),
     # --- tests/test_flex_second_order_ed_onsite.py -- #181 second-order G3 --
     ("test_flex_second_order_ed_onsite", "TestG3",
      "test_every_type_and_pair",

@@ -30,38 +30,11 @@ class TestBondGate(unittest.TestCase):
                     for k in ("static_new", "fluct_new", "chi0q", "chiq_s", "chiq_c"):
                         np.testing.assert_allclose(a[k], b[k], rtol=0, atol=1e-12, err_msg=(so, k))
 
-    def test_channel0_block_equals_the_standalone_kernel(self):
-        from hwave.solver import flex_bond
-        from hwave.solver.second_order import dense_w2
-        s, r = _flex({"flex_second_order": "local", "IterationMax": 1})
-        gi = r.get_param("green")
-        s._phase_b_reset(gi); s._phase_b_preflight(gi); s._calc_epsilon_k({})
-        beta = 0.5
-        nmat, nvol, norb = s.nmat, s.lattice.nvol, s.norb
-        nd = norb * norb
-        G = s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
-        B = s._bond_view.n_channels
-        with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
-            s._phase_b_prepare_vertices()
-            flex_bond.assemble_bubble(store, G, None, beta, s._bond_view, (4, 4, 1), 1)
-            cb = np.array(store.get_freq_batch("chibar", 0, nmat))
-            flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on, C_on=s._bond_C_on,
-                                        nb=nmat, output_full=False, nmat=nmat, nvol=nvol, nd=nd,
-                                        spatial_shape=(4, 4, 1), factors=s._second_order_factors,
-                                        second_order="local")
-            W00 = np.array(store.get_freq_batch("W", 0, nmat))[:, :, :nd, :nd]
-        S, C = s._bond_S, s._bond_C
-        I = np.eye(B * nd)
-        chi_s = np.linalg.solve(I - cb @ S, cb); chi_c = np.linalg.solve(I + cb @ C, cb)
-        ring = (1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C)[:, :, :nd, :nd]
-        w2 = dense_w2(cb[:, :, :nd, :nd], s._second_order_factors)
-        np.testing.assert_allclose(W00, ring + w2, rtol=1e-12, atol=1e-13)
-
     def _bond_w(self, identity_permutation=False):
-        """``(W, nd)``: the FULL bond-resolved ``W`` (every block,
-        ``(nmat, nvol, ND, ND)``) of the module's fixture and the pair
-        dimension of one channel block, built through the same recipe as
-        :meth:`test_channel0_block_equals_the_standalone_kernel`.
+        """``(W, chibar, solver)``: the FULL bond-resolved ``W`` (every block,
+        ``(nmat, nvol, ND, ND)``) of the module's fixture, the bare bond
+        bubble it was built from, and the solver that owns the vertices --
+        the single build recipe both tests below drive.
 
         The fixture is ``tests/rpa/input_2orb``'s ``coulombinter.dat``, whose
         off-site content includes the INTER-ORBITAL rows ``v_12(-x) = 1`` /
@@ -72,7 +45,8 @@ class TestBondGate(unittest.TestCase):
 
         With ``identity_permutation`` the permutation is replaced by the
         identity -- the pre-R3 behaviour -- so the caller can see whether it
-        is load-bearing."""
+        is load-bearing. Both returned arrays are copies: the store is
+        released on the way out."""
         from hwave.solver import flex_bond
         s, r = _flex({"flex_second_order": "local", "IterationMax": 1})
         gi = r.get_param("green")
@@ -88,13 +62,27 @@ class TestBondGate(unittest.TestCase):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, None, beta, s._bond_view, (4, 4, 1), 1)
+            cb = np.array(store.get_freq_batch("chibar", 0, nmat))
             with patch:
                 flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
                                             C_on=s._bond_C_on, nb=nmat, output_full=False,
                                             nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(4, 4, 1),
                                             factors=s._second_order_factors,
                                             second_order="local")
-            return np.array(store.get_freq_batch("W", 0, nmat)), nd
+            return np.array(store.get_freq_batch("W", 0, nmat)), cb, s
+
+    def test_channel0_block_equals_the_standalone_kernel(self):
+        from hwave.solver.second_order import dense_w2
+        W, cb, s = self._bond_w()
+        nd = s.norb ** 2
+        ND = cb.shape[-1]
+        W00 = W[:, :, :nd, :nd]
+        S, C = s._bond_S, s._bond_C
+        I = np.eye(ND)
+        chi_s = np.linalg.solve(I - cb @ S, cb); chi_c = np.linalg.solve(I + cb @ C, cb)
+        ring = (1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C)[:, :, :nd, :nd]
+        w2 = dense_w2(cb[:, :, :nd, :nd], s._second_order_factors)
+        np.testing.assert_allclose(W00, ring + w2, rtol=1e-12, atol=1e-13)
 
     def test_w_hermiticity_and_the_correction_is_load_bearing(self):
         """D-7 on the FULL effective interaction: ``W(q, l)^dagger =
@@ -123,7 +111,8 @@ class TestBondGate(unittest.TestCase):
         the second leg by ``max|W|`` would therefore be asking for a ratio
         no fixture can produce; the third assertion (nothing outside the
         mixed strips moves) is what makes this normalisation honest."""
-        W, nd = self._bond_w()
+        W, _cb, solver = self._bond_w()
+        nd = solver.norb ** 2
         nmat = W.shape[0]
         scale = np.abs(W).max()
         self.assertGreater(scale, 1e-6)                              # anti-vacuity
@@ -132,7 +121,7 @@ class TestBondGate(unittest.TestCase):
         self.assertLess(dev / scale, 1e-12,
                         "the bond-resolved W is not Hermitian under the frequency "
                         "reflection: {:.3e} of its own size".format(dev / scale))
-        W_identity, _ = self._bond_w(identity_permutation=True)
+        W_identity = self._bond_w(identity_permutation=True)[0]
         delta = np.abs(W - W_identity)
         mixed = max(np.abs(W[:, :, :nd, nd:]).max(), np.abs(W[:, :, nd:, :nd]).max())
         self.assertGreater(mixed, 1e-6 * scale,                      # anti-vacuity

@@ -39,7 +39,7 @@ offsite3 = {
 class _LegacyUHFk:
     """Just enough state for the two legacy methods (normal mode only).
 
-    Since the orientation fix of issue #192 this frozen pre-refactor code
+    Since the orientation fix of issue #193 this frozen pre-refactor code
     models the REVERSED declaration of an off-site row: on a displacement
     that is not its own reverse, ``hwave.solver.hartree_fock`` reads
     ``(r, a, b, v)`` in the documented orientation (orbital ``a`` in the

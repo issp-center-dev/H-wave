@@ -1682,6 +1682,20 @@ class TestG4(unittest.TestCase):
                             "the bond gate is not the exact second order on the inter-orbital "
                             "bond: {:.3e} from the oracle (ceiling {:.3e}); issue #192"
                             .format(gate_orc, _GATE_ORACLE_CEIL))
+            # and the CEILING's justification, asserted rather than printed:
+            # _GATE_ORACLE_CEIL is a constant, so on its own it only says the
+            # gate is close to the oracle, not that what separates them is
+            # the extraction rather than the gate. ``local + dropped`` is the
+            # exact second order by construction and goes through the
+            # identical stencil, so its own distance from the oracle IS that
+            # extraction noise; the gate must not exceed it by more than a
+            # small factor. Measured ratio: 1.720e-5 / 1.475e-5 = 1.17.
+            self.assertLess(gate_orc, 3.0 * local_orc,
+                            "the bond gate is {:.3e} from the exact oracle while the exactly "
+                            "weighted standalone path is only {:.3e} from it through the same "
+                            "extraction (ratio {:.2f}, measured 1.17): what separates the gate "
+                            "from the oracle is no longer the stencil"
+                            .format(gate_orc, local_orc, gate_orc / max(local_orc, 1e-300)))
             self._record("interorbital dropped class", np.abs(dr).max() / scale)
 
     @heavy
