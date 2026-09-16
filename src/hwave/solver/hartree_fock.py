@@ -21,6 +21,7 @@ branch is not shared in this version):
 The FLEX-side density evaluator of the same spec lives here too
 (:func:`equal_time_density`, section 2.1).
 """
+import logging
 from collections import namedtuple
 from dataclasses import dataclass
 
@@ -28,6 +29,8 @@ import numpy as np
 
 from .kgrid import reverse_fft_axes
 from ..qlmsio import wan90
+
+logger = logging.getLogger("qlms.solver.hartree_fock")
 
 InteractionTables = namedtuple("InteractionTables",
                                ["inter_table", "spin_table", "discarded"])
@@ -61,6 +64,22 @@ def _reverse_closed(tab_r):
         )
     )
     return (tab_r + tba) / 2
+
+
+def orient_documented(tab_r):
+    """Read every OFF-SITE displacement table in the documented orientation
+    (spec 2026-09-16 D-1): a row (r, a, b, v) means v n_{j,a} n_{j+r,b}.
+
+    On the Hermitian-closed table ``T[-r] = conj(T[r].T)``, so the operation
+    is the grid reversal of every displacement axis; it is written as the
+    conjugate transpose at fixed r because that form is local to each key and
+    order-independent. ``r = 0`` (the origin of the dense table) is untouched.
+    Identity for real orbital-diagonal entries and for real single-orbital
+    tables; NOT the identity for complex ones (e.g. an off-site PairHop
+    amplitude with an imaginary part)."""
+    out = np.conjugate(np.swapaxes(tab_r, -1, -2))
+    out[0, 0, 0] = tab_r[0, 0, 0]
+    return out
 
 
 def build_interaction_tables(param_ham, norb, shape):
@@ -184,6 +203,23 @@ def build_interaction_tables(param_ham, norb, shape):
         spin_table["PairHop"][1, 0, 0, 1] = 1
     else:
         inter_table["PairHop"] = None
+
+    changed = 0
+    for t in ("CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop"):
+        tab = inter_table.get(t)
+        if tab is None:
+            continue
+        new = orient_documented(tab)
+        diff = np.any(new != tab, axis=(-1, -2))
+        diff[0, 0, 0] = False
+        changed += int(np.count_nonzero(diff))
+        inter_table[t] = new
+    if changed:
+        logger.info("interaction: %d off-site displacement table(s) of two-body terms changed "
+                    "under the documented orientation (orbital a in the original cell, b in "
+                    "the cell displaced by r); mean-field results for such terms differ from "
+                    "H-wave 2.0.0 -- see the release note", changed)
+
     return InteractionTables(inter_table, spin_table, tuple(discarded))
 
 
