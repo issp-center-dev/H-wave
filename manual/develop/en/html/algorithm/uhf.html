@@ -149,6 +149,12 @@ c_{k\alpha\sigma}^\dagger c_{k\beta\sigma^\prime}^{\phantom\dagger}
 the coefficients depend only on the translation vectors <span class="math notranslate nohighlight">\(r_{ij}=r_j - r_i\)</span>.
 It is noted that InterAll type of interaction is not considered in the
 wave-number space UHF mode.</p>
+<p>The interaction tables are read in the documented orientation – a row
+<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">...</span></code> places the orbital <code class="docutils literal notranslate"><span class="pre">[alpha]</span></code> in the
+original cell and <code class="docutils literal notranslate"><span class="pre">[beta]</span></code> in the cell displaced by <span class="math notranslate nohighlight">\(\vec{r}\)</span>, the
+same rule the transfer table follows – and <a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/interaction.html#uhfk-interaction-orientation"><span class="std std-ref">the note on the
+interaction definition file page</span></a> records
+what changed with respect to H-wave 2.0.0.</p>
 <p>As the Hamiltonian is diagonal with respect to the wave number <span class="math notranslate nohighlight">\(k\)</span>,
 the calculation of the eigenvalues and eigenvectors reduces from
 diagonalization of a matrix of the size

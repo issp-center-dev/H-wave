@@ -74,6 +74,48 @@
 記載が漏れていました。</p></li>
 </ul>
 </div>
+<div class="admonition note" id="uhfk-interaction-orientation">
+<p class="admonition-title">注釈</p>
+<p><strong>規約：</strong>上の全ての式で<span class="math notranslate nohighlight">\(r_{ij} = R_j - R_i\)</span>です。すなわち
+<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">...</span></code>という行は、軌道<code class="docutils literal notranslate"><span class="pre">[alpha]</span></code>を
+元のセルに、軌道<code class="docutils literal notranslate"><span class="pre">[beta]</span></code>を<span class="math notranslate nohighlight">\(\vec{r} = (r_x, r_y, r_z)\)</span>だけ
+並進したセルに置きます。これは一体項のファイルでも二体項のファイルでも
+同じです。</p>
+<p><strong>2.0.0 との互換性：</strong>H-wave 2.0.0 までは、平均場ソルバー（<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>、
+および<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の Hartree-Fock 項）はオフサイトの二体行を2つのセルを
+入れ替えて読んでいましたが、RPA・FLEX・Eliashberg の頂点は上の規約に
+従っていました。今回から平均場も上の規約に従います。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の結果
+（および<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>または
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>を指定した<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の結果）が変わるのは、
+異なる2つの軌道をもつオフサイト行、または複素係数をもつオフサイト行が
+ある場合だけです。全てのオンサイト相互作用、実数で軌道対角な全ての
+オフサイト行、実数の単一軌道入力、およびボンド分解チャネルを用いない
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）、かつ影響を受けない
+感受率から計算した RPA と Eliashberg の全ての結果は変わりません
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>の Eliashberg 計算は、感受率を生成した FLEX 計算
+に従って変わります）。同じ相互作用ファイル形式を用いる FLEX/RPA 計算に
+ついては：<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した計算も、実数の軌道間
+オフサイトボンドでは結果が変わります（混合した2次のブロックが厳密に
+なりました。issue #192）。Hartree-Fock 項とボンド分解チャネルのいずれも
+使わない<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>の計算は変わりません。<strong>入力ファイルを変更する必要はありません。</strong></p>
+<p><strong>再現手順と複合パイプライン：</strong>2.0.0 の<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の数値を再現するには、
+全てのオフサイト二体行の変位を反転してください
+（<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> → <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>。一体項の<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>の行、およびオンサイトの行は
+対象外です。また、軌道の
+添字を入れ替えてはいけません。複素結合に対して誤りになります）。ただし、
+このように変位を反転したファイルは、RPA と Eliashberg のソルバーが計算する
+内容を変えてしまいます。元のファイルに対するこれらの 2.0.0 の結果は、
+もともと正しいものでした。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した 2.0.0 の
+<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>計算は、単一の入力ファイルでは再現できません（2.0.0 は一回の計算
+の中で平均場項と頂点項を異なる向きで評価していたためです）。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の
+出力を RPA や Eliashberg のソルバーに渡していた 2.0.0 のパイプラインを
+再現するには、<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>だけを変位を反転したファイルで、後段は元の
+ファイルで実行する必要があります。2.0.0 では、2つの段階が異なる
+ハミルトニアンを解いていたためです。従来の食い違いに対する回避策を入れて
+いた場合は取り除き、影響を受ける自己無撞着計算は 2.0.0 の初期値からでは
+なく最初からやり直してください。</p>
+</div>
 <p>以下にファイル例を示します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry
     10
@@ -106,7 +148,7 @@
 <li><p>4 - <span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 3\)</span>行:
 <code class="docutils literal notranslate"><span class="pre">[n_1]</span> <span class="pre">[n_2]</span> <span class="pre">...</span></code></p></li>
 <li><p><span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 4\)</span>行以降:
-<code class="docutils literal notranslate"><span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">[J.real]</span> <span class="pre">[J.imag]</span></code></p></li>
+<code class="docutils literal notranslate"><span class="pre">[r_x]</span> <span class="pre">[r_y]</span> <span class="pre">[r_z]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">[J.real]</span> <span class="pre">[J.imag]</span></code></p></li>
 </ul>
 </section>
 <section id="id3">
@@ -122,7 +164,7 @@
 <p><strong>説明 :</strong>
 並進ベクトル全体が入る直方体に含まれるセルの数を指定します。</p>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, <code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, ...</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, <code class="docutils literal notranslate"><span class="pre">[n2]</span></code>, ...</p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 各セルの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。</p>
@@ -153,8 +195,8 @@
 <li><p>係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手<span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span>が省略された宣言済みエントリは読み込み時に拒否されます（バージョン 2.0 以降）。結合の両方向を宣言してください。</p></li>
 <li><p>並進ベクトルは全て<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>内に収まるとします。
 <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, <code class="docutils literal notranslate"><span class="pre">r_z</span></code>の範囲が<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>のx,y,z軸のサイズを超える場合はエラーで終了します。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code>が<code class="docutils literal notranslate"><span class="pre">true</span></code>の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜<span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span>の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道<span class="math notranslate nohighlight">\(\alpha\)</span> (0 起点) とスピン<span class="math notranslate nohighlight">\(s\)</span> (0: up, 1: down) に対しファイル上のインデックス（1 起点）は<span class="math notranslate nohighlight">\(2\alpha + s + 1\)</span>）。<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code>が<code class="docutils literal notranslate"><span class="pre">false</span></code>の場合は、インデックスの範囲が 1〜<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>の行のみ考慮します。</p></li>
-<li><p>スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された<code class="docutils literal notranslate"><span class="pre">2α+s+1</span></code>のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜<span class="math notranslate nohighlight">\(N_\text{orbital}/2\)</span>）を用います。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code>が<code class="docutils literal notranslate"><span class="pre">true</span></code>の場合、Transfer項の軌道のインデックスはスピン自由度を含む一般化軌道インデックスと読み替え、1〜<span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span>（ジオメトリファイルの<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>。このモードではスピン軌道の数）の値をとります。スピンを内側に並べたインターリーブ順で、奇数インデックス (1, 3, 5, …) が各軌道の spin up、偶数インデックス (2, 4, 6, …) が spin down に対応します（軌道<span class="math notranslate nohighlight">\(\alpha\)</span> (0 起点) とスピン<span class="math notranslate nohighlight">\(s\)</span> (0: up, 1: down) に対しファイル上のインデックス（1 起点）は<span class="math notranslate nohighlight">\(2\alpha + s + 1\)</span>）。<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code>が<code class="docutils literal notranslate"><span class="pre">false</span></code>の場合は、インデックスの範囲が 1〜<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>の行のみ考慮します。</p></li>
+<li><p>スピン軌道モードでは相互作用項（CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop）も利用でき、仮想スピン分解を介して取り扱われます。倍化された<code class="docutils literal notranslate"><span class="pre">2α+s+1</span></code>のインデックス規約は Transfer ファイルのみに適用されます。相互作用定義ファイルでは物理軌道のインデックス（1 〜<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>、すなわちジオメトリファイルの<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>の半分）を用います。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>

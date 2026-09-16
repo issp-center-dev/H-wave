@@ -701,8 +701,17 @@ pair basis and are
 
    A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),
 
-understood as a matrix on the density slots of the pair basis (zero on
-every other slot), so that each product with :math:`\bar\chi` below is a
+Here :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
+V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}` is the Fourier
+transform of the interaction file in its own orientation (:math:`\alpha` in
+the original cell). On the density slots it enters with transposed orbital
+indices (:math:`\alpha \leftrightarrow \beta`), as the ring vertex does:
+:math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+[B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`. It is the same matrix the
+ring vertex uses, understood as a matrix on the density slots of the pair
+basis (zero on every other slot), so that each product with
+:math:`\bar\chi` below is a
 matrix product in that pair space, exactly as for
 :math:`A^{\sigma}_{\rm on}` and :math:`B^{\sigma}_{\rm on}`. The complete
 second-order kernel is then
@@ -800,10 +809,10 @@ result.
    bond-resolved effective interaction is built by the same kernel, so
    the two values agree there as well for a single-band :math:`U + V`
    input (the bond-resolved channels already carried the exact direct
-   :math:`V` second order). Inter-orbital (orbital-off-diagonal) off-site
-   bonds are the one case in which the bond-resolved blocks still carry a
-   small residual second-order deviation with this option enabled;
-   orbital-diagonal bonds are exact. Closing that gap is planned.
+   :math:`V` second order). The bond-resolved blocks are exact at second
+   order on every bond, inter-orbital ones included: the mixed on-site
+   :math:`\times` bond blocks read the bond side at the transposed orbital
+   pair (issue #192).
 
 .. _rpa_longitudinal_bond:
 
@@ -832,7 +841,10 @@ exchange crossing of the off-site term, :math:`w_t\, \mathrm{Re}\,
 V^{(t)}_{l_1 l_2}(R_m)`, where :math:`w_t` is the same per-type
 coefficient the on-site exchange slot uses (``CoulombInter``
 :math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`
-for the spin and charge channels). The dressed objects
+for the spin and charge channels). In the orientation of the interaction
+file, a declared row :math:`V_{ab}(R_m)` occupies the slot
+:math:`(m, a, b)` and its reverse row :math:`V_{ba}(-R_m)` the slot
+:math:`(-m, b, a)`. The dressed objects
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi` and
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi` and their
 :math:`(m = 0, m' = 0)` blocks are written under the
@@ -939,9 +951,10 @@ under ``flex_second_order = "local"`` already carries the direct skeleton and
 the :math:`UV` cross term exactly and misses only the exchange skeleton of
 two off-site vertices; under the legacy ``"takimoto"`` expression it keeps
 half of the direct :math:`V^2` term and no :math:`UV` cross term at second
-order. (With ``longitudinal_bond_channels = true``, inter-orbital off-site
-bonds keep a small residual second-order deviation of the bond-resolved
-blocks; orbital-diagonal bonds are exact.) The ordinary
+order. (With ``longitudinal_bond_channels = true`` the bond-resolved blocks
+are exact at second order on every bond, inter-orbital ones included: the
+mixed on-site :math:`\times` bond blocks read the bond side at the
+transposed orbital pair, issue #192.) The ordinary
 ``chi0q``, ``chiq_s``, ``chiq_c`` outputs of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects of the last map;
 the sixteen ``longitudinal_bond_*`` static keys of the previous section are

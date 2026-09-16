@@ -74,6 +74,47 @@
 記載が漏れていました。</p></li>
 </ul>
 </div>
+<div class="admonition note" id="rpa-interaction-orientation">
+<p class="admonition-title">注釈</p>
+<p><strong>規約：</strong>上の全ての式で<span class="math notranslate nohighlight">\(r_{ij} = R_j - R_i\)</span>です。すなわち
+<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">...</span></code>という行は、軌道<code class="docutils literal notranslate"><span class="pre">[alpha]</span></code>を
+元のセルに、軌道<code class="docutils literal notranslate"><span class="pre">[beta]</span></code>を<span class="math notranslate nohighlight">\(\vec{r} = (r_x, r_y, r_z)\)</span>だけ
+並進したセルに置きます。これは一体項のファイルでも二体項のファイルでも
+同じです。</p>
+<p><strong>2.0.0 との互換性：</strong>H-wave 2.0.0 までは、平均場ソルバー（<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>、
+および<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の Hartree-Fock 項）はオフサイトの二体行を2つのセルを
+入れ替えて読んでいましたが、RPA・FLEX・Eliashberg の頂点は上の規約に
+従っていました。今回から平均場も上の規約に従います。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の結果
+（および<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>または
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>を指定した<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の結果）が変わるのは、
+異なる2つの軌道をもつオフサイト行、または複素係数をもつオフサイト行が
+ある場合だけです。全てのオンサイト相互作用、実数で軌道対角な全ての
+オフサイト行、実数の単一軌道入力、およびボンド分解チャネルを用いない
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）、かつ影響を受けない
+感受率から計算した RPA と Eliashberg の全ての結果は変わりません
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>の Eliashberg 計算は、感受率を生成した FLEX 計算
+に従って変わります）。<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した RPA/FLEX 計算も、実数の
+軌道間オフサイトボンドでは結果が変わります（混合した2次のブロックが厳密に
+なりました。issue #192）。Hartree-Fock 項とボンド分解チャネルのいずれも
+使わない<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>の計算は変わりません。<strong>入力ファイルを変更する必要はありません。</strong></p>
+<p><strong>再現手順と複合パイプライン：</strong>2.0.0 の<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の数値を再現するには、
+全てのオフサイト二体行の変位を反転してください
+（<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> → <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>。<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>や<code class="docutils literal notranslate"><span class="pre">Extern</span></code>などの一体項の行、
+およびオンサイトの行は対象外です。また、軌道の
+添字を入れ替えてはいけません。複素結合に対して誤りになります）。ただし、
+このように変位を反転したファイルは、RPA と Eliashberg のソルバーが計算する
+内容を変えてしまいます。元のファイルに対するこれらの 2.0.0 の結果は、
+もともと正しいものでした。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した 2.0.0 の
+<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>計算は、単一の入力ファイルでは再現できません（2.0.0 は一回の計算
+の中で平均場項と頂点項を異なる向きで評価していたためです）。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の
+出力を RPA や Eliashberg のソルバーに渡していた 2.0.0 のパイプラインを
+再現するには、<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>だけを変位を反転したファイルで、後段は元の
+ファイルで実行する必要があります。2.0.0 では、2つの段階が異なる
+ハミルトニアンを解いていたためです。従来の食い違いに対する回避策を入れて
+いた場合は取り除き、影響を受ける自己無撞着計算は 2.0.0 の初期値からでは
+なく最初からやり直してください。</p>
+</div>
 <p>以下にファイル例を示します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry
     10
@@ -106,7 +147,7 @@
 <li><p>4 - <span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 3\)</span>行:
 <code class="docutils literal notranslate"><span class="pre">[n_1]</span> <span class="pre">[n_2]</span> <span class="pre">...</span></code></p></li>
 <li><p><span class="math notranslate nohighlight">\(\lceil N_\text{pts} / 15 \rceil + 4\)</span>行以降:
-<code class="docutils literal notranslate"><span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[r_x]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">[J.real]</span> <span class="pre">[J.imag]</span></code></p></li>
+<code class="docutils literal notranslate"><span class="pre">[r_x]</span> <span class="pre">[r_y]</span> <span class="pre">[r_z]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">[J.real]</span> <span class="pre">[J.imag]</span></code></p></li>
 </ul>
 </section>
 <section id="id3">
@@ -122,7 +163,7 @@
 <p><strong>説明 :</strong>
 並進ベクトル全体が入る直方体に含まれるセルの数を指定します。</p>
 </li>
-<li><p><code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, <code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, ...</p>
+<li><p><code class="docutils literal notranslate"><span class="pre">[n1]</span></code>, <code class="docutils literal notranslate"><span class="pre">[n2]</span></code>, ...</p>
 <p><strong>形式 :</strong> int型</p>
 <p><strong>説明 :</strong>
 各セルの縮重度を指定します(通常は 1)。一行あたり15点を列挙します。</p>

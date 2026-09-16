@@ -602,8 +602,17 @@ G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau)\]</div>
 書くと、対応する因子は対基底の密度スロット上にあり</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-24">
 <span class="eqno">(7.35)<a class="headerlink" href="#equation-algorithm-rpa-24" title="Link to this equation">¶</a></span>\[A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q})\]</div>
-<p>となります。これは対基底の密度スロット上の行列（それ以外のスロットではゼロ）で
-あり、以下で<span class="math notranslate nohighlight">\(\bar\chi\)</span>と取る積は<span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span>・
+<p>となります。ここで<span class="math notranslate nohighlight">\(v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
+V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}\)</span>は、相互作用
+ファイル自身の向き（<span class="math notranslate nohighlight">\(\alpha\)</span>が元のセル）でのフーリエ変換です。密度
+スロット上には、ring の頂点と同じく軌道添字を転置して
+（<span class="math notranslate nohighlight">\(\alpha \leftrightarrow \beta\)</span>）
+<span class="math notranslate nohighlight">\([A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+[B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})\)</span>として入ります。これは ring の
+頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
+スロットではゼロ）であり、以下で<span class="math notranslate nohighlight">\(\bar\chi\)</span>と取る積は
+<span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span>・
 <span class="math notranslate nohighlight">\(B^{\sigma}_{\rm on}\)</span>の場合と同様、この対空間での行列積です。
 したがって2次カーネル全体は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-25">
@@ -693,11 +702,9 @@ G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau)\]</div>
 <p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>では、ボンド分解した有効相互作用の
 チャネル0ブロックも同じカーネルで構築されるため、単一バンドの
 <span class="math notranslate nohighlight">\(U + V\)</span>入力でも2つの値は一致します（ボンド分解チャネルは
-もともと直接<span class="math notranslate nohighlight">\(V\)</span>の2次を厳密に含んでいました）。このオプション
-（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）を有効にした場合でも
-なお小さな2次のずれが残るのは軌道間（軌道非対角）のオフサイトボンドの
-ボンド分解ブロックだけで、軌道対角のボンドは厳密です。この差の解消は
-今後の課題です。</p>
+もともと直接<span class="math notranslate nohighlight">\(V\)</span>の2次を厳密に含んでいました）。ボンド分解ブロックは、
+軌道間のものも含め全てのボンドで2次まで厳密です（オンサイトとボンドの
+混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。</p>
 </div>
 </section>
 </section>
@@ -724,7 +731,10 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 置いたものです。ここで<span class="math notranslate nohighlight">\(w_t\)</span>はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 <span class="math notranslate nohighlight">\((+1, -1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>
-<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。ドレスされた
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。相互作用ファイルの向きでは、宣言された行
+<span class="math notranslate nohighlight">\(V_{ab}(R_m)\)</span>はスロット<span class="math notranslate nohighlight">\((m, a, b)\)</span>に、その逆向きの行
+<span class="math notranslate nohighlight">\(V_{ba}(-R_m)\)</span>はスロット<span class="math notranslate nohighlight">\((-m, b, a)\)</span>に入ります。
+ドレスされた
 <span class="math notranslate nohighlight">\(\chi_s = [1 - \bar\chi S]^{-1}\bar\chi\)</span>と
 <span class="math notranslate nohighlight">\(\chi_c = [1 + \bar\chi C]^{-1}\bar\chi\)</span>、およびその
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックが<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルの
@@ -799,9 +809,10 @@ G_{cd}(k - q, i\omega_n - i\nu)\]</div>
 標準の一般経路も<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>では直接スケルトンと
 <span class="math notranslate nohighlight">\(UV\)</span>交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです。
 従来の<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>の式では、2次で直接<span class="math notranslate nohighlight">\(V^2\)</span>項の半分のみを持ち、
-<span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。（このオプション（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）を
-有効にした場合でも、軌道間のオフサイトボンドではボンド分解ブロックに小さな2次のずれが
-残ります。軌道対角のボンドは厳密です。）このような計算の通常の
+<span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>では、
+ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
+ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
+このような計算の通常の
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>出力は、最後の写像のボンド分解した量の
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。前節の16個の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>静的キーも
 書き出され、要求に応じて動的チャネル全体も出力されます

@@ -43,6 +43,53 @@ in the wave-number space UHF.
      conjugate, exactly as ``PairHop`` does; the ``+ h.c.`` above was
      missing from earlier editions of this page.
 
+.. _uhfk_interaction_orientation:
+
+.. note::
+
+   **Convention.** In every expression above :math:`r_{ij} = R_j - R_i`: a row
+   ``[rx] [ry] [rz] [alpha] [beta] ...`` places the orbital ``[alpha]`` in the
+   original cell and ``[beta]`` in the cell displaced by
+   :math:`\vec{r} = (r_x, r_y, r_z)`, for the one-body and the two-body files
+   alike.
+
+   **Compatibility with version 2.0.0.** Up to H-wave 2.0.0 the mean-field
+   solvers (``UHFk``; the Hartree-Fock term of ``FLEX``) read an off-site
+   two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
+   vertices used the rule above; the mean field now follows it too. Results of
+   ``UHFk`` (and of ``FLEX`` with ``flex_hartree_fock = true`` or
+   ``flex_second_order = "local"``) change only for off-site rows with two
+   different orbitals or a complex coefficient; every on-site interaction,
+   every real orbital-diagonal off-site row, every real single-orbital input,
+   and every RPA or Eliashberg result without the bond-resolved channels
+   (``longitudinal_bond_channels = false``, the default) and computed from an
+   unaffected susceptibility are unchanged (an Eliashberg run with
+   ``chi0q_mode = "flex"`` moves together with the FLEX run that produced its
+   susceptibility). For FLEX/RPA calculations that share this
+   interaction format: a run with ``calc_type = "ring"`` and
+   ``longitudinal_bond_channels = true`` on real inter-orbital off-site bonds
+   changes as well (its mixed second-order blocks are now exact, issue #192),
+   and runs under ``flex_second_order = "takimoto"`` without the Hartree-Fock
+   term and without the bond-resolved channels are unchanged.
+   **No input file needs to be changed.**
+
+   **Reproduction recipe and composite pipelines.** To reproduce a 2.0.0
+   ``UHFk`` number, negate the displacement of every off-site two-body row
+   (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the one-body ``Transfer``
+   rows, not the on-site
+   rows; do not swap the orbital indices, which is wrong for complex
+   couplings) -- and note that this negated file changes what the RPA and
+   Eliashberg solvers compute, whose 2.0.0 results on the original file were
+   already correct. A 2.0.0 ``FLEX`` run with ``flex_hartree_fock = true``
+   cannot be reproduced with a single modified file, because that release
+   evaluated the mean-field term and the vertices in different orientations
+   within one run. A 2.0.0 pipeline that fed ``UHFk`` output into the RPA or
+   Eliashberg solvers is reproduced only by running ``UHFk`` on the negated
+   file and the later stages on the original one, because 2.0.0 solved a
+   different Hamiltonian in the two stages. Remove any workaround you added
+   for the old discrepancy, and restart affected self-consistent runs from
+   scratch rather than from 2.0.0 seeds.
+
 
 An example of the file is shown below.
 
@@ -150,13 +197,13 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner X_ba(-R) is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
--  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}`. The spin is the inner (interleaved) index: the odd indices (1, 3, 5, …) correspond to spin-up of each orbital, and the even indices (2, 4, 6, …) correspond to spin-down (for the orbital :math:`\alpha` starting from 0 and the spin :math:`s` with 0 for up and 1 for down, the file index starting from 1 is :math:`2\alpha + s + 1`). Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
+-  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of Transfer term are interpreted as the extended orbital indices including spin degree of freedom that ranges from 1 to :math:`2 N_\text{orbital}` (the geometry ``Norbit``, which in this mode is the spin-orbital count). The spin is the inner (interleaved) index: the odd indices (1, 3, 5, …) correspond to spin-up of each orbital, and the even indices (2, 4, 6, …) correspond to spin-down (for the orbital :math:`\alpha` starting from 0 and the spin :math:`s` with 0 for up and 1 for down, the file index starting from 1 is :math:`2\alpha + s + 1`). Otherwise, only the entries with the orbital indices from 1 to :math:`N_\text{orbital}` are taken into account.
 
--  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}/2`).
+-  In spin-orbital mode the interaction terms (CoulombIntra, CoulombInter, Coulomb, Hund, Ising, Exchange, PairLift, PairHop) are also supported, handled via a virtual spin decomposition. The doubled ``2α+s+1`` index convention applies to the Transfer file only. Interaction definition files use physical-orbital indices (1 .. :math:`N_\text{orbital}`, i.e. half the geometry ``Norbit``).
 
 .. note::
 

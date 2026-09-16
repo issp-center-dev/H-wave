@@ -79,6 +79,49 @@ conjugate, exactly as <code class="docutils literal notranslate"><span class="pr
 missing from earlier editions of this page.</p></li>
 </ul>
 </div>
+<div class="admonition note" id="rpa-interaction-orientation">
+<p class="admonition-title">Note</p>
+<p><strong>Convention.</strong> In every expression above <span class="math notranslate nohighlight">\(r_{ij} = R_j - R_i\)</span>: a row
+<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">...</span></code> places the orbital <code class="docutils literal notranslate"><span class="pre">[alpha]</span></code> in the
+original cell and <code class="docutils literal notranslate"><span class="pre">[beta]</span></code> in the cell displaced by
+<span class="math notranslate nohighlight">\(\vec{r} = (r_x, r_y, r_z)\)</span>, for the one-body and the two-body files
+alike.</p>
+<p><strong>Compatibility with version 2.0.0.</strong> Up to H-wave 2.0.0 the mean-field
+solvers (<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>; the Hartree-Fock term of <code class="docutils literal notranslate"><span class="pre">FLEX</span></code>) read an off-site
+two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
+vertices used the rule above; the mean field now follows it too. Results of
+<code class="docutils literal notranslate"><span class="pre">UHFk</span></code> (and of <code class="docutils literal notranslate"><span class="pre">FLEX</span></code> with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> or
+<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>) change only for off-site rows with two
+different orbitals or a complex coefficient; every on-site interaction,
+every real orbital-diagonal off-site row, every real single-orbital input,
+and every RPA or Eliashberg result without the bond-resolved channels
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>, the default) and computed from an
+unaffected susceptibility are unchanged (an Eliashberg run with
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> moves together with the FLEX run that produced its
+susceptibility). An RPA/FLEX calculation with
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> on real
+inter-orbital off-site bonds changes as well: its mixed second-order blocks
+are now exact (issue #192). Runs under <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>
+without the Hartree-Fock term and without the bond-resolved channels are
+unchanged.
+<strong>No input file needs to be changed.</strong></p>
+<p><strong>Reproduction recipe and composite pipelines.</strong> To reproduce a 2.0.0
+<code class="docutils literal notranslate"><span class="pre">UHFk</span></code> number, negate the displacement of every off-site two-body row
+(<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>; not the one-body rows such as
+<code class="docutils literal notranslate"><span class="pre">Transfer</span></code> and <code class="docutils literal notranslate"><span class="pre">Extern</span></code>, not the on-site
+rows; do not swap the orbital indices, which is wrong for complex
+couplings) – and note that this negated file changes what the RPA and
+Eliashberg solvers compute, whose 2.0.0 results on the original file were
+already correct. A 2.0.0 <code class="docutils literal notranslate"><span class="pre">FLEX</span></code> run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>
+cannot be reproduced with a single modified file, because that release
+evaluated the mean-field term and the vertices in different orientations
+within one run. A 2.0.0 pipeline that fed <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> output into the RPA or
+Eliashberg solvers is reproduced only by running <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> on the negated
+file and the later stages on the original one, because 2.0.0 solved a
+different Hamiltonian in the two stages. Remove any workaround you added
+for the old discrepancy, and restart affected self-consistent runs from
+scratch rather than from 2.0.0 seeds.</p>
+</div>
 <p>An example of the file is shown below.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry
     10
@@ -171,7 +214,7 @@ These parameters specify the real and imaginary parts of the coefficient
 <h2>Usage rules<a class="headerlink" href="#usage-rules" title="Link to this heading">¶</a></h2>
 <ul>
 <li><p>Header cannot be omitted.</p></li>
-<li><p>The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner X_ba(-R) is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.</p></li>
+<li><p>The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner <span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span> is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.</p></li>
 <li><p>The translation vectors need to be enclosed within the CellShape. If the range of <code class="docutils literal notranslate"><span class="pre">r_x</span></code>, <code class="docutils literal notranslate"><span class="pre">r_y</span></code>, or <code class="docutils literal notranslate"><span class="pre">r_z</span></code> exceeds the extent of <code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, or <code class="docutils literal notranslate"><span class="pre">z</span></code> dimension of CellShape, the program terminates with an error.</p></li>
 <li><p>When <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span></code> is set to <code class="docutils literal notranslate"><span class="pre">true</span></code>, the orbital indices of the
 Transfer term use the interleaved spin-orbital convention and range from 1 to

@@ -59,7 +59,7 @@ c_{i}^{\dagger}c_{j}^{\dagger}c_{k}c_{l}
 <span class="eqno">(7.3)<a class="headerlink" href="#equation-algorithm-uhf-2" title="Link to this equation">¶</a></span>\[\begin{aligned}
 \mathcal{H}_\text{UHF} &amp;= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
 \end{aligned}\]</div>
-<p>ここで、簡単化のため、<span class="math notranslate nohighlight">\(i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)\)</span>、<span class="math notranslate nohighlight">\(H\)</span>は<span class="math notranslate nohighlight">\(H_{ij}\)</span>を成分に持つ行列、<span class="math notranslate nohighlight">\(\hat{c}\)</span>は<span class="math notranslate nohighlight">\(c_{i}\)</span>を成分にもつ行ベクトルを表します。
+<p>ここで、簡単化のため、<span class="math notranslate nohighlight">\(i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)\)</span>、<span class="math notranslate nohighlight">\(H\)</span>は<span class="math notranslate nohighlight">\(H_{ij}\)</span>を成分に持つ行列、<span class="math notranslate nohighlight">\(\hat{c}\)</span>は<span class="math notranslate nohighlight">\(c_{i}\)</span>を成分にもつ列ベクトルを表します。
 このとき、<span class="math notranslate nohighlight">\(H\)</span>はエルミート行列なので、<span class="math notranslate nohighlight">\(\hat{\xi}\)</span>を<span class="math notranslate nohighlight">\(H\)</span>の固有値を対角成分に持つ行列、<span class="math notranslate nohighlight">\(U\)</span>は各固有ベクトルに対応する行列として、<span class="math notranslate nohighlight">\(H=U \hat{\xi} U^\dagger\)</span>のように変形できることから、<span class="math notranslate nohighlight">\(\hat{d} = U^\dagger \hat{c}\)</span>とすると、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-uhf-3">
 <span class="eqno">(7.4)<a class="headerlink" href="#equation-algorithm-uhf-3" title="Link to this equation">¶</a></span>\[\begin{aligned}
@@ -110,9 +110,10 @@ c_{k\alpha\sigma}^\dagger c_{k\beta\sigma^\prime}^{\phantom\dagger}
 \end{aligned}\]</div>
 <p>相互作用は並進対称性を仮定し、係数<span class="math notranslate nohighlight">\(J_{ij\alpha\beta}\)</span>は空間座標について並進ベクトル<span class="math notranslate nohighlight">\(r_{ij}=r_j - r_i\)</span>のみに
 依存するとします。なお、波数空間版UHFでは一般化された InterAll 形式の相互作用は扱いません。</p>
+<p>相互作用テーブルは、マニュアルに記載された向き（<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span> <span class="pre">[alpha]</span> <span class="pre">[beta]</span> <span class="pre">...</span></code>という行が軌道<code class="docutils literal notranslate"><span class="pre">[alpha]</span></code>を元のセルに、<code class="docutils literal notranslate"><span class="pre">[beta]</span></code>を<span class="math notranslate nohighlight">\(\vec{r}\)</span>だけ並進したセルに置く、トランスファーのテーブルと同じ規約）で読み込まれ、H-wave 2.0.0 からの変更点は<a class="reference internal" href="../uhfk/filespecification/inputfiles_uhfk/interaction.html#uhfk-interaction-orientation"><span class="std std-ref">相互作用指定ファイルの注意書き</span></a>に記載しています。</p>
 <p>波数空間表示のハミルトニアンは波数<span class="math notranslate nohighlight">\(k\)</span>について対角的なので、固有値・固有ベクトルの計算は、
 <span class="math notranslate nohighlight">\(N_\text{site}N_\text{orbit} \times N_\text{site}N_\text{orbit}\)</span>行列の対角化から、
-<span class="math notranslate nohighlight">\(N_\text{site}\)</span>個の<span class="math notranslate nohighlight">\(N_\text{orbit} \times N_\text{orbit}\)</span>行列の対角化に計算量を抑えることができます。ここで<span class="math notranslate nohighlight">\(N_\text{site}\)</span>はサイト数、<span class="math notranslate nohighlight">\(N_\text{orbit}\)</span>はスピン自由度も含めた1サイト当たりの軌道縮絨度です。</p>
+<span class="math notranslate nohighlight">\(N_\text{site}\)</span>個の<span class="math notranslate nohighlight">\(N_\text{orbit} \times N_\text{orbit}\)</span>行列の対角化に計算量を抑えることができます。ここで<span class="math notranslate nohighlight">\(N_\text{site}\)</span>はサイト数、<span class="math notranslate nohighlight">\(N_\text{orbit}\)</span>はスピン自由度も含めた1サイト当たりの軌道縮退度です。</p>
 </section>
 </section>
 
