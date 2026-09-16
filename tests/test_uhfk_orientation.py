@@ -105,20 +105,19 @@ amplitude is deliberately LARGE (3.5, against a bandwidth of order 1):
 PairLift contracts only the SPIN-OFF-DIAGONAL part of the density, UHFk's
 spin-collinear solution is a fixed point of the loop, and below the
 symmetry-breaking threshold the term contributes exactly zero however it
-is oriented. Those two cases therefore start from a COMMITTED
-spin-mixing initial Green function (:data:`_SEED`, built by
-:func:`_spin_mixed_seed`) rather than from UHFk's zero density -- and the
-amplitude still has to clear the threshold: MEASURED from that seed,
-PairLift contributes 2.3e-22 at 1.0 (the transverse component decays and
-the case is vacuous for it), 2.15e-01 at 2.0 and 3.91e-01 at 3.5.
-``ising.dat`` is raised for the same reason and a weaker one (2.0): in the
-broken-symmetry
-state PairLift produces, the Ising contribution is suppressed, and at 0.3 it
+is oriented. Those two cases therefore start from a COMMITTED spin-mixing
+initial Green function (:data:`_SEED`, built by :func:`_spin_mixed_seed`)
+rather than from UHFk's zero density -- and the amplitude still has to
+clear the threshold: MEASURED from that seed, PairLift contributes
+2.3e-22 at 1.0 (the transverse component decays and the case is vacuous
+for it), 2.15e-01 at 2.0 and 3.91e-01 at 3.5. ``ising.dat`` is raised for
+the same reason and a weaker one (2.0): in the broken-symmetry state
+PairLift produces, the Ising contribution is suppressed, and at 0.3 it
 cleared the anti-vacuity floor by only 2.6x (2.57e-06, i.e. 4e-07 of the
-total energy); at 2.0 it is 5.97e-04, and the reference control's gap on the
-unreversed declaration widens from 1.93e-03 to 3.93e-03. The declaration is
-a test fixture, not a physical model; what it has to do is make the
-contraction run and leave a margin worth measuring.
+total energy); at 2.0 it is 5.97e-04, and the reference control's gap on
+the unreversed declaration widens from 1.93e-03 to 3.93e-03. The
+declaration is a test fixture, not a physical model; what it has to do is
+make the contraction run and leave a margin worth measuring.
 
 The ``*_so`` directories hold the same band written in spin-orbital
 indices (``so = 2a + s``, spin-diagonal) for the
@@ -357,6 +356,9 @@ def _params(case):
                  "param": {"T": 0.05,
                            "Ncond": 4 if case.norb == 2 else 2,
                            "IterationMax": 1000, "EPS": 12, "Mix": 0.5,
+                           # inert for every case here: the all-types cases
+                           # load the committed seed and the rest start from
+                           # UHFk's zero density, so nothing draws from it
                            "RndSeed": 1,
                            "CellShape": [4, 1, 1], "SubShape": [1, 1, 1]}},
         "file": {"input": green_input,

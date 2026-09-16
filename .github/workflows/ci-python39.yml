@@ -23,8 +23,8 @@ name: CI Python 3.10+
 # Python versions in the matrix.
 #
 # Those counts were measured BEFORE the "Provision the reference revision"
-# step below. Since that step the develop-comparison harnesses run in CI
-# instead of skipping, so both the skip counts and the wall clock are
+# step below. Whenever that step succeeds the develop-comparison harnesses
+# run instead of skipping, so both the skip counts and the wall clock are
 # higher here than the table says; re-measure them when a run is at hand.
 
 on:
@@ -80,10 +80,10 @@ jobs:
     - name: Provision the reference revision for the compatibility comparisons
       # tests/test_flex_second_order_compat.py and the three harnesses that
       # share its develop_checkout() compare this tree against a SECOND
-      # source tree at DEVELOP_COMMIT. Without one they skip; with
-      # HWAVE_REQUIRE_DEVELOP_COMPARISON set they FAIL instead, so a broken
-      # provisioning step is reported here rather than quietly dropping the
-      # comparisons.
+      # source tree at DEVELOP_COMMIT. Without one they skip; once this step
+      # has provisioned one it also sets HWAVE_REQUIRE_DEVELOP_COMPARISON, so
+      # a reference that is present but unusable (wrong revision, dirty) is a
+      # failure rather than a silent skip.
       #
       # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
@@ -93,10 +93,24 @@ jobs:
       # subprocess with sys.executable and PYTHONPATH=<ref>/src:<ref>, so the
       # venv installed above serves both trees and the reference tree needs
       # none of its own.
+      #
+      # TOLERANT, deliberately: a pull request from a fork whose origin does
+      # not carry the revision -- or a transient network failure -- must not
+      # fail the whole job. Each failure warns and leaves the two variables
+      # UNSET, so the comparisons go back to skipping with their own reason.
+      # The require flag is only ever exported once a reference really is
+      # there, which is what keeps it meaningful: an exported flag with no
+      # reference behind it would turn every comparison into a failure.
       run: |
         ref="$(poetry run python -c 'from tests.test_flex_second_order_compat import DEVELOP_COMMIT; print(DEVELOP_COMMIT)')"
-        git fetch --depth=1 origin "$ref"
-        git worktree add --detach "${RUNNER_TEMP}/hwave-reference" "$ref"
+        if ! git fetch --depth=1 origin "$ref"; then
+          echo "::warning::could not fetch the reference revision $ref from origin (a fork may not carry it); the develop comparisons will skip"
+          exit 0
+        fi
+        if ! git worktree add --detach "${RUNNER_TEMP}/hwave-reference" "$ref"; then
+          echo "::warning::could not add a worktree at the reference revision $ref; the develop comparisons will skip"
+          exit 0
+        fi
         echo "HWAVE_DEVELOP_CHECKOUT=${RUNNER_TEMP}/hwave-reference" >> "$GITHUB_ENV"
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON=1" >> "$GITHUB_ENV"
 
@@ -216,10 +230,10 @@ jobs:
     - name: Provision the reference revision for the compatibility comparisons
       # tests/test_flex_second_order_compat.py and the three harnesses that
       # share its develop_checkout() compare this tree against a SECOND
-      # source tree at DEVELOP_COMMIT. Without one they skip; with
-      # HWAVE_REQUIRE_DEVELOP_COMPARISON set they FAIL instead, so a broken
-      # provisioning step is reported here rather than quietly dropping the
-      # comparisons.
+      # source tree at DEVELOP_COMMIT. Without one they skip; once this step
+      # has provisioned one it also sets HWAVE_REQUIRE_DEVELOP_COMPARISON, so
+      # a reference that is present but unusable (wrong revision, dirty) is a
+      # failure rather than a silent skip.
       #
       # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
@@ -229,10 +243,24 @@ jobs:
       # subprocess with sys.executable and PYTHONPATH=<ref>/src:<ref>, so the
       # venv installed above serves both trees and the reference tree needs
       # none of its own.
+      #
+      # TOLERANT, deliberately: a pull request from a fork whose origin does
+      # not carry the revision -- or a transient network failure -- must not
+      # fail the whole job. Each failure warns and leaves the two variables
+      # UNSET, so the comparisons go back to skipping with their own reason.
+      # The require flag is only ever exported once a reference really is
+      # there, which is what keeps it meaningful: an exported flag with no
+      # reference behind it would turn every comparison into a failure.
       run: |
         ref="$(poetry run python -c 'from tests.test_flex_second_order_compat import DEVELOP_COMMIT; print(DEVELOP_COMMIT)')"
-        git fetch --depth=1 origin "$ref"
-        git worktree add --detach "${RUNNER_TEMP}/hwave-reference" "$ref"
+        if ! git fetch --depth=1 origin "$ref"; then
+          echo "::warning::could not fetch the reference revision $ref from origin (a fork may not carry it); the develop comparisons will skip"
+          exit 0
+        fi
+        if ! git worktree add --detach "${RUNNER_TEMP}/hwave-reference" "$ref"; then
+          echo "::warning::could not add a worktree at the reference revision $ref; the develop comparisons will skip"
+          exit 0
+        fi
         echo "HWAVE_DEVELOP_CHECKOUT=${RUNNER_TEMP}/hwave-reference" >> "$GITHUB_ENV"
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON=1" >> "$GITHUB_ENV"
 
