@@ -75,11 +75,17 @@ np.savez(os.path.join(out, "static.npz"), sigma_static=np.asarray(gi["sigma_stat
 '''
 
 
-def _reversed_interaction_dir(src_dir, files):
+def _reversed_interaction_dir(src_dir, files, copy=("geom.dat", "transfer.dat")):
     """A fresh input directory holding ``F^rev``: every listed two-body file
-    rewritten with the displacement of each OFF-SITE row negated, geometry
-    and transfer copied verbatim. Returns the directory (the caller removes
-    it).
+    rewritten with the displacement of each OFF-SITE row negated, and every
+    file in ``copy`` (the geometry and the transfer by default) copied
+    verbatim. Returns the directory (the caller removes it).
+
+    ``copy`` exists because a declaration is not always geometry + transfer
+    + the reversed files: tests/test_uhfk_orientation.py runs a
+    ``CoulombIntra`` alongside the off-site types, and an ON-SITE file has
+    no row whose displacement could be negated -- passing it in ``files``
+    would (rightly) be refused as vacuous below, so it travels in ``copy``.
 
     ``F^rev`` is what a user of the reference revision has to write to
     express the same Hamiltonian this branch reads from ``F``: a row
@@ -97,10 +103,11 @@ def _reversed_interaction_dir(src_dir, files):
     Wannier90 degeneracy block would need its header permuted too, so this
     helper refuses one instead of writing a wrong file."""
     dst = tempfile.mkdtemp(prefix="hwave_rev_decl_")
-    for f in ("geom.dat", "transfer.dat"):
+    for f in copy:
         shutil.copy(os.path.join(src_dir, f), dst)
     for f in files:
-        lines = open(os.path.join(src_dir, f)).read().splitlines()
+        with open(os.path.join(src_dir, f)) as fr:
+            lines = fr.read().splitlines()
         header, body = lines[:4], lines[4:]
         if any(int(x) != 1 for x in header[3].split()):
             raise ValueError("_reversed_interaction_dir: {} declares a non-unit "

@@ -248,6 +248,14 @@ HEAVY_TESTS = (
     ("test_spinful_transverse_ed", "TestTask4TsoZeroControl",
      "test_pairlift_returns_to_pass_zero_at_tso_zero",
      "t_so=0 isolation control for PairLift"),
+    # --- tests/test_uhfk_orientation.py -- #192 end-to-end UHFk gate -----
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_bond_variants",
+     "three UHFk runs per case x three cases (Fock off, spin-orbital) "
+     "against the reference revision on the reversed declaration"),
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_pairhop_complex",
+     "three UHFk runs per case x six complex-PairHop cases (norb 2 and 1, "
+     "Fock on and off, normal and spin-orbital) against the reference "
+     "revision on the reversed declaration"),
 )
 
 #: The four fast-gate tests that exceed the 5 s rule by documented
