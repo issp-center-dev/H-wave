@@ -23,8 +23,38 @@ def exit(code):  # the legacy body calls exit(1) on the ambiguous Coulomb case
     raise SystemExit(code)
 
 
+#: A (3, 1, 1) chain declaration: ``+x`` is NOT its own reverse there, so
+#: the documented-orientation step of ``build_interaction_tables`` is
+#: visible on it (on the ``(2, 2, 1)`` shapes of :func:`_cases` every
+#: declared displacement is self-reverse and the step is the identity).
+#: Used by
+#: :class:`TestDocumentedOrientationOnAThreeSiteChain`.
+offsite3 = {
+    "CoulombInter": {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4},
+    "Hund": {((1, 0, 0), (0, 1)): 0.1, ((-1, 0, 0), (1, 0)): 0.1},
+    "PairHop": {((1, 0, 0), (0, 1)): 0.08 + 0.02j, ((-1, 0, 0), (1, 0)): 0.08 - 0.02j},
+}
+
+
 class _LegacyUHFk:
-    """Just enough state for the two legacy methods (normal mode only)."""
+    """Just enough state for the two legacy methods (normal mode only).
+
+    Since the orientation fix of issue #192 this frozen pre-refactor code
+    models the REVERSED declaration of an off-site row: on a displacement
+    that is not its own reverse, ``hwave.solver.hartree_fock`` reads
+    ``(r, a, b, v)`` in the documented orientation (orbital ``a`` in the
+    original cell) while the legacy body reads it the other way round, so
+    the two agree on ``_LegacyUHFk(reverse(ham))``, not on
+    ``_LegacyUHFk(ham)`` -- see
+    :class:`TestDocumentedOrientationOnAThreeSiteChain`. On every other
+    declaration this module exercises the step is the identity, for one of
+    two reasons: the ``(2, 2, 1)`` shapes of :func:`_cases` make every
+    declared displacement its own reverse (the Hermitian closure has then
+    already made ``T[r] = conj(T[r].T)``), and the solver fixtures of
+    :class:`TestUHFkSolverBitIdentity` declare single-orbital REAL
+    couplings, whose conjugate transpose is themselves. That is why the
+    bit-identity claim is unaffected -- and it is measured by those classes
+    passing, not assumed here."""
 
     def __init__(self, param_ham, norb, shape, iflag_fock):
         self.param_ham = param_ham
@@ -515,6 +545,40 @@ class TestKernelBitIdentity(unittest.TestCase):
         ok, err = hf.is_hermitian_batch(a + np.array([[[0, 1e-3], [0, 0]]]))
         self.assertFalse(ok); self.assertGreater(err, 1e-4)
         self.assertTrue(issubclass(hf.NonFiniteError, FloatingPointError))
+
+
+class TestDocumentedOrientationOnAThreeSiteChain(unittest.TestCase):
+    """On (3, 1, 1) the displacement +x is not its own reverse, so the
+    orientation step is visible: the tables equal the legacy closed tables
+    of the REVERSED declaration (F^rev), and differ from the legacy tables
+    of the declaration itself.
+
+    Every other fixture in this module lives on a shape where each declared
+    displacement IS its own reverse; there the Hermitian closure already
+    makes ``T[r] = conj(T[r].T)`` and the step is the identity, which is
+    why the bit-identity classes above still hold verbatim. This class is
+    the one that can see the step at all, and it is two-sided: matching the
+    reversed declaration is asserted, and NOT matching the declaration
+    itself is asserted as well, so a kernel that quietly stopped reorienting
+    would fail here."""
+
+    def test_tables_equal_legacy_of_the_reversed_declaration(self):
+        from hwave.solver import hartree_fock as hf
+        shape = (3, 1, 1)
+        for ham in (offsite3,):
+            rev = {t: {((-r[0], -r[1], -r[2]) if r != (0, 0, 0) else r, o): v
+                       for (r, o), v in tbl.items()} for t, tbl in ham.items()}
+            new = hf.build_interaction_tables(ham, 2, shape)
+            leg_rev = _LegacyUHFk(rev, 2, shape, True)
+            leg_rev._make_ham_inter()
+            leg_same = _LegacyUHFk(ham, 2, shape, True)
+            leg_same._make_ham_inter()
+            for t in ("CoulombInter", "Hund", "PairHop"):
+                self.assertGreater(np.abs(new.inter_table[t]).max(), 1e-3, t)
+                np.testing.assert_array_equal(new.inter_table[t],
+                                              leg_rev.inter_table[t], t)
+                self.assertFalse(np.array_equal(new.inter_table[t],
+                                                leg_same.inter_table[t]), t)
 
 
 class TestUHFkSolverBitIdentity(unittest.TestCase):

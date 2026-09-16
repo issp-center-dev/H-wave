@@ -52,34 +52,49 @@ cannot discriminate one).
 
 Which Hamiltonian the chain ED must be
 --------------------------------------
-The declared row ``(R, a, b, v)`` of an off-site density type places
-orbital ``a`` on the DISPLACED site and orbital ``b`` on the reference one,
+The declared row ``(R, a, b, v)`` of an off-site two-body type places
+orbital ``a`` in the ORIGINAL cell and orbital ``b`` in the cell displaced
+by ``R``,
 
-    v n_{j+R, a} n_{j, b}
+    v n_{j, a} n_{j+R, b}
 
--- the same ``(j + R, a) <- (j, b)`` reading a ``transfer.dat`` row gets
-(``EDFixture.build_h1``). This is NOT assumed here: :meth:`TestChain
+-- the DOCUMENTED reading (``docs/en`` UHFk interaction file page:
+"``[alpha]`` corresponds to the orbital alpha in the original cell, and
+``[beta]`` corresponds to the orbital beta in the cell displaced by r"),
+which the mean-field kernel implements since the orientation fix of issue
+#192. Note that this is the OPPOSITE placement from the one a
+``transfer.dat`` row gets in this code base -- ``EDFixture.build_h1`` puts
+``t[(a, b)]`` on ``(j + R, a) <- (j, b)``, which
+:meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
+pins against the solver's own band. The one-body and two-body readings
+therefore do not agree, and that asymmetry is what the fix makes explicit.
+
+This is NOT assumed here. :meth:`TestChain
 Hamiltonian.test_ed_hamiltonian_is_the_production_mean_field` compares the
 first-order functional of the ED term list against UHFk's OWN mean-field
 kernel (``hwave.solver.hartree_fock.accumulate_hf``, Hartree AND Fock, at
 the same density) and fails with the opposite (orbital-swapped) placement
 by 5.4e-2 / 1.4e-2 of the mean field on the two inter-orbital fixtures,
-while the placement above matches at 1e-16. On the single-orbital chain the
-two placements are the same Hamiltonian, which is why only the two-orbital
-fixture can decide it.
+while the documented placement matches at 1e-16. On the single-orbital
+chain the two placements are the same Hamiltonian, which is why only the
+two-orbital fixture can decide it.
+:meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`
+extends that adjudication to EVERY off-site type the kernel accepts
+(``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``,
+``PairHop``) and to both settings of the kernel's ``include_fock`` switch,
+on spin-coherent densities -- which the spin-flip types need in order to
+have a mean field at all.
 
 SCOPE OF THAT CLAIM, and of every verdict below it. What is adjudicated
 here is the second-order vertex against UHFk's MEAN-FIELD READING of a
 declared row: ``accumulate_hf`` is what defines the orbital placement the
 chain ED implements, and the gate then asks whether the second order is
-consistent with THAT Hamiltonian. It is not an adjudication against a
-file-format definition -- the documentation never fixes the sign of
-``r_ij`` in an interaction row, so "which site the row's first orbital sits
-on" has no independent written answer to appeal to. Both readings are
-internally consistent conventions; this module pins that the solver's
-first-order and second-order paths agree on ONE of them, and says which.
-The k-space bridge the comparison rides on (exponent sign, orbital index
-order) is pinned separately, on a band that can see it, by
+consistent with THAT Hamiltonian. Since the orientation fix that reading
+IS the documented one, so the pin is now anchored to the file-format
+definition and not only to internal consistency; what the module still
+cannot decide on its own is whether the DOCUMENTATION is the intended
+convention. The k-space bridge the comparison rides on (exponent sign,
+orbital index order) is pinned separately, on a band that can see it, by
 :meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`
 -- without that pin a flipped bridge would silently select the opposite
 placement and invert every verdict below.
@@ -150,6 +165,40 @@ UP, DN = 0, 1
 # recopied: the types whose two declared orientations name the SAME bond, so
 # each declared row is half of it. Pinned two-sidedly here by
 # :meth:`TestFirstOrder.test_first_order_remainder_vanishes`.
+
+#: The off-site rows of the per-type first-order gate
+#: (:meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`):
+#: ONE inter-orbital nearest-neighbour bond per type, declared in both
+#: orientations as a reader delivers it. Orbital 1 sits in the original
+#: cell and orbital 2 in the cell displaced by ``+x``, so the orbital swap
+#: maps each declaration onto a DIFFERENT Hamiltonian. ``PairHop`` carries a
+#: complex amplitude (its mirrored row is the conjugate), which is the only
+#: type whose orientation the kernel can get wrong on a REAL declaration.
+_GATE_ROWS = {
+    "CoulombInter": [(1, 0, 0, 1, 2, 0.4, 0.0), (-1, 0, 0, 2, 1, 0.4, 0.0)],
+    "Hund": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)],
+    "Ising": [(1, 0, 0, 1, 2, 0.25, 0.0), (-1, 0, 0, 2, 1, 0.25, 0.0)],
+    "Exchange": [(1, 0, 0, 1, 2, 0.2, 0.0), (-1, 0, 0, 2, 1, 0.2, 0.0)],
+    "PairLift": [(1, 0, 0, 1, 2, 0.15, 0.0), (-1, 0, 0, 2, 1, 0.15, 0.0)],
+    "PairHop": [(1, 0, 0, 1, 2, 0.1, 0.04), (-1, 0, 0, 2, 1, 0.1, -0.04)],
+}
+
+#: The on-site row the gate always carries alongside, so that every case
+#: also exercises the mixed on-site/off-site accumulation.
+_GATE_ONSITE = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]}
+
+#: Types whose HARTREE-ONLY mean field cannot see the orientation of a
+#: declared row at all. For each of them UHFk's direct term is built from
+#: the EQUAL-SITE density ``gbb`` alone (``accumulate_hf``'s ``hh0``), so
+#: on a translation-invariant density it is independent of the
+#: displacement ``r`` -- and a Hermitian-closed declaration is invariant
+#: under the orbital swap once ``r`` is dropped. The gate therefore asserts
+#: EQUALITY of the two placements there instead of a miss; with the Fock
+#: term on, every type including these misses by 9.4e-2 ... 4.6e-1.
+#: ``PairHop`` is absent because its direct term reads the INTER-SITE
+#: density, so it sees the orientation in both Fock settings.
+_HARTREE_ORIENTATION_BLIND = ("CoulombInter", "Hund", "Ising", "Exchange",
+                              "PairLift")
 
 #: Working point of the heavy comparisons (see the module docstring).
 _NMAT = 4096
@@ -390,17 +439,54 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
     ``coeff c^dag_p c_q c^dag_r c_s``, the form ``SectorED`` consumes) of
     the Hamiltonian the DECLARED rows describe.
 
-    A row ``(R, a, b, v)`` of a density type contributes
-    ``w v sum_j sum_{s1 s2} sigma(s1, s2) n_{j+R, a, s1} n_{j, b, s2}`` --
-    orbital ``a`` on the DISPLACED site (see the module docstring; pinned
-    against UHFk's mean-field kernel, not assumed) -- with ``w`` the
-    mirrored-row weight and ``sigma`` the type's spin structure: all four
-    pairings for ``CoulombInter``, only the same-spin ones with a minus for
-    ``Hund``, and the density-DIFFERENCE signs for ``Ising``.
-    ``CoulombIntra`` is the on-site ``v n_{j,a,up} n_{j,a,dn}``.
+    A row ``(R, a, b, v)`` places orbital ``a`` in the ORIGINAL cell ``j``
+    and orbital ``b`` in the cell displaced by ``R`` -- the DOCUMENTED
+    reading of an interaction row (``docs/en`` UHFk interaction file page:
+    "``[alpha]`` corresponds to the orbital alpha in the original cell, and
+    ``[beta]`` ... in the cell displaced by r"), which the mean-field
+    kernel implements since the orientation fix of issue #192. ``w`` is the
+    mirrored-row weight.
 
-    ``swap_orbitals`` builds the OPPOSITE placement (``a`` on the reference
-    site) and exists only so the orientation can be checked two-sidedly.
+    Writing ``j' = j + R``, the monomials are the ``docs/en`` definitions
+    with ``i -> j`` (orbital ``a``) and ``j -> j'`` (orbital ``b``):
+
+    ``CoulombIntra``
+        ``v n_{j,a,up} n_{j,a,dn}`` (on-site, same orbital).
+    density types
+        ``w v sum_j sum_{s1 s2} sigma(s1, s2) n_{j,a,s1} n_{j',b,s2}`` with
+        ``sigma`` the type's spin structure: all four pairings for
+        ``CoulombInter``, only the same-spin ones with a MINUS for
+        ``Hund``, the density-DIFFERENCE signs for ``Ising``.
+    ``Exchange``
+        ``w v sum_j sum_s c^dag_{j,a,s} c_{j',b,s} c^dag_{j',b,-s} c_{j,a,-s}``
+        -- the doc's ``up/dn`` monomial plus its ``dn/up`` partner --
+        written here in the ANTICOMMUTED form
+        ``- w v sum_j sum_s (c^dag_{j,a,s} c_{j,a,-s})(c^dag_{j',b,-s} c_{j',b,s})``,
+        i.e. as a product of the two ON-SITE spin-flip bilinears. The four
+        modes are distinct (the two sites differ, and so do the spins), so
+        the reordering costs two transpositions and one overall sign and is
+        the SAME operator --
+        :meth:`TestChainHamiltonian.test_the_exchange_monomial_is_the_documented_one`
+        multiplies both writings out and compares them at zero tolerance.
+        The grouping matters only for the SPLIT: the Wick functional's
+        direct lines are the ones that pair the operators as they are
+        written, and UHFk's ``flag_fock = false`` keeps exactly the
+        on-site-grouped pair for this type (its ``hh0``/``hh3`` block reads
+        the equal-site density ``gbb``). Writing the monomial in UHFk's own
+        grouping is what makes :func:`_hf_sigma`'s ``include_fock`` switch
+        mean the same thing as the kernel's, for every type at once.
+    ``PairLift``
+        ``w v sum_j c^dag_{j,a,up} c_{j,a,dn} c^dag_{j',b,up} c_{j',b,dn}
+        + h.c.`` -- the ``+ h.c.`` of the definition, per declared row.
+    ``PairHop``
+        ``v sum_j c^dag_{j,a,up} c_{j',b,up} c^dag_{j,a,dn} c_{j',b,dn}``
+        with NO ``+ h.c.`` and no mirrored halving: ``PairHop`` is absent
+        from :data:`_MIRRORED_TYPES` because its mirrored row
+        ``(-R, b, a, conj v)`` IS the Hermitian conjugate of this one, so a
+        Hermitian-closed declaration already carries the ``h.c.``.
+
+    ``swap_orbitals`` builds the OPPOSITE placement (``a`` in the displaced
+    cell) and exists only so the orientation can be checked two-sidedly.
     """
     terms = []
     for itype, rows in rows_by_type.items():
@@ -419,6 +505,7 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
                     terms.append((fx.mode(j, a, UP), fx.mode(j, a, UP),
                                   fx.mode(j, a, DN), fx.mode(j, a, DN), v))
                 continue
+            sigma = None
             if itype == "CoulombInter":
                 def sigma(s1, s2, v=v):
                     return v
@@ -428,21 +515,33 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
             elif itype == "Ising":
                 def sigma(s1, s2, v=v):
                     return v if s1 == s2 else -v
-            else:
+            elif itype not in ("Exchange", "PairLift", "PairHop"):
                 raise ValueError("chain ED: unsupported interaction type {!r}".format(itype))
             for j in range(fx.L):
                 jp = (j + R) % fx.L
-                for s1 in range(2):
-                    for s2 in range(2):
-                        c = sigma(s1, s2)
-                        if c == 0.0:
-                            continue
-                        terms.append((fx.mode(jp, a, s1), fx.mode(jp, a, s1),
-                                      fx.mode(j, b, s2), fx.mode(j, b, s2), c))
+                ma = [fx.mode(j, a, s) for s in (UP, DN)]     # orbital a, ORIGINAL cell
+                mb = [fx.mode(jp, b, s) for s in (UP, DN)]    # orbital b, cell displaced by R
+                if sigma is not None:
+                    for s1 in range(2):
+                        for s2 in range(2):
+                            c = sigma(s1, s2)
+                            if c == 0.0:
+                                continue
+                            terms.append((ma[s1], ma[s1], mb[s2], mb[s2], c))
+                elif itype == "Exchange":
+                    for s in (UP, DN):
+                        # the documented monomial, anticommuted into the
+                        # product of the two ON-SITE spin-flip bilinears
+                        terms.append((ma[s], ma[1 - s], mb[1 - s], mb[s], -v))
+                elif itype == "PairLift":
+                    terms.append((ma[UP], ma[DN], mb[UP], mb[DN], v))
+                    terms.append((mb[DN], mb[UP], ma[DN], ma[UP], np.conj(v)))
+                else:                                          # PairHop
+                    terms.append((ma[UP], mb[UP], ma[DN], mb[DN], v))
     return terms
 
 
-def _hf_sigma(fx, terms, rho):
+def _hf_sigma(fx, terms, rho, include_fock=True):
     """First-order (Hartree-Fock) self-energy of ``terms`` at the density
     ``rho[p, q] = <c^dag_p c_q>``, in mode space.
 
@@ -456,13 +555,17 @@ def _hf_sigma(fx, terms, rho):
     rather than copied, so both exact-diagonalization gates subtract the
     same functional.
 
+    ``include_fock=False`` keeps only the Hartree (direct) contractions, so
+    the mean-field gate can confront the production kernel in BOTH of its
+    Fock settings.
+
     This IS the functional the gates subtract; UHFk's own mean-field kernel
     is compared against it separately, as a convention pin, by
     :meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_mean_field`."""
-    return wick_hf_sigma(fx.nmode, terms, rho)
+    return wick_hf_sigma(fx.nmode, terms, rho, include_fock=include_fock)
 
 
-def _production_hf_sigma_k(fx, rows_by_type, rho):
+def _production_hf_sigma_k(fx, rows_by_type, rho, include_fock=True):
     """UHFk's OWN mean-field Hamiltonian for the declared rows at the
     density ``rho``, as ``Sigma_HF(k)[(s, a), (t, b)]``.
 
@@ -471,7 +574,9 @@ def _production_hf_sigma_k(fx, rows_by_type, rho):
     Hamiltonian the solver implements, Hartree AND Fock, for on-site and
     off-site rows alike. It is what makes the first-order gate below
     two-sided in both the mirrored-row weight and the orbital placement,
-    exactly as Task 10's gate is two-sided through ``compile_onsite``."""
+    exactly as Task 10's gate is two-sided through ``compile_onsite``.
+    ``include_fock`` is forwarded to the kernel, so the gate can pin the
+    Hartree-only setting (UHFk's ``flag_fock = false``) as well."""
     from hwave.solver.hartree_fock import accumulate_hf, build_interaction_tables
     norb, L = fx.norb, fx.L
     shape = (L, 1, 1)
@@ -492,7 +597,7 @@ def _production_hf_sigma_k(fx, rows_by_type, rho):
                         rho_so_r[r, s, a, t, b] = rho[fx.mode(0, a, s), fx.mode(r, b, t)]
     out = np.zeros((L, 2 * norb, 2 * norb), dtype=complex)
     accumulate_hf(out, rho_so_r, tabs.inter_table, tabs.spin_table, shape,
-                  include_fock=True)
+                  include_fock=include_fock)
     return out
 
 
@@ -553,36 +658,51 @@ def _to_k_so(fx, M):
     return out
 
 
-def _random_translation_invariant_density(fx, n=3, seed=20260915):
-    """``n`` deterministic random Hermitian, translation-invariant,
-    spin-block-diagonal densities in mode space.
+def _random_translation_invariant_density(fx, n=3, seed=20260915,
+                                          spin_coherent=False):
+    """``n`` deterministic random Hermitian, translation-invariant densities
+    in mode space; spin-block-DIAGONAL by default.
 
     Translation invariance is required by UHFk's kernel (it reads one
     reference site's row), Hermiticity by the functional; the spin blocks
     are independent, so the densities are magnetic as well as
     orbital-coherent -- everything the free density of the pin below is
-    not."""
+    not.
+
+    ``spin_coherent=True`` populates the off-diagonal SPIN blocks
+    ``<c^dag_up c_dn>`` too. That is not a refinement but a requirement for
+    three of the types: ``PairLift``'s whole mean field, and the spin-flip
+    contractions of ``Exchange`` and ``PairHop``, are proportional to a
+    spin coherence and vanish identically on any spin-block-diagonal
+    density -- so a gate run on such a density would be comparing zero with
+    zero for them. The spin-diagonal default is kept so that the existing
+    callers, which pin the density types, are unchanged."""
     rng = np.random.default_rng(seed)
     norb, L = fx.norb, fx.L
+    nd = 2 * norb
     out = []
     for _ in range(n):
-        A = (rng.normal(size=(L, 2, norb, norb))
-             + 1j * rng.normal(size=(L, 2, norb, norb)))
+        A = rng.normal(size=(L, nd, nd)) + 1j * rng.normal(size=(L, nd, nd))
+        if not spin_coherent:
+            blk = A.copy()
+            A = np.zeros_like(A)
+            A[:, :norb, :norb] = blk[:, :norb, :norb]
+            A[:, norb:, norb:] = blk[:, norb:, norb:]
         g = np.zeros_like(A)
         for R in range(L):
-            for s in range(2):
-                # g[R] = conj(g[-R]^T) makes rho Hermitian
-                g[R, s] = 0.5 * (A[R, s] + np.conj(A[(-R) % L, s].T))
+            # g[R] = conj(g[-R]^T) makes rho Hermitian
+            g[R] = 0.5 * (A[R] + np.conj(A[(-R) % L].T))
         g *= 0.15
-        for s in range(2):
-            g[0, s] += 0.5 * np.eye(norb)
+        g[0] += 0.5 * np.eye(nd)
         rho = np.zeros((fx.nmode, fx.nmode), dtype=complex)
         for j in range(L):
             for j2 in range(L):
                 for s in range(2):
                     for a in range(norb):
-                        for b in range(norb):
-                            rho[fx.mode(j, a, s), fx.mode(j2, b, s)] = g[(j - j2) % L, s, a, b]
+                        for t in range(2):
+                            for b in range(norb):
+                                rho[fx.mode(j, a, s), fx.mode(j2, b, t)] = (
+                                    g[(j - j2) % L, s * norb + a, t * norb + b])
         out.append(rho)
     return out
 
@@ -1044,15 +1164,24 @@ class TestChainHamiltonian(unittest.TestCase):
         This is what fixes the chain Hamiltonian, and it is two-sided in
         both conventions at once:
 
-        * the ORBITAL PLACEMENT of an off-site row. Measured deviation from
+        * the ORBITAL PLACEMENT of an off-site row -- now the DOCUMENTED
+          one (orbital ``a`` in the original cell). Measured deviation from
           the production mean field with the opposite placement: 0 on the
           single-orbital chain (where the two are the same Hamiltonian),
-          5.4e-2 of the mean field on the symmetric inter-orbital bond and
-          1.4e-2 on the asymmetric one. This is the convention the
-          campaign's second-order comparison rests on, and it is measured
-          here rather than assumed.
+          5.434e-2 of the mean field on the single inter-orbital bond and
+          1.359e-2 on the asymmetric pair, while the documented placement
+          matches at 2.1e-16 / 3.9e-16 (every case here is at or below
+          2.8e-15). This is the convention the campaign's second-order
+          comparison rests on, and it is measured here rather than assumed.
         * the MIRRORED-ROW weight: at the full weight the off-site part of
-          the mean field is doubled, 0.5 ... 1.0 of it.
+          the mean field is doubled -- 1.000 of the mean field's own size
+          on each of the four off-site cases.
+
+        The free density used here is paramagnetic and spin-block-diagonal,
+        which is enough for the density types but leaves ``Exchange``,
+        ``PairLift`` and ``PairHop`` with no mean field at all;
+        :meth:`test_first_order_gate_every_type_documented_reading` carries
+        those, on spin-coherent densities.
         """
         cases = [("chain U", _fx_chain(), _rows_u_v(0.3, 0.0), False),
                  ("chain V", _fx_chain(), _rows_u_v(0.0, 0.3), False),
@@ -1093,6 +1222,125 @@ class TestChainHamiltonian(unittest.TestCase):
                                        "{}: the FULL-weight Hamiltonian also matches the "
                                        "production mean field -- the mirrored-row weight is "
                                        "not pinned".format(name))
+
+    def test_the_exchange_monomial_is_the_documented_one(self):
+        """:func:`_ed_terms` writes ``Exchange`` in UHFk's own grouping --
+        the product of the two ON-SITE spin-flip bilinears -- and that is
+        the SAME operator as the documentation's
+
+            J c^dag_{i a up} c_{j b up} c^dag_{j b dn} c_{i a dn}
+
+        (``docs/en`` UHFk interaction file page), not a different vertex
+        that happens to agree on the mean field.
+
+        Multiplied out on the dense ``L = 2`` fixture and compared at ZERO
+        tolerance, because the regrouping is an exact anticommutation (two
+        transpositions and one sign) and nothing else. The grouping is what
+        makes :func:`_hf_sigma`'s ``include_fock`` switch select the same
+        pair of contractions as the kernel's, so it has to be checked
+        rather than asserted in a comment."""
+        fx = _fx_dense()
+        v, R, a, b = 0.2, 1, 0, 1
+        documented, grouped = [], []
+        for j in range(fx.L):
+            jp = (j + R) % fx.L
+            ma = [fx.mode(j, a, s) for s in (UP, DN)]
+            mb = [fx.mode(jp, b, s) for s in (UP, DN)]
+            for s in (UP, DN):
+                documented.append((ma[s], mb[s], mb[1 - s], ma[1 - s], v))
+                grouped.append((ma[s], ma[1 - s], mb[1 - s], mb[s], -v))
+        hd = edu.h_int_from_terms(fx, documented)
+        hg = edu.h_int_from_terms(fx, grouped)
+        self.assertGreater(np.abs(hd).max(), 1e-3)               # anti-vacuity
+        self.assertTrue(np.array_equal(hd, hg),
+                        "the grouped Exchange monomial is not the documented one")
+        # and it is what _ed_terms actually emits
+        rows = {"Exchange": [(R, 0, 0, a + 1, b + 1, v, 0.0)]}
+        emitted = _ed_terms(fx, rows, mirrored_weight=1.0)
+        self.assertEqual(sorted(emitted), sorted(grouped))
+
+    def test_first_order_gate_every_type_documented_reading(self):
+        """G-HF, every type: for each off-site interaction type the kernel
+        accepts, the production Hartree-Fock self-energy on a spin-coherent
+        density equals the Wick derivative of the DOCUMENTED-reading ED
+        Hamiltonian -- in BOTH of the kernel's Fock settings, on the FULL
+        spin-orbital matrix -- and the opposite orbital placement does not.
+
+        Why this fixture and this density. ``_fx_complex`` is the
+        inversion- and transpose-asymmetric two-orbital ``L = 3`` band, so
+        ``+x`` is not its own reverse and the two placements are genuinely
+        different Hamiltonians. The densities are deterministic random
+        Hermitian translation-invariant ones WITH SPIN COHERENCES: without
+        them the whole ``PairLift`` mean field, and the spin-flip
+        contractions of ``Exchange`` and ``PairHop``, vanish identically
+        and the gate would be comparing zero with zero. Each case also
+        carries an on-site ``CoulombIntra`` row, so the mixed on-site /
+        off-site accumulation is exercised too -- and the type's OWN share
+        of the mean field is measured (against the same case with the
+        off-site rows removed) and required to be non-negligible, so the
+        on-site row cannot make the comparison vacuous.
+
+        Measured (worst over the two densities; relative to the mean
+        field's own maximum):
+
+            type           flag_fock=true            flag_fock=false
+                           match   swapped miss      match   swapped miss
+            CoulombInter   2.0e-16   2.5e-1          1.4e-16   blind
+            Hund           2.0e-16   4.6e-1          1.3e-16   blind
+            Ising          2.3e-16   2.9e-1          1.7e-16   blind
+            Exchange       8.0e-17   2.2e-1          0.0       blind
+            PairLift       1.7e-16   2.2e-1          0.0       blind
+            PairHop        1.3e-16   1.6e-1          4.1e-17   9.0e-2
+
+        "blind" is not a weaker check but a different one, asserted as an
+        EQUALITY: see :data:`_HARTREE_ORIENTATION_BLIND` -- with the Fock
+        term off, those types' direct contribution is built from the
+        equal-site density alone and cannot depend on the displacement, so
+        the two placements are the same mean field and the gate pins that
+        they are. ``PairHop`` is the one type whose direct term reads the
+        inter-site density, so it discriminates in both settings."""
+        fx = _fx_complex()
+        rhos = _random_translation_invariant_density(fx, n=2, seed=20260916,
+                                                     spin_coherent=True)
+        for itype, rows in _GATE_ROWS.items():
+            rows_by_type = dict(_GATE_ONSITE)
+            rows_by_type[itype] = rows
+            terms = _ed_terms(fx, rows_by_type)
+            swap_terms = _ed_terms(fx, rows_by_type, swap_orbitals=True)
+            onsite_terms = _ed_terms(fx, _GATE_ONSITE)
+            for fock in (True, False):
+                for k, rho in enumerate(rhos):
+                    with self.subTest(type=itype, include_fock=fock, density=k):
+                        self.assertLess(np.abs(rho - rho.conj().T).max(), 1e-14)
+                        ref = _to_k_so(fx, _hf_sigma(fx, terms, rho, include_fock=fock))
+                        prod = _production_hf_sigma_k(fx, rows_by_type, rho,
+                                                      include_fock=fock)
+                        scale = max(np.abs(ref).max(), 1e-300)
+                        self.assertGreater(scale, 1e-3)          # anti-vacuity
+                        # ... and the type under test really carries part of it
+                        onsite = _to_k_so(fx, _hf_sigma(fx, onsite_terms, rho,
+                                                        include_fock=fock))
+                        self.assertGreater(np.abs(ref - onsite).max() / scale, 1e-2,
+                                           "{}: the off-site rows contribute nothing to "
+                                           "the mean field on this density -- the "
+                                           "comparison is vacuous".format(itype))
+                        self.assertLess(np.abs(prod - ref).max() / scale, 1e-12,
+                                        "{}: the production mean field is not the Wick "
+                                        "derivative of the documented-reading "
+                                        "Hamiltonian".format(itype))
+                        swapped = _to_k_so(fx, _hf_sigma(fx, swap_terms, rho,
+                                                         include_fock=fock))
+                        if fock or itype not in _HARTREE_ORIENTATION_BLIND:
+                            self.assertGreater(np.abs(prod - swapped).max() / scale, 1e-3,
+                                               "{}: the opposite orbital placement also "
+                                               "matches the production mean field -- the "
+                                               "orientation is not pinned".format(itype))
+                        else:
+                            self.assertLess(np.abs(swapped - ref).max() / scale, 1e-12,
+                                            "{}: the Hartree-only mean field DOES see the "
+                                            "orientation -- _HARTREE_ORIENTATION_BLIND is "
+                                            "wrong and this case must assert a miss"
+                                            .format(itype))
 
     def test_independent_functional_equals_production_on_random_densities(self):
         """The test side's own first-order functional (:func:`_hf_sigma`,
