@@ -701,14 +701,17 @@ pair basis and are
 
    A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q}),
 
-with :math:`v_{\alpha\beta}(\mathbf{q}) = \sum_R V_{\alpha\beta}(R)\,
-e^{i\mathbf{q}\cdot R}` the Fourier transform of the interaction file in its
-own orientation (:math:`\alpha` in the original cell), placed on the density
-slots with the pair transpose the ring vertex also carries,
+Here :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
+V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}` is the Fourier
+transform of the interaction file in its own orientation (:math:`\alpha` in
+the original cell). On the density slots it enters with transposed orbital
+indices (:math:`\alpha \leftrightarrow \beta`), as the ring vertex does:
 :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v_{\beta\alpha}(\mathbf{q})`; it is the same matrix the ring vertex
-uses, understood as a matrix on the density slots of the pair basis (zero on
-every other slot), so that each product with :math:`\bar\chi` below is a
+[B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`. It is the same matrix the
+ring vertex uses, understood as a matrix on the density slots of the pair
+basis (zero on every other slot), so that each product with
+:math:`\bar\chi` below is a
 matrix product in that pair space, exactly as for
 :math:`A^{\sigma}_{\rm on}` and :math:`B^{\sigma}_{\rm on}`. The complete
 second-order kernel is then
@@ -840,8 +843,8 @@ coefficient the on-site exchange slot uses (``CoulombInter``
 :math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`
 for the spin and charge channels). In the orientation of the interaction
 file, a declared row :math:`V_{ab}(R_m)` occupies the slot
-:math:`(m, (a, b))` and its reverse row :math:`V_{ba}(-R_m)` the slot
-:math:`(-m, (b, a))`. The dressed objects
+:math:`(m, a, b)` and its reverse row :math:`V_{ba}(-R_m)` the slot
+:math:`(-m, b, a)`. The dressed objects
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi` and
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi` and their
 :math:`(m = 0, m' = 0)` blocks are written under the

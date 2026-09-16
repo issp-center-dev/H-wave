@@ -34,7 +34,7 @@ H-waveでは以下の形式で二体相互作用を定義しています。
    \mathcal{H}_\text{UHF} &= \sum_{ij} H_{ij} c^\dagger_{i} c_{j} = \hat{c}^\dagger H \hat{c}
    \end{aligned}
 
-ここで、簡単化のため、\ :math:`i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)`\ 、\ :math:`H`\ は\ :math:`H_{ij}`\ を成分に持つ行列、\ :math:`\hat{c}`\ は\ :math:`c_{i}`\ を成分にもつ行ベクトルを表します。
+ここで、簡単化のため、\ :math:`i\equiv(i, \alpha, \sigma_1), j\equiv(j, \beta, \sigma_2)`\ 、\ :math:`H`\ は\ :math:`H_{ij}`\ を成分に持つ行列、\ :math:`\hat{c}`\ は\ :math:`c_{i}`\ を成分にもつ列ベクトルを表します。
 このとき、\ :math:`H`\ はエルミート行列なので、\ :math:`\hat{\xi}`\ を\ :math:`H`\ の固有値を対角成分に持つ行列、:math:`U`\ は各固有ベクトルに対応する行列として、:math:`H=U \hat{\xi} U^\dagger`\ のように変形できることから、:math:`\hat{d} = U^\dagger \hat{c}`\ とすると、
 
 .. math::
@@ -101,8 +101,8 @@ H-waveでは以下の形式で二体相互作用を定義しています。
 相互作用は並進対称性を仮定し、係数\ :math:`J_{ij\alpha\beta}`\ は空間座標について並進ベクトル\ :math:`r_{ij}=r_j - r_i`\ のみに
 依存するとします。なお、波数空間版UHFでは一般化された InterAll 形式の相互作用は扱いません。
 
-相互作用テーブルは、文書化された向き（``[rx] [ry] [rz] [alpha] [beta] ...``\ という行が軌道\ ``[alpha]``\ を元のセルに、\ ``[beta]``\ を\ :math:`\vec{r}`\ だけ並進したセルに置く、トランスファーのテーブルと同じ規約）で読み込まれ、H-wave 2.0.0 からの変更点は\ :ref:`相互作用指定ファイルの注意書き <uhfk_interaction_orientation>`\ に記載しています。
+相互作用テーブルは、マニュアルに記載された向き（``[rx] [ry] [rz] [alpha] [beta] ...``\ という行が軌道\ ``[alpha]``\ を元のセルに、\ ``[beta]``\ を\ :math:`\vec{r}`\ だけ並進したセルに置く、トランスファーのテーブルと同じ規約）で読み込まれ、H-wave 2.0.0 からの変更点は\ :ref:`相互作用指定ファイルの注意書き <uhfk_interaction_orientation>`\ に記載しています。
 
 波数空間表示のハミルトニアンは波数\ :math:`k`\ について対角的なので、固有値・固有ベクトルの計算は、
 :math:`N_\text{site}N_\text{orbit} \times N_\text{site}N_\text{orbit}`\ 行列の対角化から、
-:math:`N_\text{site}`\ 個の\ :math:`N_\text{orbit} \times N_\text{orbit}`\ 行列の対角化に計算量を抑えることができます。ここで\ :math:`N_\text{site}`\ はサイト数、\ :math:`N_\text{orbit}`\ はスピン自由度も含めた1サイト当たりの軌道縮絨度です。
+:math:`N_\text{site}`\ 個の\ :math:`N_\text{orbit} \times N_\text{orbit}`\ 行列の対角化に計算量を抑えることができます。ここで\ :math:`N_\text{site}`\ はサイト数、\ :math:`N_\text{orbit}`\ はスピン自由度も含めた1サイト当たりの軌道縮退度です。

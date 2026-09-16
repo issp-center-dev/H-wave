@@ -664,14 +664,17 @@ V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
 
    A_v^{\sigma} = B_v^{\sigma} = -\,v(\mathbf{q})
 
-となります。ここで\ :math:`v_{\alpha\beta}(\mathbf{q}) = \sum_R V_{\alpha\beta}(R)\,
-e^{i\mathbf{q}\cdot R}`\ は相互作用ファイルの向き（:math:`\alpha`\ が元のセル）
-でのフーリエ変換です。密度スロット上には、ring の頂点が担うのと同じ対の転置を
-伴って\ :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v_{\beta\alpha}(\mathbf{q})`\ として入ります（ring の頂点が使うものと
-同じ行列です）。
-これは対基底の密度スロット上の行列（それ以外のスロットではゼロ）で
-あり、以下で\ :math:`\bar\chi`\ と取る積は\ :math:`A^{\sigma}_{\rm on}`\ ・
+となります。ここで\ :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
+V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
+ファイル自身の向き（:math:`\alpha`\ が元のセル）でのフーリエ変換です。密度
+スロット上には、ring の頂点と同じく軌道添字を転置して
+（:math:`\alpha \leftrightarrow \beta`\ ）
+:math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+[B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
+-\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`\ として入ります。これは ring の
+頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
+スロットではゼロ）であり、以下で\ :math:`\bar\chi`\ と取る積は
+:math:`A^{\sigma}_{\rm on}`\ ・
 :math:`B^{\sigma}_{\rm on}`\ の場合と同様、この対空間での行列積です。
 したがって2次カーネル全体は
 
@@ -792,8 +795,8 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 種類ごとの係数（スピン・電荷チャネルについて\ ``CoulombInter``
 :math:`(+1, -1)`\ 、\ ``Hund`` :math:`(-1, +1)`\ 、\ ``Ising``
 :math:`(+1, -1)`\ ）です。相互作用ファイルの向きでは、宣言された行
-:math:`V_{ab}(R_m)`\ はスロット\ :math:`(m, (a, b))`\ に、その逆向きの行
-:math:`V_{ba}(-R_m)`\ はスロット\ :math:`(-m, (b, a))`\ に入ります。
+:math:`V_{ab}(R_m)`\ はスロット\ :math:`(m, a, b)`\ に、その逆向きの行
+:math:`V_{ba}(-R_m)`\ はスロット\ :math:`(-m, b, a)`\ に入ります。
 ドレスされた
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi`\ と
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi`\ 、およびその
@@ -885,8 +888,8 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 従来の\ ``"takimoto"``\ の式では、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
 :math:`UV`\ 交差項を持ちません。（``longitudinal_bond_channels = true``\ では、
 ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
-ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）このような
-計算の通常の
+ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
+このような計算の通常の
 ``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ 出力は、最後の写像のボンド分解した量の
 :math:`(m = 0, m' = 0)`\ ブロックです。前節の16個の\ ``longitudinal_bond_*``\ 静的キーも
 書き出され、要求に応じて動的チャネル全体も出力されます
