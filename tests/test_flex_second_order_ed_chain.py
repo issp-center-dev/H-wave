@@ -26,14 +26,14 @@ Two fixtures, and what each adjudicates
   (spec G2 (c) / G4), not asserted.
 * ``_fx_orbital()`` -- ``L = 3``, TWO orbitals, and an ORBITAL-ASYMMETRIC
   inter-orbital bond (``v_01(+x) = v``, ``v_10(+x) = 0.6 v``). This is the
-  fixture that adjudicates the two open ledger items of the campaign: the
+  fixture that adjudicated the two ledger items of the campaign: the
   orientation of the off-site density vertex (the documented reading, the
-  orientation fix of issue #193) and the bond gate's deviation on
-  inter-orbital bonds (Task 9, issue #192). Its verdicts are in
-  :class:`TestG4`'s methods and in the module's measured table below. The
-  same fixture also carries the MIXED on-site/off-site entry (on-site
-  ``Hund`` against the off-site ``V`` rows,
-  :meth:`TestG4.test_hund_times_offsite_v_chain`).
+  orientation fix of issue #193) and the bond gate on inter-orbital bonds
+  (issue #192, closed by the pair permutation of spec 2026-09-16 R3). Both
+  are ASSERTED here now. Its verdicts are in :class:`TestG4`'s methods and
+  in the module's measured table below. The same fixture also carries the
+  MIXED on-site/off-site entry (on-site ``Hund`` against the off-site ``V``
+  rows, :meth:`TestG4.test_hund_times_offsite_v_chain`).
 
 Which first order is subtracted
 -------------------------------
@@ -128,24 +128,34 @@ maximum over the window; tolerance 2e-3):
     L=4 norb=1  U^2                3.2e-4              --
     L=4 norb=1  Hund   (recorded)  2.6e-4              2.6e-4
     L=4 norb=1  Ising  (recorded)  2.2e-4              2.2e-4
-    L=3 norb=2  v^2 (asymmetric)   3.5e-4              4.0e-2  <-- recorded
+    L=3 norb=2  v^2 (asymmetric)   3.5e-4              3.5e-4
     L=3 norb=2  J V (mixed)        4.5e-4              --
 
-The v^2 row is the campaign's open item: the STANDALONE local path plus
-the dropped class reproduces the exact inter-orbital off-site second order
-(so the DOCUMENTED orientation of the off-site density vertex -- orbital
-``a`` in the original cell -- is confirmed by exact diagonalisation), while
-the BOND GATE misses it by 4.0e-2 -- twenty
-times the tolerance, and nearly twice the whole off/off uncrossed class it
-is supposed to be resumming (2.2e-2 of the coefficient). That deviation is
-a Phase B defect, tracked as issue #192; it is not a second-order kernel
-finding and this module does not try to fix it.
+The v^2 row was the campaign's open item, and both halves of it are now
+settled. The STANDALONE local path plus the dropped class reproduces the
+exact inter-orbital off-site second order (so the DOCUMENTED orientation
+of the off-site density vertex -- orbital ``a`` in the original cell -- is
+confirmed by exact diagonalisation). The BOND GATE used to miss it by
+4.0e-2 -- twenty times the tolerance, and nearly twice the whole off/off
+uncrossed class it is supposed to be resumming (2.2e-2 of the
+coefficient), so the deviation was not that class being mishandled but a
+Phase B defect on inter-orbital off-site bonds (issue #192): the mixed
+(channel-0 x bond) second-order blocks read the bond-side leg of the
+bubble and the bond vertex at the UNTRANSPOSED orbital pair. Since the
+pair permutation of spec 2026-09-16 R3
+(:func:`hwave.solver.flex_bond.mixed_pair_permutation`) the gate lands on
+3.5e-4 -- the same place as ``local + dropped``, which is the FLOOR of
+this working point -- and :meth:`TestG4.test_interorbital_bond_chain`
+asserts it there, in a band around a floor it measures itself and against
+the exact oracle directly (:data:`_GATE_ORACLE_CEIL`).
 
-It is RECORDED rather than asserted as an agreement -- but the record is
-PINNED (:data:`_PINNED`): every printed quantity is held to its measured
-value within :data:`_PINNED_BAND` and checked for finiteness, so it cannot
-drift in either direction unnoticed. A value that moves OUT of the band is
-a finding whichever way it moves.
+What remains RECORDED is the off-site Hund/Ising class and the size of the
+dropped class on the inter-orbital fixture -- outcomes this gate measures
+and routes to a follow-up of issue #181 rather than asserting as
+agreements. Each record is PINNED (:data:`_PINNED`): every printed
+quantity is held to its measured value within :data:`_PINNED_BAND` and
+checked for finiteness, so it cannot drift in either direction unnoticed.
+A value that moves OUT of the band is a finding whichever way it moves.
 """
 import os
 import tempfile
@@ -221,19 +231,17 @@ _FLOOR = 1.0e-6
 _DROPPED_FLOOR = 1.0e-3
 
 #: RECORDED quantities, pinned. These are outcomes this gate does not
-#: ASSERT as agreements -- the bond gate's deviation on an inter-orbital
-#: off-site bond (issue #192) and the off-site Hund/Ising results, which
-#: belong to a follow-up class of issue #181 -- but a recorded number that
-#: nothing checks is a number that can drift in either direction unnoticed.
-#: Each entry is the measured value at this module's working point; the
-#: band below is what a re-measurement may move it by.
+#: ASSERT as agreements -- the size of the dropped class on the
+#: inter-orbital fixture, and the off-site Hund/Ising results, which belong
+#: to a follow-up class of issue #181 -- but a recorded number that nothing
+#: checks is a number that can drift in either direction unnoticed. Each
+#: entry is the measured value at this module's working point; the band
+#: below is what a re-measurement may move it by.
 #:
-#: A change OUTSIDE the band is a finding either way: a larger deviation
-#: means a regression, a smaller one means the defect has been partly fixed
-#: (in which case the expectation, and issue #192, want updating).
+#: A change OUTSIDE the band is a finding either way, and wants the
+#: expectation updating rather than the band widening.
 _PINNED = {
     # inter-orbital off-site bond, L = 3 two-orbital chain
-    "interorbital gate vs ED": 4.020e-2,          # issue #192
     "interorbital dropped class": 2.222e-2,
     # off-site Hund / Ising, L = 4 single-orbital chain
     "Hund local+dropped vs ED": 2.560e-4,
@@ -244,11 +252,34 @@ _PINNED = {
     "Ising dropped class": 1.156e-1,
 }
 
+#: Ceiling on the distance between the bond gate's inter-orbital O(v^2)
+#: coefficient and the real-space oracle's EXACT one (both relative to the
+#: ED coefficient's own maximum over the window). These two are the SAME
+#: analytic object once the mixed second-order blocks read the bond-side
+#: leg and the bond vertex at the transposed orbital pair (spec 2026-09-16
+#: R3), so what is left is the EXTRACTION's own noise on the production
+#: side -- the coefficient stencil's truncation beyond the O(x) refinement,
+#: and round-off. The oracle needs no stencil (its skeleton is exactly
+#: quadratic), so it contributes none.
+#:
+#: MEASURED at this module's working point: 1.72e-5. The ceiling carries a
+#: factor 10 of margin over that. That the number IS the extraction's noise
+#: and not a residual error of the gate is calibrated inside the test,
+#: which prints the same distance for the STANDALONE path: ``local +
+#: dropped`` is the exact second order by construction (the weight rule of
+#: spec 2.4 defines ``dropped`` as ``exact - local``), and it sits at
+#: 1.47e-5 from the oracle through the identical extraction, with the gate
+#: and it agreeing to 3.2e-6 of each other.
+#:
+#: This is what turns the floor-band assertion below into a statement about
+#: the gate: the band alone only says "as close to ED as an exact second
+#: order gets", which a different error of that size would also satisfy.
+#: The ceiling is still a factor 2 below the floor, so it discriminates.
+_GATE_ORACLE_CEIL = 1.7e-4
+
 #: Relative band of :data:`_PINNED`. The pinned numbers are set by stencil
 #: truncation and the finite Matsubara window, both deterministic, so the
-#: band only has to absorb a different BLAS's round-off; it is deliberately
-#: far tighter than the factor 20 that separates the issue-#192 deviation
-#: from this module's tolerance.
+#: band only has to absorb a different BLAS's round-off.
 _PINNED_BAND = 0.20
 
 
@@ -915,8 +946,8 @@ class _Maps(object):
             self._bare = _production_sigma(self.fx, rows, False, self.nmat)[1]
         return self._bare
 
-    def dropped(self, *args):
-        """The oracle's off/off UNCROSSED class at the given couplings. The
+    def _oracle(self, which, args):
+        """One weighting of the real-space oracle at the given couplings. The
         oracle's skeleton is EXACTLY quadratic in the couplings, so a
         coefficient needs no stencil: the value at unit coupling IS it."""
         rows = self.rows_of(*args)
@@ -924,7 +955,20 @@ class _Maps(object):
             return self._zero()
         recs = oracle_records(rows, self.fx.norb, (self.fx.L, 1, 1))
         return oracle_sigma2(self.bare_green(rows), self.fx.beta, recs, self.fx.norb,
-                             "dropped", (self.fx.L, 1, 1))[0][self.idx]
+                             which, (self.fx.L, 1, 1))[0][self.idx]
+
+    def dropped(self, *args):
+        """The oracle's off/off UNCROSSED class at the given couplings."""
+        return self._oracle("dropped", args)
+
+    def oracle_exact(self, *args):
+        """The oracle's EXACT second-order coefficient at the given couplings
+        -- the full skeleton at weight 1/2 per record pair, the same object
+        the ED remainder is compared against. Its distance from the ED
+        coefficient is the FLOOR of this module's working point: the residual
+        of an exact second order against the exact remainder, set by the
+        stencil truncation and the finite Matsubara window."""
+        return self._oracle("exact", args)
 
 
 # --------------------------------------------------------------------------
@@ -1505,14 +1549,11 @@ class TestG4(unittest.TestCase):
               .format(key, value, expect, _PINNED_BAND))
         self.assertTrue(np.isfinite(value), "{}: not finite".format(key))
         self.assertGreater(value, expect * (1.0 - _PINNED_BAND),
-                           "{}: measured {:.3e}, pinned {:.3e}. A SMALLER value means the "
-                           "recorded behaviour has changed for the better -- update the "
-                           "expectation (and issue #192) rather than widening the band."
-                           .format(key, value, expect))
+                           "{}: measured {:.3e}, pinned {:.3e}. Update the expectation "
+                           "rather than widening the band.".format(key, value, expect))
         self.assertLess(value, expect * (1.0 + _PINNED_BAND),
-                        "{}: measured {:.3e}, pinned {:.3e}. A LARGER value is a "
-                        "regression in the recorded behaviour (issue #192 for the "
-                        "inter-orbital bond gate).".format(key, value, expect))
+                        "{}: measured {:.3e}, pinned {:.3e}. Update the expectation "
+                        "rather than widening the band.".format(key, value, expect))
 
     @heavy
     def test_coulombinter_chain(self):
@@ -1570,29 +1611,77 @@ class TestG4(unittest.TestCase):
         failed by while the local kernel still read the reversed
         orientation, before the fix of issue #193).
 
-        RECORDED -- the bond gate's deviation. Phase B's bond-resolved path
-        is supposed to resum exactly the class the local kernel drops
-        (2.2e-2 of the coefficient here), and on the single-orbital chain it
-        does (2.4e-4). On this inter-orbital bond it misses by 4.0e-2 --
-        twenty times the tolerance, and nearly twice the class it is
-        recovering, so the deviation is not that class being mishandled but
-        a bond-gate defect on inter-orbital off-site bonds. It is printed
-        and routed to a Phase B follow-up of issue #181; it is NOT a
-        second-order kernel finding, and it is not asserted here."""
+        ASSERTED -- the bond gate too (issue #192, fixed by spec 2026-09-16
+        R3). Phase B's bond-resolved path is supposed to resum exactly the
+        class the local kernel drops (2.2e-2 of the coefficient here), and
+        on the single-orbital chain it does (2.4e-4). On this inter-orbital
+        bond it used to miss by 4.0e-2 -- twenty times the tolerance, and
+        nearly twice the class it is recovering, so the deviation was not
+        that class being mishandled but a bond-gate defect on inter-orbital
+        off-site bonds: the mixed (channel-0 x bond) second-order blocks
+        read the bond-side leg of the bubble and the bond vertex at the
+        UNTRANSPOSED orbital pair. Since the pair permutation of spec R3 the
+        gate lands on the exact second order, and this method asserts it in
+        two independent ways:
+
+        * against the FLOOR -- the distance between the oracle's EXACT
+          coefficient and the ED remainder at this working point, which is
+          what a correct second order can achieve here and no more. The
+          floor is MEASURED in the test rather than hard-coded (it is the
+          stencil truncation plus the finite Matsubara window, both of which
+          move with the working point), and the gate is held inside
+          ``[0.5, 2] x`` it: below the band the gate would be closer to ED
+          than an exact second order is, above it there is a systematic
+          error again.
+        * against the ORACLE itself, at :data:`_GATE_ORACLE_CEIL`. The band
+          above says "as close to ED as an exact second order gets", which a
+          different error of the same size would also satisfy; this one says
+          the gate IS that exact second order, to the production side's
+          stencil round-off."""
         maps = _Maps(_fx_orbital(), _rows_interorbital)
         with _quiet():
             ed = _refine(lambda h: _coeff2(lambda v: maps.ed(v), h), _X)
             pr = _refine(lambda h: _coeff2(lambda v: maps.prod(v), h), _X)
             dr = maps.dropped(1.0)
+            orc = maps.oracle_exact(1.0)
             gate = _refine(lambda h: _coeff2(lambda v: maps.prod(v, gate=True), h), _X)
             scale = self._compare("inter-orbital v^2", ed, pr, dr)
             self.assertGreater(np.abs(dr).max(), _DROPPED_FLOOR * scale,
                                "the dropped class is negligible on this fixture")
-            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"), (gate, "gate")):
+            for arr, what in ((ed, "ED"), (pr, "local"), (dr, "dropped"),
+                              (orc, "exact oracle"), (gate, "gate")):
                 self.assertTrue(np.all(np.isfinite(arr)),
                                 "the {} coefficient is not finite".format(what))
-            # Phase B follow-up of issue #181, tracked as issue #192
-            self._record("interorbital gate vs ED", np.abs(gate - ed).max() / scale)
+            # the floor: what an EXACT second order leaves against the ED
+            # remainder at this working point (stencil truncation + the
+            # finite Matsubara window). The oracle skeleton is exactly
+            # quadratic in the coupling, so its unit-coupling value IS its
+            # coefficient and it carries no stencil error of its own.
+            floor = np.abs(orc - ed).max() / scale
+            self.assertGreater(floor, _FLOOR,
+                               "the exact oracle reproduces the ED remainder to round-off: "
+                               "there is no floor to band the gate against")
+            gate_dev = np.abs(gate - ed).max() / scale
+            gate_orc = np.abs(gate - orc).max() / scale
+            # the same distance for the STANDALONE path, which is the exact
+            # second order by construction once the dropped class is added:
+            # that is the extraction's own noise, the yardstick
+            # _GATE_ORACLE_CEIL is calibrated against
+            local_orc = np.abs(pr + dr - orc).max() / scale
+            print("MEASURED inter-orbital bond gate: vs ED {:.3e}, floor (exact oracle vs ED) "
+                  "{:.3e}, vs exact oracle {:.3e} (extraction noise, from local + dropped vs "
+                  "the same oracle: {:.3e})".format(gate_dev, floor, gate_orc, local_orc))
+            self.assertGreater(gate_dev, 0.5 * floor,
+                               "the bond gate is CLOSER to the ED remainder ({:.3e}) than the "
+                               "exact second order is ({:.3e}): the comparison is no longer "
+                               "measuring what it thinks".format(gate_dev, floor))
+            self.assertLess(gate_dev, 2.0 * floor,
+                            "the bond gate misses the ED remainder on the inter-orbital bond "
+                            "by {:.3e} (floor {:.3e}); issue #192".format(gate_dev, floor))
+            self.assertLess(gate_orc, _GATE_ORACLE_CEIL,
+                            "the bond gate is not the exact second order on the inter-orbital "
+                            "bond: {:.3e} from the oracle (ceiling {:.3e}); issue #192"
+                            .format(gate_orc, _GATE_ORACLE_CEIL))
             self._record("interorbital dropped class", np.abs(dr).max() / scale)
 
     @heavy

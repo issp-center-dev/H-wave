@@ -8,12 +8,17 @@ PairLift map is identically zero on the paramagnetic density; (c) the
 quadratic coefficients equal an INDEPENDENT hand-enumerated second-order
 evaluation (the two skeleton diagrams, direct and exchange, enumerated in
 real space on the torus with explicit spin bookkeeping -- no production
-vertex code); (d) with every off-site coefficient zero the gate reproduces
+vertex code), on the single-orbital fixture and, for the V^2 coefficient,
+on a two-orbital fixture with an orbital-asymmetric INTER-ORBITAL off-site
+bond (the composite oracle of ``tests/test_second_order_oracle.py`` there,
+which is what the mixed blocks' pair permutation of spec 2026-09-16 R3 is
+pinned by); (d) with every off-site coefficient zero the gate reproduces
 the general path's coefficients."""
 import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -36,14 +41,24 @@ def _write_wan(path, name, norb, rows):
             fw.write("{:4d} {:4d} {:4d} {:4d} {:4d} {: .15e} {: .15e}\n".format(*r))
 
 
-def _make_inputs(d, norb, U, V, uprime=0.0, pairlift=None):
+def _make_inputs(d, norb, U, V, uprime=0.0, pairlift=None, inter_rows=None):
+    """The temporary input directory of one grid point.
+
+    ``inter_rows`` REPLACES the whole default ``CoulombInter`` row list of
+    this ``norb`` (including the on-site ``uprime`` rows of the two-orbital
+    default) by the given ``(rx, ry, rz, a, b, vr, vi)`` rows, whose
+    amplitudes are scaled by ``V`` exactly as the default rows are -- so a
+    caller can drive the SAME coefficient extraction on a different bond
+    geometry without a parallel harness."""
     src = _IN1 if norb == 1 else _IN2
     for f in ("geom.dat", "transfer.dat"):
         shutil.copy(os.path.join(src, f), d)
     _write_wan(os.path.join(d, "intra.dat"), "CoulombIntra", norb,
                [(0, 0, 0, a, a, U, 0.0) for a in range(1, norb + 1)])
     rows = []
-    if norb == 2:
+    if inter_rows is not None:
+        rows += [tuple(r[:5]) + (r[5] * V, r[6] * V) for r in inter_rows]
+    elif norb == 2:
         rows += [(0, 0, 0, 1, 2, uprime, 0.0), (0, 0, 0, 2, 1, uprime, 0.0)]
         rows += [(1, 0, 0, 1, 1, V, 0.0), (-1, 0, 0, 1, 1, V, 0.0),
                  (0, 1, 0, 2, 2, V, 0.0), (0, -1, 0, 2, 2, V, 0.0),
@@ -226,13 +241,15 @@ def _rel(a, b):
 class _Grid:
     """One map per grid point on a temporary input directory."""
 
-    def __init__(self, norb, gate, u0=0.5, v0=0.5, scale=1.0, uprime=0.0, second_order=None):
+    def __init__(self, norb, gate, u0=0.5, v0=0.5, scale=1.0, uprime=0.0, second_order=None,
+                 inter_rows=None):
         self.norb, self.gate = norb, gate
         self.points = [(u * scale, v * scale) for u in (0.0, u0 / 2, u0) for v in (0.0, v0 / 2, v0)]
         self.hf, self.fluct = [], []
         with tempfile.TemporaryDirectory() as d:
             for (U, V) in self.points:
-                inter = _make_inputs(d, norb, U, V, uprime=uprime * (U / u0 if u0 else 0.0))
+                inter = _make_inputs(d, norb, U, V, uprime=uprime * (U / u0 if u0 else 0.0),
+                                     inter_rows=inter_rows)
                 s, gi = _solver(d, inter, gate, second_order=second_order)
                 hf, fl, G = _one_map(s, gi, gate)
                 self.hf.append(hf)
@@ -253,6 +270,17 @@ def _read_rows(path):
 _H = 2.0e-3          # coupling scale of the coefficient-extraction grids
 _U0 = _V0 = 0.5      # the spec's grid; used for the residual-scaling test
 
+#: An ORBITAL-ASYMMETRIC INTER-ORBITAL off-site CoulombInter bond on the
+#: two-orbital fixture: ``v_12(+x) = V`` and ``v_21(+x) = 0.6 V``, each with
+#: its reversed partner, and nothing else. Both orbital assignments of the
+#: same displacement are declared with DIFFERENT amplitudes, so no orbital
+#: swap of the pair index is a symmetry of this declaration -- which is what
+#: makes it see the mixed second-order blocks' pair permutation (spec
+#: 2026-09-16 R3, issue #192). Amplitudes are quoted at unit ``V`` and
+#: scaled by the grid's ``V`` in :func:`_make_inputs`.
+_INTERORBITAL_ROWS = [(1, 0, 0, 1, 2, 1.0, 0.0), (-1, 0, 0, 2, 1, 1.0, 0.0),
+                      (1, 0, 0, 2, 1, 0.6, 0.0), (-1, 0, 0, 1, 2, 0.6, 0.0)]
+
 
 def _richardson(cs):
     """Three-level extrapolation of a fitted coefficient c(h) = a + b1 h +
@@ -262,8 +290,9 @@ def _richardson(cs):
     return (8.0 * cs[2] - 6.0 * cs[1] + cs[0]) / 3.0
 
 
-def _coefficients(norb, gate, uprime=0.0, second_order=None):
-    grids = [_Grid(norb, gate=gate, scale=_H / _U0 * f, uprime=uprime, second_order=second_order)
+def _coefficients(norb, gate, uprime=0.0, second_order=None, inter_rows=None):
+    grids = [_Grid(norb, gate=gate, scale=_H / _U0 * f, uprime=uprime, second_order=second_order,
+                   inter_rows=inter_rows)
              for f in (1.0, 0.5, 0.25)]
     out = {k: _richardson([g.coeffs[k] for g in grids]) for k in ("c20", "c11", "c02")}
     return out, grids[0]
@@ -355,6 +384,48 @@ class TestG2(unittest.TestCase):
         self.assertGreater(np.linalg.norm(self.oracle["x_v"].ravel()), 1e-2 * np.linalg.norm(self.oracle["d_v"].ravel()))
         self.assertLess(np.abs(self.oracle["x_u"]).max(), 1e-14)
         self.assertLess(np.abs(self.oracle["x_uv"] - self.oracle["x_v_only"]).max(), 1e-14)
+
+    def test_c_gate_on_interorbital_reproduces_the_real_space_oracle(self):
+        """G-2c: the bond gate's O(V^2) coefficient on an orbital-asymmetric
+        INTER-ORBITAL off-site bond equals the exact real-space oracle (the
+        documented reading of a row) at 1e-8; with the mixed blocks' pair
+        permutation replaced by the identity -- what the gate did before
+        spec 2026-09-16 R3 -- it misses by more than 1e-3.
+
+        The oracle here is the composite of
+        ``tests/test_second_order_oracle.py`` at its ``"exact"`` weighting,
+        which is the whole second order (every record pair at weight 1/2),
+        not the locality-split one: with the gate on, the off/off uncrossed
+        class the local kernel drops is resummed, so the gate owns the full
+        second order. That oracle's skeleton is exactly quadratic in the
+        coupling, so its value at UNIT ``V`` is its coefficient and it needs
+        no stencil; the production side is the same Richardson-extrapolated
+        fit every other coefficient in this module goes through.
+
+        The anti-vacuity leg is what makes the 1e-8 mean something: a
+        permutation that happened not to matter on this fixture would let
+        the assertion pass while saying nothing about R3."""
+        from tests.test_second_order_oracle import (oracle_records, oracle_sigma2,
+                                                    _SHAPE as _ORACLE_SHAPE)
+        from hwave.solver import flex_bond
+        # the oracle enumerates its records on ITS lattice; the two must be
+        # the same one or the comparison is between different geometries
+        self.assertEqual(tuple(_SHAPE), tuple(_ORACLE_SHAPE))
+        beta = 1.0 / _T
+        rows = {"CoulombInter": _INTERORBITAL_ROWS}
+        c_gate, grid = _coefficients(2, gate=True, inter_rows=_INTERORBITAL_ROWS)
+        # the frozen bare G of the grid (coupling-independent: fixed mu, no
+        # SCF) is what BOTH sides expand around
+        orc = oracle_sigma2(grid.G, beta, oracle_records(rows, 2), 2, "exact")[0]
+        self.assertGreater(np.abs(orc).max(), 1e-6)                      # anti-vacuity
+        self.assertLess(_rel(c_gate["c02"], orc), 1e-8)
+        with mock.patch.object(flex_bond, "mixed_pair_permutation",
+                               lambda B, nd, norb: np.arange(B * nd)):
+            c_identity, _ = _coefficients(2, gate=True, inter_rows=_INTERORBITAL_ROWS)
+        self.assertGreater(_rel(c_identity["c02"], orc), 1e-3,
+                           "the pair permutation of the mixed second-order blocks does not "
+                           "change this fixture's coefficient, so the assertion above is not "
+                           "pinning it")
 
     def test_c_general_path_second_order_recorded(self):
         """Recorded finding (not a Phase B defect): the general path's
