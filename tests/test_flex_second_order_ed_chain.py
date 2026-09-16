@@ -27,8 +27,9 @@ Two fixtures, and what each adjudicates
 * ``_fx_orbital()`` -- ``L = 3``, TWO orbitals, and an ORBITAL-ASYMMETRIC
   inter-orbital bond (``v_01(+x) = v``, ``v_10(+x) = 0.6 v``). This is the
   fixture that adjudicates the two open ledger items of the campaign: the
-  orientation of the off-site density vertex (Task 5) and the bond gate's
-  deviation on inter-orbital bonds (Task 9, issue #192). Its verdicts are in
+  orientation of the off-site density vertex (the documented reading, the
+  orientation fix of issue #193) and the bond gate's deviation on
+  inter-orbital bonds (Task 9, issue #192). Its verdicts are in
   :class:`TestG4`'s methods and in the module's measured table below. The
   same fixture also carries the MIXED on-site/off-site entry (on-site
   ``Hund`` against the off-site ``V`` rows,
@@ -132,8 +133,9 @@ maximum over the window; tolerance 2e-3):
 
 The v^2 row is the campaign's open item: the STANDALONE local path plus
 the dropped class reproduces the exact inter-orbital off-site second order
-(so the Task 5 orientation of the off-site density vertex is confirmed by
-exact diagonalisation), while the BOND GATE misses it by 4.0e-2 -- twenty
+(so the DOCUMENTED orientation of the off-site density vertex -- orbital
+``a`` in the original cell -- is confirmed by exact diagonalisation), while
+the BOND GATE misses it by 4.0e-2 -- twenty
 times the tolerance, and nearly twice the whole off/off uncrossed class it
 is supposed to be resumming (2.2e-2 of the coefficient). That deviation is
 a Phase B defect, tracked as issue #192; it is not a second-order kernel
@@ -194,7 +196,7 @@ _GATE_ONSITE = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]}
 #: displacement ``r`` -- and a Hermitian-closed declaration is invariant
 #: under the orbital swap once ``r`` is dropped. The gate therefore asserts
 #: EQUALITY of the two placements there instead of a miss; with the Fock
-#: term on, every type including these misses by 9.4e-2 ... 4.6e-1.
+#: term on, every type including these misses by 9.4e-2 ... 4.5e-1.
 #: ``PairHop`` is absent because its direct term reads the INTER-SITE
 #: density, so it sees the orientation in both Fock settings.
 _HARTREE_ORIENTATION_BLIND = ("CoulombInter", "Hund", "Ising", "Exchange",
@@ -1560,10 +1562,13 @@ class TestG4(unittest.TestCase):
         Hamiltonian is pinned to UHFk's own mean field
         (:meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_
         mean_field`), this is an independent confirmation of the ORIENTATION
-        of the off-site density vertex: the OPPOSITE orbital placement of
+        of the off-site density vertex -- the DOCUMENTED reading, orbital
+        ``a`` in the original cell: the OPPOSITE orbital placement of
         the same declaration, run through the identical recipe, misses
-        ``local + dropped`` by 5.5e-2 -- twenty-seven times the tolerance,
-        and the assertion below would fail loudly on it.
+        ``local + dropped`` by 2.2e-2 -- eleven times the tolerance, and the
+        assertion below does fail loudly on it (that is exactly the value it
+        failed by while the local kernel still read the reversed
+        orientation, before the fix of issue #193).
 
         RECORDED -- the bond gate's deviation. Phase B's bond-resolved path
         is supposed to resum exactly the class the local kernel drops
@@ -1614,7 +1619,7 @@ class TestG4(unittest.TestCase):
 
         Measured at this module's working point: the ED coefficient is
         1.07e-1, ``local + dropped`` reproduces it to 4.5e-4 of it (a factor
-        4.4 inside the tolerance) and the mixed dropped part is 4.1e-18 of
+        4.4 inside the tolerance) and the mixed dropped part is 4.6e-18 of
         it -- zero to round-off.
         """
         maps = _Maps(_fx_orbital(), _rows_hund_offsite_v)

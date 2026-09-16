@@ -79,6 +79,24 @@ def oracle_records(rows_by_type, norb, shape=_SHAPE):
     minus, Ising density-difference form), at half weight for the mirrored
     types (:data:`_MIRRORED_ROW_TYPES`).
 
+    The records are in the DOCUMENTED reading of an interaction row: a row
+    ``(r, a, b, v)`` means ``v n_{j,a} n_{j+r,b}`` -- orbital ``a`` on the
+    REFERENCE site, orbital ``b`` on the site displaced by ``r``. That is the
+    reading the interaction-file documentation states and the one every
+    solver implements since the 2026-09-16 spec (#193). The swap sits at
+    RECORD CONSTRUCTION rather than in the enumeration below because the
+    oracle is a COMPOSITE and only the composite has a physical reading: the
+    ``Gf``/``Gr`` displacement indexing of :func:`oracle_sigma2` (and of
+    :func:`oracle_w2`), together with the spatial index of the ``Sigma`` they
+    return (row site MINUS column site), realises the enumerated geometry
+    MIRRORED -- it places the FIRST orbital of a record on the DISPLACED
+    site, so an off-site record written with ``a`` at ``i`` and ``b`` at
+    ``i + r`` would come out in the reversed reading. Swapping the two
+    orbitals of every off-site record at construction is exactly what
+    cancels that mirror (on a reversal-closed declaration it is the same
+    thing as reversing every displacement), and it leaves on-site rows
+    (``r = 0``, where the two placements coincide) untouched.
+
     ``shape`` is the lattice the records are enumerated on, defaulting to
     this module's 4x4 torus; the chain exact-diagonalization gate passes
     ``(L, 1, 1)``. It must be the shape of the ``G_kw`` later handed to
@@ -90,6 +108,13 @@ def oracle_records(rows_by_type, norb, shape=_SHAPE):
             if itype in _MIRRORED_ROW_TYPES:
                 v = 0.5 * v
             off = (rx, ry, rz) != (0, 0, 0)
+            if off:
+                # documented reading: the composite oracle (records + the Gf/Gr
+                # displacement indexing below) places orbital a on the DISPLACED
+                # site; swapping the orbitals of every off-site record makes it
+                # place a on the reference site (survey identity 1), which is
+                # the reading the file documents and every solver now implements.
+                a, b = b, a
             for i in range(shape[0] * shape[1] * shape[2]):
                 xi, yi, zi = _coords(i, shape)
                 j = _site(xi + rx, yi + ry, zi + rz, shape)

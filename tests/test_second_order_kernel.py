@@ -120,6 +120,39 @@ class TestKernel(unittest.TestCase):
         cross_h = Wuh - Wu - Wh
         self.assertLess(np.abs(cross_h[:, :, 0, 0]).max(), 1e-13)
 
+    def test_w2_equals_the_previous_kernel_on_the_reversed_declaration(self):
+        """Spec 2.4 (G-comp): at a fixed chibar the kernel on F equals the
+        pre-change kernel on F^rev. The pre-change kernel transposed vpair at
+        the use site, so on F^rev it is dense_w2 with vpair swapped back.
+
+        This says WHAT the orientation change of #193 did to the local
+        kernel: nothing but re-read the declaration, since reversing every
+        displacement of an off-site declaration is exactly the orbital
+        transpose of ``build_offsite``'s ``vpair`` (measured: identical to
+        the last bit on this fixture). It is a statement about the change,
+        not a gate ON it -- the identity above is symmetric in the two
+        readings and so held under the previous kernel too. What the
+        orientation itself is pinned by is gate G2 (a) of
+        ``tests/test_second_order_oracle.py``, against the independent
+        real-space oracle; the transposed reading misses it by 0.086 ... 0.26
+        of the kernel."""
+        from hwave.solver.second_order import dense_w2
+        rows = {"CoulombInter": [(1, 0, 0, 1, 2, 0.3, 0.0), (-1, 0, 0, 2, 1, 0.3, 0.0)],
+                "CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]}
+        rev = {"CoulombInter": [(-1, 0, 0, 1, 2, 0.3, 0.0), (1, 0, 0, 2, 1, 0.3, 0.0)],
+               "CoulombIntra": rows["CoulombIntra"]}
+        s, f = _factors(rows)
+        _, frev = _factors(rev)
+        cb = _random_chibar(8, 16, 4, 11)
+        new = dense_w2(cb, f)
+        import dataclasses
+        f_old_on_rev = dataclasses.replace(frev, vpair=np.ascontiguousarray(frev.vpair.swapaxes(-1, -2)))
+        old = dense_w2(cb, f_old_on_rev)
+        np.testing.assert_array_equal(new, old)
+        # non-vacuity: the declaration is asymmetric, so the previous kernel on F differs
+        f_old_on_f = dataclasses.replace(f, vpair=np.ascontiguousarray(f.vpair.swapaxes(-1, -2)))
+        self.assertGreater(np.abs(dense_w2(cb, f_old_on_f) - new).max(), 1e-3 * np.abs(new).max())
+
     def test_batch_independence_and_in_place(self):
         from hwave.solver.second_order import accumulate_batch, dense_w2
         s, f = _factors({"CoulombIntra": [(0, 0, 0, 1, 1, 0.7, 0.0), (0, 0, 0, 2, 2, 0.4, 0.0)],
