@@ -199,8 +199,10 @@ class TestG0Off(unittest.TestCase):
                 for k in db.files:
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
-            la = open(os.path.join(a, "log.txt")).read().replace(here, "<root>").replace(a, "<out>")
-            lb = open(os.path.join(b, "log.txt")).read().replace(develop, "<root>").replace(b, "<out>")
+            with open(os.path.join(a, "log.txt")) as fh:
+                la = fh.read().replace(here, "<root>").replace(a, "<out>")
+            with open(os.path.join(b, "log.txt")) as fh:
+                lb = fh.read().replace(develop, "<root>").replace(b, "<out>")
             # the whole stream, nothing filtered: the reference revision is
             # the merge that introduced flex_second_order, so it logs the
             # same "flex_second_order = takimoto" INFO line this side does
@@ -238,8 +240,11 @@ class TestG0Off(unittest.TestCase):
         rev = _reversed_interaction_dir(_IN2, ("coulombinter.dat",))
         try:
             # anti-vacuity: the reversed declaration really is a different file
-            self.assertNotEqual(open(os.path.join(rev, "coulombinter.dat")).read(),
-                                open(os.path.join(_IN2, "coulombinter.dat")).read())
+            with open(os.path.join(rev, "coulombinter.dat")) as fh:
+                reversed_text = fh.read()
+            with open(os.path.join(_IN2, "coulombinter.dat")) as fh:
+                original_text = fh.read()
+            self.assertNotEqual(reversed_text, original_text)
             with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
                     tempfile.TemporaryDirectory() as c:
                 for root, inp, out in ((here, os.path.abspath(_IN2), a),

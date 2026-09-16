@@ -48,14 +48,20 @@ direction so that a change making them visible cannot pass unnoticed:
 
 * **Hartree-only** (``flag_fock = false``) for ``CoulombInter`` / ``Hund``
   / ``Ising``: the Hartree term contracts the table only through
-  ``sum_r J_ab(r)`` (``hartree_fock.accumulate_hf``: ``hh1 =
-  einsum('rab, stb -> rsta', jab_r, hh0)`` then a sum over ``r``). The
+  ``sum_r J_ab(r)``. All three places that read it do:
+  ``hartree_fock.accumulate_hf`` (the normal-mode mean field: ``hh1 =
+  einsum('rab, stb -> rsta', jab_r, hh0)``, then a sum over ``r``), the
+  spin-orbital branch of ``uhfk.UHFk._make_ham`` (the same ``hh0``/
+  ``hh1``/``hh2``/``sum over r`` before ``_virtual_ham_to_so``), and
+  ``uhfk.UHFk._calc_energy``, which is what ``energy.dat`` prints
+  (Hartree-only: ``ee = einsum('rab, rab->', jab_r, w1b)`` with ``w1b``
+  broadcast over ``r``, i.e. again only ``sum_r J_ab(r)``). The
   reversal/Hermitian closure ``_reverse_closed`` makes that sum
   HERMITIAN, and the orientation maps it to its own conjugate transpose,
-  i.e. to itself. Nothing downstream can see the change. ``PairHop`` is
-  NOT in this class: its term (the ``hh6``/``hh7`` block) is not gated by
-  ``flag_fock`` and reads the displacement resolved, so the off-site
-  complex PairHop moves with the Fock term on or off.
+  i.e. to itself. Nothing downstream can see the change, in either mode.
+  ``PairHop`` is NOT in this class: its term (the ``hh6``/``hh7`` block)
+  is not gated by ``flag_fock`` and reads the displacement resolved, so
+  the off-site complex PairHop moves with the Fock term on or off.
 
 * **A single orbital**: at ``norb = 1`` the transpose is the identity, so
   the oriented table is the COMPLEX CONJUGATE of the original one. With a
@@ -305,6 +311,37 @@ class _OrientationMixin:
         return abs(ea["Energy_Total"] - eb["Energy_Total"]) / max(
             abs(ea["Energy_Total"]), 1e-30)
 
+    def _relative_green_gap(self, a, b):
+        """The largest relative difference over the ``green.dat.npz``
+        members, ``max|x - y| / max|x|``.
+
+        The second half of "the two runs differ", and the more sensitive
+        half: the total energy is a stationary functional of the density,
+        so a mean field that moves by 1e-4 shifts the energy by only a few
+        1e-6 (measured: 4.4e-05 on the Green function against 6.1e-06 on
+        the energy for the same pair of runs). The energy stays the
+        headline of the anti-vacuity control because it is the number a
+        user compares between releases; this one keeps that control from
+        resting on the smallest observable in the output.
+
+        A difference in the member NAMES, or in a non-numeric member such
+        as ``momentum_convention``, is a difference too -- infinite, so it
+        can never be mistaken for agreement.
+        """
+        ga, gb = a[1], b[1]
+        if sorted(ga) != sorted(gb):
+            return float("inf")
+        gap = 0.0
+        for key in sorted(ga):
+            x, y = np.asarray(ga[key]), np.asarray(gb[key])
+            if x.dtype.kind not in "fc":
+                if not np.array_equal(x, y):
+                    return float("inf")
+                continue
+            scale = max(float(np.abs(x).max()), 1e-30)
+            gap = max(gap, float(np.abs(x - y).max()) / scale)
+        return gap
+
 
 class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
     """G-UHFk: this tree's UHFk on ``F`` equals the reference revision's
@@ -336,13 +373,22 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                 shutil.rmtree(reversed_dir, ignore_errors=True)
             self._assert_same_run(mine, theirs, "case {}".format(label))
             gap = self._relative_energy_gap(mine, control)
+            green_gap = self._relative_green_gap(mine, control)
             if case.moves:
                 self.assertGreater(
                     gap, 1e-6,
                     "case {}: the reference revision's UHFk on the "
                     "UNREVERSED declaration is within {:.3e} relative of "
-                    "this tree's, so the identity above says nothing"
-                    .format(label, gap))
+                    "this tree's total energy, so the identity above says "
+                    "nothing".format(label, gap))
+                # and the same control on the MEAN FIELD, which carries the
+                # difference an order of magnitude more loudly than the
+                # stationary energy does
+                self.assertGreater(
+                    green_gap, 1e-6,
+                    "case {}: the reference revision's UHFk on the "
+                    "UNREVERSED declaration returns the same Green function "
+                    "to {:.3e} relative".format(label, green_gap))
             else:
                 # the coinciding direction, asserted rather than assumed:
                 # the reason is structural (see the module docstring), so a
@@ -351,8 +397,20 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                 self.assertLessEqual(
                     gap, 1e-12,
                     "case {}: the orientation moved a case that cannot see "
-                    "it ({:.3e} relative). The derivation is: {}"
-                    .format(label, gap, case.why))
+                    "it ({:.3e} relative in the total energy). The "
+                    "derivation is: {}".format(label, gap, case.why))
+                # the Green function of a blind case is allowed the SCF
+                # residual and no more. The Hartree-only cases agree to the
+                # last bit (identical mean field, identical trajectory);
+                # the norb = 1 pair solves two CONJUGATE problems whose
+                # converged densities meet only at the convergence
+                # tolerance, measured 9.5e-10 -- far below anything the
+                # orientation moves (4e-05) and far above bit equality.
+                self.assertLessEqual(
+                    green_gap, 1e-6,
+                    "case {}: the orientation moved the Green function of a "
+                    "case that cannot see it ({:.3e} relative). The "
+                    "derivation is: {}".format(label, green_gap, case.why))
 
     def test_bond_fock_on(self):
         """The inter-orbital ``CoulombInter`` + ``Hund`` bond with the Fock
@@ -389,32 +447,48 @@ class TestFixturesAreOrientationSensitive(_OrientationMixin,
     failure.
     """
 
-    def _gap(self, label):
+    def _gaps(self, label):
+        """``(energy gap, Green-function gap)``, both relative -- the same
+        pair of measures the gate above applies to its control."""
         case = CASES[label]
         here = os.getcwd()
         source = os.path.join(_FIXTURES, case.fixture)
         reversed_dir = _reversed_dir(case)
         try:
-            return self._relative_energy_gap(_run(here, source, case),
-                                             _run(here, reversed_dir, case))
+            mine = _run(here, source, case)
+            reversed_run = _run(here, reversed_dir, case)
         finally:
             shutil.rmtree(reversed_dir, ignore_errors=True)
+        return (self._relative_energy_gap(mine, reversed_run),
+                self._relative_green_gap(mine, reversed_run))
 
     def _assert_moves(self, label):
-        gap = self._gap(label)
+        gap, green_gap = self._gaps(label)
         self.assertGreater(
             gap, 1e-6,
             "case {}: reversing every off-site displacement moves this "
             "tree's total energy by only {:.3e} relative, so the fixture "
             "cannot see the orientation".format(label, gap))
+        self.assertGreater(
+            green_gap, 1e-6,
+            "case {}: reversing every off-site displacement moves this "
+            "tree's Green function by only {:.3e} relative"
+            .format(label, green_gap))
 
     def _assert_blind(self, label):
-        gap = self._gap(label)
+        gap, green_gap = self._gaps(label)
         self.assertLessEqual(
             gap, 1e-12,
-            "case {}: reversing the declaration moved a case that cannot "
-            "see the orientation ({:.3e} relative). The derivation is: {}"
-            .format(label, gap, CASES[label].why))
+            "case {}: reversing the declaration moved the total energy of a "
+            "case that cannot see the orientation ({:.3e} relative). The "
+            "derivation is: {}".format(label, gap, CASES[label].why))
+        # the Green function of a blind case is allowed the SCF residual
+        # and no more -- see the same assertion in the gate above.
+        self.assertLessEqual(
+            green_gap, 1e-6,
+            "case {}: reversing the declaration moved the Green function of "
+            "a case that cannot see the orientation ({:.3e} relative). The "
+            "derivation is: {}".format(label, green_gap, CASES[label].why))
 
     def test_norb2_bond(self):
         self._assert_moves("bond/norb2/fock=on")
