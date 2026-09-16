@@ -397,9 +397,14 @@ def _run(checkout, indir, case):
     work = tempfile.mkdtemp(prefix="hwave_uhfk_orient_")
     try:
         shutil.copytree(indir, work, dirs_exist_ok=True)
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(
-            (os.path.join(checkout, "src"), checkout))
+        if checkout == os.getcwd():
+            # this tree's own run: keep it measured
+            env = dict(os.environ)
+            env["PYTHONPATH"] = os.pathsep.join(
+                (os.path.join(checkout, "src"), checkout))
+        else:
+            from tests.test_flex_second_order_compat import reference_subprocess_env
+            env = reference_subprocess_env(checkout)
         proc = subprocess.run(
             [sys.executable, "-B", "-c", _RUN_SCRIPT,
              json.dumps(_params(case))],

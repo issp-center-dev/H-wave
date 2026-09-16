@@ -60,9 +60,34 @@ s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq", "sigma"
 
 _FILES = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz")
 
+#: pytest-cov's subprocess hooks. A subprocess that inherits them is
+#: measured by pytest-cov as if it belonged to the invoking pytest process,
+#: which is only correct for a subprocess that runs THIS tree. A
+#: reference-checkout subprocess runs a different revision on the same
+#: relative --cov=src/hwave path, so inheriting these turns into that
+#: revision's files entering this tree's coverage report -- which is
+#: exactly the coverage-doubling failure this module's CI run (#193) hit.
+_COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
+
+
+def reference_subprocess_env(checkout):
+    """Environment for a subprocess that runs the REFERENCE checkout: its
+    ``src`` first on ``PYTHONPATH`` and pytest-cov's subprocess hooks
+    removed, so the reference tree is never measured as part of this
+    tree's coverage (it is a different revision; measuring it halves the
+    reported total)."""
+    env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+    for key in _COVERAGE_ENV:
+        env.pop(key, None)
+    return env
+
 
 def _run(checkout, path, inter, out, so, extra=None):
-    env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+    if checkout == os.getcwd():
+        # this tree's own run: keep it measured
+        env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+    else:
+        env = reference_subprocess_env(checkout)
     subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so,
                     json.dumps(extra or {})],
                    env=env, check=True, capture_output=True, cwd=checkout)
@@ -556,6 +581,40 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
             self.skipTest(why)
         self.assertIsNone(dev)
         self.assertIn("cannot read the revision", why)
+
+
+class TestReferenceSubprocessEnv(unittest.TestCase):
+    """:func:`reference_subprocess_env` is the one place that keeps a
+    reference-checkout subprocess out of this tree's coverage report (see
+    the module docstring's CI note and issue #193's coverage-doubling
+    failure): pytest-cov propagates itself into subprocesses through
+    ``COV_CORE_SOURCE`` / ``COV_CORE_CONFIG`` / ``COV_CORE_DATAFILE``, and a
+    reference-checkout subprocess that inherits them gets measured as if it
+    were this tree, at a different revision, which halves the reported
+    total.
+    """
+
+    def test_strips_coverage_env_and_prefixes_pythonpath(self):
+        checkout = "/tmp/hwave-reference-checkout"
+        with mock.patch.dict(os.environ, {
+                "COV_CORE_SOURCE": "src/hwave",
+                "COV_CORE_CONFIG": ".coveragerc",
+                "COV_CORE_DATAFILE": ".coverage.12345",
+                "SOME_OTHER_VAR": "kept"}):
+            before = dict(os.environ)
+            env = reference_subprocess_env(checkout)
+            # the three coverage hooks are gone ...
+            for key in ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE"):
+                self.assertNotIn(key, env, key)
+            # ... everything else survives ...
+            self.assertEqual(env["SOME_OTHER_VAR"], "kept")
+            # ... PYTHONPATH puts the reference checkout's src first ...
+            self.assertTrue(
+                env["PYTHONPATH"].startswith(os.path.join(checkout, "src")),
+                env["PYTHONPATH"])
+            # ... and os.environ itself is untouched
+            self.assertEqual(dict(os.environ), before)
+            self.assertIn("COV_CORE_SOURCE", os.environ)
 
 
 class TestDevelopComparisonIsRequiredInCI(unittest.TestCase):

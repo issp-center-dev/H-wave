@@ -812,7 +812,7 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     import sys
     import tempfile
     from tests.test_flex_general import _write_2d_2orb_onsite_fixture
-    from tests.test_flex_second_order_compat import _members
+    from tests.test_flex_second_order_compat import _members, reference_subprocess_env
     dev, why = _develop_checkout()
     if dev is None:
         pytest.skip(why)
@@ -827,8 +827,12 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
         # key out there would compare two different kernels rather than two
         # revisions (see tests/test_flex_second_order_compat.DEVELOP_COMMIT)
         for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
-            env = dict(os.environ,
-                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            if checkout == here:
+                # this tree's own run: keep it measured
+                env = dict(os.environ,
+                           PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            else:
+                env = reference_subprocess_env(checkout)
             subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
                            env=env, check=True, capture_output=True, cwd=checkout)
         ma, mb = _members(a), _members(b)

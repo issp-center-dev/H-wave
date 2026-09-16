@@ -181,7 +181,8 @@ class TestG0Off(unittest.TestCase):
     """
 
     def test_byte_identity_against_develop(self):
-        from tests.test_flex_second_order_compat import develop_checkout
+        from tests.test_flex_second_order_compat import (develop_checkout,
+                                                           reference_subprocess_env)
         here = os.getcwd()
         # one shared rule with the other develop-comparison harnesses: the
         # reference tree must be at the NAMED revision and clean, or the
@@ -191,7 +192,13 @@ class TestG0Off(unittest.TestCase):
             self.skipTest(why)
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             for root, out in ((here, a), (develop, b)):
-                subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out], check=True, cwd=here)
+                # _G0_SCRIPT puts root/src on sys.path itself, so PYTHONPATH
+                # from the helper is harmless; only the reference invocation
+                # needs pytest-cov's subprocess hooks stripped -- this
+                # tree's run stays measured
+                env = None if root == here else reference_subprocess_env(root)
+                subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out],
+                               check=True, cwd=here, env=env)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
                 da, db = np.load(os.path.join(a, name), allow_pickle=True), np.load(os.path.join(b, name), allow_pickle=True)
                 # the same treatment as test_flex_second_order_compat.py's
@@ -240,7 +247,8 @@ class TestG0Off(unittest.TestCase):
         reference builder's Hermitian average, which is exact in floating
         point. A tolerance here would hide a real difference in the map.
         """
-        from tests.test_flex_second_order_compat import develop_checkout
+        from tests.test_flex_second_order_compat import (develop_checkout,
+                                                           reference_subprocess_env)
         here = os.getcwd()
         develop, why = develop_checkout()
         if develop is None:
@@ -258,8 +266,11 @@ class TestG0Off(unittest.TestCase):
                 for root, inp, out in ((here, os.path.abspath(_IN2), a),
                                        (develop, rev, b),
                                        (develop, os.path.abspath(_IN2), c)):
+                    # same rule as above: only the reference invocations lose
+                    # pytest-cov's subprocess hooks
+                    env = None if root == here else reference_subprocess_env(root)
                     subprocess.run([sys.executable, "-B", "-c", _HF_FIRST_MAP_SCRIPT,
-                                    root, inp, out], check=True, cwd=here)
+                                    root, inp, out], check=True, cwd=here, env=env)
                 mine = np.load(os.path.join(a, "static.npz"))["sigma_static"]
                 theirs = np.load(os.path.join(b, "static.npz"))["sigma_static"]
                 unreversed = np.load(os.path.join(c, "static.npz"))["sigma_static"]
