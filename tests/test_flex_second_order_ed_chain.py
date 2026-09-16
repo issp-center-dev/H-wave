@@ -63,7 +63,7 @@ by ``R``,
 "``[alpha]`` corresponds to the orbital alpha in the original cell, and
 ``[beta]`` corresponds to the orbital beta in the cell displaced by r"),
 which the mean-field kernel implements since the orientation fix of issue
-#192. Note that this is the OPPOSITE placement from the one a
+#193. Note that this is the OPPOSITE placement from the one a
 ``transfer.dat`` row gets in this code base -- ``EDFixture.build_h1`` puts
 ``t[(a, b)]`` on ``(j + R, a) <- (j, b)``, which
 :meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
@@ -454,7 +454,7 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
     reading of an interaction row (``docs/en`` UHFk interaction file page:
     "``[alpha]`` corresponds to the orbital alpha in the original cell, and
     ``[beta]`` ... in the cell displaced by r"), which the mean-field
-    kernel implements since the orientation fix of issue #192. ``w`` is the
+    kernel implements since the orientation fix of issue #193. ``w`` is the
     mirrored-row weight.
 
     Writing ``j' = j + R``, the monomials are the ``docs/en`` definitions

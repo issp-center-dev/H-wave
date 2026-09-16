@@ -108,12 +108,15 @@ def oracle_records(rows_by_type, norb, shape=_SHAPE):
             if itype in _MIRRORED_ROW_TYPES:
                 v = 0.5 * v
             off = (rx, ry, rz) != (0, 0, 0)
-            if off:
+            if off and itype != "CoulombIntra":
                 # documented reading: the composite oracle (records + the Gf/Gr
                 # displacement indexing below) places orbital a on the DISPLACED
                 # site; swapping the orbitals of every off-site record makes it
                 # place a on the reference site (survey identity 1), which is
                 # the reading the file documents and every solver now implements.
+                # ``CoulombIntra`` is on-site by definition and its branch below
+                # ignores ``b``, so it is excluded: a malformed off-site row of
+                # that type must not be silently re-read as orbital ``b``.
                 a, b = b, a
             for i in range(shape[0] * shape[1] * shape[2]):
                 xi, yi, zi = _coords(i, shape)
