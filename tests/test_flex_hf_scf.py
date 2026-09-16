@@ -5,6 +5,7 @@ potential shift, the mean-field seed follows the initial-value
 trajectory, the W-disabled fixed point equals paramagnetic UHFk, the
 reset set, IterationMax = 0 and the provenance block."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,7 +40,8 @@ out = sys.argv[2]
 logging.basicConfig(level=logging.DEBUG, filename=os.path.join(out, "log.txt"), filemode="w",
                     format="%(name)s %(levelname)s %(message)s")
 p = "tests/rpa/input_2orb"
-idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
+idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+         "CoulombInter": "onsite_inter.dat", "CoulombIntra": "coulombintra.dat"}
 r = read_input_k.QLMSkInput({"path_to_input": p, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
        "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson",
@@ -51,22 +53,102 @@ s.save_results({"path_to_output": out, "sigma": "sigma.npz", "green": "green.npz
 '''
 
 
+_HF_FIRST_MAP_SCRIPT = r'''
+import os, sys, numpy as np
+sys.path.insert(0, sys.argv[1] + "/src"); sys.path.insert(0, sys.argv[1])
+import hwave.qlmsio.read_input_k as read_input_k
+import hwave.solver.flex as flex_mod
+_root, inp, out = sys.argv[1:4]
+idict = {"path_to_input": inp, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+         "CoulombInter": "coulombinter.dat"}
+r = read_input_k.QLMSkInput({"path_to_input": inp, "interaction": idict})
+# IterationMax = 1 with Mix = 1.0 and no seed: the state after the run IS the
+# first Hartree-Fock map, taken on the bare (Sigma = 0) density, unmixed
+par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
+       "IterationMax": 1, "Mix": 1.0, "EPS": 8, "mixing_scheme": "linear",
+       "flex_hartree_fock": True, "flex_second_order": "takimoto"}
+s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                           "enable_spin_orbital": False, "calc_scheme": "general"})
+gi = r.get_param("green")
+s.solve(gi, out)
+np.savez(os.path.join(out, "static.npz"), sigma_static=np.asarray(gi["sigma_static"]))
+'''
+
+
+def _reversed_interaction_dir(src_dir, files):
+    """A fresh input directory holding ``F^rev``: every listed two-body file
+    rewritten with the displacement of each OFF-SITE row negated, geometry
+    and transfer copied verbatim. Returns the directory (the caller removes
+    it).
+
+    ``F^rev`` is what a user of the reference revision has to write to
+    express the same Hamiltonian this branch reads from ``F``: a row
+    ``(r, a, b, v)`` now means ``v n_{j,a} n_{j+r,b}`` rather than
+    ``v n_{j,b} n_{j+r,a}``, and the two readings differ exactly by
+    ``r -> -r`` (spec 2026-09-16 section 2.4). Orbital indices are NOT
+    touched; ``r = 0`` rows are copied as they are.
+
+    The wannier90-like header is four lines (title, norb, n_rvec,
+    degeneracies) and the rows follow; only the rows are rewritten. Every
+    declared degeneracy must be 1, which is what H-wave's own files write
+    and what makes the row order irrelevant -- a file with a real
+    Wannier90 degeneracy block would need its header permuted too, so this
+    helper refuses one instead of writing a wrong file."""
+    dst = tempfile.mkdtemp(prefix="hwave_rev_decl_")
+    for f in ("geom.dat", "transfer.dat"):
+        shutil.copy(os.path.join(src_dir, f), dst)
+    for f in files:
+        lines = open(os.path.join(src_dir, f)).read().splitlines()
+        header, body = lines[:4], lines[4:]
+        if any(int(x) != 1 for x in header[3].split()):
+            raise ValueError("_reversed_interaction_dir: {} declares a non-unit "
+                             "degeneracy block; reversing it would need the header "
+                             "permuted too".format(f))
+        out, reversed_rows = list(header), 0
+        for ln in body:
+            parts = ln.split()
+            if len(parts) < 7:
+                out.append(ln)
+                continue
+            r = [int(x) for x in parts[:3]]
+            if any(r):
+                parts[:3] = ["{:4d}".format(-x) for x in r]
+                reversed_rows += 1
+            out.append(" ".join(parts))
+        if reversed_rows == 0:
+            raise ValueError("_reversed_interaction_dir: {} has no off-site row, so "
+                             "F^rev == F and the comparison would be vacuous".format(f))
+        with open(os.path.join(dst, f), "w") as fw:
+            fw.write("\n".join(out) + "\n")
+    return dst
+
+
 class TestG0Off(unittest.TestCase):
     """Gate-off inputs: every archive member and the complete log stream
-    equal those of develop (the main checkout).
+    equal those of the reference revision (the main checkout, pinned by
+    tests/test_flex_second_order_compat.DEVELOP_COMMIT).
 
-    The run below pins flex_second_order = "takimoto" explicitly: this
-    guard's contract is develop identity, and develop has no second-order
-    key, so the comparison has to be made against the kernel develop
-    implements (spec 2026-09-08 D2). The new default ("local") is compared
-    against this same legacy kernel by
+    The run below pins flex_second_order = "takimoto" explicitly, on BOTH
+    sides: the reference revision defaults the key to "local", so leaving
+    it out would compare two different kernels (spec 2026-09-08 D2). The
+    default kernel is compared against this same legacy one by
     tests/test_flex_second_order_compat.py.
 
+    The declaration it runs is ON-SITE only (onsite_inter.dat +
+    coulombintra.dat). That is deliberate since the interaction-row
+    orientation change (issue #192, spec 2026-09-16 section 2.4): reading an
+    off-site row (r, a, b, v) as v n_{j,a} n_{j+r,b} moves the Hartree-Fock
+    term, so no off-site declaration can be byte-identical to the reference
+    revision under the Hartree-Fock gate, and an off-site fixture would
+    reduce this guard to "the paths that ignore the rows' orientation are
+    unchanged" -- which is already
+    tests/test_flex_second_order_compat.py's job. What the off-site half
+    became is the EQUIVALENCE below: the same run reproduces the reference
+    revision exactly on the reversed declaration F^rev.
+
     The npz comparison allows this side's archives to carry additional
-    members beyond develop's (task 7 stamps flex_second_order /
-    flex_second_order_schema on every general-scheme archive, sigma.npz and
-    green.npz included, which develop predates and never writes) -- every
-    member develop DOES have must still match exactly.
+    members beyond the reference revision's -- every member the reference
+    DOES have must still match exactly.
     """
 
     def test_byte_identity_against_develop(self):
@@ -83,28 +165,86 @@ class TestG0Off(unittest.TestCase):
                 subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out], check=True, cwd=here)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
                 da, db = np.load(os.path.join(a, name), allow_pickle=True), np.load(os.path.join(b, name), allow_pickle=True)
-                # #181 follow-up: this side now stamps flex_second_order /
-                # flex_second_order_schema on every general-scheme archive
-                # (task 7); develop predates that provenance pair and has
-                # neither key. Same treatment as
-                # test_flex_second_order_compat.py's _members() comparison:
-                # every develop member must still be present and equal, new
-                # members on this side are allowed.
+                # the same treatment as test_flex_second_order_compat.py's
+                # _members() comparison: every member the reference revision
+                # writes must be present here and equal, while this side may
+                # carry members the reference does not have (a later
+                # provenance stamp is not a compatibility break). The
+                # reference revision does write flex_second_order /
+                # flex_second_order_schema -- it is the merge that added
+                # them -- so those are compared, not tolerated.
                 self.assertEqual(set(db.files) - set(da.files), set(), name)
+                self.assertIn("flex_second_order", db.files, name)
                 for k in db.files:
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             la = open(os.path.join(a, "log.txt")).read().replace(here, "<root>").replace(a, "<out>")
             lb = open(os.path.join(b, "log.txt")).read().replace(develop, "<root>").replace(b, "<out>")
-            # flex_second_order (spec 2026-09-08 D2) is an orthogonal key
-            # added after this gate-off byte-identity guard was written: it
-            # logs one new INFO line on every general-scheme construction,
-            # regardless of the Phase B gates this test guards. Strip it
-            # before comparing so the guard still checks what it means to:
-            # Phase B gate-off output is unchanged.
-            la = "".join(ln for ln in la.splitlines(True)
-                        if "flex_second_order = " not in ln)
+            # the whole stream, nothing filtered: the reference revision is
+            # the merge that introduced flex_second_order, so it logs the
+            # same "flex_second_order = takimoto" INFO line this side does
+            # (an earlier version of this guard stripped that line, which
+            # would now DELETE a line from one side only)
+            self.assertIn("flex_second_order = takimoto", la)
             self.assertEqual(la, lb)
+
+    def test_first_map_static_equals_develop_on_the_reversed_declaration(self):
+        """Spec 2.4 end to end: with an OFF-SITE declaration F, this branch's
+        first Hartree-Fock map equals the reference revision's first map on
+        the reversed declaration F^rev.
+
+        The compatibility promise of the orientation change, through the
+        real solver and the real reference tree: a user who wants the old
+        numbers reverses the displacement of every off-site row and gets
+        them back. Iteration 1 with Mix = 1.0 and no seed is compared
+        because both sides then map the SAME (bare, Sigma = 0) density, so
+        any difference is the interaction reading and nothing else; the
+        in-process component version, on the map alone, is
+        tests/test_flex_second_order_compat.py::TestCompatibility::
+        test_hf_map_equals_develop_on_the_reversed_declaration.
+
+        np.array_equal, not a tolerance: the two tables are built from the
+        same values by the same code, and the branch's orientation step
+        (conj-transpose at fixed r) only commutes the two terms of the
+        reference builder's Hermitian average, which is exact in floating
+        point. A tolerance here would hide a real difference in the map.
+        """
+        from tests.test_flex_second_order_compat import develop_checkout
+        here = os.getcwd()
+        develop, why = develop_checkout()
+        if develop is None:
+            self.skipTest(why)
+        rev = _reversed_interaction_dir(_IN2, ("coulombinter.dat",))
+        try:
+            # anti-vacuity: the reversed declaration really is a different file
+            self.assertNotEqual(open(os.path.join(rev, "coulombinter.dat")).read(),
+                                open(os.path.join(_IN2, "coulombinter.dat")).read())
+            with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
+                    tempfile.TemporaryDirectory() as c:
+                for root, inp, out in ((here, os.path.abspath(_IN2), a),
+                                       (develop, rev, b),
+                                       (develop, os.path.abspath(_IN2), c)):
+                    subprocess.run([sys.executable, "-B", "-c", _HF_FIRST_MAP_SCRIPT,
+                                    root, inp, out], check=True, cwd=here)
+                mine = np.load(os.path.join(a, "static.npz"))["sigma_static"]
+                theirs = np.load(os.path.join(b, "static.npz"))["sigma_static"]
+                unreversed = np.load(os.path.join(c, "static.npz"))["sigma_static"]
+            scale = np.abs(mine).max()
+            self.assertGreater(scale, 1e-6)                          # anti-vacuity
+            self.assertEqual(mine.shape, theirs.shape)
+            self.assertTrue(np.array_equal(mine, theirs),
+                            "first Hartree-Fock map differs from the reference "
+                            "revision's on F^rev by {:.3e} of its own size"
+                            .format(np.abs(mine - theirs).max() / scale))
+            # and the reversal is what makes it equal: the reference revision
+            # on the UNREVERSED declaration lands somewhere else
+            gap = np.abs(mine - unreversed).max() / scale
+            self.assertGreater(gap, 1e-3,
+                               "the orientation change does not move this fixture's "
+                               "first map ({:.3e} relative); the equivalence above "
+                               "would be vacuous".format(gap))
+        finally:
+            shutil.rmtree(rev, ignore_errors=True)
 
 
 class TestStandaloneHF(unittest.TestCase):

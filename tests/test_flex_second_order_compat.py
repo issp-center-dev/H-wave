@@ -1,8 +1,19 @@
-"""Compatibility contract (spec 2026-09-08 section 3): 'takimoto' keeps every
-numerical archive member of the general path np.array_equal to develop's;
-'local' on CoulombIntra-only input agrees with 'takimoto' to 1e-14 with the
+"""Compatibility contract (spec 2026-09-08 section 3, extended by spec
+2026-09-16 section 2.4): 'takimoto' without the Hartree-Fock term keeps
+every numerical archive member of the general path np.array_equal to the
+reference revision's, and so does 'local' on an input with no off-site
+two-body row; the Hartree-Fock map on a declaration F reproduces the
+reference revision's map on the REVERSED declaration F^rev exactly; 'local'
+on CoulombIntra-only input agrees with 'takimoto' to 1e-14 with the
 archive-scale floor; the factors are built at construction under 'local'
-only; the D7 refusal fires at construction."""
+only; the D7 refusal fires at construction.
+
+What is NOT here: the paths the interaction-row orientation change moved
+(the Hartree-Fock term, the local kernel's off-site vertex, the bond gate).
+They cannot be compared to the reference revision on the same declaration
+by construction; their numerical state is pinned as committed fixed state
+by tests/test_flex_orientation_baseline.py, and their CORRECTNESS by the
+ED/oracle modules that file names."""
 import json
 import os
 import shutil
@@ -39,12 +50,6 @@ s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq", "sigma"
 '''
 
 _FILES = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "green.npz")
-#: the bond gate adds its dedicated archive to the comparison
-_BOND_FILES = _FILES + ("longitudinal_bond.npz",)
-#: gate-on parameters: the Hartree-Fock term, the bond channels and the
-#: dynamic archive (all three exist on develop as well, #181 Phase B)
-_GATE = {"flex_hartree_fock": True, "longitudinal_bond_channels": True,
-         "longitudinal_bond_output_full": True}
 
 
 def _run(checkout, path, inter, out, so, extra=None):
@@ -55,12 +60,19 @@ def _run(checkout, path, inter, out, so, extra=None):
 
 
 #: The commit the compatibility harnesses compare against: the merge that
-#: precedes this branch (``develop`` at the time the branch was cut). The
-#: contract these harnesses assert is BYTE identity with that revision, so
-#: the revision has to be named -- comparing against "whatever the reference
-#: directory happens to contain" turns a failed comparison into a puzzle and
-#: a passing one into nothing at all.
-DEVELOP_COMMIT = "59ac623810f2cff841d96bc721c9312b7ad912f7"
+#: precedes this branch (``develop`` at the time the branch was cut -- the
+#: merge of the local second-order kernel, #191). The contract these
+#: harnesses assert is BYTE identity with that revision, so the revision has
+#: to be named -- comparing against "whatever the reference directory
+#: happens to contain" turns a failed comparison into a puzzle and a passing
+#: one into nothing at all.
+#:
+#: The reference revision already HAS ``flex_second_order`` (it is the merge
+#: that added it) and already defaults it to ``"local"``, so every harness
+#: below names the kernel on BOTH sides. Leaving the reference side to its
+#: default would compare ``"local"`` against ``"takimoto"`` and report the
+#: difference between two kernels as a compatibility break.
+DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 
 
 def develop_checkout(run=None):
@@ -97,6 +109,43 @@ def develop_checkout(run=None):
     return dev, None
 
 
+#: the two-body types whose displacement tables ``build_interaction_tables``
+#: reads in the documented orientation (spec 2026-09-16 D-1); ``CoulombIntra``
+#: is on-site by construction and is not one of them
+_ORIENTED_TYPES = ("CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop")
+
+
+def _hermitian_density(shape, norb, seed):
+    """A deterministic per-spin real-space density ``rho_ab(r)`` obeying the
+    convention the Hartree-Fock map requires, ``rho_ab(r) = conj(rho_ba(-r))``
+    (it refuses anything else): the transform of a random HERMITIAN k-space
+    density."""
+    nvol = int(np.prod(shape))
+    rng = np.random.default_rng(seed)
+    rho_k = (rng.normal(size=(nvol, norb, norb))
+             + 1j * rng.normal(size=(nvol, norb, norb)))
+    rho_k = 0.5 * (rho_k + np.conjugate(np.swapaxes(rho_k, -1, -2)))
+    return np.fft.ifftn(rho_k.reshape(*shape, norb, norb),
+                        axes=(0, 1, 2)).reshape(nvol, norb, norb)
+
+
+def _legacy_tables(tables):
+    """``tables`` with the documented-orientation step UNDONE, i.e. the
+    tables the reference revision builds from the same declaration.
+
+    :func:`hwave.solver.hartree_fock.orient_documented` is an involution
+    (the conjugate transpose at fixed ``r``, with ``r = 0`` untouched), so
+    applying it a second time to each oriented type restores the reference
+    revision's table exactly -- no second source tree and no
+    re-implementation of the old builder."""
+    from hwave.solver import hartree_fock as hf
+    inter = dict(tables.inter_table)
+    for t in _ORIENTED_TYPES:
+        if inter.get(t) is not None:
+            inter[t] = hf.orient_documented(inter[t])
+    return hf.InteractionTables(inter, tables.spin_table, tables.discarded)
+
+
 def _members(d, files=_FILES):
     out = {}
     for f in files:
@@ -114,20 +163,41 @@ class TestCompatibility(unittest.TestCase):
         return dev
 
     def test_takimoto_numerical_members_equal_develop(self):
+        """The paths this branch did NOT move: every numerical archive
+        member of a ``"takimoto"`` run without the Hartree-Fock term is
+        ``np.array_equal`` to the reference revision's, on a fixture with
+        INTER-ORBITAL off-site rows and on an on-site one.
+
+        Scope, after the interaction-row orientation change (issue #192,
+        spec 2026-09-16 section 2.4): reading an off-site row ``(r, a, b, v)``
+        in the documented orientation changes three paths -- the FLEX
+        Hartree-Fock term (``flex_hartree_fock``), the local second-order
+        kernel's off-site vertex (``flex_second_order = "local"``) and the
+        bond gate, which reads the rows through the Hartree-Fock term. The
+        legacy kernel ``"takimoto"`` without the Hartree-Fock term is not
+        one of them: its vertex is the q-space density block, which the
+        orientation of the real-space row does not enter. That is the
+        identity asserted here, and its counterpart -- what the moved paths
+        DO produce -- is recorded as fixed state in
+        ``tests/test_flex_orientation_baseline.py`` (the gate-on case that
+        used to sit in this list is its ``smoke`` vector, under both
+        kernels) and pinned against develop at the Hartree-Fock map itself
+        by :meth:`test_hf_map_equals_develop_on_the_reversed_declaration`
+        below and by
+        ``tests/test_flex_hf_scf.py::TestG0Off::
+        test_first_map_static_equals_develop_on_the_reversed_declaration``.
+        """
         dev = self._develop()
         here = os.getcwd()
         compared = 0
         for path, inter, extra, files in (
                 (_IN2, {"CoulombInter": "coulombinter.dat"}, None, _FILES),
                 (_IN2, {"CoulombInter": "onsite_inter.dat",
-                        "CoulombIntra": "coulombintra.dat"}, None, _FILES),
-                # the bond gate (flex_hartree_fock + longitudinal_bond_channels):
-                # its channel-0 second order is selected by flex_second_order
-                # too, so "takimoto" must keep the whole gate-on archive set --
-                # the dedicated bond archive included -- equal to develop's
-                (_IN2, {"CoulombInter": "coulombinter.dat"}, _GATE, _BOND_FILES)):
+                        "CoulombIntra": "coulombintra.dat"}, None, _FILES)):
             with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-                _run(dev, os.path.abspath(path), inter, a, "absent", extra)
+                # "takimoto" on BOTH sides: the reference revision defaults
+                # the key to "local" (see DEVELOP_COMMIT)
+                _run(dev, os.path.abspath(path), inter, a, "takimoto", extra)
                 _run(here, os.path.abspath(path), inter, b, "takimoto", extra)
                 ma, mb = _members(a, files), _members(b, files)
                 for f in ma:
@@ -141,6 +211,35 @@ class TestCompatibility(unittest.TestCase):
                             compared += 1
         # anti-vacuity: the member list must not be empty
         self.assertGreater(compared, 10)
+
+    def test_local_on_onsite_only_input_equals_develop(self):
+        """The other unmoved path: ``flex_second_order = "local"`` on an
+        input with NO off-site two-body row is byte-identical to the
+        reference revision's.
+
+        The orientation change touches the kernel's OFF-SITE vertex only
+        (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
+        on-site fixture the exact local kernel must be untouched. Without
+        this case the identity above would leave the impression that only
+        the legacy kernel is unchanged."""
+        dev = self._develop()
+        here = os.getcwd()
+        inter = {"CoulombInter": "onsite_inter.dat", "CoulombIntra": "coulombintra.dat"}
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _run(dev, os.path.abspath(_IN2), inter, a, "local")
+            _run(here, os.path.abspath(_IN2), inter, b, "local")
+            ma, mb = _members(a), _members(b)
+            compared = 0
+            for f in ma:
+                for k, v in ma[f].items():
+                    self.assertIn(k, mb[f], (f, k))
+                    if np.asarray(v).dtype.kind in "fciub":
+                        np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
+                                                      err_msg=str((f, k)))
+                        compared += 1
+            self.assertGreater(compared, 10)
+            # anti-vacuity: the kernel really ran on a non-trivial sigma
+            self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
     def test_local_equals_takimoto_on_hubbard_only(self):
         here = os.getcwd()
@@ -257,6 +356,64 @@ class TestCompatibility(unittest.TestCase):
                     scale = np.abs(ref).max()
                     self.assertGreater(scale, 1e-6)                 # anti-vacuity
                     np.testing.assert_allclose(v, ref, rtol=0, atol=1e-13 * scale)
+
+    def test_hf_map_equals_develop_on_the_reversed_declaration(self):
+        """Spec 2.4: ``hf_map_new(F, rho) == hf_map_develop(F^rev, rho)`` at a
+        fixed density (``np.array_equal``).
+
+        This is the COMPATIBILITY statement of the orientation change for the
+        mean-field term: nothing is lost, the same physics is now written the
+        documented way round. An off-site row ``(r, a, b, v)`` that used to
+        mean ``v n_{j,b} n_{j+r,a}`` means ``v n_{j,a} n_{j+r,b}`` here, so a
+        user who wants the OLD result reverses the displacement of every
+        off-site row (``F -> F^rev``) and gets it back exactly.
+
+        The reference map is reproduced in process rather than through a
+        second source tree: it is today's map on the LEGACY tables of
+        ``F^rev``, i.e. ``build_flex_hf_tables(F^rev)`` with the orientation
+        step undone (:func:`_legacy_tables`; ``orient_documented`` is an
+        involution). The end-to-end version of the same statement, against
+        the real reference tree and through ``solve``, is
+        ``tests/test_flex_hf_scf.py::TestG0Off::
+        test_first_map_static_equals_develop_on_the_reversed_declaration``.
+        """
+        import hwave.qlmsio.read_input_k as read_input_k
+        from hwave.solver import flex_hf
+        from hwave.solver.kgrid import reverse_fft_axes
+        shape, norb = (4, 4, 1), 2
+        # the fixture's declaration, read once; its off-site content carries
+        # the INTER-ORBITAL rows v_12(-x) = 1 / v_21(+x) = 1, which is what
+        # makes F^rev a different declaration at all (reversing the
+        # displacement of an orbital-DIAGONAL row is the identity on the
+        # Hermitian-closed table)
+        idict = {"path_to_input": _IN2, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
+        rows = read_input_k.QLMSkInput(
+            {"path_to_input": _IN2, "interaction": idict}).get_param("ham")["CoulombInter"]
+        F = {"CoulombInter": dict(rows)}
+        F_rev = {"CoulombInter": {((-ir[0], -ir[1], -ir[2]), ov): v
+                                  for (ir, ov), v in rows.items()}}
+        self.assertNotEqual(F["CoulombInter"], F_rev["CoulombInter"])   # anti-vacuity
+        rho = _hermitian_density(shape, norb, seed=20260916)
+        # the density really is in the convention hf_map requires
+        rev = np.conjugate(np.swapaxes(
+            reverse_fft_axes(rho.reshape(*shape, norb, norb), (0, 1, 2)), -1, -2))
+        self.assertLess(np.abs(rho - rev.reshape(rho.shape)).max(), 1e-14)
+        t_new = flex_hf.build_flex_hf_tables(F, norb, shape)
+        t_rev = flex_hf.build_flex_hf_tables(F_rev, norb, shape)
+        new = flex_hf.hf_map(rho, t_new, shape, norb)
+        reference = flex_hf.hf_map(rho, _legacy_tables(t_rev), shape, norb)
+        self.assertGreater(np.abs(new).max(), 1e-6)                    # anti-vacuity
+        np.testing.assert_array_equal(new, reference)
+        # anti-vacuity of the REVERSAL: today's map on F differs from the
+        # reference map on F (the legacy tables of the SAME declaration), so
+        # the equality above is a property of F^rev, not of the map
+        legacy_on_F = flex_hf.hf_map(rho, _legacy_tables(t_new), shape, norb)
+        gap = np.abs(new - legacy_on_F).max() / np.abs(new).max()
+        self.assertGreater(gap, 1e-3,
+                           "the orientation step does not change this fixture's "
+                           "Hartree-Fock map ({:.3e} relative); the equivalence "
+                           "above would be vacuous".format(gap))
 
     def test_factors_lifecycle_and_d7_at_construction(self):
         from tests.test_second_order_factors import _split_for

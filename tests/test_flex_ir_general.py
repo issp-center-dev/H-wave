@@ -784,15 +784,19 @@ def test_second_order_local_ir_matches_uniform_onsite_uprime():
 
 
 def test_second_order_takimoto_ir_numerically_identical_to_develop():
-    """``"takimoto"`` on the IR path is still develop's code path: every
-    numerical archive member of a general+IR run with the key set to
-    ``"takimoto"`` is ``np.array_equal`` to the same run on the develop
-    checkout, where the key does not exist.
+    """``"takimoto"`` on the IR path is still the reference revision's code
+    path: every numerical archive member of a general+IR run with the key
+    set to ``"takimoto"`` is ``np.array_equal`` to the same run, same key,
+    on the reference source tree.
 
-    The uniform-grid half of this contract lives in
-    ``tests/test_flex_second_order_compat.py``; this is its IR twin, run
-    through the same subprocess harness (the develop checkout is a second
-    source tree, so it can only be exercised out of process)."""
+    The fixture is ON-SITE only (``_write_2d_2orb_onsite_fixture``), so the
+    interaction-row orientation change (issue #192) does not reach it: the
+    identity is expected to hold unchanged. The uniform-grid half of this
+    contract, including the off-site fixture and the paths that DID move,
+    lives in ``tests/test_flex_second_order_compat.py``; this is its IR
+    twin, run through the same subprocess harness (the reference revision
+    is a second source tree, so it can only be exercised out of
+    process)."""
     import shutil
     import subprocess
     import sys
@@ -808,7 +812,11 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     b = tempfile.mkdtemp(prefix="hwave_ir_so_here_")
     try:
         _write_2d_2orb_onsite_fixture(fixture)
-        for checkout, out, so in ((dev, a, "absent"), (here, b, "takimoto")):
+        # "takimoto" on BOTH sides: the reference revision is the merge that
+        # added flex_second_order and defaults it to "local", so leaving the
+        # key out there would compare two different kernels rather than two
+        # revisions (see tests/test_flex_second_order_compat.DEVELOP_COMMIT)
+        for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
             env = dict(os.environ,
                        PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
             subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
