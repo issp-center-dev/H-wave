@@ -361,7 +361,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
 
 
 
-def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
+def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=np):
     """Sigma_fluct(k, iw) from the bond-resolved effective interaction ``W``
     in ``store`` (spec 3.4 rev 19, normative equation):
 
@@ -388,18 +388,27 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
 
     ``green_kw`` is rank five `(1, nmat, nvol, norb, norb)`; the result has
     the same shape.  With a single on-site channel this reproduces
-    `FLEX._calc_self_energy_general` byte for byte."""
+    `FLEX._calc_self_energy_general` byte for byte.
+
+    ``xp`` selects the array module the accumulation runs in (numpy or
+    cupy; default numpy). ``green_kw`` may be host or device -- it is moved
+    to ``xp`` here via :func:`_bk.to_device`, as is each host ``W`` block
+    read from ``store``. The returned ``sigma`` is an ``xp`` array; the
+    caller moves it to the host. With ``xp is np`` this is the previous
+    code, line for line."""
+    if not (xp is np or (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp)):
+        raise TypeError("calc_self_energy_bond: xp must be numpy or cupy")
     nx, ny, nz = (int(x) for x in shape)
     nvol = nx * ny * nz
     nmat = green_kw.shape[1]
     P = norb
     nd = norb * norb
     B = view.n_channels
-    G_kw = green_kw[0]
+    G_kw = _bk.to_device(green_kw, xp)[0]
     G_rt = _bk.spatial_ifftn(
         _ms.fermion_to_tau(G_kw.reshape(nmat, nvol * P * P), axis=0).reshape(nmat, nx, ny, nz, P * P),
         axes=(1, 2, 3), workers=workers).reshape(nmat, nx, ny, nz, P, P)
-    Sigma_rt = np.zeros((nmat, nvol, P, P), dtype=np.complex128)
+    Sigma_rt = xp.zeros((nmat, nvol, P, P), dtype=xp.complex128)
     axes = (1, 2, 3)
     for alpha in range(B):
         Ra = np.asarray(view.delta_r[alpha], dtype=int)
@@ -409,14 +418,14 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
             if shift == (0, 0, 0):
                 G_sh = G_rt.reshape(nmat, nvol, P, P)
             else:
-                G_sh = np.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
-            blk = np.ascontiguousarray(store.get_pair("W", alpha, bt))               # (nmat, nvol, nd, nd)
+                G_sh = xp.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
+            blk = _bk.to_device(np.ascontiguousarray(store.get_pair("W", alpha, bt)), xp)   # 1 H2D per pair
             blk_qt = _ms.boson_to_tau(blk.reshape(nmat, nvol * nd * nd), axis=0)
             del blk
             Wab_rt = _bk.spatial_ifftn(blk_qt.reshape(nmat, nx, ny, nz, nd * nd),
                                        axes=axes, workers=workers).reshape(nmat, nvol, P, P, P, P)
             del blk_qt
-            A = np.einsum('frcadb,frcd->frab', Wab_rt, G_sh)
+            A = xp.einsum('frcadb,frcd->frab', Wab_rt, G_sh)
             del Wab_rt, G_sh
             Sigma_rt += A
             del A
