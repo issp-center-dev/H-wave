@@ -174,6 +174,41 @@ def to_host(arr):
     return xp.asnumpy(arr)
 
 
+def to_device(arr, xp):
+    """Return ``arr`` as an array of module ``xp`` (host->device copy for cupy,
+    identity for numpy). The bond-gate orchestration layer (flex_bond) is the
+    only caller for bond arrays; kernels never transfer."""
+    if xp is np:
+        return arr
+    return xp.asarray(arr)
+
+
+def device_available_bytes():
+    """Bytes a cupy allocation can use right now on the current device:
+    driver-free memory (``memGetInfo``, which EXCLUDES the blocks cupy's pool
+    holds) PLUS the pool's cached-but-unused bytes (reusable by the next
+    allocation). ``None`` when cupy or a device is unavailable, or the query
+    fails -- callers treat ``None`` as "no device model"."""
+    try:
+        cupy = _import_cupy()
+        free_b, _total = cupy.cuda.runtime.memGetInfo()
+        pool = cupy.get_default_memory_pool()
+        cached = int(pool.total_bytes()) - int(pool.used_bytes())
+        return int(free_b) + max(0, cached)
+    except Exception:            # noqa: BLE001 - any failure means "no model"
+        return None
+
+
+def gpu_available():
+    """True when ``get_backend(True)`` would select cupy with a usable device.
+    Never raises; safe at test-collection time (no import unless called)."""
+    try:
+        _xp, active = get_backend(True, logger=None, required=False)
+        return bool(active)
+    except Exception:            # noqa: BLE001
+        return False
+
+
 def spatial_ifftn(a, axes, workers=1):
     """Spatial inverse FFT shared by the k-space solvers (RPA/FLEX/dynamic
     Eliashberg). On the numpy backend this is parallelized via scipy.fft when
