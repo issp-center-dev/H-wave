@@ -1580,10 +1580,15 @@ class FLEX(RPA):
             est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
             est["cap_bytes"] / gib, est["table"])
         if "device_table" in est:
+            # every figure below is at the SELECTED batch est["nb"] (the
+            # minimum of what the host cap and the device admit); the
+            # device-only maximum is named separately so the two are not
+            # read as one number
             logger.info(
                 "Bond-resolved FLEX device table (ESTIMATE): need %.4f GiB against 0.9 * "
-                "available %.4f GiB, device batch %d\n%s", est["device_need"] / gib,
-                est["device_cap"] / gib, est["device_nb"], est["device_table"])
+                "available %.4f GiB at frequency batch %d (device alone would admit %d)\n%s",
+                est["device_need"] / gib, est["device_cap"] / gib, est["nb"],
+                est["device_nb"], est["device_table"])
         if use_gpu:
             self._log_bond_transfer_volume(est)
         if est["dressing_ops"] > flex_bond._DRESSING_OPS_WARN:
@@ -1603,7 +1608,9 @@ class FLEX(RPA):
     def _log_bond_transfer_volume(self, est):
         """Host <-> device traffic of one SCF iteration at the selected
         frequency batch (spec 4.6), logged once per solve. Per batch the
-        dressing moves one chibar batch in and one W batch out, plus two
+        dressing moves one chibar batch in and one W batch out -- over a
+        whole iteration one full (Nmat, nvol, ND, ND) buffer each way,
+        since the batches tile the frequency axis -- plus two
         batch-sized reads for the conditioning guard under
         ``guard_freqs = "all"`` and two more for the full dynamic
         susceptibilities under ``longitudinal_bond_output_full``; the
@@ -1611,12 +1618,13 @@ class FLEX(RPA):
         from hwave.solver import flex_bond
         gib = flex_bond._GIB
         nb, nmat = int(est["nb"]), int(est["nmat"])
-        n_batches = -(-nmat // nb)             # ceil
-        u_batch = nb * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
+        n_batches = -(-nmat // nb)             # ceil; the last one may be short
+        # the batches tile the frequency axis exactly, so one pass over them
+        # moves the whole (nmat, nvol, ND, ND) buffer once, whatever nb is
+        u_total = nmat * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
-        h2d = n_batches * u_batch + int(est["B"]) ** 2 * int(est["C_bytes"])
-        d2h = (n_batches * u_batch
-               * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
+        h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
+        d2h = (u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
                + 3 * int(est["C_bytes"]))
         logger.info(
             "longitudinal_bond_channels (FLEX): bond-gate transfer volume per iteration "

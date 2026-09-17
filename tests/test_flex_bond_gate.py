@@ -304,6 +304,36 @@ class TestOutputs(unittest.TestCase):
             self.assertEqual(str(z["longitudinal_bond_device"]), "numpy")
             self.assertEqual(int(z["longitudinal_bond_nb"]), s._bond_nb)
 
+    def test_guard_mode_and_array_module_reach_the_kernels(self):
+        """The configured guard mode is WIRED, not just recorded.
+
+        The end-to-end equality above and the provenance member would both
+        survive a solver that hard-coded ``guard_freqs="all"`` (the two modes
+        agree whenever the guard passes, and the member is read off the
+        config). This wraps the two kernels the solver calls and reads the
+        arguments they actually received -- including the array module of the
+        transport, which is numpy on the CPU path.
+        """
+        import hwave.solver.flex_bond as flex_bond
+        for mode, expected in ((None, "all"), ("static", "static")):
+            with self.subTest(mode=mode):
+                s, r = _flex({} if mode is None else {"longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with mock.patch.object(flex_bond, "dress_and_build_w",
+                                       wraps=flex_bond.dress_and_build_w) as dress, \
+                        mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                          wraps=flex_bond.calc_self_energy_bond) as transport:
+                    with tempfile.TemporaryDirectory() as out:
+                        s.solve(gi, out)
+                self.assertEqual(dress.call_count, _PAR["IterationMax"])
+                self.assertEqual(transport.call_count, _PAR["IterationMax"])
+                for call in dress.call_args_list:
+                    self.assertEqual(call.kwargs["guard_freqs"], expected)
+                    # the device context, not the loose vertex arrays
+                    self.assertIs(call.args[1].xp, np)
+                for call in transport.call_args_list:
+                    self.assertIs(call.kwargs["xp"], np)
+
     def test_static_guard_end_to_end_equals_all_when_the_guard_passes(self):
         outs = {}
         for mode in ("all", "static"):
