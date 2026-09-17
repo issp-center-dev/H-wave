@@ -117,6 +117,7 @@ class PairVertexAccumulator:
         self._done = set()
         self._resid_mode = False
         self._resid_type = None
+        self._resid_seen = set()
         if ir is None:
             if len(self.pairing_types) != 1:
                 raise ValueError("PairVertexAccumulator: the uniform grid takes exactly one "
@@ -198,6 +199,7 @@ class PairVertexAccumulator:
         stage's own contribution (spec 4.5): ``eval(sol)`` reconstructs exactly
         what the kernel will use -- the smooth coefficients alone when the
         constant is dropped, plus the constant when it is retained."""
+        self._resid_seen.add(channel)
         sol = self._sol[eta][channel]
         rec = np.einsum("cvij,cl->lvij", sol[:self.L], self._ev[:, l0:l1])
         if self.ir_keep_static:
@@ -236,10 +238,21 @@ class PairVertexAccumulator:
             # types differ by the scalar coefficients, which cancel in r / a
             self._resid_mode = True
             self._resid_type = self.pairing_types[0]
+            self._resid_seen = set()
             try:
                 stage_callable(self)
             finally:
                 self._resid_mode = False
+            # a callable that replays nothing would leave r = a = 0, which reads
+            # as a perfect fit AND disables the constant-vs-scale refusal below
+            missing = [st for st in self._STAGES if st not in self._resid_seen]
+            if len(missing) == len(self._STAGES):
+                raise ValueError("PairVertexAccumulator.finish: stage_callable replayed no "
+                                 "stage; the IR residual cannot be evaluated")
+            if missing:
+                raise ValueError("PairVertexAccumulator.finish: stage_callable did not replay "
+                                 "the {} stage; the IR residual cannot be evaluated"
+                                 .format(missing[0]))
             rel = np.zeros((self.B, self.B))
             for st in self._STAGES:
                 # a stage with a = 0 (identically zero contribution) counts as 0
@@ -316,10 +329,12 @@ class AdmissionTable:
 
 
 def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, residency, ir,
-                         L_B, n_channels, in_process):
+                         L_B, n_channels, in_process, nb=0):
     """The spec-8 incremental memory table of the pairing step. ``L_B`` is the
-    bosonic coefficient count (``0`` on the uniform grid) and ``n_channels``
-    (1 or 2) the number of pairing types whose IR coefficient rows are alive."""
+    bosonic coefficient count (``0`` on the uniform grid), ``n_channels``
+    (1 or 2) the number of pairing types whose IR coefficient rows are alive,
+    and ``nb`` the dressing batch size of the vertex build (``0`` for a
+    kernel-only admission, where no dressing batch is allocated)."""
     nd = norb * norb
     ND = B * nd
     S = ntau if ir else nmat
@@ -330,14 +345,22 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
         "vertex_slot": 0 if (ir or in_process) else nmat * nvol * ND * ND * 16,
         "coefficients_build": (2 * (L_B + 1) * nvol * ND * ND * 16 * n_channels) if ir else 0,
         "coefficients": ((L_B + 1) * nvol * ND * ND * 16 * n_channels) if ir else 0,
+        # one dressing batch on the device during the vertex build (the FLEX
+        # dressing row); the post-processing entry holds one archive member
+        # on the host while it feeds that build
+        "dressing_workspace": 7 * int(nb) * nvol * ND * ND * 16,
+        "source_member": 0 if in_process else nmat * nvol * ND * ND * 16,
         "G2": norb ** 4 * nvol * nfreq * 16,
         "gap_work": (3 + B) * vec,
         "hoisted_blocks": B * B * blk,
         "stream_workspace": 3 * blk,
         "eigen_vectors": (ncv + 2) * vec,
     }
-    build_host = max(rows["vertex_slot"], rows["coefficients_build"])
-    dev_common = rows["G2"] + rows["gap_work"] + rows["stream_workspace"]
+    build_host = max(rows["vertex_slot"], rows["coefficients_build"]) + rows["source_member"]
+    # the dressing batch is a BUILD-phase device peak, so it is part of every
+    # residency's device need, not only the streaming one
+    dev_common = (rows["G2"] + rows["gap_work"] + rows["stream_workspace"]
+                  + rows["dressing_workspace"])
     need = {
         "device": (int(1.25 * (build_host + rows["eigen_vectors"])),
                    int(1.25 * (dev_common + rows["hoisted_blocks"]))),
