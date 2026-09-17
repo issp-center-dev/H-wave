@@ -479,7 +479,21 @@ self-energy of every interaction term to the FLEX loop, and
 fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code> enters
 self-consistently (see <a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> for the equations and the domain).
-Both are <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free, CPU, uniform-grid options.
+Both are <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free, uniform-grid options, and
+both run on the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, via CuPy) as well as on the CPU: on
+its own, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> uses the ordinary FLEX GPU path (see
+the <code class="docutils literal notranslate"><span class="pre">gpu</span></code> option below); with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) the dressing, the effective
+interaction and the self-energy transport run on the GPU instead, while
+the bond arrays stay in host memory and are transferred one frequency
+batch at a time – the batch is chosen against both the host cap
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>) and the free device memory
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> overrides both and is refused when it
+exceeds either). Results agree with the CPU path to round-off; the
+outputs record <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>.
+Once a run has been checked with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>,
+production GPU runs can switch to <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>: on a GPU the full guard costs
+about 2.5 times the static one, versus about 20% on the CPU.
 A complete input for a single-band square lattice with an on-site <code class="docutils literal notranslate"><span class="pre">U</span></code> and a
 nearest-neighbour <code class="docutils literal notranslate"><span class="pre">V</span></code> (the interaction files follow the Wannier90-style
 format of the <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">interaction input</span></a>; <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>
@@ -500,6 +514,7 @@ lists the four bonds <code class="docutils literal notranslate"><span class="pre
 <span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # override the automatic frequency batch</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)</span>
 <span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
@@ -998,7 +1013,10 @@ unavailable the solver warns and falls back to the CPU (numpy) path
 via closed-form eigenvalues when each spin block has at most 2
 components (single-orbital, or e.g. a spin-reduced two-orbital model);
 only larger blocks fall back to a host non-Hermitian
-eigendecomposition.</p></td>
+eigendecomposition. <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> on its own uses
+this ordinary GPU path; with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+the bond-resolved GPU path described in
+<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a> applies instead.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>

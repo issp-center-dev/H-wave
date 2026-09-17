@@ -297,10 +297,19 @@ declaration is rejected with an error. It cannot be combined with
 enables the self-consistent bond-resolved channel of the Hartree-Fock
 FLEX (experimental; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
-grid, CPU execution, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
-<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). The bond-specific companions below keep their
-meaning; <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> and
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> are FLEX-only.</p>
+grid, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
+<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) and <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+the dressing, the effective interaction and the self-energy
+transport run on the GPU (CuPy); the bond arrays stay in host memory
+and one frequency batch is transferred at a time; the batch is
+chosen against both the host cap and the free device memory
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> overrides both, see there). Results
+agree with the CPU path to round-off; the outputs record
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>. The
+bond-specific companions below keep their meaning;
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>
+are FLEX-only.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code></p>
 <p><strong>Type :</strong>
@@ -325,6 +334,22 @@ The refusal message reports the estimate and the shapes behind it; on
 a machine with enough physical memory, raise the cap to proceed.
 Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+Which bosonic Matsubara frequencies the conditioning guard of the
+bond-resolved dressing inspects. <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> (default) checks every
+<code class="docutils literal notranslate"><span class="pre">(nu,</span> <span class="pre">q)</span></code> denominator with a singular-value decomposition and
+refuses the run when one is singular or nearly singular (the
+behaviour of previous versions). <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> checks only the zero
+frequency and validates the other slices by the solve residual
+<code class="docutils literal notranslate"><span class="pre">||(1</span> <span class="pre">-/+</span> <span class="pre">chibar</span> <span class="pre">V)</span> <span class="pre">chi</span> <span class="pre">-</span> <span class="pre">chibar||</span> <span class="pre">/</span> <span class="pre">max(1,</span> <span class="pre">||chibar||)</span> <span class="pre">&lt;=</span> <span class="pre">1e-6</span></code>; it
+is a reduced diagnostic that removes the dominant CPU cost of the
+guard and is recorded in the outputs (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>
+member). The default does not depend on <code class="docutils literal notranslate"><span class="pre">gpu</span></code>. Ignored with a
+warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>Type :</strong>
 Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; FLEX mode only)</p>
@@ -335,8 +360,11 @@ and off-site) to the FLEX self-energy, <span class="math notranslate nohighlight
 + \Sigma_{\rm fluct}\)</span>, recomputed from the dressed Green function every
 iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
 <span class="pre">&quot;general&quot;</span></code> on a spin-free system, the uniform Matsubara grid
-(<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), CPU execution (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>
-is refused), no sublattice, no external field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>.
+(<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), no sublattice, no external
+field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is accepted: on its own
+the ordinary FLEX GPU path applies (see <code class="docutils literal notranslate"><span class="pre">gpu</span></code> below); with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> the bond-resolved GPU path
+described there applies instead.
 A user mean field (<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>) is taken as the
 initial static self-energy instead of being folded into the band;
 <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> gains the members <code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>, <code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>,
@@ -365,8 +393,12 @@ Integer (default: chosen automatically; FLEX mode only)</p>
 Number of bosonic frequencies dressed at once by the bond-resolved
 FLEX (in <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>). By default the largest batch that keeps the
 estimated peak memory under <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> is
-used; an explicit value is checked against the same cap. Ignored with
-a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+used (and, with <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, under the free device memory as
+well); an explicit value is validated against the same cap(s) –
+the host cap always, and the free device memory measured when the
+bond solve starts when <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> – and refused when it exceeds
+either. Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p>
 <p><strong>Type :</strong>
@@ -491,7 +523,11 @@ the whole SCF loop) runs on a GPU via CuPy. When CuPy or a CUDA device is
 unavailable, the solver warns and falls back to the CPU (numpy) path with
 an identical result. Install CuPy as the precompiled binary wheel matching
 your CUDA version (e.g. <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code> for CUDA 12.x); see
-the <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.</p>
+the <a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPy installation guide</a>.
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> on its own is accepted and uses this
+ordinary GPU path; with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (which
+requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) the bond-resolved GPU path
+described under <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> above applies instead.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p>
 <p><strong>Type :</strong>

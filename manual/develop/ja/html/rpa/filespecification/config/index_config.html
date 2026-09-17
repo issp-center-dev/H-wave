@@ -249,8 +249,15 @@ exchange 配線は2つのフェルミオン運動量に依存するためこの�
 ません。<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが Hartree-Fock FLEX の
 自己無撞着なボンド分解チャネルを有効にします（実験的機能。
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
-スピンフリー系・一様松原格子・CPU 実行・副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
-が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。以下のボンド関連の補助キーは
+スピンフリー系・一様松原格子・副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）かつ<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、
+ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
+実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
+転送します。バッチ幅はホスト側の上限とデバイスの空きメモリの両方に
+照らして選ばれます（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると
+両方に優先します。詳細は同キーの項を参照）。結果は丸め誤差の範囲で
+CPU 実行と一致します。出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>が記録されます。以下のボンド関連の補助キーは
 同じ意味を持ち、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>と
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>は FLEX 専用です。</p>
 </li>
@@ -274,6 +281,22 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 上限を引き上げて実行してください。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 でない場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>)</p>
+<p><strong>説明 :</strong>
+ボンド分解したドレッシングの条件数ガードが検査するボソン松原振動数を
+指定します。デフォルトの<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>は全ての<code class="docutils literal notranslate"><span class="pre">(nu,</span> <span class="pre">q)</span></code>分母を
+特異値分解で検査し、特異または特異に近い場合は実行を拒否します
+（旧バージョンの挙動）。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>はゼロ振動数のみを特異値分解で
+検査し、その他のスライスは解の残差
+<code class="docutils literal notranslate"><span class="pre">||(1</span> <span class="pre">-/+</span> <span class="pre">chibar</span> <span class="pre">V)</span> <span class="pre">chi</span> <span class="pre">-</span> <span class="pre">chibar||</span> <span class="pre">/</span> <span class="pre">max(1,</span> <span class="pre">||chibar||)</span> <span class="pre">&lt;=</span> <span class="pre">1e-6</span></code>
+によってのみ検証します。これはガードの支配的な CPU コストを取り除く
+簡略化された診断であり（後方安定な解法は特異に近くても小さな残差で
+通過し得ます）、出力にも記録されます
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>メンバー）。デフォルト値は
+<code class="docutils literal notranslate"><span class="pre">gpu</span></code>に依存しません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+でない場合は警告付きで無視されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
 <p><strong>説明 :</strong>
@@ -283,8 +306,12 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 （<span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}\)</span>。毎反復
 ドレスドグリーン関数から再計算。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。
 スピンフリー系での<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、一様松原格子
-（<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>は拒否）、CPU 実行（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は
-拒否）、副格子なし、外場なし、偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。
+（<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>は拒否）、副格子なし、外場なし、
+偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は受理されます。
+単独では通常の FLEX の GPU 経路が使われ（下記<code class="docutils literal notranslate"><span class="pre">gpu</span></code>を参照）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は代わりに
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>の項で説明するボンド分解した
+GPU 経路が使われます。
 ユーザー指定の平均場（<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>）はバンドに
 折り込まれず、静的自己エネルギーの初期値として扱われます。
 <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>には<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>・
@@ -309,9 +336,11 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 <p><strong>形式 :</strong> int型 (デフォルトは自動選択。FLEXモードのみ)</p>
 <p><strong>説明 :</strong>
 ボンド分解 FLEX が一度にドレスするボソン振動数の数（<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>）
-です。デフォルトでは推定ピークメモリが
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>以下に収まる最大のバッチが
-選ばれ、明示した値も同じ上限と照合されます。
+です。デフォルトでは推定ピークメモリが<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>以下（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合はデバイスの空きメモリ以下でもあること）に
+収まる最大のバッチが選ばれます。明示した値も同じ上限と照合されます
+（ホスト側の上限は常に、<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合はさらにボンド分解した
+解法の開始時に計測されるデバイスの空きメモリも対象になり、
+いずれかを超えると拒否されます）。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p>
@@ -411,7 +440,7 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
-<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">true</span></code>にすると、計算の主要部（Green関数、感受率<span class="math notranslate nohighlight">\(\chi_0(q)\)</span>のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）でのインストールを推奨します（<a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPyインストールガイド</a>参照）。</p>
+<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">true</span></code>にすると、計算の主要部（Green関数、感受率<span class="math notranslate nohighlight">\(\chi_0(q)\)</span>のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">cupy-cuda12x</span></code>）でのインストールを推奨します（<a class="reference external" href="https://docs.cupy.dev/en/stable/install.html">CuPyインストールガイド</a>参照）。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を単独で指定した場合はこの通常の GPU 経路が使われます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）の場合は代わりに、上記の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>の項で説明するボンド分解した GPU 経路が使われます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p>
 <p><strong>形式 :</strong> int型 (デフォルトは 1)</p>

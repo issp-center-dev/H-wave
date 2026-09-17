@@ -452,7 +452,16 @@ continuation スイープでは<code class="docutils literal notranslate"><span 
 はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code>の交換交差を自己無撞着に取り込みます
 （式と適用範囲は<a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。いずれも<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
-スピンフリー・CPU・一様格子のオプションです。オンサイト<code class="docutils literal notranslate"><span class="pre">U</span></code>と最近接<code class="docutils literal notranslate"><span class="pre">V</span></code>を
+スピンフリー・一様格子のオプションで、いずれも CPU に加えて
+GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>、CuPy 経由）でも実行できます。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を単独で指定した場合は通常の FLEX の GPU 経路が使われます（下記<code class="docutils literal notranslate"><span class="pre">gpu</span></code>の
+項を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）の場合は代わりに、ドレッシング・有効相互作用・自己エネルギー
+の転送が GPU 上で実行され、ボンド配列はホストメモリに置かれたまま振動数
+バッチを1つずつ転送します。バッチ幅はホスト側の上限（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>）とデバイスの空きメモリの両方に照らして選ばれます（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
+範囲で CPU 実行と一致します。出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>が記録されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
+<span class="pre">&quot;all&quot;</span></code>で一度検査した後は、本番の GPU 実行を<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>に切り替えられます。
+GPU では完全なガードは静的ガードの約2.5倍、CPU では約20%のコストです。
+オンサイト<code class="docutils literal notranslate"><span class="pre">U</span></code>と最近接<code class="docutils literal notranslate"><span class="pre">V</span></code>を
 持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
 <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">相互作用入力</span></a>の Wannier90 形式で、<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>には
 4本のボンド<code class="docutils literal notranslate"><span class="pre">(+-1,</span> <span class="pre">0,</span> <span class="pre">0)</span></code>・<code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">+-1,</span> <span class="pre">0)</span></code>を列挙します）:</p>
@@ -472,6 +481,7 @@ continuation スイープでは<code class="docutils literal notranslate"><span 
 <span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_guard_freqs = "all"  # "static" ならゼロ振動数のみ特異値分解で検査</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）</span>
 <span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
@@ -942,7 +952,11 @@ GPU（CuPy）で実行します。CuPy または CUDA デバイスが無い場�
 CPU（numpy）実行へフォールバックします（結果は同一）。化学ポテンシャル探索も
 スピンブロックあたりの成分数が2以下（1軌道、およびスピン縮約した2軌道系など）
 なら閉形式の固有値により GPU 上で実行され、3以上の場合のみ非エルミート
-固有値分解を CPU で実行します。</p></td>
+固有値分解を CPU で実行します。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を
+単独で指定した場合はこの通常の GPU 経路が使われます。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は代わりに、
+<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>で説明するボンド分解した GPU 経路が
+使われます。</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>

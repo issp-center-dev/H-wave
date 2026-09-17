@@ -200,8 +200,10 @@ builds, declared or not; an undeclared type contributes zero blocks),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code> (integer, <code class="docutils literal notranslate"><span class="pre">-1</span></code> when unset),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_c</span></code> (float:
 the smallest conditioning score of the spin / charge RPA denominator over
-<span class="math notranslate nohighlight">\(q\)</span>; the run is refused when it reaches the instability floor) and
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code> (integer, <code class="docutils literal notranslate"><span class="pre">1</span></code>).</p></li>
+<span class="math notranslate nohighlight">\(q\)</span>; the run is refused when it reaches the instability floor; with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> these report the minimum over
+the zero-frequency slice only) and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code> (integer,
+<code class="docutils literal notranslate"><span class="pre">1</span></code>).</p></li>
 </ul>
 <p>In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (the
 Hartree-Fock FLEX of <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>) the same sixteen keys describe the
@@ -209,6 +211,11 @@ LAST self-consistent map (<code class="docutils literal notranslate"><span class
 written into the combined <code class="docutils literal notranslate"><span class="pre">chiq</span></code> file when <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code> is set,
 otherwise into the <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> file (which always exists; the charge-channel
 static keys are then found in <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> – an INFO line says so). The
+archive additionally carries <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code> (string:
+<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>, the frequency coverage of the bond dressing’s
+conditioning guard), <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> (string: <code class="docutils literal notranslate"><span class="pre">&quot;cupy&quot;</span></code> or
+<code class="docutils literal notranslate"><span class="pre">&quot;numpy&quot;</span></code>, the backend that ran the bond solve) and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> (integer, the frequency batch actually used). The
 ordinary <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> arrays of such a run are the
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>,
@@ -225,7 +232,9 @@ holds <code class="docutils literal notranslate"><span class="pre">bond_archive_
 <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>, <code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span>
 <span class="pre">nmat&quot;</span></code>), <code class="docutils literal notranslate"><span class="pre">beta</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>, the momentum-convention
 markers, <code class="docutils literal notranslate"><span class="pre">index_order</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>, <code class="docutils literal notranslate"><span class="pre">types</span></code>, the sixteen
-static keys and the provenance block; nothing else duplicates these arrays.
+static keys, the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>
+/ <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> members and the provenance block; nothing else
+duplicates these arrays.
 With <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> no map is executed and every last-map archive is
 omitted (an INFO line lists them); only <code class="docutils literal notranslate"><span class="pre">sigma</span></code>, <code class="docutils literal notranslate"><span class="pre">green</span></code> and <code class="docutils literal notranslate"><span class="pre">energy</span></code>
 of the seed state are written.</p>

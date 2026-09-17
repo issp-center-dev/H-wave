@@ -194,14 +194,21 @@ for s1 in (0, 1):
 ブロックはゼロ）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>（整数。未指定なら<code class="docutils literal notranslate"><span class="pre">-1</span></code>）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_c</span></code>（浮動小数。
 スピン／電荷の RPA 分母の<span class="math notranslate nohighlight">\(q\)</span>にわたる最小の条件数スコア。不安定性の
-下限に達すると実行は拒否されます）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code>（整数、<code class="docutils literal notranslate"><span class="pre">1</span></code>）。</p></li>
+下限に達すると実行は拒否されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>の
+場合はゼロ振動数スライスのみにわたる最小値を報告します）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code>（整数、<code class="docutils literal notranslate"><span class="pre">1</span></code>）。</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>で<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の
 Hartree-Fock FLEX）、同じ16個のキーは <strong>最後の</strong> 自己無撞着写像を記述し
 （<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_source</span> <span class="pre">=</span> <span class="pre">&quot;last_map&quot;</span></code>）、<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>が
 指定されていれば結合<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルに、なければ常に存在する<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>ファイルに
 書き出されます（この場合、電荷チャネルの静的キーも<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>の中にあります。
-INFO ログにその旨が出力されます）。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
+INFO ログにその旨が出力されます）。このアーカイブにはさらに
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>（文字列。<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>。
+ボンド分解したドレッシングの条件数ガードが検査する振動数の範囲）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>（文字列。<code class="docutils literal notranslate"><span class="pre">&quot;cupy&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;numpy&quot;</span></code>。
+ボンド分解した解法を実行したバックエンド）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>（整数。
+実際に使用された振動数バッチ幅）が格納されます。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
 <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>配列は、ボンド分解した量の全ボソン振動数における
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の全ての
 アーカイブ（<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・
@@ -217,7 +224,9 @@ INFO ログにその旨が出力されます）。そのような計算の通常
 （<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>、<code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span> <span class="pre">nmat&quot;</span></code>）、
 <code class="docutils literal notranslate"><span class="pre">beta</span></code>・<code class="docutils literal notranslate"><span class="pre">T</span></code>・<code class="docutils literal notranslate"><span class="pre">nmat</span></code>・<code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>・運動量規約マーカー・
 <code class="docutils literal notranslate"><span class="pre">index_order</span></code>・<code class="docutils literal notranslate"><span class="pre">delta_r</span></code>・<code class="docutils literal notranslate"><span class="pre">reverse</span></code>・<code class="docutils literal notranslate"><span class="pre">types</span></code>、16個の静的キー、
-来歴ブロックが格納されます。これらの配列を重複して持つファイルは他にありません。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>・<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>・
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>、来歴ブロックが格納されます。これらの配列を重複して
+持つファイルは他にありません。
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>では写像は実行されず、最後の写像に属するアーカイブは全て省略され
 （INFO ログに一覧が出ます）、初期状態の<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>・<code class="docutils literal notranslate"><span class="pre">energy</span></code>のみが
 書き出されます。</p>
