@@ -1,0 +1,3 @@
+# Dynamic Eliashberg leading eigenvalue
+# solver_mode='iteration' with spectral_shift=0.5: the value below is a SHIFTED ITERATE-NORM ESTIMATE, ||(K + sigma*I) v|| - sigma. It is NOT an eigenvalue of K: the Rayleigh check <v|K|v>/<v|v> left a residual ||K v - lambda v||/||v|| = 2.570e-01 (tolerance 0.03818687876533038), so no signed eigenvalue could be validated for this run -- do not quote it as lambda. the iteration did NOT converge after 50 steps. Raise max_iter, raise spectral_shift, or use solver_mode="eigenvalue".
+3.70929193e+01
