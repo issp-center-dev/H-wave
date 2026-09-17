@@ -481,17 +481,31 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     ``dressing`` row's six.
 
     ``device_available`` (bytes free on the GPU, measured by the caller
-    before any bond allocation) is optional; when given, a second,
-    incremental DEVICE table is built alongside the host one and the
-    returned ``nb`` is capped to what both agree on. The device table
-    carries only what the gated bond path actually keeps resident on
-    the device: a persistent row ``vertices_static = 5 * S`` (the static
-    vertex stack), and two phase rows that are never simultaneously
-    live -- ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the
-    per-batch dressing solve and ``transport = 6 * C`` during the bond
-    self-energy transport -- so the device need at a batch size is
-    ``1.25 * (vertices_static + max(dressing(nb), transport))`` against
-    ``device_cap = 0.9 * device_available``. Refusal at ``nb = 1``
+    at the entry of the Phase B solve, before the block store and the
+    device vertex context are allocated) is optional; when given, a
+    second, incremental DEVICE table is built alongside the host one and
+    the returned ``nb`` is capped to what both agree on. The device
+    table carries what the gated run keeps resident on the device for
+    the whole Phase B solve --
+
+    * ``vertices_static = 5 * S``: the static vertex stack of the device
+      context, allocated right after the measurement;
+    * ``flex_arrays = 5 * G``: the SCF loop's device Green functions and
+      self-energies, allocated per iteration INSIDE the loop and so not
+      yet part of the measured reading;
+    * ``second_order_factors = factor_bytes``: the device mirror of the
+      compiled factor pack, which exists exactly when the pack does
+      (``flex_second_order = "local"``). The mirror is already live at
+      the measurement point, so counting it is a deliberate margin
+      rather than a missing allocation --
+
+    plus two phase rows that are never simultaneously live:
+    ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
+    dressing solve and ``transport = 6 * C`` during the bond
+    self-energy transport. The device need at a batch size is therefore
+    ``1.25 * (vertices_static + flex_arrays + second_order_factors +
+    max(dressing(nb), transport))`` against ``device_cap = 0.9 *
+    device_available``. Refusal at ``nb = 1``
     names whichever of the two phase rows does not fit; an explicit
     ``freq_batch`` is checked against both the host and the device
     table; otherwise the selected ``nb`` is ``min`` of the largest
@@ -591,12 +605,17 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     if device_available is not None:
         vertices = 5 * S
         transport = 6 * C
+        dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
+                          "second_order_factors": int(factor_bytes)}
+        dev_persistent_sum = sum(dev_persistent.values())
         def _dev_rows(n):
-            return {"vertices_static": vertices, "dressing": 7 * n * nvol * ND * ND * it,
-                    "transport": transport}
+            rows = dict(dev_persistent)
+            rows["dressing"] = 7 * n * nvol * ND * ND * it
+            rows["transport"] = transport
+            return rows
         def _dev_need(n):
             r = _dev_rows(n)
-            return 1.25 * (r["vertices_static"] + max(r["dressing"], r["transport"]))
+            return 1.25 * (dev_persistent_sum + max(r["dressing"], r["transport"]))
         dev_cap = 0.9 * float(device_available)
         def _dev_table(n):
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
@@ -605,10 +624,11 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             phase = "dressing" if 7 * nvol * ND * ND * it >= transport else "transport"
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
-                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (vertices + max phase row) "
-                "exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce the "
-                "k mesh or Nmat, drop declared-zero outer shells with longitudinal_bond_max_shells, "
-                "or run with gpu=false.".format(_dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))
+                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
+                "row) exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce "
+                "the k mesh or Nmat, drop declared-zero outer shells with "
+                "longitudinal_bond_max_shells, or run with gpu=false.".format(
+                    _dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))
         if freq_batch is not None and _dev_need(int(freq_batch)) > dev_cap:
             raise ValueError(
                 "[mode.param] longitudinal_bond_freq_batch = {} gives an estimated device need of "

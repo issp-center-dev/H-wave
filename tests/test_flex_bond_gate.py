@@ -443,6 +443,133 @@ class TestFailureClearing(unittest.TestCase):
                 self.assertFalse(hasattr(s, a), a)
 
 
+class TestDeviceAdmission(unittest.TestCase):
+    """The device half of the bond-gate admission (spec 4.6): it runs at the
+    entry of the Phase B solve, not in the host preflight, and it owns the
+    device table and the transfer-volume line."""
+
+    def test_host_preflight_stays_host_only(self):
+        """A CPU run logs the host table and nothing about a device."""
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        joined = "\n".join(cm.output)
+        self.assertIn("Bond-resolved FLEX preflight", joined)
+        self.assertNotIn("device table", joined)
+        self.assertNotIn("transfer volume", joined)
+
+    def test_admission_runs_before_the_device_context(self):
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        order = []
+        real_adm = s._bond_device_admission
+        real_init = flex_bond.BondDeviceContext.__init__
+        s._bond_device_admission = lambda xp: (order.append("admission"), real_adm(xp))[1]
+
+        def init(ctx_self, *a, **kw):
+            order.append("context")
+            real_init(ctx_self, *a, **kw)
+
+        with mock.patch.object(flex_bond.BondDeviceContext, "__init__", init):
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        self.assertEqual(order, ["admission", "context"])
+
+    def test_admission_recomputes_the_estimate_and_logs(self):
+        """With a device backend the measured free memory is what selects the
+        batch: a reading that only admits nb = 1 must override the host
+        table's choice, and the device table and transfer volume are logged
+        there (where the backend is known), not in the preflight."""
+        import types
+        import hwave.solver.flex as flex_mod
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        nb_host = int(s._bond_nb)
+        self.assertGreater(nb_host, 1)
+        at1 = flex_bond.estimate_bond_memory(
+            device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
+        rows = at1["device_rows"]
+        need1 = 1.25 * (rows["vertices_static"] + rows["flex_arrays"]
+                        + rows["second_order_factors"]
+                        + max(rows["dressing"], rows["transport"]))
+        avail = int(need1 * 1.001 / 0.9)
+        fake_xp = types.SimpleNamespace(__name__="cupy")
+        with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s._bond_device_admission(fake_xp)
+        self.assertEqual(s._bond_nb, 1)
+        self.assertIn("device_rows", s._bond_est)
+        joined = "\n".join(cm.output)
+        self.assertIn("device table", joined)
+        self.assertIn("transfer volume", joined)
+
+    def test_admission_is_a_noop_on_the_numpy_backend(self):
+        import hwave.solver.flex as flex_mod
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        calls = []
+        with mock.patch.object(flex_mod._bk, "device_available_bytes",
+                               lambda: calls.append(1)):
+            s._bond_device_admission(np)
+        self.assertEqual(calls, [])
+
+    def test_transfer_volume_counts_the_static_slices_and_sigma(self):
+        """Every device -> host copy of one iteration is accounted for: the W
+        batches, the guard copies, the collapses, the two static ND x ND
+        slices and the returned self-energy."""
+        import hwave.solver.flex as flex_mod
+        for mode in ("all", "static"):
+            with self.subTest(guard=mode):
+                s, r = _flex({"IterationMax": 0, "longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with tempfile.TemporaryDirectory() as out:
+                    s.solve(gi, out)
+                est = s._bond_est
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    s._log_bond_transfer_volume(est)
+                line = [m for m in cm.output if "transfer volume" in m][0]
+                u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+                S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+                guard_all = mode == "all"
+                d2h = (u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                       + (0 if guard_all else 2 * S_b) + G_b)
+                gib = 1024.0 ** 3
+                self.assertIn("{:.4f}".format(d2h / gib), line)
+
+
+class TestDeviceContextFailure(unittest.TestCase):
+
+    def test_device_context_allocation_failure_is_diagnosed(self):
+        """An out-of-memory error while the vertex context is being built gets
+        the same named diagnostic as one inside the SCF loop, then propagates."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        def boom(*a, **kw):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond, "BondDeviceContext", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        self.assertTrue(any("device context" in m for m in cm.output), cm.output)
+
+
 class TestStandaloneHFAdmissibility(unittest.TestCase):
 
     def test_complex_offsite_coefficient_and_offsite_exchange_refused_at_preflight(self):

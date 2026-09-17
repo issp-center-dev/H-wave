@@ -281,21 +281,64 @@ class TestDeviceMemoryTable(unittest.TestCase):
         est = estimate_bond_memory(**self._KW)
         self.assertNotIn("device_rows", est)
 
+    #: the device table's symbols at ``_KW`` (spec 4.6 plus the two
+    #: persistent rows that are resident for the whole Phase B solve)
+    _IT = 16
+    _NVOL = 16
+    _P = 4
+    _ND = 3 * _P
+    _NMAT = 64
+
+    @classmethod
+    def _sym(cls):
+        it, nvol, P, ND, nmat = cls._IT, cls._NVOL, cls._P, cls._ND, cls._NMAT
+        return (nvol * ND * ND * it,                 # S
+                nmat * nvol * P * it,                # G
+                nmat * nvol * P * P * it,            # C
+                7 * nvol * ND * ND * it)             # dressing per batch row
+
+    @classmethod
+    def _need(cls, nb, factor_bytes=0):
+        S, G, C, per = cls._sym()
+        return 1.25 * (5 * S + 5 * G + factor_bytes + max(per * nb, 6 * C))
+
     def test_device_rows_and_selection(self):
         from hwave.solver.flex_bond import estimate_bond_memory
-        it = 16; nvol = 16; P = 4; ND = 3 * P; nmat = 64
-        S = nvol * ND * ND * it; C = nmat * nvol * P * P * it
+        S, G, C, per = self._sym()
         est = estimate_bond_memory(device_available=int(2.0e8), **self._KW)
         self.assertEqual(est["device_rows"]["vertices_static"], 5 * S)
+        # the SCF loop's device Green-function/sigma arrays outlive every bond
+        # phase, so they are a persistent device row like the host's
+        self.assertEqual(est["device_rows"]["flex_arrays"], 5 * G)
+        self.assertEqual(est["device_rows"]["second_order_factors"], 0)
         self.assertEqual(est["device_rows"]["transport"], 6 * C)
         nb = est["device_nb"]
-        self.assertEqual(est["device_rows"]["dressing"], 7 * nb * nvol * ND * ND * it)
-        need = 1.25 * (5 * S + max(7 * nb * nvol * ND * ND * it, 6 * C))
-        self.assertLessEqual(need, 0.9 * 2.0e8)
-        need_next = 1.25 * (5 * S + max(7 * (nb + 1) * nvol * ND * ND * it, 6 * C))
-        self.assertTrue(nb == nmat or need_next > 0.9 * 2.0e8)
+        self.assertEqual(est["device_rows"]["dressing"], per * nb)
+        self.assertLessEqual(self._need(nb), 0.9 * 2.0e8)
+        self.assertTrue(nb == self._NMAT or self._need(nb + 1) > 0.9 * 2.0e8)
         nb_host = estimate_bond_memory(device_available=None, **self._KW)["nb"]
         self.assertEqual(est["nb"], min(nb_host, est["device_nb"]))
+
+    def test_second_order_mirror_tightens_the_device_batch(self):
+        """``flex_second_order = "local"`` compiles a factor pack that is
+        mirrored on the device for the whole solve, so it has to lower the
+        admissible batch (and, at a tight enough cap, refuse the run)."""
+        from hwave.solver.flex_bond import estimate_bond_memory
+        cap = 1.1e7
+        avail = int(cap / 0.9)
+        bare = estimate_bond_memory(device_available=avail, **self._KW)
+        fb = 2_000_000
+        packed = estimate_bond_memory(device_available=avail, factor_bytes=fb, **self._KW)
+        self.assertEqual(packed["device_rows"]["second_order_factors"], fb)
+        self.assertLess(packed["device_nb"], bare["device_nb"])
+        self.assertLessEqual(self._need(packed["device_nb"], fb), cap)
+        # and a pack large enough to eat the remaining headroom refuses at nb = 1
+        tight = int(self._need(1) * 1.01 / 0.9)
+        estimate_bond_memory(device_available=tight, **self._KW)      # fits without the mirror
+        with self.assertRaises(ValueError) as cm:
+            estimate_bond_memory(device_available=tight,
+                                 factor_bytes=int(self._need(1)), **self._KW)
+        self.assertIn("second_order_factors", str(cm.exception))
 
     def test_refusal_names_the_phase(self):
         from hwave.solver.flex_bond import estimate_bond_memory
