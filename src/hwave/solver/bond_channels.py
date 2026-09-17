@@ -3490,19 +3490,48 @@ def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
             build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types))
 
 
-def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR):
+_GUARD_FREQS = ("all", "static")
+_STATIC_RESIDUAL_TOL = 1e-6
+
+
+def solve_residual(mat, chi, cb):
+    """Per-(l, q) solve residual ``||mat chi - cb||_F / max(1, ||cb||_F)``
+    (Frobenius norms of the ND x ND blocks; zero-safe: the same ``max(1, .)``
+    scale as the guard's absolute criterion). Array-module generic; the
+    result has the module of the inputs, shape ``(nb, nvol)``."""
+    xp = _bk.array_module_of(mat)
+    num = xp.sqrt(xp.sum(xp.abs(mat @ chi - cb) ** 2, axis=(-2, -1)))
+    den = xp.maximum(1.0, xp.sqrt(xp.sum(xp.abs(cb) ** 2, axis=(-2, -1))))
+    return num / den
+
+
+def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
+                guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
     with BOTH criteria of :func:`_check_bond_conditioning` on the
     flattened ``(nb * nvol)`` batch and solved with ``numpy.linalg.solve``.
     Returns ``(chi_b, cond_min)``; a refusal names the bosonic Matsubara
-    index ``2 (l0 + i // nvol) - nmat``, the q point and the channel."""
+    index ``2 (l0 + i // nvol) - nmat``, the q point and the channel.
+
+    Array-module generic (spec 2026-09-17 section 4.1): computes with the
+    module of ``chi_bar_b`` and returns ``chi`` in that module; never
+    transfers except for the host copy the ``"all"`` guard takes.
+    ``guard_freqs``: ``"all"`` (default) checks every (l, q) exactly as
+    before; ``"static"`` is a REDUCED diagnostic: only the slice
+    ``l = nmat // 2`` is SVD-checked and the unchecked slices are validated
+    a posteriori by the solve residual (:func:`solve_residual`) against
+    ``residual_tol``."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
+    if guard_freqs not in _GUARD_FREQS:
+        raise ValueError("dress_batch: guard_freqs must be one of {}, got {!r}"
+                         .format(list(_GUARD_FREQS), guard_freqs))
     sign = _DRESS_CHANNELS[channel]
-    cb = np.asarray(chi_bar_b)
-    W = np.asarray(W)
+    xp = _bk.array_module_of(chi_bar_b)
+    cb = chi_bar_b
+    W = xp.asarray(W)
     if cb.ndim != 4 or cb.shape[2] != cb.shape[3] or W.shape != cb.shape[1:]:
         raise ValueError("dress_batch: chi_bar_b must be (nb, nvol, ND, ND) and W (nvol, ND, ND); got {} and {}"
                          .format(cb.shape, W.shape))
@@ -3512,29 +3541,55 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         raise ValueError("dress_batch: prod(spatial_shape) != nvol")
     mat = cb @ W[None]
     if sign < 0:
-        np.negative(mat, out=mat)
-    idx = np.arange(ND)
+        xp.negative(mat, out=mat)
+    idx = xp.arange(ND)
     mat[:, :, idx, idx] += 1.0
+
+    def _guard(mat_h, i_offset):
+        # mat_h: HOST (n, ND, ND); i_offset: flattened index of its first row
+        try:
+            return _check_bond_conditioning(channel, mat_h.reshape(-1, 1, 1, ND, ND), cond_tol)
+        except ValueError as exc:
+            import re
+            m = re.search(r"q-point index \((\d+), 0, 0\)", str(exc))
+            if m is None:
+                raise
+            i = int(m.group(1)) + i_offset
+            l = l0 + i // nvol
+            q = i % nvol
+            qx, rem = divmod(q, Ny * Nz)
+            qy, qz = divmod(rem, Nz)
+            raise ValueError(
+                "dress_batch: the {} RPA denominator is singular or nearly singular at "
+                "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+                "the bond path has entered the instability region. Reduce the interaction "
+                "strength, raise the temperature, refine or reduce the q grid, or lower "
+                "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz)) from exc
+
+    l_static = nmat // 2
+    cond_min = None
+    if guard_freqs == "all":
+        cond_min = _guard(_bk.to_host(mat).reshape(nb * nvol, ND, ND), 0)
+    elif l0 <= l_static < l0 + nb:
+        i = l_static - l0
+        cond_min = _guard(_bk.to_host(mat[i]).reshape(nvol, ND, ND), i * nvol)
     flat = mat.reshape(nb * nvol, ND, ND)
-    try:
-        cond_min = _check_bond_conditioning(channel, flat.reshape(nb * nvol, 1, 1, ND, ND), cond_tol)
-    except ValueError as exc:
-        # decode the flattened index named as "q-point index (i, 0, 0)"
-        import re
-        m = re.search(r"q-point index \((\d+), 0, 0\)", str(exc))
-        if m is None:
-            raise
-        i = int(m.group(1))
-        l = l0 + i // nvol
-        q = i % nvol
-        qx, rem = divmod(q, Ny * Nz)
-        qy, qz = divmod(rem, Nz)
-        raise ValueError(
-            "dress_batch: the {} RPA denominator is singular or nearly singular at "
-            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
-            "the bond path has entered the instability region. Reduce the interaction "
-            "strength, raise the temperature, refine or reduce the q grid, or lower "
-            "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz)) from exc
-    chi = np.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    if guard_freqs == "static":
+        r = solve_residual(mat, chi, cb)
+        worst = int(xp.argmax(r))
+        r_max = float(r.reshape(-1)[worst])
+        if not np.isfinite(r_max) or r_max > residual_tol:
+            l = l0 + worst // nvol
+            q = worst % nvol
+            qx, rem = divmod(q, Ny * Nz)
+            qy, qz = divmod(rem, Nz)
+            raise ValueError(
+                "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
+                "residual ||mat chi - chibar||_F / max(1, ||chibar||_F) = {:.3e} exceeds {:.1e} "
+                "at bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+                "the unchecked slice is singular or nearly singular. Use guard_freqs = \"all\" to "
+                "locate it, or reduce the interaction / raise the temperature."
+                .format(channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz))
     del mat, flat
     return chi, (None if cond_min is None else float(cond_min))

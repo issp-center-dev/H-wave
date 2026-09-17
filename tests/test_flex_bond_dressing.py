@@ -133,5 +133,88 @@ class TestDressAndBuildW(unittest.TestCase):
                             store.get_freq_batch("chi_s_w", 0, 1)
 
 
+class TestDressBatchGuardModes(unittest.TestCase):
+
+    def test_all_is_the_default_and_unchanged(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        nmat = chi_bar.shape[0]
+        ref, c_ref = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        out, c_out = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1),
+                                    guard_freqs="all")
+        np.testing.assert_array_equal(out, ref)
+        self.assertEqual(c_out, c_ref)
+
+    def test_static_checks_only_the_zero_frequency_slice(self):
+        """A batch singular ONLY at a nonzero bosonic frequency: refused by "all",
+        accepted by "static" when the solve is accurate (here the block is exactly
+        singular, so the solve raises / the residual check refuses -- both name the
+        frequency); a batch singular ONLY at l = nmat//2 is refused by both."""
+        from hwave.solver import bond_channels as bc
+        nmat, nvol = 4, 2
+        W = np.ones((nvol, 1, 1), complex)
+        # near-singular (not exactly) at l=3 (bosonic index 2), q=1: 1 - 0.999999 = 1e-6
+        chi_bar = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar[3, 1, 0, 0] = 1.0 - 1e-6
+        with self.assertRaises(ValueError) as cm:
+            bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                           guard_freqs="all")
+        self.assertIn("bosonic Matsubara index 2", str(cm.exception))
+        chi, cond = bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                                   guard_freqs="static")
+        self.assertTrue(np.all(np.isfinite(chi)))
+        self.assertAlmostEqual(cond, 1.0)                    # the static slice is the identity
+        # singular at the static slice: both modes refuse
+        chi_bar2 = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar2[nmat // 2, 0, 0, 0] = 1.0
+        for mode in ("all", "static"):
+            with self.assertRaises(ValueError):
+                bc.dress_batch(chi_bar2, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                               guard_freqs=mode)
+
+    def test_static_residual_check_refuses_an_inaccurate_unchecked_solve(self):
+        from hwave.solver import bond_channels as bc
+        nmat, nvol = 4, 1
+        W = np.ones((nvol, 1, 1), complex)
+        chi_bar = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar[3, 0, 0, 0] = 1.0                            # exactly singular at l=3 (unchecked)
+        with self.assertRaises((ValueError, np.linalg.LinAlgError)) as cm:
+            bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(1, 1, 1),
+                           guard_freqs="static")
+        self.assertTrue("residual" in str(cm.exception).lower()
+                        or "singular" in str(cm.exception).lower())
+
+    def test_invalid_guard_mode_refused(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        with self.assertRaises(ValueError):
+            bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=6, spatial_shape=(4, 1, 1),
+                           guard_freqs="none")
+
+    def test_solve_residual_is_zero_safe(self):
+        from hwave.solver import bond_channels as bc
+        mat = np.eye(3, dtype=complex)[None, None]
+        cb = np.zeros((1, 1, 3, 3), complex)
+        chi = np.zeros_like(cb)
+        r = bc.solve_residual(mat, chi, cb)
+        self.assertEqual(r.shape, (1, 1))
+        self.assertEqual(float(r[0, 0]), 0.0)
+
+    def test_batch_size_invariance_of_chi_and_cond(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=2, B=2, seed=3)
+        nmat = chi_bar.shape[0]
+        full, c_full = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        for nb in (1, 3, nmat // 2):
+            parts, conds = [], []
+            for l0 in range(0, nmat, nb):
+                l1 = min(nmat, l0 + nb)
+                p, c = bc.dress_batch(chi_bar[l0:l1], S, "spin", l0=l0, nmat=nmat,
+                                      spatial_shape=(4, 1, 1))
+                parts.append(p); conds.append(c)
+            np.testing.assert_allclose(np.concatenate(parts), full, rtol=1e-12, atol=1e-14)
+            self.assertAlmostEqual(min(conds), c_full, places=12)
+
+
 if __name__ == "__main__":
     unittest.main()
