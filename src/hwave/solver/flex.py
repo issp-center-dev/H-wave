@@ -266,7 +266,8 @@ class FLEX(RPA):
     _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
                           "longitudinal_bond_freq_batch",
                           "longitudinal_bond_max_shells",
-                          "longitudinal_bond_memory_cap_gb")
+                          "longitudinal_bond_memory_cap_gb",
+                          "longitudinal_bond_guard_freqs")
 
     _SECOND_ORDER_VALUES = ("local", "takimoto")
 
@@ -314,7 +315,8 @@ class FLEX(RPA):
                     "true; these bond-only options are ignored (not parsed).",
                     ", ".join(stale))
             out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
-                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0)
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
+                       longitudinal_bond_guard_freqs="all")
             return out
         # step 2: domain keys that need no assembly
         nmat = param.get("Nmat", 1024)          # the solver's default grid
@@ -344,10 +346,6 @@ class FLEX(RPA):
                 "[mode.param] matsubara_basis='{}' is not supported with flex_hartree_fock / "
                 "longitudinal_bond_channels (uniform Matsubara grid only; the IR fit of bond "
                 "susceptibilities is ill-conditioned)".format(basis))
-        if _bk.as_bool(param.get("gpu", False)):
-            raise ValueError(
-                "[mode.param] gpu=true is not supported with flex_hartree_fock / "
-                "longitudinal_bond_channels in this version (CPU only)")
         sub = param.get("SubShape", None)
         if sub is not None and tuple(int(x) for x in sub) != (1, 1, 1):
             raise ValueError(
@@ -364,7 +362,8 @@ class FLEX(RPA):
                 "[mode.param] %s set but longitudinal_bond_channels is not true; these "
                 "bond-only options are ignored (not parsed).", ", ".join(stale))
             out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
-                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0)
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
+                       longitudinal_bond_guard_freqs="all")
             return out
         v = param.get("longitudinal_bond_output_full", False)
         if not isinstance(v, (bool, np.bool_)):
@@ -388,6 +387,13 @@ class FLEX(RPA):
         if isinstance(cap, bool) or not isinstance(cap, numbers.Real) or not np.isfinite(cap) or cap <= 0:
             raise ValueError("[mode.param] longitudinal_bond_memory_cap_gb must be a finite number > 0 (binary GiB), got {!r}".format(cap))
         out["longitudinal_bond_memory_cap_gb"] = float(cap)
+        gf = param.get("longitudinal_bond_guard_freqs", "all")
+        if not isinstance(gf, str) or gf.strip().lower() not in ("all", "static"):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_guard_freqs must be \"all\" (every bosonic frequency "
+                "is conditioning-checked; the default) or \"static\" (only the zero frequency is "
+                "checked and the other slices are validated by the solve residual), got {!r}".format(gf))
+        out["longitudinal_bond_guard_freqs"] = gf.strip().lower()
         return out
 
     def _install_phase_b_keys(self):
@@ -400,6 +406,7 @@ class FLEX(RPA):
         self.longitudinal_bond_freq_batch = raw["longitudinal_bond_freq_batch"]
         self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
+        self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
         self._phase_b_active = raw["active"]
         if self._phase_b_active and str(self.calc_scheme).lower() != "general":
             raise ValueError(
@@ -1038,6 +1045,9 @@ class FLEX(RPA):
         # brings its operator to the host internally.
         xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger,
                                          required=self.gpu_required)
+        # the backend this solve actually runs on, for the bond provenance
+        # members (the output block has no gpu_active of its own)
+        self._bond_xp_name = "cupy" if gpu_active else "numpy"
         if gpu_active:
             logger.info("FLEX: GPU backend active (CuPy); moving H0 "
                         "eigenpairs and interaction to the device.")
@@ -1384,7 +1394,8 @@ class FLEX(RPA):
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
                      "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on",
                      "_bond_types",
-                     "_bond_last", "_bond_est", "_bond_nb", "_phase_b_seed", "_hf_tables"):
+                     "_bond_last", "_bond_est", "_bond_nb", "_bond_xp_name",
+                     "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
         self.scf_converged = False
@@ -1543,6 +1554,14 @@ class FLEX(RPA):
         B = int(np.asarray(topo.delta_r).shape[0])
         n_types = sum(1 for t in (getattr(self._hf_tables, "inter_table", {}) or {}).values()
                       if t is not None)
+        # The device memory is measured HERE, before the block store, the
+        # device context and any other bond allocation exist, so the reading
+        # is the free memory the bond path may actually claim (spec 4.6).
+        use_gpu = bool(getattr(self, "use_gpu", False))
+        device_available = _bk.device_available_bytes() if use_gpu else None
+        if use_gpu and device_available is None:
+            logger.warning("gpu=true: no usable device memory model; the bond gate runs on "
+                           "the numpy backend if the backend selection falls back")
         est = flex_bond.estimate_bond_memory(
             nmat=self.nmat, nvol=self.lattice.nvol, norb=self.norb, B=B,
             depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
@@ -1550,7 +1569,8 @@ class FLEX(RPA):
             freq_batch=self.longitudinal_bond_freq_batch,
             cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
             factor_bytes=(0 if self._second_order_factors is None
-                          else int(self._second_order_factors.nbytes)))
+                          else int(self._second_order_factors.nbytes)),
+            device_available=device_available)
         gib = flex_bond._GIB
         logger.info(
             "Bond-resolved FLEX preflight (ESTIMATE): B = %d channels %s, ND = %d, nvol = %d, "
@@ -1559,6 +1579,13 @@ class FLEX(RPA):
             B, [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)], est["ND"],
             est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
             est["cap_bytes"] / gib, est["table"])
+        if "device_table" in est:
+            logger.info(
+                "Bond-resolved FLEX device table (ESTIMATE): need %.4f GiB against 0.9 * "
+                "available %.4f GiB, device batch %d\n%s", est["device_need"] / gib,
+                est["device_cap"] / gib, est["device_nb"], est["device_table"])
+        if use_gpu:
+            self._log_bond_transfer_volume(est)
         if est["dressing_ops"] > flex_bond._DRESSING_OPS_WARN:
             logger.warning(
                 "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "
@@ -1572,6 +1599,31 @@ class FLEX(RPA):
                 "expect long iterations.", est["transport_ops"], B, est["nmat"], est["nvol"],
                 self.norb)
         return est
+
+    def _log_bond_transfer_volume(self, est):
+        """Host <-> device traffic of one SCF iteration at the selected
+        frequency batch (spec 4.6), logged once per solve. Per batch the
+        dressing moves one chibar batch in and one W batch out, plus two
+        batch-sized reads for the conditioning guard under
+        ``guard_freqs = "all"`` and two more for the full dynamic
+        susceptibilities under ``longitudinal_bond_output_full``; the
+        transport moves the B^2 blocks of W in and the collapses out."""
+        from hwave.solver import flex_bond
+        gib = flex_bond._GIB
+        nb, nmat = int(est["nb"]), int(est["nmat"])
+        n_batches = -(-nmat // nb)             # ceil
+        u_batch = nb * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
+        guard_all = self.longitudinal_bond_guard_freqs == "all"
+        h2d = n_batches * u_batch + int(est["B"]) ** 2 * int(est["C_bytes"])
+        d2h = (n_batches * u_batch
+               * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
+               + 3 * int(est["C_bytes"]))
+        logger.info(
+            "longitudinal_bond_channels (FLEX): bond-gate transfer volume per iteration "
+            "(ESTIMATE) at frequency batch %d (%d batches): host to device %.4f GiB, "
+            "device to host %.4f GiB (guard_freqs = %r, longitudinal_bond_output_full = %s)",
+            nb, n_batches, h2d / gib, d2h / gib, self.longitudinal_bond_guard_freqs,
+            self.longitudinal_bond_output_full)
 
     def _phase_b_active_outputs(self, info_outputfile):
         active = [k for k in ("energy", "sigma", "green") if k in info_outputfile]
@@ -1652,7 +1704,7 @@ class FLEX(RPA):
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
         with contextlib.ExitStack() as stack:
-            store = None
+            store = dev = None
             if gate:
                 names = ["chibar", "W"]
                 if self.longitudinal_bond_output_full:
@@ -1660,6 +1712,18 @@ class FLEX(RPA):
                 store = stack.enter_context(flex_bond.BondBlockStore(
                     nmat, nvol, self._bond_view.n_channels * nd, nd, tuple(names)))
                 self._phase_b_prepare_vertices()
+                # The immutable bond inputs are transferred once per solve,
+                # after the memory preflight measured the device (spec 4.2);
+                # every iteration's dressing reuses them. On numpy the
+                # context holds the host arrays themselves.
+                perm = flex_bond._mixed_pair_permutation(self._bond_view.n_channels, nd, norb)
+                mask = np.zeros((self._bond_view.n_channels * nd,) * 2)
+                mask[:nd, :] = 0.5
+                mask[:, :nd] = 0.5
+                mask[:nd, :nd] = 0.0
+                dev = stack.enter_context(flex_bond.BondDeviceContext(
+                    xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
+                    perm, mask))
             heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
             for iteration in range(self.max_iter):
                 logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
@@ -1689,7 +1753,7 @@ class FLEX(RPA):
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if gate:
                     chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
-                        store, green_kw, green_scf, green0_tail, beta, iteration + 1)
+                        store, dev, green_kw, green_scf, green0_tail, beta, iteration + 1)
                 else:
                     chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
                     assert chi0q_raw.shape[0] == 1
@@ -1809,35 +1873,51 @@ class FLEX(RPA):
                                 "outputs (sigma, green, physics) of the seed state are stored.")
         logger.info("End FLEX calculations")
 
-    def _phase_b_bond_map(self, store, green_kw, green_scf, green0_tail, beta, iteration):
+    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, green0_tail, beta, iteration):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
         dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
-        collapses (``acbd`` layout) and Sigma_fluct."""
+        collapses (``acbd`` layout) and Sigma_fluct.
+
+        ``dev`` is the solve-scoped :class:`~hwave.solver.flex_bond.BondDeviceContext`
+        owning the vertices; its array module drives the dressing and the
+        transport. The block store stays host-resident either way -- the
+        kernels move one frequency batch (and one W block pair) at a time."""
         from hwave.solver import flex_bond
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         nd = norb * norb
         shape = tuple(int(x) for x in self.lattice.shape)
         workers = getattr(self, "fft_workers", 1)
+        xp = dev.xp
         with self._traced("bubble"):
             flex_bond.assemble_bubble(
                 store, _bk.to_host(green_scf),
                 None if green0_tail is None else _bk.to_host(green0_tail),
                 beta, self._bond_view, shape, workers)
-        with self._traced("dressing"):
-            res = flex_bond.dress_and_build_w(
-                store, self._bond_S, self._bond_C, S_on=self._bond_S_on, C_on=self._bond_C_on,
-                nb=self._bond_nb,
-                output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
-                spatial_shape=shape, iteration=iteration,
-                # the HOST pack, not _second_order_device: flex_bond is a
-                # host-side module (its store is numpy and every array
-                # reaching it goes through _bk.to_host), so a device mirror
-                # would not survive the kernel's numpy.asarray.
-                factors=self._second_order_factors,
-                second_order=self.flex_second_order)
-        with self._traced("transport"):
-            sigma_fluct = flex_bond.calc_self_energy_bond(
-                store, _bk.to_host(green_kw), beta, self._bond_view, shape, norb, workers)
+        try:
+            with self._traced("dressing"):
+                res = flex_bond.dress_and_build_w(
+                    store, dev, nb=self._bond_nb,
+                    output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
+                    spatial_shape=shape, iteration=iteration,
+                    # the second-order kernel computes in the module of its
+                    # input, so on the device it needs the device mirror of
+                    # the factor pack; the host pack stays authoritative.
+                    factors=((self._second_order_device or self._second_order_factors)
+                             if xp is not np else self._second_order_factors),
+                    second_order=self.flex_second_order,
+                    guard_freqs=self.longitudinal_bond_guard_freqs)
+            with self._traced("transport"):
+                sigma_fluct = flex_bond.calc_self_energy_bond(
+                    store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
+        except _bk._oom_error_types() as exc:
+            # no retry: a smaller batch mid-SCF would change the arithmetic
+            # of this solve. The iteration, the batch size and the pool
+            # occupancy are logged, then the error propagates -- solve()
+            # drops every partial result on the way out (spec 3.5).
+            logger.error("bond-gate device allocation failed at iteration %d with frequency "
+                         "batch %d (device pool used %.3f GiB): %s", iteration, self._bond_nb,
+                         _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
+            raise
         self._bond_last = res
         r6 = (nmat, nvol, norb, norb, norb, norb)
         return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
@@ -1875,6 +1955,9 @@ class FLEX(RPA):
             "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
             "longitudinal_bond_schema": np.int64(1),
             "longitudinal_bond_source": np.str_("last_map"),
+            "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
+            "longitudinal_bond_device": np.str_(getattr(self, "_bond_xp_name", "numpy")),
+            "longitudinal_bond_nb": np.int64(self._bond_nb),
         }
         if self.longitudinal_bond_output_full:
             out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")

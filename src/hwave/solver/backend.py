@@ -199,6 +199,28 @@ def device_available_bytes():
         return None
 
 
+def _oom_error_types():
+    """The exception types a device allocation failure raises, as a tuple
+    usable directly in an ``except`` clause: ``(cupy.cuda.memory.
+    OutOfMemoryError,)`` when cupy imports, else the empty tuple (which
+    matches nothing, so the same handler is inert on the numpy path)."""
+    try:
+        cupy = _import_cupy()
+        return (cupy.cuda.memory.OutOfMemoryError,)
+    except Exception:            # noqa: BLE001 - no cupy means no device error
+        return ()
+
+
+def device_pool_used_bytes():
+    """Bytes cupy's default memory pool currently hands out to live arrays,
+    for the out-of-memory diagnostic. 0 when cupy or the query is
+    unavailable; never raises."""
+    try:
+        return int(_import_cupy().get_default_memory_pool().used_bytes())
+    except Exception:            # noqa: BLE001
+        return 0
+
+
 def gpu_available():
     """True when ``get_backend(True)`` would select cupy with a usable device.
     Never raises; safe at test-collection time (no import unless called)."""

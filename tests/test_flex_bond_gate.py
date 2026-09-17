@@ -293,6 +293,28 @@ class TestOutputs(unittest.TestCase):
             cs2 = np.load(os.path.join(out, "chiq_s.npz"))
             self.assertNotIn("longitudinal_bond_chi_s", cs2.files)
 
+    def test_provenance_members_stamped(self):
+        s, r = _flex()
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "chiq": "chiq.npz", "sigma": "sigma.npz"}, gi)
+            z = np.load(os.path.join(out, "chiq.npz"))
+            self.assertEqual(str(z["longitudinal_bond_guard_freqs"]), "all")
+            self.assertEqual(str(z["longitudinal_bond_device"]), "numpy")
+            self.assertEqual(int(z["longitudinal_bond_nb"]), s._bond_nb)
+
+    def test_static_guard_end_to_end_equals_all_when_the_guard_passes(self):
+        outs = {}
+        for mode in ("all", "static"):
+            s, r = _flex({"longitudinal_bond_guard_freqs": mode})
+            gi = r.get_param("green")
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+                outs[mode] = (np.array(gi["sigma"]), np.array(gi["longitudinal_bond_chi_s"]))
+        np.testing.assert_allclose(outs["static"][0], outs["all"][0], rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(outs["static"][1], outs["all"][1], rtol=1e-12, atol=1e-14)
+
     def test_iteration_max_zero_omits_last_map_archives(self):
         with tempfile.TemporaryDirectory() as out:
             s, r = _flex({"IterationMax": 0, "longitudinal_bond_output_full": True})

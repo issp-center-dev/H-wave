@@ -1,5 +1,6 @@
 """backend helpers added for the bond-gate GPU path: to_device, device_available_bytes,
-gpu_available. All tests run without a GPU (cupy is mocked)."""
+gpu_available, _oom_error_types, device_pool_used_bytes. All tests run without a GPU
+(cupy is mocked)."""
 import types
 import unittest
 from unittest import mock
@@ -73,6 +74,43 @@ class TestGpuAvailable(unittest.TestCase):
     def test_true_with_device(self):
         with mock.patch.object(backend, "_import_cupy", lambda: _fake_cupy()):
             self.assertTrue(backend.gpu_available())
+
+
+class TestOomHelpers(unittest.TestCase):
+    """The two helpers the solver's out-of-memory handler needs: a tuple that
+    is safe to use in an ``except`` clause with or without cupy, and a pool
+    reading that never raises."""
+
+    def test_error_types_empty_without_cupy(self):
+        def _no():
+            raise ImportError("no cupy")
+        with mock.patch.object(backend, "_import_cupy", _no):
+            self.assertEqual(backend._oom_error_types(), ())
+
+    def test_error_types_carry_the_cupy_exception(self):
+        class _Oom(Exception):
+            pass
+        cupy = _fake_cupy()
+        cupy.cuda.memory = types.SimpleNamespace(OutOfMemoryError=_Oom)
+        with mock.patch.object(backend, "_import_cupy", lambda: cupy):
+            self.assertEqual(backend._oom_error_types(), (_Oom,))
+            # usable as an except clause
+            try:
+                raise _Oom("out of memory")
+            except backend._oom_error_types():
+                caught = True
+            self.assertTrue(caught)
+
+    def test_pool_used_bytes(self):
+        cupy = _fake_cupy(pool_total=6 * 2**30, pool_used=2 * 2**30)
+        with mock.patch.object(backend, "_import_cupy", lambda: cupy):
+            self.assertEqual(backend.device_pool_used_bytes(), 2 * 2**30)
+
+    def test_pool_used_bytes_zero_without_cupy(self):
+        def _no():
+            raise ImportError("no cupy")
+        with mock.patch.object(backend, "_import_cupy", _no):
+            self.assertEqual(backend.device_pool_used_bytes(), 0)
 
 
 if __name__ == "__main__":

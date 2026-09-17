@@ -300,11 +300,15 @@ def _mixed_w(chibar=None):
     with flex_bond.BondBlockStore(s.nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
         s._phase_b_prepare_vertices()
         store.put_freq_batch("chibar", 0, s.nmat, chibar)
-        flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
-                                    C_on=s._bond_C_on, nb=s.nmat, output_full=False,
-                                    nmat=s.nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
-                                    factors=s._second_order_factors,
-                                    second_order="local")
+        perm = flex_bond._mixed_pair_permutation(B, nd, s.norb)
+        mask = np.zeros((B * nd, B * nd))
+        mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        with flex_bond.BondDeviceContext(np, s._bond_S, s._bond_C, s._bond_S_on,
+                                         s._bond_C_on, perm, mask) as dev:
+            flex_bond.dress_and_build_w(store, dev, nb=s.nmat, output_full=False,
+                                        nmat=s.nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
+                                        factors=s._second_order_factors,
+                                        second_order="local")
         W = store.get_freq_batch("W", 0, s.nmat)
         return chibar, np.array(W[:, :, :nd, nd:]), np.array(W[:, :, nd:, :nd])
 
