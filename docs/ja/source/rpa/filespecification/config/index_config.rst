@@ -216,8 +216,16 @@ TOML形式
   ません。\ ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
   自己無撞着なボンド分解チャネルを有効にします（実験的機能。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
-  スピンフリー系・一様松原格子・CPU 実行・副格子なし・偶数の\ ``Nmat``
-  が必要。:ref:`flex_bond_hf`\ を参照）。以下のボンド関連の補助キーは
+  スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
+  が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
+  （\ ``flex_hartree_fock = true``\ が前提）かつ\ ``gpu = true``\ の場合、
+  ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
+  実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
+  転送します。バッチ幅はホスト側の上限とデバイスの空きメモリの両方に
+  照らして選ばれます（``longitudinal_bond_freq_batch``\ を指定すると
+  両方に優先します。詳細は同キーの項を参照）。結果は丸め誤差の範囲で
+  CPU 実行と一致します。出力には\ ``longitudinal_bond_device``\ と
+  ``longitudinal_bond_nb``\ が記録されます。以下のボンド関連の補助キーは
   同じ意味を持ち、\ ``longitudinal_bond_output_full``\ と
   ``longitudinal_bond_freq_batch``\ は FLEX 専用です。
 
@@ -245,6 +253,24 @@ TOML形式
   上限を引き上げて実行してください。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
 
+- ``longitudinal_bond_guard_freqs``
+
+  **形式 :** str型 (デフォルトは\ ``"all"``)
+
+  **説明 :**
+  ボンド分解したドレッシングの条件数ガードが検査するボソン松原振動数を
+  指定します。デフォルトの\ ``"all"``\ は全ての\ ``(nu, q)``\ 分母を
+  特異値分解で検査し、特異または特異に近い場合は実行を拒否します
+  （旧バージョンの挙動）。\ ``"static"``\ はゼロ振動数のみを特異値分解で
+  検査し、その他のスライスは解の残差
+  ``||(1 -/+ chibar V) chi - chibar|| / max(1, ||chibar||) <= 1e-6``
+  によってのみ検証します。これはガードの支配的な CPU コストを取り除く
+  簡略化された診断であり（後方安定な解法は特異に近くても小さな残差で
+  通過し得ます）、出力にも記録されます
+  （``longitudinal_bond_guard_freqs``\ メンバー）。デフォルト値は
+  ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
+  でない場合は警告付きで無視されます。
+
 - ``flex_hartree_fock``
 
   **形式 :** bool型 (デフォルトは\ ``false``\ 。FLEXモードのみ)
@@ -256,8 +282,12 @@ TOML形式
   （:math:`\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}`\ 。毎反復
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
   スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
-  （``matsubara_basis = "ir"``\ は拒否）、CPU 実行（``gpu = true``\ は
-  拒否）、副格子なし、外場なし、偶数の\ ``Nmat``\ が必要です。
+  （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
+  偶数の\ ``Nmat``\ が必要です。\ ``gpu = true``\ は受理されます。
+  単独では通常の FLEX の GPU 経路が使われ（下記\ ``gpu``\ を参照）、
+  ``longitudinal_bond_channels = true``\ の場合は代わりに
+  ``longitudinal_bond_channels``\ の項で説明するボンド分解した
+  GPU 経路が使われます。
   ユーザー指定の平均場（``trans_mod`` / ``green_init``\ ）はバンドに
   折り込まれず、静的自己エネルギーの初期値として扱われます。
   ``sigma.npz``\ には\ ``sigma_static``\ ・\ ``sigma_fluct``\ ・
@@ -286,9 +316,12 @@ TOML形式
 
   **説明 :**
   ボンド分解 FLEX が一度にドレスするボソン振動数の数（``[1, Nmat]``\ ）
-  です。デフォルトでは推定ピークメモリが
-  ``longitudinal_bond_memory_cap_gb``\ 以下に収まる最大のバッチが
-  選ばれ、明示した値も同じ上限と照合されます。
+  です。デフォルトでは推定ピークメモリが\ ``longitudinal_bond_memory_cap_gb``\
+  以下（``gpu = true``\ の場合はデバイスの空きメモリ以下でもあること）に
+  収まる最大のバッチが選ばれます。明示した値も同じ上限と照合されます
+  （ホスト側の上限は常に、\ ``gpu = true``\ の場合はさらにボンド分解した
+  解法の開始時に計測されるデバイスの空きメモリも対象になり、
+  いずれかを超えると拒否されます）。
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``flex_second_order``
@@ -403,7 +436,7 @@ TOML形式
 
   **形式 :** bool型 (デフォルトは false)
 
-  **説明 :** ``true``\ にすると、計算の主要部（Green関数、感受率\ :math:`\chi_0(q)`\ のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら\ ``pip install cupy-cuda12x``\ ）でのインストールを推奨します（`CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_\ 参照）。
+  **説明 :** ``true``\ にすると、計算の主要部（Green関数、感受率\ :math:`\chi_0(q)`\ のFFT、スピン展開、RPA方程式のバッチ解法。FLEXではSCFループ全体）を GPU（CuPy）で実行します。CuPy または CUDA デバイスが利用できない場合は、警告を出して CPU（numpy）実行に自動的にフォールバックします（結果は同一です）。CuPy は CUDA バージョンに合ったビルド済み wheel（CUDA 12.x なら\ ``pip install cupy-cuda12x``\ ）でのインストールを推奨します（`CuPyインストールガイド <https://docs.cupy.dev/en/stable/install.html>`_\ 参照）。\ ``flex_hartree_fock = true``\ を単独で指定した場合はこの通常の GPU 経路が使われます。\ ``longitudinal_bond_channels = true``\ （\ ``flex_hartree_fock = true``\ が前提）の場合は代わりに、上記の\ ``longitudinal_bond_channels``\ の項で説明するボンド分解した GPU 経路が使われます。
 
 - ``fft_workers``
 

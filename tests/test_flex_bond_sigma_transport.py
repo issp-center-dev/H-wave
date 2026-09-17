@@ -26,24 +26,39 @@ def _green(s, beta):
     return s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
 
 
+def _transport_problem():
+    """The B = 1 on-site problem shared by the transport tests below: a
+    ``BondBlockStore`` already filled with a random ``W``, its dressed
+    Green function, beta, the bond view, the spatial shape and norb --
+    exactly the setup ``test_b1_reduces_to_calc_self_energy_general`` used
+    to build inline. ``W`` is recoverable bit-identically from the returned
+    store via ``store.get_freq_batch("W", 0, nmat)``."""
+    from hwave.solver import bond_channels as bc
+    from hwave.solver.flex_bond import BondBlockStore
+    s, _ = _flex()
+    import os; os.makedirs("tests/flex/output", exist_ok=True)
+    nmat, nvol, norb, nd = s.nmat, s.lattice.nvol, s.norb, s.norb ** 2
+    beta = 0.5
+    rng = np.random.default_rng(0)
+    W = rng.normal(size=(nmat, nvol, nd, nd)) + 1j * rng.normal(size=(nmat, nvol, nd, nd))
+    topo = bc.resolve_bond_topology({}, np.eye(3), norb, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+    view = bc.BondSetView(topo)
+    s._calc_epsilon_k({})
+    G = _green(s, beta)
+    store = BondBlockStore(nmat, nvol, nd, nd, ("W",))
+    store.put_freq_batch("W", 0, nmat, W)
+    return store, G, beta, view, (4, 4, 1), norb
+
+
 class TestTransport(unittest.TestCase):
 
     def test_b1_reduces_to_calc_self_energy_general(self):
-        from hwave.solver import bond_channels as bc
-        from hwave.solver.flex_bond import BondBlockStore, calc_self_energy_bond
+        from hwave.solver.flex_bond import calc_self_energy_bond
+        store, G, beta, view, shape, norb = _transport_problem()
+        W = store.get_freq_batch("W", 0, store.nmat)
+        with store:
+            sig = calc_self_energy_bond(store, G, beta, view, shape, norb, 1)
         s, _ = _flex()
-        import os; os.makedirs("tests/flex/output", exist_ok=True)
-        nmat, nvol, norb, nd = s.nmat, s.lattice.nvol, s.norb, s.norb ** 2
-        beta = 0.5
-        rng = np.random.default_rng(0)
-        W = rng.normal(size=(nmat, nvol, nd, nd)) + 1j * rng.normal(size=(nmat, nvol, nd, nd))
-        topo = bc.resolve_bond_topology({}, np.eye(3), norb, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
-        view = bc.BondSetView(topo)
-        s._calc_epsilon_k({})
-        G = _green(s, beta)
-        with BondBlockStore(nmat, nvol, nd, nd, ("W",)) as store:
-            store.put_freq_batch("W", 0, nmat, W)
-            sig = calc_self_energy_bond(store, G, beta, view, (4, 4, 1), norb, 1)
         ref = s._calc_self_energy_general(G, W, beta)
         np.testing.assert_array_equal(sig, ref)
 
@@ -173,3 +188,22 @@ class TestFrequencyOracleSanity(unittest.TestCase):
         ref /= beta * nvol
         mid = slice(nmat // 2 - 8, nmat // 2 + 8)
         np.testing.assert_allclose(sig[mid], ref[mid], rtol=1e-3, atol=1e-6)
+
+
+class TestTransportBackendArgument(unittest.TestCase):
+
+    def test_xp_numpy_default_is_identical(self):
+        """``xp=np`` (explicit) reproduces the implicit numpy default, byte
+        for byte -- the array-module argument is a pure addition on the
+        numpy path."""
+        from hwave.solver import flex_bond as fb
+        store, green_kw, beta, view, shape, norb = _transport_problem()
+        ref = fb.calc_self_energy_bond(store, green_kw, beta, view, shape, norb, 1)
+        out = fb.calc_self_energy_bond(store, green_kw, beta, view, shape, norb, 1, xp=np)
+        np.testing.assert_array_equal(out, ref)
+
+    def test_rejects_unknown_module(self):
+        from hwave.solver import flex_bond as fb
+        store, green_kw, beta, view, shape, norb = _transport_problem()
+        with self.assertRaises(TypeError):
+            fb.calc_self_energy_bond(store, green_kw, beta, view, shape, norb, 1, xp="cupy")

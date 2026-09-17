@@ -66,7 +66,6 @@ class TestPhaseBConfig(unittest.TestCase):
             ({"longitudinal_bond_channels": 1}, {}, "boolean"),
             (dict(hf, Nmat=31), {}, "even"),
             (dict(hf, matsubara_basis="ir"), {}, "matsubara_basis"),
-            (dict(hf, gpu=True), {}, "gpu"),
             (dict(hf, SubShape=[2, 1, 1]), {}, "sublattice"),
             ({"longitudinal_bond_channels": True}, {}, "flex_hartree_fock"),
             (dict(gate, longitudinal_bond_freq_batch=0), {}, "longitudinal_bond_freq_batch"),
@@ -82,6 +81,40 @@ class TestPhaseBConfig(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             _build(hf, calc_scheme="reduced")
         self.assertIn("general", str(cm.exception))
+
+    def test_guard_freqs_key(self):
+        import hwave.solver.flex as flex_mod
+        base = {"flex_hartree_fock": True, "longitudinal_bond_channels": True}
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base)})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "all")
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, Longitudinal_Bond_Guard_Freqs="Static")})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "static")
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, longitudinal_bond_guard_freqs="none")})
+        self.assertIn("all", str(cm.exception)); self.assertIn("static", str(cm.exception))
+        with self.assertRaises(ValueError):
+            flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, longitudinal_bond_guard_freqs=1)})
+        # the inactive branches still carry the default
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {}})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "all")
+        s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                       "Longitudinal_Bond_Guard_Freqs": "STATIC"})
+        self.assertEqual(s.longitudinal_bond_guard_freqs, "static")
+        s, _ = _build()
+        self.assertEqual(s.longitudinal_bond_guard_freqs, "all")
+
+    def test_gpu_true_is_accepted_with_the_gate(self):
+        """No refusal at config time; without cupy the backend falls back to numpy
+        with the usual warning (the general path's behaviour)."""
+        import hwave.solver.flex as flex_mod
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {"flex_hartree_fock": True,
+                                                            "longitudinal_bond_channels": True,
+                                                            "gpu": True}})
+        self.assertTrue(out["active"])
+        # and with the Hartree-Fock term alone
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {"flex_hartree_fock": True,
+                                                            "gpu": True}})
+        self.assertTrue(out["active"])
 
     def test_refusals_precede_the_base_constructor(self):
         """Odd Nmat is a ValueError from the FLEX parser (before the base

@@ -163,6 +163,14 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
+    # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
+    ("test_flex_bond_gpu", "TestEndToEndEquivalence",
+     "test_two_orbital_bond_chain",
+     "two whole bond-gate FLEX solves of the two-orbital fixture (4x4, "
+     "Nmat = 8, EPS = 1e-12, 45 iterations each), one per array backend, "
+     "compared end to end -- 4.5 s measured on an A100, so it sits right "
+     "at the rule; on a machine WITHOUT a CUDA device the whole class is "
+     "skipped from setUpClass anyway, and the fast gate pays nothing"),
     # --- tests/test_flex_bond_memory.py -- #181 Phase B memory validation --
     ("test_flex_bond_memory", "TestSubprocessRSS",
      "test_subprocess_rss_below_estimate_plus_allowance",

@@ -293,6 +293,58 @@ class TestOutputs(unittest.TestCase):
             cs2 = np.load(os.path.join(out, "chiq_s.npz"))
             self.assertNotIn("longitudinal_bond_chi_s", cs2.files)
 
+    def test_provenance_members_stamped(self):
+        s, r = _flex()
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "chiq": "chiq.npz", "sigma": "sigma.npz"}, gi)
+            z = np.load(os.path.join(out, "chiq.npz"))
+            self.assertEqual(str(z["longitudinal_bond_guard_freqs"]), "all")
+            self.assertEqual(str(z["longitudinal_bond_device"]), "numpy")
+            self.assertEqual(int(z["longitudinal_bond_nb"]), s._bond_nb)
+
+    def test_guard_mode_and_array_module_reach_the_kernels(self):
+        """The configured guard mode is WIRED, not just recorded.
+
+        The end-to-end equality above and the provenance member would both
+        survive a solver that hard-coded ``guard_freqs="all"`` (the two modes
+        agree whenever the guard passes, and the member is read off the
+        config). This wraps the two kernels the solver calls and reads the
+        arguments they actually received -- including the array module of the
+        transport, which is numpy on the CPU path.
+        """
+        import hwave.solver.flex_bond as flex_bond
+        for mode, expected in ((None, "all"), ("static", "static")):
+            with self.subTest(mode=mode):
+                s, r = _flex({} if mode is None else {"longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with mock.patch.object(flex_bond, "dress_and_build_w",
+                                       wraps=flex_bond.dress_and_build_w) as dress, \
+                        mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                          wraps=flex_bond.calc_self_energy_bond) as transport:
+                    with tempfile.TemporaryDirectory() as out:
+                        s.solve(gi, out)
+                self.assertEqual(dress.call_count, _PAR["IterationMax"])
+                self.assertEqual(transport.call_count, _PAR["IterationMax"])
+                for call in dress.call_args_list:
+                    self.assertEqual(call.kwargs["guard_freqs"], expected)
+                    # the device context, not the loose vertex arrays
+                    self.assertIs(call.args[1].xp, np)
+                for call in transport.call_args_list:
+                    self.assertIs(call.kwargs["xp"], np)
+
+    def test_static_guard_end_to_end_equals_all_when_the_guard_passes(self):
+        outs = {}
+        for mode in ("all", "static"):
+            s, r = _flex({"longitudinal_bond_guard_freqs": mode})
+            gi = r.get_param("green")
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+                outs[mode] = (np.array(gi["sigma"]), np.array(gi["longitudinal_bond_chi_s"]))
+        np.testing.assert_allclose(outs["static"][0], outs["all"][0], rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(outs["static"][1], outs["all"][1], rtol=1e-12, atol=1e-14)
+
     def test_iteration_max_zero_omits_last_map_archives(self):
         with tempfile.TemporaryDirectory() as out:
             s, r = _flex({"IterationMax": 0, "longitudinal_bond_output_full": True})
@@ -347,6 +399,26 @@ class TestOutputs(unittest.TestCase):
             self.assertTrue(np.isfinite(v) and v > 0.0)
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
+    def test_static_guard_mode_is_logged(self):
+        """``longitudinal_bond_guard_freqs = "static"`` narrows the
+        conditioning guard to the zero bosonic frequency; the solve must
+        say so once, and the default ("all") mode must say nothing about
+        it."""
+        s, r = _flex({"longitudinal_bond_guard_freqs": "static"})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                s.solve(gi, out)
+        static_records = [rec for rec in cm.output if "static" in rec and "cond_min" in rec]
+        self.assertEqual(len(static_records), 1, cm.output)
+
+        s2, r2 = _flex()
+        gi2 = r2.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm2:
+                s2.solve(gi2, out)
+        self.assertFalse(any("guard_freqs" in rec and "cond_min" in rec for rec in cm2.output))
+
 
 class TestFailureClearing(unittest.TestCase):
 
@@ -389,6 +461,133 @@ class TestFailureClearing(unittest.TestCase):
             for a in attrs + ("sigma", "sigma_static", "sigma_fluct", "green_kw", "chi_s",
                               "chi_c", "physics"):
                 self.assertFalse(hasattr(s, a), a)
+
+
+class TestDeviceAdmission(unittest.TestCase):
+    """The device half of the bond-gate admission (spec 4.6): it runs at the
+    entry of the Phase B solve, not in the host preflight, and it owns the
+    device table and the transfer-volume line."""
+
+    def test_host_preflight_stays_host_only(self):
+        """A CPU run logs the host table and nothing about a device."""
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        joined = "\n".join(cm.output)
+        self.assertIn("Bond-resolved FLEX preflight", joined)
+        self.assertNotIn("device table", joined)
+        self.assertNotIn("transfer volume", joined)
+
+    def test_admission_runs_before_the_device_context(self):
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        order = []
+        real_adm = s._bond_device_admission
+        real_init = flex_bond.BondDeviceContext.__init__
+        s._bond_device_admission = lambda xp: (order.append("admission"), real_adm(xp))[1]
+
+        def init(ctx_self, *a, **kw):
+            order.append("context")
+            real_init(ctx_self, *a, **kw)
+
+        with mock.patch.object(flex_bond.BondDeviceContext, "__init__", init):
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        self.assertEqual(order, ["admission", "context"])
+
+    def test_admission_recomputes_the_estimate_and_logs(self):
+        """With a device backend the measured free memory is what selects the
+        batch: a reading that only admits nb = 1 must override the host
+        table's choice, and the device table and transfer volume are logged
+        there (where the backend is known), not in the preflight."""
+        import types
+        import hwave.solver.flex as flex_mod
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        nb_host = int(s._bond_nb)
+        self.assertGreater(nb_host, 1)
+        at1 = flex_bond.estimate_bond_memory(
+            device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
+        rows = at1["device_rows"]
+        need1 = 1.25 * (rows["vertices_static"] + rows["flex_arrays"]
+                        + rows["second_order_factors"]
+                        + max(rows["dressing"], rows["transport"]))
+        avail = int(need1 * 1.001 / 0.9)
+        fake_xp = types.SimpleNamespace(__name__="cupy")
+        with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s._bond_device_admission(fake_xp)
+        self.assertEqual(s._bond_nb, 1)
+        self.assertIn("device_rows", s._bond_est)
+        joined = "\n".join(cm.output)
+        self.assertIn("device table", joined)
+        self.assertIn("transfer volume", joined)
+
+    def test_admission_is_a_noop_on_the_numpy_backend(self):
+        import hwave.solver.flex as flex_mod
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        calls = []
+        with mock.patch.object(flex_mod._bk, "device_available_bytes",
+                               lambda: calls.append(1)):
+            s._bond_device_admission(np)
+        self.assertEqual(calls, [])
+
+    def test_transfer_volume_counts_the_static_slices_and_sigma(self):
+        """Every device -> host copy of one iteration is accounted for: the W
+        batches, the guard copies, the collapses, the two static ND x ND
+        slices and the returned self-energy."""
+        import hwave.solver.flex as flex_mod
+        for mode in ("all", "static"):
+            with self.subTest(guard=mode):
+                s, r = _flex({"IterationMax": 0, "longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with tempfile.TemporaryDirectory() as out:
+                    s.solve(gi, out)
+                est = s._bond_est
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    s._log_bond_transfer_volume(est)
+                line = [m for m in cm.output if "transfer volume" in m][0]
+                u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+                S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+                guard_all = mode == "all"
+                d2h = (u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                       + (0 if guard_all else 2 * S_b) + G_b)
+                gib = 1024.0 ** 3
+                self.assertIn("{:.4f}".format(d2h / gib), line)
+
+
+class TestDeviceContextFailure(unittest.TestCase):
+
+    def test_device_context_allocation_failure_is_diagnosed(self):
+        """An out-of-memory error while the vertex context is being built gets
+        the same named diagnostic as one inside the SCF loop, then propagates."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        def boom(*a, **kw):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond, "BondDeviceContext", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        self.assertTrue(any("device context" in m for m in cm.output), cm.output)
 
 
 class TestStandaloneHFAdmissibility(unittest.TestCase):

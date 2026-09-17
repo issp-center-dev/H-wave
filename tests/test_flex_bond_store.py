@@ -5,6 +5,7 @@ every-frequency channel-0 identity with the general bubble under a
 nonzero coeff_tail."""
 import os
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -106,6 +107,51 @@ class TestBubbleAssembly(unittest.TestCase):
             assemble_bubble(store, green_scf, s.green0_tail, beta, view, (4, 4, 1), 1)
             ch0 = store.get_freq_batch("chibar", 0, nmat)[:, :, :nd, :nd]
         np.testing.assert_allclose(ch0.reshape(nmat, nvol, norb, norb, norb, norb), ref, rtol=0, atol=1e-12)
+
+
+class TestBondDeviceContext(unittest.TestCase):
+
+    def _arrays(self):
+        rng = np.random.default_rng(1)
+        nvol, ND, nd = 3, 4, 2
+        S = rng.normal(size=(nvol, ND, ND)) + 0j
+        C = rng.normal(size=(nvol, ND, ND)) + 0j
+        S_on = rng.normal(size=(nvol, nd, nd)) + 0j
+        C_on = rng.normal(size=(nvol, nd, nd)) + 0j
+        perm = np.array([0, 1, 3, 2])
+        mask = np.ones((ND, ND))
+        return S, C, S_on, C_on, perm, mask
+
+    def test_numpy_backend_passes_host_arrays_through(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+            self.assertIs(dev.xp, np)
+            self.assertIs(dev.S, S)
+            self.assertIs(dev.C, C)
+            self.assertIs(dev.S_on, S_on)
+            self.assertIs(dev.C_on, C_on)
+            self.assertIs(dev.perm, perm)
+            self.assertIs(dev.mask, mask)
+            np.testing.assert_array_equal(dev.SpC_on, S_on + C_on)
+            self.assertFalse(dev.released)
+        self.assertTrue(dev.released)
+        with self.assertRaises(RuntimeError):
+            dev.S
+
+    def test_transfer_uses_to_device_once_per_array(self):
+        from hwave.solver import flex_bond
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        seen = []
+        fake_xp = object()
+        def _to_device(a, xp):
+            seen.append((id(a), xp))
+            return a
+        with mock.patch.object(flex_bond._bk, "to_device", _to_device):
+            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask) as dev:
+                self.assertIs(dev.xp, fake_xp)
+        self.assertEqual(len(seen), 7)                      # S, C, S_on, C_on, SpC_on, perm, mask
+        self.assertTrue(all(x is fake_xp for _, x in seen))
 
 
 if __name__ == "__main__":

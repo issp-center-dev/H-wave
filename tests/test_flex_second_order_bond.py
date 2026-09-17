@@ -6,10 +6,8 @@ the mixed second-order blocks carry the pair permutation of spec
 2026-09-16 R3 (issue #192); those mixed strips equal the index-loop
 formula of that permutation at norb = 3; the memory table carries the
 factor row."""
-import contextlib
 import tempfile
 import unittest
-from unittest import mock
 
 import numpy as np
 
@@ -61,16 +59,17 @@ class TestBondGate(unittest.TestCase):
         nd = norb * norb
         G = s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
         B = s._bond_view.n_channels
-        patch = (mock.patch.object(flex_bond, "_mixed_pair_permutation",
-                                   lambda nb, ndd, nrb: np.arange(nb * ndd))
-                 if identity_permutation else contextlib.nullcontext())
-        with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
+        ND = B * nd
+        perm = (np.arange(ND) if identity_permutation
+               else flex_bond._mixed_pair_permutation(B, nd, norb))
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, None, beta, s._bond_view, (4, 4, 1), 1)
             cb = np.array(store.get_freq_batch("chibar", 0, nmat))
-            with patch:
-                flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
-                                            C_on=s._bond_C_on, nb=nmat, output_full=False,
+            with flex_bond.BondDeviceContext(np, s._bond_S, s._bond_C, s._bond_S_on,
+                                             s._bond_C_on, perm, mask) as dev:
+                flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                             nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(4, 4, 1),
                                             factors=s._second_order_factors,
                                             second_order=second_order)
@@ -232,12 +231,15 @@ class TestBondGate(unittest.TestCase):
         S = np.broadcast_to(np.diag(diag), (nvol, ND, ND)).copy()
         C = np.broadcast_to(np.diag(0.7 * diag[::-1]), (nvol, ND, ND)).copy()
         zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        perm = flex_bond._mixed_pair_permutation(B, nd, norb)
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
         with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
             store.put_freq_batch("chibar", 0, nmat, cb)
-            flex_bond.dress_and_build_w(store, S, C, S_on=zero_on, C_on=zero_on, nb=nmat,
-                                        output_full=False, nmat=nmat, nvol=nvol, nd=nd,
-                                        spatial_shape=shape, factors=None,
-                                        second_order="takimoto")
+            with flex_bond.BondDeviceContext(np, S, C, zero_on, zero_on, perm, mask) as dev:
+                flex_bond.dress_and_build_w(store, dev, nb=nmat,
+                                            output_full=False, nmat=nmat, nvol=nvol, nd=nd,
+                                            spatial_shape=shape, factors=None,
+                                            second_order="takimoto")
             W = np.array(store.get_freq_batch("W", 0, nmat))
         eye = np.eye(ND)
         chi_s = np.linalg.solve(eye - cb @ S[None], cb)
@@ -276,23 +278,34 @@ class TestBondGate(unittest.TestCase):
         is refused, not silently truncated by ``B = ND // nd``: the pair
         index the permutation builds (``m * nd + a * norb + b``) describes a
         block layout that such a matrix does not have."""
-        from hwave.solver.flex_bond import dress_and_build_w
+        from hwave.solver.flex_bond import (BondDeviceContext, _mixed_pair_permutation,
+                                            dress_and_build_w)
         nvol, nd, ND = 2, 4, 6
         S = np.zeros((nvol, ND, ND), complex)
-        with self.assertRaises(ValueError) as cm:
-            dress_and_build_w(None, S, S, S_on=S, C_on=S, nb=2, output_full=False,
-                              nmat=2, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),
-                              factors=None, second_order="takimoto")
+        norb = int(round(nd ** 0.5))
+        perm = _mixed_pair_permutation(ND // nd, nd, norb)
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        with BondDeviceContext(np, S, S, S, S, perm, mask) as dev:
+            with self.assertRaises(ValueError) as cm:
+                dress_and_build_w(None, dev, nb=2, output_full=False,
+                                  nmat=2, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),
+                                  factors=None, second_order="takimoto")
         self.assertIn("ND = 6", str(cm.exception))
         self.assertIn("nd = 4", str(cm.exception))
 
     def test_local_without_factors_is_refused(self):
-        from hwave.solver.flex_bond import BondBlockStore, dress_and_build_w
+        from hwave.solver.flex_bond import (BondBlockStore, BondDeviceContext,
+                                            _mixed_pair_permutation, dress_and_build_w)
         nmat, nvol, nd, B = 2, 2, 1, 1
-        S = np.zeros((nvol, B * nd, B * nd), complex)
-        with BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
+        ND = B * nd
+        S = np.zeros((nvol, ND, ND), complex)
+        norb = int(round(nd ** 0.5))
+        perm = _mixed_pair_permutation(B, nd, norb)
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        with BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                BondDeviceContext(np, S, S, S, S, perm, mask) as dev:
             with self.assertRaises(ValueError) as cm:
-                dress_and_build_w(store, S, S, S_on=S, C_on=S, nb=nmat, output_full=False,
+                dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                   nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),
                                   factors=None, second_order="local")
         self.assertIn("flex_second_order", str(cm.exception))

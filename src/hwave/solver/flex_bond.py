@@ -85,6 +85,53 @@ class BondBlockStore:
         return self._released
 
 
+class BondDeviceContext:
+    """Owner of the IMMUTABLE bond inputs for one ``_solve_phase_b`` call
+    (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``, the on-site
+    ``S_on``, ``C_on``, their sum ``SpC_on`` (formed on the host here, once),
+    the mixed-block pair permutation ``perm`` and the block-weight ``mask``.
+    Construction transfers them to the array module ``xp`` exactly once
+    (``_bk.to_device``; the identity on numpy, so the CPU path gets the
+    host arrays themselves); every SCF iteration reuses them. A context
+    manager like :class:`BondBlockStore`: ``release()`` drops the references
+    (the cupy pool may then reuse the blocks). ``_solve_phase_b`` creates
+    it AFTER the memory preflight (its allocation is part of the predicted
+    device need) and nothing else creates device copies of the vertices."""
+
+    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask")
+
+    def __init__(self, xp, S, C, S_on, C_on, perm, mask):
+        self.xp = xp
+        SpC_on = np.asarray(S_on) + np.asarray(C_on)
+        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
+        self._arrays = {k: _bk.to_device(host[k], xp) for k in self._NAMES}
+        self._released = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.release()
+        return False
+
+    def __getattr__(self, name):
+        # attribute access for the seven arrays; everything else is normal
+        if name in BondDeviceContext._NAMES:
+            arrays = self.__dict__.get("_arrays")
+            if self.__dict__.get("_released", True) or arrays is None:
+                raise RuntimeError("BondDeviceContext: released")
+            return arrays[name]
+        raise AttributeError(name)
+
+    def release(self):
+        self._arrays = {}
+        self._released = True
+
+    @property
+    def released(self):
+        return self._released
+
+
 def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, workers):
     """Fill ``store['chibar']`` pair by pair from ``bubble._iter_bond_dynamic``
     (spec 3.1). ``green_scf`` is the TAIL-SUBTRACTED single-block Green
@@ -116,15 +163,16 @@ def _at(iteration):
     return "" if iteration is None else " (SCF iteration {})".format(iteration)
 
 
-def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration):
+def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all"):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      cond_tol=cond_tol)
+                                      cond_tol=cond_tol, guard_freqs=guard_freqs)
     except ValueError as exc:
         if iteration is None:
             raise
         raise ValueError("{}{}".format(exc, _at(iteration))) from exc
-    if not np.all(np.isfinite(chi_b)):
+    xp = _bk.array_module_of(chi_b)
+    if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
                               "at l={}{}".format(channel, l0, _at(iteration)))
     return chi_b, cond
@@ -166,9 +214,9 @@ class DressResult:
     cond_min_c: float
 
 
-def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, nd, spatial_shape,
+def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
-                      second_order="takimoto"):
+                      second_order="takimoto", guard_freqs="all"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -211,12 +259,22 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
 
     The mixed and bond-bond blocks are the same under both values: the
     gate resums the off/off exchange topology the local kernel does not
-    carry, and that is the D4/D5 design."""
+    carry, and that is the D4/D5 design.
+
+    ``dev`` is the :class:`BondDeviceContext` owning the vertices (spec
+    2026-09-17 section 4.2): each frequency batch is moved from the store
+    (host) onto ``dev.xp`` once (``_bk.to_device``), dressed and reduced to
+    ``W`` entirely on that module, then the collapses, the static slices
+    and ``W`` itself are copied back to the host (``_bk.to_host``) before
+    the ONE store write of the batch. On numpy (``dev.xp is np``) every
+    transfer is the identity, so this is byte-for-byte the host loop."""
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
     if second_order == "local" and factors is None:
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
+    xp = dev.xp
+    S, C, SpC_on = dev.S, dev.C, dev.SpC_on
     ND = S.shape[-1]
     norb = int(round(nd ** 0.5))
     if norb * norb != nd:
@@ -231,44 +289,37 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         raise ValueError("dress_and_build_w: the vertex pair dimension ND = {} is not a "
                          "multiple of the channel block size nd = {}, so it does not carry "
                          "whole bond-channel blocks".format(ND, nd))
-    # the pair permutation of the mixed second-order blocks, built once (it
-    # depends on the block layout only, not on the frequency batch)
-    perm = _mixed_pair_permutation(ND // nd, nd, norb)
-    SpC_on = np.asarray(S_on) + np.asarray(C_on)
-    collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
+    # the pair permutation and the block-weight mask, owned by the device
+    # context (built once, ahead of every SCF iteration)
+    perm, mask = dev.perm, dev.mask
+    collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)      # HOST accumulators
     collapse_s = np.empty_like(collapse0)
     collapse_c = np.empty_like(collapse0)
     static_s = np.zeros((nvol, ND, ND), dtype=np.complex128)
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
     l_static = nmat // 2
     cond_s = cond_c = np.inf
-    # block weights of the second-order term: 1 on channel-0, 1/2 on the
-    # mixed blocks, 0 on bond-bond (applied to the half-sum below)
-    mask = np.zeros((ND, ND))
-    mask[:nd, :] = 0.5
-    mask[:, :nd] = 0.5
-    mask[:nd, :nd] = 0.0
     for l0 in range(0, nmat, nb):
         l1 = min(nmat, l0 + nb)
-        cb = store.get_freq_batch("chibar", l0, l1)
-        collapse0[l0:l1] = cb[:, :, :nd, :nd]
-        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration)
+        cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
+        collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
+        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
-        collapse_s[l0:l1] = chi_s_b[:, :, :nd, :nd]
+        collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
-            static_s[...] = chi_s_b[l_static - l0]
+            static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_s_w", l0, l1, chi_s_b)
+            store.put_freq_batch("chi_s_w", l0, l1, _bk.to_host(chi_s_b))
         chi_s_b -= cb
         W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         del chi_s_b
-        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration)
+        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
-        collapse_c[l0:l1] = chi_c_b[:, :, :nd, :nd]
+        collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
-            static_c[...] = chi_c_b[l_static - l0]
+            static_c[...] = _bk.to_host(chi_c_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_c_w", l0, l1, chi_c_b)
+            store.put_freq_batch("chi_c_w", l0, l1, _bk.to_host(chi_c_b))
         chi_c_b -= cb
         W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
         del chi_c_b
@@ -278,12 +329,8 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         A = S[None] @ cb @ S[None]
         Bc = C[None] @ cb @ C[None]
         if second_order == "local":
-            # the exact local second order on the channel-0 sub-block; the
-            # ring already in W_b starts at third order there (both channels
-            # had the bare bubble subtracted). The kernel allocates its own
-            # two (nb, nvol, nd, nd) temporaries -- this loop holds none of
-            # that shape to lend (A / Bc are (nb, nvol, ND, ND) and are still
-            # needed for the mixed blocks below).
+            # accumulate_batch is array-module generic; `factors` must carry arrays
+            # of xp's module (the caller passes the device pack on the GPU)
             _so.accumulate_batch(W_b[:, :, :nd, :nd], cb[:, :, :nd, :nd], l0, factors)
         else:
             W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
@@ -298,11 +345,11 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
             A = A[:, :, perm[:, None], perm[None, :]]
         W_b += A
         del A
-        if not np.all(np.isfinite(W_b)):
+        if not bool(xp.all(xp.isfinite(W_b))):
             raise _NonFiniteError("non-finite effective interaction W in the frequency batch "
                                   "[{}, {}){}".format(l0, l1, _at(iteration)))
-        store.put_freq_batch("W", l0, l1, W_b)
-        del W_b
+        store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))          # written ONCE, last
+        del W_b, cb
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
                        cond_min_s=float(cond_s), cond_min_c=float(cond_c))
@@ -314,7 +361,7 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
 
 
 
-def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
+def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=np):
     """Sigma_fluct(k, iw) from the bond-resolved effective interaction ``W``
     in ``store`` (spec 3.4 rev 19, normative equation):
 
@@ -341,18 +388,27 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
 
     ``green_kw`` is rank five `(1, nmat, nvol, norb, norb)`; the result has
     the same shape.  With a single on-site channel this reproduces
-    `FLEX._calc_self_energy_general` byte for byte."""
+    `FLEX._calc_self_energy_general` byte for byte.
+
+    ``xp`` selects the array module the accumulation runs in (numpy or
+    cupy; default numpy). ``green_kw`` may be host or device -- it is moved
+    to ``xp`` here via :func:`_bk.to_device`, as is each host ``W`` block
+    read from ``store``. The returned ``sigma`` is an ``xp`` array; the
+    caller moves it to the host. With ``xp is np`` this is the previous
+    code, line for line."""
+    if not (xp is np or (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp)):
+        raise TypeError("calc_self_energy_bond: xp must be numpy or cupy")
     nx, ny, nz = (int(x) for x in shape)
     nvol = nx * ny * nz
     nmat = green_kw.shape[1]
     P = norb
     nd = norb * norb
     B = view.n_channels
-    G_kw = green_kw[0]
+    G_kw = _bk.to_device(green_kw, xp)[0]
     G_rt = _bk.spatial_ifftn(
         _ms.fermion_to_tau(G_kw.reshape(nmat, nvol * P * P), axis=0).reshape(nmat, nx, ny, nz, P * P),
         axes=(1, 2, 3), workers=workers).reshape(nmat, nx, ny, nz, P, P)
-    Sigma_rt = np.zeros((nmat, nvol, P, P), dtype=np.complex128)
+    Sigma_rt = xp.zeros((nmat, nvol, P, P), dtype=xp.complex128)
     axes = (1, 2, 3)
     for alpha in range(B):
         Ra = np.asarray(view.delta_r[alpha], dtype=int)
@@ -362,14 +418,14 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers):
             if shift == (0, 0, 0):
                 G_sh = G_rt.reshape(nmat, nvol, P, P)
             else:
-                G_sh = np.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
-            blk = np.ascontiguousarray(store.get_pair("W", alpha, bt))               # (nmat, nvol, nd, nd)
+                G_sh = xp.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
+            blk = _bk.to_device(np.ascontiguousarray(store.get_pair("W", alpha, bt)), xp)   # 1 H2D per pair
             blk_qt = _ms.boson_to_tau(blk.reshape(nmat, nvol * nd * nd), axis=0)
             del blk
             Wab_rt = _bk.spatial_ifftn(blk_qt.reshape(nmat, nx, ny, nz, nd * nd),
                                        axes=axes, workers=workers).reshape(nmat, nvol, P, P, P, P)
             del blk_qt
-            A = np.einsum('frcadb,frcd->frab', Wab_rt, G_sh)
+            A = xp.einsum('frcadb,frcd->frab', Wab_rt, G_sh)
             del Wab_rt, G_sh
             Sigma_rt += A
             del A
@@ -407,7 +463,7 @@ def transport_ops(B, nmat, nvol, norb):
 
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
-                         freq_batch, cap_gb, mixing, factor_bytes=0):
+                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -422,7 +478,39 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     (``second_order_factors``). Its batch temporaries are not a row of
     their own -- they are two ``(nb, nvol, nd, nd)`` arrays, i.e. 2/B^2
     of a single ``(nb, nvol, ND, ND)`` buffer, well inside the
-    ``dressing`` row's six."""
+    ``dressing`` row's six.
+
+    ``device_available`` (bytes free on the GPU, measured by the caller
+    at the entry of the Phase B solve, before the block store and the
+    device vertex context are allocated) is optional; when given, a
+    second, incremental DEVICE table is built alongside the host one and
+    the returned ``nb`` is capped to what both agree on. The device
+    table carries what the gated run keeps resident on the device for
+    the whole Phase B solve --
+
+    * ``vertices_static = 5 * S``: the static vertex stack of the device
+      context, allocated right after the measurement;
+    * ``flex_arrays = 5 * G``: the SCF loop's device Green functions and
+      self-energies, allocated per iteration INSIDE the loop and so not
+      yet part of the measured reading;
+    * ``second_order_factors = factor_bytes``: the device mirror of the
+      compiled factor pack, which exists exactly when the pack does
+      (``flex_second_order = "local"``). The mirror is already live at
+      the measurement point, so counting it is a deliberate margin
+      rather than a missing allocation --
+
+    plus two phase rows that are never simultaneously live:
+    ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
+    dressing solve and ``transport = 6 * C`` during the bond
+    self-energy transport. The device need at a batch size is therefore
+    ``1.25 * (vertices_static + flex_arrays + second_order_factors +
+    max(dressing(nb), transport))`` against ``device_cap = 0.9 *
+    device_available``. Refusal at ``nb = 1``
+    names whichever of the two phase rows does not fit; an explicit
+    ``freq_batch`` is checked against both the host and the device
+    table; otherwise the selected ``nb`` is ``min`` of the largest
+    batch each table admits, and the dict gains ``device_rows``,
+    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -512,12 +600,58 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             if _peak(cand) <= cap_bytes:
                 nb = cand
                 break
+
+    device = {}
+    if device_available is not None:
+        vertices = 5 * S
+        transport = 6 * C
+        dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
+                          "second_order_factors": int(factor_bytes)}
+        dev_persistent_sum = sum(dev_persistent.values())
+        def _dev_rows(n):
+            rows = dict(dev_persistent)
+            rows["dressing"] = 7 * n * nvol * ND * ND * it
+            rows["transport"] = transport
+            return rows
+        def _dev_need(n):
+            r = _dev_rows(n)
+            return 1.25 * (dev_persistent_sum + max(r["dressing"], r["transport"]))
+        dev_cap = 0.9 * float(device_available)
+        def _dev_table(n):
+            return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
+                             for k, v in _dev_rows(n).items())
+        if _dev_need(1) > dev_cap:
+            phase = "dressing" if 7 * nvol * ND * ND * it >= transport else "transport"
+            raise ValueError(
+                "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
+                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
+                "row) exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce "
+                "the k mesh or Nmat, drop declared-zero outer shells with "
+                "longitudinal_bond_max_shells, or run with gpu=false.".format(
+                    _dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))
+        if freq_batch is not None and _dev_need(int(freq_batch)) > dev_cap:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_freq_batch = {} gives an estimated device need of "
+                "{:.4f} GiB above 0.9 * the available device memory {:.4f} GiB (host peak {:.4f} GiB "
+                "against the host cap {:.4f} GiB); the device rows are\n{}".format(
+                    int(freq_batch), _dev_need(int(freq_batch)) / _GIB, dev_cap / _GIB,
+                    _peak(int(freq_batch)) / _GIB, cap_bytes / _GIB, _dev_table(int(freq_batch))))
+        device_nb = 1
+        for cand in range(nmat, 0, -1):
+            if _dev_need(cand) <= dev_cap:
+                device_nb = cand
+                break
+        nb = min(nb, device_nb)
+        device = dict(device_rows=_dev_rows(nb), device_need=_dev_need(nb), device_cap=dev_cap,
+                      device_nb=device_nb, device_table=_dev_table(nb))
+
     phase_rows = _phase_rows(nb)
     return dict(persistent_rows=persistent_rows, phase_rows=phase_rows, persistent=persistent,
                 nb=nb, peak=_peak(nb), cap_bytes=cap_bytes, U=U, G_bytes=G, C_bytes=C,
                 S_bytes=S, H_bytes=H, B=B, ND=ND, nvol=nvol, nmat=nmat, table=_table(nb),
                 dressing_ops=dressing_ops(nmat, nvol, ND),
-                transport_ops=transport_ops(B, nmat, nvol, norb))
+                transport_ops=transport_ops(B, nmat, nvol, norb),
+                **device)
 
 
 _NPZ_ARTIFACTS = ("chi0q", "chiq_s", "chiq_c", "chiq", "sigma", "green", "longitudinal_bond")

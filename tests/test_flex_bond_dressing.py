@@ -27,6 +27,17 @@ class TestDressBatch(unittest.TestCase):
                 np.testing.assert_array_equal(chi_b[i], ref)
             self.assertIsInstance(cond, float)
 
+    def test_accepts_an_array_like_input(self):
+        """The batch argument is documented as an array, not specifically a
+        numpy one: an array-like (nested list) must be coerced, not crash on
+        a missing ``ndim``."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, _C = _problem(nmat=2, nvol=2, nd=1, B=1, seed=3)
+        ref, _ = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1))
+        out, _ = bc.dress_batch(chi_bar.tolist(), S, "spin", l0=0, nmat=2,
+                                spatial_shape=(2, 1, 1))
+        np.testing.assert_array_equal(out, ref)
+
     def test_refusal_names_frequency_and_q(self):
         from hwave.solver import bond_channels as bc
         chi_bar, S, C = _problem(nmat=4, nvol=2, nd=1, B=1)
@@ -70,7 +81,8 @@ class TestDressAndBuildW(unittest.TestCase):
         layout alone. The synthetic problem has ``nd = 4`` (norb = 2) and a
         random, orbital-asymmetric ``chi_bar``/``S``/``C``, so it sees the
         permutation."""
-        from hwave.solver.flex_bond import BondBlockStore, dress_and_build_w
+        from hwave.solver.flex_bond import (BondBlockStore, BondDeviceContext,
+                                            _mixed_pair_permutation, dress_and_build_w)
         from hwave.solver.second_order import dense_w2
         chi_bar, S, C = _problem(nmat=6, nvol=4, nd=4, B=3)
         nmat, nvol, ND = chi_bar.shape[:3]
@@ -84,10 +96,14 @@ class TestDressAndBuildW(unittest.TestCase):
                     store.put_freq_batch("chibar", 0, nmat, chi_bar)
                     S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
                     C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
-                    res = dress_and_build_w(store, S, C, S_on=S_on, C_on=C_on, nb=4,
-                                            output_full=output_full, nmat=nmat,
-                                            nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
-                                            factors=factors, second_order=second_order)
+                    perm = _mixed_pair_permutation(ND // nd, nd, int(round(nd ** 0.5)))
+                    mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5
+                    mask[:nd, :nd] = 0.0
+                    with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                        res = dress_and_build_w(store, dev, nb=4,
+                                                output_full=output_full, nmat=nmat,
+                                                nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
+                                                factors=factors, second_order=second_order)
                     I = np.eye(ND)
                     chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
                     chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
@@ -131,6 +147,154 @@ class TestDressAndBuildW(unittest.TestCase):
                     else:
                         with self.assertRaises(KeyError):
                             store.get_freq_batch("chi_s_w", 0, 1)
+
+
+class TestDressAndBuildWDevice(unittest.TestCase):
+
+    def test_numpy_context_matches_reference_batch_sizes(self):
+        """The refactored loop with the numpy context equals itself for every batch
+        size (1, non-divisor, boundary containing l_static, full) to round-off, and
+        the store's W is written once per batch (spy)."""
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
+        nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1]
+        nd = 4
+        S_on = S[:, :nd, :nd].copy(); C_on = C[:, :nd, :nd].copy()
+        perm = fb._mixed_pair_permutation(ND // nd, nd, 2)
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        outs = {}
+        for nb in (1, 3, nmat // 2, nmat):
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                puts = []
+                orig = store.put_freq_batch
+                def _spy(name, l0, l1, batch, _o=orig):
+                    puts.append((name, l0, l1)); return _o(name, l0, l1, batch)
+                store.put_freq_batch = _spy
+                res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
+                                           second_order="takimoto")
+                outs[nb] = (store._arrays["W"].copy(), res.collapse0.copy(), res.static_s.copy(),
+                            res.cond_min_s)
+                self.assertEqual([p for p in puts if p[0] == "W"],
+                                 [("W", l0, min(nmat, l0 + nb)) for l0 in range(0, nmat, nb)])
+        for nb in (1, 3, nmat // 2):
+            for a, b in zip(outs[nb], outs[nmat]):
+                if isinstance(a, float):
+                    self.assertAlmostEqual(a, b, places=12)
+                else:
+                    np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-14)
+
+
+class TestDressBatchGuardModes(unittest.TestCase):
+
+    def test_all_is_the_default_and_unchanged(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        nmat = chi_bar.shape[0]
+        ref, c_ref = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        out, c_out = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1),
+                                    guard_freqs="all")
+        np.testing.assert_array_equal(out, ref)
+        self.assertEqual(c_out, c_ref)
+
+    def test_static_checks_only_the_zero_frequency_slice(self):
+        """A batch singular ONLY at a nonzero bosonic frequency: refused by "all",
+        accepted by "static" when the solve is accurate (here the block is exactly
+        singular, so the solve raises / the residual check refuses -- both name the
+        frequency); a batch singular ONLY at l = nmat//2 is refused by both."""
+        from hwave.solver import bond_channels as bc
+        nmat, nvol = 4, 2
+        W = np.ones((nvol, 1, 1), complex)
+        # near-singular (not exactly) at l=3 (bosonic index 2), q=1: 1 - 0.999999 = 1e-6
+        chi_bar = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar[3, 1, 0, 0] = 1.0 - 1e-6
+        with self.assertRaises(ValueError) as cm:
+            bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                           guard_freqs="all")
+        self.assertIn("bosonic Matsubara index 2", str(cm.exception))
+        chi, cond = bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                                   guard_freqs="static")
+        self.assertTrue(np.all(np.isfinite(chi)))
+        self.assertAlmostEqual(cond, 1.0)                    # the static slice is the identity
+        # singular at the static slice: both modes refuse
+        chi_bar2 = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar2[nmat // 2, 0, 0, 0] = 1.0
+        for mode in ("all", "static"):
+            with self.assertRaises(ValueError):
+                bc.dress_batch(chi_bar2, W, "spin", l0=0, nmat=nmat, spatial_shape=(2, 1, 1),
+                               guard_freqs=mode)
+
+    def test_static_residual_check_refuses_an_inaccurate_unchecked_solve(self):
+        from hwave.solver import bond_channels as bc
+        nmat, nvol = 4, 1
+        W = np.ones((nvol, 1, 1), complex)
+        chi_bar = np.zeros((nmat, nvol, 1, 1), complex)
+        chi_bar[3, 0, 0, 0] = 1.0                            # exactly singular at l=3 (unchecked)
+        with self.assertRaises(ValueError) as cm:
+            bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(1, 1, 1),
+                           guard_freqs="static")
+        msg = str(cm.exception)
+        self.assertIn("static", msg)
+        self.assertIn("spin", msg)
+
+    def test_invalid_guard_mode_refused(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        with self.assertRaises(ValueError):
+            bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=6, spatial_shape=(4, 1, 1),
+                           guard_freqs="none")
+
+    def test_solve_residual_is_zero_safe(self):
+        from hwave.solver import bond_channels as bc
+        mat = np.eye(3, dtype=complex)[None, None]
+        cb = np.zeros((1, 1, 3, 3), complex)
+        chi = np.zeros_like(cb)
+        r = bc.solve_residual(mat, chi, cb)
+        self.assertEqual(r.shape, (1, 1))
+        self.assertEqual(float(r[0, 0]), 0.0)
+
+    def test_static_mode_skips_the_guard_outside_the_static_slice(self):
+        """A sub-batch that does not contain l = nmat // 2 gets no SVD guard
+        under "static" (cond_min is None); the sub-batch that does contain it
+        gets a float. The concatenated chi still matches the "all" result."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        nmat = chi_bar.shape[0]
+        l_static = nmat // 2
+        full, _ = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        nb = 2
+        parts, conds = [], []
+        for l0 in range(0, nmat, nb):
+            l1 = min(nmat, l0 + nb)
+            p, c = bc.dress_batch(chi_bar[l0:l1], S, "spin", l0=l0, nmat=nmat,
+                                  spatial_shape=(4, 1, 1), guard_freqs="static")
+            parts.append(p); conds.append((l0, l1, c))
+        saw_none = False
+        for l0, l1, c in conds:
+            if l0 <= l_static < l1:
+                self.assertIsInstance(c, float)
+            else:
+                self.assertIsNone(c)
+                saw_none = True
+        self.assertTrue(saw_none)                             # at least one excluded sub-batch
+        np.testing.assert_allclose(np.concatenate(parts), full, rtol=1e-12, atol=1e-14)
+
+    def test_batch_size_invariance_of_chi_and_cond(self):
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=2, B=2, seed=3)
+        nmat = chi_bar.shape[0]
+        full, c_full = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        for nb in (1, 3, nmat // 2):
+            parts, conds = [], []
+            for l0 in range(0, nmat, nb):
+                l1 = min(nmat, l0 + nb)
+                p, c = bc.dress_batch(chi_bar[l0:l1], S, "spin", l0=l0, nmat=nmat,
+                                      spatial_shape=(4, 1, 1))
+                parts.append(p); conds.append(c)
+            np.testing.assert_allclose(np.concatenate(parts), full, rtol=1e-12, atol=1e-14)
+            self.assertAlmostEqual(min(conds), c_full, places=12)
 
 
 if __name__ == "__main__":

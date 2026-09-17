@@ -113,14 +113,19 @@ def _one_map(s, gi, gate):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, green0_tail, beta, s._bond_view, _SHAPE, 1)
+            ND = B * nd
+            perm = flex_bond._mixed_pair_permutation(B, nd, norb)
+            mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5
+            mask[:nd, :nd] = 0.0
             # the SAME kernel the solver was configured with (the production
             # call in flex.py passes both of these): without them the harness
             # would silently measure the legacy kernel under a "local" solver.
-            flex_bond.dress_and_build_w(store, s._bond_S, s._bond_C, S_on=s._bond_S_on,
-                                        C_on=s._bond_C_on, nb=nmat, output_full=False,
-                                        nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
-                                        factors=s._second_order_factors,
-                                        second_order=s.flex_second_order)
+            with flex_bond.BondDeviceContext(np, s._bond_S, s._bond_C, s._bond_S_on,
+                                             s._bond_C_on, perm, mask) as dev:
+                flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
+                                            nmat=nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
+                                            factors=s._second_order_factors,
+                                            second_order=s.flex_second_order)
             sig = flex_bond.calc_self_energy_bond(store, G, beta, s._bond_view, _SHAPE, norb, 1)
     else:
         chi0q_raw = s._calc_chi0q(G, green0_tail, beta)[0]
