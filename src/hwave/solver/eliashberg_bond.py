@@ -9,6 +9,7 @@ import numpy as np
 from . import backend as _bk
 from . import bond_channels as _bc
 from . import flex_bond as _fb
+from . import matsubara as _ms
 
 logger = logging.getLogger("qlms").getChild("eliashberg_bond")
 
@@ -369,3 +370,321 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
         "stream": (int(1.25 * (build_host + rows["eigen_vectors"])), int(1.25 * dev_common)),
     }
     return AdmissionTable(rows=rows, residency_need=need, requested=residency)
+
+
+# =============================================================================
+# The pairing kernel on the uniform grid (spec 3, 4.1-4.4)
+# =============================================================================
+
+def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
+    """The frequency-INDEPENDENT pairing vertex of spec 4.2.
+
+    ``0.5 (S_0 + C_0)`` (singlet) / ``0.5 (C_0 - S_0)`` (triplet) built from the
+    CHANNEL-0 blocks of the enlarged bond vertices and crossed into the on-site
+    ``(l1, l2, l3, l4)`` layout by the shared
+    :func:`~hwave.solver.eliashberg_dynamic._instantaneous_vertex` (which
+    evaluates ``sc._compute_vertices_flex`` at ``chi_s = chi_c = 0``), so the
+    bond path and the on-site path carry bit-identical bare terms.
+
+    Parameters
+    ----------
+    S, C : ndarray, shape (nvol, ND, ND)
+        The enlarged bond spin/charge vertices; only the channel-0 block
+        ``[:, :nd, :nd]`` is read.
+    nd : int
+        ``norb**2``.
+    pairing_type : {"singlet", "triplet"}
+    spatial_shape : tuple
+        ``(Nx, Ny, Nz)``.
+
+    Returns
+    -------
+    ndarray, shape ``(norb, norb, norb, norb, Nx, Ny, Nz)``
+    """
+    from . import eliashberg_dynamic as _ed
+    nx, ny, nz = (int(x) for x in spatial_shape)
+    norb = int(round(nd ** 0.5))
+    S0 = np.asarray(S)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+    C0 = np.asarray(C)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+    return _ed._instantaneous_vertex({}, norb, nx, ny, nz, pairing_type=pairing_type,
+                                     convention="myo", sc_matrices=(S0, C0))
+
+
+def _vinst_as_block(V_inst, nd, nvol):
+    """``(norb,)*4 x (Nx, Ny, Nz)`` -> ``(nvol, nd, nd)`` pair-matrix form
+    (row pair ``(a, b)``, column pair ``(c, d)``) -- the layout the vertex
+    blocks live in, so the bare term can be added to the channel-0 block."""
+    return np.ascontiguousarray(
+        np.asarray(V_inst).transpose(4, 5, 6, 0, 1, 2, 3).reshape(nvol, nd, nd))
+
+
+def block_to_rtau_uniform(blk, spatial_shape, norb, workers, xp):
+    """One ``(alpha, beta)`` vertex block ``(nmat, nvol, nd, nd)`` on the uniform
+    bosonic grid -> ``(a, b, c, d, x, y, z, tau)`` on the module ``xp``.
+
+    The same two transforms the on-site vertex leg
+    (:func:`~hwave.solver.eliashberg_dynamic.vertex_qw_to_rt`) applies -- boson
+    -> tau on the frequency axis, ``ifftn`` (which carries the single spatial
+    fold's ``1/N``) on the spatial axes -- written for the block's own axis
+    order and transposed into the kernel's ``(a, b, c, d, x, y, z, t)`` layout.
+    """
+    nx, ny, nz = spatial_shape
+    nmat = blk.shape[0]
+    nvol = nx * ny * nz
+    nd = norb * norb
+    b = _bk.to_device(np.ascontiguousarray(blk) if isinstance(blk, np.ndarray) else blk, xp)
+    bt = _ms.boson_to_tau(b.reshape(nmat, nvol * nd * nd), axis=0)
+    br = _bk.spatial_ifftn(bt.reshape(nmat, nx, ny, nz, nd * nd), axes=(1, 2, 3),
+                           workers=workers)
+    return xp.ascontiguousarray(
+        br.reshape(nmat, nx, ny, nz, norb, norb, norb, norb).transpose(4, 5, 6, 7, 1, 2, 3, 0))
+
+
+def _host_available_bytes():
+    """Host memory the admission model may spend (the shared probe)."""
+    from . import eliashberg_dynamic as _ed
+    return _ed._available_ram_bytes()
+
+
+class BondPairKernel:
+    r"""The bond-resolved, frequency-resolved linearized Eliashberg operator
+    (spec 3, 4.1-4.4) as a ``matvec`` on a flat gap.
+
+    The gap is ``(norb, norb, Nx, Ny, Nz, nfreq)``; the bond channel index is
+    INTERNAL (summed over, never part of the gap). One matvec is
+
+    .. code-block:: text
+
+        F(k, n)        = sum G2(k, n) phi(k, n)                 (orbital pair)
+        F_beta(r, tau) = roll(ifft F(r, tau), -R_beta)
+        P_alpha        = - sum_beta Gamma_{alpha beta}(r, tau) F_beta(r, tau)
+        out(k, n)      = tau->freq fft sum_alpha roll(P_alpha, -R_alpha)
+
+    i.e. ``2B`` rolls and ``B**2`` real-space multiply-accumulates per matvec.
+    The roll convention is spec 4.3: ``e^{+ik.R} f(k)`` is ``f(r + R)``, which
+    on the FFT grid is ``xp.roll(f, -R, axis=(2, 3, 4))`` -- the same rule the
+    static bond kernel (:func:`~hwave.solver.bond_channels.make_bond_kernel`)
+    realizes with explicit ``e^{+ik.dr_m}`` phases and the FLEX bond transport
+    (``flex_bond.calc_self_energy_bond``) realizes with its ``R_alpha -
+    R_beta`` shift.
+
+    The frequency-independent bare vertex ``V_inst`` (spec 4.2) is added to the
+    CHANNEL-0 block at every bosonic frequency: on the dense uniform tau grid
+    that is exactly the ``delta(tau)`` its Fourier transform represents.
+
+    Normalization follows the on-site uniform kernel
+    (:func:`~hwave.solver.eliashberg_dynamic.eliashberg_kernel_dynamic`): the
+    ``1/beta`` lives inside ``G2``, the ``-(1/N)`` in the single ``ifftn``, and
+    no explicit ``beta`` is applied. The IR branch follows
+    :func:`~hwave.solver.eliashberg_dynamic.eliashberg_kernel_ir` instead (the
+    IR transforms are physical, so the operator carries one explicit ``beta``).
+
+    Parameters
+    ----------
+    vertex : PairVertexUniform or PairVertexIR
+        The pairing vertex ``Gamma_eta`` (:class:`PairVertexAccumulator`).
+    G2 : ndarray
+        Pair bubble ``(norb, norb, norb, norb, Nx, Ny, Nz, nfreq)`` on the
+        fermionic axis (uniform grid: ``eliashberg_dynamic.calc_g2_dynamic``).
+    view : BondSetView
+        The bond topology (``n_channels``, ``delta_r``).
+    xp : module
+        Array backend the matvec runs on (``numpy`` or ``cupy``).
+    residency : {"auto", "device", "host", "stream"}
+        Where the ``B**2`` transformed vertex blocks live. ``"device"`` and
+        ``"host"`` hoist them once; ``"stream"`` rebuilds one block at a time
+        inside every matvec. On the numpy backend there is no separate device,
+        so ``"auto"`` and ``"device"`` both resolve to ``"host"`` and the
+        device cap is the host cap.
+    """
+
+    def __init__(self, vertex, G2, view, *, xp, spatial_shape, norb, beta, nfreq, V_inst=None,
+                 axF=None, residency="auto", admission=None, host_cap=None, device_cap=None,
+                 workers=1):
+        self.xp = xp
+        self.shape = tuple(int(x) for x in spatial_shape)
+        nx, ny, nz = self.shape
+        self.nvol = nx * ny * nz
+        self.norb, self.nd = int(norb), int(norb) ** 2
+        self.beta, self.nfreq, self.workers = float(beta), int(nfreq), workers
+        self.view = view
+        self.B = int(view.n_channels)
+        self.delta_r = [tuple(int(x) for x in r) for r in view.delta_r]
+        self.vertex = vertex
+        self.is_ir = isinstance(vertex, PairVertexIR)
+        self.axF = axF
+        if self.is_ir and axF is None:
+            raise ValueError("BondPairKernel: the IR vertex needs the fermionic axis axF")
+        self.G2 = xp.asarray(G2)
+        self.gap_shape = (self.norb, self.norb, nx, ny, nz, self.nfreq)
+        self.V_inst = None if V_inst is None else np.asarray(V_inst)
+        self._Vinst_rt = None
+        self._const_rt = None
+
+        # -- admission (spec 8) --------------------------------------------
+        if admission is None:
+            admission = estimate_pair_memory(
+                nmat=0 if self.is_ir else self.nfreq,
+                ntau=(len(axF.tau) if self.is_ir else 0), nfreq=self.nfreq, nvol=self.nvol,
+                norb=self.norb, B=self.B, num_eigenvalues=10, residency=residency,
+                ir=self.is_ir, L_B=(int(vertex.coeffs.shape[0]) if self.is_ir else 0),
+                n_channels=1, in_process=False)
+        if host_cap is None:
+            host_cap = 0.8 * _host_available_bytes()
+        req = residency
+        if xp is np:
+            # no separate device: "auto"/"device" mean the hoisted host blocks,
+            # and the device rows are budgeted against the host cap
+            if req in ("auto", "device"):
+                req = "host"
+            device_cap = host_cap
+        elif device_cap is None:
+            device_cap = 0.9 * _bk.device_available_bytes()
+        self.residency = admission.choose(req, host_cap, device_cap)
+        self.admission = admission
+
+        # -- hoisting -------------------------------------------------------
+        self._blocks = None
+        if self.residency in ("device", "host"):
+            mod = xp if self.residency == "device" else np
+            self._blocks = {(a, b): self._block_rtau(a, b, mod)
+                            for a in range(self.B) for b in range(self.B)}
+        if self.is_ir:
+            if self.V_inst is not None:
+                self._Vinst_rt = xp.asarray(_bk.spatial_ifftn(
+                    self.V_inst.astype(complex), axes=(4, 5, 6), workers=workers))
+            if vertex.const is not None:
+                self._const_rt = {(a, b): self._const_block_r(a, b, xp)
+                                  for a in range(self.B) for b in range(self.B)}
+
+    # -- block builders ------------------------------------------------------
+    def _raw_block_uniform(self, a, b):
+        """The ``(a, b)`` vertex block on the bosonic grid, with the bare term
+        added to the channel-0 block at every frequency (spec 4.2)."""
+        blk = np.array(self.vertex.source.get_pair(self.vertex.slot, a, b), copy=True)
+        if a == 0 and b == 0 and self.V_inst is not None:
+            blk += _vinst_as_block(self.V_inst, self.nd, self.nvol)[None]
+        return blk
+
+    def _block_rtau(self, a, b, mod):
+        """The ``(a, b)`` block in ``(r, tau)`` on module ``mod``."""
+        if not self.is_ir:
+            return block_to_rtau_uniform(self._raw_block_uniform(a, b), self.shape,
+                                         self.norb, self.workers, mod)
+        nd = self.nd
+        nx, ny, nz = self.shape
+        co = self.vertex.coeffs[:, :, a * nd:(a + 1) * nd, b * nd:(b + 1) * nd]  # (L,nvol,nd,nd)
+        co = np.moveaxis(co, 0, -1)                                    # (nvol, nd, nd, L)
+        vt = self.vertex.axB.eval_to_tau_points(co, self.axF.tau)      # (nvol, nd, nd, ntau)
+        vr = _bk.spatial_ifftn(vt.reshape(nx, ny, nz, nd, nd, -1), axes=(0, 1, 2),
+                               workers=self.workers)
+        arr = vr.reshape(nx, ny, nz, self.norb, self.norb, self.norb,
+                         self.norb, -1).transpose(3, 4, 5, 6, 0, 1, 2, 7)
+        return mod.ascontiguousarray(mod.asarray(arr))
+
+    def _const_block_r(self, a, b, mod):
+        """The retained frequency-independent IR component of the ``(a, b)``
+        block, spatially transformed to ``r`` (spec 4.5)."""
+        nd = self.nd
+        nx, ny, nz = self.shape
+        cb = self.vertex.const[:, a * nd:(a + 1) * nd,
+                               b * nd:(b + 1) * nd].reshape(nx, ny, nz, nd, nd)
+        cr = _bk.spatial_ifftn(cb, axes=(0, 1, 2), workers=self.workers)
+        return mod.asarray(cr.reshape(nx, ny, nz, self.norb, self.norb, self.norb,
+                                      self.norb).transpose(3, 4, 5, 6, 0, 1, 2))
+
+    def _get_block(self, a, b):
+        if self._blocks is not None:
+            return self.xp.asarray(self._blocks[(a, b)])
+        return self._block_rtau(a, b, self.xp)
+
+    # -- matvec ---------------------------------------------------------------
+    def matvec(self, phi_flat):
+        """Apply the kernel to a flat HOST gap; returns a flat host array."""
+        xp = self.xp
+        ax = (2, 3, 4)
+        phi = xp.asarray(np.asarray(phi_flat).reshape(self.gap_shape))
+        F = xp.einsum("iljmxyzn,lmxyzn->ijxyzn", self.G2, phi)
+        F0_r = None
+        if self.is_ir:
+            F_coeff = self.axF.fit_from_freq(F)
+            F_rt = _bk.spatial_ifftn(self.axF.eval_to_tau(F_coeff), axes=ax,
+                                     workers=self.workers)
+            if self._Vinst_rt is not None or self._const_rt is not None:
+                # the equal-time value of F, evaluated exactly through the
+                # fermionic basis (the delta(tau) bare term's tau integral)
+                u0 = xp.asarray(self.axF.u_zero_plus)
+                F0_r = _bk.spatial_ifftn(F_coeff @ u0, axes=ax, workers=self.workers)
+        else:
+            F_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(F, axis=-1), axes=ax,
+                                     workers=self.workers)
+        acc = [None] * self.B
+        acc0 = [None] * self.B
+        for b in range(self.B):
+            Rb = self.delta_r[b]
+            F_b = F_rt if Rb == (0, 0, 0) else xp.roll(F_rt, tuple(-x for x in Rb), axis=ax)
+            F0_b = None
+            if self._const_rt is not None:
+                F0_b = F0_r if Rb == (0, 0, 0) else xp.roll(F0_r, tuple(-x for x in Rb),
+                                                            axis=ax)
+            for a in range(self.B):
+                G_ab = self._get_block(a, b)
+                P = -xp.einsum("abcdxyzt,bcxyzt->adxyzt", G_ab, F_b)
+                acc[a] = P if acc[a] is None else acc[a] + P
+                del G_ab, P
+                if F0_b is not None:
+                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz", self._const_rt[(a, b)], F0_b)
+                    acc0[a] = P0 if acc0[a] is None else acc0[a] + P0
+        out_rt = None
+        out0_r = None
+        for a in range(self.B):
+            Ra = self.delta_r[a]
+            t = acc[a] if Ra == (0, 0, 0) else xp.roll(acc[a], tuple(-x for x in Ra), axis=ax)
+            out_rt = t if out_rt is None else out_rt + t
+            if acc0[a] is not None:
+                t0 = acc0[a] if Ra == (0, 0, 0) else xp.roll(acc0[a], tuple(-x for x in Ra),
+                                                             axis=ax)
+                out0_r = t0 if out0_r is None else out0_r + t0
+        if self.is_ir:
+            out = self.axF.tau_to_freq(_bk.spatial_fftn(out_rt, axes=ax, workers=self.workers))
+            if self._Vinst_rt is not None:
+                inst_r = -xp.einsum("abcdxyz,bcxyz->adxyz", self._Vinst_rt, F0_r)
+                out = out + _bk.spatial_fftn(inst_r, axes=ax, workers=self.workers)[..., None]
+            if out0_r is not None:
+                out = out + _bk.spatial_fftn(out0_r, axes=ax, workers=self.workers)[..., None]
+            out = self.beta * out
+        else:
+            out = _ms.tau_to_fermion(_bk.spatial_fftn(out_rt, axes=ax, workers=self.workers),
+                                     axis=-1)
+        return _bk.to_host(out).ravel()
+
+    def memory_table(self):
+        """The admission rows (bytes) plus the residency actually chosen."""
+        return dict(self.admission.rows, residency=self.residency)
+
+
+def gap_bond_projection(gap_w, view, spatial_shape):
+    """Project a gap onto the bond form factors: ``psi_m = (1/N) sum_k
+    e^{-i k . R_m} Delta(k)`` for every channel ``m`` (spec 4.4, 5.1).
+
+    Parameters
+    ----------
+    gap_w : ndarray, shape (norb, norb, Nx, Ny, Nz, nfreq)
+    view : BondSetView
+    spatial_shape : tuple
+
+    Returns
+    -------
+    ndarray, shape ``(B, norb, norb, nfreq)``
+    """
+    nx, ny, nz = spatial_shape
+    gap = np.asarray(gap_w)
+    kx = 2 * np.pi * np.arange(nx) / nx
+    ky = 2 * np.pi * np.arange(ny) / ny
+    kz = 2 * np.pi * np.arange(nz) / nz
+    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
+    out = np.empty((int(view.n_channels),) + gap.shape[:2] + gap.shape[5:], complex)
+    for m, R in enumerate(view.delta_r):
+        ph = np.exp(-1j * (KX * R[0] + KY * R[1] + KZ * R[2]))
+        out[m] = np.einsum("xyz,abxyzn->abn", ph, gap) / (nx * ny * nz)
+    return out

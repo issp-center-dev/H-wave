@@ -172,5 +172,358 @@ class TestAdmission(unittest.TestCase):
         self.assertEqual(tab_ir.rows["hoisted_blocks"], 9 * 5 * 16 * 16 * 16)
 
 
+def _b1_topology(norb):
+    """A ``B = 1`` (on-site only) topology.
+
+    ``resolve_bond_topology`` always refuses a declaration set without an
+    off-site shell, so the degenerate single-channel topology the on-site
+    equivalence test (10.1.1) needs is built through the ``BondTopology``
+    constructor, which re-validates every invariant (channel 0 is R = 0, the
+    reversal involution, the exactly-zero channel-0 coefficients).
+    """
+    from hwave.solver import bond_channels
+    return bond_channels.BondTopology(
+        delta_r=[[0, 0, 0]], reverse=[0],
+        coeffs={"CoulombInter": np.zeros((1, norb, norb), complex)})
+
+
+def _g2(fx):
+    from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+    return calc_g2_dynamic(fx["green_sc"], fx["beta"])
+
+
+def _kernel(fx, vertex, residency="host", V_inst=None):
+    from hwave.solver.eliashberg_bond import BondPairKernel
+    return BondPairKernel(vertex, _g2(fx), fx["view"], xp=np,
+                          spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                          beta=fx["beta"], nfreq=fx["nmat"], V_inst=V_inst,
+                          residency=residency, host_cap=10 ** 12, device_cap=10 ** 12)
+
+
+def _uniform_vertex(fx, eta):
+    from hwave.solver.eliashberg_bond import PairVertexAccumulator
+    with _dev(fx) as dev:
+        acc = PairVertexAccumulator(dev, pairing_types=(eta,), nb=4, nmat=fx["nmat"],
+                                    nvol=fx["nvol"], nd=fx["nd"],
+                                    spatial_shape=fx["spatial_shape"])
+        acc.add_channel("spin", fx["store"], "chi_s_w")
+        acc.add_channel("charge", fx["store"], "chi_c_w")
+        return acc.finish()[eta]
+
+
+class TestKernelUniform(unittest.TestCase):
+    def test_b1_matches_onsite_dynamic_kernel(self):              # 10.1.1
+        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+                                                  BondPairKernel, COEFF, instantaneous_vertex)
+        from hwave.solver.bond_channels import BondSetView
+        rng = np.random.default_rng(1)
+        for norb in (1, 2):
+            nd = norb * norb
+            shape, nmat, beta = (2, 2, 1), 4, 1.5
+            nvol = 4
+
+            def rc(*s):
+                return rng.standard_normal(s) + 1j * rng.standard_normal(s)
+
+            chi_s, chi_c = rc(nmat, nvol, nd, nd), rc(nmat, nvol, nd, nd)
+            S0, C0 = rc(nvol, nd, nd), rc(nvol, nd, nd)
+            G2 = rc(norb, norb, norb, norb, 2, 2, 1, nmat)
+            for eta in ("singlet", "triplet"):
+                cs, cc = COEFF[eta]
+                Gam = cs * (S0[None] @ chi_s @ S0[None]) + cc * (C0[None] @ chi_c @ C0[None])
+                V_inst = instantaneous_vertex(S0, C0, nd, eta, shape)
+                # on-site reference: V(q, l) in the sc.py layout, the
+                # instantaneous part added at every l
+                V_ref = np.empty((norb, norb, norb, norb, 2, 2, 1, nmat), complex)
+                for l in range(nmat):
+                    V_ref[..., l] = Gam[l].reshape(2, 2, 1, norb, norb, norb, norb).transpose(
+                        3, 4, 5, 6, 0, 1, 2) + V_inst
+                phi = rc(norb, norb, 2, 2, 1, nmat)
+                ref = ed.eliashberg_kernel_dynamic(V_ref, G2, phi, norb, beta)
+                view = BondSetView(_b1_topology(norb))
+                src = ArrayBlockSource({"Gamma": Gam}, nd)
+                vert = PairVertexUniform(source=src, slot="Gamma", B=1, nd=nd, nmat=nmat,
+                                         nvol=nvol)
+                for residency in ("host", "stream"):
+                    K = BondPairKernel(vert, G2, view, xp=np, spatial_shape=shape, norb=norb,
+                                       beta=beta, nfreq=nmat, V_inst=V_inst,
+                                       residency=residency, host_cap=10 ** 12,
+                                       device_cap=10 ** 12)
+                    out = K.matvec(phi.ravel()).reshape(phi.shape)
+                    np.testing.assert_allclose(out, ref, rtol=0, atol=1e-12,
+                                               err_msg="norb {} {} {}".format(norb, eta,
+                                                                              residency))
+
+    def test_flat_frequency_matches_static_bond_kernel(self):     # 10.1.2
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+                                                  BondPairKernel, COEFF)
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0,
+                              delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
+        nx, ny, nz = fx["spatial_shape"]
+        nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
+        # static side: the ED-adjudicated bond kernel on the SAME topology and vertices
+        coul = {(tuple(R), (0, 0)): 0.5 for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))}
+        bond_set = bc.resolve_interactions(coul, np.eye(3), 1)
+        S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+        C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+        S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 1)
+        np.testing.assert_allclose(S_b.reshape(nvol, ND, ND), fx["S"], atol=1e-13)
+        np.testing.assert_allclose(C_b.reshape(nvol, ND, ND), fx["C"], atol=1e-13)
+        l0 = nmat // 2
+        chi_s_st = fx["chi_s"][l0].reshape(nx, ny, nz, ND, ND)
+        chi_c_st = fx["chi_c"][l0].reshape(nx, ny, nz, ND, ND)
+        rng = np.random.default_rng(5)
+        phi_k = rng.standard_normal((1, 1, nx, ny, nz)) + 1j * rng.standard_normal(
+            (1, 1, nx, ny, nz))
+        for eta in ("singlet", "triplet"):
+            A_st, _ = bc.make_bond_kernel(chi_s_st, chi_c_st, S_b, C_b, Vpp_s, Vpp_t,
+                                          fx["green_sc"], bond_set, eta, fx["beta"],
+                                          part="fluctuation")
+            ref = A_st.matvec(phi_k.ravel()).reshape(phi_k.shape)
+            cs, cc = COEFF[eta]
+            Gam_flat = np.broadcast_to(
+                (cs * fx["S"] @ chi_s_st.reshape(nvol, ND, ND) @ fx["S"]
+                 + cc * fx["C"] @ chi_c_st.reshape(nvol, ND, ND) @ fx["C"])[None],
+                (nmat, nvol, ND, ND)).copy()
+            vert = PairVertexUniform(source=ArrayBlockSource({"G": Gam_flat}, nd), slot="G",
+                                     B=fx["B"], nd=nd, nmat=nmat, nvol=nvol)
+            K = BondPairKernel(vert, _g2(fx), fx["view"], xp=np,
+                               spatial_shape=fx["spatial_shape"], norb=1, beta=fx["beta"],
+                               nfreq=nmat, residency="host", host_cap=10 ** 12,
+                               device_cap=10 ** 12)
+            phi_w = np.broadcast_to(phi_k[..., None], phi_k.shape + (nmat,)).copy()
+            out = K.matvec(phi_w.ravel()).reshape(phi_w.shape)
+            # a flat-frequency vertex acting on a flat gap gives a flat output
+            np.testing.assert_allclose(out, np.broadcast_to(out[..., :1], out.shape),
+                                       atol=1e-10)
+            np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10, err_msg=eta)
+
+    def test_bruteforce_oracle_norb2_bonds(self):                 # 10.1.3
+        fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4, beta=1.0,
+                              coeffs={("CoulombInter", (1, 0, 0)):
+                                      np.array([[0.3, 0.2], [0.2, 0.1]]),
+                                      ("CoulombInter", (-1, 0, 0)):
+                                      np.array([[0.3, 0.2], [0.2, 0.1]])})
+        nx, ny, nz = fx["spatial_shape"]
+        nmat, nvol, nd, B, norb = fx["nmat"], fx["nvol"], fx["nd"], fx["B"], 2
+        G2 = _g2(fx)
+        rng = np.random.default_rng(7)
+        phi = (rng.standard_normal((norb, norb, nx, ny, nz, nmat))
+               + 1j * rng.standard_normal((norb, norb, nx, ny, nz, nmat)))
+        F = np.einsum("iljmxyzn,lmxyzn->ijxyzn", G2, phi)          # (l2, l3, k', w')
+        kx = 2 * np.pi * np.arange(nx) / nx
+        ky = 2 * np.pi * np.arange(ny) / ny
+        dr = np.asarray(fx["view"].delta_r)
+        for eta in ("singlet", "triplet"):
+            vert = _uniform_vertex(fx, eta)
+            Gam = vert.source.get_freq_batch(vert.slot, 0, nmat)   # (l, q, ND, ND)
+            ref = np.zeros_like(phi)
+            for ix in range(nx):
+                for iy in range(ny):
+                    for n in range(nmat):
+                        for jx in range(nx):
+                            for jy in range(ny):
+                                qx, qy = (ix - jx) % nx, (iy - jy) % ny
+                                q = (qx * ny + qy) * nz
+                                for m in range(nmat):
+                                    # The uniform-grid tau product is a CIRCULAR
+                                    # convolution on the bosonic axis: the phase
+                                    # bookkeeping of fermion_to_tau / boson_to_tau /
+                                    # tau_to_fermion pins the bosonic index to
+                                    # l = n - m + nmat//2 taken MODULO nmat.
+                                    l = (n - m + nmat // 2) % nmat
+                                    for al in range(B):
+                                        pa = np.exp(1j * (kx[ix] * dr[al, 0]
+                                                          + ky[iy] * dr[al, 1]))
+                                        for be in range(B):
+                                            pb = np.exp(1j * (kx[jx] * dr[be, 0]
+                                                              + ky[jy] * dr[be, 1]))
+                                            blk = Gam[l, q, al * nd:(al + 1) * nd,
+                                                      be * nd:(be + 1) * nd]
+                                            blk4 = blk.reshape(norb, norb, norb, norb)
+                                            ref[:, :, ix, iy, 0, n] += -(1.0 / nvol) * pa * pb * (
+                                                np.einsum("abcd,bc->ad", blk4,
+                                                          F[:, :, jx, jy, 0, m]))
+            K = _kernel(fx, vert)
+            out = K.matvec(phi.ravel()).reshape(phi.shape)
+            np.testing.assert_allclose(out, ref, rtol=0, atol=1e-12, err_msg=eta)
+
+    def test_parity_commutation(self):                            # 10.1.4
+        from hwave.solver.eliashberg_dynamic import _parity_leakage
+        from scipy.sparse.linalg import LinearOperator
+        fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4, beta=1.0)
+        for eta in ("singlet", "triplet"):
+            K = _kernel(fx, _uniform_vertex(fx, eta))
+            n = int(np.prod(K.gap_shape))
+            A = LinearOperator((n, n), matvec=K.matvec, dtype=complex)
+            self.assertLessEqual(_parity_leakage(A, K.gap_shape, eta), 1e-10, eta)
+
+    def test_parity_leakage_refused(self):                        # 10.1.4b
+        from hwave.solver.eliashberg_dynamic import run_leading_eigenproblem, build_seed
+        from hwave.solver.eliashberg_bond import ArrayBlockSource, PairVertexUniform
+        fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=4, beta=1.0)
+        vert = _uniform_vertex(fx, "singlet")
+        Gam = vert.source.get_freq_batch(vert.slot, 0, fx["nmat"]).copy()
+        Gam[1, 2, 0, 1] += 0.7          # break the reversal symmetry of one block
+        vert2 = PairVertexUniform(ArrayBlockSource({"G": Gam}, 1), "G", fx["B"], 1,
+                                  fx["nmat"], fx["nvol"])
+        K = _kernel(fx, vert2)
+        nx, ny, nz = fx["spatial_shape"]
+        kx, ky, kz = (2 * np.pi * np.arange(n) / n for n in (nx, ny, nz))
+        phi0, seed = build_seed({}, "singlet", 1, kx, ky, kz, K.gap_shape, False, None,
+                                fx["nmat"])
+        for mode in ("iteration", "eigenvalue"):
+            eli = {"solver_mode": mode, "eigenvalue_method": "arnoldi",
+                   "num_eigenvalues": 2, "max_iter": 5}
+            with self.assertRaisesRegex(ValueError, "does not commute with the combined parity"):
+                run_leading_eigenproblem(K.matvec, K.gap_shape, eli, "singlet", phi0=phi0,
+                                         seed_vec=seed, use_ir=False, axF=None,
+                                         nmat=fx["nmat"], parity_leakage_policy="refuse")
+
+    def test_dense_oracle_leading_eigenvalue(self):               # 10.1.5
+        import scipy.linalg
+        import hwave.sc as sc
+        from scipy.sparse.linalg import LinearOperator
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4, beta=1.0)
+        K = _kernel(fx, _uniform_vertex(fx, "singlet"))
+        n = int(np.prod(K.gap_shape))
+        M = np.empty((n, n), complex)
+        for j in range(n):
+            e = np.zeros(n, complex)
+            e[j] = 1.0
+            M[:, j] = K.matvec(e)
+        ev = scipy.linalg.eigvals(M)
+        lead = ev[np.argmax(ev.real)]
+
+        def make():
+            return LinearOperator((n, n), matvec=K.matvec, dtype=complex), n
+
+        lam, _, _ = sc._solve_leading(make, n, "arnoldi", num_eigenvalues=3)
+        self.assertAlmostEqual(float(np.real(lam)), float(lead.real),
+                               delta=1e-8 * max(1.0, abs(lead)))
+
+    def test_residency_modes_agree(self):                         # 10.1.6
+        from hwave.solver import backend
+        from hwave.solver.eliashberg_bond import BondPairKernel
+        fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4, beta=1.0)
+        vert = _uniform_vertex(fx, "singlet")
+        rng = np.random.default_rng(3)
+        Kh = _kernel(fx, vert, residency="host")
+        phi = rng.standard_normal(int(np.prod(Kh.gap_shape))) + 0j
+        ref = Kh.matvec(phi)
+        Ks = _kernel(fx, vert, residency="stream")
+        np.testing.assert_allclose(Ks.matvec(phi), ref, atol=1e-13)
+        Ka = _kernel(fx, vert, residency="auto")
+        self.assertEqual(Ka.residency, "host")
+        np.testing.assert_allclose(Ka.matvec(phi), ref, atol=1e-13)
+        if not backend.gpu_available():
+            raise unittest.SkipTest("CUDA device required for the device residency")
+        import cupy
+        Kd = BondPairKernel(vert, cupy.asarray(_g2(fx)), fx["view"], xp=cupy,
+                            spatial_shape=fx["spatial_shape"], norb=2, beta=fx["beta"],
+                            nfreq=4, residency="device", host_cap=10 ** 12,
+                            device_cap=10 ** 12)
+        np.testing.assert_allclose(Kd.matvec(phi), ref, atol=1e-13)
+
+    def test_gap_bond_projection(self):                           # 10.1.10
+        from hwave.solver.eliashberg_bond import gap_bond_projection
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2)
+        nx, ny, nz = fx["spatial_shape"]
+        kx = 2 * np.pi * np.arange(nx) / nx
+        dr = np.asarray(fx["view"].delta_r)
+        m = 1
+        gap = (np.exp(1j * kx[:, None, None] * dr[m, 0])[None, None, :, :, :, None]
+               * np.ones((1, 1, nx, ny, nz, 2)))
+        psi = gap_bond_projection(gap, fx["view"], fx["spatial_shape"])
+        self.assertEqual(psi.shape, (fx["B"], 1, 1, 2))
+        for mm in range(fx["B"]):
+            np.testing.assert_allclose(psi[mm], 1.0 if mm == m else 0.0, atol=1e-12)
+
+    def test_instantaneous_vertex_single_band_equals_onsite(self):   # 10.1.12
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg_bond import instantaneous_vertex
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2, U=2.0,
+                              delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
+        nx, ny, nz = fx["spatial_shape"]
+        kx, ky, kz = (2 * np.pi * np.arange(n) / n for n in (nx, ny, nz))
+        interactions = {"CoulombIntra": {((0, 0, 0), (0, 0)): 2.0},
+                        "CoulombInter": {(tuple(R), (0, 0)): 0.5
+                                         for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                                                   (0, -1, 0))}}
+        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, 1)
+        for eta in ("singlet", "triplet"):
+            ref = ed._instantaneous_vertex(inter_k, 1, nx, ny, nz, eta, "myo")
+            got = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"])
+            np.testing.assert_allclose(got, ref, atol=1e-14, err_msg=eta)
+        fx2 = physical_fixture(norb=2, shape=(4, 2, 1), nmat=2, U=2.0,
+                               coeffs={("CoulombInter", (1, 0, 0)):
+                                       np.array([[0.0, 0.4], [0.4, 0.0]]),
+                                       ("CoulombInter", (-1, 0, 0)):
+                                       np.array([[0.0, 0.4], [0.4, 0.0]])})
+        interactions2 = {"CoulombIntra": {((0, 0, 0), (a, a)): 2.0 for a in range(2)},
+                         "CoulombInter": {((1, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4,
+                                          ((-1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}}
+        inter_k2 = sc._build_interaction_k(kx, 2 * np.pi * np.arange(2) / 2, kz,
+                                           interactions2, 2)
+        ref2 = ed._instantaneous_vertex(inter_k2, 2, 4, 2, 1, "singlet", "myo")
+        got2 = instantaneous_vertex(fx2["S"], fx2["C"], 4, "singlet", (4, 2, 1))
+        diff = np.abs(got2 - ref2) > 1e-12
+        # only the cross slots (ab,ab)/(ba,ba) may differ: V[a,b,c,d] with (a,b)=(c,d), a != b
+        allowed = np.zeros(diff.shape, bool)
+        allowed[0, 1, 0, 1] = allowed[1, 0, 1, 0] = True
+        self.assertFalse(np.any(diff & ~allowed))
+
+    def test_instantaneous_operator_matches_static_bond_kernel(self):   # 10.1.13 (ARBITER)
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.eliashberg_dynamic import _project_parity_dynamic
+        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+                                                  BondPairKernel, instantaneous_vertex)
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0, U=2.0,
+                              delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
+        nx, ny, nz = fx["spatial_shape"]
+        nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
+        coul = {(tuple(R), (0, 0)): 0.5 for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))}
+        bond_set = bc.resolve_interactions(coul, np.eye(3), 1)
+        S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+        C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+        S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 1)
+        zero = np.zeros((nx, ny, nz, ND, ND), complex)
+        G2 = _g2(fx)
+        rng = np.random.default_rng(11)
+        for eta in ("singlet", "triplet"):
+            A_st, _ = bc.make_bond_kernel(zero, zero, S_b, C_b, Vpp_s, Vpp_t, fx["green_sc"],
+                                          bond_set, eta, fx["beta"], part="instantaneous")
+            V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
+            Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
+            vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
+                                     nmat, nvol)
+            K = BondPairKernel(vert, G2, fx["view"], xp=np, spatial_shape=fx["spatial_shape"],
+                               norb=1, beta=fx["beta"], nfreq=nmat, V_inst=V_inst,
+                               residency="host", host_cap=10 ** 12, device_cap=10 ** 12)
+            flat = np.ones((1, 1, nx, ny, nz, nmat), complex)
+            rnd = (rng.standard_normal((1, 1, nx, ny, nz, nmat))
+                   + 1j * rng.standard_normal((1, 1, nx, ny, nz, nmat)))
+            odd = rnd - rnd[..., ::-1]
+            for phi in (flat, rnd, odd):
+                phi = _project_parity_dynamic(phi, eta)
+                if np.linalg.norm(phi) == 0:
+                    continue
+                out = K.matvec(phi.ravel()).reshape(phi.shape)
+                # frequency-flat output
+                np.testing.assert_allclose(out, np.broadcast_to(out[..., :1], out.shape),
+                                           atol=1e-10)
+                # static side on the gap whose X equals the dynamic frequency-summed F:
+                # X_static(phi_s) = G2_static phi_s with G2_static = T sum_n G G
+                # == sum_n G2(n) phi(n)
+                F_dyn = np.einsum("iljmxyzn,lmxyzn->ijxyzn", G2, phi).sum(-1)
+                G2_st = bc._g2_from_green(fx["green_sc"], fx["beta"])
+                phi_s = F_dyn / G2_st[0, 0, 0, 0]          # norb = 1: scalar per k
+                ref = A_st.matvec(phi_s.ravel()).reshape(phi.shape[:-1])
+                np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10, err_msg=eta)
+
+
 if __name__ == "__main__":
     unittest.main()
