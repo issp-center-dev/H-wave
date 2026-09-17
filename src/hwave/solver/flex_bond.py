@@ -163,15 +163,16 @@ def _at(iteration):
     return "" if iteration is None else " (SCF iteration {})".format(iteration)
 
 
-def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration):
+def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all"):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      cond_tol=cond_tol)
+                                      cond_tol=cond_tol, guard_freqs=guard_freqs)
     except ValueError as exc:
         if iteration is None:
             raise
         raise ValueError("{}{}".format(exc, _at(iteration))) from exc
-    if not np.all(np.isfinite(chi_b)):
+    xp = _bk.array_module_of(chi_b)
+    if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
                               "at l={}{}".format(channel, l0, _at(iteration)))
     return chi_b, cond
@@ -213,9 +214,9 @@ class DressResult:
     cond_min_c: float
 
 
-def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, nd, spatial_shape,
+def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
-                      second_order="takimoto"):
+                      second_order="takimoto", guard_freqs="all"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -258,12 +259,22 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
 
     The mixed and bond-bond blocks are the same under both values: the
     gate resums the off/off exchange topology the local kernel does not
-    carry, and that is the D4/D5 design."""
+    carry, and that is the D4/D5 design.
+
+    ``dev`` is the :class:`BondDeviceContext` owning the vertices (spec
+    2026-09-17 section 4.2): each frequency batch is moved from the store
+    (host) onto ``dev.xp`` once (``_bk.to_device``), dressed and reduced to
+    ``W`` entirely on that module, then the collapses, the static slices
+    and ``W`` itself are copied back to the host (``_bk.to_host``) before
+    the ONE store write of the batch. On numpy (``dev.xp is np``) every
+    transfer is the identity, so this is byte-for-byte the host loop."""
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
     if second_order == "local" and factors is None:
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
+    xp = dev.xp
+    S, C, SpC_on = dev.S, dev.C, dev.SpC_on
     ND = S.shape[-1]
     norb = int(round(nd ** 0.5))
     if norb * norb != nd:
@@ -278,44 +289,37 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         raise ValueError("dress_and_build_w: the vertex pair dimension ND = {} is not a "
                          "multiple of the channel block size nd = {}, so it does not carry "
                          "whole bond-channel blocks".format(ND, nd))
-    # the pair permutation of the mixed second-order blocks, built once (it
-    # depends on the block layout only, not on the frequency batch)
-    perm = _mixed_pair_permutation(ND // nd, nd, norb)
-    SpC_on = np.asarray(S_on) + np.asarray(C_on)
-    collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)
+    # the pair permutation and the block-weight mask, owned by the device
+    # context (built once, ahead of every SCF iteration)
+    perm, mask = dev.perm, dev.mask
+    collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)      # HOST accumulators
     collapse_s = np.empty_like(collapse0)
     collapse_c = np.empty_like(collapse0)
     static_s = np.zeros((nvol, ND, ND), dtype=np.complex128)
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
     l_static = nmat // 2
     cond_s = cond_c = np.inf
-    # block weights of the second-order term: 1 on channel-0, 1/2 on the
-    # mixed blocks, 0 on bond-bond (applied to the half-sum below)
-    mask = np.zeros((ND, ND))
-    mask[:nd, :] = 0.5
-    mask[:, :nd] = 0.5
-    mask[:nd, :nd] = 0.0
     for l0 in range(0, nmat, nb):
         l1 = min(nmat, l0 + nb)
-        cb = store.get_freq_batch("chibar", l0, l1)
-        collapse0[l0:l1] = cb[:, :, :nd, :nd]
-        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration)
+        cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
+        collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
+        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
-        collapse_s[l0:l1] = chi_s_b[:, :, :nd, :nd]
+        collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
-            static_s[...] = chi_s_b[l_static - l0]
+            static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_s_w", l0, l1, chi_s_b)
+            store.put_freq_batch("chi_s_w", l0, l1, _bk.to_host(chi_s_b))
         chi_s_b -= cb
         W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         del chi_s_b
-        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration)
+        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
-        collapse_c[l0:l1] = chi_c_b[:, :, :nd, :nd]
+        collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
-            static_c[...] = chi_c_b[l_static - l0]
+            static_c[...] = _bk.to_host(chi_c_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_c_w", l0, l1, chi_c_b)
+            store.put_freq_batch("chi_c_w", l0, l1, _bk.to_host(chi_c_b))
         chi_c_b -= cb
         W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
         del chi_c_b
@@ -325,12 +329,8 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
         A = S[None] @ cb @ S[None]
         Bc = C[None] @ cb @ C[None]
         if second_order == "local":
-            # the exact local second order on the channel-0 sub-block; the
-            # ring already in W_b starts at third order there (both channels
-            # had the bare bubble subtracted). The kernel allocates its own
-            # two (nb, nvol, nd, nd) temporaries -- this loop holds none of
-            # that shape to lend (A / Bc are (nb, nvol, ND, ND) and are still
-            # needed for the mixed blocks below).
+            # accumulate_batch is array-module generic; `factors` must carry arrays
+            # of xp's module (the caller passes the device pack on the GPU)
             _so.accumulate_batch(W_b[:, :, :nd, :nd], cb[:, :, :nd, :nd], l0, factors)
         else:
             W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
@@ -345,11 +345,11 @@ def dress_and_build_w(store, S, C, *, S_on, C_on, nb, output_full, nmat, nvol, n
             A = A[:, :, perm[:, None], perm[None, :]]
         W_b += A
         del A
-        if not np.all(np.isfinite(W_b)):
+        if not bool(xp.all(xp.isfinite(W_b))):
             raise _NonFiniteError("non-finite effective interaction W in the frequency batch "
                                   "[{}, {}){}".format(l0, l1, _at(iteration)))
-        store.put_freq_batch("W", l0, l1, W_b)
-        del W_b
+        store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))          # written ONCE, last
+        del W_b, cb
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
                        cond_min_s=float(cond_s), cond_min_c=float(cond_c))

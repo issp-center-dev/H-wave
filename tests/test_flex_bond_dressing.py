@@ -70,7 +70,8 @@ class TestDressAndBuildW(unittest.TestCase):
         layout alone. The synthetic problem has ``nd = 4`` (norb = 2) and a
         random, orbital-asymmetric ``chi_bar``/``S``/``C``, so it sees the
         permutation."""
-        from hwave.solver.flex_bond import BondBlockStore, dress_and_build_w
+        from hwave.solver.flex_bond import (BondBlockStore, BondDeviceContext,
+                                            _mixed_pair_permutation, dress_and_build_w)
         from hwave.solver.second_order import dense_w2
         chi_bar, S, C = _problem(nmat=6, nvol=4, nd=4, B=3)
         nmat, nvol, ND = chi_bar.shape[:3]
@@ -84,10 +85,14 @@ class TestDressAndBuildW(unittest.TestCase):
                     store.put_freq_batch("chibar", 0, nmat, chi_bar)
                     S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
                     C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
-                    res = dress_and_build_w(store, S, C, S_on=S_on, C_on=C_on, nb=4,
-                                            output_full=output_full, nmat=nmat,
-                                            nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
-                                            factors=factors, second_order=second_order)
+                    perm = _mixed_pair_permutation(ND // nd, nd, int(round(nd ** 0.5)))
+                    mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5
+                    mask[:nd, :nd] = 0.0
+                    with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                        res = dress_and_build_w(store, dev, nb=4,
+                                                output_full=output_full, nmat=nmat,
+                                                nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
+                                                factors=factors, second_order=second_order)
                     I = np.eye(ND)
                     chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
                     chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
@@ -131,6 +136,44 @@ class TestDressAndBuildW(unittest.TestCase):
                     else:
                         with self.assertRaises(KeyError):
                             store.get_freq_batch("chi_s_w", 0, 1)
+
+
+class TestDressAndBuildWDevice(unittest.TestCase):
+
+    def test_numpy_context_matches_reference_batch_sizes(self):
+        """The refactored loop with the numpy context equals itself for every batch
+        size (1, non-divisor, boundary containing l_static, full) to round-off, and
+        the store's W is written once per batch (spy)."""
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
+        nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1]
+        nd = 4
+        S_on = S[:, :nd, :nd].copy(); C_on = C[:, :nd, :nd].copy()
+        perm = fb._mixed_pair_permutation(ND // nd, nd, 2)
+        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        outs = {}
+        for nb in (1, 3, nmat // 2, nmat):
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                puts = []
+                orig = store.put_freq_batch
+                def _spy(name, l0, l1, batch, _o=orig):
+                    puts.append((name, l0, l1)); return _o(name, l0, l1, batch)
+                store.put_freq_batch = _spy
+                res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
+                                           second_order="takimoto")
+                outs[nb] = (store._arrays["W"].copy(), res.collapse0.copy(), res.static_s.copy(),
+                            res.cond_min_s)
+                self.assertEqual([p for p in puts if p[0] == "W"],
+                                 [("W", l0, min(nmat, l0 + nb)) for l0 in range(0, nmat, nb)])
+        for nb in (1, 3, nmat // 2):
+            for a, b in zip(outs[nb], outs[nmat]):
+                if isinstance(a, float):
+                    self.assertAlmostEqual(a, b, places=12)
+                else:
+                    np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-14)
 
 
 class TestDressBatchGuardModes(unittest.TestCase):
