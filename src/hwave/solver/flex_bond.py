@@ -463,7 +463,7 @@ def transport_ops(B, nmat, nvol, norb):
 
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
-                         freq_batch, cap_gb, mixing, factor_bytes=0):
+                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -478,7 +478,25 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     (``second_order_factors``). Its batch temporaries are not a row of
     their own -- they are two ``(nb, nvol, nd, nd)`` arrays, i.e. 2/B^2
     of a single ``(nb, nvol, ND, ND)`` buffer, well inside the
-    ``dressing`` row's six."""
+    ``dressing`` row's six.
+
+    ``device_available`` (bytes free on the GPU, measured by the caller
+    before any bond allocation) is optional; when given, a second,
+    incremental DEVICE table is built alongside the host one and the
+    returned ``nb`` is capped to what both agree on. The device table
+    carries only what the gated bond path actually keeps resident on
+    the device: a persistent row ``vertices_static = 5 * S`` (the static
+    vertex stack), and two phase rows that are never simultaneously
+    live -- ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the
+    per-batch dressing solve and ``transport = 6 * C`` during the bond
+    self-energy transport -- so the device need at a batch size is
+    ``1.25 * (vertices_static + max(dressing(nb), transport))`` against
+    ``device_cap = 0.9 * device_available``. Refusal at ``nb = 1``
+    names whichever of the two phase rows does not fit; an explicit
+    ``freq_batch`` is checked against both the host and the device
+    table; otherwise the selected ``nb`` is ``min`` of the largest
+    batch each table admits, and the dict gains ``device_rows``,
+    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -568,12 +586,52 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             if _peak(cand) <= cap_bytes:
                 nb = cand
                 break
+
+    device = {}
+    if device_available is not None:
+        vertices = 5 * S
+        transport = 6 * C
+        def _dev_rows(n):
+            return {"vertices_static": vertices, "dressing": 7 * n * nvol * ND * ND * it,
+                    "transport": transport}
+        def _dev_need(n):
+            r = _dev_rows(n)
+            return 1.25 * (r["vertices_static"] + max(r["dressing"], r["transport"]))
+        dev_cap = 0.9 * float(device_available)
+        def _dev_table(n):
+            return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
+                             for k, v in _dev_rows(n).items())
+        if _dev_need(1) > dev_cap:
+            phase = "dressing" if 7 * nvol * ND * ND * it >= transport else "transport"
+            raise ValueError(
+                "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
+                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (vertices + max phase row) "
+                "exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce the "
+                "k mesh or Nmat, drop declared-zero outer shells with longitudinal_bond_max_shells, "
+                "or run with gpu=false.".format(_dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))
+        if freq_batch is not None and _dev_need(int(freq_batch)) > dev_cap:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_freq_batch = {} gives an estimated device need of "
+                "{:.4f} GiB above 0.9 * the available device memory {:.4f} GiB (host peak {:.4f} GiB "
+                "against the host cap {:.4f} GiB); the device rows are\n{}".format(
+                    int(freq_batch), _dev_need(int(freq_batch)) / _GIB, dev_cap / _GIB,
+                    _peak(int(freq_batch)) / _GIB, cap_bytes / _GIB, _dev_table(int(freq_batch))))
+        device_nb = 1
+        for cand in range(nmat, 0, -1):
+            if _dev_need(cand) <= dev_cap:
+                device_nb = cand
+                break
+        nb = min(nb, device_nb)
+        device = dict(device_rows=_dev_rows(nb), device_need=_dev_need(nb), device_cap=dev_cap,
+                      device_nb=device_nb, device_table=_dev_table(nb))
+
     phase_rows = _phase_rows(nb)
     return dict(persistent_rows=persistent_rows, phase_rows=phase_rows, persistent=persistent,
                 nb=nb, peak=_peak(nb), cap_bytes=cap_bytes, U=U, G_bytes=G, C_bytes=C,
                 S_bytes=S, H_bytes=H, B=B, ND=ND, nvol=nvol, nmat=nmat, table=_table(nb),
                 dressing_ops=dressing_ops(nmat, nvol, ND),
-                transport_ops=transport_ops(B, nmat, nvol, norb))
+                transport_ops=transport_ops(B, nmat, nvol, norb),
+                **device)
 
 
 _NPZ_ARTIFACTS = ("chi0q", "chiq_s", "chiq_c", "chiq", "sigma", "green", "longitudinal_bond")
