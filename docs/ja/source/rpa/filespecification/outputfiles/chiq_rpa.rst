@@ -192,7 +192,12 @@ Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写�
 （``longitudinal_bond_source = "last_map"``\ ）、\ ``[file.output] chiq``\ が
 指定されていれば結合\ ``chiq``\ ファイルに、なければ常に存在する\ ``chiq_s``\ ファイルに
 書き出されます（この場合、電荷チャネルの静的キーも\ ``chiq_s.npz``\ の中にあります。
-INFO ログにその旨が出力されます）。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+INFO ログにその旨が出力されます）。このアーカイブにはさらに
+``longitudinal_bond_guard_freqs``\ （文字列。\ ``"all"``\ または\ ``"static"``\ 。
+ボンド分解したドレッシングの条件数ガードが検査する振動数の範囲）、
+``longitudinal_bond_device``\ （文字列。\ ``"cupy"``\ または\ ``"numpy"``\ 。
+ボンド分解した解法を実行したバックエンド）、\ ``longitudinal_bond_nb``\ （整数。
+実際に使用された振動数バッチ幅）が格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
@@ -208,7 +213,9 @@ INFO ログにその旨が出力されます）。そのような計算の通常
 （``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
 ``beta``\ ・\ ``T``\ ・\ ``nmat``\ ・\ ``cell_shape``\ ・運動量規約マーカー・
 ``index_order``\ ・\ ``delta_r``\ ・\ ``reverse``\ ・\ ``types``\ 、16個の静的キー、
-来歴ブロックが格納されます。これらの配列を重複して持つファイルは他にありません。
+``longitudinal_bond_guard_freqs``\ ・\ ``longitudinal_bond_device``\ ・
+``longitudinal_bond_nb``\ 、来歴ブロックが格納されます。これらの配列を重複して
+持つファイルは他にありません。
 ``IterationMax = 0``\ では写像は実行されず、最後の写像に属するアーカイブは全て省略され
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。

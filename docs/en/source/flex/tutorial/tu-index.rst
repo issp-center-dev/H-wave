@@ -446,7 +446,8 @@ self-energy of every interaction term to the FLEX loop, and
 fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site ``CoulombInter`` / ``Hund`` / ``Ising`` enters
 self-consistently (see :ref:`flex_bond_hf` for the equations and the domain).
-Both are ``calc_scheme = "general"``, spin-free, CPU, uniform-grid options.
+Both are ``calc_scheme = "general"``, spin-free, uniform-grid options, and
+both run on the GPU (``gpu = true``, via CuPy) as well as on the CPU.
 A complete input for a single-band square lattice with an on-site ``U`` and a
 nearest-neighbour ``V`` (the interaction files follow the Wannier90-style
 format of the :ref:`interaction input <Ch:Config_rpa>`; ``coulombinter.dat``
@@ -470,6 +471,7 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
      longitudinal_bond_channels = true
      # longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it
      # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
+     # longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD
      # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)
    [file.input]
      path_to_input = "."
@@ -911,7 +913,12 @@ The FLEX solver accepts the following parameters in the
        via closed-form eigenvalues when each spin block has at most 2
        components (single-orbital, or e.g. a spin-reduced two-orbital model);
        only larger blocks fall back to a host non-Hermitian
-       eigendecomposition.
+       eigendecomposition. The bond-resolved gate (``flex_hartree_fock``
+       and/or ``longitudinal_bond_channels``, see
+       :ref:`flex_bond_hf_tutorial`) also runs on the GPU: the dressing,
+       the effective interaction and the self-energy transport run on
+       the device, while the bond arrays stay in host memory and are
+       transferred one frequency batch at a time.
    * - ``fft_workers``
      - int
      - 1

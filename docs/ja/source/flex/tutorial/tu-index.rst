@@ -418,7 +418,8 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
 ``CoulombInter`` / ``Hund`` / ``Ising``\ の交換交差を自己無撞着に取り込みます
 （式と適用範囲は\ :ref:`flex_bond_hf`\ を参照）。いずれも\ ``calc_scheme = "general"``\ ・
-スピンフリー・CPU・一様格子のオプションです。オンサイト\ ``U``\ と最近接\ ``V``\ を
+スピンフリー・一様格子のオプションで、いずれも CPU に加えて
+GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。オンサイト\ ``U``\ と最近接\ ``V``\ を
 持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
 :ref:`相互作用入力 <Ch:Config_rpa>`\ の Wannier90 形式で、\ ``coulombinter.dat``\ には
 4本のボンド\ ``(+-1, 0, 0)``\ ・\ ``(0, +-1, 0)``\ を列挙します）:
@@ -441,6 +442,7 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
      longitudinal_bond_channels = true
      # longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否
      # longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き
+     # longitudinal_bond_guard_freqs = "all"  # "static" ならゼロ振動数のみ特異値分解で検査
      # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）
    [file.input]
      path_to_input = "."
@@ -855,7 +857,11 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
        CPU（numpy）実行へフォールバックします（結果は同一）。化学ポテンシャル探索も
        スピンブロックあたりの成分数が2以下（1軌道、およびスピン縮約した2軌道系など）
        なら閉形式の固有値により GPU 上で実行され、3以上の場合のみ非エルミート
-       固有値分解を CPU で実行します。
+       固有値分解を CPU で実行します。ボンド分解ゲート（\ ``flex_hartree_fock``\
+       および／または\ ``longitudinal_bond_channels``\ 。:ref:`flex_bond_hf_tutorial`\
+       を参照）も GPU 上で実行できます。ドレッシング・有効相互作用・自己エネルギー
+       の転送はデバイス上で実行され、ボンド配列はホストメモリに置かれたまま
+       振動数バッチを1つずつ転送します。
    * - ``fft_workers``
      - int
      - 1

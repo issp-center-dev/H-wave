@@ -200,6 +200,11 @@ LAST self-consistent map (``longitudinal_bond_source = "last_map"``) and are
 written into the combined ``chiq`` file when ``[file.output] chiq`` is set,
 otherwise into the ``chiq_s`` file (which always exists; the charge-channel
 static keys are then found in ``chiq_s.npz`` -- an INFO line says so). The
+archive additionally carries ``longitudinal_bond_guard_freqs`` (string:
+``"all"`` or ``"static"``, the frequency coverage of the bond dressing's
+conditioning guard), ``longitudinal_bond_device`` (string: ``"cupy"`` or
+``"numpy"``, the backend that ran the bond solve) and
+``longitudinal_bond_nb`` (integer, the frequency batch actually used). The
 ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
@@ -216,7 +221,9 @@ holds ``bond_archive_schema`` (``1``), the full dynamic ``chi_s_w`` and
 ``chi_c_w`` (``ndarray(l, q, I, J)``, ``freq_axis = "bosonic l -> 2l -
 nmat"``), ``beta``, ``T``, ``nmat``, ``cell_shape``, the momentum-convention
 markers, ``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen
-static keys and the provenance block; nothing else duplicates these arrays.
+static keys, the ``longitudinal_bond_guard_freqs`` / ``longitudinal_bond_device``
+/ ``longitudinal_bond_nb`` members and the provenance block; nothing else
+duplicates these arrays.
 With ``IterationMax = 0`` no map is executed and every last-map archive is
 omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
 of the seed state are written.
