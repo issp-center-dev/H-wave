@@ -266,9 +266,18 @@ Parameters
   FLEX (experimental; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
   grid, no sublattice and an even ``Nmat``; see
-  :ref:`flex_bond_hf`). The bond-specific companions below keep their
-  meaning; ``longitudinal_bond_output_full`` and
-  ``longitudinal_bond_freq_batch`` are FLEX-only.
+  :ref:`flex_bond_hf`). With ``longitudinal_bond_channels = true``
+  (which requires ``flex_hartree_fock = true``) and ``gpu = true``,
+  the dressing, the effective interaction and the self-energy
+  transport run on the GPU (CuPy); the bond arrays stay in host memory
+  and one frequency batch is transferred at a time; the batch is
+  chosen against both the host cap and the free device memory
+  (``longitudinal_bond_freq_batch`` overrides both, see there). Results
+  agree with the CPU path to round-off; the outputs record
+  ``longitudinal_bond_device`` and ``longitudinal_bond_nb``. The
+  bond-specific companions below keep their meaning;
+  ``longitudinal_bond_output_full`` and ``longitudinal_bond_freq_batch``
+  are FLEX-only.
 
 - ``longitudinal_bond_max_shells``
 
@@ -328,14 +337,10 @@ Parameters
   iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
   "general"`` on a spin-free system, the uniform Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
-  field and an even ``Nmat``. ``gpu = true`` runs the dressing, the
-  effective interaction and the self-energy transport on the GPU
-  (CuPy); the bond arrays stay in host memory and one frequency batch
-  is transferred at a time; the batch is chosen against both the host
-  cap and the free device memory (``longitudinal_bond_freq_batch``
-  overrides both). Results agree with the CPU path to round-off; the
-  outputs record ``longitudinal_bond_device`` and
-  ``longitudinal_bond_nb``.
+  field and an even ``Nmat``. ``gpu = true`` is accepted: on its own
+  the ordinary FLEX GPU path applies (see ``gpu`` below); with
+  ``longitudinal_bond_channels = true`` the bond-resolved GPU path
+  described there applies instead.
   A user mean field (``trans_mod`` / ``green_init``) is taken as the
   initial static self-energy instead of being folded into the band;
   ``sigma.npz`` gains the members ``sigma_static``, ``sigma_fluct``,
@@ -368,8 +373,12 @@ Parameters
   Number of bosonic frequencies dressed at once by the bond-resolved
   FLEX (in ``[1, Nmat]``). By default the largest batch that keeps the
   estimated peak memory under ``longitudinal_bond_memory_cap_gb`` is
-  used; an explicit value is checked against the same cap. Ignored with
-  a warning unless ``longitudinal_bond_channels = true``.
+  used (and, with ``gpu = true``, under the free device memory as
+  well); an explicit value is validated against the same cap(s) --
+  the host cap always, and the free device memory measured when the
+  bond solve starts when ``gpu = true`` -- and refused when it exceeds
+  either. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
 
 - ``flex_second_order``
 
@@ -511,9 +520,10 @@ Parameters
   an identical result. Install CuPy as the precompiled binary wheel matching
   your CUDA version (e.g. ``pip install cupy-cuda12x`` for CUDA 12.x); see
   the `CuPy installation guide <https://docs.cupy.dev/en/stable/install.html>`_.
-  The bond-resolved gate (``flex_hartree_fock`` and/or
-  ``longitudinal_bond_channels``) is supported on the GPU; see
-  ``flex_hartree_fock`` above.
+  ``flex_hartree_fock = true`` on its own is accepted and uses this
+  ordinary GPU path; with ``longitudinal_bond_channels = true`` (which
+  requires ``flex_hartree_fock = true``) the bond-resolved GPU path
+  described under ``longitudinal_bond_channels`` above applies instead.
 
 - ``fft_workers``
 

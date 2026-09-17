@@ -447,7 +447,17 @@ fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site ``CoulombInter`` / ``Hund`` / ``Ising`` enters
 self-consistently (see :ref:`flex_bond_hf` for the equations and the domain).
 Both are ``calc_scheme = "general"``, spin-free, uniform-grid options, and
-both run on the GPU (``gpu = true``, via CuPy) as well as on the CPU.
+both run on the GPU (``gpu = true``, via CuPy) as well as on the CPU: on
+its own, ``flex_hartree_fock = true`` uses the ordinary FLEX GPU path (see
+the ``gpu`` option below); with ``longitudinal_bond_channels = true``
+(which requires ``flex_hartree_fock = true``) the dressing, the effective
+interaction and the self-energy transport run on the GPU instead, while
+the bond arrays stay in host memory and are transferred one frequency
+batch at a time -- the batch is chosen against both the host cap
+(``longitudinal_bond_memory_cap_gb``) and the free device memory
+(``longitudinal_bond_freq_batch`` overrides both and is refused when it
+exceeds either). Results agree with the CPU path to round-off; the
+outputs record ``longitudinal_bond_device`` and ``longitudinal_bond_nb``.
 A complete input for a single-band square lattice with an on-site ``U`` and a
 nearest-neighbour ``V`` (the interaction files follow the Wannier90-style
 format of the :ref:`interaction input <Ch:Config_rpa>`; ``coulombinter.dat``
@@ -913,12 +923,10 @@ The FLEX solver accepts the following parameters in the
        via closed-form eigenvalues when each spin block has at most 2
        components (single-orbital, or e.g. a spin-reduced two-orbital model);
        only larger blocks fall back to a host non-Hermitian
-       eigendecomposition. The bond-resolved gate (``flex_hartree_fock``
-       and/or ``longitudinal_bond_channels``, see
-       :ref:`flex_bond_hf_tutorial`) also runs on the GPU: the dressing,
-       the effective interaction and the self-energy transport run on
-       the device, while the bond arrays stay in host memory and are
-       transferred one frequency batch at a time.
+       eigendecomposition. ``flex_hartree_fock = true`` on its own uses
+       this ordinary GPU path; with ``longitudinal_bond_channels = true``
+       the bond-resolved GPU path described in
+       :ref:`flex_bond_hf_tutorial` applies instead.
    * - ``fft_workers``
      - int
      - 1
