@@ -29,10 +29,31 @@ def _fake_cupy(free=10 * 2**30, total=40 * 2**30, pool_total=6 * 2**30, pool_use
     return cupy
 
 
+class _FakeDeviceArray:
+    """Stands in for a cupy ndarray: what matters to the backend helpers is
+    that its TYPE lives in a module whose root package is ``cupy``."""
+
+    def __init__(self, host):
+        self.host = host
+
+
+_FakeDeviceArray.__module__ = "cupy._core.core"
+
+
 class TestToDevice(unittest.TestCase):
     def test_numpy_backend_is_identity(self):
         a = np.arange(3.0)
         self.assertIs(backend.to_device(a, np), a)
+
+    def test_numpy_backend_host_restores_a_device_array(self):
+        """``to_device(arr, np)`` is the documented way to reach the numpy
+        backend, so a device array handed to it must come back on the HOST
+        (identity is only correct for a host input)."""
+        cupy = _fake_cupy()
+        host = np.arange(3.0)
+        cupy.asnumpy = lambda a: a.host
+        with mock.patch.object(backend, "_import_cupy", lambda: cupy):
+            self.assertIs(backend.to_device(_FakeDeviceArray(host), np), host)
 
     def test_cupy_backend_calls_asarray(self):
         cupy = _fake_cupy()

@@ -27,6 +27,17 @@ class TestDressBatch(unittest.TestCase):
                 np.testing.assert_array_equal(chi_b[i], ref)
             self.assertIsInstance(cond, float)
 
+    def test_accepts_an_array_like_input(self):
+        """The batch argument is documented as an array, not specifically a
+        numpy one: an array-like (nested list) must be coerced, not crash on
+        a missing ``ndim``."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, _C = _problem(nmat=2, nvol=2, nd=1, B=1, seed=3)
+        ref, _ = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1))
+        out, _ = bc.dress_batch(chi_bar.tolist(), S, "spin", l0=0, nmat=2,
+                                spatial_shape=(2, 1, 1))
+        np.testing.assert_array_equal(out, ref)
+
     def test_refusal_names_frequency_and_q(self):
         from hwave.solver import bond_channels as bc
         chi_bar, S, C = _problem(nmat=4, nvol=2, nd=1, B=1)

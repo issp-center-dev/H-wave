@@ -175,11 +175,16 @@ def to_host(arr):
 
 
 def to_device(arr, xp):
-    """Return ``arr`` as an array of module ``xp`` (host->device copy for cupy,
-    identity for numpy). The bond-gate orchestration layer (flex_bond) is the
-    only caller for bond arrays; kernels never transfer."""
+    """Return ``arr`` as an array of module ``xp``: a host->device copy for
+    cupy, and for ``xp is np`` whatever it takes to reach the host -- the
+    identity for a numpy input, a device->host copy (:func:`to_host`) for a
+    cupy one. Callers use it as "put this array on the backend I am running
+    on", and on the numpy backend an array that is still device-resident
+    (e.g. a Green function produced by the general path) has to come back.
+    The bond-gate orchestration layer (flex_bond) is the only caller for bond
+    arrays; kernels never transfer."""
     if xp is np:
-        return arr
+        return to_host(arr)
     return xp.asarray(arr)
 
 

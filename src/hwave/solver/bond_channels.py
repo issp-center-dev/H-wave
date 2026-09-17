@@ -3520,12 +3520,18 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     transfers except for the host copy the ``"all"`` guard takes.
     ``guard_freqs``: ``"all"`` (default) checks every (l, q) exactly as
     before; ``"static"`` is a REDUCED diagnostic: only the slice
-    ``l = nmat // 2`` is SVD-checked and the unchecked slices are validated
-    a posteriori by the solve residual (:func:`solve_residual`) against
-    ``residual_tol``. Under ``"static"``, an EXACTLY singular unchecked
-    slice is refused by the solve itself, with a message naming the
-    channel, the batch start and the mode; a nearly singular one is caught
-    by the residual check."""
+    ``l = nmat // 2`` is SVD-checked, and every other slice is checked a
+    posteriori for FINITENESS and for the CONSISTENCY of its own solve --
+    the residual :func:`solve_residual` against ``residual_tol`` -- which
+    is a weaker statement than the conditioning guard. An EXACTLY singular
+    unchecked slice is refused by the solve itself, with a message naming
+    the channel, the batch start and the mode, and a solve whose output
+    does not reproduce its right-hand side is refused by the residual;
+    but ``xp.linalg.solve`` is backward stable, so a NEARLY singular
+    denominator can still return a small residual while its result is
+    dominated by amplified round-off. ``"static"`` therefore does not
+    detect every near singularity -- use ``"all"`` whenever the run may
+    approach the instability."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3533,7 +3539,9 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                          .format(list(_GUARD_FREQS), guard_freqs))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
-    cb = chi_bar_b
+    # array-like inputs are coerced once the module is known (the identity for
+    # an array of that module, so the device path never takes a copy)
+    cb = xp.asarray(chi_bar_b)
     W = xp.asarray(W)
     if cb.ndim != 4 or cb.shape[2] != cb.shape[3] or W.shape != cb.shape[1:]:
         raise ValueError("dress_batch: chi_bar_b must be (nb, nvol, ND, ND) and W (nvol, ND, ND); got {} and {}"
