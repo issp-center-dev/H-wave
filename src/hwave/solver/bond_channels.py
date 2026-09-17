@@ -3522,7 +3522,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     before; ``"static"`` is a REDUCED diagnostic: only the slice
     ``l = nmat // 2`` is SVD-checked and the unchecked slices are validated
     a posteriori by the solve residual (:func:`solve_residual`) against
-    ``residual_tol``."""
+    ``residual_tol``. Under ``"static"``, an EXACTLY singular unchecked
+    slice is refused by the solve itself, with a message naming the
+    channel, the batch start and the mode; a nearly singular one is caught
+    by the residual check."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3574,7 +3577,18 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         i = l_static - l0
         cond_min = _guard(_bk.to_host(mat[i]).reshape(nvol, ND, ND), i * nvol)
     flat = mat.reshape(nb * nvol, ND, ND)
-    chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    if guard_freqs == "static":
+        LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
+        try:
+            chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+        except LinAlgError as exc:
+            raise ValueError(
+                "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
+                "failed ({}): an unchecked slice of the frequency batch starting at grid index "
+                "l={} is exactly singular. Use guard_freqs = \"all\" to locate it, or reduce the "
+                "interaction / raise the temperature.".format(channel, exc, l0)) from exc
+    else:
+        chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
     if guard_freqs == "static":
         r = solve_residual(mat, chi, cb)
         worst = int(xp.argmax(r))

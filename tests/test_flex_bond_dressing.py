@@ -178,11 +178,12 @@ class TestDressBatchGuardModes(unittest.TestCase):
         W = np.ones((nvol, 1, 1), complex)
         chi_bar = np.zeros((nmat, nvol, 1, 1), complex)
         chi_bar[3, 0, 0, 0] = 1.0                            # exactly singular at l=3 (unchecked)
-        with self.assertRaises((ValueError, np.linalg.LinAlgError)) as cm:
+        with self.assertRaises(ValueError) as cm:
             bc.dress_batch(chi_bar, W, "spin", l0=0, nmat=nmat, spatial_shape=(1, 1, 1),
                            guard_freqs="static")
-        self.assertTrue("residual" in str(cm.exception).lower()
-                        or "singular" in str(cm.exception).lower())
+        msg = str(cm.exception)
+        self.assertIn("static", msg)
+        self.assertIn("spin", msg)
 
     def test_invalid_guard_mode_refused(self):
         from hwave.solver import bond_channels as bc
@@ -199,6 +200,32 @@ class TestDressBatchGuardModes(unittest.TestCase):
         r = bc.solve_residual(mat, chi, cb)
         self.assertEqual(r.shape, (1, 1))
         self.assertEqual(float(r[0, 0]), 0.0)
+
+    def test_static_mode_skips_the_guard_outside_the_static_slice(self):
+        """A sub-batch that does not contain l = nmat // 2 gets no SVD guard
+        under "static" (cond_min is None); the sub-batch that does contain it
+        gets a float. The concatenated chi still matches the "all" result."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem()
+        nmat = chi_bar.shape[0]
+        l_static = nmat // 2
+        full, _ = bc.dress_batch(chi_bar, S, "spin", l0=0, nmat=nmat, spatial_shape=(4, 1, 1))
+        nb = 2
+        parts, conds = [], []
+        for l0 in range(0, nmat, nb):
+            l1 = min(nmat, l0 + nb)
+            p, c = bc.dress_batch(chi_bar[l0:l1], S, "spin", l0=l0, nmat=nmat,
+                                  spatial_shape=(4, 1, 1), guard_freqs="static")
+            parts.append(p); conds.append((l0, l1, c))
+        saw_none = False
+        for l0, l1, c in conds:
+            if l0 <= l_static < l1:
+                self.assertIsInstance(c, float)
+            else:
+                self.assertIsNone(c)
+                saw_none = True
+        self.assertTrue(saw_none)                             # at least one excluded sub-batch
+        np.testing.assert_allclose(np.concatenate(parts), full, rtol=1e-12, atol=1e-14)
 
     def test_batch_size_invariance_of_chi_and_cond(self):
         from hwave.solver import bond_channels as bc
