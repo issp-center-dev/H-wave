@@ -2715,8 +2715,14 @@ class FLEX(RPA):
         lam, ew = self._matsubara_number_operator(sigma, beta)
         if ew_ref is not None:
             # Phase B (#181): the analytic reference is Heff = H0 + sigma_static
-            # (exact Fermi count when the fluctuation part vanishes)
-            ew = np.asarray(ew_ref)
+            # (exact Fermi count when the fluctuation part vanishes). It is
+            # built on the host from H0_k and the static self-energy, so it
+            # has to be put on LAM's backend here: _number_from_eigs adds
+            # the two together (1j omega + (mu - ew), with omega taken from
+            # lam's module), and mixing a host array into a device
+            # expression raises rather than transferring. Identity on the
+            # numpy path.
+            ew = _bk.to_device(np.asarray(ew_ref), _bk.array_module_of(lam))
         w = ew
 
         def _delta_n(mu, with_deriv=False):
