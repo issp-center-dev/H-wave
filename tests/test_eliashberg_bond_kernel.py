@@ -525,5 +525,290 @@ class TestKernelUniform(unittest.TestCase):
                 np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10, err_msg=eta)
 
 
+
+#: A residual band wide enough that the deliberately non-smooth physical
+#: fixture is accepted without even the warning decade of spec 4.5.
+_WIDE_TOL = 100.0
+
+
+def _ir_fixture():
+    """The physical fixture the IR accumulator tests run on. Its uniform-FFT
+    susceptibilities are deliberately NOT IR-representable (they carry the
+    finite-Nmat delta(tau) constant and the aliasing images of the discrete
+    tau transform), so these tests pin the ACCUMULATION and the residual
+    bookkeeping, never the fit quality; the operator equivalence is gated on
+    an IR-representable vertex in 10.1.14."""
+    return physical_fixture(norb=1, shape=(4, 4, 1), nmat=64, beta=4.0, U=1.0)
+
+
+def _stage_pair(source):
+    """The two post-processing stages of the accumulator over one source."""
+    def stages(acc):
+        acc.add_channel("spin", source, "chi_s_w")
+        acc.add_channel("charge", source, "chi_c_w")
+    return stages
+
+
+def _direct_residual(fx, axB, eta, keep):
+    """The spec-4.5 componentwise relative residual computed directly from the
+    resident contributions: per stage, ``r = max |eval(fit(G)) - G|`` and
+    ``a = max |G|`` over frequency, momentum and the elements of each
+    ``(alpha, beta)`` block, reported as ``max_stage r / a``."""
+    from hwave.solver.eliashberg_bond import COEFF
+    nd, B, nmat = fx["nd"], fx["B"], fx["nmat"]
+    fit, ev = axB.uniform_matrices(nmat, with_constant=True)
+    cs, cc = COEFF[eta]
+    stages = (cs * (fx["S"][None] @ fx["chi_s"] @ fx["S"][None]),
+              cc * (fx["C"][None] @ fx["chi_c"] @ fx["C"][None]))
+    rel = np.zeros((B, B))
+    for G in stages:
+        sol = np.einsum("lvij,lc->cvij", G, fit)
+        rec = np.einsum("cvij,cl->lvij", sol[:axB.L], ev)
+        if keep:
+            rec = rec + sol[axB.L][None]
+        for al in range(B):
+            for be in range(B):
+                sl = (slice(None), slice(None), slice(al * nd, (al + 1) * nd),
+                      slice(be * nd, (be + 1) * nd))
+                a = float(np.abs(G[sl]).max())
+                r = float(np.abs(rec[sl] - G[sl]).max())
+                rel[al, be] = max(rel[al, be], r / a if a > 0 else 0.0)
+    return rel
+
+
+def _lorentzian_source(fx, g=1.3, kappa=0.0):
+    """An ArrayBlockSource whose susceptibilities are EXACTLY representable in
+    the bosonic IR basis: the fixture's own static (reversal-closed) bond
+    blocks times a Lorentzian bosonic profile ``g^2 / (nu^2 + g^2)``, plus an
+    optional frequency-FLAT offset ``kappa`` -- the delta(tau) component the
+    smooth basis cannot represent and ``ir_keep_static`` retains."""
+    from hwave.solver.eliashberg_bond import ArrayBlockSource
+    nmat, beta = fx["nmat"], fx["beta"]
+    nu = (2 * np.arange(nmat) - nmat) * np.pi / beta
+    prof = (g * g / (nu ** 2 + g * g) + kappa)[:, None, None, None]
+    return ArrayBlockSource({"chi_s_w": fx["chi_s"][nmat // 2][None] * prof,
+                             "chi_c_w": fx["chi_c"][nmat // 2][None] * prof}, fx["nd"])
+
+
+def _ir_vs_uniform_at_nodes(fx, axF, axB, eta, *, source, keep, with_vinst):
+    """Build the uniform and the IR bond kernel from the SAME source and return
+    the max-norm relative difference of their matvecs at the Matsubara nodes
+    the two grids share (the comparison :func:`_smooth_vertex_gate` of
+    ``tests/test_eliashberg_ir.py`` makes on the on-site path). Densifying the
+    IR output instead would be meaningless here: a frequency-FLAT output term
+    (the bare vertex, the retained constant) is by construction outside the
+    fermionic IR basis."""
+    from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+                                              instantaneous_vertex)
+    from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+    nmat, beta = fx["nmat"], fx["beta"]
+    nx, ny, nz = fx["spatial_shape"]
+    stages = _stage_pair(source)
+    # both kernels see the same Green function: the IR nodes and the SAME
+    # interpolant densified back onto the uniform grid
+    green_ir = _ir_compress(fx["green_sc"], axF, nmat, "green")
+    green_u = axF.eval_to_uniform(axF.fit_from_freq(green_ir), nmat)
+    V_inst = (instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"])
+              if with_vinst else None)
+    kx = 2 * np.pi * np.arange(nx) / nx
+    ky = 2 * np.pi * np.arange(ny) / ny
+    form = (np.cos(kx)[:, None] - np.cos(ky)[None, :])[None, None, :, :, None, None]
+    with _dev(fx) as dev:
+        au = PairVertexAccumulator(dev, pairing_types=(eta,), nb=16, nmat=nmat,
+                                   nvol=fx["nvol"], nd=fx["nd"],
+                                   spatial_shape=fx["spatial_shape"])
+        stages(au)
+        ai = PairVertexAccumulator(dev, pairing_types=(eta,), nb=16, nmat=nmat,
+                                   nvol=fx["nvol"], nd=fx["nd"],
+                                   spatial_shape=fx["spatial_shape"], ir=(axF, axB),
+                                   ir_keep_static=keep)
+        stages(ai)
+        vu = au.finish()[eta]
+        vi = ai.finish(ir_fit_tol=1e-3, stage_callable=stages)[eta]
+    assert (vi.const is not None) == keep, "ir_keep_static did not reach the vertex"
+    Ku = BondPairKernel(vu, calc_g2_dynamic(green_u, beta), fx["view"], xp=np,
+                        spatial_shape=fx["spatial_shape"], norb=1, beta=beta, nfreq=nmat,
+                        V_inst=V_inst, residency="host", host_cap=10 ** 12,
+                        device_cap=10 ** 12)
+    Ki = BondPairKernel(vi, calc_g2_dynamic(green_ir, beta), fx["view"], xp=np,
+                        spatial_shape=fx["spatial_shape"], norb=1, beta=beta,
+                        nfreq=axF.n_freq, V_inst=V_inst, axF=axF, residency="host",
+                        host_cap=10 ** 12, device_cap=10 ** 12)
+    phi_u = np.ascontiguousarray(np.broadcast_to(
+        form, (1, 1, nx, ny, nz, nmat))).astype(complex)
+    phi_i = np.ascontiguousarray(np.broadcast_to(
+        form, (1, 1, nx, ny, nz, axF.n_freq))).astype(complex)
+    out_u = Ku.matvec(phi_u.ravel()).reshape(phi_u.shape)
+    out_i = Ki.matvec(phi_i.ravel()).reshape((1, 1, nx, ny, nz, axF.n_freq))
+    idx = (axF.freq_n - 1 + nmat) // 2
+    inside = (idx >= 0) & (idx < nmat)
+    return float(np.abs(out_i[..., inside] - out_u[..., idx[inside]]).max()
+                 / np.abs(out_u).max())
+
+
+class TestKernelIR(unittest.TestCase):
+    def test_ir_coefficient_accumulation_equals_direct_fit(self):     # 10.1.8
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, COEFF
+        fx = _ir_fixture()
+        axF, axB = _axes(fx["beta"])
+        nmat = fx["nmat"]
+        calls = []
+
+        def stages(acc):
+            calls.append(1)
+            _stage_pair(fx["store"])(acc)
+
+        def direct(eta):
+            cs, cc = COEFF[eta]
+            Gam = (cs * (fx["S"][None] @ fx["chi_s"] @ fx["S"][None])
+                   + cc * (fx["C"][None] @ fx["chi_c"] @ fx["C"][None]))
+            return np.einsum("lvij,lc->cvij", Gam,
+                             axB.uniform_matrices(nmat, with_constant=True)[0])
+
+        with _dev(fx) as dev:
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet", "triplet"), nb=3,
+                                        nmat=nmat, nvol=fx["nvol"], nd=fx["nd"],
+                                        spatial_shape=fx["spatial_shape"], ir=(axF, axB))
+            stages(acc)
+            calls.clear()
+            # the uniform-FFT vertex of the physical fixture is NOT smooth (see
+            # _ir_fixture); this test is about the bookkeeping, so the residual
+            # band is wide open (and well clear of the warning decade) and the
+            # residual itself is pinned against a direct computation below
+            both = acc.finish(ir_fit_tol=_WIDE_TOL, stage_callable=stages)
+            self.assertEqual(len(calls), 1)     # the residual pass replays once
+            for eta in ("singlet", "triplet"):
+                # batched accumulation over nb = 3 == the one-shot fit
+                np.testing.assert_allclose(both[eta].coeffs, direct(eta)[:axB.L], atol=1e-12)
+                self.assertIsNone(both[eta].const)
+                self.assertEqual(both[eta].fit_residual_rel.shape, (fx["B"], fx["B"]))
+                np.testing.assert_allclose(both[eta].fit_residual_rel,
+                                           _direct_residual(fx, axB, eta, keep=False),
+                                           rtol=1e-12, err_msg=eta)
+            # the residual is a property of the fit; the pairing types differ by
+            # scalar coefficients, which cancel in r / a
+            np.testing.assert_array_equal(both["singlet"].fit_residual_rel,
+                                          both["triplet"].fit_residual_rel)
+            # "both" in one pass == two single passes
+            for eta in ("singlet", "triplet"):
+                a1 = PairVertexAccumulator(dev, pairing_types=(eta,), nb=3, nmat=nmat,
+                                           nvol=fx["nvol"], nd=fx["nd"],
+                                           spatial_shape=fx["spatial_shape"], ir=(axF, axB))
+                stages(a1)
+                one = a1.finish(ir_fit_tol=_WIDE_TOL, stage_callable=stages)[eta]
+                np.testing.assert_array_equal(one.coeffs, both[eta].coeffs)
+                # r and a carry the pairing coefficients, which cancel in the
+                # ratio up to the floating-point order of the two reductions
+                np.testing.assert_allclose(one.fit_residual_rel,
+                                           both[eta].fit_residual_rel, rtol=1e-12)
+            # ir_fit_tol = 0 skips the residual pass: the callable is NOT invoked
+            a0 = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=3, nmat=nmat,
+                                       nvol=fx["nvol"], nd=fx["nd"],
+                                       spatial_shape=fx["spatial_shape"], ir=(axF, axB))
+            stages(a0)
+            calls.clear()
+            with self.assertLogs("qlms.eliashberg_bond", level="WARNING"):
+                v0 = a0.finish(ir_fit_tol=0, stage_callable=stages)["singlet"]
+            self.assertEqual(calls, [])
+            self.assertTrue(np.all(np.isnan(v0.fit_residual_rel)))
+            np.testing.assert_array_equal(v0.coeffs, both["singlet"].coeffs)
+            # ir_keep_static retains the constant column of the augmented fit,
+            # and the residual then credits it instead of counting it as misfit
+            ak = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=3, nmat=nmat,
+                                       nvol=fx["nvol"], nd=fx["nd"],
+                                       spatial_shape=fx["spatial_shape"], ir=(axF, axB),
+                                       ir_keep_static=True)
+            stages(ak)
+            vk = ak.finish(ir_fit_tol=_WIDE_TOL, stage_callable=stages)["singlet"]
+            np.testing.assert_allclose(vk.const, direct("singlet")[axB.L], atol=1e-12)
+            np.testing.assert_array_equal(vk.coeffs, both["singlet"].coeffs)
+            np.testing.assert_allclose(vk.fit_residual_rel,
+                                       _direct_residual(fx, axB, "singlet", keep=True),
+                                       rtol=1e-12)
+            self.assertGreater(float(np.abs(vk.const).max()), 0.0)
+            self.assertLess(float(vk.fit_residual_rel.max()),
+                            float(both["singlet"].fit_residual_rel.max()))
+
+    def test_ir_fit_tol_refusal(self):                                # 10.1.9
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        fx = _ir_fixture()
+        axF, axB = _axes(fx["beta"])
+        rng = np.random.default_rng(2)
+        noise = (rng.standard_normal(fx["chi_s"].shape)
+                 + 1j * rng.standard_normal(fx["chi_s"].shape))
+        src = ArrayBlockSource({"chi_s_w": noise, "chi_c_w": noise}, fx["nd"])
+        stages = _stage_pair(src)
+
+        def build(dev):
+            a = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=8, nmat=fx["nmat"],
+                                      nvol=fx["nvol"], nd=fx["nd"],
+                                      spatial_shape=fx["spatial_shape"], ir=(axF, axB))
+            stages(a)
+            return a
+
+        with _dev(fx) as dev:
+            # white noise is not representable in a smooth basis: refused
+            with self.assertRaisesRegex(ValueError, "raise ir_wmax, increase Nmat"):
+                build(dev).finish(ir_fit_tol=1e-4, stage_callable=stages)
+            # ir_fit_tol = 0 only warns that the check was skipped
+            with self.assertLogs("qlms.eliashberg_bond", level="WARNING") as cm:
+                build(dev).finish(ir_fit_tol=0, stage_callable=stages)
+            self.assertTrue(any("SKIPPED" in m for m in cm.output))
+            # a residual inside [0.1 * tol, tol) is accepted with a warning
+            worst = float(build(dev).finish(
+                ir_fit_tol=1e9, stage_callable=stages)["singlet"].fit_residual_rel.max())
+            self.assertGreater(worst, 0.0)
+            with self.assertLogs("qlms.eliashberg_bond", level="WARNING") as cm2:
+                build(dev).finish(ir_fit_tol=1.5 * worst, stage_callable=stages)
+            self.assertTrue(any("within a decade" in m for m in cm2.output))
+
+    def test_ir_matvec_matches_uniform_matvec(self):                  # 10.1.14
+        """The IR and the uniform bond matvec are the same operator.
+
+        Part A pins the DYNAMIC part exactly: on a fully IR-representable
+        (Lorentzian) bond vertex carried by the fixture's own vertices,
+        topology and Green function, the two agree at the Matsubara nodes the
+        grids share to well under the on-site path's ``1e-6``.
+
+        Part B measures the FREQUENCY-FLAT terms -- the bare vertex ``V_inst``
+        and the retained ``ir_keep_static`` constant. Spec 4.5 handles them
+        analytically on IR through ``F(tau = 0+) = sum_l F_l u_l(0+)``, which
+        is the EXACT equal-time value, while the uniform grid represents them
+        as a single tau bin, i.e. the Matsubara sum TRUNCATED at Nmat. The two
+        therefore differ by O(beta / Nmat) by construction, and the assertion
+        is that difference's convergence: doubling Nmat halves it. A dropped
+        ``u_zero_plus`` term or a wrong ``beta`` gives an O(1) difference that
+        does not converge.
+        """
+        def fixture(nmat, beta=2.0):
+            fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=nmat, beta=beta, U=1.0)
+            return fx, _axes(beta, wmax=20.0)
+
+        # -- Part A: the dynamic part, no frequency-flat term ---------------
+        fx, (axF, axB) = fixture(256)
+        for eta in ("singlet", "triplet"):
+            d = _ir_vs_uniform_at_nodes(fx, axF, axB, eta,
+                                        source=_lorentzian_source(fx), keep=False,
+                                        with_vinst=False)
+            self.assertLess(d, 1e-6, "{}: IR vs uniform {:.3e}".format(eta, d))
+
+        # -- Part B: the frequency-flat terms converge as O(beta / Nmat) ----
+        for eta in ("singlet", "triplet"):
+            for keep, with_vinst in ((False, True), (True, False)):
+                diffs = []
+                for nmat in (128, 256):
+                    fx, (axF, axB) = fixture(nmat)
+                    src = _lorentzian_source(fx, kappa=0.3 if keep else 0.0)
+                    diffs.append(_ir_vs_uniform_at_nodes(fx, axF, axB, eta, source=src,
+                                                         keep=keep, with_vinst=with_vinst))
+                tag = "{} keep_static={} V_inst={}".format(eta, keep, with_vinst)
+                # measured: 3.7e-3 -> 1.8e-3 (V_inst) and 1.5e-3 -> 7.5e-4
+                # (retained constant); the equal-time truncation error itself
+                # is 3.2e-3 -> 1.6e-3 on this fixture
+                self.assertLess(diffs[0], 1e-2, tag)
+                self.assertLess(diffs[1], 0.6 * diffs[0],
+                                "{}: no Nmat convergence {:.3e} -> {:.3e}"
+                                .format(tag, diffs[0], diffs[1]))
+
 if __name__ == "__main__":
     unittest.main()
