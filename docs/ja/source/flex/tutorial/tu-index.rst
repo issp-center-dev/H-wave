@@ -421,14 +421,17 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 スピンフリー・一様格子のオプションで、いずれも CPU に加えて
 GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartree_fock = true``\
 を単独で指定した場合は通常の FLEX の GPU 経路が使われます（下記\ ``gpu``\ の
-項を参照）。\ ``longitudinal_bond_channels = true``\ （\ ``flex_hartree_fock =
-true``\ が前提）の場合は代わりに、ドレッシング・有効相互作用・自己エネルギー
+項を参照）。\ ``longitudinal_bond_channels = true``\ （\ ``flex_hartree_fock = true``\
+が前提）の場合は代わりに、ドレッシング・有効相互作用・自己エネルギー
 の転送が GPU 上で実行され、ボンド配列はホストメモリに置かれたまま振動数
 バッチを1つずつ転送します。バッチ幅はホスト側の上限（``longitudinal_bond_memory_cap_gb``\
 ）とデバイスの空きメモリの両方に照らして選ばれます（``longitudinal_bond_freq_batch``\
 を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
 範囲で CPU 実行と一致します。出力には\ ``longitudinal_bond_device``\ と
-``longitudinal_bond_nb``\ が記録されます。オンサイト\ ``U``\ と最近接\ ``V``\ を
+``longitudinal_bond_nb``\ が記録されます。\ ``longitudinal_bond_guard_freqs =
+"all"``\ で一度検査した後は、本番の GPU 実行を\ ``"static"``\ に切り替えられます。
+GPU では完全なガードは静的ガードの約2.5倍、CPU では約20%のコストです。
+オンサイト\ ``U``\ と最近接\ ``V``\ を
 持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
 :ref:`相互作用入力 <Ch:Config_rpa>`\ の Wannier90 形式で、\ ``coulombinter.dat``\ には
 4本のボンド\ ``(+-1, 0, 0)``\ ・\ ``(0, +-1, 0)``\ を列挙します）:

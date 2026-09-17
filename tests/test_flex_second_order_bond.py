@@ -6,10 +6,8 @@ the mixed second-order blocks carry the pair permutation of spec
 2026-09-16 R3 (issue #192); those mixed strips equal the index-loop
 formula of that permutation at norb = 3; the memory table carries the
 factor row."""
-import contextlib
 import tempfile
 import unittest
-from unittest import mock
 
 import numpy as np
 
