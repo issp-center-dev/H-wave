@@ -85,6 +85,53 @@ class BondBlockStore:
         return self._released
 
 
+class BondDeviceContext:
+    """Owner of the IMMUTABLE bond inputs for one ``_solve_phase_b`` call
+    (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``, the on-site
+    ``S_on``, ``C_on``, their sum ``SpC_on`` (formed on the host here, once),
+    the mixed-block pair permutation ``perm`` and the block-weight ``mask``.
+    Construction transfers them to the array module ``xp`` exactly once
+    (``_bk.to_device``; the identity on numpy, so the CPU path gets the
+    host arrays themselves); every SCF iteration reuses them. A context
+    manager like :class:`BondBlockStore`: ``release()`` drops the references
+    (the cupy pool may then reuse the blocks). ``_solve_phase_b`` creates
+    it AFTER the memory preflight (its allocation is part of the predicted
+    device need) and nothing else creates device copies of the vertices."""
+
+    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask")
+
+    def __init__(self, xp, S, C, S_on, C_on, perm, mask):
+        self.xp = xp
+        SpC_on = np.asarray(S_on) + np.asarray(C_on)
+        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
+        self._arrays = {k: _bk.to_device(host[k], xp) for k in self._NAMES}
+        self._released = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.release()
+        return False
+
+    def __getattr__(self, name):
+        # attribute access for the seven arrays; everything else is normal
+        if name in BondDeviceContext._NAMES:
+            arrays = self.__dict__.get("_arrays")
+            if self.__dict__.get("_released", True) or arrays is None:
+                raise RuntimeError("BondDeviceContext: released")
+            return arrays[name]
+        raise AttributeError(name)
+
+    def release(self):
+        self._arrays = {}
+        self._released = True
+
+    @property
+    def released(self):
+        return self._released
+
+
 def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, workers):
     """Fill ``store['chibar']`` pair by pair from ``bubble._iter_bond_dynamic``
     (spec 3.1). ``green_scf`` is the TAIL-SUBTRACTED single-block Green
