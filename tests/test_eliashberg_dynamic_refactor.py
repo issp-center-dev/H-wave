@@ -78,6 +78,99 @@ class TestDynamicGolden(unittest.TestCase):
                 shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestEigenDriverUnits(unittest.TestCase):
+    """Direct unit coverage for build_seed, run_leading_eigenproblem's
+    parity_leakage_policy branches, and write_eigenvalue_file -- exercised
+    only indirectly (and never for a leaky, non-commuting kernel) by the
+    golden end-to-end runs above."""
+
+    def setUp(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        self.ed = ed
+        self.gap_shape = (1, 1, 2, 2, 1, 4)
+        vec_size = int(np.prod(self.gap_shape))
+        # A fixed, non-symmetric complex matrix: generic enough that it does
+        # NOT commute with the channel's combined (k, orbital, frequency)
+        # parity, so the leakage probe inside run_leading_eigenproblem is
+        # exercised on a genuinely leaky kernel (not the physical, roughly-
+        # parity-preserving FLEX kernel the golden runs use).
+        rng = np.random.default_rng(11)
+        M = rng.standard_normal((vec_size, vec_size)) + 1j * rng.standard_normal((vec_size, vec_size))
+
+        def matvec(x):
+            return M @ x
+
+        self.matvec = matvec
+        # Exercise build_seed with an empty eli_param (defaults: init_gap
+        # resolved from pairing_type -> "cos" for singlet).
+        kx = np.array([0.0, np.pi])
+        ky = np.array([0.0, np.pi])
+        kz = np.array([0.0])
+        self.phi0, self.seed_vec = ed.build_seed(
+            {}, "singlet", 1, kx, ky, kz, self.gap_shape, False, None, 4)
+
+    def test_build_seed_shape_and_normalization(self):
+        self.assertEqual(self.phi0.shape, self.gap_shape)
+        self.assertTrue(np.iscomplexobj(self.phi0))
+        self.assertAlmostEqual(np.linalg.norm(self.phi0), 1.0)
+        self.assertIsNone(self.seed_vec)
+
+    def test_refuse_raises_before_any_solve_for_iteration(self):
+        eli_param = {"solver_mode": "iteration", "max_iter": 5}
+        with self.assertRaisesRegex(
+                ValueError, "does not commute with the combined parity"):
+            self.ed.run_leading_eigenproblem(
+                self.matvec, self.gap_shape, eli_param, "singlet",
+                phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False, axF=None,
+                nmat=4, parity_leakage_policy="refuse")
+
+    def test_refuse_raises_before_any_solve_for_eigenvalue(self):
+        eli_param = {"solver_mode": "eigenvalue", "num_eigenvalues": 2}
+        with self.assertRaisesRegex(
+                ValueError, "does not commute with the combined parity"):
+            self.ed.run_leading_eigenproblem(
+                self.matvec, self.gap_shape, eli_param, "singlet",
+                phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False, axF=None,
+                nmat=4, parity_leakage_policy="refuse")
+
+    def test_warn_completes_and_logs_existing_message(self):
+        eli_param = {"solver_mode": "iteration", "max_iter": 3}
+        with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
+            lam, gap_w, eigenvalues_all, eigenvalue_match, note = \
+                self.ed.run_leading_eigenproblem(
+                    self.matvec, self.gap_shape, eli_param, "singlet",
+                    phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
+                    axF=None, nmat=4, parity_leakage_policy="warn")
+        self.assertTrue(
+            any("does not commute with parity" in msg for msg in cm.output),
+            cm.output)
+        self.assertIsInstance(lam, float)
+        self.assertEqual(gap_w.shape, self.gap_shape)
+        self.assertIsNone(eigenvalues_all)
+        self.assertIsNone(eigenvalue_match)
+
+    def test_invalid_policy_raises(self):
+        eli_param = {"solver_mode": "iteration"}
+        with self.assertRaisesRegex(ValueError, "parity_leakage_policy"):
+            self.ed.run_leading_eigenproblem(
+                self.matvec, self.gap_shape, eli_param, "singlet",
+                phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False, axF=None,
+                nmat=4, parity_leakage_policy="bogus")
+
+    def test_write_eigenvalue_file_header_lines(self):
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "eigenvalue.dat")
+            self.ed.write_eigenvalue_file(
+                path, 1.5, None, None, None, header_lines=["x=1"])
+            with open(path) as f:
+                lines = f.read().splitlines()
+            self.assertEqual(lines[0], "# Dynamic Eliashberg leading eigenvalue")
+            self.assertEqual(lines[1], "# x=1")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     if os.environ.get("RECORD_GOLDEN") == "1":
         for mode, shift in _CASES:
