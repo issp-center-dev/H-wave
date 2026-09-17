@@ -191,8 +191,10 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   ``longitudinal_bond_max_shells`` (integer, ``-1`` when unset),
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c`` (float:
   the smallest conditioning score of the spin / charge RPA denominator over
-  :math:`q`; the run is refused when it reaches the instability floor) and
-  ``longitudinal_bond_schema`` (integer, ``1``).
+  :math:`q`; the run is refused when it reaches the instability floor; with
+  ``longitudinal_bond_guard_freqs = "static"`` these report the minimum over
+  the zero-frequency slice only) and ``longitudinal_bond_schema`` (integer,
+  ``1``).
 
 In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
 Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the

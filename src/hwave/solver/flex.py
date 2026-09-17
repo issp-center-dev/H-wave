@@ -1584,6 +1584,13 @@ class FLEX(RPA):
             B, [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)], est["ND"],
             est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
             est["cap_bytes"] / gib, est["table"])
+        if self.longitudinal_bond_guard_freqs == "static":
+            logger.warning(
+                "longitudinal_bond_guard_freqs = \"static\": the conditioning guard inspects "
+                "only the zero bosonic frequency; the other slices are validated for finiteness "
+                "and for the consistency of their own solve (residual <= 1e-6) only, so a "
+                "nearly singular denominator at nu != 0 is not refused; "
+                "longitudinal_bond_cond_min_s/c report the zero-frequency minimum.")
         if est["dressing_ops"] > flex_bond._DRESSING_OPS_WARN:
             logger.warning(
                 "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "

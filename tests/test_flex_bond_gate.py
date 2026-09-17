@@ -399,6 +399,26 @@ class TestOutputs(unittest.TestCase):
             self.assertTrue(np.isfinite(v) and v > 0.0)
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
+    def test_static_guard_mode_is_logged(self):
+        """``longitudinal_bond_guard_freqs = "static"`` narrows the
+        conditioning guard to the zero bosonic frequency; the solve must
+        say so once, and the default ("all") mode must say nothing about
+        it."""
+        s, r = _flex({"longitudinal_bond_guard_freqs": "static"})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                s.solve(gi, out)
+        static_records = [rec for rec in cm.output if "static" in rec and "cond_min" in rec]
+        self.assertEqual(len(static_records), 1, cm.output)
+
+        s2, r2 = _flex()
+        gi2 = r2.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm2:
+                s2.solve(gi2, out)
+        self.assertFalse(any("guard_freqs" in rec and "cond_min" in rec for rec in cm2.output))
+
 
 class TestFailureClearing(unittest.TestCase):
 

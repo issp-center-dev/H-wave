@@ -185,7 +185,9 @@ chiq のデータ形式
   ブロックはゼロ）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c``\ （浮動小数。
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
-  下限に達すると実行は拒否されます）、\ ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
+  下限に達すると実行は拒否されます。\ ``longitudinal_bond_guard_freqs = "static"``\ の
+  場合はゼロ振動数スライスのみにわたる最小値を報告します）、
+  ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
 
 ``mode = "FLEX"``\ で\ ``longitudinal_bond_channels = true``\ の場合（:ref:`flex_bond_hf`\ の
 Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写像を記述し
