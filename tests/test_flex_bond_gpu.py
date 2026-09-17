@@ -70,13 +70,14 @@ class _GpuCase(unittest.TestCase):
 class TestDressBatchEquivalence(_GpuCase):
     """``bond_channels.dress_batch`` (spec 4.1) on numpy and on cupy."""
 
-    def _check(self, chi_bar, V, channel, guard, label):
+    def _check(self, chi_bar, V, channel, guard, label, cond_tol=None):
         from hwave.solver import bond_channels as bc
         nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], chi_bar.shape[-1]
+        tol = {} if cond_tol is None else {"cond_tol": cond_tol}
         ref, c_ref = bc.dress_batch(chi_bar, V, channel, l0=0, nmat=nmat,
-                                    spatial_shape=(nvol, 1, 1), guard_freqs=guard)
+                                    spatial_shape=(nvol, 1, 1), guard_freqs=guard, **tol)
         out_d, c_out = bc.dress_batch(self.cupy.asarray(chi_bar), V, channel, l0=0, nmat=nmat,
-                                      spatial_shape=(nvol, 1, 1), guard_freqs=guard)
+                                      spatial_shape=(nvol, 1, 1), guard_freqs=guard, **tol)
         # the kernel returns the module of its input, never a host copy
         self.assertEqual(type(out_d).__module__.split(".")[0], "cupy")
         out = self.cupy.asnumpy(out_d)
@@ -106,12 +107,42 @@ class TestDressBatchEquivalence(_GpuCase):
                     self._check(chi_bar, V, ch, guard, "random general")
 
     def test_ill_conditioned_but_accepted(self):
-        """A denominator pushed to 1e-2 of the identity scale -- above the
-        1e-3 guard floor, so both backends solve it rather than refuse."""
+        """A GENUINELY ill-conditioned denominator (condition number 1e5)
+        that both backends still solve.
+
+        The denominator is prescribed directly: with a q-independent vertex
+        ``V`` and ``chibar = (1 - M) V^-1`` the kernel's solve matrix is
+        exactly ``M``, so choosing ``M = U diag(1, ..., 1e-5) U^H`` with a
+        random unitary ``U`` fixes its condition number at 1e5 -- the regime
+        where the two backends' LAPACK and cuSOLVER round-off is amplified,
+        which is what the ``cond_max``-scaled tolerances exist for. (An
+        earlier fixture scaled the denominator uniformly, which leaves the
+        condition number at 1 and tested nothing of the kind.)
+
+        The default conditioning floor refuses anything with
+        ``sigma_min / sigma_max <= 1e-3``, i.e. every condition number at or
+        above 1e3, so the guard floor is lowered here deliberately -- the
+        escape hatch the guard's own refusal message names. The guard still
+        runs: it reports the 1e-5 minimum, and both backends must agree on
+        it.
+        """
         chi_bar, S, _C = _problem(nmat=4, nvol=2, nd=2, B=2, seed=7)
-        chi_bar = np.zeros_like(chi_bar)
-        chi_bar[2, 0] = 0.99 * np.linalg.inv(S[0])              # 1 - chi S ~ 0.01 I
-        self._check(chi_bar, S, "spin", "all", "near-pole denominator")
+        nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], chi_bar.shape[-1]
+        V = np.repeat(S[:1], nvol, axis=0)                    # q-independent vertex
+        rng = np.random.default_rng(11)
+        U, _r = np.linalg.qr(rng.normal(size=(ND, ND)) + 1j * rng.normal(size=(ND, ND)))
+        d = np.ones(ND)
+        d[-1] = 1.0e-5
+        M = (U * d) @ U.conj().T                              # cond(M) = 1e5
+        chi_bar = np.broadcast_to((np.eye(ND) - M) @ np.linalg.inv(V[0]),
+                                  (nmat, nvol, ND, ND)).copy()
+        # spin channel: mat = 1 - chibar V = M, by construction
+        cm = _cond_max(np.eye(ND)[None, None] - chi_bar @ V[None])
+        self.assertGreaterEqual(cm, 1.0e4)
+        for guard in ("all", "static"):
+            with self.subTest(guard=guard):
+                self._check(chi_bar, V, "spin", guard, "ill-conditioned denominator",
+                            cond_tol=1e-8)
 
     def test_near_zero_values(self):
         chi_bar, S, _C = _problem(nmat=4, nvol=2, nd=2, B=2, seed=8)
