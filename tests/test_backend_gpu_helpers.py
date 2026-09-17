@@ -134,5 +134,11 @@ class TestOomHelpers(unittest.TestCase):
             self.assertEqual(backend.device_pool_used_bytes(), 0)
 
 
+class TestFreeDevicePool(unittest.TestCase):
+    def test_free_device_pool_is_noop_on_numpy(self):
+        from hwave.solver import backend
+        self.assertIsNone(backend.free_device_pool())   # never raises without cupy
+
+
 if __name__ == "__main__":
     unittest.main()
