@@ -6,6 +6,7 @@ import unittest
 
 import numpy as np
 
+from tests.heavy_tests import heavy
 from tests.test_flex_bond_gate import _flex
 
 
@@ -157,3 +158,150 @@ class TestPairingControls(unittest.TestCase):
                 PairingControls.from_param(bad, pairing_types=("singlet",))
         with self.assertRaises(ValueError):
             PairingControls.from_param({}, pairing_types=("x",))
+
+
+# ---------------------------------------------------------------------------
+# Post-processing entry through hwave_sc (spec 6, 10.2.1 / 10.2.2)
+# ---------------------------------------------------------------------------
+
+_IN1 = "tests/rpa/input"
+
+
+def _sc_input(flex_dir, out_dir, T, nmat, cell, **eli):
+    inp = {"mode": {"param": {"T": T, "CellShape": list(cell), "SubShape": [1, 1, 1],
+                              "Nmat": nmat, "filling": 0.5}},
+           "file": {"input": {"path_to_flex_output": flex_dir,
+                              "interaction": {"path_to_input": _IN1, "Geometry": "geom.dat",
+                                              "Transfer": "transfer.dat",
+                                              "CoulombIntra": "coulombintra.dat",
+                                              "CoulombInter": "coulombinter.dat"}},
+                    "output": {"path_to_output": out_dir}},
+           "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic", "bond_channels": True,
+                          "pairing_type": "singlet", "solver_mode": "eigenvalue",
+                          "num_eigenvalues": 3}}
+    inp["eliashberg"].update(eli)
+    return inp
+
+
+def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None):
+    """A real single-band (U = 4, V = 1) bond-gate FLEX run through ``qlms.run``,
+    writing green.npz and the bond archive into ``tmp``."""
+    import hwave.qlms as qlms
+    par = {"T": T, "filling": 0.5, "CellShape": list(cell), "SubShape": [1, 1, 1], "Nmat": nmat,
+           "IterationMax": 200, "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
+           "longitudinal_bond_channels": True, "longitudinal_bond_output_full": output_full,
+           "mixing_scheme": "linear"}
+    if pairing is not None:
+        par["longitudinal_bond_pairing"] = pairing
+    inp = {"mode": {"mode": "FLEX", "calc_scheme": "general", "param": par},
+           "file": {"input": {"path_to_input": "",
+                              "interaction": {"path_to_input": _IN1, "Geometry": "geom.dat",
+                                              "Transfer": "transfer.dat",
+                                              "CoulombIntra": "coulombintra.dat",
+                                              "CoulombInter": "coulombinter.dat"}},
+                    "output": {"path_to_output": tmp, "chiq_s": "chiq_s", "chiq_c": "chiq_c",
+                               "green": "green", "longitudinal_bond": "longitudinal_bond"}}}
+    if eli is not None:
+        inp["eliashberg"] = eli
+    qlms.run(input_dict=inp)
+    return inp
+
+
+class TestPostProcessingGuards(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _refused(self, needle, **eli):
+        import hwave.sc as sc
+        with self.assertRaisesRegex(ValueError, needle):
+            sc.calc_eliashberg(_sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1), **eli))
+
+    def test_refusals(self):                                # 10.2.1 (post-processing half)
+        self._refused("bond_green", bond_green="x.npz")
+        self._refused("bond_max_shells", bond_max_shells=1)
+        self._refused("zero_chi", zero_chi_s=True)
+        self._refused("zero_chi", zero_chi_c=True)
+        import hwave.sc as sc
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 9, (4, 4, 1))
+        with self.assertRaisesRegex(ValueError, "even Nmat"):
+            sc.calc_eliashberg(inp)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        inp["eliashberg"]["chi0q_mode"] = "rpa"
+        with self.assertRaisesRegex(ValueError, "chi0q_mode='flex'"):
+            sc.calc_eliashberg(inp)
+        # the archive is missing in tmp: the message names the FLEX prerequisite
+        self._refused("longitudinal_bond_output_full = true")
+
+    def test_static_bond_guards_unchanged(self):
+        import hwave.sc as sc
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        inp["eliashberg"]["frequency"] = "static"
+        # the STATIC bond path still refuses chi0q_mode = "flex" (unchanged)
+        with self.assertRaisesRegex(ValueError, "(?i)flex"):
+            sc.calc_eliashberg(inp)
+
+
+class TestPostProcessingRuns(unittest.TestCase):
+    @heavy
+    def test_uniform_lambda_and_outputs(self):              # 10.2.2 (uniform half)
+        """A real bond-gate FLEX run, then ``hwave_sc`` on its archive for both
+        pairing channels: the leading eigenvalue is a finite real number, the
+        documented file set is written with the bond provenance, and the answer
+        is stable in the FLEX run's own Nmat (64 vs 128, the discretization the
+        post-processing inherits rather than one it chooses).
+
+        The IR half of spec 10.2.2 (the same lambda from
+        ``matsubara_basis = "ir"``) is NOT asserted here: the IR dynamic kernel
+        does not commute with the combined parity once the instantaneous vertex
+        term is present, so every IR run is refused by the
+        ``parity_leakage_policy = "refuse"`` this entry is required to use.
+        Measured on an exactly IR-representable fixture (IR fit residual
+        5.8e-10, so not a data-quality effect): leakage 3.5e-12 without the
+        instantaneous term and 3.52e-01 with it, unchanged from Nmat 128 to
+        256, against 1e-15 for the uniform kernel in both cases. That is a
+        property of the shared IR flat-term evaluation, not of the bond path
+        (the on-site dynamic IR kernel leaks 3.3e-01 the same way), and it has
+        to be fixed there before the comparison can be asserted.
+        """
+        import hwave.sc as sc
+        lam = {}
+        for nmat in (64, 128):
+            flex_dir = tempfile.mkdtemp()
+            try:
+                _run_gate_1orb(flex_dir, nmat=nmat)
+                for eta in ("singlet", "triplet"):
+                    out = tempfile.mkdtemp()
+                    try:
+                        lam[(eta, nmat)] = sc.calc_eliashberg(_sc_input(
+                            flex_dir, out, 0.5, nmat, (4, 4, 1), pairing_type=eta))
+                        self.assertTrue(np.isfinite(lam[(eta, nmat)]))
+                        for name in ("eigenvalue.dat", "gap.dat", "gap_dynamic.npz"):
+                            self.assertTrue(os.path.exists(os.path.join(out, name)), name)
+                        head = open(os.path.join(out, "eigenvalue.dat")).read()
+                        self.assertIn("# bond_channels=true", head)
+                        self.assertIn("# residency=", head)
+                        with np.load(os.path.join(out, "gap_dynamic.npz")) as d:
+                            self.assertTrue(bool(d["bond_channels"]))
+                            self.assertEqual(str(d["pairing_type"]), eta)
+                            self.assertEqual(d["gap"].shape, (1, 1, 4, 4, 1, nmat))
+                            # the bond provenance: B = on-site + the four
+                            # nearest neighbours of the V = 1 fixture
+                            self.assertEqual(d["bond_delta_r"].shape, (5, 3))
+                            self.assertEqual(tuple(d["bond_delta_r"][0]), (0, 0, 0))
+                            self.assertEqual(d["bond_reverse"].shape, (5,))
+                            self.assertTrue(str(d["bond_archive"]).endswith(
+                                "longitudinal_bond.npz"))
+                            self.assertIn(str(d["bond_residency"]),
+                                          ("device", "host", "stream"))
+                            self.assertEqual(d["gap_bond_projection"].shape,
+                                             (5, 1, 1, nmat))
+                    finally:
+                        shutil.rmtree(out, ignore_errors=True)
+            finally:
+                shutil.rmtree(flex_dir, ignore_errors=True)
+        for eta in ("singlet", "triplet"):
+            self.assertAlmostEqual(lam[(eta, 128)], lam[(eta, 64)],
+                                   delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)

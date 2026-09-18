@@ -1432,11 +1432,6 @@ def solve_dynamic(input_dict):
     Nk = Nx * Ny * Nz
 
     eli_param = input_dict.get("eliashberg", {})
-    # The bond-resolved channels are a STATIC-path feature; reject them here
-    # too so a direct solve_dynamic() call (bypassing calc_eliashberg's
-    # dispatch, which validates the same thing) cannot silently fall back to
-    # the scalar dynamic vertex.
-    sc._reject_bond_channels_dynamic(eli_param)
     pairing_type = eli_param.get("pairing_type", "singlet")
     use_gpu = _gpu_requested(eli_param)
     xp, gpu_active = backend.get_backend(

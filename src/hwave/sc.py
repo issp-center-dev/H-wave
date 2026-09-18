@@ -199,26 +199,6 @@ def _eliashberg_frequency(input_dict):
     return freq
 
 
-def _reject_bond_channels_dynamic(eli_param):
-    """Reject ``bond_channels=true`` on the dynamic Eliashberg entry point.
-
-    The bond-resolved vertex is implemented for the STATIC path only (spec S5
-    guard / non-goal S2): the dynamic kernel would need the bond channels
-    carried through the frequency-resolved vertex, which is a separate spec.
-    Fail loudly rather than silently running the scalar dynamic vertex.
-
-    The flag goes through the same validator as the static path, so a typo
-    ("ture") is refused here too instead of quietly reading as false.
-    """
-    if _bond_bool_option(eli_param, "bond_channels", False):
-        raise ValueError(
-            "[eliashberg] bond_channels=true is not supported with "
-            "frequency='dynamic': the bond-resolved pairing vertex is "
-            "implemented for the STATIC linearized Eliashberg path only. "
-            "Porting the bond kernel to eliashberg_dynamic.py is a deferred "
-            "follow-up; use frequency='static' (or bond_channels=false).")
-
-
 def _validate_dynamic_prereqs(input_dict):
     """Validate prerequisites for dynamic Eliashberg calculation.
 
@@ -230,11 +210,29 @@ def _validate_dynamic_prereqs(input_dict):
     Raises
     ------
     ValueError
-        If bond_channels is requested, if chi0q_mode is not "flex", or if
-        Nmat is odd.
+        If a static-bond-only key is combined with ``bond_channels=true``, if
+        chi0q_mode is not "flex", or if Nmat is odd.
     """
     eli = input_dict.get("eliashberg", {})
-    _reject_bond_channels_dynamic(eli)
+    # bond_channels = true on the DYNAMIC path selects the bond-resolved
+    # pairing kernel, which takes its Green function and its bond topology
+    # from the FLEX run, not from the static path's own keys. Refuse those
+    # keys rather than accept and ignore them (a silently ignored bond_green
+    # would leave the user believing a different propagator was used).
+    if _bond_bool_option(eli, "bond_channels", False):
+        for key in ("bond_green", "bond_max_shells"):
+            if eli.get(key) is not None:
+                raise ValueError(
+                    "[eliashberg] {} is not used by the dynamic bond path "
+                    "(frequency='dynamic' with bond_channels=true): the Green "
+                    "function comes from path_to_flex_output and the topology "
+                    "from the bond archive; remove the key".format(key))
+        for key in ("zero_chi_s", "zero_chi_c"):
+            if backend.as_bool(eli.get(key, False)):
+                raise ValueError(
+                    "[eliashberg] {} is not implemented on the dynamic bond "
+                    "path (frequency='dynamic' with bond_channels=true)"
+                    .format(key))
     if eli.get("chi0q_mode") != "flex":
         raise ValueError(
             "eliashberg.frequency='dynamic' requires chi0q_mode='flex' "
@@ -2780,6 +2778,20 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     return Vs_q
 
 
+def _resolve_flex_dir(input_dict):
+    """The directory the FLEX outputs are read from.
+
+    ``[file.input] path_to_flex_output``, falling back to ``[file.output]
+    path_to_output`` and finally to ``"output"``. Factored out so every
+    consumer of the FLEX outputs (the chi/green loaders here and the bond
+    archive of the dynamic bond path) resolves the SAME directory.
+    """
+    file_input = input_dict.get("file", {}).get("input", {})
+    return file_input.get("path_to_flex_output",
+                          input_dict.get("file", {}).get("output", {}).get(
+                              "path_to_output", "output"))
+
+
 def _resolve_flex_paths(input_dict):
     """Resolve the FLEX output directory and chi_s/chi_c/green file paths.
 
@@ -2788,10 +2800,7 @@ def _resolve_flex_paths(input_dict):
     index from the same files' metadata), so the two never disagree about
     which files are in play.
     """
-    file_input = input_dict.get("file", {}).get("input", {})
-    flex_dir = file_input.get("path_to_flex_output",
-                              input_dict.get("file", {}).get("output", {}).get(
-                                  "path_to_output", "output"))
+    flex_dir = _resolve_flex_dir(input_dict)
 
     eli_param = input_dict.get("eliashberg", {})
     chi_s_file = eli_param.get("flex_chi_s", "chiq_s.npz")
@@ -6530,6 +6539,11 @@ def calc_eliashberg(input_dict):
     # Dispatch to dynamic Eliashberg if requested
     if _eliashberg_frequency(input_dict) == "dynamic":
         _validate_dynamic_prereqs(input_dict)
+        if _bond_bool_option(eli_param, "bond_channels", False):
+            # bond-resolved dynamic pairing kernel, fed by the FLEX run's
+            # bond archive (the on-site solver below reads chiq_s/chiq_c)
+            from hwave.solver import eliashberg_bond_io
+            return eliashberg_bond_io.solve_dynamic_bond(input_dict)
         from hwave.solver import eliashberg_dynamic
         return eliashberg_dynamic.solve_dynamic(input_dict)
 

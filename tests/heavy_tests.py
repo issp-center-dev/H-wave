@@ -163,6 +163,14 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
+    # --- tests/test_eliashberg_bond_entry.py -- post-processing entry ----
+    ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
+     "test_uniform_lambda_and_outputs",
+     "two real bond-gate FLEX runs (4x4, Nmat 64 and 128) plus four hwave_sc "
+     "solves on their archives, one per pairing channel -- 2.2 s measured, "
+     "below the rule, and registered anyway because it is the uniform half of "
+     "one entry-level case whose IR half (blocked on the shared IR flat-term "
+     "parity defect, see the test's docstring) doubles it and belongs with it"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",

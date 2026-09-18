@@ -353,19 +353,19 @@ class TestS5Guards(_ApproxTestCase):
         with self.assertRaisesRegex(ValueError, r"(?i)CoulombInter"):
             sc.calc_eliashberg(inp)
 
-    def test_guard_dynamic_entry_point(self):
-        """(e) bond_channels=true on the dynamic entry point -> error, both via
-        calc_eliashberg's dispatch and via solve_dynamic directly."""
+    def test_dynamic_entry_point_takes_the_bond_path(self):
+        """(e) bond_channels=true with frequency='dynamic' no longer falls back
+        to the STATIC bond kernel or to the scalar dynamic vertex: it dispatches
+        to the bond-resolved dynamic solver, which here gets as far as looking
+        for the FLEX bond archive (absent in this fixture) and names the FLEX
+        prerequisite. The static guards above are unaffected."""
         ci = os.path.join(self.tmp_path, "ci.dat")
         _write_w90(ci, 1, _nn_entries(1.0))
         inp = _base_input(self.tmp_path, coulomb_inter=ci, bond_channels=True,
                           frequency="dynamic", chi0q_mode="flex")
-        with self.assertRaisesRegex(ValueError, r"(?i)dynamic"):
+        with self.assertRaisesRegex(ValueError,
+                                    r"longitudinal_bond_output_full = true"):
             sc.calc_eliashberg(inp)
-
-        from hwave.solver import eliashberg_dynamic
-        with self.assertRaisesRegex(ValueError, r"(?i)dynamic"):
-            eliashberg_dynamic.solve_dynamic(inp)
 
     def test_resource_preflight_errors_and_names_channels(self):
         """S3.2: the preflight refuses to allocate beyond bond_memory_cap_gb and
@@ -2696,10 +2696,13 @@ class TestBondConfigValidation(_ApproxTestCase):
                     self.assertIs(diagnostics, expected)
 
     def test_bond_channels_typo_is_rejected_on_the_dynamic_entry_point(self):
-        """The dynamic refusal reads the same key, so a typo there must not slip
-        a bond_channels request past the guard either."""
+        """The dynamic entry point reads the same key (to pick the bond-resolved
+        kernel), so a typo there must not slip a bond_channels request past the
+        validation either."""
         with self.assertRaises(ValueError) as cm:
-            sc._reject_bond_channels_dynamic({"bond_channels": "ture"})
+            sc._validate_dynamic_prereqs(
+                {"eliashberg": {"bond_channels": "ture", "chi0q_mode": "flex"},
+                 "mode": {"param": {"Nmat": 8}}})
         self.assertIn("bond_channels", str(cm.exception))
 
     def test_bond_integer_options_reject_malformed_values(self):
