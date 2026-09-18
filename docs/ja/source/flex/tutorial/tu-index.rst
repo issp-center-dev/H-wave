@@ -539,6 +539,287 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
    :math:`1/\omega_n`\ テイルはフェルミ液体的振る舞いを示します。
 
 
+.. _flex_bond_pairing_tutorial:
+
+bond 分解頂点によるペアリング固有値
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ボンド分解チャネルを持つ Hartree-Fock FLEX 計算（前述の
+``longitudinal_bond_channels = true``\ ）がドレスドグリーン関数を
+生成し、さらに\ ``longitudinal_bond_output_full = true``\ により
+動的ボンドアーカイブ\ ``longitudinal_bond.npz``\ （スキーマ2）を
+生成した後は、自己エネルギーが使ったのと同じボンド分解して
+振動数に依存する対形成バーテックスを用いて線形化 Eliashberg 方程式を
+解くことができます -- :ref:`動的振動数の節 <sc_dynamic_frequency>`
+のオンサイトの\ ``chiq_s.npz`` / ``chiq_c.npz``\ バーテックスの
+代わりに用います。このカーネルに到達する経路は2つあり、どちらも
+同じ配列からカーネルを構築するため、一様松原格子上では丸め誤差の
+範囲で一致します:
+
+- **インプロセス** 、FLEX の計算自身の最後に実行: FLEX の入力に
+  ``[mode.param] longitudinal_bond_pairing = "singlet" | "triplet" |
+  "both"``\ を設定します。\ ``longitudinal_bond_channels = true``\ と
+  ``IterationMax >= 1``\ が必要です。同じ入力ファイルの
+  ``[eliashberg]``\ テーブル（省略可能）でソルバーを設定します
+  （各キーは\ ``hwave_sc``\ と全く同じデフォルト値を取ります）。
+  ``pairing_type``\ はここでは拒否されます（チャネルは
+  ``longitudinal_bond_pairing``\ で選択されます）。\ ``gpu`` /
+  ``gpu_required`` / ``bond_channels`` / ``chi0q_mode`` / ``frequency`` /
+  ``flex_bond_archive`` / ``bond_green`` / ``bond_max_shells``\ は
+  INFO ログとともに無視されます -- 対形成ステップは再読み込みした
+  アーカイブではなく、FLEX の計算自身のバックエンドとデータの上で
+  動作します。リクエストしたチャネルごとに\ ``eliashberg_bond_<type>.npz``\ ・
+  ``gap_bond_<type>.dat``\ ・\ ``eigenvalue_bond_<type>.dat``\ を、
+  全ての FLEX 出力ファイルの **後** に書き出すため、対形成ステップの
+  失敗が FLEX の結果を損なうことはありません。
+- **後処理** 、``hwave_sc``\ を経由: 別の\ ``hwave_sc``\ 入力で
+  ``[eliashberg] bond_channels = true``\ と\ ``frequency =
+  "dynamic"``\ ・\ ``chi0q_mode = "flex"``\ を設定し、
+  ``[file.input] path_to_flex_output``\ に FLEX 計算の出力ディレクトリを
+  指定します。その FLEX 計算が\ ``longitudinal_bond_output_full =
+  true``\ で（アーカイブはこの場合にのみ書き出されます）、かつ
+  アーカイブスキーマ2を書き出すバージョンで実行されている必要が
+  あります -- 古いスキーマ1のアーカイブは再計算を求めるメッセージと
+  ともに拒否されます。1回の実行につき1つのチャネル
+  （``[eliashberg] pairing_type``\ ）のみを解き、オンサイトの動的
+  ソルバーと同じファイル名（``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・
+  ``eigenvalue.dat``\ ）で書き出します。
+
+完全なキー集合は\ :ref:`出力リファレンス
+<subsec:eliashberg_bond_outputs>`\ を、各キーの説明は設定
+リファレンスの\ ``eliashberg``\ セクションを参照してください。
+
+メモリと IR 基底
+""""""""""""""""""""""""""""""""
+
+アーカイブの主要な2つのメンバー\ ``chi_s_w``\ と\ ``chi_c_w``\ は、
+それぞれ\ ``Nmat * nvol * ND**2 * 16``\ バイト（複素128ビット。
+``ND = B * norb**2``\ 、\ ``B``\ は FLEX の計算が保持したボンド
+チャネル数でチャネル0がオンサイト項）です。したがってアーカイブ
+全体はおよそ\ ``2 * Nmat * nvol * ND**2 * 16``\ バイトになり、これは
+前述の\ ``longitudinal_bond_output_full = true``\ がすでに FLEX の
+計算自身の常駐メモリに課しているのと同じ倍増です。対形成カーネルは
+さらに独自の作業領域（対バブル・持ち上げたバーテックスブロック・
+固有値ソルバーのベクトル）を必要とします。2つの代表的なモデルに
+ついての実測値です（CuO2型: :math:`B=5`\ 、``norb``\ =3、``ND``\ =45、
+``nvol``\ =1024、``Nmat``\ =1024、``num_eigenvalues``\ =10。単一バンド:
+:math:`B=5`\ 、``norb``\ =1、32x32格子、``Nmat``\ =1024）:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 27 27
+
+   * - 量
+     - CuO2型 (GB)
+     - 単一バンド (GB)
+   * - ディスク上の動的アーカイブ (``chi_s_w`` + ``chi_c_w``)
+     - 68
+     - < 1
+   * - インプロセス・一様格子・持ち上げたバーテックスブロック
+       (``B**2``\ ブロック)
+     - 34
+     - < 1
+   * - インプロセス・一様格子・\ ``"stream"``\ 残留方式のデバイス
+       メモリ（A100 1台。1回の matvec = FLEX と同規模の1回の転送、
+       15〜30 秒）
+     - ~8.3
+     - < 1
+   * - インプロセス・IR（:math:`L_B \approx 80`\ ）のデバイスメモリ
+       （持ち上げたブロックが支配的。全て収まり、matvec は数秒）
+     - ~2.7
+     - < 1
+   * - 後処理・一様格子・カーネル前のホストメモリ
+       （アーカイブメンバー1個 + バーテックスアキュムレータ）
+     - ~68
+     - < 1
+   * - 後処理・IR・\ ``finish``\ 前のホストメモリ
+       （アーカイブメンバー1個 + IR 係数）
+     - ~39
+     - < 1
+
+``B**2``\ 個の持ち上げたブロック（後処理の場合はアーカイブメンバー）が
+メモリに収まらないモデルでは、``[eliashberg] matsubara_basis =
+"ir"``\ を設定してください。IR 基底は\ ``Nmat``\ 点の松原軸をその
+スパースサンプリングノード（通常50〜100点）で置き換え、上記の
+周波数軸に関わる各行をおよそ\ ``Nmat / L``\ 分の1に縮小します。
+オプションの `sparse-ir <https://sparse-ir.readthedocs.io>`_
+パッケージが必要です（``pip install sparse-ir``\ ）。
+``[eliashberg] bond_memory_cap_gb``\ でこの経路のホスト側を明示的に
+制限できます（既存の静的ボンド経路と同名のキーを再利用します）。
+ストリーミング残留方式でも収まらない場合、インプロセスの経路は
+最初の FLEX 写像の **前** に拒否し（長時間の FLEX 計算が事後の
+確保失敗によって失われることはありません）、後処理の経路は
+完全なメモリテーブルとともに拒否します。
+
+単一バンドの例（両方の経路）
+""""""""""""""""""""""""""""""""""""""
+
+オンサイト\ :math:`U = 4t`\ と最近接\ :math:`V = t`\ を持つ
+32x32格子、``Nmat`` 1024 で、両方のペアリングチャネルをインプロセスで
+解く例です:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.02
+     filling = 0.45
+     CellShape = [32, 32, 1]
+     Nmat = 1024
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     longitudinal_bond_output_full = true
+     longitudinal_bond_pairing = "both"
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     sigma = "sigma"
+     green = "green"
+     chiq = "chiq"
+     longitudinal_bond = "longitudinal_bond.npz"
+     energy = "energy.dat"
+   [eliashberg]
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 6
+
+これにより\ ``output/``\ に\ ``eliashberg_bond_singlet.npz`` /
+``gap_bond_singlet.dat`` / ``eigenvalue_bond_singlet.dat``\ と、
+``triplet``\ の対応するファイルが書き出されます。同じアーカイブを
+後処理の経路で解く場合（例えば FLEX を再実行せずに基底を比較したい
+場合）は、上記の FLEX 入力を一度実行し（後処理の経路のみが目的
+なら\ ``longitudinal_bond_pairing``\ は\ ``"none"``\ のままでも
+構いません）、続けて\ ``hwave_sc``\ で2つ目の入力を実行します:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "SC"
+   [mode.param]
+     T = 0.02
+     CellShape = [32, 32, 1]
+     Nmat = 1024
+     filling = 0.45
+   [file.input]
+     path_to_flex_output = "output"
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output_sc"
+   [eliashberg]
+     chi0q_mode = "flex"
+     frequency = "dynamic"
+     bond_channels = true
+     pairing_type = "singlet"
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 6
+
+どちらも一様格子上では、先頭固有値とギャップが丸め誤差の範囲で
+一致します。
+
+IR 基底での3軌道の例（インプロセスのみ）
+""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+ボンド分解した動的アーカイブが一様格子のメモリに収まらないモデル
+（例えば CuO2型の3軌道モデル）では、FLEX 入力の\ ``[eliashberg]``
+テーブルで\ ``matsubara_basis = "ir"``\ を設定します:
+
+.. code-block:: toml
+
+   [mode.param]
+     ...
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     longitudinal_bond_pairing = "singlet"
+   [eliashberg]
+     matsubara_basis = "ir"
+     ir_fit_tol = 0.1
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 4
+
+``ir_fit_tol``\ （デフォルト 0.5）は、一様格子上のボンドバーテックスを
+IR 基底にフィットさせた際の成分ごとの相対残差です。定数項を保持した
+（``ir_keep_static_chi = true``\ ）実際の一様 FFT アーカイブでは、
+通常 0.1〜0.2 程度の残差になるため、上記のようなより厳しい値は
+十分に解像された計算での妥当な検査であり、``Nmat``\ が粗い計算では
+緩める必要があるかもしれません。
+
+.. note::
+
+   ボンドバーテックスの瞬時（振動数に依存しない）部分は、IR カーネル
+   では厳密な松原和の中間点
+   :math:`\tfrac12(F(0^+) - F(\beta^-))`\ として畳み込まれ、
+   :math:`F(0^+)`\ ではありません。この修正より前のバージョンで
+   ``matsubara_basis = "ir"``\ かつ非零の瞬時バーテックス（係数が
+   非零のオフサイト\ ``CoulombInter`` / ``Hund`` / ``Ising``\ の
+   いずれか）を用いて計算した動的 IR の結果は、このバージョンの
+   結果と異なります。一様格子の経路は影響を受けません。
+
+IR 結果の Nmat 依存性
+""""""""""""""""""""""""""""""""""""
+
+一様格子上では2つの経路は丸め誤差の範囲で一致します。一方 IR 基底
+では、非零の瞬時バーテックスにより2つは\ :math:`O(\beta /
+N_{\rm mat})`\ だけ異なります。一様格子は有限の\ ``Nmat``\ で
+振動数に依存しない項の松原和を打ち切るのに対し、IR 表現はそれを
+解析的に評価するためです。単一バンド\ :math:`U=4`\ 、\ :math:`V=1`\ 、
+4x4のフィクスチャで\ :math:`T=0.5`\ における実測値:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 20
+
+   * - ``Nmat``
+     - singlet, 一様 vs. IR
+     - triplet, 一様 vs. IR
+   * - 64
+     - 5.7 %
+     - 3.0 %
+   * - 128
+     - 1.7 %
+     - 0.9 %
+
+``Nmat``\ を大きくすると2つは同じ連続極限に収束します。実運用では、
+IR の結果をそのまま信頼する前に、自分のモデルの\ ``Nmat``\ における
+この差を確認してください（オンサイトの動的ソルバーの IR の節が
+推奨するのと同じ手順です）。一様 FFT アーカイブの IR 表現は、上記
+とは無関係に、それ自体が\ ``Nmat^-2``\ で減衰するパリティの非対称性
+も持ちます（同じフィクスチャで Nmat 64 で 7.6e-3、Nmat 128 で
+1.3e-3 と実測）。これが\ ``[eliashberg] parity_leakage_tol``\ の
+デフォルトが、一様格子の\ ``1e-8``\ よりも IR 基底で緩い\ ``2e-2``
+になっている理由です。
+
+収束していない FLEX 計算での対形成
+""""""""""""""""""""""""""""""""""""""""
+
+インプロセスの対形成ステップは、FLEX の SCF ループが収束しなかった
+場合でも実行されます（計算コストはすでに払われているため）。
+カーネルは **最後の** 写像のドレスされた感受率と **最終** （混合後）の
+グリーン関数を組み合わせて用い、WARNING がログに出力され、出力には
+``scf_converged = false``\ と\ ``state = "mixed: last-map chi, final
+green"``\ が記録されます（収束した計算では代わりに\ ``state =
+"last_map_chi / final_green"``\ が記録されます）。これは npz の
+メタデータと\ ``eigenvalue_bond_<type>.dat``\ の\ ``#``\ ヘッダー行の
+両方に記録されます。このような結果は、自己無撞着な対形成固有値では
+なく、SCF ループが辿っていた軌跡の診断値として扱ってください。
+
+
 サンプル 2: 2軌道Hubbardモデル
 -----------------------------------------
 
