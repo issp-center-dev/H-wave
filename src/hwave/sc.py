@@ -228,7 +228,10 @@ def _validate_dynamic_prereqs(input_dict):
                     "function comes from path_to_flex_output and the topology "
                     "from the bond archive; remove the key".format(key))
         for key in ("zero_chi_s", "zero_chi_c"):
-            if backend.as_bool(eli.get(key, False)):
+            # the same strict parser as bond_channels just above: read as
+            # plain truthiness a typo like "ture" would slip past this
+            # refusal and the unimplemented decomposition would be requested
+            if _bond_bool_option(eli, key, False):
                 raise ValueError(
                     "[eliashberg] {} is not implemented on the dynamic bond "
                     "path (frequency='dynamic' with bond_channels=true)"

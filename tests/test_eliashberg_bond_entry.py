@@ -798,6 +798,24 @@ class TestInProcess(unittest.TestCase):
                 dict(self._outputs(self.tmp), eliashberg_bond_singlet="chiq_s"),
                 self.tmp, ("chiq_s", "eliashberg_bond_singlet"))
 
+    def test_cpu_run_never_touches_the_device_pool(self):
+        """``free_device_pool`` swallows everything it raises, so on a CPU run
+        the cupy import is merely a pointless attempt per channel -- but on a
+        machine where cupy IS installed while the run is on numpy it would
+        free another consumer's blocks. It must not be called at all."""
+        from hwave.solver import backend as bk
+        s, r = _flex({"longitudinal_bond_pairing": "both", "IterationMax": 3})
+        gi = r.get_param("green")
+        with mock.patch.object(bk, "free_device_pool",
+                               side_effect=AssertionError("must not be called")) as spy, \
+                mock.patch.object(bk, "_import_cupy",
+                                  side_effect=AssertionError("must not be called")):
+            s.solve(gi, self.tmp)
+        for eta in ("singlet", "triplet"):
+            self.assertIn("pairing_{}_eigenvalue".format(eta), gi)
+            self.assertNotIn("pairing_{}_error".format(eta), gi)
+        self.assertEqual(spy.call_count, 0)
+
     def test_configured_subdirectory_name_is_published(self):
         """A configured output name may carry a subdirectory. The temporary is
         written next to its target (so the rename stays on one filesystem), the

@@ -174,6 +174,19 @@ class TestReleaseSlot(unittest.TestCase):
             with self.assertRaisesRegex(KeyError, "no slot 'W'"):
                 store.release_slot("W")
 
+    def test_release_slot_after_release_says_released(self):
+        """After ``release`` every array is gone, so a slot name would look
+        "unknown" and the KeyError would send the caller chasing a typo
+        instead of a lifetime error."""
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar", "W")) as store:
+            pass
+        self.assertTrue(store.released)
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("W")
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("nonexistent")
+
 
 class TestDeviceContextOptional(unittest.TestCase):
     def test_optional_arrays_are_none(self):
@@ -191,6 +204,16 @@ class TestDeviceContextOptional(unittest.TestCase):
         S = np.eye(2, dtype=complex)[None]
         with BondDeviceContext(np, S, S, S, S, np.arange(2), np.zeros((2, 2))) as dev:
             np.testing.assert_array_equal(dev.SpC_on, 2 * S)
+
+    def test_on_site_pair_must_be_given_together(self):
+        """``SpC_on`` is formed only when BOTH on-site vertices are present, so
+        one of them alone would be silently dropped into a context whose
+        ``SpC_on`` is ``None``."""
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        for S_on, C_on in ((S, None), (None, S)):
+            with self.assertRaisesRegex(ValueError, "S_on.*C_on|C_on.*S_on"):
+                BondDeviceContext(np, S, S, S_on, C_on)
 
 
 class TestOutputNameRegistry(unittest.TestCase):

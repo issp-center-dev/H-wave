@@ -1454,7 +1454,12 @@ class FLEX(RPA):
         """Solve-entry reset by ownership (spec 3.5): every solve-produced
         member and solver result attribute is dropped; the inputs
         (sigma_init, trans_mod, green_init, chi0q_init, reader entries)
-        are preserved."""
+        are preserved.
+
+        The ``pairing_`` prefix is a RESERVED namespace of ``green_info``,
+        like ``longitudinal_bond_`` and ``scf_``: it belongs entirely to the
+        in-process pairing results, so dropping the whole prefix here cannot
+        discard anything a reader owns."""
         produced = ("sigma", "sigma_static", "sigma_fluct", "green", "physics",
                     "chi0q", "chiq_s", "chiq_c")
         prov = ("map_iteration", "state_iteration", "payload_kind", "hf_density_error",

@@ -2705,6 +2705,31 @@ class TestBondConfigValidation(_ApproxTestCase):
                  "mode": {"param": {"Nmat": 8}}})
         self.assertIn("bond_channels", str(cm.exception))
 
+    def test_zero_chi_typo_is_rejected_on_the_dynamic_bond_path(self):
+        """``zero_chi_s`` is refused on the dynamic bond path, so a typo read
+        as plain truthiness decides whether the guard fires at all: "ture"
+        must raise, not quietly pass the refusal."""
+        def prereqs(**eli):
+            cfg = {"eliashberg": dict({"bond_channels": True, "chi0q_mode": "flex"}, **eli),
+                   "mode": {"param": {"Nmat": 8}}}
+            return sc._validate_dynamic_prereqs(cfg)
+
+        for key in ("zero_chi_s", "zero_chi_c"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError) as cm:
+                    prereqs(**{key: "ture"})
+                self.assertIn(key, str(cm.exception))
+                # a genuine request is still refused, naming the key
+                with self.assertRaises(ValueError) as cm:
+                    prereqs(**{key: True})
+                self.assertIn(key, str(cm.exception))
+                with self.assertRaises(ValueError):
+                    prereqs(**{key: "on"})
+                # and the false spellings pass
+                prereqs(**{key: False})
+                prereqs(**{key: "false"})
+                prereqs(**{key: "off"})
+
     def test_bond_integer_options_reject_malformed_values(self):
         """``int(1.5)`` used to silently truncate to 1 and TOML booleans were
         accepted as 0/1; both CHANGE THE MEANING of a malformed config."""

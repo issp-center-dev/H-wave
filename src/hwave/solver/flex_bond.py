@@ -83,6 +83,10 @@ class BondBlockStore:
         """Free ONE named array (the pairing step drops ``W`` before it
         allocates the IR coefficients, spec 7 step 1). Later access to the
         slot raises KeyError; ``release`` / ``__exit__`` tolerate it."""
+        # after release every array is gone, so a valid slot name would look
+        # "unknown": say what really happened instead
+        if self._released:
+            raise RuntimeError("BondBlockStore: released")
         if name not in self._arrays:
             if name in self._released_slots:
                 return
@@ -116,6 +120,13 @@ class BondDeviceContext:
 
     def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None):
         self.xp = xp
+        # SpC_on exists only when BOTH are present, so one of them alone would
+        # be silently dropped into a context whose SpC_on is None
+        if (S_on is None) != (C_on is None):
+            raise ValueError("BondDeviceContext: S_on and C_on must be given together "
+                             "(both None or both arrays); got S_on {}, C_on {}"
+                             .format("None" if S_on is None else "an array",
+                                     "None" if C_on is None else "an array"))
         SpC_on = None if (S_on is None or C_on is None) else np.asarray(S_on) + np.asarray(C_on)
         host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
         self._arrays = {k: (None if host[k] is None else _bk.to_device(host[k], xp))

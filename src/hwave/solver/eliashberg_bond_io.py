@@ -664,8 +664,12 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
             K = None
             try:
                 # the previous channel's device arrays are gone by now; give
-                # them back to the driver so this admission measures the truth
-                _bk.free_device_pool()
+                # them back to the driver so this admission measures the
+                # truth. On the numpy backend there is no device pool to give
+                # back to, and a cupy installed next to a CPU run belongs to
+                # somebody else -- do not touch it.
+                if xp is not np:
+                    _bk.free_device_pool()
                 host_cap = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
                     else 0.8 * _eb._host_available_bytes()
                 device_cap = host_cap if xp is np else _device_cap(
