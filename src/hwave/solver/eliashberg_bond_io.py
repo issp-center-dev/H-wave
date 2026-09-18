@@ -1,6 +1,7 @@
 """Entries, configuration and files of the bond-resolved dynamic pairing kernel."""
 import logging
 import os
+import secrets
 import zipfile
 from dataclasses import dataclass
 
@@ -12,6 +13,9 @@ logger = logging.getLogger("qlms").getChild("solver").getChild("eliashberg_bond"
 _INDEX_ORDER = "I = m*norb**2 + l1*norb + l2"
 _FREQ_AXIS = "bosonic l -> 2l - nmat"
 _SOLVER_MODES = ("iteration", "eigenvalue", "both")
+#: the eigen family sc._solve_leading accepts (see sc.calc_eliashberg)
+_EIGENVALUE_METHODS = ("arnoldi", "shift-invert-bicgstab", "shift-invert-gmres",
+                       "shift-invert-lgmres")
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,6 @@ class PairingControls:
 
     @classmethod
     def from_param(cls, eli_param, *, pairing_types):
-        from . import backend as _bk
         p = dict(eli_param or {})
         for eta in pairing_types:
             if eta not in ("singlet", "triplet"):
@@ -54,10 +57,28 @@ class PairingControls:
             v = p.get(key, default)
             if v is None and allow_none:
                 return None
+            # a bool is an int in Python: "alpha = true" would become 1.0
+            if isinstance(v, bool):
+                raise ValueError("[eliashberg] {} must be a positive finite number, got {!r}".format(key, p.get(key)))
             v = float(v)
             if not np.isfinite(v) or v < 0 or (v == 0 and not allow_zero):
                 raise ValueError("[eliashberg] {} must be a positive finite number, got {!r}".format(key, p.get(key)))
             return v
+
+        def _bool(key, default):
+            """A boolean option, refusing unrecognised spellings: read as
+            plain truthiness a typo like "ture" would become TRUE and the
+            silently wrong branch would run."""
+            v = p.get(key, default)
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                s = v.strip().lower()
+                if s in ("true", "yes", "on", "1"):
+                    return True
+                if s in ("false", "no", "off", "0"):
+                    return False
+            raise ValueError("[eliashberg] {} must be a boolean, got {!r}".format(key, v))
 
         sm = str(p.get("solver_mode", "iteration")).lower()
         if sm not in _SOLVER_MODES:
@@ -65,19 +86,23 @@ class PairingControls:
         mb = str(p.get("matsubara_basis", "uniform")).lower()
         if mb not in ("uniform", "ir"):
             raise ValueError("[eliashberg] matsubara_basis must be 'uniform' or 'ir', got {!r}".format(mb))
+        em = str(p.get("eigenvalue_method", "arnoldi")).lower()
+        if em not in _EIGENVALUE_METHODS:
+            raise ValueError("[eliashberg] eigenvalue_method must be one of {}, got {!r}"
+                             .format(_EIGENVALUE_METHODS, p.get("eigenvalue_method")))
         return cls(
             pairing_types=tuple(pairing_types), solver_mode=sm,
-            eigenvalue_method=str(p.get("eigenvalue_method", "arnoldi")),
+            eigenvalue_method=em,
             num_eigenvalues=_pos_int("num_eigenvalues", 10), max_iter=_pos_int("max_iter", 1000),
             alpha=_pos_float("alpha", 0.5), convergence_tol=_pos_float("convergence_tol", 1.0e-5),
             spectral_shift=p.get("spectral_shift"), sigma_shift=p.get("sigma_shift"),
             init_gap=p.get("init_gap"), seed_eigenvector=p.get("seed_eigenvector"),
             matsubara_basis=mb, ir_wmax=p.get("ir_wmax"), ir_tol=_pos_float("ir_tol", 1.0e-8),
-            ir_keep_static_chi=_bk.as_bool(p.get("ir_keep_static_chi", False)),
+            ir_keep_static_chi=_bool("ir_keep_static_chi", False),
             ir_fit_tol=_pos_float("ir_fit_tol", 0.5, allow_zero=True),
             parity_leakage_tol=_pos_float("parity_leakage_tol", None, allow_zero=True,
                                           allow_none=True),
-            fft_workers=int(p.get("fft_workers", 1)),
+            fft_workers=_pos_int("fft_workers", 1),
             bond_memory_cap_gb=_pos_float("bond_memory_cap_gb", None, allow_none=True))
 
     @property
@@ -134,6 +159,21 @@ class BondArchive:
         return arr
 
 
+def _as_index_array(member, name, path):
+    """One integer-valued archive member as ``int64``.
+
+    ``astype(np.int64)`` TRUNCATES, so a float member carrying 0.5 would
+    become a DIFFERENT bond topology without a word; the values must be
+    exactly integral (and finite) before the cast."""
+    arr = np.asarray(member)
+    if not np.issubdtype(arr.dtype, np.integer):
+        if not np.issubdtype(arr.dtype, np.floating) or not np.all(np.isfinite(arr)) \
+                or not np.all(np.mod(arr, 1) == 0):
+            raise ValueError("bond archive {}: {} must hold integers, got dtype {} with "
+                             "non-integral values".format(path, name, arr.dtype))
+    return arr.astype(np.int64)
+
+
 def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected):
     from hwave.solver.rpa import check_momentum_marker
     if not os.path.exists(path):
@@ -162,19 +202,36 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         if cell != tuple(int(x) for x in cell_shape_expected):
             raise ValueError("bond archive {}: cell_shape {} != this run's {}".format(path, cell, tuple(cell_shape_expected)))
         beta = float(d["beta"])
+        # every comparison with nan is false, so an archive whose beta is nan
+        # would pass the relative check below and the run would proceed on an
+        # unknown temperature
+        if not np.isfinite(beta) or beta <= 0:
+            raise ValueError("bond archive {}: beta must be a finite positive number, got {}"
+                             .format(path, beta))
+        if not np.isfinite(beta_expected) or beta_expected <= 0:
+            raise ValueError("bond archive {}: this run's beta must be a finite positive "
+                             "number, got {}".format(path, beta_expected))
         if abs(beta - beta_expected) > 1e-10 * max(1.0, abs(beta_expected)):
             raise ValueError("bond archive {}: beta {} != this run's {}".format(path, beta, beta_expected))
         check_momentum_marker(d, path)
-        delta_r = np.asarray(d["delta_r"], dtype=np.int64)
-        reverse = np.asarray(d["reverse"], dtype=np.int64)
+        delta_r = _as_index_array(d["delta_r"], "delta_r", path)
+        reverse = _as_index_array(d["reverse"], "reverse", path)
         types = tuple(str(t) for t in np.asarray(d["types"]).ravel())
         S_bond = np.asarray(d["S_bond"]); C_bond = np.asarray(d["C_bond"])
+    # the rank check comes BEFORE shape[0] is read as the channel count
+    if delta_r.ndim != 2 or delta_r.shape[1] != 3 or delta_r.shape[0] < 1:
+        raise ValueError("bond archive {}: delta_r must be (B, 3) with delta_r[0] = (0, 0, 0)".format(path))
     B = int(delta_r.shape[0])
     nd = norb * norb
     ND = B * nd
     nvol = int(np.prod(cell))
-    if delta_r.ndim != 2 or delta_r.shape[1] != 3 or tuple(delta_r[0]) != (0, 0, 0):
+    if tuple(delta_r[0]) != (0, 0, 0):
         raise ValueError("bond archive {}: delta_r must be (B, 3) with delta_r[0] = (0, 0, 0)".format(path))
+    # NOTE: ``types`` holds the INTERACTION TYPE NAMES the bond vertices were
+    # built from (CoulombInter / Hund / Ising), not one entry per channel, so
+    # its length is unrelated to B and nothing is checked against B here.
+    if not types:
+        raise ValueError("bond archive {}: types is empty".format(path))
     mod = {tuple(int(x) for x in np.mod(r, cell)) for r in delta_r}
     if len(mod) != B:
         raise ValueError("bond archive {}: two channels of delta_r coincide modulo cell_shape {}".format(path, cell))
@@ -517,10 +574,17 @@ def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     A failure in a stage SHARED by several channels fails all of them with the
     same root cause; the later per-channel stages fail that channel only.
     """
-    from . import backend as _bk
+    # the handler's OWN setup runs inside the guard: an import or a device
+    # probe that fails here would otherwise propagate and cost the FLEX
+    # results. Python evaluates the ``except`` expression at match time, so
+    # rebinding ``caught`` inside the try is what makes the device
+    # out-of-memory types part of the match once they are known.
+    caught = (Exception,)
     try:
+        from . import backend as _bk
+        caught = (Exception,) + tuple(_bk._oom_error_types())
         _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info)
-    except (Exception,) + tuple(_bk._oom_error_types()) as exc:
+    except caught as exc:
         # the phase handlers below cover every failure the design foresees;
         # this is the backstop that keeps the promise for the one it does not
         _record_backstop(green_info, _requested_types(solver), "pairing", exc)
@@ -597,6 +661,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
             fail(group, "vertex", exc)
             continue
         for eta in group:
+            K = None
             try:
                 # the previous channel's device arrays are gone by now; give
                 # them back to the driver so this admission measures the truth
@@ -651,16 +716,29 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 green_info["pairing_{}_note".format(eta)] = note
                 logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
                             eta, float(lam), label_state)
-                del K
             except caught as exc:
                 fail((eta,), "kernel/solver", exc)
+            finally:
+                # a FAILED channel must not keep its kernel (and the device
+                # blocks it hoisted) alive while the next channel calls
+                # free_device_pool and measures what is available
+                K = None
         del vertices
 
 
 def _tmp_name(path):
-    """``x.npz`` -> ``x.tmp.npz`` (numpy's savez suffix rule is satisfied)."""
-    root, ext = os.path.splitext(path)
-    return root + ".tmp" + ext
+    """``dir/x.npz`` -> ``dir/.x.<pid>-<token>.tmp.npz``.
+
+    Next to its target (so the publishing rename stays inside one filesystem),
+    hidden by the leading dot, and UNIQUE per process and per call: a fixed
+    ``x.tmp.npz`` collides whenever two runs share an output directory (a
+    parameter sweep, a restarted job), and one run's rename can then publish
+    the other's half-written file. The ``.npz`` tail is preserved, so numpy's
+    savez suffix rule is still satisfied."""
+    head, base = os.path.split(path)
+    root, ext = os.path.splitext(base)
+    token = secrets.token_hex(4)
+    return os.path.join(head, ".{}.{}-{}.tmp{}".format(root, os.getpid(), token, ext))
 
 
 def write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
@@ -700,7 +778,11 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                 if kind == "eliashberg_bond" and not fn.endswith(".npz"):
                     fn += ".npz"
                 names[kind] = os.path.join(str(path_to_output), fn)
-                tmps[kind] = _tmp_name(names[kind])
+                tmps[kind] = _tmp_name(os.path.abspath(names[kind]))
+            for kind in names:
+                # a configured name may carry a subdirectory; the temporary
+                # lives next to its target, so both need that directory
+                os.makedirs(os.path.dirname(tmps[kind]), exist_ok=True)
             meta = green_info["pairing_{}_meta".format(eta)]
             extra = dict(meta)
             evs = green_info.get("pairing_{}_eigenvalues".format(eta))
@@ -710,8 +792,12 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                 str(path_to_output), green_info["pairing_{}_gap".format(eta)],
                 green_info["pairing_{}_eigenvalue".format(eta)], solver.T, eta,
                 kx, ky, kz, 1.0 / solver.T,
-                gap_file=os.path.basename(tmps["gap_bond"]),
-                npz_file=os.path.basename(tmps["eliashberg_bond"]), extra_meta=extra)
+                # the ABSOLUTE temporaries: os.path.join(output_dir, abs_path)
+                # is abs_path, so a configured name with a subdirectory (or an
+                # absolute one) lands where it was asked for and not next to
+                # path_to_output under its basename
+                gap_file=tmps["gap_bond"], npz_file=tmps["eliashberg_bond"],
+                extra_meta=extra)
             _ed.write_eigenvalue_file(
                 tmps["eigenvalue_bond"], green_info["pairing_{}_eigenvalue".format(eta)],
                 evs, green_info.get("pairing_{}_eigenvalue_match".format(eta)),

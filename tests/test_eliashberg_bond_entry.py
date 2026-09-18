@@ -111,6 +111,49 @@ class TestLoadBondArchive(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reverse"):
             self._load()
 
+    def test_non_finite_beta_refused(self):
+        """``beta = nan`` slips through the relative comparison (every
+        comparison with nan is false), and the run would then proceed on an
+        archive whose temperature is unknown."""
+        self._rewrite(beta=np.float64("nan"))
+        with self.assertRaisesRegex(ValueError, "beta must be a finite positive number"):
+            self._load()
+        self._rewrite(beta=np.float64(0.0))
+        with self.assertRaisesRegex(ValueError, "beta must be a finite positive number"):
+            self._load()
+        # the caller's own beta is held to the same rule
+        self._rewrite(beta=np.float64(1.0 / self.s.T))
+        with self.assertRaisesRegex(ValueError, "this run's beta"):
+            self._load(beta_expected=float("inf"))
+
+    def test_non_integral_topology_refused(self):
+        """``delta_r`` / ``reverse`` used to be cast with ``astype(int64)``,
+        which TRUNCATES: a float member carrying 0.5 would silently become a
+        different bond topology."""
+        with np.load(self.path) as d:
+            dr = np.asarray(d["delta_r"], dtype=float)
+            rev = np.asarray(d["reverse"], dtype=float)
+            types = np.asarray(d["types"])
+        bad = dr.copy()
+        bad[1, 0] += 0.5
+        self._rewrite(delta_r=bad)
+        with self.assertRaisesRegex(ValueError, "delta_r"):
+            self._load()
+        self._rewrite(delta_r=dr)
+        self._load()                      # the same values as floats are fine
+        bad_rev = rev.copy()
+        bad_rev[0] = 0.5
+        self._rewrite(reverse=bad_rev)
+        with self.assertRaisesRegex(ValueError, "reverse"):
+            self._load()
+        # ``types`` names the INTERACTION TYPES the vertices were built from,
+        # not one entry per channel, so only emptiness is a contradiction
+        self._rewrite(reverse=rev, types=types[:0])
+        with self.assertRaisesRegex(ValueError, "types is empty"):
+            self._load()
+        self._rewrite(types=types)
+        self._load()
+
     def test_delta_r_aliasing_refused(self):
         with np.load(self.path) as d:
             dr = d["delta_r"].copy()
@@ -159,6 +202,33 @@ class TestPairingControls(unittest.TestCase):
                 PairingControls.from_param(bad, pairing_types=("singlet",))
         with self.assertRaises(ValueError):
             PairingControls.from_param({}, pairing_types=("x",))
+
+    def test_strict_parsing_of_the_remaining_keys(self):
+        """A malformed value must be refused, not silently read as something
+        else: ``"ture"`` is not false, ``fft_workers = 1.5`` is not 1, an
+        unknown ``eigenvalue_method`` is not arnoldi, and ``alpha = true`` is
+        not 1.0."""
+        from hwave.solver.eliashberg_bond_io import PairingControls
+        for bad in ({"ir_keep_static_chi": "ture"}, {"ir_keep_static_chi": 2.5},
+                    {"ir_keep_static_chi": []},
+                    {"fft_workers": 1.5}, {"fft_workers": 0}, {"fft_workers": True},
+                    {"eigenvalue_method": "foo"},
+                    {"alpha": True}, {"convergence_tol": True}):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    PairingControls.from_param(bad, pairing_types=("singlet",))
+        for spelling, expected in (("TRUE", True), ("on", True), ("1", True), (True, True),
+                                   ("No", False), ("off", False), ("0", False), (False, False)):
+            c = PairingControls.from_param({"ir_keep_static_chi": spelling},
+                                           pairing_types=("singlet",))
+            self.assertIs(c.ir_keep_static_chi, expected, spelling)
+        for method in ("arnoldi", "shift-invert-bicgstab", "shift-invert-gmres",
+                       "shift-invert-lgmres"):
+            c = PairingControls.from_param({"eigenvalue_method": method.upper()},
+                                           pairing_types=("singlet",))
+            self.assertEqual(c.eigenvalue_method, method)
+        self.assertEqual(PairingControls.from_param({"fft_workers": 4},
+                                                    pairing_types=("singlet",)).fft_workers, 4)
 
     def test_parity_leakage_tol_default_depends_on_the_basis(self):
         """``parity_leakage_tol`` is optional; ``None`` resolves to 1e-8 on the
@@ -634,6 +704,57 @@ class TestQlmsForwarding(unittest.TestCase):
             delta=1e-6 * max(leakage, 1e-12))
 
 
+class TestInProcessHookBoundary(unittest.TestCase):
+    """``run_inprocess_pairing`` promises never to raise: a pairing failure
+    must cost the pairing results only, never the FLEX ones. The promise has
+    to cover the handler's OWN setup too, not just the worker call."""
+
+    def _solver(self):
+        import types as _t
+        return _t.SimpleNamespace(
+            _pairing_controls=_t.SimpleNamespace(pairing_types=("singlet",)))
+
+    def test_worker_failure_is_recorded_not_raised(self):
+        from hwave.solver import eliashberg_bond_io as io
+        gi = {}
+        with mock.patch.object(io, "_run_inprocess_pairing",
+                               side_effect=RuntimeError("worker boom")):
+            with self.assertLogs("qlms.solver.eliashberg_bond", "ERROR"):
+                io.run_inprocess_pairing(self._solver(), None, None, None, 1.0, gi)
+        self.assertIn("worker boom", gi["pairing_singlet_error"])
+
+    def test_a_failure_in_the_handlers_own_setup_is_recorded_too(self):
+        """The backend import and the out-of-memory type tuple are built
+        INSIDE the guard; built outside, a failure there would propagate and
+        take the FLEX results with it."""
+        from hwave.solver import backend as bk, eliashberg_bond_io as io
+        gi = {}
+        with mock.patch.object(bk, "_oom_error_types", side_effect=RuntimeError("probe boom")):
+            with self.assertLogs("qlms.solver.eliashberg_bond", "ERROR"):
+                io.run_inprocess_pairing(self._solver(), None, None, None, 1.0, gi)
+        self.assertIn("probe boom", gi["pairing_singlet_error"])
+
+
+class TestTemporaryNames(unittest.TestCase):
+    """A fixed ``x.tmp.npz`` collides between two runs writing the same
+    directory (a parameter sweep, a restarted job): one run's rename can
+    publish the other's half-written file. The temporary carries the pid and
+    a random token, and starts with a dot so it is not mistaken for output."""
+
+    def test_tmp_name_is_unique_hidden_and_local(self):
+        from hwave.solver.eliashberg_bond_io import _tmp_name
+        path = os.path.join("/some", "where", "gap_bond_singlet.dat")
+        a = _tmp_name(path)
+        b = _tmp_name(path)
+        self.assertEqual(os.path.dirname(a), os.path.dirname(path))
+        self.assertTrue(os.path.basename(a).startswith("."), a)
+        self.assertTrue(a.endswith(".dat"), a)
+        self.assertIn("gap_bond_singlet", os.path.basename(a))
+        self.assertNotEqual(a, b)
+        npz = _tmp_name(os.path.join("/some", "where", "eliashberg_bond_singlet.npz"))
+        self.assertTrue(npz.endswith(".npz"), npz)
+
+
 class TestInProcess(unittest.TestCase):
     """The in-process entry at the end of the FLEX solve (spec 7, 10.2)."""
 
@@ -676,6 +797,24 @@ class TestInProcess(unittest.TestCase):
             flex_bond.resolve_output_paths(
                 dict(self._outputs(self.tmp), eliashberg_bond_singlet="chiq_s"),
                 self.tmp, ("chiq_s", "eliashberg_bond_singlet"))
+
+    def test_configured_subdirectory_name_is_published(self):
+        """A configured output name may carry a subdirectory. The temporary is
+        written next to its target (so the rename stays on one filesystem), the
+        directory is created, and nothing temporary survives."""
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3})
+        gi = r.get_param("green")
+        s.solve(gi, self.tmp)
+        self.assertNotIn("pairing_singlet_error", gi)
+        outputs = dict(self._outputs(self.tmp),
+                       gap_bond_singlet=os.path.join("sub", "gap_bond_singlet.dat"))
+        s.validate_output_paths(outputs, self.tmp)
+        s.save_results(outputs, gi)
+        self.assertNotIn("pairing_singlet_error", gi)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "sub", "gap_bond_singlet.dat")))
+        leftovers = [os.path.join(d, f) for d, _, fs in os.walk(self.tmp) for f in fs
+                     if ".tmp" in f]
+        self.assertEqual(leftovers, [])
 
     def test_pairing_failure_keeps_flex_outputs(self):             # 10.2.7
         from unittest import mock
