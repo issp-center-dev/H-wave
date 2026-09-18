@@ -61,11 +61,20 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     tolerance, every other token exactly. The golden files were recorded on
     one platform; another BLAS / FFT build differs in the last bits, which
     the ``%.8e`` formatting can flip in the last printed digit."""
+    punct = "()[]{},;:"
     ga, gb = got.split(), want.split()
     case.assertEqual(len(ga), len(gb), "{}: token count".format(tag))
     for x, y in zip(ga, gb):
+        # a number may be wrapped in punctuation ("(spectral_shift=0.038),"):
+        # compare the wrapping exactly and the numeric core to the tolerance
+        cx, cy = x.strip(punct), y.strip(punct)
+        case.assertEqual(x.replace(cx, "", 1), y.replace(cy, "", 1), tag)
+        if "=" in cx or "=" in cy:                  # "spectral_shift=0.5"
+            kx, _, cx = cx.partition("=")
+            ky, _, cy = cy.partition("=")
+            case.assertEqual(kx, ky, tag)
         try:
-            fx, fy = float(x), float(y)
+            fx, fy = float(cx), float(cy)
         except ValueError:
             case.assertEqual(x, y, tag)
             continue
