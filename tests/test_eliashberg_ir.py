@@ -711,6 +711,43 @@ class TestIRInstantaneousVertexTerm(unittest.TestCase):
                                "u_zero_plus must NOT be the limit of the "
                                "truncated sum (Nmat {} -> {})".format(lo, hi))
 
+    def test_matsubara_sum_weights_follow_the_statistics(self):
+        """The bosonic half of the test above. The extension is PERIODIC, not
+        anti-periodic, so the tau = 0 midpoint is ``0.5 (f(0^+) + f(beta^-))``
+        and the bosonic axis needs the PLUS sign the fermionic one does not.
+        Against the fermionic combination the truncated bosonic sum does not
+        converge at all."""
+        from hwave.solver.ir_axis import IRAxis
+
+        beta = 2.0
+        ax = IRAxis(beta=beta, wmax=20.0, eps=1e-8, statistics="B")
+        self.assertEqual(ax.statistics, "B")
+        rng = np.random.default_rng(3)
+        c = rng.standard_normal(ax.L) + 1j * rng.standard_normal(ax.L)
+        mid = c @ ax.u_matsubara_sum
+        fermionic = c @ (0.5 * (np.asarray(ax.u_zero_plus)
+                                - np.asarray(ax.u_beta_minus)))
+        self.assertGreater(abs(mid - fermionic), 1e-3 * abs(mid),
+                           "the fixture has no tau jump: the two combinations "
+                           "coincide and the case proves nothing")
+        gaps = {}
+        for nmat in (128, 256, 512, 1024):
+            n = 2 * np.arange(nmat) - nmat              # a CENTRED bosonic grid
+            uhat = np.asarray(ax._basis.uhat(n)).reshape(ax.L, nmat)
+            total = (c @ uhat).sum() / beta
+            gaps[nmat] = (abs(total - mid), abs(total - fermionic))
+        for lo, hi in ((128, 256), (256, 512), (512, 1024)):
+            # measured: 8.65 -> 4.54 -> 2.30 -> 1.15 against the bosonic
+            # midpoint, and a nearly flat 1.20e+01 -> 9.77 against the
+            # fermionic combination
+            self.assertLess(gaps[hi][0], 0.6 * gaps[lo][0],
+                            "no O(beta/Nmat) convergence to the bosonic "
+                            "u_matsubara_sum at Nmat {} -> {}".format(lo, hi))
+            self.assertGreater(gaps[hi][1], 0.7 * gaps[lo][1],
+                               "the FERMIONIC combination must NOT be the limit "
+                               "of the bosonic truncated sum (Nmat {} -> {})"
+                               .format(lo, hi))
+
     @staticmethod
     def _instantaneous_vertex(p, scale=0.6, seed=29):
         """A parity-invariant, frequency-flat vertex on the ``(q)`` grid, plus

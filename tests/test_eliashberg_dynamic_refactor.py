@@ -153,6 +153,42 @@ class TestEigenDriverUnits(unittest.TestCase):
         self.assertIsInstance(leakage, float)
         self.assertGreater(leakage, 1.0e-8)
 
+    def test_parity_probe_runs_at_most_once_and_only_where_it_is_needed(self):
+        """The probe is a full matvec pair, so a duplicate one silently
+        doubles the cost of every dynamic solve. It runs exactly once on the
+        paths that consume it -- the iteration path (which decides whether to
+        project) and the "refuse" policy -- and not at all on the eigenvalue
+        family under the default policy."""
+        from unittest import mock
+
+        real = self.ed._parity_leakage
+
+        def run(eli_param, **kw):
+            calls = []
+
+            def counting(*a, **k):
+                calls.append(1)
+                return real(*a, **k)
+
+            with mock.patch.object(self.ed, "_parity_leakage", side_effect=counting):
+                try:
+                    with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
+                        self.ed.run_leading_eigenproblem(
+                            self.matvec, self.gap_shape, eli_param, "singlet",
+                            phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
+                            axF=None, nmat=4, **kw)
+                except ValueError:
+                    pass                       # the "refuse" policy, as designed
+            return len(calls)
+
+        self.assertEqual(run({"solver_mode": "iteration", "max_iter": 3}), 1)
+        self.assertEqual(run({"solver_mode": "eigenvalue", "num_eigenvalues": 2}), 0)
+        self.assertEqual(run({"solver_mode": "both", "num_eigenvalues": 2}), 0)
+        self.assertEqual(run({"solver_mode": "eigenvalue", "num_eigenvalues": 2},
+                             parity_leakage_policy="refuse"), 1)
+        self.assertEqual(run({"solver_mode": "iteration", "max_iter": 3},
+                             parity_leakage_policy="refuse"), 1)
+
     def test_invalid_policy_raises(self):
         eli_param = {"solver_mode": "iteration"}
         with self.assertRaisesRegex(ValueError, "parity_leakage_policy"):
