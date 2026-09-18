@@ -235,7 +235,20 @@ class TestParityLeakageTolerance(unittest.TestCase):
             self._run(parity_leakage_tol=0.5 * self.leak)
         self.assertIn("cross-sector leakage", str(cm.exception))
 
+    def test_silent_below_a_tenth_of_the_tolerance(self):
+        """The lower edge of the warning band: a leakage below ``0.1 * tol`` is
+        accepted SILENTLY, so the warning of the sibling case above is a signal
+        and not something every accepted run emits."""
+        with self.assertNoLogs("qlms.eliashberg_dynamic", level="WARNING"):
+            out = self._run(parity_leakage_tol=100.0 * self.leak)
+        self.assertAlmostEqual(out[5], self.leak)
+
     def test_default_tolerance_is_1e_minus_8(self):
+        import inspect
+        # the default itself, not only its consequence on this leaky operator
+        self.assertEqual(
+            inspect.signature(self.ed.run_leading_eigenproblem)
+            .parameters["parity_leakage_tol"].default, 1.0e-8)
         with self.assertRaisesRegex(ValueError, "cross-sector leakage"):
             self._run()
 
@@ -578,8 +591,22 @@ class TestQlmsForwarding(unittest.TestCase):
         self.assertEqual(ctl.parity_leakage_tol, 5.0e-3)
         self.assertEqual(ctl.resolved_parity_leakage_tol, 5.0e-3)
         self.assertEqual(ctl.ir_fit_tol, 0.5)
-        self.assertTrue(os.path.exists(
-            os.path.join(self.tmp, "eigenvalue_bond_singlet.dat")))
+        # the in-process half of "the measured leakage is recorded in the
+        # outputs" (spec 4.4): the eigenvalue header line and the npz member
+        ev = os.path.join(self.tmp, "eigenvalue_bond_singlet.dat")
+        self.assertTrue(os.path.exists(ev))
+        with open(ev) as f:
+            txt = f.read()
+        self.assertIn("# parity_leakage=", txt)
+        with np.load(os.path.join(self.tmp, "eliashberg_bond_singlet.npz")) as d:
+            self.assertIn("bond_parity_leakage", d.files)
+            leakage = float(d["bond_parity_leakage"])
+        self.assertTrue(np.isfinite(leakage))
+        self.assertGreaterEqual(leakage, 0.0)
+        # the header line and the npz member are the SAME measurement
+        self.assertAlmostEqual(
+            float(txt.split("# parity_leakage=")[1].split()[0]), leakage,
+            delta=1e-6 * max(leakage, 1e-12))
 
 
 class TestInProcess(unittest.TestCase):
