@@ -1,5 +1,6 @@
 """Bond-resolved dynamic pairing kernel (spec 10.1)."""
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -914,6 +915,62 @@ class TestKernelIR(unittest.TestCase):
         Kd = kernel(cupy, cupy.asarray(G2), "device")
         self.assertEqual(Kd.residency, "device")
         np.testing.assert_allclose(Kd.matvec(phi), ref, atol=1e-13)
+
+
+class _NotNumpy(object):
+    """An array module that is NOT ``numpy`` and whose every operation IS
+    numpy's: it makes the kernel take its device-backend branch on a machine
+    with no device, which is the only way to reach the ``device_cap is None``
+    path from a CPU test."""
+
+    def __getattr__(self, name):
+        return getattr(np, name)
+
+
+class TestDeviceProbeFallback(unittest.TestCase):
+    """``backend.device_available_bytes()`` returns ``None`` when there is no
+    device AND when the query itself fails (a busy driver, a container
+    without the management interface). A caller that multiplies it loses the
+    run to a ``TypeError`` about ``NoneType``; the admission must instead
+    fall back to the host cap and say so."""
+
+    def test_helper_falls_back_to_the_host_cap(self):
+        from hwave.solver import backend as bk, eliashberg_bond as eb
+        with mock.patch.object(bk, "device_available_bytes", return_value=None):
+            with self.assertLogs("qlms.eliashberg_bond", "WARNING") as log:
+                cap = eb.device_cap_or_host(7.0 * eb._GIB, "probe test")
+        self.assertEqual(cap, 7.0 * eb._GIB)
+        self.assertIn("device memory probe", "\n".join(log.output))
+        self.assertIn("probe test", "\n".join(log.output))
+        # a probe that answers is used as before, with the 0.9 headroom
+        with mock.patch.object(bk, "device_available_bytes", return_value=1000):
+            self.assertEqual(eb.device_cap_or_host(7.0 * eb._GIB, "probe test"), 900.0)
+
+    def test_kernel_admission_survives_a_failed_probe(self):
+        """``BondPairKernel(device_cap=None)`` on a device backend: the
+        admission runs with the host cap on both sides instead of raising."""
+        from hwave.solver import backend as bk, eliashberg_bond as eb
+        fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=4, beta=1.0)
+        vert = _uniform_vertex(fx, "singlet")
+        seen = {}
+        real_choose = eb.AdmissionTable.choose
+
+        def spy(table, requested, host_cap, device_cap):
+            seen.update(requested=requested, host=host_cap, device=device_cap)
+            return real_choose(table, requested, host_cap, device_cap)
+
+        with mock.patch.object(bk, "device_available_bytes", return_value=None), \
+                mock.patch.object(eb.AdmissionTable, "choose", spy):
+            with self.assertLogs("qlms.eliashberg_bond", "WARNING") as log:
+                K = eb.BondPairKernel(vert, _g2(fx), fx["view"], xp=_NotNumpy(),
+                                      spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                                      beta=fx["beta"], nfreq=fx["nmat"], residency="stream",
+                                      host_cap=8.0 * eb._GIB, device_cap=None)
+        self.assertEqual(K.residency, "stream")
+        self.assertEqual(seen["device"], seen["host"])
+        self.assertEqual(seen["host"], 8.0 * eb._GIB)
+        self.assertIn("device memory probe", "\n".join(log.output))
+
 
 if __name__ == "__main__":
     unittest.main()

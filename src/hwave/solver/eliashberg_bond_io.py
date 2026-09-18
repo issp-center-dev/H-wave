@@ -206,6 +206,16 @@ class _ArchiveView:
         self.n_channels = len(self.delta_r)
 
 
+def _device_cap(host_cap, where):
+    """The device byte cap of an entry-level admission, with the fallback of
+    :func:`~hwave.solver.eliashberg_bond.device_cap_or_host` and this module's
+    logger: the device probe is allowed to have no answer (it returns ``None``
+    when the query fails, not only when there is no device), and an admission
+    that multiplied that would lose the run to a ``TypeError``."""
+    from . import eliashberg_bond as _eb
+    return _eb.device_cap_or_host(host_cap, where, log=logger)
+
+
 def _frequency_batch(nmat, nvol, ND, host_cap, device_cap=None):
     """Frequency batch size of the vertex build: at least 1, at most ``nmat``.
 
@@ -316,7 +326,7 @@ def solve_dynamic_bond(input_dict):
     # --- admission (spec 8) -------------------------------------------------
     host_cap = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
         else 0.8 * _eb._host_available_bytes()
-    device_cap = host_cap if xp is np else 0.9 * _bk.device_available_bytes()
+    device_cap = host_cap if xp is np else _device_cap(host_cap, "bond pairing admission")
     nb = _frequency_batch(nmat, nvol, arch.ND, host_cap,
                           device_cap=(None if xp is np else device_cap))
     table = _eb.estimate_pair_memory(
@@ -589,7 +599,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 _bk.free_device_pool()
                 host_cap = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
                     else 0.8 * _eb._host_available_bytes()
-                device_cap = host_cap if xp is np else 0.9 * _bk.device_available_bytes()
+                device_cap = host_cap if xp is np else _device_cap(
+                    host_cap, "longitudinal_bond_pairing ({}) admission".format(eta))
                 table = _eb.estimate_pair_memory(
                     nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=nfreq, nvol=nvol,
                     norb=norb, B=view.n_channels, num_eigenvalues=ctl.num_eigenvalues,

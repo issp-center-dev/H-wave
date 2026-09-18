@@ -497,7 +497,8 @@ TOML形式
 **動的** ペアリング経路に固有のキーのみを説明します。\ ``[eliashberg]``
 テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
-Eliashberg ソルバーのチュートリアルで説明しています。
+:ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
+<sc_dynamic_frequency>`\ で説明しています。
 
 - ``bond_channels``
 

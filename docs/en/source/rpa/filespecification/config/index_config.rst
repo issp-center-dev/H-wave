@@ -598,7 +598,9 @@ itself when ``[mode.param] longitudinal_bond_pairing`` (above) requests it.
 Only the keys specific to the bond-resolved DYNAMIC pairing path are
 documented here; the full ``[eliashberg]`` table (``frequency``,
 ``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
-``ir_wmax``, ...) is documented in the Eliashberg solver tutorial.
+``ir_wmax``, ...) is documented in
+:ref:`the dynamic-frequency section of the Eliashberg solver tutorial
+<sc_dynamic_frequency>`.
 
 - ``bond_channels``
 

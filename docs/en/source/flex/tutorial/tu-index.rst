@@ -792,13 +792,19 @@ coarser ``Nmat``.
 
 .. note::
 
-   The instantaneous (frequency-independent) part of the bond vertex is
-   folded into the IR kernel as the exact Matsubara-sum midpoint
+   The instantaneous (frequency-independent) part of the vertex is folded
+   into the IR kernel as the exact Matsubara-sum midpoint
    :math:`\tfrac12(F(0^+) - F(\beta^-))`, not :math:`F(0^+)`: a dynamic IR
    result computed with ``matsubara_basis = "ir"`` and a nonzero
    instantaneous vertex (any off-site ``CoulombInter`` / ``Hund`` /
    ``Ising`` with a nonzero coefficient) by a version before this fix
    differs from this one. The uniform-grid path is unaffected.
+
+   This is not specific to the bond-resolved vertex: the same correction
+   applies to the ordinary on-site dynamic IR solver, so results of
+   existing ``matsubara_basis = "ir"`` runs with an off-site interaction
+   change with this version too. See
+   :ref:`the instantaneous-vertex change note <sc_dynamic_ir_instantaneous_en>`.
 
 Nmat dependence of the IR result
 """"""""""""""""""""""""""""""""""""

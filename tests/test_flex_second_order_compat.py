@@ -119,11 +119,11 @@ DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 _REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON"
 
 
-def _comparison_is_required():
-    return os.environ.get(_REQUIRE_ENV, "").strip() not in ("", "0", "false", "no", "off")
+def _comparison_is_required(require_env=_REQUIRE_ENV):
+    return os.environ.get(require_env, "").strip() not in ("", "0", "false", "no", "off")
 
 
-def _unusable(reason):
+def _unusable(reason, require_env=_REQUIRE_ENV):
     """The single refusal site of :func:`develop_checkout`: a skip reason
     normally, an ``AssertionError`` when the comparison is required.
 
@@ -131,34 +131,44 @@ def _unusable(reason):
     a property of the reference checkout, not of the individual comparison,
     and a rule spelled out four times is a rule three of them can drift
     from."""
-    if _comparison_is_required():
+    if _comparison_is_required(require_env):
         raise AssertionError(
             "{} is set, so this comparison must run against the reference "
-            "revision: {}".format(_REQUIRE_ENV, reason))
+            "revision: {}".format(require_env, reason))
     return None, reason
 
 
-def develop_checkout(run=None):
+def develop_checkout(run=None, expected_commit=None, path_env="HWAVE_DEVELOP_CHECKOUT",
+                     require_env=_REQUIRE_ENV):
     """``(path, None)`` when the reference checkout is usable, ``(None,
-    reason)`` otherwise -- or an ``AssertionError`` when
-    :data:`_REQUIRE_ENV` is set (CI).
+    reason)`` otherwise -- or an ``AssertionError`` when ``require_env``
+    (by default :data:`_REQUIRE_ENV`) is set (CI).
 
-    Usable means: it exists, it is at :data:`DEVELOP_COMMIT`, and its tree
-    is clean. A checkout at another revision -- or with local edits -- is
-    NOT a reference: the comparison would either fail for reasons that have
-    nothing to do with this branch, or pass against a tree nobody can name.
-    Either way the answer is to skip and say what was expected -- unless
-    the caller has declared the comparison mandatory, which is what
-    :data:`_REQUIRE_ENV` does.
+    Usable means: it exists, it is at ``expected_commit`` (by default
+    :data:`DEVELOP_COMMIT`), and its tree is clean. A checkout at another
+    revision -- or with local edits -- is NOT a reference: the comparison
+    would either fail for reasons that have nothing to do with this branch,
+    or pass against a tree nobody can name. Either way the answer is to skip
+    and say what was expected -- unless the caller has declared the
+    comparison mandatory, which is what ``require_env`` does.
+
+    A comparison whose contract is against a DIFFERENT revision than the
+    second-order harnesses' (the bond-archive regression of the pairing
+    branch compares against the branch's merge base, which is later than
+    :data:`DEVELOP_COMMIT`) passes its own ``expected_commit`` together with
+    its own ``path_env``/``require_env`` pair, so the two references are
+    provisioned and required independently and neither can be satisfied by
+    the other's checkout.
 
     ``run`` is the subprocess runner, injectable so the rejections can be
     unit-tested without a second checkout."""
     run = run or subprocess.run
-    dev = os.environ.get("HWAVE_DEVELOP_CHECKOUT",
+    expected_commit = expected_commit or DEVELOP_COMMIT
+    dev = os.environ.get(path_env,
                          os.path.abspath(os.path.join(os.getcwd(), "..", "..", "..")))
     if not os.path.exists(os.path.join(dev, "src", "hwave", "solver", "flex.py")):
-        return _unusable("reference checkout not found at {} (set HWAVE_DEVELOP_CHECKOUT)"
-                         .format(dev))
+        return _unusable("reference checkout not found at {} (set {})".format(dev, path_env),
+                         require_env)
     try:
         head = run(["git", "-C", dev, "rev-parse", "HEAD"],
                    check=True, capture_output=True, text=True).stdout.strip()
@@ -166,13 +176,13 @@ def develop_checkout(run=None):
                     check=True, capture_output=True, text=True).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return _unusable("cannot read the revision of the reference checkout {}: {}"
-                         .format(dev, exc))
-    if head != DEVELOP_COMMIT:
+                         .format(dev, exc), require_env)
+    if head != expected_commit:
         return _unusable("the reference checkout {} is at {}, but this comparison is against {}"
-                         .format(dev, head or "<unknown>", DEVELOP_COMMIT))
+                         .format(dev, head or "<unknown>", expected_commit), require_env)
     if dirty:
         return _unusable("the reference checkout {} has local modifications; this comparison "
-                         "needs a clean tree at {}".format(dev, DEVELOP_COMMIT))
+                         "needs a clean tree at {}".format(dev, expected_commit), require_env)
     return dev, None
 
 
@@ -572,6 +582,30 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
         self.assertIsNone(dev)
         self.assertIn("local modifications", why)
         self.assertIn(DEVELOP_COMMIT, why)
+
+    def test_another_comparison_names_its_own_revision_and_variables(self):
+        """A harness whose contract is against a DIFFERENT revision passes
+        its own ``expected_commit`` with its own ``path_env`` /
+        ``require_env``: the rejection then names THAT revision, and it is
+        THAT require flag -- not :data:`_REQUIRE_ENV` -- which decides
+        between a skip reason and a failure."""
+        other, path_env, req_env = "1" * 40, "HWAVE_DEVELOP_CHECKOUT_OTHER", "HWAVE_REQUIRE_OTHER"
+        kw = dict(expected_commit=other, path_env=path_env, require_env=req_env)
+        with mock.patch.dict(os.environ, {path_env: os.getcwd()}):
+            os.environ.pop(req_env, None)
+            # the second-order revision in the tree is the WRONG one here
+            dev, why = develop_checkout(run=self._runner(DEVELOP_COMMIT, ""), **kw)
+            self.assertIsNone(dev)
+            self.assertIn(other, why)
+        with mock.patch.dict(os.environ, {path_env: os.path.join(os.getcwd(), "no_such_tree")}):
+            os.environ.pop(req_env, None)
+            # the "where do I put it" hint names the caller's variable
+            self.assertIn(path_env, develop_checkout(run=self._runner(other, ""), **kw)[1])
+        with mock.patch.dict(os.environ, {path_env: os.getcwd(), req_env: "1"}):
+            os.environ.pop(_REQUIRE_ENV, None)
+            with self.assertRaises(AssertionError) as cm:
+                develop_checkout(run=self._runner(DEVELOP_COMMIT, ""), **kw)
+            self.assertIn(req_env, str(cm.exception))
 
     def test_rejects_a_checkout_git_cannot_read(self):
         def run(cmd, **kw):

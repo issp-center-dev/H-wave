@@ -446,6 +446,31 @@ def _host_available_bytes():
     return _ed._available_ram_bytes()
 
 
+def device_cap_or_host(host_cap, where, log=None):
+    """The device byte cap of an admission: ``0.9 x`` the device probe, or
+    ``host_cap`` when the probe has no answer.
+
+    :func:`backend.device_available_bytes` returns ``None`` whenever cupy or
+    the device is unavailable OR the query itself fails -- the last case can
+    happen on a perfectly working device (a busy driver, a container without
+    the management interface). Multiplying that ``None`` would end the run
+    with a ``TypeError`` that says nothing about what went wrong, so every
+    caller that budgets device bytes goes through here instead: the host cap
+    is the conservative stand-in (the device is at most as large as what the
+    admission was already allowed to spend), and the WARNING says the model
+    is a fallback rather than a measurement.
+
+    ``where`` names the call site in that warning; ``log`` is the caller's
+    logger, so the message appears under the module the user is watching."""
+    available = _bk.device_available_bytes()
+    if available is None:
+        (log or logger).warning(
+            "%s: the device memory probe returned no value; the admission falls back to the "
+            "host cap (%.3f GiB) for the device rows", where, float(host_cap) / _GIB)
+        return float(host_cap)
+    return 0.9 * float(available)
+
+
 class BondPairKernel:
     r"""The bond-resolved, frequency-resolved linearized Eliashberg operator
     (spec 3, 4.1-4.4) as a ``matvec`` on a flat gap.
@@ -539,7 +564,7 @@ class BondPairKernel:
                 req = "host"
             device_cap = host_cap
         elif device_cap is None:
-            device_cap = 0.9 * _bk.device_available_bytes()
+            device_cap = device_cap_or_host(host_cap, "BondPairKernel admission")
         self.residency = admission.choose(req, host_cap, device_cap)
         self.admission = admission
 

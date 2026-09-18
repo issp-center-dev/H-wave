@@ -388,8 +388,33 @@ class TestFrequencyBatch(unittest.TestCase):
         self.assertEqual(self._nb(1e6, 1e6, nmat=8), 8)
 
 
+class TestDeviceProbeFallback(unittest.TestCase):
+    """Both entries budget device bytes before they admit a channel, and
+    ``backend.device_available_bytes()`` is allowed to have no answer --
+    it returns ``None`` when the query FAILS as well as when there is no
+    device. Multiplying that would end a post-processing run with a
+    ``TypeError`` about ``NoneType`` and turn an in-process channel's error
+    into the same, so the entries fall back to the host cap and warn."""
+
+    def test_entry_admission_falls_back_to_the_host_cap(self):
+        from hwave.solver import backend as bk
+        from hwave.solver.eliashberg_bond_io import _device_cap
+        gib = 1024.0 ** 3
+        with mock.patch.object(bk, "device_available_bytes", return_value=None):
+            with self.assertLogs("qlms.solver.eliashberg_bond", "WARNING") as log:
+                cap = _device_cap(3.0 * gib, "bond pairing admission")
+        self.assertEqual(cap, 3.0 * gib)
+        self.assertIn("device memory probe", "\n".join(log.output))
+        self.assertIn("bond pairing admission", "\n".join(log.output))
+        # the warning belongs to the entry module's logger, not the kernel's,
+        # so a user filtering on qlms.solver sees it
+        self.assertTrue(all(r.startswith("WARNING:qlms.solver.eliashberg_bond")
+                            for r in log.output), log.output)
+        with mock.patch.object(bk, "device_available_bytes", return_value=2000):
+            self.assertEqual(_device_cap(3.0 * gib, "bond pairing admission"), 1800.0)
+
+
 class TestPostProcessingRuns(unittest.TestCase):
-    @heavy
     def test_uniform_lambda_and_outputs(self):              # 10.2.2 (uniform half)
         """A real bond-gate FLEX run, then ``hwave_sc`` on its archive for both
         pairing channels: the leading eigenvalue is a finite real number, the
@@ -737,7 +762,17 @@ class TestInProcess(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "matsubara_basis = 'ir'"):
             s.solve(gi, self.tmp)
 
-    def test_flag_off_regression(self):                            # 10.2.4
+    def test_flag_off_is_deterministic(self):                      # 10.2.4 (in-tree half)
+        """Two runs of THIS tree with the pairing absent write byte-identical
+        artifacts -- run-to-run determinism, which is what a comparison
+        against a second run of the same code can prove and all it can prove.
+
+        The backward-compatibility half of spec 10.2.4 -- identity with the
+        revision this branch was cut from -- is
+        :class:`TestFlagOffMatchesTheReferenceRevision`, which needs a second
+        source tree and therefore skips wherever one is not provisioned. This
+        test needs nothing, so the gate keeps a flag-off assertion even
+        there."""
         ref = tempfile.mkdtemp()
         try:
             s1, r1 = _flex({"IterationMax": 3, "longitudinal_bond_output_full": True})
@@ -766,7 +801,6 @@ class TestInProcess(unittest.TestCase):
         finally:
             shutil.rmtree(ref, ignore_errors=True)
 
-    @heavy
     def test_inprocess_equals_postprocessing(self):                # 10.2.3
         import hwave.sc as sc
         flex_dir = tempfile.mkdtemp()
@@ -793,3 +827,148 @@ class TestInProcess(unittest.TestCase):
                 self.assertAlmostEqual(ov, 1.0, delta=1e-8, msg=eta)
         finally:
             shutil.rmtree(flex_dir, ignore_errors=True)
+
+
+#: The revision the flag-off comparison of spec 10.2.4 is against: the merge
+#: this branch was cut from (``develop`` at that point, the merge of the
+#: bond-gate GPU work). It is deliberately NOT
+#: ``test_flex_second_order_compat.DEVELOP_COMMIT``, which names an earlier
+#: merge and belongs to the second-order comparisons: the claim here is that
+#: a run WITHOUT the pairing table reproduces the tree this branch started
+#: from, so the revision has to be that tree and no other.
+BOND_REFERENCE_COMMIT = "65719b742c7c7d5cd3aada9d6e533c608563dcfe"
+
+#: The environment variables that provision and require the reference
+#: checkout of :data:`BOND_REFERENCE_COMMIT`. A pair of its own, separate
+#: from the second-order harnesses': the two references are at different
+#: revisions, so one checkout cannot serve both, and a "required" flag shared
+#: between them would turn a missing bond reference into a failure of a
+#: comparison whose own reference is sitting right there.
+BOND_REFERENCE_PATH_ENV = "HWAVE_DEVELOP_CHECKOUT_BOND"
+BOND_REFERENCE_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND"
+
+#: The archive members this branch is allowed to add or change with the
+#: pairing absent: the two bond vertices, the orbital count the loader needs
+#: in order to check them, and the schema stamp that announces all three
+#: (1 -> 2). Every other member of the archive -- and every other output
+#: file -- must come out of both revisions bit for bit.
+_ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema"))
+
+#: The driver both revisions run: one ``qlms.run`` on an input dict read from
+#: a file. A file rather than an argument because the reference tree is
+#: driven through a subprocess and the dict carries paths.
+_QLMS_RUN = r'''
+import json, sys
+import hwave.qlms as qlms
+with open(sys.argv[1]) as fh:
+    qlms.run(input_dict=json.load(fh))
+'''
+
+
+def _bond_compat_input(out_dir):
+    """The run both revisions execute for the flag-off comparison: the
+    single-band (U = 4, V = 1) bond gate with the full archive and NO
+    ``[eliashberg]`` table -- i.e. exactly the configuration an existing user
+    of the bond gate has today. ``path_to_input`` stays relative so that each
+    tree reads its own copy of the fixture (the two copies are identical; a
+    shared absolute path would instead compare one revision's run against a
+    foreign input)."""
+    return {"mode": {"mode": "FLEX", "calc_scheme": "general",
+                     "param": {"T": 0.5, "filling": 0.5, "CellShape": [4, 4, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 16, "IterationMax": 200,
+                               "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
+                               "mixing_scheme": "linear",
+                               "longitudinal_bond_channels": True,
+                               "longitudinal_bond_output_full": True}},
+            "file": {"input": {"path_to_input": "",
+                               "interaction": {"path_to_input": _IN1, "Geometry": "geom.dat",
+                                               "Transfer": "transfer.dat",
+                                               "CoulombIntra": "coulombintra.dat",
+                                               "CoulombInter": "coulombinter.dat"}},
+                     "output": {"path_to_output": out_dir, "chiq_s": "chiq_s",
+                                "chiq_c": "chiq_c", "green": "green", "energy": "energy.dat",
+                                "longitudinal_bond": "longitudinal_bond"}}}
+
+
+class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
+    """spec 10.2.4: with the pairing absent, this branch reproduces the
+    revision it was cut from (:data:`BOND_REFERENCE_COMMIT`) file by file --
+    the archive's two new vertex members, ``norb`` and the schema stamp
+    excepted.
+
+    The comparison needs a SECOND source tree, provisioned by CI as a
+    detached worktree and pointed at by :data:`BOND_REFERENCE_PATH_ENV`;
+    without one the test skips with the reason (and, where
+    :data:`BOND_REFERENCE_REQUIRE_ENV` is set, fails instead of skipping, so
+    a comparison that stops running in CI is reported rather than silently
+    dropped)."""
+
+    def setUp(self):
+        self.ref_out = tempfile.mkdtemp()
+        self.new_out = tempfile.mkdtemp()
+        self.work = tempfile.mkdtemp()
+
+    def tearDown(self):
+        for d in (self.ref_out, self.new_out, self.work):
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _run(self, checkout, out_dir, name):
+        import json
+        import subprocess
+        import sys
+        from tests.test_flex_second_order_compat import reference_subprocess_env
+        path = os.path.join(self.work, "input_{}.json".format(name))
+        with open(path, "w") as fh:
+            json.dump(_bond_compat_input(out_dir), fh)
+        if checkout == os.getcwd():
+            # this tree's own run: keep it measured by the coverage run
+            env = dict(os.environ,
+                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+        else:
+            env = reference_subprocess_env(checkout)
+        subprocess.run([sys.executable, "-B", "-c", _QLMS_RUN, path],
+                       env=env, check=True, capture_output=True, cwd=checkout)
+
+    @staticmethod
+    def _identical(a, b):
+        return a.shape == b.shape and a.dtype == b.dtype and np.array_equal(a, b)
+
+    def test_outputs_match_the_reference_revision(self):           # 10.2.4
+        from tests.test_flex_second_order_compat import develop_checkout
+        dev, why = develop_checkout(expected_commit=BOND_REFERENCE_COMMIT,
+                                    path_env=BOND_REFERENCE_PATH_ENV,
+                                    require_env=BOND_REFERENCE_REQUIRE_ENV)
+        if dev is None:
+            raise unittest.SkipTest(why)
+        self._run(dev, self.ref_out, "reference")
+        self._run(os.getcwd(), self.new_out, "branch")
+        ref_files = sorted(os.listdir(self.ref_out))
+        self.assertEqual(ref_files, sorted(os.listdir(self.new_out)),
+                         "the two revisions wrote different file sets")
+        self.assertIn("longitudinal_bond.npz", ref_files)
+        self.assertIn("energy.dat", ref_files)
+        for fn in ref_files:
+            a, b = os.path.join(self.ref_out, fn), os.path.join(self.new_out, fn)
+            if not fn.endswith(".npz"):
+                with open(a, "rb") as fa, open(b, "rb") as fb:
+                    self.assertEqual(fa.read(), fb.read(), fn)
+                continue
+            with np.load(a) as da, np.load(b) as db:
+                if fn != "longitudinal_bond.npz":
+                    self.assertEqual(set(da.files), set(db.files), fn)
+                    for k in da.files:
+                        np.testing.assert_array_equal(da[k], db[k],
+                                                      err_msg="{} {}".format(fn, k))
+                    continue
+                # the one file this branch may change, and only in the four
+                # named members
+                self.assertEqual(set(da.files) - set(db.files), set(),
+                                 "the archive dropped members the reference wrote")
+                added = set(db.files) - set(da.files)
+                changed = {k for k in da.files if not self._identical(da[k], db[k])}
+                self.assertEqual(added | changed, set(_ARCHIVE_DELTA))
+                for k in set(da.files) - _ARCHIVE_DELTA:
+                    np.testing.assert_array_equal(da[k], db[k],
+                                                  err_msg="{} {}".format(fn, k))
+                self.assertEqual(int(da["bond_archive_schema"]), 1)
+                self.assertEqual(int(db["bond_archive_schema"]), 2)

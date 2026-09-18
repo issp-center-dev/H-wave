@@ -1134,6 +1134,33 @@ re-run FLEX with ``write_densified = true``.
    dispersion-based bound and is now much smaller (and correct) on
    realistic multi-hopping models.
 
+.. _sc_dynamic_ir_instantaneous_en:
+
+.. warning::
+
+   **Changed in this version — recompute affected runs.** With
+   ``matsubara_basis = "ir"``, the frequency-independent (instantaneous)
+   part of the pairing vertex is now multiplied by the EXACT Matsubara sum
+   of the pair bubble, i.e. by the midpoint
+   :math:`\tfrac12\bigl(F(0^+)-F(\beta^-)\bigr)` of its jump at
+   :math:`\tau = 0`, instead of by the one-sided value :math:`F(0^+)` that
+   earlier versions used.
+
+   This changes results of the ordinary (on-site) dynamic solver — nothing
+   about it is specific to the bond-resolved vertex. It applies to every
+   ``matsubara_basis = "ir"`` run whose vertex has a nonzero instantaneous
+   part, which is the case as soon as an off-site interaction is declared
+   (``CoulombInter``, ``Hund``, ``Ising`` with a nonzero coefficient);
+   purely on-site models have no instantaneous part and are unaffected, and
+   the uniform-grid path (``matsubara_basis = "uniform"``) is unaffected in
+   either case.
+
+   The change is a correction, not a convention: the one-sided value broke
+   the parity commutation of the kernel and did not converge to the
+   uniform-grid result as ``Nmat`` grows, while the midpoint does both. If
+   you have dynamic IR results for such a model from an earlier version,
+   recompute them.
+
 .. _sc_dynamic_gpu_en:
 
 GPU execution (CuPy)
