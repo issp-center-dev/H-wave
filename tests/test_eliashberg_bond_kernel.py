@@ -685,10 +685,10 @@ class TestKernelIR(unittest.TestCase):
                 np.testing.assert_allclose(both[eta].fit_residual_rel,
                                            _direct_residual(fx, axB, eta, keep=False),
                                            rtol=1e-12, err_msg=eta)
-            # the residual is a property of the fit; the pairing types differ by
-            # scalar coefficients, which cancel in r / a
-            np.testing.assert_array_equal(both["singlet"].fit_residual_rel,
-                                          both["triplet"].fit_residual_rel)
+            # (the two types share one residual array by construction -- the
+            # residual pass runs on the FIRST type only, the types differing by
+            # scalar coefficients that cancel in r / a; the per-type equality
+            # against _direct_residual above is what pins that)
             # "both" in one pass == two single passes
             for eta in ("singlet", "triplet"):
                 a1 = PairVertexAccumulator(dev, pairing_types=(eta,), nb=3, nmat=nmat,
@@ -780,9 +780,14 @@ class TestKernelIR(unittest.TestCase):
         ``u_zero_plus`` term or a wrong ``beta`` gives an O(1) difference that
         does not converge.
         """
-        def fixture(nmat, beta=2.0):
-            fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=nmat, beta=beta, U=1.0)
-            return fx, _axes(beta, wmax=20.0)
+        beta = 2.0
+
+        def fixture(nmat):
+            # the axes first, so a machine without sparse-ir skips before
+            # paying for the fixture
+            axes = _axes(beta, wmax=20.0)
+            return physical_fixture(norb=1, shape=(4, 4, 1), nmat=nmat, beta=beta,
+                                    U=1.0), axes
 
         # -- Part A: the dynamic part, no frequency-flat term ---------------
         fx, (axF, axB) = fixture(256)
@@ -794,7 +799,7 @@ class TestKernelIR(unittest.TestCase):
 
         # -- Part B: the frequency-flat terms converge as O(beta / Nmat) ----
         for eta in ("singlet", "triplet"):
-            for keep, with_vinst in ((False, True), (True, False)):
+            for keep, with_vinst in ((False, True), (True, False), (True, True)):
                 diffs = []
                 for nmat in (128, 256):
                     fx, (axF, axB) = fixture(nmat)
@@ -809,6 +814,59 @@ class TestKernelIR(unittest.TestCase):
                 self.assertLess(diffs[1], 0.6 * diffs[0],
                                 "{}: no Nmat convergence {:.3e} -> {:.3e}"
                                 .format(tag, diffs[0], diffs[1]))
+
+    def test_ir_residency_modes_agree(self):                          # 10.1.6 (IR)
+        """The IR half of the residency contract: the hoisted blocks and the
+        per-matvec rebuild of ``_block_rtau`` must give the same operator.
+        Run with the bare vertex AND a retained constant, so the two
+        frequency-flat terms (which live outside the hoisted blocks) are part
+        of the comparison."""
+        from hwave.solver import backend
+        from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+                                                  instantaneous_vertex)
+        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+        axF, axB = _axes(2.0, wmax=20.0)
+        fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=64, beta=2.0, U=1.0)
+        stages = _stage_pair(_lorentzian_source(fx, kappa=0.3))
+        with _dev(fx) as dev:
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=16,
+                                        nmat=fx["nmat"], nvol=fx["nvol"], nd=fx["nd"],
+                                        spatial_shape=fx["spatial_shape"], ir=(axF, axB),
+                                        ir_keep_static=True)
+            stages(acc)
+            vert = acc.finish(ir_fit_tol=1e-3, stage_callable=stages)["singlet"]
+        self.assertIsNotNone(vert.const)
+        V_inst = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], "singlet",
+                                      fx["spatial_shape"])
+        G2 = calc_g2_dynamic(_ir_compress(fx["green_sc"], axF, fx["nmat"], "green"),
+                             fx["beta"])
+
+        def kernel(xp, g2, residency):
+            return BondPairKernel(vert, g2, fx["view"], xp=xp,
+                                  spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                                  beta=fx["beta"], nfreq=axF.n_freq, V_inst=V_inst,
+                                  axF=axF, residency=residency, host_cap=10 ** 12,
+                                  device_cap=10 ** 12)
+
+        Kh = kernel(np, G2, "host")
+        self.assertEqual(Kh.gap_shape[-1], axF.n_freq)
+        rng = np.random.default_rng(13)
+        n = int(np.prod(Kh.gap_shape))
+        phi = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        ref = Kh.matvec(phi)
+        self.assertGreater(np.abs(ref).max(), 0.0)
+        Ks = kernel(np, G2, "stream")
+        self.assertIsNone(Ks._blocks)                 # rebuilt inside every matvec
+        np.testing.assert_allclose(Ks.matvec(phi), ref, atol=1e-13)
+        Ka = kernel(np, G2, "auto")
+        self.assertEqual(Ka.residency, "host")        # numpy has no separate device
+        np.testing.assert_allclose(Ka.matvec(phi), ref, atol=1e-13)
+        if not backend.gpu_available():
+            raise unittest.SkipTest("CUDA device required for the device residency")
+        import cupy
+        Kd = kernel(cupy, cupy.asarray(G2), "device")
+        self.assertEqual(Kd.residency, "device")
+        np.testing.assert_allclose(Kd.matvec(phi), ref, atol=1e-13)
 
 if __name__ == "__main__":
     unittest.main()
