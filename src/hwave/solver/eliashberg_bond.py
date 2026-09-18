@@ -116,6 +116,7 @@ class PairVertexAccumulator:
         self.ir = ir
         self.ir_keep_static = bool(ir_keep_static)
         self._done = set()
+        self._finished = False
         self._resid_mode = False
         self._resid_type = None
         self._resid_seen = set()
@@ -145,10 +146,26 @@ class PairVertexAccumulator:
             self._a = {st: np.zeros((self.B, self.B)) for st in self._STAGES}
 
     # -- stages -----------------------------------------------------------
+    def _check_open(self, stages):
+        """Refuse a stage after ``finish`` (the caller already holds the frozen
+        vertex) and a stage that was already absorbed (which would double-count
+        it silently). Both checks run BEFORE anything is absorbed; the residual
+        replay of :meth:`finish` is exempt from the second one, being a
+        deliberate second pass over the same stages."""
+        if self._finished:
+            raise RuntimeError("PairVertexAccumulator: finished")
+        if self._resid_mode:
+            return
+        for st in stages:
+            if st in self._done:
+                raise ValueError("PairVertexAccumulator: the {} stage was already added"
+                                 .format(st))
+
     def add_dressed(self, source, *, cond_tol=_bc._BOND_COND_FLOOR, guard_freqs="all"):
         """In-process stage: per frequency batch of ``source['chibar']`` re-dress
         the spin AND the charge channel with :func:`flex_bond._dress` and add
         both contributions for every requested pairing type."""
+        self._check_open(self._STAGES)
         xp, S, C = self.xp, self.dev.S, self.dev.C
         for l0 in range(0, self.nmat, self.nb):
             l1 = min(self.nmat, l0 + self.nb)
@@ -169,6 +186,7 @@ class PairVertexAccumulator:
         Called once per channel, with one archive member resident at a time."""
         if channel not in self._STAGES:
             raise ValueError("channel must be 'spin' or 'charge', got {!r}".format(channel))
+        self._check_open((channel,))
         V = self.dev.S if channel == "spin" else self.dev.C
         for l0 in range(0, self.nmat, self.nb):
             l1 = min(self.nmat, l0 + self.nb)
@@ -221,10 +239,13 @@ class PairVertexAccumulator:
         target slot. IR: the residual pass of spec 4.5 (replayed through
         ``stage_callable``), the ``ir_fit_tol`` refusal / warning band and the
         frozen :class:`PairVertexIR` per pairing type."""
+        if self._finished:
+            raise RuntimeError("PairVertexAccumulator: finished")
         for st in self._STAGES:
             if st not in self._done:
                 raise ValueError("PairVertexAccumulator: the {} stage was never added".format(st))
         if self.ir is None:
+            self._finished = True
             return {self.pairing_types[0]: PairVertexUniform(
                 source=self._target, slot=self._slot, B=self.B, nd=self.nd,
                 nmat=self.nmat, nvol=self.nvol)}
@@ -296,6 +317,7 @@ class PairVertexAccumulator:
                         "retained" if self.ir_keep_static else "discarded")
             out[eta] = PairVertexIR(coeffs=np.ascontiguousarray(sol[:self.L]), const=const,
                                     axB=self.axB, fit_residual_rel=rel)
+        self._finished = True
         return out
 
 
@@ -314,15 +336,23 @@ class AdmissionTable:
     def need(self, residency):
         return self.residency_need[residency]
 
-    def choose(self, requested, host_cap, device_cap):
+    def choose(self, requested, host_cap, device_cap, shared=False):
+        """Pick the residency that fits the caps.
+
+        ``shared = True`` says the host rows and the device rows are drawn
+        from ONE pool (the numpy backend, where "device" memory is the same
+        RAM): a residency then fits only if ``host + device <= host_cap``,
+        and ``device_cap`` is ignored. With two real address spaces
+        (``shared = False``) the two needs are checked independently."""
         order = ("device", "host", "stream") if requested == "auto" else (requested,)
         for r in order:
             h, d = self.residency_need[r]
-            if h <= host_cap and d <= device_cap:
+            if (h + d <= host_cap) if shared else (h <= host_cap and d <= device_cap):
                 return r
         raise MemoryError(
-            "bond pairing kernel: no residency fits (requested {}; host cap {:.3f} GiB, device cap "
-            "{:.3f} GiB); needs host/device GiB: {}; rows (GiB): {}".format(
+            "bond pairing kernel: no residency fits{} (requested {}; host cap {:.3f} GiB, device "
+            "cap {:.3f} GiB); needs host/device GiB: {}; rows (GiB): {}".format(
+                " (shared host/device pool)" if shared else "",
                 requested, host_cap / _GIB, device_cap / _GIB,
                 {r: (round(h / _GIB, 3), round(d / _GIB, 3))
                  for r, (h, d) in self.residency_need.items()},
@@ -330,12 +360,15 @@ class AdmissionTable:
 
 
 def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, residency, ir,
-                         L_B, n_channels, in_process, nb=0):
+                         L_B, n_channels, in_process, nb=0, keep_const=False):
     """The spec-8 incremental memory table of the pairing step. ``L_B`` is the
     bosonic coefficient count (``0`` on the uniform grid), ``n_channels``
     (1 or 2) the number of pairing types whose IR coefficient rows are alive,
-    and ``nb`` the dressing batch size of the vertex build (``0`` for a
-    kernel-only admission, where no dressing batch is allocated)."""
+    ``nb`` the dressing batch size of the vertex build (``0`` for a
+    kernel-only admission, where no dressing batch is allocated), and
+    ``keep_const`` whether the IR vertex retains its frequency-independent
+    component (``ir_keep_static_chi``), which the kernel then hoists as
+    ``B**2`` constant blocks alongside the frequency blocks."""
     nd = norb * norb
     ND = B * nd
     S = ntau if ir else nmat
@@ -354,6 +387,10 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
         "G2": norb ** 4 * nvol * nfreq * 16,
         "gap_work": (3 + B) * vec,
         "hoisted_blocks": B * B * blk,
+        # the retained IR constant blocks: B**2 blocks WITHOUT a frequency axis
+        "const_blocks": (B * B * nvol * nd * nd * 16) if (ir and keep_const) else 0,
+        # the spatially transformed bare vertex, always resident on the device
+        "vinst_block": nvol * nd * nd * 16,
         "stream_workspace": 3 * blk,
         "eigen_vectors": (ncv + 2) * vec,
     }
@@ -361,13 +398,18 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
     # the dressing batch is a BUILD-phase device peak, so it is part of every
     # residency's device need, not only the streaming one
     dev_common = (rows["G2"] + rows["gap_work"] + rows["stream_workspace"]
-                  + rows["dressing_workspace"])
+                  + rows["dressing_workspace"] + rows["vinst_block"])
+    # the constant blocks follow the residency of the frequency blocks: on the
+    # device for "device", on the host for "host" AND "stream" (they carry no
+    # frequency axis, so even the streaming residency keeps them resident)
+    cb = rows["const_blocks"]
     need = {
         "device": (int(1.25 * (build_host + rows["eigen_vectors"])),
-                   int(1.25 * (dev_common + rows["hoisted_blocks"]))),
-        "host": (int(1.25 * (build_host + rows["hoisted_blocks"] + rows["eigen_vectors"])),
+                   int(1.25 * (dev_common + rows["hoisted_blocks"] + cb))),
+        "host": (int(1.25 * (build_host + rows["hoisted_blocks"] + rows["eigen_vectors"] + cb)),
                  int(1.25 * dev_common)),
-        "stream": (int(1.25 * (build_host + rows["eigen_vectors"])), int(1.25 * dev_common)),
+        "stream": (int(1.25 * (build_host + rows["eigen_vectors"] + cb)),
+                   int(1.25 * dev_common)),
     }
     return AdmissionTable(rows=rows, residency_need=need, requested=residency)
 
@@ -456,9 +498,16 @@ def device_cap_or_host(host_cap, where, log=None):
     the management interface). Multiplying that ``None`` would end the run
     with a ``TypeError`` that says nothing about what went wrong, so every
     caller that budgets device bytes goes through here instead: the host cap
-    is the conservative stand-in (the device is at most as large as what the
-    admission was already allowed to spend), and the WARNING says the model
-    is a fallback rather than a measurement.
+    stands in for the device cap, and the WARNING says the model is a fallback
+    rather than a measurement.
+
+    That stand-in is a LOOSE upper bound, not a conservative one: host RAM
+    normally EXCEEDS device memory, so on a real device whose probe failed the
+    admission may accept a device residency the device cannot hold. The run
+    then ends in a device out-of-memory error from the allocation itself
+    instead of an admission refusal with the memory table. Set
+    ``bond_memory_cap_gb`` to bound both sides explicitly when the probe on a
+    given machine is known to fail.
 
     ``where`` names the call site in that warning; ``log`` is the caller's
     logger, so the message appears under the module the user is watching."""
@@ -546,6 +595,40 @@ class BondPairKernel:
         self._Vinst_rt = None
         self._const_rt = None
 
+        # -- shapes (before admission) ---------------------------------------
+        # every quantity the matvec contracts is checked here, where the
+        # message can still NAME it; the same mismatch inside matvec is an
+        # opaque einsum or broadcast failure
+        ND = self.B * self.nd
+        if len(view.delta_r) != self.B:
+            raise ValueError("BondPairKernel: view.delta_r has {} entries but view.n_channels "
+                             "is {}".format(len(view.delta_r), self.B))
+        if self.is_ir:
+            want = (self.nvol, ND, ND)
+            if tuple(vertex.coeffs.shape[1:]) != want:
+                raise ValueError("BondPairKernel: vertex.coeffs must be (L_B,) + {}, got {}"
+                                 .format(want, tuple(vertex.coeffs.shape)))
+            if vertex.const is not None and tuple(vertex.const.shape) != want:
+                raise ValueError("BondPairKernel: vertex.const must be {}, got {}"
+                                 .format(want, tuple(vertex.const.shape)))
+        elif isinstance(vertex, PairVertexUniform):
+            for name, got, want in (("vertex.B", int(vertex.B), self.B),
+                                    ("vertex.nd", int(vertex.nd), self.nd),
+                                    ("vertex.nvol", int(vertex.nvol), self.nvol),
+                                    ("vertex.nmat", int(vertex.nmat), self.nfreq)):
+                if got != want:
+                    raise ValueError("BondPairKernel: {} is {} but this kernel needs {}"
+                                     .format(name, got, want))
+        g2_want = (self.norb,) * 4 + (nx, ny, nz, self.nfreq)
+        if tuple(self.G2.shape) != g2_want:
+            raise ValueError("BondPairKernel: G2 must have shape {}, got {}"
+                             .format(g2_want, tuple(self.G2.shape)))
+        if self.V_inst is not None:
+            v_want = (self.norb,) * 4 + (nx, ny, nz)
+            if tuple(self.V_inst.shape) != v_want:
+                raise ValueError("BondPairKernel: V_inst must have shape {}, got {}"
+                                 .format(v_want, tuple(self.V_inst.shape)))
+
         # -- admission (spec 8) --------------------------------------------
         if admission is None:
             admission = estimate_pair_memory(
@@ -553,7 +636,8 @@ class BondPairKernel:
                 ntau=(len(axF.tau) if self.is_ir else 0), nfreq=self.nfreq, nvol=self.nvol,
                 norb=self.norb, B=self.B, num_eigenvalues=10, residency=residency,
                 ir=self.is_ir, L_B=(int(vertex.coeffs.shape[0]) if self.is_ir else 0),
-                n_channels=1, in_process=False)
+                n_channels=1, in_process=False,
+                keep_const=(self.is_ir and vertex.const is not None))
         if host_cap is None:
             host_cap = 0.8 * _host_available_bytes()
         req = residency
@@ -565,7 +649,7 @@ class BondPairKernel:
             device_cap = host_cap
         elif device_cap is None:
             device_cap = device_cap_or_host(host_cap, "BondPairKernel admission")
-        self.residency = admission.choose(req, host_cap, device_cap)
+        self.residency = admission.choose(req, host_cap, device_cap, shared=(xp is np))
         self.admission = admission
 
         # -- hoisting -------------------------------------------------------
@@ -579,7 +663,10 @@ class BondPairKernel:
                 self._Vinst_rt = xp.asarray(_bk.spatial_ifftn(
                     self.V_inst.astype(complex), axes=(4, 5, 6), workers=workers))
             if vertex.const is not None:
-                self._const_rt = {(a, b): self._const_block_r(a, b, xp)
+                # same module rule as _blocks: the array module only for the
+                # "device" residency, the host for "host" and "stream"
+                cmod = xp if self.residency == "device" else np
+                self._const_rt = {(a, b): self._const_block_r(a, b, cmod)
                                   for a in range(self.B) for b in range(self.B)}
 
     # -- block builders ------------------------------------------------------
@@ -662,7 +749,8 @@ class BondPairKernel:
                 acc[a] = P if acc[a] is None else acc[a] + P
                 del G_ab, P
                 if F0_b is not None:
-                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz", self._const_rt[(a, b)], F0_b)
+                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz",
+                                    xp.asarray(self._const_rt[(a, b)]), F0_b)
                     acc0[a] = P0 if acc0[a] is None else acc0[a] + P0
         out_rt = None
         out0_r = None

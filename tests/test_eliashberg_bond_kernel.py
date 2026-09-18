@@ -79,6 +79,39 @@ class TestAccumulator(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"non-finite .* batch \[0, 2\)"):
                 acc.add_channel("spin", src, "chi_s_w")
 
+    def test_lifecycle_guards(self):
+        """Adding the same stage twice would DOUBLE-COUNT it silently, and
+        adding anything after ``finish`` would mutate a vertex the caller
+        already holds. Both are refused, as is a second ``finish``."""
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
+
+        def build(dev):
+            return PairVertexAccumulator(dev, pairing_types=("singlet",), nb=2, nmat=4,
+                                         nvol=4, nd=1, spatial_shape=(2, 2, 1))
+
+        with _dev(fx) as dev:
+            acc = build(dev)
+            acc.add_channel("spin", fx["store"], "chi_s_w")
+            with self.assertRaisesRegex(ValueError, "spin stage was already added"):
+                acc.add_channel("spin", fx["store"], "chi_s_w")
+            acc.add_channel("charge", fx["store"], "chi_c_w")
+            with self.assertRaisesRegex(ValueError, "charge stage was already added"):
+                acc.add_channel("charge", fx["store"], "chi_c_w")
+            acc.finish()
+            with self.assertRaisesRegex(RuntimeError, "finished"):
+                acc.add_channel("spin", fx["store"], "chi_s_w")
+            with self.assertRaisesRegex(RuntimeError, "finished"):
+                acc.finish()
+            # add_dressed covers BOTH stages, so it refuses after either one
+            acc2 = build(dev)
+            acc2.add_dressed(fx["store"], cond_tol=1e-6)
+            with self.assertRaisesRegex(ValueError, "stage was already added"):
+                acc2.add_dressed(fx["store"], cond_tol=1e-6)
+            acc2.finish()
+            with self.assertRaisesRegex(RuntimeError, "finished"):
+                acc2.add_dressed(fx["store"], cond_tol=1e-6)
+
     def test_ir_finish_refuses_a_stage_callable_that_replays_nothing(self):
         """A callable that replays no stage leaves r = a = 0, which would read as
         a perfect fit AND silently disable the constant-vs-scale refusal."""
@@ -115,6 +148,24 @@ class TestAccumulator(unittest.TestCase):
 
 
 class TestAdmission(unittest.TestCase):
+    def test_shared_pool_admission(self):
+        """On the numpy backend the "device" rows and the "host" rows are the
+        SAME RAM. Checking them against two independent caps admits a
+        residency whose two needs fit one at a time but not together; the
+        shared-pool rule sums them against the host cap instead."""
+        from hwave.solver.eliashberg_bond import estimate_pair_memory
+        tab = estimate_pair_memory(nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=3,
+                                   num_eigenvalues=2, residency="auto", ir=False, L_B=0,
+                                   n_channels=1, in_process=False)
+        h, d = tab.need("host")
+        self.assertGreater(d, 0)
+        with self.assertRaisesRegex(MemoryError, r"shared host/device pool"):
+            tab.choose("host", host_cap=h + d - 1, device_cap=h + d - 1, shared=True)
+        self.assertEqual(
+            tab.choose("host", host_cap=h + d - 1, device_cap=h + d - 1, shared=False), "host")
+        self.assertEqual(
+            tab.choose("host", host_cap=h + d, device_cap=h + d, shared=True), "host")
+
     def test_admission_table(self):                              # 10.1.11
         from hwave.solver.eliashberg_bond import estimate_pair_memory
         tab = estimate_pair_memory(nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=3,
@@ -130,9 +181,13 @@ class TestAdmission(unittest.TestCase):
         self.assertEqual(tab.rows["vertex_slot"], 8 * 16 * ND * ND * 16)   # post-processing uniform
         self.assertEqual(tab.rows["source_member"], 8 * 16 * ND * ND * 16)
         self.assertEqual(tab.rows["dressing_workspace"], 0)                # nb omitted
+        self.assertEqual(tab.rows["vinst_block"], 16 * nd * nd * 16)
+        self.assertEqual(tab.rows["const_blocks"], 0)                      # ir = False
         h, d = tab.need("device")
         self.assertEqual(d, int(1.25 * (tab.rows["G2"] + tab.rows["gap_work"] + 9 * blk + 3 * blk
-                                        + tab.rows["dressing_workspace"])))
+                                        + tab.rows["dressing_workspace"]
+                                        + tab.rows["vinst_block"]
+                                        + tab.rows["const_blocks"])))
         self.assertEqual(h, int(1.25 * (tab.rows["vertex_slot"] + tab.rows["source_member"]
                                         + tab.rows["eigen_vectors"])))
         big = 10 ** 12
@@ -158,19 +213,43 @@ class TestAdmission(unittest.TestCase):
         self.assertEqual(tab_nb.need("stream")[1],
                          int(1.25 * (tab_nb.rows["G2"] + tab_nb.rows["gap_work"]
                                      + tab_nb.rows["stream_workspace"]
-                                     + tab_nb.rows["dressing_workspace"])))
+                                     + tab_nb.rows["dressing_workspace"]
+                                     + tab_nb.rows["vinst_block"])))
         self.assertEqual(tab_nb.need("device")[1],
                          int(1.25 * (tab_nb.rows["G2"] + tab_nb.rows["gap_work"]
                                      + tab_nb.rows["stream_workspace"]
                                      + tab_nb.rows["dressing_workspace"]
+                                     + tab_nb.rows["vinst_block"]
                                      + tab_nb.rows["hoisted_blocks"])))
         self.assertEqual(tab_nb.need("host")[1], tab_nb.need("stream")[1])
-        tab_ir = estimate_pair_memory(nmat=8, ntau=5, nfreq=6, nvol=16, norb=2, B=3,
-                                      num_eigenvalues=2, residency="auto", ir=True, L_B=4,
-                                      n_channels=2, in_process=True)
+        ir_kw = dict(nmat=8, ntau=5, nfreq=6, nvol=16, norb=2, B=3, num_eigenvalues=2,
+                     residency="auto", ir=True, L_B=4, n_channels=2, in_process=True)
+        tab_ir = estimate_pair_memory(**ir_kw)
         self.assertEqual(tab_ir.rows["coefficients_build"], 2 * 2 * 5 * 16 * ND * ND * 16)
         self.assertEqual(tab_ir.rows["coefficients"], 2 * 5 * 16 * ND * ND * 16)
         self.assertEqual(tab_ir.rows["hoisted_blocks"], 9 * 5 * 16 * 16 * 16)
+        self.assertEqual(tab_ir.rows["const_blocks"], 0)          # keep_const defaults off
+        # the RETAINED IR constant blocks are hoisted like the frequency blocks:
+        # they join the DEVICE need of "device" and the HOST need of "host" and
+        # "stream" (they carry no frequency axis, so the streaming residency
+        # keeps them resident on the host too)
+        tab_kc = estimate_pair_memory(keep_const=True, **ir_kw)
+        cb = 9 * 16 * nd * nd * 16
+        self.assertEqual(tab_kc.rows["const_blocks"], cb)
+        dev_common = (tab_kc.rows["G2"] + tab_kc.rows["gap_work"]
+                      + tab_kc.rows["stream_workspace"] + tab_kc.rows["dressing_workspace"]
+                      + tab_kc.rows["vinst_block"])
+        build_host = tab_kc.rows["coefficients_build"] + tab_kc.rows["source_member"]
+        self.assertEqual(tab_kc.need("device"),
+                         (int(1.25 * (build_host + tab_kc.rows["eigen_vectors"])),
+                          int(1.25 * (dev_common + tab_kc.rows["hoisted_blocks"] + cb))))
+        self.assertEqual(tab_kc.need("host"),
+                         (int(1.25 * (build_host + tab_kc.rows["hoisted_blocks"]
+                                      + tab_kc.rows["eigen_vectors"] + cb)),
+                          int(1.25 * dev_common)))
+        self.assertEqual(tab_kc.need("stream"),
+                         (int(1.25 * (build_host + tab_kc.rows["eigen_vectors"] + cb)),
+                          int(1.25 * dev_common)))
 
 
 def _b1_topology(norb):
@@ -213,6 +292,52 @@ def _uniform_vertex(fx, eta):
 
 
 class TestKernelUniform(unittest.TestCase):
+    def test_constructor_validation(self):
+        """Every shape the matvec relies on is checked at construction, where
+        the message can still name the quantity; deep inside ``matvec`` the
+        same mismatch is an opaque einsum or broadcast failure."""
+        import types
+        from hwave.solver.eliashberg_bond import (BondPairKernel, PairVertexUniform,
+                                                  PairVertexIR)
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4, beta=2.0)
+        vert = _uniform_vertex(fx, "singlet")
+        G2 = _g2(fx)
+        nvol, nd, B = fx["nvol"], fx["nd"], fx["B"]
+        ND = B * nd
+        nx, ny, nz = fx["spatial_shape"]
+
+        def build(vertex=None, g2=None, view=None, v_inst=None):
+            return BondPairKernel(vert if vertex is None else vertex,
+                                  G2 if g2 is None else g2,
+                                  fx["view"] if view is None else view,
+                                  xp=np, spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                                  beta=fx["beta"], nfreq=fx["nmat"], V_inst=v_inst,
+                                  # a placeholder axis: the IR cases below are
+                                  # refused before axF is ever used
+                                  axF=object(), residency="host",
+                                  host_cap=10 ** 12, device_cap=10 ** 12)
+
+        build()                                   # the consistent set constructs
+        uni = dict(source=vert.source, slot=vert.slot, B=B, nd=nd, nmat=fx["nmat"], nvol=nvol)
+        for field, bad in (("B", B + 1), ("nd", nd + 1), ("nvol", nvol + 1),
+                           ("nmat", fx["nmat"] + 2)):
+            with self.assertRaisesRegex(ValueError, "vertex.{}".format(field)):
+                build(vertex=PairVertexUniform(**dict(uni, **{field: bad})))
+        ok_coeffs = np.zeros((3, nvol, ND, ND), complex)
+        with self.assertRaisesRegex(ValueError, "vertex.coeffs"):
+            build(vertex=PairVertexIR(coeffs=np.zeros((3, nvol + 1, ND, ND), complex),
+                                      const=None, axB=None, fit_residual_rel=None))
+        with self.assertRaisesRegex(ValueError, "vertex.const"):
+            build(vertex=PairVertexIR(coeffs=ok_coeffs,
+                                      const=np.zeros((nvol, ND, ND + 1), complex),
+                                      axB=None, fit_residual_rel=None))
+        with self.assertRaisesRegex(ValueError, "G2"):
+            build(g2=G2[..., :-1])
+        with self.assertRaisesRegex(ValueError, "V_inst"):
+            build(v_inst=np.zeros((1,) * 4 + (nx, ny, nz + 1), complex))
+        with self.assertRaisesRegex(ValueError, "delta_r"):
+            build(view=types.SimpleNamespace(n_channels=B, delta_r=fx["view"].delta_r[:-1]))
+
     def test_b1_matches_onsite_dynamic_kernel(self):              # 10.1.1
         from hwave.solver import eliashberg_dynamic as ed
         from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
@@ -524,6 +649,84 @@ class TestKernelUniform(unittest.TestCase):
                 phi_s = F_dyn / G2_st[0, 0, 0, 0]          # norb = 1: scalar per k
                 ref = A_st.matvec(phi_s.ravel()).reshape(phi.shape[:-1])
                 np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10, err_msg=eta)
+
+    def test_instantaneous_operator_matches_static_bond_kernel_norb2(self):  # 10.1.13 (norb 2)
+        """The norb = 1 arbiter above, carried to two orbitals -- where a
+        review claimed the bond instantaneous term and the static bond kernel
+        disagree. They agree to machine precision once the SAME interaction is
+        fed to both sides, for a diagonal V, a purely inter-orbital V and a
+        full 2x2 V, in both pairing channels.
+
+        The static side needs the gap whose static bubble equals the dynamic
+        frequency-summed ``F``; for norb = 2 that is a per-k 4x4 solve rather
+        than the norb = 1 scalar division."""
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.eliashberg_dynamic import _project_parity_dynamic, calc_g2_dynamic
+        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+                                                  BondPairKernel, instantaneous_vertex)
+
+        def check(coeffs, coul):
+            fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=8, beta=2.0, U=2.0,
+                                  delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0)), coeffs=coeffs)
+            nx, ny, nz = fx["spatial_shape"]
+            nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
+            bond_set = bc.resolve_interactions(coul, np.eye(3), 2)
+            self.assertEqual(bond_set.n_channels, fx["B"])
+            S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+            C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
+            S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 2)
+            zero = np.zeros((nx, ny, nz, ND, ND), complex)
+            G2 = calc_g2_dynamic(fx["green_sc"], fx["beta"])
+            G2_st = bc._g2_from_green(fx["green_sc"], fx["beta"])   # (i,j,l,m,x,y,z)
+            # X_{l3 l4} = sum G2[l3,l5,l4,l6] phi_{l5 l6}: the matrix
+            # [(l3,l4), (l5,l6)] per k, inverted to build the static gap whose
+            # bubble reproduces the dynamic frequency-summed F
+            M = G2_st.transpose(4, 5, 6, 0, 2, 1, 3).reshape(nvol, nd, nd)
+            Minv = np.linalg.inv(M)
+            rng = np.random.default_rng(11)
+            for eta in ("singlet", "triplet"):
+                A_st, _ = bc.make_bond_kernel(zero, zero, S_b, C_b, Vpp_s, Vpp_t,
+                                              fx["green_sc"], bond_set, eta, fx["beta"],
+                                              part="instantaneous")
+                V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
+                Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
+                vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
+                                         nmat, nvol)
+                K = BondPairKernel(vert, G2, fx["view"], xp=np,
+                                   spatial_shape=fx["spatial_shape"], norb=2,
+                                   beta=fx["beta"], nfreq=nmat, V_inst=V_inst,
+                                   residency="host", host_cap=10 ** 12, device_cap=10 ** 12)
+                for _ in range(2):
+                    rnd = (rng.standard_normal((2, 2, nx, ny, nz, nmat))
+                           + 1j * rng.standard_normal((2, 2, nx, ny, nz, nmat)))
+                    phi = _project_parity_dynamic(rnd, eta)
+                    out = K.matvec(phi.ravel()).reshape(phi.shape)
+                    np.testing.assert_allclose(out, np.broadcast_to(out[..., :1], out.shape),
+                                               rtol=0, atol=1e-10, err_msg=eta)
+                    F_dyn = np.einsum("iljmxyzn,lmxyzn->ijxyzn", G2, phi).sum(-1)
+                    Fv = F_dyn.transpose(2, 3, 4, 0, 1).reshape(nvol, nd)
+                    phi_s = np.einsum("vab,vb->va", Minv, Fv).reshape(nx, ny, nz, 2, 2)
+                    phi_s = phi_s.transpose(3, 4, 0, 1, 2)
+                    np.testing.assert_allclose(
+                        np.einsum("iljmxyz,lmxyz->ijxyz", G2_st, phi_s), F_dyn, atol=1e-10)
+                    ref = A_st.matvec(phi_s.ravel()).reshape(phi.shape[:-1])
+                    np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10,
+                                               err_msg=eta)
+
+        check({("CoulombInter", (1, 0, 0)): np.diag([0.5, 0.5]),
+               ("CoulombInter", (-1, 0, 0)): np.diag([0.5, 0.5])},
+              {(tuple(R), (a, a)): 0.5
+               for R in ((1, 0, 0), (-1, 0, 0)) for a in range(2)})
+        check({("CoulombInter", (1, 0, 0)): np.array([[0.0, 0.4], [0.4, 0.0]]),
+               ("CoulombInter", (-1, 0, 0)): np.array([[0.0, 0.4], [0.4, 0.0]])},
+              {((1, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4,
+               ((-1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4})
+        check({("CoulombInter", (1, 0, 0)): np.array([[0.5, 0.3], [0.3, 0.7]]),
+               ("CoulombInter", (-1, 0, 0)): np.array([[0.5, 0.3], [0.3, 0.7]])},
+              {((1, 0, 0), (0, 0)): 0.5, ((1, 0, 0), (0, 1)): 0.3, ((1, 0, 0), (1, 0)): 0.3,
+               ((1, 0, 0), (1, 1)): 0.7,
+               ((-1, 0, 0), (0, 0)): 0.5, ((-1, 0, 0), (0, 1)): 0.3,
+               ((-1, 0, 0), (1, 0)): 0.3, ((-1, 0, 0), (1, 1)): 0.7})
 
 
 
@@ -916,6 +1119,51 @@ class TestKernelIR(unittest.TestCase):
         self.assertEqual(Kd.residency, "device")
         np.testing.assert_allclose(Kd.matvec(phi), ref, atol=1e-13)
 
+    def test_ir_constant_blocks_obey_the_residency(self):
+        """The retained IR constant blocks follow the same module rule as the
+        frequency blocks: the array module only for the "device" residency,
+        the host otherwise. Exercised through the ``_NotNumpy`` stand-in of
+        :class:`TestDeviceProbeFallback`, here in the marking variant whose
+        ``asarray`` returns an ndarray SUBCLASS -- with the plain stand-in
+        (whose every operation IS numpy's) the ``np.ndarray`` check would
+        hold on both sides and prove nothing."""
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, BondPairKernel
+        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+        axF, axB = _axes(2.0, wmax=20.0)
+        fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=32, beta=2.0, U=1.0)
+        stages = _stage_pair(_lorentzian_source(fx, kappa=0.3))
+        with _dev(fx) as dev:
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=16,
+                                        nmat=fx["nmat"], nvol=fx["nvol"], nd=fx["nd"],
+                                        spatial_shape=fx["spatial_shape"], ir=(axF, axB),
+                                        ir_keep_static=True)
+            stages(acc)
+            vert = acc.finish(ir_fit_tol=_WIDE_TOL, stage_callable=stages)["singlet"]
+        self.assertIsNotNone(vert.const)
+        G2 = calc_g2_dynamic(_ir_compress(fx["green_sc"], axF, fx["nmat"], "green"),
+                             fx["beta"])
+
+        def kernel(residency):
+            return BondPairKernel(vert, G2, fx["view"], xp=_MarkingNotNumpy(),
+                                  spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                                  beta=fx["beta"], nfreq=axF.n_freq, axF=axF,
+                                  residency=residency, host_cap=10 ** 12,
+                                  device_cap=10 ** 12)
+
+        for residency in ("host", "stream"):
+            K = kernel(residency)
+            self.assertEqual(K.residency, residency)
+            self.assertEqual(len(K._const_rt), fx["B"] ** 2)
+            for key, block in K._const_rt.items():
+                self.assertIsInstance(block, np.ndarray, (residency, key))
+                self.assertIs(type(block), np.ndarray, (residency, key))
+        # the device residency keeps them on the array module, which is what
+        # makes the host assertions above discriminating
+        Kd = kernel("device")
+        self.assertEqual(Kd.residency, "device")
+        for block in Kd._const_rt.values():
+            self.assertIs(type(block), _MarkedArray)
+
 
 class _NotNumpy(object):
     """An array module that is NOT ``numpy`` and whose every operation IS
@@ -925,6 +1173,21 @@ class _NotNumpy(object):
 
     def __getattr__(self, name):
         return getattr(np, name)
+
+
+class _MarkedArray(np.ndarray):
+    """A host array TAGGED as having come from the stand-in array module."""
+
+
+class _MarkingNotNumpy(_NotNumpy):
+    """:class:`_NotNumpy` whose constructors return :class:`_MarkedArray`, so a
+    test can tell WHICH module a stored block was built on."""
+
+    def asarray(self, *a, **kw):
+        return np.asarray(*a, **kw).view(_MarkedArray)
+
+    def ascontiguousarray(self, *a, **kw):
+        return np.ascontiguousarray(*a, **kw).view(_MarkedArray)
 
 
 class TestDeviceProbeFallback(unittest.TestCase):
@@ -955,9 +1218,9 @@ class TestDeviceProbeFallback(unittest.TestCase):
         seen = {}
         real_choose = eb.AdmissionTable.choose
 
-        def spy(table, requested, host_cap, device_cap):
-            seen.update(requested=requested, host=host_cap, device=device_cap)
-            return real_choose(table, requested, host_cap, device_cap)
+        def spy(table, requested, host_cap, device_cap, **kw):
+            seen.update(requested=requested, host=host_cap, device=device_cap, kw=kw)
+            return real_choose(table, requested, host_cap, device_cap, **kw)
 
         with mock.patch.object(bk, "device_available_bytes", return_value=None), \
                 mock.patch.object(eb.AdmissionTable, "choose", spy):

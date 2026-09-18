@@ -332,11 +332,13 @@ def solve_dynamic_bond(input_dict):
     table = _eb.estimate_pair_memory(
         nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=nfreq, nvol=nvol, norb=norb,
         B=arch.B, num_eigenvalues=ctl.num_eigenvalues, residency="auto", ir=use_ir,
-        L_B=L_B, n_channels=1, in_process=False, nb=nb)
+        L_B=L_B, n_channels=1, in_process=False, nb=nb,
+        keep_const=ctl.ir_keep_static_chi and use_ir)
     logger.info("bond pairing admission (post-processing, GiB): %s",
                 {k: round(v / _eb._GIB, 3) for k, v in table.rows.items()})
     # raises MemoryError with the full table when nothing fits
-    residency = table.choose("host" if xp is np else "auto", host_cap, device_cap)
+    residency = table.choose("host" if xp is np else "auto", host_cap, device_cap,
+                             shared=(xp is np))
 
     with _fb.BondDeviceContext(xp, arch.S_bond, arch.C_bond) as dev:
         acc = _eb.PairVertexAccumulator(
@@ -454,7 +456,8 @@ def pairing_preflight(solver):
         nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=(axF.n_freq if use_ir else nmat),
         nvol=nvol, norb=norb, B=B, num_eigenvalues=ctl.num_eigenvalues, residency="auto",
         ir=use_ir, L_B=(axB.L if use_ir else 0), n_channels=len(ctl.pairing_types),
-        in_process=True, nb=solver._bond_nb)
+        in_process=True, nb=solver._bond_nb,
+        keep_const=ctl.ir_keep_static_chi and use_ir)
     host_cap_now = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
         else 0.8 * _eb._host_available_bytes()
     # estimate_bond_memory's "peak": 1.25 x (persistent + the largest phase)
@@ -476,7 +479,8 @@ def pairing_preflight(solver):
                 device_need = 0.0
             device_cap = 0.9 * float(available) - float(device_need)
     try:
-        residency = table.choose("auto", host_cap, device_cap)
+        residency = table.choose("auto", host_cap, device_cap,
+                                 shared=not getattr(solver, "use_gpu", False))
     except MemoryError as exc:
         raise ValueError(
             "longitudinal_bond_pairing: the pairing step would not fit after the FLEX solve "
@@ -605,7 +609,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                     nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=nfreq, nvol=nvol,
                     norb=norb, B=view.n_channels, num_eigenvalues=ctl.num_eigenvalues,
                     residency="auto", ir=use_ir, L_B=(axB.L if use_ir else 0),
-                    n_channels=1, in_process=True)
+                    n_channels=1, in_process=True,
+                    keep_const=ctl.ir_keep_static_chi and use_ir)
                 V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape)
                 K = _eb.BondPairKernel(
                     vertices[eta], G2, view, xp=xp, spatial_shape=shape, norb=norb, beta=beta,
