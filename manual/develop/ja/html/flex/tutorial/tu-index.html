@@ -169,13 +169,13 @@ Phys. Rev. Lett. <strong>104</strong>, 157001 (2010).</p>
 </aside>
 <aside class="footnote brackets" id="id15" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id11">1</a>,<a role="doc-backlink" href="#id36">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id11">1</a>,<a role="doc-backlink" href="#id39">2</a>)</span>
 <p>M. Mochizuki, Y. Yanase, and M. Ogata,
 J. Phys. Soc. Jpn. (cond-mat/0407094).</p>
 </aside>
 <aside class="footnote brackets" id="id16" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id12">1</a>,<a role="doc-backlink" href="#id37">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id12">1</a>,<a role="doc-backlink" href="#id40">2</a>)</span>
 <p>T. Takimoto, T. Hotta, and K. Ueda,
 Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 </aside>
@@ -531,43 +531,375 @@ hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-trans
 作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
 ブロックに縮約します）。<code class="docutils literal notranslate"><span class="pre">--force</span></code>で既存の出力を上書きします。</p>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id42">
+<figure class="align-center" id="id45">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.1 </span><span class="caption-text">ハーフフィリングにおける1軌道Hubbardモデルの静的スピン感受率
 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span>。
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフェルミ面の
-ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id42" title="Link to this image">¶</a></p>
+ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id45" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id43">
+<figure class="align-center" id="id46">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace.png"><img alt="../../_images/sigma_kspace.png" src="../../_images/sigma_kspace.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.2 </span><span class="caption-text">最低松原周波数における自己エネルギーの虚部。
 k依存性はスピンゆらぎによる準粒子の散乱を反映しており、
-反強磁性ホットスポット付近でより強いダンピングを示します。</span><a class="headerlink" href="#id43" title="Link to this image">¶</a></p>
+反強磁性ホットスポット付近でより強いダンピングを示します。</span><a class="headerlink" href="#id46" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id44">
+<figure class="align-center" id="id47">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara.png"><img alt="../../_images/sigma_matsubara.png" src="../../_images/sigma_matsubara.png" style="width: 80%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.3 </span><span class="caption-text">選択されたk点での自己エネルギーの周波数依存性。
 虚部<span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span>は
 準粒子のダンピングを示し、高周波数での
-<span class="math notranslate nohighlight">\(1/\omega_n\)</span>テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id44" title="Link to this image">¶</a></p>
+<span class="math notranslate nohighlight">\(1/\omega_n\)</span>テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id47" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
+<section id="bond">
+<span id="flex-bond-pairing-tutorial"></span><h3>bond 分解頂点によるペアリング固有値<a class="headerlink" href="#bond" title="Link to this heading">¶</a></h3>
+<p>ボンド分解チャネルを持つ Hartree-Fock FLEX 計算（前述の
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）がドレスドグリーン関数を
+生成した後は、自己エネルギーが使ったのと同じボンド分解して
+振動数に依存する対形成バーテックスを用いて線形化 Eliashberg 方程式を
+解くことができます -- <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>
+のオンサイトの<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>バーテックスの
+代わりに用います。インプロセスの経路に必要なのはこれだけです。
+動的ボンドアーカイブ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ2）は
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定したときにのみ
+書き出され、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を経由する後処理の経路でのみ必要になります。
+このカーネルに到達する経路は2つあり、どちらも
+同じ配列からカーネルを構築するため、一様松原格子上では丸め誤差の
+範囲で一致します:</p>
+<ul class="simple">
+<li><p><strong>インプロセス</strong> 、FLEX の計算自身の最後に実行: FLEX の入力に
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span> <span class="pre">=</span> <span class="pre">&quot;singlet&quot;</span> <span class="pre">|</span> <span class="pre">&quot;triplet&quot;</span> <span class="pre">|</span>
+<span class="pre">&quot;both&quot;</span></code>を設定します。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">&gt;=</span> <span class="pre">1</span></code>が必要です。同じ入力ファイルの
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブル（省略可能）でソルバーを設定します
+（各キーは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります）。
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>はここでは拒否されます（チャネルは
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>で選択されます）。<code class="docutils literal notranslate"><span class="pre">gpu</span></code> /
+<code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code> / <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> / <code class="docutils literal notranslate"><span class="pre">frequency</span></code> /
+<code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>は
+INFO ログとともに無視されます -- 対形成ステップは再読み込みした
+アーカイブではなく、FLEX の計算自身のバックエンドとデータの上で
+動作します。リクエストしたチャネルごとに<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>を、
+全ての FLEX 出力ファイルの <strong>後</strong> に書き出すため、対形成ステップの
+失敗が FLEX の結果を損なうことはありません。</p></li>
+<li><p><strong>後処理</strong> 、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を経由: 別の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>入力で
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
+<span class="pre">&quot;dynamic&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>を設定し、
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>に FLEX 計算の出力ディレクトリを
+指定します。その FLEX 計算が<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span>
+<span class="pre">true</span></code>で（アーカイブはこの場合にのみ書き出されます）、かつ
+アーカイブスキーマ2を書き出すバージョンで実行されている必要が
+あります -- 古いスキーマ1のアーカイブは再計算を求めるメッセージと
+ともに拒否されます。1回の実行につき1つのチャネル
+（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">pairing_type</span></code>）のみを解き、オンサイトの動的
+ソルバーと同じファイル名（<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>）で書き出します。</p></li>
+</ul>
+<p>完全なキー集合は<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">出力リファレンス</span></a>を、ボンド固有のキーは
+<a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">設定ファイルリファレンスの eliashberg 節</span></a>を、ソルバー全般の設定は
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照してください。</p>
+<section id="ir">
+<h4>メモリと IR 基底<a class="headerlink" href="#ir" title="Link to this heading">¶</a></h4>
+<p>アーカイブの主要な2つのメンバー<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>は、
+それぞれ<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code>バイト（複素128ビット。
+<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">norb**2</span></code>、<code class="docutils literal notranslate"><span class="pre">B</span></code>は FLEX の計算が保持したボンド
+チャネル数でチャネル0がオンサイト項）です。したがってアーカイブ
+全体はおよそ<code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code>バイトになり、これは
+前述の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>がすでに FLEX の
+計算自身の常駐メモリに課しているのと同じ倍増です。インプロセスの
+経路のみを使う場合は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>を
+<code class="docutils literal notranslate"><span class="pre">false</span></code>のままにしてください。アーカイブは後処理の経路のためだけに
+書き出されるものであり、多軌道モデルではディスク上で数十 GB に
+なります。対形成カーネルは
+さらに独自の作業領域（対バブル・持ち上げたバーテックスブロック・
+固有値ソルバーのベクトル）を必要とします。2つの代表的なモデルに
+ついての実測値です（CuO2型: <span class="math notranslate nohighlight">\(B=5\)</span>、<code class="docutils literal notranslate"><span class="pre">norb</span></code>=3、<code class="docutils literal notranslate"><span class="pre">ND</span></code>=45、
+<code class="docutils literal notranslate"><span class="pre">nvol</span></code>=1024、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>=1024、<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>=10。単一バンド:
+<span class="math notranslate nohighlight">\(B=5\)</span>、<code class="docutils literal notranslate"><span class="pre">norb</span></code>=1、32x32格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>=1024）:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 46.0%" />
+<col style="width: 27.0%" />
+<col style="width: 27.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>量</p></th>
+<th class="head"><p>CuO2型 (GB)</p></th>
+<th class="head"><p>単一バンド (GB)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ディスク上の動的アーカイブ (<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> + <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>)</p></td>
+<td><p>68</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>インプロセス・一様格子・持ち上げたバーテックスブロック
+(<code class="docutils literal notranslate"><span class="pre">B**2</span></code>ブロック)</p></td>
+<td><p>34</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-even"><td><p>インプロセス・一様格子・<code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code>残留方式のデバイス
+メモリ（A100 1台。1回の matvec = FLEX と同規模の1回の転送、
+15〜30 秒）</p></td>
+<td><p>~8.3</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>インプロセス・IR（<span class="math notranslate nohighlight">\(L_B \approx 80\)</span>）のデバイスメモリ
+（持ち上げたブロックが支配的。全て収まり、matvec は数秒）</p></td>
+<td><p>~2.7</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-even"><td><p>後処理・一様格子・カーネル前のホストメモリ
+（アーカイブメンバー1個 + バーテックスアキュムレータ）</p></td>
+<td><p>~68</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>後処理・IR・<code class="docutils literal notranslate"><span class="pre">finish</span></code>前のホストメモリ
+（アーカイブメンバー1個 + IR 係数）</p></td>
+<td><p>~39</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+</tbody>
+</table>
+<p>ここでの GB は<span class="math notranslate nohighlight">\(10^9\)</span>バイトを意味します。一方、上限を指定する
+キー<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>は2進の GiB（<span class="math notranslate nohighlight">\(1024^3\)</span>バイト。
+約7%大きい単位）です。上の数値からこのキーを設定する際は、その差を
+考慮してください。</p>
+<p><code class="docutils literal notranslate"><span class="pre">B**2</span></code>個の持ち上げたブロック（後処理の場合はアーカイブメンバー）が
+メモリに収まらないモデルでは、<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span>
+<span class="pre">&quot;ir&quot;</span></code>を設定してください。IR 基底は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>点の松原軸をその
+スパースサンプリングノード（通常50〜100点）で置き換え、上記の
+周波数軸に関わる各行をおよそ<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">/</span> <span class="pre">L</span></code>分の1に縮小します。
+オプションの <a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a>
+パッケージが必要です（<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>）。
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span></code>でこの経路のホスト側を明示的に
+制限できます（既存の静的ボンド経路と同名のキーを再利用します）。
+ストリーミング残留方式でも収まらない場合、インプロセスの経路は
+最初の FLEX 写像の <strong>前</strong> に拒否し（長時間の FLEX 計算が事後の
+確保失敗によって失われることはありません）、後処理の経路は
+完全なメモリテーブルとともに拒否します。カーネルは残留方式
+（<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code>、すなわち
+バーテックスブロックをデバイス上に置く・ホスト上に置く・適用ごとに
+再構築する）を、デバイスとホストの空きメモリおよび
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>から自動的に選択します。選択された方式は
+出力に<code class="docutils literal notranslate"><span class="pre">bond_residency</span></code>として記録されます。</p>
 </section>
 <section id="id21">
-<h2><span class="section-number">6.1.4. </span>サンプル 2: 2軌道Hubbardモデル<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h2>
+<h4>単一バンドの例（両方の経路）<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h4>
+<p>オンサイト<span class="math notranslate nohighlight">\(U = 4t\)</span>と最近接<span class="math notranslate nohighlight">\(V = t\)</span>を持つ
+32x32格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 1024 で、両方のペアリングチャネルをインプロセスで
+解く例です:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"general"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.45</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="n">IterationMax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"anderson"</span>
+<span class="w">  </span><span class="n">anderson_depth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span>
+<span class="w">  </span><span class="n">EPS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_output_full</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">   </span><span class="c1"># 後述の hwave_sc の経路のためだけに必要。インプロセスのみの計算では省略してください</span>
+<span class="w">  </span><span class="n">longitudinal_bond_pairing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"both"</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">sigma</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span>
+<span class="w">  </span><span class="n">chiq</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chiq"</span>
+<span class="w">  </span><span class="n">longitudinal_bond</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"longitudinal_bond.npz"</span>
+<span class="w">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"energy.dat"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>これにより<code class="docutils literal notranslate"><span class="pre">output/</span></code>に<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet.npz</span></code> /
+<code class="docutils literal notranslate"><span class="pre">gap_bond_singlet.dat</span></code> / <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet.dat</span></code>と、
+<code class="docutils literal notranslate"><span class="pre">triplet</span></code>の対応するファイルが書き出されます。同じアーカイブを
+後処理の経路で解く場合（例えば FLEX を再実行せずに基底を比較したい
+場合）は、上記の FLEX 入力を一度実行し（後処理の経路のみが目的
+なら<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>は<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>のままでも
+構いません）、続けて<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で2つ目の入力を実行します:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"SC"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.45</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_flex_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output_sc"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">chi0q_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"flex"</span>
+<span class="w">  </span><span class="n">frequency</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"dynamic"</span>
+<span class="w">  </span><span class="n">bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">pairing_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"singlet"</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave_sc<span class="w"> </span>input_sc.toml
+</pre></div>
+</div>
+<p>どちらも一様格子上では、先頭固有値とギャップが丸め誤差の範囲で
+一致します。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>が何であっても
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>をこの固定の名前で書き出します
+（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code> / <code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>で名前を
+変更できるのはテキストファイルの<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> / <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>
+だけです）。singlet と triplet のチャネルは異なる2つの
+<code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>ディレクトリに出力してください。さもないと
+2回目の実行が1回目のアーカイブを上書きします。</p>
+</div>
+</section>
+<section id="ir-3">
+<h4>IR 基底での3軌道の例<a class="headerlink" href="#ir-3" title="Link to this heading">¶</a></h4>
+<p>ボンド分解した動的アーカイブが一様格子のメモリに収まらないモデル
+（例えば CuO2型の3軌道モデル）では、FLEX 入力の<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
+テーブルで<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を設定します。</p>
+<p>後処理の経路も<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を受け付けます。ここで
+インプロセスの経路を示しているのは、この経路が一様格子のアーカイブを
+書き出さないためです。</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_pairing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"singlet"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ir"</span>
+<span class="w">  </span><span class="n">ir_fit_tol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.1</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code>（デフォルト 0.5）は、一様格子上のボンドバーテックスを
+IR 基底にフィットさせた際の成分ごとの相対残差です。定数項を保持した
+（<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>）実際の一様 FFT アーカイブでは、
+通常 0.1〜0.2 程度の残差になるため、上記のようなより厳しい値は
+十分に解像された計算での妥当な検査であり、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が粗い計算では
+緩める必要があるかもしれません。</p>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>バーテックスの瞬時（振動数に依存しない）部分は、IR カーネルには
+厳密な松原和の中間点
+<span class="math notranslate nohighlight">\(\tfrac12(F(0^+) - F(\beta^-))\)</span>として入り、
+<span class="math notranslate nohighlight">\(F(0^+)\)</span>としてではありません。振動数について偶の対振幅に
+対しては両者は一致します（その偶数<span class="math notranslate nohighlight">\(l\)</span>の IR 係数は消える
+ためです）。以前の処方はこれに加えて奇振動数成分を偶セクターへ
+写し、逆向きには作用しなかったため、振動数パリティに関して
+ブロック三角であり、スペクトルは同じでした。したがってパリティ
+射影を行った計算の固有値も固有値ソルバーの固有値も変わりませんが、
+固有ベクトルと射影なしの反復は影響を受けていました。この修正が
+取り除くのは、その偽のパリティの漏れ（およびそれに伴う射影の
+無効化——triplet の計算では singlet セクターの値に収束し得ました
+——と、奇パリティチャネルのギャップ関数への偶パリティ成分の混入）
+です。同じ修正は
+通常のオンサイト動的 IR ソルバーにも適用されます。再実行が必要な
+のはどのような計算かについては<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-ir-instantaneous"><span class="std std-ref">変更に関する注意</span></a>を参照してください。</p>
+</div>
+</section>
+<section id="ir-nmat">
+<h4>IR 結果の Nmat 依存性<a class="headerlink" href="#ir-nmat" title="Link to this heading">¶</a></h4>
+<p>一様格子上では2つの経路は丸め誤差の範囲で一致します。一方 IR 基底
+では、非零の瞬時バーテックスにより2つは<span class="math notranslate nohighlight">\(O(\beta /
+N_{\rm mat})\)</span>だけ異なります。一様格子は有限の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>で
+振動数に依存しない項の松原和を打ち切るのに対し、IR 表現はそれを
+解析的に評価するためです。単一バンド<span class="math notranslate nohighlight">\(U=4\)</span>、<span class="math notranslate nohighlight">\(V=1\)</span>、
+4x4のフィクスチャで<span class="math notranslate nohighlight">\(T=0.5\)</span>における実測値:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 33.0%" />
+<col style="width: 33.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code></p></th>
+<th class="head"><p>singlet, 一様 vs. IR</p></th>
+<th class="head"><p>triplet, 一様 vs. IR</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>64</p></td>
+<td><p>5.7 %</p></td>
+<td><p>3.0 %</p></td>
+</tr>
+<tr class="row-odd"><td><p>128</p></td>
+<td><p>1.7 %</p></td>
+<td><p>0.9 %</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を大きくすると2つは同じ連続極限に収束します。実運用では、
+IR の結果をそのまま信頼する前に、自分のモデルの<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>における
+この差を確認してください（オンサイトの動的ソルバーの IR の節が
+推奨するのと同じ手順です）。一様 FFT アーカイブの IR 表現は、上記
+とは無関係に、それ自体が<code class="docutils literal notranslate"><span class="pre">Nmat^-2</span></code>で減衰するパリティの非対称性
+も持ちます（同じフィクスチャで Nmat 64 で 7.6e-3、Nmat 128 で
+1.3e-3 と実測）。これが<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">parity_leakage_tol</span></code>の
+デフォルトが、一様格子の<code class="docutils literal notranslate"><span class="pre">1e-8</span></code>よりも IR 基底で緩い<code class="docutils literal notranslate"><span class="pre">2e-2</span></code>
+になっている理由です。</p>
+</section>
 <section id="id22">
-<h3>モデル<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h3>
+<h4>収束していない FLEX 計算での対形成<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h4>
+<p>インプロセスの対形成ステップは、FLEX の SCF ループが収束しなかった
+場合でも実行されます（計算コストはすでに払われているため）。
+カーネルは <strong>最後の</strong> 写像のドレスされた感受率と <strong>最終</strong> （混合後）の
+グリーン関数を組み合わせて用い、WARNING がログに出力され、出力には
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>と<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">=</span> <span class="pre">&quot;mixed:</span> <span class="pre">last-map</span> <span class="pre">chi,</span> <span class="pre">final</span>
+<span class="pre">green&quot;</span></code>が記録されます（収束した計算では代わりに<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">=</span>
+<span class="pre">&quot;last_map_chi</span> <span class="pre">/</span> <span class="pre">final_green&quot;</span></code>が記録されます）。これは npz の
+メタデータと<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span></code>ヘッダー行の
+両方に記録されます。このような結果は、自己無撞着な対形成固有値では
+なく、SCF ループが辿っていた軌跡の診断値として扱ってください。
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>を読み込むパイプラインでは、値を
+利用する前に<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=true</span></code>のヘッダー行（または npz の
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>キー）を確認してください。</p>
+</section>
+</section>
+</section>
+<section id="id23">
+<h2><span class="section-number">6.1.4. </span>サンプル 2: 2軌道Hubbardモデル<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h2>
+<section id="id24">
+<h3>モデル<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
 <p>2番目のサンプルは、軌道間クーロン相互作用とフント結合を含む
 <strong>2軌道Hubbardモデル</strong> です:</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
@@ -581,8 +913,8 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 <p><span class="math notranslate nohighlight">\(U = 4.0\)</span>, <span class="math notranslate nohighlight">\(V = 1.0\)</span>, <span class="math notranslate nohighlight">\(J = 0.5\)</span>,
 温度<span class="math notranslate nohighlight">\(T = 1.0\)</span>を使用します。</p>
 </section>
-<section id="id23">
-<h3>入力ファイルの準備<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h3>
+<section id="id25">
+<h3>入力ファイルの準備<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
 <p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -685,8 +1017,8 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 </div>
 <p>フント結合<span class="math notranslate nohighlight">\(J = 0.5\)</span>。</p>
 </section>
-<section id="id24">
-<h3>計算の実行<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
+<section id="id26">
+<h3>計算の実行<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/2orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -706,42 +1038,42 @@ FLEX converged after 59 iterations
 </div>
 <p>（粒子ホール対称なハーフフィリング模型のため<span class="math notranslate nohighlight">\(\mu = 0\)</span>となります。）</p>
 </section>
-<section id="id25">
-<h3>計算結果<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
+<section id="id27">
+<h3>計算結果<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id45">
+<figure class="align-center" id="id48">
 <a class="reference internal image-reference" href="../../_images/chi_s1.png"><img alt="../../_images/chi_s1.png" src="../../_images/chi_s1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.4 </span><span class="caption-text">2軌道モデルの静的スピン感受率。
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフント結合により増強されており、
 各サイト内での強磁性的な配列を促進しつつ、
-サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id45" title="Link to this image">¶</a></p>
+サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id48" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id46">
+<figure class="align-center" id="id49">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace1.png"><img alt="../../_images/sigma_kspace1.png" src="../../_images/sigma_kspace1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.5 </span><span class="caption-text">2軌道モデルの自己エネルギー虚部。
-軌道依存のk構造は多軌道系における異なる散乱チャネルを反映しています。</span><a class="headerlink" href="#id46" title="Link to this image">¶</a></p>
+軌道依存のk構造は多軌道系における異なる散乱チャネルを反映しています。</span><a class="headerlink" href="#id49" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id47">
+<figure class="align-center" id="id50">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara1.png"><img alt="../../_images/sigma_matsubara1.png" src="../../_images/sigma_matsubara1.png" style="width: 80%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.6 </span><span class="caption-text">2軌道モデルの自己エネルギーの周波数依存性。
 1軌道の場合と比較して大きな振幅は、
-軌道間相互作用による増強された相関を反映しています。</span><a class="headerlink" href="#id47" title="Link to this image">¶</a></p>
+軌道間相互作用による増強された相関を反映しています。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 </section>
-<section id="id26">
-<h2><span class="section-number">6.1.5. </span>プロット<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h2>
+<section id="id28">
+<h2><span class="section-number">6.1.5. </span>プロット<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
 <p>上記の図は以下のプロットスクリプトで再現できます:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample
 $<span class="w"> </span>python<span class="w"> </span>plot_results.py
@@ -753,8 +1085,8 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 </pre></div>
 </div>
 </section>
-<section id="id27">
-<h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h2>
+<section id="id29">
+<h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルを生成します:</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
@@ -837,7 +1169,7 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 </section>
 </section>
 <section id="flex-params">
-<span id="id28"></span><h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#flex-params" title="Link to this heading">¶</a></h2>
+<span id="id30"></span><h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#flex-params" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションで以下のパラメータを受け付けます:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -1098,11 +1430,11 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 プリフライトは、実行のメモリ余裕が乏しい場合すでに警告を出します）。</p>
 </div>
 </section>
-<section id="id29">
-<h2><span class="section-number">6.1.8. </span>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
-<section id="id30">
-<h3>モデル<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h3>
-<p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id32" id="id31" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a> が提案した
+<section id="id32">
+<h2><span class="section-number">6.1.8. </span>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h2>
+<section id="id33">
+<h3>モデル<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h3>
+<p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id35" id="id34" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a> が提案した
 <strong>鉄系超伝導体の2軌道最小モデル</strong> です。
 Fe-As面を正方格子（1-Fe単位胞）上の<span class="math notranslate nohighlight">\(d_{xz}\)</span>と
 <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道で記述します。</p>
@@ -1133,15 +1465,15 @@ Fe-As面を正方格子（1-Fe単位胞）上の<span class="math notranslate no
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>における強いスピンゆらぎを駆動します。
 これが鉄系超伝導体の特徴的な物理です。</p>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id32" role="doc-footnote">
-<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id31">5</a><span class="fn-bracket">]</span></span>
+<aside class="footnote brackets" id="id35" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id34">5</a><span class="fn-bracket">]</span></span>
 <p>S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
 Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </aside>
 </aside>
 </section>
-<section id="id33">
-<h3>入力ファイルの準備<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h3>
+<section id="id36">
+<h3>入力ファイルの準備<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
 <p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -1258,8 +1590,8 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </pre></div>
 </div>
 </section>
-<section id="id34">
-<h3>計算の実行<a class="headerlink" href="#id34" title="Link to this heading">¶</a></h3>
+<section id="id37">
+<h3>計算の実行<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/iron_2orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -1278,10 +1610,10 @@ FLEX converged after 62 iterations
 </pre></div>
 </div>
 </section>
-<section id="id35">
-<h3>計算結果<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h3>
+<section id="id38">
+<h3>計算結果<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h3>
 <p><strong>スピン・電荷感受率</strong>:</p>
-<figure class="align-center" id="id48">
+<figure class="align-center" id="id51">
 <a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -1290,29 +1622,29 @@ FLEX converged after 62 iterations
 スピン感受率は<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>および<span class="math notranslate nohighlight">\((0, \pi)\)</span>に
 ピークを持ち、ホールポケットと電子ポケット間のネスティングを反映しています。
 これは単一バンドHubbardモデル（<span class="math notranslate nohighlight">\((\pi, \pi)\)</span>にピーク）とは
-定性的に異なります。</span><a class="headerlink" href="#id48" title="Link to this image">¶</a></p>
+定性的に異なります。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>軌道分解自己エネルギー</strong>:</p>
-<figure class="align-center" id="id49">
+<figure class="align-center" id="id52">
 <a class="reference internal image-reference" href="../../_images/sigma_orbital.png"><img alt="../../_images/sigma_orbital.png" src="../../_images/sigma_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.8 </span><span class="caption-text">最低松原周波数での軌道分解自己エネルギー虚部。
 <span class="math notranslate nohighlight">\(d_{xz}\)</span>軌道は<span class="math notranslate nohighlight">\(k_y\)</span>方向でより強い散乱を示し、
 <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は<span class="math notranslate nohighlight">\(k_x\)</span>方向で強い散乱を示します。
-この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id49" title="Link to this image">¶</a></p>
+この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id50">
+<figure class="align-center" id="id53">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara_orbital.png"><img alt="../../_images/sigma_matsubara_orbital.png" src="../../_images/sigma_matsubara_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.9 </span><span class="caption-text">高対称k点での軌道分解自己エネルギーの周波数依存性。
 <span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span>において<span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は
 <span class="math notranslate nohighlight">\(d_{xz}\)</span>よりも強くダンピングされ、
-軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
+軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id53" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>プロットスクリプト</strong>:</p>
@@ -1331,8 +1663,8 @@ FLEX converged after 62 iterations
 モデルと相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）を用い、off-diagonalな完全なKanamori頂点
 （スピンフリップのHund結合およびペアホッピング／交換項）を保持します。
-これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id36" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
-（THU <a class="footnote-reference brackets" href="#id16" id="id37" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
+これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id39" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
+（THU <a class="footnote-reference brackets" href="#id16" id="id40" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
 <p>この版は、Hund／交換／ペアホッピングのoff-diagonal頂点が重要となる
 多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
 十分な場合に適しています。なお<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームは
@@ -1435,10 +1767,10 @@ FLEX converged after 62 iterations
 </li>
 </ul>
 </section>
-<section id="id38">
-<h2><span class="section-number">6.1.11. </span>実装の詳細と制限事項<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h2>
-<section id="id39">
-<h3>対応する相互作用型<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
+<section id="id41">
+<h2><span class="section-number">6.1.11. </span>実装の詳細と制限事項<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h2>
+<section id="id42">
+<h3>対応する相互作用型<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
 <p>FLEXソルバーは以下の相互作用型に対応しています:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -1499,8 +1831,8 @@ FLEX converged after 62 iterations
 分解して指定してください。</p>
 </div>
 </section>
-<section id="id40">
-<h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id40" title="Link to this heading">¶</a></h3>
+<section id="id43">
+<h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
 <p>相互作用はWannier90形式の入力ファイルで指定します。
 各行の形式は<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code>であり、
 <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>は実空間の格子ベクトルです。</p>
@@ -1522,8 +1854,8 @@ q非依存な相互作用<span class="math notranslate nohighlight">\(W(\mathbf{
 入力ファイルに指定する必要があります。</p>
 </div>
 </section>
-<section id="id41">
-<h3>スピン・電荷チャネル分解の制約<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>
+<section id="id44">
+<h3>スピン・電荷チャネル分解の制約<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h3>
 <p>FLEXソルバーは、自己エネルギーの計算において相互作用テンソルを
 スピンチャネルとチャネルに分解します。
 この分解では、4体相互作用テンソル
@@ -1603,14 +1935,14 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <li class="toctree-l3"><a class="reference internal" href="#id1">6.1.1. 概要</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id3">6.1.2. 理論</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#hubbard">6.1.3. サンプル 1: 1軌道Hubbardモデル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id21">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id26">6.1.5. プロット</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id27">6.1.6. 出力ファイル形式</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id23">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id28">6.1.5. プロット</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id29">6.1.6. 出力ファイル形式</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#flex-params">6.1.7. FLEX固有のパラメータ</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id29">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id32">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#b-general">6.1.9. サンプル 3b: 完全頂点（general）版</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">6.1.10. Tips</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id38">6.1.11. 実装の詳細と制限事項</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id41">6.1.11. 実装の詳細と制限事項</a></li>
 </ul>
 </li>
 </ul>

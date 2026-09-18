@@ -324,6 +324,31 @@ Parameters
   member). The default does not depend on ``gpu``. Ignored with a
   warning unless ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_pairing``
+
+  **Type :**
+  String (``"none"``, ``"singlet"``, ``"triplet"``, ``"both"``;
+  case-insensitive; default ``"none"``; FLEX mode only)
+
+  **Description :**
+  With ``longitudinal_bond_channels = true`` (required; the key is refused
+  otherwise, as it is with ``IterationMax = 0``), solves the linearized
+  Eliashberg equation at the end of the FLEX solve with the bond-resolved,
+  frequency-resolved pairing vertex built from the same ``S``, ``C`` and
+  dressed ``chi_s``, ``chi_c`` the self-energy used (the in-process
+  counterpart of ``[eliashberg] bond_channels`` below). The solver controls
+  are read from the ``[eliashberg]`` table of the SAME input file (optional;
+  every key defaults to the value ``hwave_sc`` uses; ``pairing_type`` is
+  refused there -- the channel(s) are selected by this key instead; ``gpu``
+  follows the FLEX solve). Results: ``eliashberg_bond_<type>.npz``,
+  ``gap_bond_<type>.dat``, ``eigenvalue_bond_<type>.dat`` per requested
+  channel (``[file.output]`` keys of the same names, see below). A failure
+  of the pairing step is recorded in the log; that channel's files are then
+  simply not written (the FLEX outputs are written first and are never lost
+  to it). Memory: see :ref:`the FLEX tutorial section on pairing with the
+  bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
+  ``[eliashberg] matsubara_basis = "ir"``.
+
 - ``flex_hartree_fock``
 
   **Type :**
@@ -562,6 +587,127 @@ Parameters
   sigma-sized arrays (kept on the device under GPU execution).
 
 
+.. _eliashberg_bond_dynamic_config:
+
+``eliashberg`` section
+================================
+
+This section is read by ``hwave_sc`` (the linearized Eliashberg equation
+solver) and, for the two keys marked "in-process" below, by ``hwave``
+itself when ``[mode.param] longitudinal_bond_pairing`` (above) requests it.
+Only the keys specific to the bond-resolved DYNAMIC pairing path are
+documented here; the full ``[eliashberg]`` table (``frequency``,
+``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
+``ir_wmax``, ...) is documented in
+:ref:`the dynamic-frequency section of the Eliashberg solver tutorial
+<sc_dynamic_frequency>`.
+
+- ``bond_channels``
+
+  **Type :**
+  Boolean (default value is ``false``; post-processing, ``hwave_sc`` only)
+
+  **Description :**
+  With ``frequency = "dynamic"`` and ``chi0q_mode = "flex"``, replaces the
+  on-site dynamic pairing kernel by the bond-resolved one: the pairing
+  vertex is built from a FLEX run's dynamic bond-resolved susceptibilities
+  (``S_bond``, ``C_bond`` and the bond-resolved ``chi_s_w`` / ``chi_c_w``)
+  instead of ``chiq_s.npz`` / ``chiq_c.npz``. The producing FLEX run must
+  have used ``longitudinal_bond_channels = true`` AND
+  ``longitudinal_bond_output_full = true`` under a version writing archive
+  schema 2 (see the description of ``longitudinal_bond`` in
+  ``file.output`` and :ref:`the archive reference <subsec:chiq_rpa>`); an
+  older schema-1 archive is refused with a message asking for a re-run.
+  Refused together with ``bond_green`` / ``bond_max_shells`` (the Green
+  function and the bond topology come from ``path_to_flex_output`` and the
+  archive, not from these static-bond-path keys) and ``zero_chi_s`` /
+  ``zero_chi_c`` (not implemented on the bond path). Exactly one
+  ``pairing_type`` (``"singlet"`` or ``"triplet"``) is solved per
+  ``hwave_sc`` run, as on the on-site dynamic path; a second channel is a
+  second run with its own ``path_to_output``. See :ref:`the FLEX tutorial
+  section on pairing with the bond-resolved vertex
+  <flex_bond_pairing_tutorial>` for the memory model, the sparse-ir
+  dependency and worked examples.
+
+- ``flex_bond_archive``
+
+  **Type :**
+  String (default value is ``"longitudinal_bond.npz"``; post-processing
+  only)
+
+  **Description :**
+  Filename of the dynamic bond archive read by the ``bond_channels = true``
+  dynamic path. A relative name is joined to ``[file.input]
+  path_to_flex_output``; an absolute path is used as given (the same rule
+  ``bond_green`` follows).
+
+- ``ir_fit_tol``
+
+  **Type :**
+  Float (default value is ``0.5``; both entries)
+
+  **Description :**
+  With ``matsubara_basis = "ir"``, refusal threshold of the componentwise
+  relative residual of fitting the uniform-grid bond vertex onto the IR
+  basis (evaluated separately for the spin and the charge contribution of
+  every bond-channel block, then maximized). A residual in
+  ``[0.1 * ir_fit_tol, ir_fit_tol)`` warns; ``ir_fit_tol = 0`` skips the
+  check entirely (the outputs then record the residual as ``nan``). Real
+  uniform-FFT archives typically give a 0.1-0.2 componentwise residual with
+  the constant retained (``ir_keep_static_chi = true``); independent of
+  ``ir_tol``.
+
+- ``parity_leakage_tol``
+
+  **Type :**
+  Float (default: unset -- resolves to ``1e-8`` on the uniform grid and
+  ``2e-2`` with ``matsubara_basis = "ir"``; both entries)
+
+  **Description :**
+  Refusal threshold of the parity-commutation probe the bond kernel runs
+  before every solve (the direct-term-only kernel is the physical one only
+  on a definite-parity subspace, so a leakage above this threshold is
+  refused rather than silently solved). The IR representation of a
+  uniform-FFT archive carries a parity asymmetry of its own, decaying as
+  ``Nmat^-2`` (measured 7.6e-3 / 1.3e-3 at Nmat 64 / 128 on a single-band
+  test fixture), which is why the IR default is looser than the uniform
+  one. A leakage above ``0.1 * parity_leakage_tol`` warns; the measured
+  value is recorded in the outputs as ``bond_parity_leakage``.
+
+- ``bond_memory_cap_gb``
+
+  **Type :**
+  Float (default: 80% of the measured free host memory; both entries)
+
+  **Description :**
+  Host memory cap of the dynamic bond-resolved pairing step, in binary
+  GiB (the existing static-bond key of the same name, reused here as the
+  host cap of this path; GPU memory is not covered). Admission is checked
+  before the vertex is built and again before the kernel's largest arrays;
+  the run (or, in-process, the requested channel) is refused with the full
+  memory table when even the streaming residency does not fit. In-process,
+  admission also runs once BEFORE the first FLEX map so that a long FLEX
+  run is not lost to a pairing-step allocation failure after the fact.
+
+**In-process pairing** (``[mode.param] longitudinal_bond_pairing``, see the
+``mode.param`` section above): when a FLEX input sets
+``longitudinal_bond_pairing`` to something other than ``"none"``, an
+``[eliashberg]`` table in the SAME input file is optional and configures
+the pairing step at the end of the FLEX solve; every key of the general
+table not listed as post-processing-only above (``solver_mode``,
+``num_eigenvalues``, ``max_iter``, ``alpha``, ``convergence_tol``,
+``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_keep_static_chi``,
+``fft_workers``, ...) defaults exactly as it does for ``hwave_sc``.
+``pairing_type`` is refused (the channel(s) are selected by
+``longitudinal_bond_pairing`` instead); ``gpu`` / ``gpu_required`` are
+ignored (the kernel runs on the FLEX solve's own backend); ``bond_channels``,
+``chi0q_mode``, ``frequency``, ``flex_bond_archive``, ``bond_green``,
+``bond_max_shells`` are ignored too (an INFO line lists any that are
+present -- a shared input file for ``hwave`` then ``hwave_sc`` is a normal
+workflow, not a mistake). The ``[file.output]`` keys of the resulting files
+are documented under ``file.output`` below.
+
+
 ``log`` section
 ================================
 
@@ -717,3 +863,24 @@ to the definition files.
   appended, as for the other ``.npz`` outputs. It must not resolve to the
   same file as any other output of the run (the collision is refused
   before the calculation starts).
+
+- ``eliashberg_bond_singlet``, ``eliashberg_bond_triplet``,
+  ``eigenvalue_bond_singlet``, ``eigenvalue_bond_triplet``,
+  ``gap_bond_singlet``, ``gap_bond_triplet``
+
+  **Type :**
+  String (defaults ``eliashberg_bond_singlet.npz``,
+  ``eliashberg_bond_triplet.npz``, ``eigenvalue_bond_singlet.dat``,
+  ``eigenvalue_bond_triplet.dat``, ``gap_bond_singlet.dat``,
+  ``gap_bond_triplet.dat``; FLEX mode only)
+
+  **Description :**
+  Output filenames of the in-process bond-resolved pairing step
+  (``[mode.param] longitudinal_bond_pairing``, see the ``mode.param``
+  section above): the frequency-resolved gap archive, the leading-eigenvalue
+  file and the single-frequency gap slice of each requested channel (see
+  :ref:`the output reference <subsec:eliashberg_bond_outputs>`). Archive
+  names without a ``.npz`` suffix get one appended, as for the other
+  ``.npz`` outputs. Each name must not resolve to the same file as any
+  other output of the run (the collision is refused before the calculation
+  starts).

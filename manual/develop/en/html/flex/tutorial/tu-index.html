@@ -182,13 +182,13 @@ Phys. Rev. Lett. <strong>104</strong>, 157001 (2010).</p>
 </aside>
 <aside class="footnote brackets" id="id8" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id4">1</a>,<a role="doc-backlink" href="#id20">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id4">1</a>,<a role="doc-backlink" href="#id21">2</a>)</span>
 <p>M. Mochizuki, Y. Yanase, and M. Ogata,
 J. Phys. Soc. Jpn. (cond-mat/0407094).</p>
 </aside>
 <aside class="footnote brackets" id="id9" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id5">1</a>,<a role="doc-backlink" href="#id21">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id5">1</a>,<a role="doc-backlink" href="#id22">2</a>)</span>
 <p>T. Takimoto, T. Hotta, and K. Ueda,
 Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 </aside>
@@ -570,7 +570,7 @@ archive and the run’s bare Transfer input (the archive is Fourier-transformed
 with the solver’s convention, the bare transfer is subtracted and the result
 is reduced to the spin-free block). <code class="docutils literal notranslate"><span class="pre">--force</span></code> overwrites an existing output.</p>
 <p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id22">
+<figure class="align-center" id="id23">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
 </a>
 <figcaption>
@@ -578,22 +578,22 @@ is reduced to the spin-free block). <code class="docutils literal notranslate"><
 single-orbital Hubbard model at half filling.
 The peak at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> indicates strong
 antiferromagnetic spin fluctuations, consistent with the nesting
-of the Fermi surface.</span><a class="headerlink" href="#id22" title="Link to this image">¶</a></p>
+of the Fermi surface.</span><a class="headerlink" href="#id23" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Self-energy</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id23">
+<figure class="align-center" id="id24">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace.png"><img alt="../../_images/sigma_kspace.png" src="../../_images/sigma_kspace.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">Fig. 6.2 </span><span class="caption-text">Imaginary part of the self-energy at the lowest Matsubara frequency.
 The k-dependence reflects the scattering of quasiparticles by
 spin fluctuations, with stronger damping near the antiferromagnetic
-hot spots.</span><a class="headerlink" href="#id23" title="Link to this image">¶</a></p>
+hot spots.</span><a class="headerlink" href="#id24" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Self-energy vs Matsubara frequency</strong>:</p>
-<figure class="align-center" id="id24">
+<figure class="align-center" id="id25">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara.png"><img alt="../../_images/sigma_matsubara.png" src="../../_images/sigma_matsubara.png" style="width: 80%;" />
 </a>
 <figcaption>
@@ -601,9 +601,326 @@ hot spots.</span><a class="headerlink" href="#id23" title="Link to this image">�
 The imaginary part <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span>
 shows quasiparticle damping, while the
 <span class="math notranslate nohighlight">\(1/\omega_n\)</span> tail at high frequencies indicates
-Fermi liquid behavior.</span><a class="headerlink" href="#id24" title="Link to this image">¶</a></p>
+Fermi liquid behavior.</span><a class="headerlink" href="#id25" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
+</section>
+<section id="pairing-eigenvalues-with-the-bond-resolved-vertex">
+<span id="flex-bond-pairing-tutorial"></span><h3>Pairing eigenvalues with the bond-resolved vertex<a class="headerlink" href="#pairing-eigenvalues-with-the-bond-resolved-vertex" title="Link to this heading">¶</a></h3>
+<p>Once a Hartree-Fock FLEX run with the bond-resolved channel
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, above) has produced a dressed
+Green function, the linearized Eliashberg equation can be solved with the
+SAME bond-resolved, frequency-resolved pairing vertex the self-energy used
+– rather than the on-site <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> vertex of
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a>. That is all
+the in-process entry needs. The dynamic bond archive
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code> (schema 2), which is written only with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>, is needed solely by the
+post-processing entry through <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>. Two entries reach this kernel
+and build it from the same arrays, so they agree to round-off on the
+uniform Matsubara grid:</p>
+<ul class="simple">
+<li><p><strong>In-process</strong>, at the end of the FLEX solve itself: set
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span> <span class="pre">=</span> <span class="pre">&quot;singlet&quot;</span> <span class="pre">|</span> <span class="pre">&quot;triplet&quot;</span> <span class="pre">|</span>
+<span class="pre">&quot;both&quot;</span></code> in the FLEX input. Requires <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code> and <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">&gt;=</span> <span class="pre">1</span></code>. An optional <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table in
+the SAME input file configures the solver (every key defaults exactly as
+it does for <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>); <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is refused there (the
+channel is chosen by <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>), and <code class="docutils literal notranslate"><span class="pre">gpu</span></code> /
+<code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code> / <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> / <code class="docutils literal notranslate"><span class="pre">frequency</span></code> /
+<code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> are ignored
+with an INFO line – the pairing step runs on the FLEX solve’s own
+backend and data, not on a re-read archive. Writes
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code> and
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> per requested channel AFTER every FLEX
+output file, so a failure of the pairing step never costs the FLEX
+results.</p></li>
+<li><p><strong>Post-processing</strong>, through <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>: set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> in a separate <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> input, pointing
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code> at the FLEX run’s output directory.
+Requires <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> on that FLEX run (the
+archive is written only then) under a version writing archive schema 2
+– an older schema-1 archive is refused with a message asking for a
+re-run. Solves ONE channel per run (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">pairing_type</span></code>), and
+writes the same file names as the on-site dynamic solver
+(<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>).</p></li>
+</ul>
+<p>See <a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">the output reference</span></a> for the
+complete key sets, <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">the configuration reference’s eliashberg section</span></a> for the bond-specific keys and
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a> for the general
+solver controls.</p>
+<section id="memory-and-the-ir-basis">
+<h4>Memory and the IR basis<a class="headerlink" href="#memory-and-the-ir-basis" title="Link to this heading">¶</a></h4>
+<p>The archive’s two dominant members, <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> and <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>, are each
+<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code> bytes (complex128; <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">norb**2</span></code> with
+<code class="docutils literal notranslate"><span class="pre">B</span></code> the number of bond channels the FLEX run kept, channel 0 the on-site
+term), so the archive as a whole is about <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code>
+bytes – the same doubling <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (above)
+already costs the FLEX solve’s own persistent memory. For in-process-only
+use leave <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> at <code class="docutils literal notranslate"><span class="pre">false</span></code>: the archive is
+written only for the post-processing entry, and on a multi-orbital model it
+is tens of GB on disk. The pairing kernel adds its own working set on top
+(the pair bubble, the hoisted vertex blocks, the eigensolver vectors).
+Worked numbers for two representative models (CuO2-type: <span class="math notranslate nohighlight">\(B=5\)</span>, <code class="docutils literal notranslate"><span class="pre">norb</span></code> = 3, <code class="docutils literal notranslate"><span class="pre">ND</span></code> = 45, <code class="docutils literal notranslate"><span class="pre">nvol</span></code> = 1024,
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> = 1024, <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> = 10; single band: <span class="math notranslate nohighlight">\(B=5\)</span>,
+<code class="docutils literal notranslate"><span class="pre">norb</span></code> = 1, a 32x32 lattice, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> = 1024):</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 46.0%" />
+<col style="width: 27.0%" />
+<col style="width: 27.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Quantity</p></th>
+<th class="head"><p>CuO2-type (GB)</p></th>
+<th class="head"><p>Single band (GB)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Dynamic archive on disk (<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> + <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>)</p></td>
+<td><p>68</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>In-process, uniform grid, hoisted vertex blocks (<code class="docutils literal notranslate"><span class="pre">B**2</span></code> blocks)</p></td>
+<td><p>34</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-even"><td><p>In-process, uniform grid, <code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code> residency, device memory
+(one A100; one matvec = one FLEX-sized transport, 15-30 s)</p></td>
+<td><p>~8.3</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>In-process, IR (<span class="math notranslate nohighlight">\(L_B \approx 80\)</span>), device memory
+(dominated by the hoisted blocks; everything fits, matvec in
+seconds)</p></td>
+<td><p>~2.7</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-even"><td><p>Post-processing, uniform grid, host memory before the kernel
+(one archive member + the vertex accumulator)</p></td>
+<td><p>~68</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Post-processing, IR, host memory before <code class="docutils literal notranslate"><span class="pre">finish</span></code>
+(one archive member + the IR coefficients)</p></td>
+<td><p>~39</p></td>
+<td><p>&lt; 1</p></td>
+</tr>
+</tbody>
+</table>
+<p>GB here means <span class="math notranslate nohighlight">\(10^9\)</span> bytes; the cap key <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> is in
+binary GiB (<span class="math notranslate nohighlight">\(1024^3\)</span> bytes, about 7 % larger), so set it from these
+numbers with that margin in mind.</p>
+<p>For a model whose <code class="docutils literal notranslate"><span class="pre">B**2</span></code> hoisted blocks (or, in post-processing, whose
+archive members) do not fit in memory, set <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span>
+<span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>: the IR basis replaces the <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>-point Matsubara axis by its
+sparse sampling nodes (typically 50-100), shrinking every frequency-axis
+row above by roughly <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">/</span> <span class="pre">L</span></code>. It requires the optional
+<a class="reference external" href="https://sparse-ir.readthedocs.io">sparse-ir</a> package
+(<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">sparse-ir</span></code>). <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span></code> caps the
+host side of this path explicitly (the existing static-bond key of the
+same name, reused here); when even the streaming residency would not fit,
+the in-process entry refuses BEFORE the first FLEX map (a long FLEX run is
+never lost to a post-hoc allocation failure) and the post-processing entry
+refuses with the full memory table. The kernel picks its residency
+(<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code>: vertex blocks on the device, on
+the host, or rebuilt per application) automatically from the free device /
+host memory and <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>; the choice is recorded in the
+outputs as <code class="docutils literal notranslate"><span class="pre">bond_residency</span></code>.</p>
+</section>
+<section id="a-single-band-example-both-entries">
+<h4>A single-band example (both entries)<a class="headerlink" href="#a-single-band-example-both-entries" title="Link to this heading">¶</a></h4>
+<p>On-site <span class="math notranslate nohighlight">\(U = 4t\)</span> and nearest-neighbour <span class="math notranslate nohighlight">\(V = t\)</span> on a 32x32
+lattice, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 1024, solving both pairing channels in-process:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"general"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.45</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="n">IterationMax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"anderson"</span>
+<span class="w">  </span><span class="n">anderson_depth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span>
+<span class="w">  </span><span class="n">EPS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_output_full</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">   </span><span class="c1"># only for the hwave_sc entry below; omit for in-process-only runs</span>
+<span class="w">  </span><span class="n">longitudinal_bond_pairing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"both"</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">sigma</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span>
+<span class="w">  </span><span class="n">chiq</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chiq"</span>
+<span class="w">  </span><span class="n">longitudinal_bond</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"longitudinal_bond.npz"</span>
+<span class="w">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"energy.dat"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave<span class="w"> </span>input.toml
+</pre></div>
+</div>
+<p>This writes <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap_bond_singlet.dat</span></code> /
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet.dat</span></code> and the <code class="docutils literal notranslate"><span class="pre">triplet</span></code> equivalents into
+<code class="docutils literal notranslate"><span class="pre">output/</span></code>. To solve the same archive through the post-processing entry
+instead (e.g. to compare bases without re-running FLEX), run the FLEX
+input above once (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> may stay <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> if
+only the post-processing entry is wanted), then a second input through
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"SC"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">32</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1024</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.45</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_flex_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output_sc"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">chi0q_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"flex"</span>
+<span class="w">  </span><span class="n">frequency</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"dynamic"</span>
+<span class="w">  </span><span class="n">bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">pairing_type</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"singlet"</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">6</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>hwave_sc<span class="w"> </span>input_sc.toml
+</pre></div>
+</div>
+<p>Both give the leading eigenvalue and gap to round-off on the uniform grid.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> writes <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> under that fixed name whatever
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code> / <code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>
+rename only the text files <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> / <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>); solve the
+singlet and the triplet channel into two different <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>
+directories, or the second run overwrites the first archive.</p>
+</div>
+</section>
+<section id="a-three-band-example-on-the-ir-basis">
+<h4>A three-band example on the IR basis<a class="headerlink" href="#a-three-band-example-on-the-ir-basis" title="Link to this heading">¶</a></h4>
+<p>For a model whose bond-resolved dynamic archive does not fit the uniform
+grid’s memory (e.g. a CuO2-type three-band model), set <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span>
+<span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> in the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table of the FLEX input.</p>
+<p>The post-processing entry accepts <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> as well; the
+in-process entry is shown because it never writes the uniform-grid archive.</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="p">...</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_pairing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"singlet"</span>
+<span class="k">[eliashberg]</span>
+<span class="w">  </span><span class="n">matsubara_basis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"ir"</span>
+<span class="w">  </span><span class="n">ir_fit_tol</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.1</span>
+<span class="w">  </span><span class="n">solver_mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"eigenvalue"</span>
+<span class="w">  </span><span class="n">num_eigenvalues</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code> (default 0.5) is the componentwise relative residual of
+fitting the uniform-grid bond vertex onto the IR basis; real uniform-FFT
+archives with the constant retained (<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>)
+typically give a 0.1-0.2 residual, so the tighter value above is a
+reasonable check on a well-resolved run and may need loosening on a
+coarser <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The instantaneous (frequency-independent) part of the vertex enters the
+IR kernel through the exact Matsubara-sum midpoint
+<span class="math notranslate nohighlight">\(\tfrac12(F(0^+) - F(\beta^-))\)</span>, not <span class="math notranslate nohighlight">\(F(0^+)\)</span>. On a
+frequency-even pair amplitude the two coincide (its even-<span class="math notranslate nohighlight">\(l\)</span> IR
+coefficients vanish); the old prescription additionally mapped
+odd-frequency components into the even sector and never the other way,
+so it was block-triangular with respect to frequency parity and had the
+same spectrum – eigenvalues of parity-projected solves and of the
+eigenvalue solver are unchanged, while eigenvectors and an unprojected
+iteration were affected. What the correction removes is that spurious
+parity leakage (and with it the disabled projection, which in a triplet
+run can converge to the singlet-sector value, and the even-parity
+admixture in odd-channel gap functions). The same correction applies to
+the ordinary on-site dynamic IR solver; see
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-ir-instantaneous-en"><span class="std std-ref">the change note</span></a> for who should
+re-run.</p>
+</div>
+</section>
+<section id="nmat-dependence-of-the-ir-result">
+<h4>Nmat dependence of the IR result<a class="headerlink" href="#nmat-dependence-of-the-ir-result" title="Link to this heading">¶</a></h4>
+<p>On the uniform grid the two entries agree to round-off. Against the IR
+basis, however, a nonzero instantaneous vertex makes the two differ by
+<span class="math notranslate nohighlight">\(O(\beta / N_{\rm mat})\)</span>: the uniform grid truncates the Matsubara
+sum of the frequency-flat term at a finite <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, while the IR
+representation evaluates it analytically. Measured on the single-band
+<span class="math notranslate nohighlight">\(U=4\)</span>, <span class="math notranslate nohighlight">\(V=1\)</span>, 4x4 fixture at <span class="math notranslate nohighlight">\(T=0.5\)</span>:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 33.0%" />
+<col style="width: 33.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code></p></th>
+<th class="head"><p>singlet, uniform vs. IR</p></th>
+<th class="head"><p>triplet, uniform vs. IR</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>64</p></td>
+<td><p>5.7 %</p></td>
+<td><p>3.0 %</p></td>
+</tr>
+<tr class="row-odd"><td><p>128</p></td>
+<td><p>1.7 %</p></td>
+<td><p>0.9 %</p></td>
+</tr>
+</tbody>
+</table>
+<p>The two converge to the same continuum limit as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grows; for
+production use, check this shift at your own model’s <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> before
+trusting the IR result at face value, the same way the on-site dynamic
+solver’s IR section recommends. The IR representation of a uniform-FFT
+archive also carries its own parity asymmetry (unrelated to the above),
+decaying as <code class="docutils literal notranslate"><span class="pre">Nmat^-2</span></code> (measured 7.6e-3 at Nmat 64, 1.3e-3 at Nmat 128 on
+the same fixture) – the reason <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">parity_leakage_tol</span></code>
+defaults to a looser <code class="docutils literal notranslate"><span class="pre">2e-2</span></code> on the IR basis than the uniform grid’s
+<code class="docutils literal notranslate"><span class="pre">1e-8</span></code>.</p>
+</section>
+<section id="pairing-on-a-non-converged-flex-solve">
+<h4>Pairing on a non-converged FLEX solve<a class="headerlink" href="#pairing-on-a-non-converged-flex-solve" title="Link to this heading">¶</a></h4>
+<p>The in-process pairing step runs even when the FLEX SCF loop did not
+converge (the cost of the run is already sunk): the kernel uses the LAST
+map’s dressed susceptibility together with the FINAL (post-mix) Green
+function, a WARNING is logged, and the outputs record
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> and <code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">=</span> <span class="pre">&quot;mixed:</span> <span class="pre">last-map</span> <span class="pre">chi,</span> <span class="pre">final</span>
+<span class="pre">green&quot;</span></code> (a converged run instead records
+<code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">=</span> <span class="pre">&quot;last_map_chi</span> <span class="pre">/</span> <span class="pre">final_green&quot;</span></code>) – both in the npz metadata and
+as <code class="docutils literal notranslate"><span class="pre">#</span></code> header lines of <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>. Treat such a
+result as a diagnostic of the trajectory the SCF loop was following, not
+as a self-consistent pairing eigenvalue. A pipeline that reads
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> should test the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=true</span></code>
+header line (or the <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> key of the npz) before using the
+number.</p>
+</section>
 </section>
 </section>
 <section id="sample-2-two-orbital-hubbard-model">
@@ -752,34 +1069,34 @@ FLEX converged after 59 iterations
 <section id="id13">
 <h3>Results<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h3>
 <p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id25">
+<figure class="align-center" id="id26">
 <a class="reference internal image-reference" href="../../_images/chi_s1.png"><img alt="../../_images/chi_s1.png" src="../../_images/chi_s1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">Fig. 6.4 </span><span class="caption-text">Static spin susceptibility of the two-orbital model.
 The peak at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span> is enhanced by
 Hund’s coupling, which promotes ferromagnetic alignment within
-each site while allowing antiferromagnetic inter-site correlations.</span><a class="headerlink" href="#id25" title="Link to this image">¶</a></p>
+each site while allowing antiferromagnetic inter-site correlations.</span><a class="headerlink" href="#id26" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Self-energy</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id26">
+<figure class="align-center" id="id27">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace1.png"><img alt="../../_images/sigma_kspace1.png" src="../../_images/sigma_kspace1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">Fig. 6.5 </span><span class="caption-text">Imaginary part of the self-energy for the two-orbital model.
 The orbital-dependent k-structure reflects the different
-scattering channels in the multi-orbital system.</span><a class="headerlink" href="#id26" title="Link to this image">¶</a></p>
+scattering channels in the multi-orbital system.</span><a class="headerlink" href="#id27" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Self-energy vs Matsubara frequency</strong>:</p>
-<figure class="align-center" id="id27">
+<figure class="align-center" id="id28">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara1.png"><img alt="../../_images/sigma_matsubara1.png" src="../../_images/sigma_matsubara1.png" style="width: 80%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">Fig. 6.6 </span><span class="caption-text">Frequency dependence of the self-energy for the two-orbital model.
 The larger magnitude compared to the single-orbital case reflects
-the enhanced correlations from inter-orbital interactions.</span><a class="headerlink" href="#id27" title="Link to this image">¶</a></p>
+the enhanced correlations from inter-orbital interactions.</span><a class="headerlink" href="#id28" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
@@ -1173,10 +1490,10 @@ run looks under-provisioned).</p>
 </section>
 <section id="sample-3-iron-pnictide-2-orbital-model">
 <h2><span class="section-number">6.1.8. </span>Sample 3: Iron pnictide 2-orbital model<a class="headerlink" href="#sample-3-iron-pnictide-2-orbital-model" title="Link to this heading">¶</a></h2>
-<section id="id14">
-<h3>Model<a class="headerlink" href="#id14" title="Link to this heading">¶</a></h3>
+<section id="id15">
+<h3>Model<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>The third sample is a <strong>two-orbital minimal model for iron-based
-superconductors</strong> proposed by Raghu et al. <a class="footnote-reference brackets" href="#id16" id="id15" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a>
+superconductors</strong> proposed by Raghu et al. <a class="footnote-reference brackets" href="#id17" id="id16" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a>
 The model describes the Fe-As plane using <span class="math notranslate nohighlight">\(d_{xz}\)</span> and
 <span class="math notranslate nohighlight">\(d_{yz}\)</span> orbitals on a square lattice (1-Fe unit cell).</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
@@ -1204,15 +1521,15 @@ electron pockets at <span class="math notranslate nohighlight">\(M = (\pi, 0)\)<
 The nesting between these pockets drives strong spin fluctuations
 at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>, which is the hallmark of iron pnictides.</p>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id16" role="doc-footnote">
-<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id15">5</a><span class="fn-bracket">]</span></span>
+<aside class="footnote brackets" id="id17" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id16">5</a><span class="fn-bracket">]</span></span>
 <p>S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
 Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </aside>
 </aside>
 </section>
-<section id="id17">
-<h3>Prepare input files<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h3>
+<section id="id18">
+<h3>Prepare input files<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
 <p>The sample files are in <code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample/iron_2orb/</span></code>.</p>
 <p><strong>Parameter file</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -1329,8 +1646,8 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </pre></div>
 </div>
 </section>
-<section id="id18">
-<h3>Run the calculation<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
+<section id="id19">
+<h3>Run the calculation<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/en/source/flex/sample/iron_2orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -1349,10 +1666,10 @@ FLEX converged after 62 iterations
 </pre></div>
 </div>
 </section>
-<section id="id19">
-<h3>Results<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
+<section id="id20">
+<h3>Results<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h3>
 <p><strong>Spin and charge susceptibilities</strong>:</p>
-<figure class="align-center" id="id28">
+<figure class="align-center" id="id29">
 <a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -1361,11 +1678,11 @@ susceptibility <span class="math notranslate nohighlight">\(\chi_c(\mathbf{q})\)
 The spin susceptibility peaks at <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span> and
 <span class="math notranslate nohighlight">\((0, \pi)\)</span>, reflecting the nesting between hole and electron
 Fermi pockets. This is qualitatively different from the single-band
-Hubbard model where <span class="math notranslate nohighlight">\(\chi_s\)</span> peaks at <span class="math notranslate nohighlight">\((\pi, \pi)\)</span>.</span><a class="headerlink" href="#id28" title="Link to this image">¶</a></p>
+Hubbard model where <span class="math notranslate nohighlight">\(\chi_s\)</span> peaks at <span class="math notranslate nohighlight">\((\pi, \pi)\)</span>.</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Orbital-resolved self-energy</strong>:</p>
-<figure class="align-center" id="id29">
+<figure class="align-center" id="id30">
 <a class="reference internal image-reference" href="../../_images/sigma_orbital.png"><img alt="../../_images/sigma_orbital.png" src="../../_images/sigma_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -1373,18 +1690,18 @@ Hubbard model where <span class="math notranslate nohighlight">\(\chi_s\)</span>
 resolved by orbital. The <span class="math notranslate nohighlight">\(d_{xz}\)</span> orbital shows stronger
 scattering along <span class="math notranslate nohighlight">\(k_y\)</span> direction, while <span class="math notranslate nohighlight">\(d_{yz}\)</span> shows
 stronger scattering along <span class="math notranslate nohighlight">\(k_x\)</span>. This orbital anisotropy
-arises from the orbital character of the Fermi surface.</span><a class="headerlink" href="#id29" title="Link to this image">¶</a></p>
+arises from the orbital character of the Fermi surface.</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Self-energy vs Matsubara frequency</strong>:</p>
-<figure class="align-center" id="id30">
+<figure class="align-center" id="id31">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara_orbital.png"><img alt="../../_images/sigma_matsubara_orbital.png" src="../../_images/sigma_matsubara_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">Fig. 6.9 </span><span class="caption-text">Frequency dependence of the orbital-resolved self-energy at
 high-symmetry k-points. At <span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span>, the
 <span class="math notranslate nohighlight">\(d_{yz}\)</span> orbital is more strongly damped than <span class="math notranslate nohighlight">\(d_{xz}\)</span>,
-reflecting orbital-selective correlations.</span><a class="headerlink" href="#id30" title="Link to this image">¶</a></p>
+reflecting orbital-selective correlations.</span><a class="headerlink" href="#id31" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Plotting script</strong>:</p>
@@ -1404,7 +1721,7 @@ choice explicit. It uses the <strong>same</strong> model and interaction files
 (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>) and retains
 the full off-diagonal Kanamori vertices (the spin-flip Hund and
 pair-hopping / exchange terms). This is the paramagnetic full-vertex MYO
-formulation <a class="footnote-reference brackets" href="#id8" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> (corroborated by THU <a class="footnote-reference brackets" href="#id9" id="id21" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a>).</p>
+formulation <a class="footnote-reference brackets" href="#id8" id="id21" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a> (corroborated by THU <a class="footnote-reference brackets" href="#id9" id="id22" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a>).</p>
 <p>This variant is appropriate for multi-orbital models in which the
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
 pnictide model here — and a paramagnetic FLEX is sufficient. Note that the

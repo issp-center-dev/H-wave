@@ -228,16 +228,87 @@ susceptibilities, <code class="docutils literal notranslate"><span class="pre">&
 describes, with <code class="docutils literal notranslate"><span class="pre">hf_density_source</span></code>) and <code class="docutils literal notranslate"><span class="pre">density_target_enforced</span></code>.
 With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> the dedicated archive
 (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>, default <code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>)
-holds <code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code> (<code class="docutils literal notranslate"><span class="pre">1</span></code>), the full dynamic <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> and
-<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>, <code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span>
-<span class="pre">nmat&quot;</span></code>), <code class="docutils literal notranslate"><span class="pre">beta</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>, the momentum-convention
-markers, <code class="docutils literal notranslate"><span class="pre">index_order</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>, <code class="docutils literal notranslate"><span class="pre">types</span></code>, the sixteen
-static keys, the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>
+holds <code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code> (<code class="docutils literal notranslate"><span class="pre">2</span></code>, since the bond-resolved dynamic
+Eliashberg pairing solver below was added; see the note at the end of this
+paragraph), the full dynamic <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> and <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span>
+<span class="pre">J)</span></code>, <code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span> <span class="pre">nmat&quot;</span></code>), the instantaneous bond
+vertices <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> and <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> (complex <code class="docutils literal notranslate"><span class="pre">ndarray(nvol,</span> <span class="pre">ND,</span> <span class="pre">ND)</span></code>, the
+same bond-major layout as <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>) and <code class="docutils literal notranslate"><span class="pre">norb</span></code>, <code class="docutils literal notranslate"><span class="pre">beta</span></code>,
+<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>, the momentum-convention markers,
+<code class="docutils literal notranslate"><span class="pre">index_order</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>, <code class="docutils literal notranslate"><span class="pre">types</span></code>, the sixteen static
+keys, the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>
 / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> members and the provenance block; nothing else
-duplicates these arrays.
+duplicates these arrays. <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> and <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> are the input the
+bond-resolved dynamic Eliashberg pairing solver needs in addition to
+<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (see below); an archive written by an earlier
+version (<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">1</span></code>, without <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> /
+<code class="docutils literal notranslate"><span class="pre">norb</span></code>) is refused by that solver with a message asking for a re-run
+under this version. Every schema-1 key keeps its value and meaning
+unchanged under schema 2.
 With <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> no map is executed and every last-map archive is
 omitted (an INFO line lists them); only <code class="docutils literal notranslate"><span class="pre">sigma</span></code>, <code class="docutils literal notranslate"><span class="pre">green</span></code> and <code class="docutils literal notranslate"><span class="pre">energy</span></code>
 of the seed state are written.</p>
+</section>
+<section id="bond-resolved-dynamic-eliashberg-pairing-outputs">
+<span id="subsec-eliashberg-bond-outputs"></span><h1>Bond-resolved dynamic Eliashberg pairing outputs<a class="headerlink" href="#bond-resolved-dynamic-eliashberg-pairing-outputs" title="Link to this heading">¶</a></h1>
+<p>Two entries solve the linearized Eliashberg equation with the bond-resolved,
+dynamic pairing vertex built from <code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code> (schema 2,
+above): <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (post-processing, <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) and <code class="docutils literal notranslate"><span class="pre">hwave</span></code> itself at the end of a FLEX
+solve (<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>, see the configuration
+reference). See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">the FLEX tutorial section on pairing with the
+bond-resolved vertex</span></a> for the workflow and
+worked examples.</p>
+<p><strong>Post-processing entry</strong> (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>). Writes the same three files
+as the on-site dynamic solver – <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> and
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code> / <code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>
+override the names of <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> and <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>) – for the single
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> the run solves. <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> gains, in addition to its base key set (<code class="docutils literal notranslate"><span class="pre">gap</span></code>,
+<code class="docutils literal notranslate"><span class="pre">iomega</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">frequency</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>,
+<code class="docutils literal notranslate"><span class="pre">axis_order</span></code>, <code class="docutils literal notranslate"><span class="pre">normalization</span></code>, <code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>): <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>
+(<code class="docutils literal notranslate"><span class="pre">true</span></code>), <code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_reverse</span></code> (the archive’s bond
+topology, matching <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_delta_r</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_reverse</span></code>
+above), <code class="docutils literal notranslate"><span class="pre">bond_archive</span></code> (the resolved archive path), <code class="docutils literal notranslate"><span class="pre">bond_residency</span></code>
+(<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code>, the memory residency the kernel
+chose), <code class="docutils literal notranslate"><span class="pre">bond_parity_leakage</span></code> (the measured parity-commutation leakage;
+see <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">parity_leakage_tol</span></code>) and <code class="docutils literal notranslate"><span class="pre">gap_bond_projection</span></code> – the
+gap projected onto each bond form factor, complex <code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">norb,</span> <span class="pre">norb,</span>
+<span class="pre">Nmat)</span></code>. With <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> it additionally carries
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_L</span></code> and
+<code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code> (the componentwise IR fit residual of the bond
+vertex, real <code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">B)</span></code>; see <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">ir_fit_tol</span></code>).
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> gains the header lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code> and, when computed, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>.</p>
+<p><strong>In-process entry</strong> (<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>). For
+each requested channel (<code class="docutils literal notranslate"><span class="pre">singlet</span></code> and/or <code class="docutils literal notranslate"><span class="pre">triplet</span></code>) writes three files
+under the <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> names of the configuration reference (default
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>), AFTER every FLEX output file so a failure
+of the pairing step never costs the FLEX results:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code> carries the same key set as
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> above (including <code class="docutils literal notranslate"><span class="pre">gap_bond_projection</span></code> and, on IR,
+<code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code>) except <code class="docutils literal notranslate"><span class="pre">bond_archive</span></code> (the vertex is built
+from the FLEX solve’s own arrays, not a file), plus <code class="docutils literal notranslate"><span class="pre">eigenvalues_all</span></code>
+(the full spectrum returned by the eigensolver, when available),
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> and <code class="docutils literal notranslate"><span class="pre">scf_iterations</span></code> (the FLEX solve’s own
+convergence state) and <code class="docutils literal notranslate"><span class="pre">state</span></code> – <code class="docutils literal notranslate"><span class="pre">&quot;last_map_chi</span> <span class="pre">/</span> <span class="pre">final_green&quot;</span></code> when
+the FLEX solve converged, or <code class="docutils literal notranslate"><span class="pre">&quot;mixed:</span> <span class="pre">last-map</span> <span class="pre">chi,</span> <span class="pre">final</span> <span class="pre">green&quot;</span></code> when
+it did not: the pairing step still runs on a non-converged FLEX solve
+(the cost is sunk), and this label, together with
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>, marks the result as a diagnostic of the SCF
+trajectory rather than a self-consistent pairing eigenvalue.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code> is the same single-frequency text slice as
+<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> is the same format as <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>,
+with header lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code> and, when computed, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>.</p></li>
+</ul>
+<p>A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
+an eigensolver failure, a write failure) writes none of its three files;
+the failure is logged, and the next requested channel (if any) is still
+attempted.</p>
 </section>
 <section id="example-for-reading-data">
 <h1>Example for reading data<a class="headerlink" href="#example-for-reading-data" title="Link to this heading">¶</a></h1>

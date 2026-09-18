@@ -350,6 +350,29 @@ guard and is recorded in the outputs (<code class="docutils literal notranslate"
 member). The default does not depend on <code class="docutils literal notranslate"><span class="pre">gpu</span></code>. Ignored with a
 warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
+<p><strong>Type :</strong>
+String (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>;
+case-insensitive; default <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (required; the key is refused
+otherwise, as it is with <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>), solves the linearized
+Eliashberg equation at the end of the FLEX solve with the bond-resolved,
+frequency-resolved pairing vertex built from the same <code class="docutils literal notranslate"><span class="pre">S</span></code>, <code class="docutils literal notranslate"><span class="pre">C</span></code> and
+dressed <code class="docutils literal notranslate"><span class="pre">chi_s</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_c</span></code> the self-energy used (the in-process
+counterpart of <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span></code> below). The solver controls
+are read from the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table of the SAME input file (optional;
+every key defaults to the value <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses; <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is
+refused there – the channel(s) are selected by this key instead; <code class="docutils literal notranslate"><span class="pre">gpu</span></code>
+follows the FLEX solve). Results: <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> per requested
+channel (<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> keys of the same names, see below). A failure
+of the pairing step is recorded in the log; that channel’s files are then
+simply not written (the FLEX outputs are written first and are never lost
+to it). Memory: see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">the FLEX tutorial section on pairing with the
+bond-resolved vertex</span></a>; for large models set
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>Type :</strong>
 Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; FLEX mode only)</p>
@@ -561,6 +584,112 @@ sigma-sized arrays (kept on the device under GPU execution).</p>
 </li>
 </ul>
 </section>
+<section id="eliashberg-section">
+<span id="eliashberg-bond-dynamic-config"></span><h3><code class="docutils literal notranslate"><span class="pre">eliashberg</span></code> section<a class="headerlink" href="#eliashberg-section" title="Link to this heading">¶</a></h3>
+<p>This section is read by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (the linearized Eliashberg equation
+solver) and, for the two keys marked “in-process” below, by <code class="docutils literal notranslate"><span class="pre">hwave</span></code>
+itself when <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code> (above) requests it.
+Only the keys specific to the bond-resolved DYNAMIC pairing path are
+documented here; the full <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table (<code class="docutils literal notranslate"><span class="pre">frequency</span></code>,
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>, <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, …) is documented in
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section of the Eliashberg solver tutorial</span></a>.</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; post-processing, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> only)</p>
+<p><strong>Description :</strong>
+With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, replaces the
+on-site dynamic pairing kernel by the bond-resolved one: the pairing
+vertex is built from a FLEX run’s dynamic bond-resolved susceptibilities
+(<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>, <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> and the bond-resolved <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>)
+instead of <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>. The producing FLEX run must
+have used <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> AND
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> under a version writing archive
+schema 2 (see the description of <code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code> in
+<code class="docutils literal notranslate"><span class="pre">file.output</span></code> and <a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-chiq-rpa"><span class="std std-ref">the archive reference</span></a>); an
+older schema-1 archive is refused with a message asking for a re-run.
+Refused together with <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> (the Green
+function and the bond topology come from <code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code> and the
+archive, not from these static-bond-path keys) and <code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code> /
+<code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code> (not implemented on the bond path). Exactly one
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>) is solved per
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> run, as on the on-site dynamic path; a second channel is a
+second run with its own <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>. See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">the FLEX tutorial
+section on pairing with the bond-resolved vertex</span></a> for the memory model, the sparse-ir
+dependency and worked examples.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;longitudinal_bond.npz&quot;</span></code>; post-processing
+only)</p>
+<p><strong>Description :</strong>
+Filename of the dynamic bond archive read by the <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+dynamic path. A relative name is joined to <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<span class="pre">path_to_flex_output</span></code>; an absolute path is used as given (the same rule
+<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> follows).</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is <code class="docutils literal notranslate"><span class="pre">0.5</span></code>; both entries)</p>
+<p><strong>Description :</strong>
+With <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>, refusal threshold of the componentwise
+relative residual of fitting the uniform-grid bond vertex onto the IR
+basis (evaluated separately for the spin and the charge contribution of
+every bond-channel block, then maximized). A residual in
+<code class="docutils literal notranslate"><span class="pre">[0.1</span> <span class="pre">*</span> <span class="pre">ir_fit_tol,</span> <span class="pre">ir_fit_tol)</span></code> warns; <code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span> <span class="pre">=</span> <span class="pre">0</span></code> skips the
+check entirely (the outputs then record the residual as <code class="docutils literal notranslate"><span class="pre">nan</span></code>). Real
+uniform-FFT archives typically give a 0.1-0.2 componentwise residual with
+the constant retained (<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>); independent of
+<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">parity_leakage_tol</span></code></p>
+<p><strong>Type :</strong>
+Float (default: unset – resolves to <code class="docutils literal notranslate"><span class="pre">1e-8</span></code> on the uniform grid and
+<code class="docutils literal notranslate"><span class="pre">2e-2</span></code> with <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>; both entries)</p>
+<p><strong>Description :</strong>
+Refusal threshold of the parity-commutation probe the bond kernel runs
+before every solve (the direct-term-only kernel is the physical one only
+on a definite-parity subspace, so a leakage above this threshold is
+refused rather than silently solved). The IR representation of a
+uniform-FFT archive carries a parity asymmetry of its own, decaying as
+<code class="docutils literal notranslate"><span class="pre">Nmat^-2</span></code> (measured 7.6e-3 / 1.3e-3 at Nmat 64 / 128 on a single-band
+test fixture), which is why the IR default is looser than the uniform
+one. A leakage above <code class="docutils literal notranslate"><span class="pre">0.1</span> <span class="pre">*</span> <span class="pre">parity_leakage_tol</span></code> warns; the measured
+value is recorded in the outputs as <code class="docutils literal notranslate"><span class="pre">bond_parity_leakage</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code></p>
+<p><strong>Type :</strong>
+Float (default: 80% of the measured free host memory; both entries)</p>
+<p><strong>Description :</strong>
+Host memory cap of the dynamic bond-resolved pairing step, in binary
+GiB (the existing static-bond key of the same name, reused here as the
+host cap of this path; GPU memory is not covered). Admission is checked
+before the vertex is built and again before the kernel’s largest arrays;
+the run (or, in-process, the requested channel) is refused with the full
+memory table when even the streaming residency does not fit. In-process,
+admission also runs once BEFORE the first FLEX map so that a long FLEX
+run is not lost to a pairing-step allocation failure after the fact.</p>
+</li>
+</ul>
+<p><strong>In-process pairing</strong> (<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>, see the
+<code class="docutils literal notranslate"><span class="pre">mode.param</span></code> section above): when a FLEX input sets
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> to something other than <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, an
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table in the SAME input file is optional and configures
+the pairing step at the end of the FLEX solve; every key of the general
+table not listed as post-processing-only above (<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>,
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, <code class="docutils literal notranslate"><span class="pre">max_iter</span></code>, <code class="docutils literal notranslate"><span class="pre">alpha</span></code>, <code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>,
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>,
+<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>, …) defaults exactly as it does for <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is refused (the channel(s) are selected by
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> instead); <code class="docutils literal notranslate"><span class="pre">gpu</span></code> / <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> are
+ignored (the kernel runs on the FLEX solve’s own backend); <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>,
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>, <code class="docutils literal notranslate"><span class="pre">frequency</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>,
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> are ignored too (an INFO line lists any that are
+present – a shared input file for <code class="docutils literal notranslate"><span class="pre">hwave</span></code> then <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> is a normal
+workflow, not a mistake). The <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> keys of the resulting files
+are documented under <code class="docutils literal notranslate"><span class="pre">file.output</span></code> below.</p>
+</section>
 <section id="log-section">
 <h3><code class="docutils literal notranslate"><span class="pre">log</span></code> section<a class="headerlink" href="#log-section" title="Link to this heading">¶</a></h3>
 <ul>
@@ -688,6 +817,25 @@ susceptibilities, written only when <code class="docutils literal notranslate"><
 appended, as for the other <code class="docutils literal notranslate"><span class="pre">.npz</span></code> outputs. It must not resolve to the
 same file as any other output of the run (the collision is refused
 before the calculation starts).</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet</span></code>, <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet</span></code>,
+<code class="docutils literal notranslate"><span class="pre">gap_bond_singlet</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_bond_triplet</span></code></p>
+<p><strong>Type :</strong>
+String (defaults <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet.dat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_bond_singlet.dat</span></code>,
+<code class="docutils literal notranslate"><span class="pre">gap_bond_triplet.dat</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Output filenames of the in-process bond-resolved pairing step
+(<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>, see the <code class="docutils literal notranslate"><span class="pre">mode.param</span></code>
+section above): the frequency-resolved gap archive, the leading-eigenvalue
+file and the single-frequency gap slice of each requested channel (see
+<a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">the output reference</span></a>). Archive
+names without a <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix get one appended, as for the other
+<code class="docutils literal notranslate"><span class="pre">.npz</span></code> outputs. Each name must not resolve to the same file as any
+other output of the run (the collision is refused before the calculation
+starts).</p>
 </li>
 </ul>
 </section>

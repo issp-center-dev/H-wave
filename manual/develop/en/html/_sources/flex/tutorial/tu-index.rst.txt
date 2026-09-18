@@ -578,6 +578,323 @@ is reduced to the spin-free block). ``--force`` overwrites an existing output.
    Fermi liquid behavior.
 
 
+.. _flex_bond_pairing_tutorial:
+
+Pairing eigenvalues with the bond-resolved vertex
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Once a Hartree-Fock FLEX run with the bond-resolved channel
+(``longitudinal_bond_channels = true``, above) has produced a dressed
+Green function, the linearized Eliashberg equation can be solved with the
+SAME bond-resolved, frequency-resolved pairing vertex the self-energy used
+-- rather than the on-site ``chiq_s.npz`` / ``chiq_c.npz`` vertex of
+:ref:`the dynamic-frequency section <sc_dynamic_frequency>`. That is all
+the in-process entry needs. The dynamic bond archive
+``longitudinal_bond.npz`` (schema 2), which is written only with
+``longitudinal_bond_output_full = true``, is needed solely by the
+post-processing entry through ``hwave_sc``. Two entries reach this kernel
+and build it from the same arrays, so they agree to round-off on the
+uniform Matsubara grid:
+
+- **In-process**, at the end of the FLEX solve itself: set
+  ``[mode.param] longitudinal_bond_pairing = "singlet" | "triplet" |
+  "both"`` in the FLEX input. Requires ``longitudinal_bond_channels =
+  true`` and ``IterationMax >= 1``. An optional ``[eliashberg]`` table in
+  the SAME input file configures the solver (every key defaults exactly as
+  it does for ``hwave_sc``); ``pairing_type`` is refused there (the
+  channel is chosen by ``longitudinal_bond_pairing``), and ``gpu`` /
+  ``gpu_required`` / ``bond_channels`` / ``chi0q_mode`` / ``frequency`` /
+  ``flex_bond_archive`` / ``bond_green`` / ``bond_max_shells`` are ignored
+  with an INFO line -- the pairing step runs on the FLEX solve's own
+  backend and data, not on a re-read archive. Writes
+  ``eliashberg_bond_<type>.npz``, ``gap_bond_<type>.dat`` and
+  ``eigenvalue_bond_<type>.dat`` per requested channel AFTER every FLEX
+  output file, so a failure of the pairing step never costs the FLEX
+  results.
+- **Post-processing**, through ``hwave_sc``: set ``[eliashberg]
+  bond_channels = true`` with ``frequency = "dynamic"`` and
+  ``chi0q_mode = "flex"`` in a separate ``hwave_sc`` input, pointing
+  ``[file.input] path_to_flex_output`` at the FLEX run's output directory.
+  Requires ``longitudinal_bond_output_full = true`` on that FLEX run (the
+  archive is written only then) under a version writing archive schema 2
+  -- an older schema-1 archive is refused with a message asking for a
+  re-run. Solves ONE channel per run (``[eliashberg] pairing_type``), and
+  writes the same file names as the on-site dynamic solver
+  (``gap_dynamic.npz``, ``gap.dat``, ``eigenvalue.dat``).
+
+See :ref:`the output reference <subsec:eliashberg_bond_outputs>` for the
+complete key sets, :ref:`the configuration reference's eliashberg section
+<eliashberg_bond_dynamic_config>` for the bond-specific keys and
+:ref:`the dynamic-frequency section <sc_dynamic_frequency>` for the general
+solver controls.
+
+Memory and the IR basis
+""""""""""""""""""""""""""""""""
+
+The archive's two dominant members, ``chi_s_w`` and ``chi_c_w``, are each
+``Nmat * nvol * ND**2 * 16`` bytes (complex128; ``ND = B * norb**2`` with
+``B`` the number of bond channels the FLEX run kept, channel 0 the on-site
+term), so the archive as a whole is about ``2 * Nmat * nvol * ND**2 * 16``
+bytes -- the same doubling ``longitudinal_bond_output_full = true`` (above)
+already costs the FLEX solve's own persistent memory. For in-process-only
+use leave ``longitudinal_bond_output_full`` at ``false``: the archive is
+written only for the post-processing entry, and on a multi-orbital model it
+is tens of GB on disk. The pairing kernel adds its own working set on top
+(the pair bubble, the hoisted vertex blocks, the eigensolver vectors).
+Worked numbers for two representative models (CuO2-type: :math:`B=5`, ``norb`` = 3, ``ND`` = 45, ``nvol`` = 1024,
+``Nmat`` = 1024, ``num_eigenvalues`` = 10; single band: :math:`B=5`,
+``norb`` = 1, a 32x32 lattice, ``Nmat`` = 1024):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 27 27
+
+   * - Quantity
+     - CuO2-type (GB)
+     - Single band (GB)
+   * - Dynamic archive on disk (``chi_s_w`` + ``chi_c_w``)
+     - 68
+     - < 1
+   * - In-process, uniform grid, hoisted vertex blocks (``B**2`` blocks)
+     - 34
+     - < 1
+   * - In-process, uniform grid, ``"stream"`` residency, device memory
+       (one A100; one matvec = one FLEX-sized transport, 15-30 s)
+     - ~8.3
+     - < 1
+   * - In-process, IR (:math:`L_B \approx 80`), device memory
+       (dominated by the hoisted blocks; everything fits, matvec in
+       seconds)
+     - ~2.7
+     - < 1
+   * - Post-processing, uniform grid, host memory before the kernel
+       (one archive member + the vertex accumulator)
+     - ~68
+     - < 1
+   * - Post-processing, IR, host memory before ``finish``
+       (one archive member + the IR coefficients)
+     - ~39
+     - < 1
+
+GB here means :math:`10^9` bytes; the cap key ``bond_memory_cap_gb`` is in
+binary GiB (:math:`1024^3` bytes, about 7 % larger), so set it from these
+numbers with that margin in mind.
+
+For a model whose ``B**2`` hoisted blocks (or, in post-processing, whose
+archive members) do not fit in memory, set ``[eliashberg] matsubara_basis
+= "ir"``: the IR basis replaces the ``Nmat``-point Matsubara axis by its
+sparse sampling nodes (typically 50-100), shrinking every frequency-axis
+row above by roughly ``Nmat / L``. It requires the optional
+`sparse-ir <https://sparse-ir.readthedocs.io>`_ package
+(``pip install sparse-ir``). ``[eliashberg] bond_memory_cap_gb`` caps the
+host side of this path explicitly (the existing static-bond key of the
+same name, reused here); when even the streaming residency would not fit,
+the in-process entry refuses BEFORE the first FLEX map (a long FLEX run is
+never lost to a post-hoc allocation failure) and the post-processing entry
+refuses with the full memory table. The kernel picks its residency
+(``"device"``, ``"host"`` or ``"stream"``: vertex blocks on the device, on
+the host, or rebuilt per application) automatically from the free device /
+host memory and ``bond_memory_cap_gb``; the choice is recorded in the
+outputs as ``bond_residency``.
+
+A single-band example (both entries)
+""""""""""""""""""""""""""""""""""""""
+
+On-site :math:`U = 4t` and nearest-neighbour :math:`V = t` on a 32x32
+lattice, ``Nmat`` 1024, solving both pairing channels in-process:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.02
+     filling = 0.45
+     CellShape = [32, 32, 1]
+     Nmat = 1024
+     IterationMax = 100
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     longitudinal_bond_output_full = true   # only for the hwave_sc entry below; omit for in-process-only runs
+     longitudinal_bond_pairing = "both"
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     sigma = "sigma"
+     green = "green"
+     chiq = "chiq"
+     longitudinal_bond = "longitudinal_bond.npz"
+     energy = "energy.dat"
+   [eliashberg]
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 6
+
+.. code-block:: bash
+
+   $ hwave input.toml
+
+This writes ``eliashberg_bond_singlet.npz`` / ``gap_bond_singlet.dat`` /
+``eigenvalue_bond_singlet.dat`` and the ``triplet`` equivalents into
+``output/``. To solve the same archive through the post-processing entry
+instead (e.g. to compare bases without re-running FLEX), run the FLEX
+input above once (``longitudinal_bond_pairing`` may stay ``"none"`` if
+only the post-processing entry is wanted), then a second input through
+``hwave_sc``:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "SC"
+   [mode.param]
+     T = 0.02
+     CellShape = [32, 32, 1]
+     Nmat = 1024
+     filling = 0.45
+   [file.input]
+     path_to_flex_output = "output"
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output_sc"
+   [eliashberg]
+     chi0q_mode = "flex"
+     frequency = "dynamic"
+     bond_channels = true
+     pairing_type = "singlet"
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 6
+
+.. code-block:: bash
+
+   $ hwave_sc input_sc.toml
+
+Both give the leading eigenvalue and gap to round-off on the uniform grid.
+
+.. note::
+
+   ``hwave_sc`` writes ``gap_dynamic.npz`` under that fixed name whatever
+   ``pairing_type`` is (``[eliashberg] output_gap`` / ``output_eigenvalue``
+   rename only the text files ``gap.dat`` / ``eigenvalue.dat``); solve the
+   singlet and the triplet channel into two different ``path_to_output``
+   directories, or the second run overwrites the first archive.
+
+A three-band example on the IR basis
+""""""""""""""""""""""""""""""""""""""
+
+For a model whose bond-resolved dynamic archive does not fit the uniform
+grid's memory (e.g. a CuO2-type three-band model), set ``matsubara_basis
+= "ir"`` in the ``[eliashberg]`` table of the FLEX input.
+
+The post-processing entry accepts ``matsubara_basis = "ir"`` as well; the
+in-process entry is shown because it never writes the uniform-grid archive.
+
+.. code-block:: toml
+
+   [mode.param]
+     ...
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+     longitudinal_bond_pairing = "singlet"
+   [eliashberg]
+     matsubara_basis = "ir"
+     ir_fit_tol = 0.1
+     solver_mode = "eigenvalue"
+     num_eigenvalues = 4
+
+``ir_fit_tol`` (default 0.5) is the componentwise relative residual of
+fitting the uniform-grid bond vertex onto the IR basis; real uniform-FFT
+archives with the constant retained (``ir_keep_static_chi = true``)
+typically give a 0.1-0.2 residual, so the tighter value above is a
+reasonable check on a well-resolved run and may need loosening on a
+coarser ``Nmat``.
+
+.. note::
+
+   The instantaneous (frequency-independent) part of the vertex enters the
+   IR kernel through the exact Matsubara-sum midpoint
+   :math:`\tfrac12(F(0^+) - F(\beta^-))`, not :math:`F(0^+)`. On a
+   frequency-even pair amplitude the two coincide (its even-:math:`l` IR
+   coefficients vanish); the old prescription additionally mapped
+   odd-frequency components into the even sector and never the other way,
+   so it was block-triangular with respect to frequency parity and had the
+   same spectrum -- eigenvalues of parity-projected solves and of the
+   eigenvalue solver are unchanged, while eigenvectors and an unprojected
+   iteration were affected. What the correction removes is that spurious
+   parity leakage (and with it the disabled projection, which in a triplet
+   run can converge to the singlet-sector value, and the even-parity
+   admixture in odd-channel gap functions). The same correction applies to
+   the ordinary on-site dynamic IR solver; see
+   :ref:`the change note <sc_dynamic_ir_instantaneous_en>` for who should
+   re-run.
+
+Nmat dependence of the IR result
+""""""""""""""""""""""""""""""""""""
+
+On the uniform grid the two entries agree to round-off. Against the IR
+basis, however, a nonzero instantaneous vertex makes the two differ by
+:math:`O(\beta / N_{\rm mat})`: the uniform grid truncates the Matsubara
+sum of the frequency-flat term at a finite ``Nmat``, while the IR
+representation evaluates it analytically. Measured on the single-band
+:math:`U=4`, :math:`V=1`, 4x4 fixture at :math:`T=0.5`:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 33 33
+
+   * - ``Nmat``
+     - singlet, uniform vs. IR
+     - triplet, uniform vs. IR
+   * - 64
+     - 5.7 %
+     - 3.0 %
+   * - 128
+     - 1.7 %
+     - 0.9 %
+
+The two converge to the same continuum limit as ``Nmat`` grows; for
+production use, check this shift at your own model's ``Nmat`` before
+trusting the IR result at face value, the same way the on-site dynamic
+solver's IR section recommends. The IR representation of a uniform-FFT
+archive also carries its own parity asymmetry (unrelated to the above),
+decaying as ``Nmat^-2`` (measured 7.6e-3 at Nmat 64, 1.3e-3 at Nmat 128 on
+the same fixture) -- the reason ``[eliashberg] parity_leakage_tol``
+defaults to a looser ``2e-2`` on the IR basis than the uniform grid's
+``1e-8``.
+
+Pairing on a non-converged FLEX solve
+""""""""""""""""""""""""""""""""""""""""
+
+The in-process pairing step runs even when the FLEX SCF loop did not
+converge (the cost of the run is already sunk): the kernel uses the LAST
+map's dressed susceptibility together with the FINAL (post-mix) Green
+function, a WARNING is logged, and the outputs record
+``scf_converged = false`` and ``state = "mixed: last-map chi, final
+green"`` (a converged run instead records
+``state = "last_map_chi / final_green"``) -- both in the npz metadata and
+as ``#`` header lines of ``eigenvalue_bond_<type>.dat``. Treat such a
+result as a diagnostic of the trajectory the SCF loop was following, not
+as a self-consistent pairing eigenvalue. A pipeline that reads
+``eigenvalue_bond_<type>.dat`` should test the ``# scf_converged=true``
+header line (or the ``scf_converged`` key of the npz) before using the
+number.
+
+
 Sample 2: Two-orbital Hubbard model
 -----------------------------------------
 

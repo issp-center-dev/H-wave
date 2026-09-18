@@ -1084,11 +1084,53 @@ CPU の空間 FFT にのみ作用します。</p>
 <p class="admonition-title">警告</p>
 <p>1.0.x で計算した動的IRの結果は、ペアリング頂点にν非依存成分を
 持つモデル——特にオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
-を含む系——では誤りです（オンサイト<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの模型は
-裸頂点項が厳密に相殺するため影響なし）。該当する計算は再実行して
+を含む系——では誤りです（同梱のオンサイト<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの
+比較ではこの不具合は現れませんでした。なお、そのような模型でも裸の
+singlet 項はゼロではなく<span class="math notranslate nohighlight">\(+U\)</span>です——下の変更に関する注意を
+参照）。該当する計算は再実行して
 ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
 変更ではありません）。また自動<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>推定は分散ベースに変わり、
 現実的な多ホッピング模型では大幅に小さい（正しい）値になります。</p>
+</div>
+<div class="admonition warning" id="sc-dynamic-ir-instantaneous">
+<p class="admonition-title">警告</p>
+<p><strong>本バージョンでの変更。</strong>
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>では、ペアリング頂点の振動数に依存しない
+（瞬時）部分に、ペアバブルの厳密な松原和、すなわち
+<span class="math notranslate nohighlight">\(\tau = 0\)</span>における跳びの中間点
+<span class="math notranslate nohighlight">\(\tfrac12\bigl(F(0^+)-F(\beta^-)\bigr)\)</span>を掛けるように
+なりました。以前用いていた片側の値
+<span class="math notranslate nohighlight">\(F(0^+)\)</span>ではありません。これはボンド分解のソルバーと同様に
+通常の（オンサイトの）動的ソルバーにも適用されます。一様グリッドの
+経路は影響を受けません。</p>
+<p>何が変わるか。振動数について偶の対振幅に対しては2つの処方は一致
+します（その偶数<span class="math notranslate nohighlight">\(l\)</span>の IR 係数は消えるためです）。以前の
+処方はこれに加えて奇振動数成分を偶セクターへ写していましたが、
+逆向きには作用しなかったため、以前の演算子は振動数パリティに関して
+ブロック三角であり、新しい演算子と <strong>同じ</strong> スペクトルを持ちます。
+したがってパリティ射影を行った計算の先頭固有値も、固有値ソルバーが
+返す固有値も変わりませんが、固有ベクトルと射影なしの反復の振る舞いは
+影響を受けていました。これによる実用上の2つの帰結は現在では解消
+されています。1つはべき乗法のパリティガードが
+<span class="math notranslate nohighlight">\(10^{-1}\)</span>程度の漏れを報告して射影なしの反復に切り替わり、
+triplet の計算では偶パリティ（singlet セクター）の固有値に収束し
+得たこと、もう1つは固有値ソルバーが返す奇パリティチャネルの
+ギャップ関数に偶パリティ成分が混入していたことです。</p>
+<p>誰が影響を受けるか。瞬時バーテックスが非零である
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の計算すべてです。singlet チャネルの裸の
+項は Kuroki のスピン行列と電荷行列を用いた<span class="math notranslate nohighlight">\(\tfrac12(S+C)\)</span>
+であり、密度型の相互作用を持つほぼあらゆる模型で非零です（純粋な
+Hubbard 模型では<span class="math notranslate nohighlight">\(+U\)</span>になります）。triplet チャネルの裸の
+項は<span class="math notranslate nohighlight">\(\tfrac12(C-S)\)</span>であり、純粋な Hubbard 模型では零、
+組み上げた2つの行列が一致しない場合には非零になります。これは
+軌道間の<span class="math notranslate nohighlight">\(U'\)</span>、（オンサイトかオフサイトかによらず）Hund
+または Ising 項、あるいはオフサイトの密度間相互作用がある場合の
+一般的な帰結です（特定の組み合わせでは相殺し得ます）。
+以前の IR 計算については、ログに
+「does not commute with parity」の警告が出ていた場合（射影が無効に
+なっていました）、またはそのギャップ関数を利用する場合、特に
+triplet の計算では再実行してください。パリティ射影を行った
+singlet 計算の固有値は変わりません。</p>
 </div>
 </section>
 <section id="gpu-cupy">

@@ -297,6 +297,33 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 <code class="docutils literal notranslate"><span class="pre">gpu</span></code>に依存しません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 でない場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
+<p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>・
+<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。大文字小文字を区別しません。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>。
+FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提です（このキー自体は
+それなしでは拒否されます。<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>の場合も同様）。
+FLEX の計算の最後で、自己エネルギーが使ったのと同じ<code class="docutils literal notranslate"><span class="pre">S</span></code>・
+<code class="docutils literal notranslate"><span class="pre">C</span></code>・ドレスされた<code class="docutils literal notranslate"><span class="pre">chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chi_c</span></code>から構築される、
+ボンド分解して振動数に依存する対形成バーテックスを用いて、線形化
+Eliashberg 方程式を解きます（下記の<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span></code>
+のインプロセス版に相当します）。ソルバーの制御パラメータは同じ
+入力ファイルの<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブルから読み込まれます
+（省略可能。省略したキーは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と同じデフォルト値を
+取ります。<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>はここでは拒否されます -- チャネルは
+代わりにこのキーで選択されます。<code class="docutils literal notranslate"><span class="pre">gpu</span></code>は FLEX の計算に
+従います）。結果は<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>
+（リクエストしたチャネルごと。<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の同名キーで
+ファイル名を指定します。下記参照）。対形成計算の失敗はログに
+記録され、該当チャネルの出力ファイルは単に書き出されません
+（FLEX の出力は先に書き出されるため、失われることはありません）。
+メモリについては<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">FLEX チュートリアルのボンド分解バーテックス
+によるペアリングの節</span></a>を参照して
+ください。大規模な系では
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を設定してください。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
 <p><strong>説明 :</strong>
@@ -456,6 +483,117 @@ GPU 経路が使われます。
 </li>
 </ul>
 </section>
+<section id="eliashberg">
+<span id="eliashberg-bond-dynamic-config"></span><h3><code class="docutils literal notranslate"><span class="pre">eliashberg</span></code>セクション<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h3>
+<p>このセクションは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（線形化 Eliashberg 方程式ソルバー）が
+読み込みます。下記で「インプロセス」と記した2つのキーは、
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>（前述）がそれを要求する
+場合に<code class="docutils literal notranslate"><span class="pre">hwave</span></code>自身も読み込みます。ここではボンド分解した
+<strong>動的</strong> ペアリング経路に固有のキーのみを説明します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
+テーブルの全体（<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>・
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>など）は
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Eliashberg ソルバーのチュートリアルの動的振動数の節</span></a>で説明しています。</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。後処理の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+のみ)</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>とともに指定すると、
+オンサイトの動的対形成カーネルの代わりにボンド分解したものを使います。
+対形成バーテックスは、FLEX 計算のボンド分解した動的感受率
+（<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>・<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>とボンド分解した<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> /
+<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>）から構築され、<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>は
+使われません。生成元の FLEX 計算は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code><strong>かつ</strong><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>を、
+アーカイブスキーマ2を書き出すバージョンで実行している必要があります
+（<code class="docutils literal notranslate"><span class="pre">file.output</span></code>の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code>の説明と
+<a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-chiq-rpa"><span class="std std-ref">アーカイブの出力リファレンス</span></a>を参照）。
+古いスキーマ1のアーカイブは再計算を求めるメッセージとともに拒否
+されます。<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>（Green 関数と
+ボンドトポロジーはこれらの静的ボンド経路のキーではなく
+<code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code>とアーカイブから取得されます）、および
+<code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">zero_chi_c</span></code>（ボンド経路では未実装）と
+同時に指定すると拒否されます。オンサイトの動的経路と同様、
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の1回の実行につき1つの<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>
+または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>）のみを解きます。2つ目のチャネルは
+それぞれ独自の<code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>を持つ別の実行になります。
+メモリモデル・sparse-ir 依存・具体例は<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">FLEX チュートリアルの
+ボンド分解バーテックスによるペアリングの節</span></a>を参照してください。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;longitudinal_bond.npz&quot;</span></code>。
+後処理のみ)</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の動的経路が読み込むボンドアーカイブの
+ファイル名です。相対パスは<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>
+と結合されます。絶対パスはそのまま使われます
+（<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と同じ規則です）。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">0.5</span></code>。両方の経路)</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の場合、一様格子上のボンドバーテックスを
+IR 基底にフィットさせた際の、成分ごとの相対残差の拒否閾値です
+（各ボンドチャネルブロックのスピン・電荷それぞれの寄与について
+評価し、最大値を取ります）。残差が<code class="docutils literal notranslate"><span class="pre">[0.1</span> <span class="pre">*</span> <span class="pre">ir_fit_tol,</span>
+<span class="pre">ir_fit_tol)</span></code>の範囲にあれば警告のみです。<code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span> <span class="pre">=</span> <span class="pre">0</span></code>
+は検査そのものを省略します（出力の残差は<code class="docutils literal notranslate"><span class="pre">nan</span></code>になります）。
+実際の一様 FFT アーカイブでは、定数項を保持した場合
+（<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span> <span class="pre">=</span> <span class="pre">true</span></code>）で成分ごとの残差は通常
+0.1〜0.2 程度です。<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>とは独立です。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">parity_leakage_tol</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは未設定 -- 一様格子では<code class="docutils literal notranslate"><span class="pre">1e-8</span></code>、
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">2e-2</span></code>に解決されます。両方の
+経路)</p>
+<p><strong>説明 :</strong>
+ボンドカーネルが各回の求解の前に実行するパリティ交換確率の拒否
+閾値です（直接項のみのカーネルが物理的に正しいのは確定したパリティ
+部分空間上のみのため、この閾値を超える漏れは黙って解かず拒否
+します）。一様 FFT アーカイブの IR 表現はそれ自体が<code class="docutils literal notranslate"><span class="pre">Nmat^-2</span></code>
+で減衰するパリティの非対称性を持ちます（単一バンドのテストフィク
+スチャで Nmat 64 / 128 においてそれぞれ 7.6e-3 / 1.3e-3 と実測）。
+これが IR のデフォルトが一様格子より緩い理由です。
+<code class="docutils literal notranslate"><span class="pre">0.1</span> <span class="pre">*</span> <span class="pre">parity_leakage_tol</span></code>を超える漏れは警告となり、実測値は
+出力に<code class="docutils literal notranslate"><span class="pre">bond_parity_leakage</span></code>として記録されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは計測された空きホストメモリの
+80%。両方の経路)</p>
+<p><strong>説明 :</strong>
+動的なボンド分解対形成ステップの推定ホストメモリの上限で、
+2進 GiB 単位です（既存の静的ボンド経路と同名のキーを、この経路の
+ホスト上限として再利用します。GPU メモリは対象外）。バーテックスの
+構築前と、カーネルの最大の配列を確保する前の2回にわたって照合
+されます。ストリーミング残留方式でも収まらない場合、実行
+（インプロセスの場合は該当チャネル）は完全なメモリテーブルと
+ともに拒否されます。インプロセスの場合はさらに、最初の FLEX
+写像の <strong>前</strong> にも1回照合が行われるため、長時間の FLEX 計算が
+事後の対形成ステップのメモリ確保失敗によって失われることは
+ありません。</p>
+</li>
+</ul>
+<p><strong>インプロセスの対形成</strong>（<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>。
+前述の<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションを参照）: FLEX の入力で
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>を<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外にすると、同じ
+入力ファイルの<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブルは省略可能で、FLEX の
+計算の最後の対形成ステップを設定します。上記で「後処理のみ」と
+記していない一般的なテーブルの各キー（<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>・
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>・<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>・<code class="docutils literal notranslate"><span class="pre">alpha</span></code>・
+<code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>・<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>など）は
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります。<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>
+は拒否されます（チャネルは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>で
+選択されます）。<code class="docutils literal notranslate"><span class="pre">gpu</span></code> / <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>は無視されます
+（カーネルは FLEX 計算自身のバックエンドで動作します）。
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>・<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・
+<code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code>・<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>・<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>
+も無視されます（存在する場合は INFO ログに一覧が出力されます --
+<code class="docutils literal notranslate"><span class="pre">hwave</span></code>と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で同じ入力ファイルを共有するのは
+通常のワークフローであり、誤りではありません）。生成される
+ファイルの<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>キーは下記の<code class="docutils literal notranslate"><span class="pre">file.output</span></code>
+の項で説明します。</p>
+</section>
 <section id="log">
 <h3><code class="docutils literal notranslate"><span class="pre">log</span></code>セクション<a class="headerlink" href="#log" title="Link to this heading">¶</a></h3>
 <ul>
@@ -534,6 +672,24 @@ GPU 経路が使われます。
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>。FLEXモードのみ)</p>
 <p><strong>説明 :</strong> ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>かつ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合にのみ書き出されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のない名前には他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet</span></code>、<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet</span></code>、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet</span></code>、
+<code class="docutils literal notranslate"><span class="pre">gap_bond_singlet</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_bond_triplet</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトはそれぞれ<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet.dat</span></code>・
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">gap_bond_singlet.dat</span></code>・
+<code class="docutils literal notranslate"><span class="pre">gap_bond_triplet.dat</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+インプロセスのボンド分解対形成ステップ（<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_pairing</span></code>。前述の<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>セクションを
+参照）の出力ファイル名です。リクエストしたチャネルごとに、
+周波数分解したギャップのアーカイブ・先頭固有値のファイル・
+単一周波数でのギャップのスライスを指定します
+（<a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">出力リファレンス</span></a>を参照）。
+<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のないアーカイブ名には他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に
+拡張子が付加されます。他の出力ファイルと同じファイルに解決される
+指定は、計算開始前に拒否されます。</p>
 </li>
 </ul>
 </section>

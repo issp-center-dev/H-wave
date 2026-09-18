@@ -220,16 +220,96 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">hf_density_source</span></code>付き）・<code class="docutils literal notranslate"><span class="pre">density_target_enforced</span></code>が含まれます。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、専用アーカイブ
 （<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>、デフォルト<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>）に
-<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code>（<code class="docutils literal notranslate"><span class="pre">1</span></code>）、動的な<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>
+<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code>（<code class="docutils literal notranslate"><span class="pre">2</span></code>。以下のボンド分解した動的 Eliashberg
+対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+動的な<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>
 （<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>、<code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span> <span class="pre">nmat&quot;</span></code>）、
+瞬時のボンドバーテックス<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>と<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>（複素<code class="docutils literal notranslate"><span class="pre">ndarray(nvol,</span>
+<span class="pre">ND,</span> <span class="pre">ND)</span></code>。<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>と同じボンド優先の配置）と<code class="docutils literal notranslate"><span class="pre">norb</span></code>、
 <code class="docutils literal notranslate"><span class="pre">beta</span></code>・<code class="docutils literal notranslate"><span class="pre">T</span></code>・<code class="docutils literal notranslate"><span class="pre">nmat</span></code>・<code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>・運動量規約マーカー・
 <code class="docutils literal notranslate"><span class="pre">index_order</span></code>・<code class="docutils literal notranslate"><span class="pre">delta_r</span></code>・<code class="docutils literal notranslate"><span class="pre">reverse</span></code>・<code class="docutils literal notranslate"><span class="pre">types</span></code>、16個の静的キー、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>・<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>・
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>、来歴ブロックが格納されます。これらの配列を重複して
-持つファイルは他にありません。
+持つファイルは他にありません。<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>と<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>は、下記の
+ボンド分解した動的 Eliashberg 対形成ソルバーが<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>
+に加えて必要とする入力です。旧バージョンで書き出されたアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">S_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">norb</span></code>を
+含まない）は、そのソルバーによって、このバージョンでの再計算を求める
+メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
+スキーマ2でも変わりません。
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>では写像は実行されず、最後の写像に属するアーカイブは全て省略され
 （INFO ログに一覧が出ます）、初期状態の<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>・<code class="docutils literal notranslate"><span class="pre">energy</span></code>のみが
 書き出されます。</p>
+</section>
+<section id="eliashberg">
+<span id="subsec-eliashberg-bond-outputs"></span><h1>ボンド分解した動的 Eliashberg 対形成の出力<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ2、前述）のボンド分解した動的
+対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
+あります。後処理の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）と、FLEX の計算の最後に
+実行される<code class="docutils literal notranslate"><span class="pre">hwave</span></code>自身の経路（<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_pairing</span></code>。設定リファレンスを参照）です。
+ワークフローと具体例は<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">FLEX チュートリアルのボンド分解
+バーテックスによるペアリングの節</span></a>を
+参照してください。</p>
+<p><strong>後処理の経路</strong> （<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）。オンサイトの動的ソルバーと
+同じ3つのファイル -- <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>（<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の名前は
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code> / <code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>で上書きできます）
+-- を、その実行が解く単一の<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>について書き出します。<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>
+は、基本のキー集合（<code class="docutils literal notranslate"><span class="pre">gap</span></code>・<code class="docutils literal notranslate"><span class="pre">iomega</span></code>・<code class="docutils literal notranslate"><span class="pre">T</span></code>・
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>・
+<code class="docutils literal notranslate"><span class="pre">axis_order</span></code>・<code class="docutils literal notranslate"><span class="pre">normalization</span></code>・<code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>）に
+加えて、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>（<code class="docutils literal notranslate"><span class="pre">true</span></code>）、<code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> /
+<code class="docutils literal notranslate"><span class="pre">bond_reverse</span></code>（アーカイブのボンドトポロジー。上記の
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_delta_r</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_reverse</span></code>に
+対応）、<code class="docutils literal notranslate"><span class="pre">bond_archive</span></code>（解決されたアーカイブのパス）、
+<code class="docutils literal notranslate"><span class="pre">bond_residency</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;stream&quot;</span></code>の
+いずれか。カーネルが選んだメモリ配置）、<code class="docutils literal notranslate"><span class="pre">bond_parity_leakage</span></code>
+（実測されたパリティ交換の漏れ。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">parity_leakage_tol</span></code>を参照）、<code class="docutils literal notranslate"><span class="pre">gap_bond_projection</span></code>（各ボンド
+形状因子へ射影したギャップ。複素<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">norb,</span> <span class="pre">norb,</span> <span class="pre">Nmat)</span></code>）
+を追加で持ちます。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の場合はさらに
+<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_L</span></code>・
+<code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code>（ボンドバーテックスの成分ごとの IR
+フィット残差。実数<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">B)</span></code>。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">ir_fit_tol</span></code>を参照）を持ちます。<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>には
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された
+場合は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行が追加されます。</p>
+<p><strong>インプロセスの経路</strong> （<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_pairing</span></code>）。リクエストされたチャネル
+（<code class="docutils literal notranslate"><span class="pre">singlet</span></code>・<code class="docutils literal notranslate"><span class="pre">triplet</span></code>のいずれか、または両方）ごとに、
+設定リファレンスの<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>名の下に3つのファイルを
+書き出します（デフォルトは<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>）。
+これらは全ての FLEX 出力ファイルの <strong>後</strong> に書き出されるため、
+対形成ステップの失敗が FLEX の結果を損なうことはありません。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>は、上記の<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>
+と同じキー集合（<code class="docutils literal notranslate"><span class="pre">gap_bond_projection</span></code>、IR の場合は
+<code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code>を含む）を、<code class="docutils literal notranslate"><span class="pre">bond_archive</span></code>
+（バーテックスは FLEX の計算自身の配列から構築され、ファイルでは
+ありません）を除いて持ち、さらに<code class="docutils literal notranslate"><span class="pre">eigenvalues_all</span></code>（固有値
+ソルバーが返す全スペクトル。取得できた場合）、<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>
+と<code class="docutils literal notranslate"><span class="pre">scf_iterations</span></code>（FLEX の計算自身の収束状態）、
+<code class="docutils literal notranslate"><span class="pre">state</span></code>（FLEX の計算が収束していれば<code class="docutils literal notranslate"><span class="pre">&quot;last_map_chi</span> <span class="pre">/</span>
+<span class="pre">final_green&quot;</span></code>、していなければ<code class="docutils literal notranslate"><span class="pre">&quot;mixed:</span> <span class="pre">last-map</span> <span class="pre">chi,</span> <span class="pre">final</span>
+<span class="pre">green&quot;</span></code>）を持ちます。対形成ステップは FLEX の計算が収束
+しなくても実行されます（コストはすでに払われているため）。この
+ラベルは<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>とともに、結果が自己無撞着な
+対形成固有値ではなく SCF の軌跡上の診断値であることを示します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と同じ単一周波数の
+テキストスライスです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>と同じ
+形式で、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>・
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された場合は<code class="docutils literal notranslate"><span class="pre">#</span>
+<span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行を持ちます。</p></li>
+</ul>
+<p>失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
+固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの
+いずれも書き出しません。失敗はログに記録され、（あれば）次に
+リクエストされたチャネルの計算は続行されます。</p>
 </section>
 <section id="id2">
 <h1>データ読み込みの例<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h1>
