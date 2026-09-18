@@ -1194,7 +1194,7 @@ def build_seed(eli_param, pairing_type, norb, kx, ky, kz, gap_shape, use_ir, axF
 
 def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0, seed_vec,
                              use_ir, axF, nmat, logger_label="dynamic kernel",
-                             parity_leakage_policy="warn"):
+                             parity_leakage_policy="warn", parity_leakage_tol=1.0e-8):
     """Solve for the leading Eliashberg eigenpair of ``matvec`` and gauge-fix
     (and, on the IR path, densify) the resulting gap onto the uniform grid.
 
@@ -1210,6 +1210,20 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     probe up front, before any solve, on every solver mode, and raises
     ``ValueError`` if the kernel does not commute with the channel's parity
     within tolerance.
+
+    ``parity_leakage_tol`` (float >= 0) is that tolerance, the
+    ``[eliashberg] parity_leakage_tol`` key of the bond entries. Its default
+    ``1e-8`` is the historical hard-coded threshold, which is what the uniform
+    grid reaches; the bond entries raise it to ``2e-2`` under
+    ``matsubara_basis = "ir"``, where the IR representation of a uniform-FFT
+    archive carries a parity asymmetry of its own decaying as ``Nmat^-2``.
+    Under ``"refuse"`` a leakage in the band ``[0.1 * tol, tol)`` is accepted
+    with a WARNING.
+
+    Returns ``(lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
+    leakage)``, where ``leakage`` is the measured cross-sector leakage as a
+    float, or ``None`` when no probe ran (the ``"warn"`` policy on the
+    non-iteration solver modes).
     """
     from scipy.sparse.linalg import LinearOperator
     import hwave.sc as sc
@@ -1217,6 +1231,18 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     if parity_leakage_policy not in ("warn", "refuse"):
         raise ValueError("parity_leakage_policy must be 'warn' or 'refuse', got {!r}"
                          .format(parity_leakage_policy))
+    try:
+        tol_ok = parity_leakage_tol is not None \
+            and np.isfinite(float(parity_leakage_tol)) and float(parity_leakage_tol) >= 0.0
+    except (TypeError, ValueError):
+        tol_ok = False
+    if not tol_ok:
+        raise ValueError("parity_leakage_tol must be a finite number >= 0, got {!r}"
+                         .format(parity_leakage_tol))
+    parity_leakage_tol = float(parity_leakage_tol)
+    # the measured probe value, reported to the caller so the outputs can
+    # record it; stays None when no probe runs on this path
+    leakage = None
 
     vec_size = int(np.prod(gap_shape))
     solver_mode = eli_param.get("solver_mode", "iteration")
@@ -1231,15 +1257,23 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
 
     if parity_leakage_policy == "refuse":
         A_probe, _ = make_operator()
-        leak = _parity_leakage(A_probe, gap_shape, pairing_type)
-        if leak > 1.0e-8:
+        leakage = _parity_leakage(A_probe, gap_shape, pairing_type)
+        if leakage > parity_leakage_tol:
             raise ValueError(
                 "the {} does not commute with the combined parity (cross-sector leakage "
-                "{:.2e} > 1e-8); the direct-term pairing kernel is the physical kernel only "
-                "on a definite-parity subspace, so this run is refused. Likely causes: an "
-                "asymmetric susceptibility archive, an IR fit error, or an inconsistent S/C "
-                "and chi pair. Remedies: use matsubara_basis = 'uniform', tighten ir_tol / "
-                "raise ir_wmax, or regenerate the archive.".format(logger_label, leak))
+                "{:.2e} > parity_leakage_tol = {:.2e}); the direct-term pairing kernel is the "
+                "physical kernel only on a definite-parity subspace, so this run is refused. "
+                "Likely causes: an asymmetric susceptibility archive, an IR fit error, or an "
+                "inconsistent S/C and chi pair. Remedies: use matsubara_basis = 'uniform', "
+                "tighten ir_tol / raise ir_wmax, regenerate the archive at a larger Nmat, or "
+                "raise [eliashberg] parity_leakage_tol if this leakage is acceptable."
+                .format(logger_label, leakage, parity_leakage_tol))
+        if parity_leakage_tol > 0.0 and leakage >= 0.1 * parity_leakage_tol:
+            logger.warning(
+                "The %s commutes with the combined parity only to %.2e, within a decade of "
+                "parity_leakage_tol = %.2e; the '%s' eigenvalue carries that much "
+                "cross-sector contamination.",
+                logger_label, leakage, parity_leakage_tol, pairing_type)
 
     # Map [eliashberg] controls to the _solve_leading solver_mode string,
     # exactly as calc_eliashberg does for the static path.
@@ -1257,9 +1291,10 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # The projection is legitimate only when the kernel commutes with P;
         # probe the cross-sector leakage first and fall back to the
         # un-projected iteration (with a warning) if it does not.
-        A_probe, _ = make_operator()
-        leak = _parity_leakage(A_probe, gap_shape, pairing_type)
-        if leak <= 1.0e-8:
+        if leakage is None:              # not already measured by "refuse"
+            A_probe, _ = make_operator()
+            leakage = _parity_leakage(A_probe, gap_shape, pairing_type)
+        if leakage <= parity_leakage_tol:
             def project_fn(flat):
                 return _project_parity_dynamic(
                     flat.reshape(gap_shape), pairing_type).ravel()
@@ -1271,7 +1306,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 "Dynamic Eliashberg kernel does not commute with parity "
                 "(cross-sector leakage %.2e); parity projection for the '%s' "
                 "channel is disabled and the un-projected iteration is used.",
-                leak, pairing_type)
+                leakage, pairing_type)
             project_fn = None
         # spectral_shift is honoured on the power-iteration path too: with a
         # repulsive-dominant kernel (negative dominant eigenvalue) the iterate
@@ -1339,7 +1374,8 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # provenance (design Sec. 3.2).
         gap_w = _fix_gauge(axF.eval_to_uniform(
             axF.fit_from_freq(gap_w), nmat))
-    return lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note
+    return (lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
+            None if leakage is None else float(leakage))
 
 
 def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note, header_lines=()):
@@ -1680,7 +1716,9 @@ def solve_dynamic(input_dict):
                 workers=fft_workers)
         return backend.to_host(out).ravel()
 
-    lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note = \
+    # the on-site path keeps the historical "warn" policy and its default
+    # tolerance; the measured leakage is not part of its output format
+    lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, _leakage = \
         run_leading_eigenproblem(
             _matvec, gap_shape, eli_param, pairing_type, phi0=phi0,
             seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,

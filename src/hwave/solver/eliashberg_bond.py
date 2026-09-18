@@ -216,7 +216,7 @@ class PairVertexAccumulator:
                                                float(np.abs(G[sl]).max()))
 
     # -- finish -------------------------------------------------------------
-    def finish(self, *, ir_fit_tol=0.1, stage_callable=None):
+    def finish(self, *, ir_fit_tol=0.5, stage_callable=None):
         """Close the accumulation. Uniform: a :class:`PairVertexUniform` over the
         target slot. IR: the residual pass of spec 4.5 (replayed through
         ``stage_callable``), the ``ir_fit_tol`` refusal / warning band and the

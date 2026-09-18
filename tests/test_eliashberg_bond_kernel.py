@@ -771,14 +771,18 @@ class TestKernelIR(unittest.TestCase):
         grids share to well under the on-site path's ``1e-6``.
 
         Part B measures the FREQUENCY-FLAT terms -- the bare vertex ``V_inst``
-        and the retained ``ir_keep_static`` constant. Spec 4.5 handles them
-        analytically on IR through ``F(tau = 0+) = sum_l F_l u_l(0+)``, which
-        is the EXACT equal-time value, while the uniform grid represents them
-        as a single tau bin, i.e. the Matsubara sum TRUNCATED at Nmat. The two
-        therefore differ by O(beta / Nmat) by construction, and the assertion
-        is that difference's convergence: doubling Nmat halves it. A dropped
-        ``u_zero_plus`` term or a wrong ``beta`` gives an O(1) difference that
-        does not converge.
+        and the retained ``ir_keep_static`` constant. A frequency-flat vertex
+        multiplies the UNREGULARIZED Matsubara sum ``(1/beta) sum_n F(i w_n)``,
+        which on IR is the midpoint of the ``tau = 0`` jump,
+        ``sum_l F_l * 0.5 * (u_l(0+) - u_l(beta-))`` -- the
+        ``IRAxis.u_matsubara_sum`` weights, NOT the one-sided equal-time value
+        ``F(0+)``. The uniform grid evaluates the same sum TRUNCATED at Nmat,
+        so the two differ by O(beta / Nmat) by construction and the assertion
+        is that difference's convergence: doubling Nmat halves it. Contracting
+        with ``u_zero_plus`` instead (the half-jump anti-commutes with
+        ``i w -> -i w``) gives an O(1) difference that does not converge, and
+        breaks the parity commutation the kernel is projected on -- see
+        ``TestKernelIR.test_ir_parity_commutation``.
         """
         beta = 2.0
 

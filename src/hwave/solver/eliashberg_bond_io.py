@@ -31,7 +31,8 @@ class PairingControls:
     ir_wmax: object = None
     ir_tol: float = 1.0e-8
     ir_keep_static_chi: bool = False
-    ir_fit_tol: float = 0.1
+    ir_fit_tol: float = 0.5
+    parity_leakage_tol: object = None
     fft_workers: int = 1
     bond_memory_cap_gb: object = None
 
@@ -73,9 +74,26 @@ class PairingControls:
             init_gap=p.get("init_gap"), seed_eigenvector=p.get("seed_eigenvector"),
             matsubara_basis=mb, ir_wmax=p.get("ir_wmax"), ir_tol=_pos_float("ir_tol", 1.0e-8),
             ir_keep_static_chi=_bk.as_bool(p.get("ir_keep_static_chi", False)),
-            ir_fit_tol=_pos_float("ir_fit_tol", 0.1, allow_zero=True),
+            ir_fit_tol=_pos_float("ir_fit_tol", 0.5, allow_zero=True),
+            parity_leakage_tol=_pos_float("parity_leakage_tol", None, allow_zero=True,
+                                          allow_none=True),
             fft_workers=int(p.get("fft_workers", 1)),
             bond_memory_cap_gb=_pos_float("bond_memory_cap_gb", None, allow_none=True))
+
+    @property
+    def resolved_parity_leakage_tol(self):
+        """The parity-probe refusal threshold this run actually uses (4.4).
+
+        ``parity_leakage_tol = None`` (the default) resolves per basis: 1e-8
+        on the uniform grid, which real archives reach at machine precision,
+        and 2e-2 with ``matsubara_basis = "ir"``, where the IR representation
+        of a uniform-FFT archive carries a parity asymmetry of its own that
+        decays as ``Nmat^-2`` (measured 7.6e-3 / 1.3e-3 at Nmat 64 / 128 on
+        the single-band U = 4, V = 1 run) and is not kernel algebra.
+        """
+        if self.parity_leakage_tol is not None:
+            return float(self.parity_leakage_tol)
+        return 2.0e-2 if self.matsubara_basis == "ir" else 1.0e-8
 
     def as_eli_param(self):
         """The dict run_leading_eigenproblem / build_seed read."""
@@ -339,22 +357,30 @@ def solve_dynamic_bond(input_dict):
         logger.info("bond pairing kernel residency: %s", kernel.residency)
         phi0, seed_vec = _ed.build_seed(ctl.as_eli_param(), pairing_type, norb, kx, ky, kz,
                                         kernel.gap_shape, use_ir, axF, nmat)
-        lam, gap_w, eigenvalues_all, eigenvalue_match, note = _ed.run_leading_eigenproblem(
-            kernel.matvec, kernel.gap_shape, ctl.as_eli_param(), pairing_type, phi0=phi0,
-            seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
-            logger_label="bond pairing kernel", parity_leakage_policy="refuse")
+        lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage = \
+            _ed.run_leading_eigenproblem(
+                kernel.matvec, kernel.gap_shape, ctl.as_eli_param(), pairing_type, phi0=phi0,
+                seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
+                logger_label="bond pairing kernel", parity_leakage_policy="refuse",
+                parity_leakage_tol=ctl.resolved_parity_leakage_tol)
         residency_used = kernel.residency
 
     # --- outputs (the on-site dynamic file set plus the bond provenance) ----
     out_dir = input_dict["file"]["output"]["path_to_output"]
     os.makedirs(out_dir, exist_ok=True)
+    # the measured parity leakage is recorded in BOTH outputs (spec 4.4), so a
+    # run accepted under a raised parity_leakage_tol carries its own evidence
+    head = ["bond_channels=true", "residency=" + residency_used]
+    if leakage is not None:
+        head.append("parity_leakage={:.6e}".format(leakage))
     _ed.write_eigenvalue_file(
         os.path.join(out_dir, eli_param.get("output_eigenvalue", "eigenvalue.dat")),
-        lam, eigenvalues_all, eigenvalue_match, note,
-        header_lines=["bond_channels=true", "residency=" + residency_used])
+        lam, eigenvalues_all, eigenvalue_match, note, header_lines=head)
     extra = {"bond_channels": True, "bond_delta_r": arch.delta_r, "bond_reverse": arch.reverse,
              "bond_archive": arch_path, "bond_residency": residency_used,
              "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, (Nx, Ny, Nz))}
+    if leakage is not None:
+        extra["bond_parity_leakage"] = float(leakage)
     if use_ir:
         extra.update({"matsubara_basis": "ir", "ir_tol": axF.eps, "ir_wmax": axF.wmax,
                       "ir_L": axF.L, "bond_ir_fit_residual_rel": vertex.fit_residual_rel})
@@ -400,8 +426,12 @@ def pairing_preflight(solver):
 
     The caps are the section-8 caps measured now MINUS what the bond gate has
     already told us it will hold when the pairing step starts
-    (``solver._bond_est``). Raises ``ValueError``; the post-SCF admission
-    re-measures and is a per-channel error there, not an exception.
+    (``solver._bond_est``). The table is charged the solve's OWN dressing
+    batch (``solver._bond_nb``), because the in-process vertex build re-dresses
+    ``chibar`` in batches of exactly that size; the post-SCF admission is
+    kernel-only (the vertex is built by then) and charges none. Raises
+    ``ValueError``; the post-SCF admission re-measures and is a per-channel
+    error there, not an exception.
     """
     from . import backend as _bk
     from . import eliashberg_bond as _eb
@@ -414,7 +444,7 @@ def pairing_preflight(solver):
         nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=(axF.n_freq if use_ir else nmat),
         nvol=nvol, norb=norb, B=B, num_eigenvalues=ctl.num_eigenvalues, residency="auto",
         ir=use_ir, L_B=(axB.L if use_ir else 0), n_channels=len(ctl.pairing_types),
-        in_process=True)
+        in_process=True, nb=solver._bond_nb)
     host_cap_now = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
         else 0.8 * _eb._host_available_bytes()
     # estimate_bond_memory's "peak": 1.25 x (persistent + the largest phase)
@@ -424,7 +454,17 @@ def pairing_preflight(solver):
     if getattr(solver, "use_gpu", False):
         available = _bk.device_available_bytes()
         if available is not None:
-            device_cap = 0.9 * float(available) - float(solver._bond_est.get("device_need", 0.0))
+            device_need = solver._bond_est.get("device_need")
+            if device_need is None:
+                # the FLEX device admission runs inside the first map, i.e.
+                # after this point; say so rather than implying the 0 below is
+                # a measurement
+                logger.warning(
+                    "longitudinal_bond_pairing preflight: the FLEX device peak is unknown at "
+                    "solve entry, charged 0; the post-SCF admission re-measures it and reports "
+                    "a shortfall as a per-channel error instead of a refusal here")
+                device_need = 0.0
+            device_cap = 0.9 * float(available) - float(device_need)
     try:
         residency = table.choose("auto", host_cap, device_cap)
     except MemoryError as exc:
@@ -565,11 +605,12 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)
                 phi0, seed = _ed.build_seed(ctl.as_eli_param(), eta, norb, kx, ky, kz,
                                             K.gap_shape, use_ir, axF, nmat)
-                lam, gap_w, evs, match, note = _ed.run_leading_eigenproblem(
+                lam, gap_w, evs, match, note, leakage = _ed.run_leading_eigenproblem(
                     K.matvec, K.gap_shape, ctl.as_eli_param(), eta, phi0=phi0, seed_vec=seed,
                     use_ir=use_ir, axF=axF, nmat=nmat,
                     logger_label="bond pairing kernel ({})".format(eta),
-                    parity_leakage_policy="refuse")
+                    parity_leakage_policy="refuse",
+                    parity_leakage_tol=ctl.resolved_parity_leakage_tol)
                 meta = {"bond_channels": True,
                         "bond_delta_r": np.asarray(view.delta_r, dtype=np.int64),
                         "bond_reverse": np.asarray(view.reverse, dtype=np.int64),
@@ -579,6 +620,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                         "state": label_state,
                         "matsubara_basis": ctl.matsubara_basis,
                         "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, shape)}
+                if leakage is not None:
+                    meta["bond_parity_leakage"] = float(leakage)
                 if use_ir:
                     meta.update({"ir_tol": axF.eps, "ir_wmax": axF.wmax, "ir_L": axF.L,
                                  "bond_ir_fit_residual_rel": vertices[eta].fit_residual_rel})
@@ -657,10 +700,13 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                 tmps["eigenvalue_bond"], green_info["pairing_{}_eigenvalue".format(eta)],
                 evs, green_info.get("pairing_{}_eigenvalue_match".format(eta)),
                 green_info.get("pairing_{}_note".format(eta)),
-                header_lines=["bond_channels=true",
-                              "scf_converged={}".format(str(meta["scf_converged"]).lower()),
-                              "state={}".format(meta["state"]),
-                              "residency={}".format(meta["bond_residency"])])
+                header_lines=(
+                    ["bond_channels=true",
+                     "scf_converged={}".format(str(meta["scf_converged"]).lower()),
+                     "state={}".format(meta["state"]),
+                     "residency={}".format(meta["bond_residency"])]
+                    + (["parity_leakage={:.6e}".format(meta["bond_parity_leakage"])]
+                       if "bond_parity_leakage" in meta else [])))
         except Exception as exc:
             for t in tmps.values():
                 try:

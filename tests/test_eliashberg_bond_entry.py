@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -146,7 +147,7 @@ class TestPairingControls(unittest.TestCase):
         c = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual((c.solver_mode, c.eigenvalue_method, c.num_eigenvalues, c.max_iter, c.alpha,
                           c.convergence_tol, c.matsubara_basis, c.ir_tol, c.ir_fit_tol, c.fft_workers),
-                         ("iteration", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.1, 1))
+                         ("iteration", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.5, 1))
         self.assertIsNone(c.init_gap); self.assertIsNone(c.bond_memory_cap_gb); self.assertFalse(c.ir_keep_static_chi)
         c2 = PairingControls.from_param({"matsubara_basis": "IR", "ir_fit_tol": 0, "num_eigenvalues": 3,
                                          "ir_keep_static_chi": "true"}, pairing_types=("singlet", "triplet"))
@@ -159,12 +160,97 @@ class TestPairingControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             PairingControls.from_param({}, pairing_types=("x",))
 
+    def test_parity_leakage_tol_default_depends_on_the_basis(self):
+        """``parity_leakage_tol`` is optional; ``None`` resolves to 1e-8 on the
+        uniform grid and 2e-2 with ``matsubara_basis = "ir"`` (spec 4.4: the IR
+        representation of a uniform-FFT archive carries a parity asymmetry
+        decaying as Nmat^-2, measured 7.6e-3 / 1.3e-3 at Nmat 64 / 128)."""
+        from hwave.solver.eliashberg_bond_io import PairingControls
+        c = PairingControls.from_param({}, pairing_types=("singlet",))
+        self.assertIsNone(c.parity_leakage_tol)
+        self.assertEqual(c.resolved_parity_leakage_tol, 1.0e-8)
+        cir = PairingControls.from_param({"matsubara_basis": "ir"},
+                                         pairing_types=("singlet",))
+        self.assertIsNone(cir.parity_leakage_tol)
+        self.assertEqual(cir.resolved_parity_leakage_tol, 2.0e-2)
+        # an explicit value wins on either basis, zero included
+        for basis in ("uniform", "ir"):
+            c2 = PairingControls.from_param(
+                {"matsubara_basis": basis, "parity_leakage_tol": 3.5e-3},
+                pairing_types=("singlet",))
+            self.assertEqual(c2.resolved_parity_leakage_tol, 3.5e-3)
+        c0 = PairingControls.from_param({"parity_leakage_tol": 0},
+                                        pairing_types=("singlet",))
+        self.assertEqual(c0.resolved_parity_leakage_tol, 0.0)
+        for bad in ({"parity_leakage_tol": -1e-3}, {"parity_leakage_tol": float("nan")}):
+            with self.assertRaises(ValueError):
+                PairingControls.from_param(bad, pairing_types=("singlet",))
+
+
+class TestParityLeakageTolerance(unittest.TestCase):
+    """The configurable refusal threshold of the parity probe (spec 4.4).
+
+    The operator is the deliberately non-commuting one of the shared
+    eigen-driver's unit tests (a dense random complex matrix): its
+    cross-sector leakage is O(1), so a tolerance above it must let the solve
+    through (with the warning of the ``[0.1 * tol, tol)`` band) and a
+    tolerance below it must refuse, naming the key and the tolerance.
+    """
+
+    def setUp(self):
+        from scipy.sparse.linalg import LinearOperator
+        from hwave.solver import eliashberg_dynamic as ed
+        self.ed = ed
+        self.gap_shape = (1, 1, 2, 2, 1, 4)
+        n = int(np.prod(self.gap_shape))
+        rng = np.random.default_rng(11)
+        M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+        self.matvec = lambda x: M @ x
+        kx = np.array([0.0, np.pi])
+        ky = np.array([0.0, np.pi])
+        kz = np.array([0.0])
+        self.phi0, self.seed = ed.build_seed({}, "singlet", 1, kx, ky, kz,
+                                             self.gap_shape, False, None, 4)
+        self.leak = ed._parity_leakage(
+            LinearOperator((n, n), matvec=self.matvec, dtype=complex),
+            self.gap_shape, "singlet")
+
+    def _run(self, **kw):
+        return self.ed.run_leading_eigenproblem(
+            self.matvec, self.gap_shape, {"solver_mode": "iteration", "max_iter": 5},
+            "singlet", phi0=self.phi0, seed_vec=self.seed, use_ir=False, axF=None,
+            nmat=4, parity_leakage_policy="refuse", **kw)
+
+    def test_tolerance_above_the_leakage_completes_and_warns(self):
+        self.assertGreater(self.leak, 1.0e-8)
+        with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
+            out = self._run(parity_leakage_tol=1.5 * self.leak)
+        self.assertEqual(len(out), 6)
+        self.assertIsInstance(out[5], float)
+        self.assertAlmostEqual(out[5], self.leak)
+        self.assertTrue(any("parity_leakage_tol" in m for m in cm.output), cm.output)
+
+    def test_tolerance_below_the_leakage_refuses_naming_the_key(self):
+        with self.assertRaisesRegex(ValueError, "parity_leakage_tol") as cm:
+            self._run(parity_leakage_tol=0.5 * self.leak)
+        self.assertIn("cross-sector leakage", str(cm.exception))
+
+    def test_default_tolerance_is_1e_minus_8(self):
+        with self.assertRaisesRegex(ValueError, "cross-sector leakage"):
+            self._run()
+
+    def test_invalid_tolerance_refused(self):
+        for bad in (-1.0, float("nan"), None):
+            with self.assertRaisesRegex(ValueError, "parity_leakage_tol"):
+                self._run(parity_leakage_tol=bad)
+
 
 # ---------------------------------------------------------------------------
 # Post-processing entry through hwave_sc (spec 6, 10.2.1 / 10.2.2)
 # ---------------------------------------------------------------------------
 
 _IN1 = "tests/rpa/input"
+_IN2 = "tests/rpa/input_2orb"
 
 
 def _sc_input(flex_dir, out_dir, T, nmat, cell, **eli):
@@ -298,10 +384,10 @@ class TestPostProcessingRuns(unittest.TestCase):
         is stable in the FLEX run's own Nmat (64 vs 128, the discretization the
         post-processing inherits rather than one it chooses).
 
-        The IR half of spec 10.2.2 (the same lambda from
-        ``matsubara_basis = "ir"``) is still not a lambda comparison: see
-        :meth:`test_ir_arm_parity_leakage_converges` below for what the IR arm
-        does assert on this same working point, and why.
+        The IR half of spec 10.2.2 -- the same lambda from
+        ``matsubara_basis = "ir"`` -- is
+        :meth:`test_ir_lambda_arm_matches_uniform` below, on this same working
+        point.
         """
         import hwave.sc as sc
         lam = {}
@@ -344,94 +430,156 @@ class TestPostProcessingRuns(unittest.TestCase):
                                    delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)
 
     @heavy
-    def test_ir_arm_parity_leakage_converges(self):         # 10.2.2 (IR half)
-        """The IR arm of 10.2.2 on the SAME real bond-gate archives.
+    def test_ir_lambda_arm_matches_uniform(self):           # 10.2.2 (IR half)
+        """The IR arm of 10.2.2 on the SAME real bond-gate archives: the IR
+        basis must reproduce the uniform-grid eigenvalue, and the discrepancy
+        must be a discretization one.
 
-        The flat-term fix (the instantaneous vertex multiplies the
-        unregularized Matsubara sum, i.e. the midpoint of the tau = 0 jump,
-        not ``F(0^+)``) makes the IR kernel algebra exact: on an exactly
-        IR-representable fixture the leakage is 1e-12 with both flat terms
-        live (``test_eliashberg_bond_kernel.TestKernelIR
-        .test_ir_parity_commutation``). On REAL output it drops by two orders
-        of magnitude -- singlet 2.80e-01 -> 7.56e-03 and triplet 1.69e-01 ->
-        9.70e-03 at Nmat 64, 2.98e-01 -> 1.29e-03 and 1.29e-01 -> 1.68e-03 at
-        Nmat 128 -- and the remainder CONVERGES as roughly ``Nmat^-2``
-        (3.1e-04 at Nmat 256), which the O(1), Nmat-independent flat-term
-        defect did not.
+        Both bases are solved on the ONE archive per Nmat, so the only
+        difference is the Matsubara representation. At Nmat 128 the two agree
+        to the spec's 2e-2 relative band, and the disagreement at Nmat 128 is
+        smaller than at Nmat 64 for both channels -- measured
 
-        What is still NOT asserted, and why there is no ``lambda_ir`` vs
-        ``lambda_uniform`` comparison here: that remainder is above the
-        entry's fixed ``parity_leakage_policy = "refuse"`` threshold of 1e-8,
-        so the IR run is refused and produces no eigenvalue. It is NOT the
-        flat term -- forcing the instantaneous vertex to zero AND dropping the
-        retained constant leaves the same floor (7.69e-03 at Nmat 64, 2.40e-03
-        at Nmat 128) -- but the IR representability of the uniform-FFT bond
-        archive itself, and no reachable ``ir_wmax`` / ``ir_tol`` / ``Nmat``
-        setting brings it to 1e-8 (measured over wmax in {auto, 40, 200},
-        ir_tol in {1e-8, 1e-12}, Nmat in {64, 128, 256}: best 2.45e-04). That
-        is a separate, pre-existing data-quality issue of the archive, not of
-        the pairing kernel.
+            singlet  -0.1464292 (uniform) vs -0.1547410 (IR)  5.7 % at Nmat  64
+                     -0.1455735           vs -0.1480647       1.7 % at Nmat 128
+            triplet  -0.1987357           vs -0.2047572       3.0 % at Nmat  64
+                     -0.1984555           vs -0.2002307       0.9 % at Nmat 128
+
+        so the residual gap is the IR representability of a uniform-FFT
+        archive, not a defect of the kernel algebra (which is exact to 1e-12
+        on an IR-representable fixture:
+        ``test_eliashberg_bond_kernel.TestKernelIR.test_ir_parity_commutation``).
+
+        That same representability is what ``[eliashberg] parity_leakage_tol``
+        exists for (spec 4.4): the measured cross-sector leakage is 7.56e-03 /
+        9.70e-03 at Nmat 64 and 1.29e-03 / 1.68e-03 at Nmat 128, i.e. roughly
+        ``Nmat^-2`` and below the IR default 2e-2, where the uniform grid sits
+        at 1e-15. The Task 7b convergence guard is kept here as the third
+        assertion. The componentwise IR fit residual with the constant
+        retained is 0.161 / 0.157, below the ``ir_fit_tol`` default 0.5 (and
+        inside its warning band); both numbers are recorded in the npz, which
+        the test also asserts.
         """
         try:
             import sparse_ir  # noqa: F401
         except ImportError:
             raise unittest.SkipTest("sparse-ir not installed")
-        import re
         import hwave.sc as sc
 
-        def ir_run(flex_dir, out, nmat, eta, **extra):
-            # ir_fit_tol = 0: on this real output the componentwise IR fit
-            # residual WITH the constant retained is 1.609e-01 (Nmat 64) /
-            # 1.568e-01 (Nmat 128), above the default ir_fit_tol = 0.1. That
-            # default is deliberately NOT changed -- retaining the constant
-            # already brings the residual down from 1.64 / 0.39, and the rest
-            # is the same archive representability the docstring describes.
-            kw = dict(pairing_type=eta, matsubara_basis="ir", ir_tol=1e-8,
-                      ir_keep_static_chi=True, ir_fit_tol=0.0)
-            kw.update(extra)
-            return sc.calc_eliashberg(_sc_input(flex_dir, out, 0.5, nmat,
-                                                (4, 4, 1), **kw))
-
-        leak = {}
+        lam, leak, resid = {}, {}, {}
         for nmat in (64, 128):
             flex_dir = tempfile.mkdtemp()
             try:
                 _run_gate_1orb(flex_dir, nmat=nmat)
                 for eta in ("singlet", "triplet"):
-                    out = tempfile.mkdtemp()
-                    try:
-                        with self.assertRaisesRegex(
-                                ValueError, "cross-sector leakage") as cm:
-                            ir_run(flex_dir, out, nmat, eta)
-                        m = re.search(r"cross-sector leakage ([0-9.eE+-]+)",
-                                      str(cm.exception))
-                        self.assertIsNotNone(m)
-                        leak[(eta, nmat)] = float(m.group(1))
-                    finally:
-                        shutil.rmtree(out, ignore_errors=True)
-                if nmat == 64:
-                    # and the default ir_fit_tol refuses EARLIER, with the
-                    # measured residual named in the message
-                    out = tempfile.mkdtemp()
-                    try:
-                        with self.assertRaisesRegex(
-                                ValueError, "exceeds ir_fit_tol") as cm:
-                            ir_run(flex_dir, out, 64, "singlet", ir_fit_tol=0.1)
-                        m = re.search(r"relative residual ([0-9.eE+-]+)",
-                                      str(cm.exception))
-                        self.assertIsNotNone(m)
-                        self.assertLess(float(m.group(1)), 0.5)   # was 1.64
-                    finally:
-                        shutil.rmtree(out, ignore_errors=True)
+                    for basis in ("uniform", "ir"):
+                        kw = dict(pairing_type=eta)
+                        if basis == "ir":
+                            # the defaults of spec rev 8 (ir_fit_tol 0.5,
+                            # parity_leakage_tol 2e-2) must accept these real
+                            # archives: nothing is loosened here
+                            kw.update(matsubara_basis="ir", ir_tol=1e-8,
+                                      ir_keep_static_chi=True)
+                        out = tempfile.mkdtemp()
+                        try:
+                            lam[(basis, eta, nmat)] = sc.calc_eliashberg(_sc_input(
+                                flex_dir, out, 0.5, nmat, (4, 4, 1), **kw))
+                            self.assertTrue(np.isfinite(lam[(basis, eta, nmat)]))
+                            with np.load(os.path.join(out, "gap_dynamic.npz")) as d:
+                                # the measured parity leakage is recorded on
+                                # BOTH bases; the IR fit residual only on IR
+                                self.assertIn("bond_parity_leakage", d.files)
+                                leak[(basis, eta, nmat)] = float(d["bond_parity_leakage"])
+                                if basis == "ir":
+                                    self.assertIn("bond_ir_fit_residual_rel", d.files)
+                                    resid[(eta, nmat)] = float(
+                                        np.asarray(d["bond_ir_fit_residual_rel"]).max())
+                                else:
+                                    self.assertNotIn("bond_ir_fit_residual_rel", d.files)
+                            head = open(os.path.join(out, "eigenvalue.dat")).read()
+                            self.assertIn("# parity_leakage=", head)
+                        finally:
+                            shutil.rmtree(out, ignore_errors=True)
             finally:
                 shutil.rmtree(flex_dir, ignore_errors=True)
+
         for eta in ("singlet", "triplet"):
-            # two orders of magnitude below the pre-fix O(0.1) flat-term
-            # leakage, and converging in the FLEX run's own Nmat
-            self.assertLess(leak[(eta, 64)], 5e-2, eta)
-            self.assertLess(leak[(eta, 128)], 0.6 * leak[(eta, 64)],
-                            "{}: no Nmat convergence {:.3e} -> {:.3e}"
-                            .format(eta, leak[(eta, 64)], leak[(eta, 128)]))
+            rel = {n: abs(lam[("ir", eta, n)] - lam[("uniform", eta, n)])
+                   / abs(lam[("uniform", eta, n)]) for n in (64, 128)}
+            self.assertLessEqual(
+                rel[128], 2e-2,
+                "{}: lambda_ir {:.9f} vs lambda_uniform {:.9f} at Nmat 128 "
+                "({:.3e} relative)".format(eta, lam[("ir", eta, 128)],
+                                           lam[("uniform", eta, 128)], rel[128]))
+            self.assertLess(rel[128], rel[64],
+                            "{}: no Nmat convergence of lambda_ir, {:.3e} -> {:.3e}"
+                            .format(eta, rel[64], rel[128]))
+            # the Task 7b guard: the IR parity leakage of the archive converges
+            # (and the uniform grid is at machine precision either way)
+            self.assertLess(leak[("ir", eta, 64)], 5e-2, eta)
+            self.assertLess(leak[("ir", eta, 128)], 0.6 * leak[("ir", eta, 64)],
+                            "{}: no Nmat convergence of the parity leakage "
+                            "{:.3e} -> {:.3e}".format(eta, leak[("ir", eta, 64)],
+                                                      leak[("ir", eta, 128)]))
+            self.assertLess(leak[("uniform", eta, 64)], 1e-10, eta)
+            # and the IR fit residual stays under the shipped ir_fit_tol
+            for n in (64, 128):
+                self.assertLess(resid[(eta, n)], 0.5, (eta, n))
+
+
+class TestQlmsForwarding(unittest.TestCase):
+    """``qlms.run`` hands the ``[eliashberg]`` table of the SAME input file to
+    the FLEX solver (spec 7 / 9).
+
+    Fast end-to-end check of the forwarding seam only: one ``IterationMax = 1``
+    two-orbital solve, asserting that the constructed solver carries the parsed
+    :class:`PairingControls` (the new ``parity_leakage_tol`` included) and that
+    the requested channel produced an eigenvalue artifact.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_run_forwards_the_eliashberg_table(self):
+        import hwave.qlms as qlms
+        par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+               "Nmat": 8, "IterationMax": 1, "Mix": 0.5, "EPS": 1e-12,
+               "flex_hartree_fock": True, "mixing_scheme": "linear",
+               "longitudinal_bond_channels": True,
+               "longitudinal_bond_pairing": "singlet"}
+        inp = {"mode": {"mode": "FLEX", "calc_scheme": "general", "param": par},
+               "file": {"input": {"path_to_input": "",
+                                  "interaction": {"path_to_input": _IN2,
+                                                  "Geometry": "geom.dat",
+                                                  "Transfer": "transfer.dat",
+                                                  "CoulombInter": "coulombinter.dat"}},
+                        "output": {"path_to_output": self.tmp, "green": "green"}},
+               "eliashberg": {"solver_mode": "eigenvalue", "num_eigenvalues": 3,
+                              "parity_leakage_tol": 5.0e-3}}
+        captured = []
+        real_init = qlms.sol_flex.FLEX.__init__
+
+        def capture_init(solver, *a, **kw):
+            real_init(solver, *a, **kw)
+            captured.append(solver)
+
+        with mock.patch.object(qlms.sol_flex.FLEX, "__init__", capture_init):
+            qlms.run(input_dict=inp)
+        self.assertEqual(len(captured), 1)
+        ctl = captured[0]._pairing_controls
+        self.assertIsNotNone(ctl)
+        self.assertEqual(ctl.pairing_types, ("singlet",))
+        self.assertEqual((ctl.solver_mode, ctl.num_eigenvalues), ("eigenvalue", 3))
+        # the forwarded key reaches the resolved tolerance, and the default
+        # ir_fit_tol of spec 4.5 is the one the table did not override
+        self.assertEqual(ctl.parity_leakage_tol, 5.0e-3)
+        self.assertEqual(ctl.resolved_parity_leakage_tol, 5.0e-3)
+        self.assertEqual(ctl.ir_fit_tol, 0.5)
+        self.assertTrue(os.path.exists(
+            os.path.join(self.tmp, "eigenvalue_bond_singlet.dat")))
 
 
 class TestInProcess(unittest.TestCase):

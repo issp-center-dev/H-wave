@@ -136,7 +136,7 @@ class TestEigenDriverUnits(unittest.TestCase):
     def test_warn_completes_and_logs_existing_message(self):
         eli_param = {"solver_mode": "iteration", "max_iter": 3}
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
-            lam, gap_w, eigenvalues_all, eigenvalue_match, note = \
+            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage = \
                 self.ed.run_leading_eigenproblem(
                     self.matvec, self.gap_shape, eli_param, "singlet",
                     phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
@@ -148,6 +148,10 @@ class TestEigenDriverUnits(unittest.TestCase):
         self.assertEqual(gap_w.shape, self.gap_shape)
         self.assertIsNone(eigenvalues_all)
         self.assertIsNone(eigenvalue_match)
+        # the driver reports the probe value it measured (the "warn" policy
+        # probes on the iteration path)
+        self.assertIsInstance(leakage, float)
+        self.assertGreater(leakage, 1.0e-8)
 
     def test_invalid_policy_raises(self):
         eli_param = {"solver_mode": "iteration"}
