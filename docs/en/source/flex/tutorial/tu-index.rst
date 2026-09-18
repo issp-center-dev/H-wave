@@ -623,8 +623,10 @@ uniform Matsubara grid:
   (``gap_dynamic.npz``, ``gap.dat``, ``eigenvalue.dat``).
 
 See :ref:`the output reference <subsec:eliashberg_bond_outputs>` for the
-complete key sets, and :ref:`the configuration reference's eliashberg
-section <eliashberg_bond_dynamic_config>` for every key.
+complete key sets, :ref:`the configuration reference's eliashberg section
+<eliashberg_bond_dynamic_config>` for the bond-specific keys and
+:ref:`the dynamic-frequency section <sc_dynamic_frequency>` for the general
+solver controls.
 
 Memory and the IR basis
 """"""""""""""""""""""""""""""""
@@ -637,7 +639,7 @@ bytes -- the same doubling ``longitudinal_bond_output_full = true`` (above)
 already costs the FLEX solve's own persistent memory. For in-process-only
 use leave ``longitudinal_bond_output_full`` at ``false``: the archive is
 written only for the post-processing entry, and on a multi-orbital model it
-is tens of GiB on disk. The pairing kernel adds its own working set on top
+is tens of GB on disk. The pairing kernel adds its own working set on top
 (the pair bubble, the hoisted vertex blocks, the eigensolver vectors).
 Worked numbers for two representative models (CuO2-type: :math:`B=5`, ``norb`` = 3, ``ND`` = 45, ``nvol`` = 1024,
 ``Nmat`` = 1024, ``num_eigenvalues`` = 10; single band: :math:`B=5`,
@@ -648,8 +650,8 @@ Worked numbers for two representative models (CuO2-type: :math:`B=5`, ``norb`` =
    :widths: 46 27 27
 
    * - Quantity
-     - CuO2-type (GiB)
-     - Single band (GiB)
+     - CuO2-type (GB)
+     - Single band (GB)
    * - Dynamic archive on disk (``chi_s_w`` + ``chi_c_w``)
      - 68
      - < 1
@@ -673,6 +675,10 @@ Worked numbers for two representative models (CuO2-type: :math:`B=5`, ``norb`` =
        (one archive member + the IR coefficients)
      - ~39
      - < 1
+
+GB here means :math:`10^9` bytes; the cap key ``bond_memory_cap_gb`` is in
+binary GiB (:math:`1024^3` bytes, about 7 % larger), so set it from these
+numbers with that margin in mind.
 
 For a model whose ``B**2`` hoisted blocks (or, in post-processing, whose
 archive members) do not fit in memory, set ``[eliashberg] matsubara_basis
@@ -782,10 +788,11 @@ Both give the leading eigenvalue and gap to round-off on the uniform grid.
 
 .. note::
 
-   ``hwave_sc`` writes the fixed names ``gap_dynamic.npz``, ``gap.dat`` and
-   ``eigenvalue.dat`` whatever ``pairing_type`` is; solve the singlet and
-   the triplet channel into two different ``path_to_output`` directories, or
-   the second run overwrites the first.
+   ``hwave_sc`` writes ``gap_dynamic.npz`` under that fixed name whatever
+   ``pairing_type`` is (``[eliashberg] output_gap`` / ``output_eigenvalue``
+   rename only the text files ``gap.dat`` / ``eigenvalue.dat``); solve the
+   singlet and the triplet channel into two different ``path_to_output``
+   directories, or the second run overwrites the first archive.
 
 A three-band example on the IR basis
 """"""""""""""""""""""""""""""""""""""
@@ -821,14 +828,20 @@ coarser ``Nmat``.
 
    The instantaneous (frequency-independent) part of the vertex enters the
    IR kernel through the exact Matsubara-sum midpoint
-   :math:`\tfrac12(F(0^+) - F(\beta^-))`, not :math:`F(0^+)`. On a pair
-   amplitude of definite frequency parity the two coincide, so eigenvalues
-   of parity-projected solves are unchanged; what the correction removes is
-   the spurious parity leakage of the earlier prescription (and with it the
-   disabled projection and the parity admixture in odd-channel gap
-   functions). The same correction applies to the ordinary on-site dynamic
-   IR solver; see :ref:`the change note <sc_dynamic_ir_instantaneous_en>`
-   for who should re-run.
+   :math:`\tfrac12(F(0^+) - F(\beta^-))`, not :math:`F(0^+)`. On a
+   frequency-even pair amplitude the two coincide (its even-:math:`l` IR
+   coefficients vanish); the old prescription additionally mapped
+   odd-frequency components into the even sector and never the other way,
+   so it was block-triangular with respect to frequency parity and had the
+   same spectrum -- eigenvalues of parity-projected solves and of the
+   eigenvalue solver are unchanged, while eigenvectors and an unprojected
+   iteration were affected. What the correction removes is that spurious
+   parity leakage (and with it the disabled projection, which in a triplet
+   run can converge to the singlet-sector value, and the even-parity
+   admixture in odd-channel gap functions). The same correction applies to
+   the ordinary on-site dynamic IR solver; see
+   :ref:`the change note <sc_dynamic_ir_instantaneous_en>` for who should
+   re-run.
 
 Nmat dependence of the IR result
 """"""""""""""""""""""""""""""""""""
