@@ -172,12 +172,19 @@ HEAVY_TESTS = (
      "(TestPostProcessingRuns.test_uniform_lambda_and_outputs, below) is "
      "registered: the two belong in the same shape of the suite"),
     ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
+     "test_ir_arm_parity_leakage_converges",
+     "the IR half of the same entry-level case: two more real bond-gate FLEX "
+     "runs (4x4, Nmat 64 and 128) plus five hwave_sc solves on their archives "
+     "with matsubara_basis = 'ir' -- registered with its uniform sibling "
+     "below, which it belongs with"),
+    ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
      "test_uniform_lambda_and_outputs",
      "two real bond-gate FLEX runs (4x4, Nmat 64 and 128) plus four hwave_sc "
      "solves on their archives, one per pairing channel -- 2.2 s measured, "
      "below the rule, and registered anyway because it is the uniform half of "
-     "one entry-level case whose IR half (blocked on the shared IR flat-term "
-     "parity defect, see the test's docstring) doubles it and belongs with it"),
+     "one entry-level case whose IR half "
+     "(test_ir_arm_parity_leakage_converges, above) doubles it and belongs "
+     "with it"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",

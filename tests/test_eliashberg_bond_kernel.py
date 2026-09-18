@@ -815,6 +815,49 @@ class TestKernelIR(unittest.TestCase):
                                 "{}: no Nmat convergence {:.3e} -> {:.3e}"
                                 .format(tag, diffs[0], diffs[1]))
 
+    def test_ir_parity_commutation(self):                             # 10.1.4 (IR)
+        """The IR bond kernel must commute with the combined parity operator
+        with BOTH frequency-flat terms live -- the bare vertex ``V_inst`` and
+        the ``ir_keep_static`` constant.
+
+        The uniform half (10.1.4) cannot see this: its dense tau grid
+        represents the flat term as a single bin, which IS the (truncated)
+        Matsubara sum. On IR the sum is evaluated analytically, and it must be
+        the UNREGULARIZED sum, i.e. the midpoint of the tau jump. The one-sided
+        ``F(0^+)`` carries half the jump on top, and that half ANTI-commutes
+        with the frequency reversal: measured leakage 4.30e-01 before the fix
+        on this fixture (an IR fit residual of 2.9e-10, so not a data-quality
+        effect), 1.3e-12 after."""
+        from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+                                                  instantaneous_vertex)
+        from hwave.solver.eliashberg_dynamic import (calc_g2_dynamic, _ir_compress,
+                                                     _parity_leakage)
+        from scipy.sparse.linalg import LinearOperator
+        beta = 2.0
+        axF, axB = _axes(beta, wmax=20.0)
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=128, beta=beta, U=1.0)
+        stages = _stage_pair(_lorentzian_source(fx, kappa=0.3))
+        with _dev(fx) as dev:
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=16,
+                                        nmat=fx["nmat"], nvol=fx["nvol"], nd=fx["nd"],
+                                        spatial_shape=fx["spatial_shape"], ir=(axF, axB),
+                                        ir_keep_static=True)
+            stages(acc)
+            vert = acc.finish(ir_fit_tol=1e-3, stage_callable=stages)["singlet"]
+        self.assertIsNotNone(vert.const)            # the retained flat term is live
+        G2 = calc_g2_dynamic(_ir_compress(fx["green_sc"], axF, fx["nmat"], "green"), beta)
+        for eta in ("singlet", "triplet"):
+            V_inst = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta,
+                                          fx["spatial_shape"])
+            self.assertGreater(float(np.abs(V_inst).max()), 0.0)
+            K = BondPairKernel(vert, G2, fx["view"], xp=np,
+                               spatial_shape=fx["spatial_shape"], norb=fx["norb"],
+                               beta=beta, nfreq=axF.n_freq, V_inst=V_inst, axF=axF,
+                               residency="host", host_cap=10 ** 12, device_cap=10 ** 12)
+            n = int(np.prod(K.gap_shape))
+            A = LinearOperator((n, n), matvec=K.matvec, dtype=complex)
+            self.assertLessEqual(_parity_leakage(A, K.gap_shape, eta), 1e-10, eta)
+
     def test_ir_residency_modes_agree(self):                          # 10.1.6 (IR)
         """The IR half of the residency contract: the hoisted blocks and the
         per-matvec rebuild of ``_block_rtau`` must give the same operator.

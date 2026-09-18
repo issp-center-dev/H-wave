@@ -611,9 +611,13 @@ class BondPairKernel:
             F_rt = _bk.spatial_ifftn(self.axF.eval_to_tau(F_coeff), axes=ax,
                                      workers=self.workers)
             if self._Vinst_rt is not None or self._const_rt is not None:
-                # the equal-time value of F, evaluated exactly through the
-                # fermionic basis (the delta(tau) bare term's tau integral)
-                u0 = xp.asarray(self.axF.u_zero_plus)
+                # the delta(tau) terms' tau integral (the bare vertex and the
+                # retained IR constant): the UNREGULARIZED Matsubara sum
+                # (1/beta) sum_n F(i w_n), i.e. the MIDPOINT 0.5 (F(0^+) +
+                # F(0^-)) of the tau = 0 jump, evaluated exactly through the
+                # fermionic basis. NOT u_zero_plus -- see
+                # eliashberg_dynamic.eliashberg_kernel_ir.
+                u0 = xp.asarray(self.axF.u_matsubara_sum)
                 F0_r = _bk.spatial_ifftn(F_coeff @ u0, axes=ax, workers=self.workers)
         else:
             F_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(F, axis=-1), axes=ax,

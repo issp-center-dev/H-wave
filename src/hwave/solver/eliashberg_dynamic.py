@@ -1083,11 +1083,26 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     never be fitted (``_ir_vertex_to_rtau`` would alias it into an
     uncontrolled smooth function); its tau integral is analytic instead:
     ``integral dtau e^{i w tau} V_inst delta(tau) F(tau) = V_inst F(0)``
-    with ``F(0) = (1/beta) sum_nu F(i nu)`` evaluated exactly through the
-    fermionic basis (``u_zero_plus``; F ~ 1/nu^2, so the equal-time value
-    is continuous and needs no 0^+ regularization). The uniform-grid
-    kernel needs no such split: its dense tau grid represents the delta as
-    a single bin.
+    with ``F(0) = (1/beta) sum_nu F(i nu)`` -- the UNREGULARIZED Matsubara
+    sum, i.e. the MIDPOINT ``0.5 * (F(0^+) + F(0^-))`` of the tau = 0 jump,
+    evaluated exactly through the fermionic basis
+    (``axF.u_matsubara_sum``).
+
+    It must NOT be ``u_zero_plus``: that is the one-sided ``F(0^+)``, the
+    midpoint PLUS half of the tau-jump. The jump half ANTI-commutes with
+    the frequency reversal ``i w -> -i w`` (on IR coefficients the node
+    reversal acts as ``c_l -> (-1)^(l+1) c_l``, and ``u_l(0^+)`` mixes both
+    parities), so with ``u_zero_plus`` the kernel stops commuting with the
+    combined parity operator as soon as the instantaneous vertex is nonzero
+    -- i.e. for any model with a CoulombInter term -- and its flat term does
+    not converge to the uniform-grid one at any Nmat. The earlier claim that
+    "F ~ 1/nu^2, so the equal-time value is continuous" holds only for the
+    particular smooth probes the shipped gates drive the kernel with; the
+    kernel is a linear operator and must be right on every input.
+
+    The uniform-grid kernel needs no such split: its dense tau grid
+    represents the delta as a single bin, which IS the Matsubara sum
+    truncated at Nmat.
     """
     xp = backend.array_module_of(G2_nodes)
     phi_nodes = xp.asarray(phi_nodes)
@@ -1099,7 +1114,7 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     out = axF.tau_to_freq(_spatial_fftn(prod, axes=(2, 3, 4),
                                         workers=workers))
     if V_inst_rt is not None:
-        u0 = axF.u_zero_plus
+        u0 = axF.u_matsubara_sum
         if xp is not np:
             u0 = xp.asarray(u0)
         F0_r = _spatial_ifftn(F_coeff @ u0, axes=(2, 3, 4), workers=workers)

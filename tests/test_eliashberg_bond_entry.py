@@ -299,17 +299,9 @@ class TestPostProcessingRuns(unittest.TestCase):
         post-processing inherits rather than one it chooses).
 
         The IR half of spec 10.2.2 (the same lambda from
-        ``matsubara_basis = "ir"``) is NOT asserted here: the IR dynamic kernel
-        does not commute with the combined parity once the instantaneous vertex
-        term is present, so every IR run is refused by the
-        ``parity_leakage_policy = "refuse"`` this entry is required to use.
-        Measured on an exactly IR-representable fixture (IR fit residual
-        5.8e-10, so not a data-quality effect): leakage 3.5e-12 without the
-        instantaneous term and 3.52e-01 with it, unchanged from Nmat 128 to
-        256, against 1e-15 for the uniform kernel in both cases. That is a
-        property of the shared IR flat-term evaluation, not of the bond path
-        (the on-site dynamic IR kernel leaks 3.3e-01 the same way), and it has
-        to be fixed there before the comparison can be asserted.
+        ``matsubara_basis = "ir"``) is still not a lambda comparison: see
+        :meth:`test_ir_arm_parity_leakage_converges` below for what the IR arm
+        does assert on this same working point, and why.
         """
         import hwave.sc as sc
         lam = {}
@@ -350,6 +342,96 @@ class TestPostProcessingRuns(unittest.TestCase):
         for eta in ("singlet", "triplet"):
             self.assertAlmostEqual(lam[(eta, 128)], lam[(eta, 64)],
                                    delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)
+
+    @heavy
+    def test_ir_arm_parity_leakage_converges(self):         # 10.2.2 (IR half)
+        """The IR arm of 10.2.2 on the SAME real bond-gate archives.
+
+        The flat-term fix (the instantaneous vertex multiplies the
+        unregularized Matsubara sum, i.e. the midpoint of the tau = 0 jump,
+        not ``F(0^+)``) makes the IR kernel algebra exact: on an exactly
+        IR-representable fixture the leakage is 1e-12 with both flat terms
+        live (``test_eliashberg_bond_kernel.TestKernelIR
+        .test_ir_parity_commutation``). On REAL output it drops by two orders
+        of magnitude -- singlet 2.80e-01 -> 7.56e-03 and triplet 1.69e-01 ->
+        9.70e-03 at Nmat 64, 2.98e-01 -> 1.29e-03 and 1.29e-01 -> 1.68e-03 at
+        Nmat 128 -- and the remainder CONVERGES as roughly ``Nmat^-2``
+        (3.1e-04 at Nmat 256), which the O(1), Nmat-independent flat-term
+        defect did not.
+
+        What is still NOT asserted, and why there is no ``lambda_ir`` vs
+        ``lambda_uniform`` comparison here: that remainder is above the
+        entry's fixed ``parity_leakage_policy = "refuse"`` threshold of 1e-8,
+        so the IR run is refused and produces no eigenvalue. It is NOT the
+        flat term -- forcing the instantaneous vertex to zero AND dropping the
+        retained constant leaves the same floor (7.69e-03 at Nmat 64, 2.40e-03
+        at Nmat 128) -- but the IR representability of the uniform-FFT bond
+        archive itself, and no reachable ``ir_wmax`` / ``ir_tol`` / ``Nmat``
+        setting brings it to 1e-8 (measured over wmax in {auto, 40, 200},
+        ir_tol in {1e-8, 1e-12}, Nmat in {64, 128, 256}: best 2.45e-04). That
+        is a separate, pre-existing data-quality issue of the archive, not of
+        the pairing kernel.
+        """
+        try:
+            import sparse_ir  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest("sparse-ir not installed")
+        import re
+        import hwave.sc as sc
+
+        def ir_run(flex_dir, out, nmat, eta, **extra):
+            # ir_fit_tol = 0: on this real output the componentwise IR fit
+            # residual WITH the constant retained is 1.609e-01 (Nmat 64) /
+            # 1.568e-01 (Nmat 128), above the default ir_fit_tol = 0.1. That
+            # default is deliberately NOT changed -- retaining the constant
+            # already brings the residual down from 1.64 / 0.39, and the rest
+            # is the same archive representability the docstring describes.
+            kw = dict(pairing_type=eta, matsubara_basis="ir", ir_tol=1e-8,
+                      ir_keep_static_chi=True, ir_fit_tol=0.0)
+            kw.update(extra)
+            return sc.calc_eliashberg(_sc_input(flex_dir, out, 0.5, nmat,
+                                                (4, 4, 1), **kw))
+
+        leak = {}
+        for nmat in (64, 128):
+            flex_dir = tempfile.mkdtemp()
+            try:
+                _run_gate_1orb(flex_dir, nmat=nmat)
+                for eta in ("singlet", "triplet"):
+                    out = tempfile.mkdtemp()
+                    try:
+                        with self.assertRaisesRegex(
+                                ValueError, "cross-sector leakage") as cm:
+                            ir_run(flex_dir, out, nmat, eta)
+                        m = re.search(r"cross-sector leakage ([0-9.eE+-]+)",
+                                      str(cm.exception))
+                        self.assertIsNotNone(m)
+                        leak[(eta, nmat)] = float(m.group(1))
+                    finally:
+                        shutil.rmtree(out, ignore_errors=True)
+                if nmat == 64:
+                    # and the default ir_fit_tol refuses EARLIER, with the
+                    # measured residual named in the message
+                    out = tempfile.mkdtemp()
+                    try:
+                        with self.assertRaisesRegex(
+                                ValueError, "exceeds ir_fit_tol") as cm:
+                            ir_run(flex_dir, out, 64, "singlet", ir_fit_tol=0.1)
+                        m = re.search(r"relative residual ([0-9.eE+-]+)",
+                                      str(cm.exception))
+                        self.assertIsNotNone(m)
+                        self.assertLess(float(m.group(1)), 0.5)   # was 1.64
+                    finally:
+                        shutil.rmtree(out, ignore_errors=True)
+            finally:
+                shutil.rmtree(flex_dir, ignore_errors=True)
+        for eta in ("singlet", "triplet"):
+            # two orders of magnitude below the pre-fix O(0.1) flat-term
+            # leakage, and converging in the FLEX run's own Nmat
+            self.assertLess(leak[(eta, 64)], 5e-2, eta)
+            self.assertLess(leak[(eta, 128)], 0.6 * leak[(eta, 64)],
+                            "{}: no Nmat convergence {:.3e} -> {:.3e}"
+                            .format(eta, leak[(eta, 64)], leak[(eta, 128)]))
 
 
 class TestInProcess(unittest.TestCase):
