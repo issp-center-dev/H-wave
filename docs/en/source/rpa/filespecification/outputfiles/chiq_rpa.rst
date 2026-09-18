@@ -251,14 +251,15 @@ dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
 above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
 with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
 solve (``[mode.param] longitudinal_bond_pairing``, see the configuration
-reference). See the FLEX tutorial section "Pairing eigenvalues with the
-bond-resolved vertex" for the workflow and worked examples.
+reference). See :ref:`the FLEX tutorial section on pairing with the
+bond-resolved vertex <flex_bond_pairing_tutorial>` for the workflow and
+worked examples.
 
-**Post-processing entry (** ``hwave_sc`` **).** Writes the same three files
+**Post-processing entry** (``hwave_sc``). Writes the same three files
 as the on-site dynamic solver -- ``gap_dynamic.npz``, ``gap.dat`` and
 ``eigenvalue.dat`` (``[eliashberg] output_gap`` / ``output_eigenvalue``
-override the first two names) -- for the single ``pairing_type`` the run
-solves. ``gap_dynamic.npz`` gains, in addition to its base key set (``gap``,
+override the names of ``gap.dat`` and ``eigenvalue.dat``) -- for the single
+``pairing_type`` the run solves. ``gap_dynamic.npz`` gains, in addition to its base key set (``gap``,
 ``iomega``, ``T``, ``pairing_type``, ``frequency``, ``eigenvalue``,
 ``axis_order``, ``normalization``, ``momentum_convention``): ``bond_channels``
 (``true``), ``bond_delta_r`` / ``bond_reverse`` (the archive's bond
@@ -275,7 +276,7 @@ vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
 ``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
 ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
 
-**In-process entry (** ``[mode.param] longitudinal_bond_pairing`` **).** For
+**In-process entry** (``[mode.param] longitudinal_bond_pairing``). For
 each requested channel (``singlet`` and/or ``triplet``) writes three files
 under the ``[file.output]`` names of the configuration reference (default
 ``eliashberg_bond_<type>.npz``, ``gap_bond_<type>.dat``,

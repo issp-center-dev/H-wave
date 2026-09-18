@@ -244,14 +244,15 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 true``\ と\ ``frequency = "dynamic"``\ ）と、FLEX の計算の最後に
 実行される\ ``hwave``\ 自身の経路（``[mode.param]
 longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
-ワークフローと具体例は FLEX チュートリアルの「bond 分解頂点による
-ペアリング固有値」の節を参照してください。
+ワークフローと具体例は\ :ref:`FLEX チュートリアルのボンド分解
+バーテックスによるペアリングの節 <flex_bond_pairing_tutorial>`\ を
+参照してください。
 
-**後処理の経路（** ``hwave_sc`` **）。** オンサイトの動的ソルバーと
+**後処理の経路** （``hwave_sc``\ ）。オンサイトの動的ソルバーと
 同じ3つのファイル -- ``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・
-``eigenvalue.dat``\ （最初の2つの名前は\ ``[eliashberg] output_gap`` /
-``output_eigenvalue``\ で上書きできます）-- を、その実行が解く
-単一の\ ``pairing_type``\ について書き出します。\ ``gap_dynamic.npz``
+``eigenvalue.dat``\ （``gap.dat``\ と\ ``eigenvalue.dat``\ の名前は
+``[eliashberg] output_gap`` / ``output_eigenvalue``\ で上書きできます）
+-- を、その実行が解く単一の\ ``pairing_type``\ について書き出します。\ ``gap_dynamic.npz``
 は、基本のキー集合（``gap``\ ・\ ``iomega``\ ・\ ``T``\ ・
 ``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
 ``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ）に
@@ -272,8 +273,8 @@ ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
 場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
 
-**インプロセスの経路（** ``[mode.param]
-longitudinal_bond_pairing`` **）。** リクエストされたチャネル
+**インプロセスの経路** （``[mode.param]
+longitudinal_bond_pairing``\ ）。リクエストされたチャネル
 （``singlet``\ ・\ ``triplet``\ のいずれか、または両方）ごとに、
 設定リファレンスの\ ``[file.output]``\ 名の下に3つのファイルを
 書き出します（デフォルトは\ ``eliashberg_bond_<type>.npz``\ ・

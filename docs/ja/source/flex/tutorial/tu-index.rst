@@ -546,13 +546,15 @@ bond 分解頂点によるペアリング固有値
 
 ボンド分解チャネルを持つ Hartree-Fock FLEX 計算（前述の
 ``longitudinal_bond_channels = true``\ ）がドレスドグリーン関数を
-生成し、さらに\ ``longitudinal_bond_output_full = true``\ により
-動的ボンドアーカイブ\ ``longitudinal_bond.npz``\ （スキーマ2）を
 生成した後は、自己エネルギーが使ったのと同じボンド分解して
 振動数に依存する対形成バーテックスを用いて線形化 Eliashberg 方程式を
 解くことができます -- :ref:`動的振動数の節 <sc_dynamic_frequency>`
 のオンサイトの\ ``chiq_s.npz`` / ``chiq_c.npz``\ バーテックスの
-代わりに用います。このカーネルに到達する経路は2つあり、どちらも
+代わりに用います。インプロセスの経路に必要なのはこれだけです。
+動的ボンドアーカイブ\ ``longitudinal_bond.npz``\ （スキーマ2）は
+``longitudinal_bond_output_full = true``\ を指定したときにのみ
+書き出され、``hwave_sc``\ を経由する後処理の経路でのみ必要になります。
+このカーネルに到達する経路は2つあり、どちらも
 同じ配列からカーネルを構築するため、一様松原格子上では丸め誤差の
 範囲で一致します:
 
@@ -586,8 +588,9 @@ bond 分解頂点によるペアリング固有値
   ``eigenvalue.dat``\ ）で書き出します。
 
 完全なキー集合は\ :ref:`出力リファレンス
-<subsec:eliashberg_bond_outputs>`\ を、各キーの説明は設定
-リファレンスの\ ``eliashberg``\ セクションを参照してください。
+<subsec:eliashberg_bond_outputs>`\ を、各キーの説明は
+:ref:`設定ファイルリファレンスの eliashberg 節
+<eliashberg_bond_dynamic_config>`\ を参照してください。
 
 メモリと IR 基底
 """"""""""""""""""""""""""""""""
@@ -598,7 +601,11 @@ bond 分解頂点によるペアリング固有値
 チャネル数でチャネル0がオンサイト項）です。したがってアーカイブ
 全体はおよそ\ ``2 * Nmat * nvol * ND**2 * 16``\ バイトになり、これは
 前述の\ ``longitudinal_bond_output_full = true``\ がすでに FLEX の
-計算自身の常駐メモリに課しているのと同じ倍増です。対形成カーネルは
+計算自身の常駐メモリに課しているのと同じ倍増です。インプロセスの
+経路のみを使う場合は\ ``longitudinal_bond_output_full``\ を
+``false``\ のままにしてください。アーカイブは後処理の経路のためだけに
+書き出されるものであり、多軌道モデルではディスク上で数十 GiB に
+なります。対形成カーネルは
 さらに独自の作業領域（対バブル・持ち上げたバーテックスブロック・
 固有値ソルバーのベクトル）を必要とします。2つの代表的なモデルに
 ついての実測値です（CuO2型: :math:`B=5`\ 、``norb``\ =3、``ND``\ =45、
@@ -610,8 +617,8 @@ bond 分解頂点によるペアリング固有値
    :widths: 46 27 27
 
    * - 量
-     - CuO2型 (GB)
-     - 単一バンド (GB)
+     - CuO2型 (GiB)
+     - 単一バンド (GiB)
    * - ディスク上の動的アーカイブ (``chi_s_w`` + ``chi_c_w``)
      - 68
      - < 1
@@ -649,7 +656,12 @@ bond 分解頂点によるペアリング固有値
 ストリーミング残留方式でも収まらない場合、インプロセスの経路は
 最初の FLEX 写像の **前** に拒否し（長時間の FLEX 計算が事後の
 確保失敗によって失われることはありません）、後処理の経路は
-完全なメモリテーブルとともに拒否します。
+完全なメモリテーブルとともに拒否します。カーネルは残留方式
+（``"device"``\ ・\ ``"host"``\ ・\ ``"stream"``\ 、すなわち
+バーテックスブロックをデバイス上に置く・ホスト上に置く・適用ごとに
+再構築する）を、デバイスとホストの空きメモリおよび
+``bond_memory_cap_gb``\ から自動的に選択します。選択された方式は
+出力に\ ``bond_residency``\ として記録されます。
 
 単一バンドの例（両方の経路）
 """"""""""""""""""""""""""""""""""""""
@@ -668,13 +680,14 @@ bond 分解頂点によるペアリング固有値
      filling = 0.45
      CellShape = [32, 32, 1]
      Nmat = 1024
+     IterationMax = 100
      mixing_scheme = "anderson"
      anderson_depth = 8
      Mix = 0.2
      EPS = 8
      flex_hartree_fock = true
      longitudinal_bond_channels = true
-     longitudinal_bond_output_full = true
+     longitudinal_bond_output_full = true   # 後述の hwave_sc の経路のためだけに必要。インプロセスのみの計算では省略してください
      longitudinal_bond_pairing = "both"
    [file.input]
      path_to_input = "."
@@ -694,6 +707,10 @@ bond 分解頂点によるペアリング固有値
    [eliashberg]
      solver_mode = "eigenvalue"
      num_eigenvalues = 6
+
+.. code-block:: bash
+
+   $ hwave input.toml
 
 これにより\ ``output/``\ に\ ``eliashberg_bond_singlet.npz`` /
 ``gap_bond_singlet.dat`` / ``eigenvalue_bond_singlet.dat``\ と、
@@ -730,15 +747,31 @@ bond 分解頂点によるペアリング固有値
      solver_mode = "eigenvalue"
      num_eigenvalues = 6
 
+.. code-block:: bash
+
+   $ hwave_sc input_sc.toml
+
 どちらも一様格子上では、先頭固有値とギャップが丸め誤差の範囲で
 一致します。
 
-IR 基底での3軌道の例（インプロセスのみ）
-""""""""""""""""""""""""""""""""""""""""""""""""""""""""
+.. note::
+
+   ``hwave_sc``\ は、``pairing_type``\ が何であっても
+   ``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・\ ``eigenvalue.dat``\ という
+   固定のファイル名で書き出します。singlet と triplet のチャネルは
+   異なる2つの\ ``path_to_output``\ ディレクトリに出力してください。
+   さもないと2回目の実行が1回目の結果を上書きします。
+
+IR 基底での3軌道の例
+""""""""""""""""""""""""""
 
 ボンド分解した動的アーカイブが一様格子のメモリに収まらないモデル
 （例えば CuO2型の3軌道モデル）では、FLEX 入力の\ ``[eliashberg]``
-テーブルで\ ``matsubara_basis = "ir"``\ を設定します:
+テーブルで\ ``matsubara_basis = "ir"``\ を設定します。
+
+後処理の経路も\ ``matsubara_basis = "ir"``\ を受け付けます。ここで
+インプロセスの経路を示しているのは、この経路が一様格子のアーカイブを
+書き出さないためです。
 
 .. code-block:: toml
 
@@ -762,19 +795,16 @@ IR 基底にフィットさせた際の成分ごとの相対残差です。定�
 
 .. note::
 
-   バーテックスの瞬時（振動数に依存しない）部分は、IR カーネル
-   では厳密な松原和の中間点
-   :math:`\tfrac12(F(0^+) - F(\beta^-))`\ として畳み込まれ、
-   :math:`F(0^+)`\ ではありません。この修正より前のバージョンで
-   ``matsubara_basis = "ir"``\ かつ非零の瞬時バーテックス（係数が
-   非零のオフサイト\ ``CoulombInter`` / ``Hund`` / ``Ising``\ の
-   いずれか）を用いて計算した動的 IR の結果は、このバージョンの
-   結果と異なります。一様格子の経路は影響を受けません。
-
-   これはボンド分解バーテックスに固有の話ではありません。同じ修正は
-   通常のオンサイト動的 IR ソルバーにも適用されるため、オフサイト
-   相互作用を含む既存の\ ``matsubara_basis = "ir"``\ 計算の結果も本
-   バージョンで変わります。\ :ref:`瞬時バーテックスの変更に関する注意
+   バーテックスの瞬時（振動数に依存しない）部分は、IR カーネルには
+   厳密な松原和の中間点
+   :math:`\tfrac12(F(0^+) - F(\beta^-))`\ として入り、
+   :math:`F(0^+)`\ としてではありません。振動数パリティが定まった
+   対振幅に対しては両者は一致するため、パリティ射影を行った計算の
+   固有値は変わりません。この修正が取り除くのは、以前の処方が持って
+   いた偽のパリティの漏れ（およびそれに伴う射影の無効化と、奇パリティ
+   チャネルのギャップ関数への偶パリティ成分の混入）です。同じ修正は
+   通常のオンサイト動的 IR ソルバーにも適用されます。再実行が必要な
+   のはどのような計算かについては\ :ref:`変更に関する注意
    <sc_dynamic_ir_instantaneous>`\ を参照してください。
 
 IR 結果の Nmat 依存性
@@ -789,7 +819,7 @@ N_{\rm mat})`\ だけ異なります。一様格子は有限の\ ``Nmat``\ で
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 20 20
+   :widths: 34 33 33
 
    * - ``Nmat``
      - singlet, 一様 vs. IR
@@ -824,6 +854,9 @@ green"``\ が記録されます（収束した計算では代わりに\ ``state 
 メタデータと\ ``eigenvalue_bond_<type>.dat``\ の\ ``#``\ ヘッダー行の
 両方に記録されます。このような結果は、自己無撞着な対形成固有値では
 なく、SCF ループが辿っていた軌跡の診断値として扱ってください。
+``eigenvalue_bond_<type>.dat``\ を読み込むパイプラインでは、値を
+利用する前に\ ``# scf_converged=true``\ のヘッダー行（または npz の
+``scf_converged``\ キー）を確認してください。
 
 
 サンプル 2: 2軌道Hubbardモデル

@@ -345,8 +345,8 @@ Parameters
   channel (``[file.output]`` keys of the same names, see below). A failure
   of the pairing step is recorded in the log; that channel's files are then
   simply not written (the FLEX outputs are written first and are never lost
-  to it). Memory: see the FLEX tutorial section "Pairing eigenvalues with
-  the bond-resolved vertex"; for large models set
+  to it). Memory: see :ref:`the FLEX tutorial section on pairing with the
+  bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
   ``[eliashberg] matsubara_basis = "ir"``.
 
 - ``flex_hartree_fock``
@@ -624,9 +624,10 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   ``zero_chi_c`` (not implemented on the bond path). Exactly one
   ``pairing_type`` (``"singlet"`` or ``"triplet"``) is solved per
   ``hwave_sc`` run, as on the on-site dynamic path; a second channel is a
-  second run with its own ``path_to_output``. See the FLEX tutorial
-  section "Pairing eigenvalues with the bond-resolved vertex" for the
-  memory model, the sparse-ir dependency and worked examples.
+  second run with its own ``path_to_output``. See :ref:`the FLEX tutorial
+  section on pairing with the bond-resolved vertex
+  <flex_bond_pairing_tutorial>` for the memory model, the sparse-ir
+  dependency and worked examples.
 
 - ``flex_bond_archive``
 

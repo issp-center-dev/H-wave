@@ -1138,28 +1138,35 @@ re-run FLEX with ``write_densified = true``.
 
 .. warning::
 
-   **Changed in this version — recompute affected runs.** With
-   ``matsubara_basis = "ir"``, the frequency-independent (instantaneous)
-   part of the pairing vertex is now multiplied by the EXACT Matsubara sum
-   of the pair bubble, i.e. by the midpoint
+   **Changed in this version.** With ``matsubara_basis = "ir"``, the
+   frequency-independent (instantaneous) part of the pairing vertex now
+   multiplies the exact Matsubara sum of the pair bubble, i.e. the midpoint
    :math:`\tfrac12\bigl(F(0^+)-F(\beta^-)\bigr)` of its jump at
-   :math:`\tau = 0`, instead of by the one-sided value :math:`F(0^+)` that
-   earlier versions used.
+   :math:`\tau = 0`, instead of the one-sided value :math:`F(0^+)` used
+   before. This applies to the ordinary (on-site) dynamic solver as much as
+   to the bond-resolved one; the uniform-grid path is unaffected.
 
-   This changes results of the ordinary (on-site) dynamic solver — nothing
-   about it is specific to the bond-resolved vertex. It applies to every
-   ``matsubara_basis = "ir"`` run whose vertex has a nonzero instantaneous
-   part, which is the case as soon as an off-site interaction is declared
-   (``CoulombInter``, ``Hund``, ``Ising`` with a nonzero coefficient);
-   purely on-site models have no instantaneous part and are unaffected, and
-   the uniform-grid path (``matsubara_basis = "uniform"``) is unaffected in
-   either case.
+   What it changes. On a pair amplitude of definite frequency parity the
+   two prescriptions coincide, so the leading eigenvalue of a
+   parity-projected solve, and the eigenvalues returned by the eigenvalue
+   solver, are unchanged. The old prescription broke the commutation of the
+   kernel with the combined parity (it mapped odd-frequency components into
+   the even sector), with two practical consequences that are now gone: the
+   parity guard of the power iteration reported a leakage of order
+   :math:`10^{-1}` and switched to the unprojected iteration, which in a
+   triplet run can converge to the even-parity (singlet-sector) eigenvalue;
+   and the gap function of the odd-parity channel returned by the
+   eigenvalue solver carried an even-parity admixture.
 
-   The change is a correction, not a convention: the one-sided value broke
-   the parity commutation of the kernel and did not converge to the
-   uniform-grid result as ``Nmat`` grows, while the midpoint does both. If
-   you have dynamic IR results for such a model from an earlier version,
-   recompute them.
+   Who is affected. Any ``matsubara_basis = "ir"`` run whose instantaneous
+   vertex is nonzero. In the singlet channel that is every model, the pure
+   Hubbard model included (its bare singlet term is :math:`+U`); in the
+   triplet channel every model with an inter-orbital (:math:`U'`, Hund) or
+   off-site (``CoulombInter``, ``Hund``, ``Ising`` at :math:`R \neq 0`)
+   interaction. Re-run an earlier IR run if its log carried the "does not
+   commute with parity" warning (its projection was off) or if its gap
+   function is used, in particular triplet runs; eigenvalues of
+   parity-projected singlet runs are unchanged.
 
 .. _sc_dynamic_gpu_en:
 
