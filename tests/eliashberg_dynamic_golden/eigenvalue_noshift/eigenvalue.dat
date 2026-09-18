@@ -1,0 +1,7 @@
+# Dynamic Eliashberg leading eigenvalue
+1.03252068e+01
+# index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
+   0  1.03252068e+01 -4.54480570e+01  4.66061775e+01 0
+   1 -1.52330197e+01  4.01841138e+01  4.29745028e+01 0
+   2 -1.54578603e+01  5.16497433e+01  5.39132770e+01 0
+   3 -4.08688254e+01  1.13141607e+01  4.24060270e+01 0

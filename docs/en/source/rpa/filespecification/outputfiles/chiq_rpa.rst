@@ -219,16 +219,93 @@ susceptibilities, ``"final_state"`` for ``sigma`` / ``green``),
 describes, with ``hf_density_source``) and ``density_target_enforced``.
 With ``longitudinal_bond_output_full = true`` the dedicated archive
 (``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
-holds ``bond_archive_schema`` (``1``), the full dynamic ``chi_s_w`` and
-``chi_c_w`` (``ndarray(l, q, I, J)``, ``freq_axis = "bosonic l -> 2l -
-nmat"``), ``beta``, ``T``, ``nmat``, ``cell_shape``, the momentum-convention
-markers, ``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen
-static keys, the ``longitudinal_bond_guard_freqs`` / ``longitudinal_bond_device``
+holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic
+Eliashberg pairing solver below was added; see the note at the end of this
+paragraph), the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
+J)``, ``freq_axis = "bosonic l -> 2l - nmat"``), the instantaneous bond
+vertices ``S_bond`` and ``C_bond`` (complex ``ndarray(nvol, ND, ND)``, the
+same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
+``T``, ``nmat``, ``cell_shape``, the momentum-convention markers,
+``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen static
+keys, the ``longitudinal_bond_guard_freqs`` / ``longitudinal_bond_device``
 / ``longitudinal_bond_nb`` members and the provenance block; nothing else
-duplicates these arrays.
+duplicates these arrays. ``S_bond`` and ``C_bond`` are the input the
+bond-resolved dynamic Eliashberg pairing solver needs in addition to
+``chi_s_w`` / ``chi_c_w`` (see below); an archive written by an earlier
+version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
+``norb``) is refused by that solver with a message asking for a re-run
+under this version. Every schema-1 key keeps its value and meaning
+unchanged under schema 2.
 With ``IterationMax = 0`` no map is executed and every last-map archive is
 omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
 of the seed state are written.
+
+
+.. _subsec:eliashberg_bond_outputs:
+
+Bond-resolved dynamic Eliashberg pairing outputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two entries solve the linearized Eliashberg equation with the bond-resolved,
+dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
+above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
+with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
+solve (``[mode.param] longitudinal_bond_pairing``, see the configuration
+reference). See :ref:`the FLEX tutorial section on pairing with the
+bond-resolved vertex <flex_bond_pairing_tutorial>` for the workflow and
+worked examples.
+
+**Post-processing entry** (``hwave_sc``). Writes the same three files
+as the on-site dynamic solver -- ``gap_dynamic.npz``, ``gap.dat`` and
+``eigenvalue.dat`` (``[eliashberg] output_gap`` / ``output_eigenvalue``
+override the names of ``gap.dat`` and ``eigenvalue.dat``) -- for the single
+``pairing_type`` the run solves. ``gap_dynamic.npz`` gains, in addition to its base key set (``gap``,
+``iomega``, ``T``, ``pairing_type``, ``frequency``, ``eigenvalue``,
+``axis_order``, ``normalization``, ``momentum_convention``): ``bond_channels``
+(``true``), ``bond_delta_r`` / ``bond_reverse`` (the archive's bond
+topology, matching ``longitudinal_bond_delta_r`` / ``longitudinal_bond_reverse``
+above), ``bond_archive`` (the resolved archive path), ``bond_residency``
+(``"device"``, ``"host"`` or ``"stream"``, the memory residency the kernel
+chose), ``bond_parity_leakage`` (the measured parity-commutation leakage;
+see ``[eliashberg] parity_leakage_tol``) and ``gap_bond_projection`` -- the
+gap projected onto each bond form factor, complex ``ndarray(B, norb, norb,
+Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
+``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_L`` and
+``bond_ir_fit_residual_rel`` (the componentwise IR fit residual of the bond
+vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
+``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
+``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+
+**In-process entry** (``[mode.param] longitudinal_bond_pairing``). For
+each requested channel (``singlet`` and/or ``triplet``) writes three files
+under the ``[file.output]`` names of the configuration reference (default
+``eliashberg_bond_<type>.npz``, ``gap_bond_<type>.dat``,
+``eigenvalue_bond_<type>.dat``), AFTER every FLEX output file so a failure
+of the pairing step never costs the FLEX results:
+
+- ``eliashberg_bond_<type>.npz`` carries the same key set as
+  ``gap_dynamic.npz`` above (including ``gap_bond_projection`` and, on IR,
+  ``bond_ir_fit_residual_rel``) except ``bond_archive`` (the vertex is built
+  from the FLEX solve's own arrays, not a file), plus ``eigenvalues_all``
+  (the full spectrum returned by the eigensolver, when available),
+  ``scf_converged`` and ``scf_iterations`` (the FLEX solve's own
+  convergence state) and ``state`` -- ``"last_map_chi / final_green"`` when
+  the FLEX solve converged, or ``"mixed: last-map chi, final green"`` when
+  it did not: the pairing step still runs on a non-converged FLEX solve
+  (the cost is sunk), and this label, together with
+  ``scf_converged = false``, marks the result as a diagnostic of the SCF
+  trajectory rather than a self-consistent pairing eigenvalue.
+- ``gap_bond_<type>.dat`` is the same single-frequency text slice as
+  ``gap.dat``.
+- ``eigenvalue_bond_<type>.dat`` is the same format as ``eigenvalue.dat``,
+  with header lines ``# bond_channels=true``,
+  ``# scf_converged=<true|false>``, ``# state=<...>``,
+  ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+
+A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
+an eigensolver failure, a write failure) writes none of its three files;
+the failure is logged, and the next requested channel (if any) is still
+attempted.
 
 
 Example for reading data

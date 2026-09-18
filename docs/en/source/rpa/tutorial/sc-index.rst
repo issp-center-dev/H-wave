@@ -1127,12 +1127,54 @@ re-run FLEX with ``write_densified = true``.
    Dynamic IR results computed with H-wave 1.0.x are incorrect for any
    model whose pairing vertex has a nonzero frequency-independent
    part — in particular anything with off-site
-   ``CoulombInter`` (pure on-site-``CoulombIntra`` models were
-   unaffected: their bare vertex term cancels exactly). Recompute such
+   ``CoulombInter`` (the shipped pure on-site-``CoulombIntra``
+   comparisons did not expose it; note that the bare singlet term of such
+   a model is :math:`+U`, not zero -- see the change note below). Recompute such
    runs; large changes in lambda are expected (they were the bug, not a
    physics change). The automatic ``ir_wmax`` estimate also changed to a
    dispersion-based bound and is now much smaller (and correct) on
    realistic multi-hopping models.
+
+.. _sc_dynamic_ir_instantaneous_en:
+
+.. warning::
+
+   **Changed in this version.** With ``matsubara_basis = "ir"``, the
+   frequency-independent (instantaneous) part of the pairing vertex now
+   multiplies the exact Matsubara sum of the pair bubble, i.e. the midpoint
+   :math:`\tfrac12\bigl(F(0^+)-F(\beta^-)\bigr)` of its jump at
+   :math:`\tau = 0`, instead of the one-sided value :math:`F(0^+)` used
+   before. This applies to the ordinary (on-site) dynamic solver as much as
+   to the bond-resolved one; the uniform-grid path is unaffected.
+
+   What it changes. On a frequency-even pair amplitude the two
+   prescriptions coincide (its even-:math:`l` IR coefficients vanish). The
+   old prescription additionally mapped odd-frequency components into the
+   even sector; since it never acted the other way, the old operator was
+   block-triangular with respect to frequency parity and had the SAME
+   spectrum as the new one -- so the leading eigenvalue of a
+   parity-projected solve and the eigenvalues returned by the eigenvalue
+   solver are unchanged, while eigenvectors and the behaviour of an
+   unprojected iteration were affected. Two practical consequences of that
+   are now gone: the parity guard of the power iteration reported a leakage
+   of order :math:`10^{-1}` and switched to the unprojected iteration,
+   which in a triplet run can converge to the even-parity (singlet-sector)
+   eigenvalue; and the gap function of the odd-parity channel returned by
+   the eigenvalue solver carried an even-parity admixture.
+
+   Who is affected. Any ``matsubara_basis = "ir"`` run whose instantaneous
+   vertex is nonzero. In the singlet channel the bare term is
+   :math:`\tfrac12(S+C)` of the Kuroki spin and charge matrices, nonzero
+   for essentially every density-type model (a pure Hubbard model gives
+   :math:`+U`). In the triplet channel the bare term is
+   :math:`\tfrac12(C-S)`, zero for a pure Hubbard model and nonzero
+   wherever the assembled matrices differ -- the generic outcome of an
+   inter-orbital :math:`U'`, a Hund or Ising term (on-site or off-site) or
+   an off-site density interaction (particular combinations can cancel).
+   Re-run an earlier IR run if its log carried the "does not
+   commute with parity" warning (its projection was off) or if its gap
+   function is used, in particular triplet runs; eigenvalues of
+   parity-projected singlet runs are unchanged.
 
 .. _sc_dynamic_gpu_en:
 

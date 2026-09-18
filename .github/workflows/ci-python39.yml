@@ -114,6 +114,31 @@ jobs:
         echo "HWAVE_DEVELOP_CHECKOUT=${RUNNER_TEMP}/hwave-reference" >> "$GITHUB_ENV"
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON=1" >> "$GITHUB_ENV"
 
+    - name: Provision the reference revision for the bond archive comparison
+      # tests/test_eliashberg_bond_entry.py's flag-off comparison is against
+      # a DIFFERENT revision than the step above: the merge the pairing
+      # branch was cut from (BOND_REFERENCE_COMMIT), which is later than
+      # DEVELOP_COMMIT. One checkout cannot be at two revisions, so this
+      # comparison gets a second worktree and its OWN pair of variables --
+      # sharing the pair above would declare a comparison mandatory whose
+      # reference is not there.
+      #
+      # Same mechanics and the same tolerance as the step above: a fetch or
+      # worktree failure warns and leaves both variables unset, and the
+      # comparison goes back to skipping with its own reason.
+      run: |
+        ref="$(poetry run python -c 'from tests.test_eliashberg_bond_entry import BOND_REFERENCE_COMMIT; print(BOND_REFERENCE_COMMIT)')"
+        if ! git fetch --depth=1 origin "$ref"; then
+          echo "::warning::could not fetch the bond reference revision $ref from origin (a fork may not carry it); the bond archive comparison will skip"
+          exit 0
+        fi
+        if ! git worktree add --detach "${RUNNER_TEMP}/hwave-reference-bond" "$ref"; then
+          echo "::warning::could not add a worktree at the bond reference revision $ref; the bond archive comparison will skip"
+          exit 0
+        fi
+        echo "HWAVE_DEVELOP_CHECKOUT_BOND=${RUNNER_TEMP}/hwave-reference-bond" >> "$GITHUB_ENV"
+        echo "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND=1" >> "$GITHUB_ENV"
+
     - name: Install optional dependencies (IR basis)
       run: poetry run pip install sparse-ir
 
@@ -263,6 +288,31 @@ jobs:
         fi
         echo "HWAVE_DEVELOP_CHECKOUT=${RUNNER_TEMP}/hwave-reference" >> "$GITHUB_ENV"
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON=1" >> "$GITHUB_ENV"
+
+    - name: Provision the reference revision for the bond archive comparison
+      # tests/test_eliashberg_bond_entry.py's flag-off comparison is against
+      # a DIFFERENT revision than the step above: the merge the pairing
+      # branch was cut from (BOND_REFERENCE_COMMIT), which is later than
+      # DEVELOP_COMMIT. One checkout cannot be at two revisions, so this
+      # comparison gets a second worktree and its OWN pair of variables --
+      # sharing the pair above would declare a comparison mandatory whose
+      # reference is not there.
+      #
+      # Same mechanics and the same tolerance as the step above: a fetch or
+      # worktree failure warns and leaves both variables unset, and the
+      # comparison goes back to skipping with its own reason.
+      run: |
+        ref="$(poetry run python -c 'from tests.test_eliashberg_bond_entry import BOND_REFERENCE_COMMIT; print(BOND_REFERENCE_COMMIT)')"
+        if ! git fetch --depth=1 origin "$ref"; then
+          echo "::warning::could not fetch the bond reference revision $ref from origin (a fork may not carry it); the bond archive comparison will skip"
+          exit 0
+        fi
+        if ! git worktree add --detach "${RUNNER_TEMP}/hwave-reference-bond" "$ref"; then
+          echo "::warning::could not add a worktree at the bond reference revision $ref; the bond archive comparison will skip"
+          exit 0
+        fi
+        echo "HWAVE_DEVELOP_CHECKOUT_BOND=${RUNNER_TEMP}/hwave-reference-bond" >> "$GITHUB_ENV"
+        echo "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND=1" >> "$GITHUB_ENV"
 
     - name: Install optional dependencies (IR basis)
       run: poetry run pip install sparse-ir

@@ -34,6 +34,7 @@ class BondBlockStore:
         self.nmat, self.nvol, self.ND, self.nd = int(nmat), int(nvol), int(ND), int(nd)
         self.B = self.ND // self.nd
         self._arrays = {}
+        self._released_slots = set()
         try:
             for name in names:
                 self._arrays[name] = np.zeros((self.nmat, self.nvol, self.ND, self.ND),
@@ -53,6 +54,8 @@ class BondBlockStore:
     def _arr(self, name):
         if self._released:
             raise RuntimeError("BondBlockStore: released")
+        if name in self._released_slots:
+            raise KeyError("BondBlockStore: slot {!r} was released".format(name))
         return self._arrays[name]
 
     def put_pair(self, name, alpha, beta, block):
@@ -75,6 +78,21 @@ class BondBlockStore:
         a = self._arr(name)
         del self._arrays[name]
         return a
+
+    def release_slot(self, name):
+        """Free ONE named array (the pairing step drops ``W`` before it
+        allocates the IR coefficients, spec 7 step 1). Later access to the
+        slot raises KeyError; ``release`` / ``__exit__`` tolerate it."""
+        # after release every array is gone, so a valid slot name would look
+        # "unknown": say what really happened instead
+        if self._released:
+            raise RuntimeError("BondBlockStore: released")
+        if name not in self._arrays:
+            if name in self._released_slots:
+                return
+            raise KeyError("BondBlockStore: no slot {!r}".format(name))
+        del self._arrays[name]
+        self._released_slots.add(name)
 
     def release(self):
         self._arrays.clear()
@@ -100,11 +118,19 @@ class BondDeviceContext:
 
     _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask")
 
-    def __init__(self, xp, S, C, S_on, C_on, perm, mask):
+    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None):
         self.xp = xp
-        SpC_on = np.asarray(S_on) + np.asarray(C_on)
+        # SpC_on exists only when BOTH are present, so one of them alone would
+        # be silently dropped into a context whose SpC_on is None
+        if (S_on is None) != (C_on is None):
+            raise ValueError("BondDeviceContext: S_on and C_on must be given together "
+                             "(both None or both arrays); got S_on {}, C_on {}"
+                             .format("None" if S_on is None else "an array",
+                                     "None" if C_on is None else "an array"))
+        SpC_on = None if (S_on is None or C_on is None) else np.asarray(S_on) + np.asarray(C_on)
         host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
-        self._arrays = {k: _bk.to_device(host[k], xp) for k in self._NAMES}
+        self._arrays = {k: (None if host[k] is None else _bk.to_device(host[k], xp))
+                        for k in self._NAMES}
         self._released = False
 
     def __enter__(self):
@@ -654,9 +680,16 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
                 **device)
 
 
-_NPZ_ARTIFACTS = ("chi0q", "chiq_s", "chiq_c", "chiq", "sigma", "green", "longitudinal_bond")
+_NPZ_ARTIFACTS = ("chi0q", "chiq_s", "chiq_c", "chiq", "sigma", "green", "longitudinal_bond",
+                  "eliashberg_bond_singlet", "eliashberg_bond_triplet")
 _DEFAULT_FILES = {"chiq_s": "chiq_s", "chiq_c": "chiq_c",
-                  "longitudinal_bond": "longitudinal_bond.npz"}
+                  "longitudinal_bond": "longitudinal_bond.npz",
+                  "eliashberg_bond_singlet": "eliashberg_bond_singlet",
+                  "eliashberg_bond_triplet": "eliashberg_bond_triplet",
+                  "eigenvalue_bond_singlet": "eigenvalue_bond_singlet.dat",
+                  "eigenvalue_bond_triplet": "eigenvalue_bond_triplet.dat",
+                  "gap_bond_singlet": "gap_bond_singlet.dat",
+                  "gap_bond_triplet": "gap_bond_triplet.dat"}
 
 
 def resolve_output_paths(info_outputfile, path_to_output, active_outputs):

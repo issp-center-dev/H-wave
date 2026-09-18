@@ -154,5 +154,85 @@ class TestBondDeviceContext(unittest.TestCase):
         self.assertTrue(all(x is fake_xp for _, x in seen))
 
 
+class TestReleaseSlot(unittest.TestCase):
+    def test_release_slot_frees_and_refuses_access(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar", "W")) as store:
+            store.put_freq_batch("W", 0, 4, np.ones((4, 2, 2, 2), complex))
+            store.release_slot("W")
+            with self.assertRaisesRegex(KeyError, "slot 'W' was released"):
+                store.get_freq_batch("W", 0, 2)
+            with self.assertRaisesRegex(KeyError, "slot 'W' was released"):
+                store.get_pair("W", 0, 0)
+            # the other slot is untouched
+            self.assertEqual(store.get_freq_batch("chibar", 0, 4).shape, (4, 2, 2, 2))
+        self.assertTrue(store.released)
+
+    def test_release_slot_unknown_name(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar",)) as store:
+            with self.assertRaisesRegex(KeyError, "no slot 'W'"):
+                store.release_slot("W")
+
+    def test_release_slot_after_release_says_released(self):
+        """After ``release`` every array is gone, so a slot name would look
+        "unknown" and the KeyError would send the caller chasing a typo
+        instead of a lifetime error."""
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar", "W")) as store:
+            pass
+        self.assertTrue(store.released)
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("W")
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("nonexistent")
+
+
+class TestDeviceContextOptional(unittest.TestCase):
+    def test_optional_arrays_are_none(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        with BondDeviceContext(np, S, 2 * S) as dev:
+            self.assertIs(dev.xp, np)
+            np.testing.assert_array_equal(dev.S, S)
+            np.testing.assert_array_equal(dev.C, 2 * S)
+            for name in ("S_on", "C_on", "SpC_on", "perm", "mask"):
+                self.assertIsNone(getattr(dev, name))
+
+    def test_full_construction_unchanged(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        with BondDeviceContext(np, S, S, S, S, np.arange(2), np.zeros((2, 2))) as dev:
+            np.testing.assert_array_equal(dev.SpC_on, 2 * S)
+
+    def test_on_site_pair_must_be_given_together(self):
+        """``SpC_on`` is formed only when BOTH on-site vertices are present, so
+        one of them alone would be silently dropped into a context whose
+        ``SpC_on`` is ``None``."""
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        for S_on, C_on in ((S, None), (None, S)):
+            with self.assertRaisesRegex(ValueError, "S_on.*C_on|C_on.*S_on"):
+                BondDeviceContext(np, S, S, S_on, C_on)
+
+
+class TestOutputNameRegistry(unittest.TestCase):
+    def test_pairing_output_names_registered(self):
+        from hwave.solver import flex_bond
+        for name in ("eliashberg_bond_singlet", "eliashberg_bond_triplet"):
+            self.assertIn(name, flex_bond._NPZ_ARTIFACTS)
+            self.assertEqual(flex_bond._DEFAULT_FILES[name], name)
+        for name in ("eigenvalue_bond_singlet", "eigenvalue_bond_triplet",
+                     "gap_bond_singlet", "gap_bond_triplet"):
+            self.assertEqual(flex_bond._DEFAULT_FILES[name], name + ".dat")
+
+    def test_pairing_output_collision_refused(self):
+        from hwave.solver import flex_bond
+        with self.assertRaisesRegex(ValueError, "resolve to the same file"):
+            flex_bond.resolve_output_paths(
+                {"eliashberg_bond_singlet": "x", "chiq_s": "x"}, "/tmp/o",
+                ("eliashberg_bond_singlet", "chiq_s"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -242,7 +242,7 @@ class FLEX(RPA):
     """
 
     @do_profile
-    def __init__(self, param_ham, info_log, info_mode):
+    def __init__(self, param_ham, info_log, info_mode, eliashberg_param=None):
         logger.debug(">>> FLEX.__init__")
 
         # Phase B (#181): the raw Phase B keys are parsed BEFORE the RPA
@@ -257,6 +257,7 @@ class FLEX(RPA):
         # FLEX-specific parameters
         self._init_flex_param()
         self._install_phase_b_keys()
+        self._install_pairing_controls(eliashberg_param)
 
     # ------------------------------------------------------------------
     # Phase B (#181): configuration surface -- spec 2026-09-06 section 4.1
@@ -267,9 +268,21 @@ class FLEX(RPA):
                           "longitudinal_bond_freq_batch",
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb",
-                          "longitudinal_bond_guard_freqs")
+                          "longitudinal_bond_guard_freqs",
+                          "longitudinal_bond_pairing")
 
     _SECOND_ORDER_VALUES = ("local", "takimoto")
+    #: the accepted ``longitudinal_bond_pairing`` values and the channel tuple
+    #: each of them selects ("none" stays the string, so the absence of the
+    #: step is not an empty tuple that reads as "every channel")
+    _PAIRING_VALUES = {"none": "none", "singlet": ("singlet",), "triplet": ("triplet",),
+                       "both": ("singlet", "triplet")}
+    #: the ``[eliashberg]`` keys that describe WHERE the data comes from or
+    #: WHICH backend runs the kernel: in-process both are the FLEX solve's own,
+    #: so these are ignored (with one INFO line) rather than refused -- the same
+    #: file is a normal hwave_sc input.
+    _PAIRING_IGNORED_KEYS = ("gpu", "gpu_required", "bond_channels", "chi0q_mode", "frequency",
+                             "flex_bond_archive", "bond_green", "bond_max_shells")
 
     @staticmethod
     def _parse_flex_keys(info_mode):
@@ -308,6 +321,20 @@ class FLEX(RPA):
         active = hf_on or gate_on
         out["active"] = active
         stale = [k for k in FLEX._PHASE_B_BOND_KEYS if k in param]
+        # the in-process pairing selector is validated on EVERY path (the value
+        # domain first, then the gate coupling), so that a stale or misspelled
+        # key is never silently ignored -- the gate-off branches below return
+        # before the other bond keys are parsed (spec 7).
+        pv = param.get("longitudinal_bond_pairing", "none")
+        if not isinstance(pv, str) or pv.strip().lower() not in FLEX._PAIRING_VALUES:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing must be one of 'none', 'singlet', "
+                "'triplet', 'both' (case-insensitive), got {!r}".format(pv))
+        out["longitudinal_bond_pairing"] = FLEX._PAIRING_VALUES[pv.strip().lower()]
+        if out["longitudinal_bond_pairing"] != "none" and not gate_on:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing needs the bond gate "
+                "(longitudinal_bond_channels = true)")
         if not active:
             if stale:
                 logger.warning(
@@ -331,6 +358,12 @@ class FLEX(RPA):
             raise ValueError(
                 "[mode.param] IterationMax must be an integer >= 0 when flex_hartree_fock or "
                 "longitudinal_bond_channels is true, got {!r}".format(itmax))
+        if out["longitudinal_bond_pairing"] != "none" and int(itmax) < 1:
+            # the pairing kernel is built from the LAST map's chibar; with no
+            # map there is none (spec 7)
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing needs at least one FLEX map "
+                "(IterationMax >= 1), got IterationMax = {}".format(int(itmax)))
         # the SAME canonicalisation the solver itself applies later
         # (hwave.solver.rpa.canonical_scheme_name): this pre-parser runs
         # before any solver exists, so it cannot read the resolved state,
@@ -410,6 +443,7 @@ class FLEX(RPA):
         self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
         self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
+        self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
         self._phase_b_active = raw["active"]
         if self._phase_b_active and str(self.calc_scheme).lower() != "general":
             raise ValueError(
@@ -421,6 +455,36 @@ class FLEX(RPA):
             logger.info("    flex_hartree_fock = {}".format(self.flex_hartree_fock))
             logger.info("    longitudinal_bond_channels (FLEX) = {}".format(
                 self.longitudinal_bond_channels))
+            logger.info("    longitudinal_bond_pairing = {}".format(
+                self.longitudinal_bond_pairing))
+
+    def _install_pairing_controls(self, eliashberg_param):
+        """The ``[eliashberg]`` table of the FLEX input, evaluated once at
+        construction (spec 7). ``self._pairing_controls`` is a
+        :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
+        in-process pairing step is requested and ``None`` otherwise."""
+        from hwave.solver.eliashberg_bond_io import PairingControls
+        self._pairing_controls = None
+        types = self.longitudinal_bond_pairing
+        if types == "none":
+            if eliashberg_param:
+                # one input file serving hwave and then hwave_sc is a normal
+                # workflow, not a mistake
+                logger.info("[eliashberg] table present but longitudinal_bond_pairing is "
+                            "'none': ignored (it configures hwave_sc, not this run)")
+            return
+        table = dict(eliashberg_param or {})
+        if "pairing_type" in table:
+            raise ValueError(
+                "in-process pairing selects its channels with [mode.param] "
+                "longitudinal_bond_pairing; remove [eliashberg] pairing_type")
+        ignored = [k for k in FLEX._PAIRING_IGNORED_KEYS if k in table]
+        if ignored:
+            logger.info("[eliashberg] keys ignored in-process (the FLEX solve's backend and "
+                        "data are used): %s", ", ".join(ignored))
+            for k in ignored:
+                table.pop(k)
+        self._pairing_controls = PairingControls.from_param(table, pairing_types=types)
 
     def _assemble_static_seed(self, green_info, expected_shape):
         """Refusal precedence steps 4-5 and the seed matrix (spec 2.3, D7,
@@ -1007,6 +1071,13 @@ class FLEX(RPA):
             _gi_h0 = {k: v for k, v in green_info.items()
                       if k not in ("trans_mod", "green_init")}
             self._calc_epsilon_k(_gi_h0)
+            if getattr(self, "_pairing_controls", None) is not None:
+                # spec 7: a long FLEX run must not be lost to a post-hoc
+                # allocation, so the pairing step is admitted here -- after
+                # H0 is diagonalised (the IR auto-wmax reads its bands) and
+                # before the first map.
+                from hwave.solver import eliashberg_bond_io
+                eliashberg_bond_io.pairing_preflight(self)
         else:
             self._calc_epsilon_k(green_info)
 
@@ -1383,7 +1454,12 @@ class FLEX(RPA):
         """Solve-entry reset by ownership (spec 3.5): every solve-produced
         member and solver result attribute is dropped; the inputs
         (sigma_init, trans_mod, green_init, chi0q_init, reader entries)
-        are preserved."""
+        are preserved.
+
+        The ``pairing_`` prefix is a RESERVED namespace of ``green_info``,
+        like ``longitudinal_bond_`` and ``scf_``: it belongs entirely to the
+        in-process pairing results, so dropping the whole prefix here cannot
+        discard anything a reader owns."""
         produced = ("sigma", "sigma_static", "sigma_fluct", "green", "physics",
                     "chi0q", "chiq_s", "chiq_c")
         prov = ("map_iteration", "state_iteration", "payload_kind", "hf_density_error",
@@ -1391,7 +1467,8 @@ class FLEX(RPA):
         for k in list(green_info):
             ks = str(k)
             if (k in produced or ks.startswith("longitudinal_bond_")
-                    or ks.startswith("scf_") or ks in prov):
+                    or ks.startswith("scf_") or ks.startswith("pairing_")
+                    or ks in prov):
                 green_info.pop(k, None)
         for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
@@ -1701,6 +1778,15 @@ class FLEX(RPA):
             active += [k for k in ("chi0q", "chiq") if k in info_outputfile]
             if self.longitudinal_bond_channels and self.longitudinal_bond_output_full:
                 active.append("longitudinal_bond")
+            ctl = getattr(self, "_pairing_controls", None)
+            if ctl is not None:
+                # the three files of every requested pairing channel (spec 7);
+                # they are written after every FLEX artifact, but a collision
+                # with one of them is refused before the solve like any other
+                for eta in ctl.pairing_types:
+                    active += ["eliashberg_bond_{}".format(eta),
+                               "eigenvalue_bond_{}".format(eta),
+                               "gap_bond_{}".format(eta)]
         return tuple(active)
 
     def validate_output_paths(self, info_outputfile=None, path_to_output=None):
@@ -1922,13 +2008,15 @@ class FLEX(RPA):
                     raise _hf.NonFiniteError("non-finite final-state Green function")
                 dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
                 if self.calc_mu:
-                    dev = abs(dens.n_per_spin - Ncond_target)
-                    if dev > 1e-10 * max(1.0, abs(Ncond_target)):
+                    # NOT named `dev`: that name holds the solve-scoped bond
+                    # device context here, which the pairing hook below needs
+                    dens_dev = abs(dens.n_per_spin - Ncond_target)
+                    if dens_dev > 1e-10 * max(1.0, abs(Ncond_target)):
                         raise ValueError(
                             "flex_hartree_fock: the final-state chemical potential search closed "
                             "on N/2 = {:.12g} but the equal-time density gives {:.12g} (residual "
                             "{:.3e} > tolerance {:.3e})".format(
-                                Ncond_target, dens.n_per_spin, dev,
+                                Ncond_target, dens.n_per_spin, dens_dev,
                                 1e-10 * max(1.0, abs(Ncond_target))))
                 self.hf_density_error_state = abs(
                     2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
@@ -1953,6 +2041,13 @@ class FLEX(RPA):
                     green_info["chiq_c"] = self.chi_c
                     if gate:
                         self._phase_b_publish_bond(green_info, store)
+                        if getattr(self, "_pairing_controls", None) is not None:
+                            # spec 7: NON-THROWING. The store (chibar of the
+                            # last map), the bond device context and the
+                            # final-state green_kw on xp are all alive here.
+                            from hwave.solver import eliashberg_bond_io
+                            eliashberg_bond_io.run_inprocess_pairing(
+                                self, store, dev, green_kw, beta, green_info)
                 else:
                     logger.info("FLEX IterationMax=0: no map executed; only the final-state "
                                 "outputs (sigma, green, physics) of the seed state are stored.")
@@ -2047,6 +2142,8 @@ class FLEX(RPA):
         if self.longitudinal_bond_output_full:
             out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
             out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+            out["longitudinal_bond_S"] = np.array(self._bond_S, copy=True)
+            out["longitudinal_bond_C"] = np.array(self._bond_C, copy=True)
         green_info.update(out)
         logger.info(
             "longitudinal_bond_channels (FLEX): chi0q/chiq_s/chiq_c are the channel-0 "
@@ -4023,7 +4120,8 @@ class FLEX(RPA):
             self.validate_output_paths(info_outputfile, path_to_output)
             _bond_static = {k: v for k, v in green_info.items()
                             if str(k).startswith("longitudinal_bond_")
-                            and not str(k).endswith("_w")}
+                            and not str(k).endswith("_w")
+                            and k not in ("longitudinal_bond_S", "longitudinal_bond_C")}
             if "chiq_s" not in green_info:
                 _last_map_omitted = True
                 logger.info("save_results: no map was executed (IterationMax=0); the last-map "
@@ -4263,9 +4361,12 @@ class FLEX(RPA):
             logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
                         "channel data)".format(file_name), 2 * chi_s_w.nbytes / 1024 ** 3)
             np.savez(file_name,
-                     bond_archive_schema=np.int64(1),
+                     bond_archive_schema=np.int64(2),
                      chi_s_w=chi_s_w,
                      chi_c_w=chi_c_w,
+                     S_bond=green_info["longitudinal_bond_S"],
+                     C_bond=green_info["longitudinal_bond_C"],
+                     norb=np.int64(self.norb),
                      freq_axis=np.str_("bosonic l -> 2l - nmat"),
                      beta=1.0 / self.T,
                      T=self.T,
@@ -4282,3 +4383,10 @@ class FLEX(RPA):
                      **self._provenance_block("last_map"),
                      **self._second_order_members())
             logger.info("save_results: save the bond archive in file {}".format(file_name))
+
+        # In-process pairing (spec 7): AFTER every FLEX artifact, in its own
+        # guarded block -- a failure here never costs the FLEX outputs.
+        if getattr(self, "_pairing_controls", None) is not None:
+            from hwave.solver import eliashberg_bond_io
+            eliashberg_bond_io.write_pairing_outputs(self, info_outputfile, green_info,
+                                                     path_to_output)

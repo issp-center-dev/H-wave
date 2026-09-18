@@ -163,6 +163,19 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
+    # --- tests/test_eliashberg_bond_entry.py -- the two pairing entries ---
+    ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
+     "test_ir_lambda_arm_matches_uniform",
+     "the IR arm of the entry-level agreement case: two real bond-gate FLEX "
+     "runs (4x4, Nmat 64 and 128) plus eight hwave_sc solves on their "
+     "archives, one per channel per Matsubara basis, comparing lambda_ir with "
+     "lambda_uniform on the same archive -- it also needs sparse-ir, which "
+     "the fast gate does not require. Its uniform sibling "
+     "(test_uniform_lambda_and_outputs, 2.2 s) and the two-entry agreement "
+     "case (TestInProcess.test_inprocess_equals_postprocessing, 1.2 s) are "
+     "deliberately NOT registered: they are the only end-to-end runs of the "
+     "hwave_sc bond entry, and a fast gate without them would exercise its "
+     "refusals and nothing else"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",

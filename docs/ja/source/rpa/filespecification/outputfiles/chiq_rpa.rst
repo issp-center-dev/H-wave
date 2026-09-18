@@ -211,16 +211,102 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``hf_density_source``\ 付き）・\ ``density_target_enforced``\ が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
-``bond_archive_schema``\ （``1``\ ）、動的な\ ``chi_s_w``\ と\ ``chi_c_w``
+``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
+対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+動的な\ ``chi_s_w``\ と\ ``chi_c_w``
 （``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
+瞬時のボンドバーテックス\ ``S_bond``\ と\ ``C_bond``\ （複素\ ``ndarray(nvol,
+ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と\ ``norb``\ 、
 ``beta``\ ・\ ``T``\ ・\ ``nmat``\ ・\ ``cell_shape``\ ・運動量規約マーカー・
 ``index_order``\ ・\ ``delta_r``\ ・\ ``reverse``\ ・\ ``types``\ 、16個の静的キー、
 ``longitudinal_bond_guard_freqs``\ ・\ ``longitudinal_bond_device``\ ・
 ``longitudinal_bond_nb``\ 、来歴ブロックが格納されます。これらの配列を重複して
-持つファイルは他にありません。
+持つファイルは他にありません。\ ``S_bond``\ と\ ``C_bond``\ は、下記の
+ボンド分解した動的 Eliashberg 対形成ソルバーが\ ``chi_s_w`` / ``chi_c_w``
+に加えて必要とする入力です。旧バージョンで書き出されたアーカイブ
+（``bond_archive_schema = 1``\ 、``S_bond`` / ``C_bond`` / ``norb``\ を
+含まない）は、そのソルバーによって、このバージョンでの再計算を求める
+メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
+スキーマ2でも変わりません。
 ``IterationMax = 0``\ では写像は実行されず、最後の写像に属するアーカイブは全て省略され
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
+
+
+.. _subsec:eliashberg_bond_outputs:
+
+ボンド分解した動的 Eliashberg 対形成の出力
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``longitudinal_bond.npz``\ （スキーマ2、前述）のボンド分解した動的
+対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
+あります。後処理の\ ``hwave_sc``\ （``[eliashberg] bond_channels =
+true``\ と\ ``frequency = "dynamic"``\ ）と、FLEX の計算の最後に
+実行される\ ``hwave``\ 自身の経路（``[mode.param]
+longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
+ワークフローと具体例は\ :ref:`FLEX チュートリアルのボンド分解
+バーテックスによるペアリングの節 <flex_bond_pairing_tutorial>`\ を
+参照してください。
+
+**後処理の経路** （``hwave_sc``\ ）。オンサイトの動的ソルバーと
+同じ3つのファイル -- ``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・
+``eigenvalue.dat``\ （``gap.dat``\ と\ ``eigenvalue.dat``\ の名前は
+``[eliashberg] output_gap`` / ``output_eigenvalue``\ で上書きできます）
+-- を、その実行が解く単一の\ ``pairing_type``\ について書き出します。\ ``gap_dynamic.npz``
+は、基本のキー集合（``gap``\ ・\ ``iomega``\ ・\ ``T``\ ・
+``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
+``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ）に
+加えて、\ ``bond_channels``\ （``true``\ ）、\ ``bond_delta_r`` /
+``bond_reverse``\ （アーカイブのボンドトポロジー。上記の
+``longitudinal_bond_delta_r`` / ``longitudinal_bond_reverse``\ に
+対応）、\ ``bond_archive``\ （解決されたアーカイブのパス）、
+``bond_residency``\ （``"device"``\ ・\ ``"host"``\ ・\ ``"stream"``\ の
+いずれか。カーネルが選んだメモリ配置）、\ ``bond_parity_leakage``
+（実測されたパリティ交換の漏れ。\ ``[eliashberg]
+parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
+形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ ）
+を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
+``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ ・\ ``ir_L``\ ・
+``bond_ir_fit_residual_rel``\ （ボンドバーテックスの成分ごとの IR
+フィット残差。実数\ ``ndarray(B, B)``\ 。\ ``[eliashberg]
+ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
+``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
+場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
+
+**インプロセスの経路** （``[mode.param]
+longitudinal_bond_pairing``\ ）。リクエストされたチャネル
+（``singlet``\ ・\ ``triplet``\ のいずれか、または両方）ごとに、
+設定リファレンスの\ ``[file.output]``\ 名の下に3つのファイルを
+書き出します（デフォルトは\ ``eliashberg_bond_<type>.npz``\ ・
+``gap_bond_<type>.dat``\ ・\ ``eigenvalue_bond_<type>.dat``\ ）。
+これらは全ての FLEX 出力ファイルの **後** に書き出されるため、
+対形成ステップの失敗が FLEX の結果を損なうことはありません。
+
+- ``eliashberg_bond_<type>.npz``\ は、上記の\ ``gap_dynamic.npz``
+  と同じキー集合（``gap_bond_projection``\ 、IR の場合は
+  ``bond_ir_fit_residual_rel``\ を含む）を、\ ``bond_archive``
+  （バーテックスは FLEX の計算自身の配列から構築され、ファイルでは
+  ありません）を除いて持ち、さらに\ ``eigenvalues_all``\ （固有値
+  ソルバーが返す全スペクトル。取得できた場合）、\ ``scf_converged``
+  と\ ``scf_iterations``\ （FLEX の計算自身の収束状態）、
+  ``state``\ （FLEX の計算が収束していれば\ ``"last_map_chi /
+  final_green"``\ 、していなければ\ ``"mixed: last-map chi, final
+  green"``\ ）を持ちます。対形成ステップは FLEX の計算が収束
+  しなくても実行されます（コストはすでに払われているため）。この
+  ラベルは\ ``scf_converged = false``\ とともに、結果が自己無撞着な
+  対形成固有値ではなく SCF の軌跡上の診断値であることを示します。
+- ``gap_bond_<type>.dat``\ は\ ``gap.dat``\ と同じ単一周波数の
+  テキストスライスです。
+- ``eigenvalue_bond_<type>.dat``\ は\ ``eigenvalue.dat``\ と同じ
+  形式で、\ ``# bond_channels=true``\ ・
+  ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
+  ``# residency=<...>``\ 、計算された場合は\ ``#
+  parity_leakage=<...>``\ のヘッダー行を持ちます。
+
+失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
+固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの
+いずれも書き出しません。失敗はログに記録され、（あれば）次に
+リクエストされたチャネルの計算は続行されます。
 
 
 データ読み込みの例

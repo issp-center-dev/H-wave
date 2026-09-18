@@ -226,6 +226,17 @@ def device_pool_used_bytes():
         return 0
 
 
+def free_device_pool():
+    """Return every free block of the cupy default memory pool to the driver
+    so a following free-memory measurement sees what is really available.
+    No-op without cupy / without a usable pool; never raises."""
+    try:
+        _import_cupy().get_default_memory_pool().free_all_blocks()
+    except Exception:            # noqa: BLE001
+        return None
+    return None
+
+
 def gpu_available():
     """True when ``get_backend(True)`` would select cupy with a usable device.
     Never raises; safe at test-collection time (no import unless called)."""

@@ -258,7 +258,7 @@ class TestOutputs(unittest.TestCase):
                       "green.npz", "chi0q.npz"):
                 self.assertTrue(os.path.exists(os.path.join(out, f)), f)
             b = np.load(os.path.join(out, "longitudinal_bond.npz"))
-            self.assertEqual(int(b["bond_archive_schema"]), 1)
+            self.assertEqual(int(b["bond_archive_schema"]), 2)
             self.assertEqual(str(b["freq_axis"]), "bosonic l -> 2l - nmat")
             nvol, nd = s.lattice.nvol, s.norb ** 2
             B = b["delta_r"].shape[0]
@@ -267,8 +267,13 @@ class TestOutputs(unittest.TestCase):
             for k in ("beta", "T", "nmat", "cell_shape", "momentum_convention", "index_order",
                       "reverse", "types", "longitudinal_bond_schema", "scf_converged",
                       "payload_kind", "hf_density_error", "density_target_enforced",
-                      "longitudinal_bond_cond_min_s"):
+                      "longitudinal_bond_cond_min_s", "S_bond", "C_bond", "norb"):
                 self.assertIn(k, b.files, k)
+            self.assertEqual(int(b["norb"]), s.norb)
+            self.assertEqual(b["S_bond"].shape, (nvol, B * nd, B * nd))
+            self.assertEqual(b["C_bond"].shape, (nvol, B * nd, B * nd))
+            np.testing.assert_array_equal(b["S_bond"], s._bond_S)
+            np.testing.assert_array_equal(b["C_bond"], s._bond_C)
             self.assertEqual(str(b["payload_kind"]), "last_map")
             np.testing.assert_array_equal(b["chi_s_w"][_NMAT // 2], b["longitudinal_bond_chi_s"])
             np.testing.assert_array_equal(b["chi_c_w"][_NMAT // 2], b["longitudinal_bond_chi_c"])

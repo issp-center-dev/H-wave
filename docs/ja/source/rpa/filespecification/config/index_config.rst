@@ -271,6 +271,35 @@ TOML形式
   ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
 
+- ``longitudinal_bond_pairing``
+
+  **形式 :** str型 (``"none"``\ ・\ ``"singlet"``\ ・\ ``"triplet"``\ ・
+  ``"both"``。大文字小文字を区別しません。デフォルトは\ ``"none"``\ 。
+  FLEXモードのみ)
+
+  **説明 :**
+  ``longitudinal_bond_channels = true``\ が前提です（このキー自体は
+  それなしでは拒否されます。\ ``IterationMax = 0``\ の場合も同様）。
+  FLEX の計算の最後で、自己エネルギーが使ったのと同じ\ ``S``\ ・
+  ``C``\ ・ドレスされた\ ``chi_s``\ ・\ ``chi_c``\ から構築される、
+  ボンド分解して振動数に依存する対形成バーテックスを用いて、線形化
+  Eliashberg 方程式を解きます（下記の\ ``[eliashberg] bond_channels``
+  のインプロセス版に相当します）。ソルバーの制御パラメータは同じ
+  入力ファイルの\ ``[eliashberg]``\ テーブルから読み込まれます
+  （省略可能。省略したキーは\ ``hwave_sc``\ と同じデフォルト値を
+  取ります。\ ``pairing_type``\ はここでは拒否されます -- チャネルは
+  代わりにこのキーで選択されます。\ ``gpu``\ は FLEX の計算に
+  従います）。結果は\ ``eliashberg_bond_<type>.npz``\ ・
+  ``gap_bond_<type>.dat``\ ・\ ``eigenvalue_bond_<type>.dat``
+  （リクエストしたチャネルごと。\ ``[file.output]``\ の同名キーで
+  ファイル名を指定します。下記参照）。対形成計算の失敗はログに
+  記録され、該当チャネルの出力ファイルは単に書き出されません
+  （FLEX の出力は先に書き出されるため、失われることはありません）。
+  メモリについては\ :ref:`FLEX チュートリアルのボンド分解バーテックス
+  によるペアリングの節 <flex_bond_pairing_tutorial>`\ を参照して
+  ください。大規模な系では
+  ``[eliashberg] matsubara_basis = "ir"``\ を設定してください。
+
 - ``flex_hartree_fock``
 
   **形式 :** bool型 (デフォルトは\ ``false``\ 。FLEXモードのみ)
@@ -457,6 +486,132 @@ TOML形式
   **説明 :** Anderson 加速の履歴の深さを指定します。メモリは自己エネルギーサイズの配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
 
 
+.. _eliashberg_bond_dynamic_config:
+
+``eliashberg``\ セクション
+================================
+
+このセクションは\ ``hwave_sc``\ （線形化 Eliashberg 方程式ソルバー）が
+読み込みます。下記で「インプロセス」と記した2つのキーは、
+``[mode.param] longitudinal_bond_pairing``\ （前述）がそれを要求する
+場合に\ ``hwave``\ 自身も読み込みます。ここではボンド分解した
+**動的** ペアリング経路に固有のキーのみを説明します。\ ``[eliashberg]``
+テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
+``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
+:ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
+<sc_dynamic_frequency>`\ で説明しています。
+
+- ``bond_channels``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 。後処理の\ ``hwave_sc``
+  のみ)
+
+  **説明 :**
+  ``frequency = "dynamic"``\ と\ ``chi0q_mode = "flex"``\ とともに指定すると、
+  オンサイトの動的対形成カーネルの代わりにボンド分解したものを使います。
+  対形成バーテックスは、FLEX 計算のボンド分解した動的感受率
+  （``S_bond``\ ・\ ``C_bond``\ とボンド分解した\ ``chi_s_w`` /
+  ``chi_c_w``\ ）から構築され、\ ``chiq_s.npz`` / ``chiq_c.npz``\ は
+  使われません。生成元の FLEX 計算は\ ``longitudinal_bond_channels =
+  true``\ **かつ**\ ``longitudinal_bond_output_full = true``\ を、
+  アーカイブスキーマ2を書き出すバージョンで実行している必要があります
+  （``file.output``\ の\ ``longitudinal_bond``\ の説明と
+  :ref:`アーカイブの出力リファレンス <subsec:chiq_rpa>`\ を参照）。
+  古いスキーマ1のアーカイブは再計算を求めるメッセージとともに拒否
+  されます。\ ``bond_green`` / ``bond_max_shells``\ （Green 関数と
+  ボンドトポロジーはこれらの静的ボンド経路のキーではなく
+  ``path_to_flex_output``\ とアーカイブから取得されます）、および
+  ``zero_chi_s`` / ``zero_chi_c``\ （ボンド経路では未実装）と
+  同時に指定すると拒否されます。オンサイトの動的経路と同様、
+  ``hwave_sc``\ の1回の実行につき1つの\ ``pairing_type``\ （``"singlet"``
+  または\ ``"triplet"``\ ）のみを解きます。2つ目のチャネルは
+  それぞれ独自の\ ``path_to_output``\ を持つ別の実行になります。
+  メモリモデル・sparse-ir 依存・具体例は\ :ref:`FLEX チュートリアルの
+  ボンド分解バーテックスによるペアリングの節
+  <flex_bond_pairing_tutorial>`\ を参照してください。
+
+- ``flex_bond_archive``
+
+  **形式 :** str型 (デフォルトは\ ``"longitudinal_bond.npz"``\ 。
+  後処理のみ)
+
+  **説明 :**
+  ``bond_channels = true``\ の動的経路が読み込むボンドアーカイブの
+  ファイル名です。相対パスは\ ``[file.input] path_to_flex_output``
+  と結合されます。絶対パスはそのまま使われます
+  （``bond_green``\ と同じ規則です）。
+
+- ``ir_fit_tol``
+
+  **形式 :** float型 (デフォルトは\ ``0.5``\ 。両方の経路)
+
+  **説明 :**
+  ``matsubara_basis = "ir"``\ の場合、一様格子上のボンドバーテックスを
+  IR 基底にフィットさせた際の、成分ごとの相対残差の拒否閾値です
+  （各ボンドチャネルブロックのスピン・電荷それぞれの寄与について
+  評価し、最大値を取ります）。残差が\ ``[0.1 * ir_fit_tol,
+  ir_fit_tol)``\ の範囲にあれば警告のみです。\ ``ir_fit_tol = 0``
+  は検査そのものを省略します（出力の残差は\ ``nan``\ になります）。
+  実際の一様 FFT アーカイブでは、定数項を保持した場合
+  （``ir_keep_static_chi = true``\ ）で成分ごとの残差は通常
+  0.1〜0.2 程度です。\ ``ir_tol``\ とは独立です。
+
+- ``parity_leakage_tol``
+
+  **形式 :** float型 (デフォルトは未設定 -- 一様格子では\ ``1e-8``\ 、
+  ``matsubara_basis = "ir"``\ では\ ``2e-2``\ に解決されます。両方の
+  経路)
+
+  **説明 :**
+  ボンドカーネルが各回の求解の前に実行するパリティ交換確率の拒否
+  閾値です（直接項のみのカーネルが物理的に正しいのは確定したパリティ
+  部分空間上のみのため、この閾値を超える漏れは黙って解かず拒否
+  します）。一様 FFT アーカイブの IR 表現はそれ自体が\ ``Nmat^-2``
+  で減衰するパリティの非対称性を持ちます（単一バンドのテストフィク
+  スチャで Nmat 64 / 128 においてそれぞれ 7.6e-3 / 1.3e-3 と実測）。
+  これが IR のデフォルトが一様格子より緩い理由です。
+  ``0.1 * parity_leakage_tol``\ を超える漏れは警告となり、実測値は
+  出力に\ ``bond_parity_leakage``\ として記録されます。
+
+- ``bond_memory_cap_gb``
+
+  **形式 :** float型 (デフォルトは計測された空きホストメモリの
+  80%。両方の経路)
+
+  **説明 :**
+  動的なボンド分解対形成ステップの推定ホストメモリの上限で、
+  2進 GiB 単位です（既存の静的ボンド経路と同名のキーを、この経路の
+  ホスト上限として再利用します。GPU メモリは対象外）。バーテックスの
+  構築前と、カーネルの最大の配列を確保する前の2回にわたって照合
+  されます。ストリーミング残留方式でも収まらない場合、実行
+  （インプロセスの場合は該当チャネル）は完全なメモリテーブルと
+  ともに拒否されます。インプロセスの場合はさらに、最初の FLEX
+  写像の **前** にも1回照合が行われるため、長時間の FLEX 計算が
+  事後の対形成ステップのメモリ確保失敗によって失われることは
+  ありません。
+
+**インプロセスの対形成**\ （``[mode.param] longitudinal_bond_pairing``\ 。
+前述の\ ``mode.param``\ セクションを参照）: FLEX の入力で
+``longitudinal_bond_pairing``\ を\ ``"none"``\ 以外にすると、同じ
+入力ファイルの\ ``[eliashberg]``\ テーブルは省略可能で、FLEX の
+計算の最後の対形成ステップを設定します。上記で「後処理のみ」と
+記していない一般的なテーブルの各キー（``solver_mode``\ ・
+``num_eigenvalues``\ ・\ ``max_iter``\ ・\ ``alpha``\ ・
+``convergence_tol``\ ・\ ``matsubara_basis``\ ・\ ``ir_tol``\ ・
+``ir_wmax``\ ・\ ``ir_keep_static_chi``\ ・\ ``fft_workers``\ など）は
+``hwave_sc``\ と全く同じデフォルト値を取ります。\ ``pairing_type``
+は拒否されます（チャネルは\ ``longitudinal_bond_pairing``\ で
+選択されます）。\ ``gpu`` / ``gpu_required``\ は無視されます
+（カーネルは FLEX 計算自身のバックエンドで動作します）。
+``bond_channels``\ ・\ ``chi0q_mode``\ ・\ ``frequency``\ ・
+``flex_bond_archive``\ ・\ ``bond_green``\ ・\ ``bond_max_shells``
+も無視されます（存在する場合は INFO ログに一覧が出力されます --
+``hwave``\ と\ ``hwave_sc``\ で同じ入力ファイルを共有するのは
+通常のワークフローであり、誤りではありません）。生成される
+ファイルの\ ``[file.output]``\ キーは下記の\ ``file.output``
+の項で説明します。
+
+
 ``log``\ セクション
 ================================
 
@@ -564,3 +719,23 @@ TOML形式
   **形式 :** str型 (デフォルトは\ ``longitudinal_bond.npz``\ 。FLEXモードのみ)
 
   **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。
+
+- ``eliashberg_bond_singlet``\ 、\ ``eliashberg_bond_triplet``\ 、
+  ``eigenvalue_bond_singlet``\ 、\ ``eigenvalue_bond_triplet``\ 、
+  ``gap_bond_singlet``\ 、\ ``gap_bond_triplet``
+
+  **形式 :** str型 (デフォルトはそれぞれ\ ``eliashberg_bond_singlet.npz``\ ・
+  ``eliashberg_bond_triplet.npz``\ ・\ ``eigenvalue_bond_singlet.dat``\ ・
+  ``eigenvalue_bond_triplet.dat``\ ・\ ``gap_bond_singlet.dat``\ ・
+  ``gap_bond_triplet.dat``\ 。FLEXモードのみ)
+
+  **説明 :**
+  インプロセスのボンド分解対形成ステップ（``[mode.param]
+  longitudinal_bond_pairing``\ 。前述の\ ``mode.param``\ セクションを
+  参照）の出力ファイル名です。リクエストしたチャネルごとに、
+  周波数分解したギャップのアーカイブ・先頭固有値のファイル・
+  単一周波数でのギャップのスライスを指定します
+  （:ref:`出力リファレンス <subsec:eliashberg_bond_outputs>`\ を参照）。
+  ``.npz``\ 拡張子のないアーカイブ名には他の\ ``.npz``\ 出力と同様に
+  拡張子が付加されます。他の出力ファイルと同じファイルに解決される
+  指定は、計算開始前に拒否されます。

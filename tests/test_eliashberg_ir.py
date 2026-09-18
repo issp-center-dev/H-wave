@@ -8,6 +8,7 @@ white noise on the frequency axis and must not be used here.
 Tests must run from the repository root.
 """
 import os
+import unittest
 
 import numpy as np
 import pytest
@@ -469,16 +470,35 @@ def test_solve_dynamic_ir_gpu_matches_cpu_offsite(flex_outdir_offsite):
 
 
 
-def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
-    """Kernel-algebra exactness gate: a fully IR-representable synthetic
-    vertex (Lorentzian bosonic profile) and bare pair bubble -- the uniform
-    and IR kernels must agree to numerical precision (no chi-artifact
-    contamination, unlike the FLEX-data gate)."""
-    from hwave.solver import eliashberg_dynamic as ed
+def _reverse_q_and_orbitals(V):
+    """``V_{abcd}(q) -> V_{dcba}(-q)`` on the FFT grid.
+
+    A pairing vertex INVARIANT under this map is exactly what the dynamic
+    kernel needs in order to commute with the combined parity operator
+    ``Delta_{ab}(k, iw) -> Delta_{ba}(-k, -iw)`` (the vertices the solver
+    actually builds from a symmetric susceptibility have it by
+    construction; a random tensor does not).
+    """
+    from hwave.solver.kgrid import reverse_fft_axes
+    return reverse_fft_axes(V, (4, 5, 6)).transpose(3, 2, 1, 0, 4, 5, 6)
+
+
+def _smooth_vertex_pieces(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3,
+                          symmetrize=False):
+    """Ingredients of the kernel-algebra gate below: a fully IR-representable
+    synthetic vertex (Lorentzian bosonic profile) on both frequency grids, the
+    bare pair bubble on both, and a flat trial gap.
+
+    ``symmetrize`` additionally projects the random momentum profile onto the
+    parity-invariant vertices of :func:`_reverse_q_and_orbitals`, which the
+    parity-commutation cases below need and the plain agreement gate does not.
+    """
     from hwave.solver.ir_axis import IRAxis
 
     rng = np.random.default_rng(11)
     Vc = rng.standard_normal((norb,)*4 + (Nx, Ny, Nz)) * 0.4
+    if symmetrize:
+        Vc = 0.5 * (Vc + _reverse_q_and_orbitals(Vc))
     nuB_u = (2*np.arange(nmat) - nmat) * np.pi / beta
     V_w = (Vc[..., None] * (g*g/(nuB_u**2 + g*g))).astype(complex)
     axF = IRAxis(beta=beta, wmax=wmax, eps=1e-8, statistics="F")
@@ -505,9 +525,24 @@ def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
                             phi.shape + (nmat,)).astype(complex)
     phi_n = np.broadcast_to(phi[..., None],
                             phi.shape + (axF.n_freq,)).astype(complex)
-    out_u = ed.eliashberg_kernel_dynamic(V_w, G2_u, phi_u.copy(), norb, beta)
-    Vrt = ed._ir_vertex_to_rtau(V_n, axB, axF)
-    out_n = ed.eliashberg_kernel_ir(Vrt, G2_n, phi_n.copy(), axF, beta)
+    return dict(rng=rng, axF=axF, axB=axB, V_w=V_w, V_n=V_n, G2_u=G2_u,
+                G2_n=G2_n, phi_u=phi_u, phi_n=phi_n, norb=norb, beta=beta,
+                nmat=nmat, shape=(Nx, Ny, Nz))
+
+
+def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
+    """Kernel-algebra exactness gate: a fully IR-representable synthetic
+    vertex (Lorentzian bosonic profile) and bare pair bubble -- the uniform
+    and IR kernels must agree to numerical precision (no chi-artifact
+    contamination, unlike the FLEX-data gate)."""
+    from hwave.solver import eliashberg_dynamic as ed
+
+    p = _smooth_vertex_pieces(norb, Nx, Ny, Nz, beta, nmat, wmax, g=g)
+    axF = p["axF"]
+    out_u = ed.eliashberg_kernel_dynamic(p["V_w"], p["G2_u"],
+                                         p["phi_u"].copy(), norb, beta)
+    Vrt = ed._ir_vertex_to_rtau(p["V_n"], p["axB"], axF)
+    out_n = ed.eliashberg_kernel_ir(Vrt, p["G2_n"], p["phi_n"].copy(), axF, beta)
     k_idx = (axF.freq_n - 1 + nmat) // 2
     inside = (k_idx >= 0) & (k_idx < nmat)
     return (np.abs(out_n[..., inside] - out_u[..., k_idx[inside]]).max()
@@ -616,3 +651,209 @@ def test_channel_decomposition_ir_bypasses_only_zeroed_channel(
     else:
         assert captured["chic_max"] > 0.0
     assert np.isfinite(lam)
+
+
+class TestIRInstantaneousVertexTerm(unittest.TestCase):
+    """The frequency-flat (instantaneous) vertex term of the IR kernel.
+
+    With a frequency-INDEPENDENT vertex the kernel's frequency convolution
+    collapses to ``-V_inst * (1/beta) sum_n F(i w_n)``. That Matsubara sum is
+    UNREGULARIZED (no ``e^{i w 0^+}`` factor), so for an ``F`` with a jump at
+    ``tau = 0`` it converges to the jump MIDPOINT ``0.5 (F(0^+) + F(0^-))``,
+    not to the one-sided ``F(0^+)``. The surplus half-jump is the one piece of
+    ``F`` that ANTI-commutes with the frequency reversal ``i w -> -i w``, so
+    using ``F(0^+)`` (a) breaks the kernel's commutation with the combined
+    parity operator, and (b) does not converge to the uniform-grid kernel's
+    value at any ``Nmat``. Both are asserted below.
+
+    These cases need a frequency-ODD component in the probe: the shipped
+    agreement gates drive the kernel with a gap that is flat in frequency, and
+    for a frequency-EVEN ``F`` the even-``l`` coefficients vanish, the two
+    functionals coincide identically, and the defect is invisible.
+    """
+
+    def setUp(self):
+        if not _HAVE_SPARSE_IR:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    def test_matsubara_sum_weights_are_the_truncated_uniform_sum_limit(self):
+        """``IRAxis.u_matsubara_sum`` at the basis level, with no kernel in the
+        way: for an IR-representable function the plain sum over a centered
+        uniform fermionic grid converges to ``coeffs @ u_matsubara_sum`` as
+        O(beta / Nmat) -- each doubling halves the gap -- and stays O(1) away
+        from ``coeffs @ u_zero_plus`` forever. That is what identifies the
+        midpoint, and not the one-sided limit, as the functional the uniform
+        kernel's single tau bin is a truncation of."""
+        from hwave.solver.ir_axis import IRAxis
+
+        beta = 2.0
+        ax = IRAxis(beta=beta, wmax=20.0, eps=1e-8, statistics="F")
+        rng = np.random.default_rng(3)
+        c = rng.standard_normal(ax.L) + 1j * rng.standard_normal(ax.L)
+        mid = c @ ax.u_matsubara_sum
+        one_sided = c @ ax.u_zero_plus
+        self.assertGreater(abs(mid - one_sided), 1e-3 * abs(mid),
+                           "the fixture has no tau jump: the two functionals "
+                           "coincide and the case proves nothing")
+        gaps = {}
+        for nmat in (128, 256, 512, 1024):
+            n = 2 * np.arange(nmat) + 1 - nmat
+            uhat = np.asarray(ax._basis.uhat(n)).reshape(ax.L, nmat)
+            total = (c @ uhat).sum() / beta
+            gaps[nmat] = (abs(total - mid), abs(total - one_sided))
+        for lo, hi in ((128, 256), (256, 512), (512, 1024)):
+            # measured: 1.24 -> 0.655 -> 0.333 -> 0.168 against the midpoint,
+            # and a flat 1.03e+01 against the one-sided value
+            self.assertLess(gaps[hi][0], 0.6 * gaps[lo][0],
+                            "no O(beta/Nmat) convergence to u_matsubara_sum "
+                            "at Nmat {} -> {}".format(lo, hi))
+            self.assertGreater(gaps[hi][1], 0.9 * gaps[lo][1],
+                               "u_zero_plus must NOT be the limit of the "
+                               "truncated sum (Nmat {} -> {})".format(lo, hi))
+
+    def test_matsubara_sum_weights_follow_the_statistics(self):
+        """The bosonic half of the test above. The extension is PERIODIC, not
+        anti-periodic, so the tau = 0 midpoint is ``0.5 (f(0^+) + f(beta^-))``
+        and the bosonic axis needs the PLUS sign the fermionic one does not.
+        Against the fermionic combination the truncated bosonic sum does not
+        converge at all."""
+        from hwave.solver.ir_axis import IRAxis
+
+        beta = 2.0
+        ax = IRAxis(beta=beta, wmax=20.0, eps=1e-8, statistics="B")
+        self.assertEqual(ax.statistics, "B")
+        rng = np.random.default_rng(3)
+        c = rng.standard_normal(ax.L) + 1j * rng.standard_normal(ax.L)
+        mid = c @ ax.u_matsubara_sum
+        fermionic = c @ (0.5 * (np.asarray(ax.u_zero_plus)
+                                - np.asarray(ax.u_beta_minus)))
+        self.assertGreater(abs(mid - fermionic), 1e-3 * abs(mid),
+                           "the fixture has no tau jump: the two combinations "
+                           "coincide and the case proves nothing")
+        gaps = {}
+        for nmat in (128, 256, 512, 1024):
+            n = 2 * np.arange(nmat) - nmat              # a CENTRED bosonic grid
+            uhat = np.asarray(ax._basis.uhat(n)).reshape(ax.L, nmat)
+            total = (c @ uhat).sum() / beta
+            gaps[nmat] = (abs(total - mid), abs(total - fermionic))
+        for lo, hi in ((128, 256), (256, 512), (512, 1024)):
+            # measured: 8.65 -> 4.54 -> 2.30 -> 1.15 against the bosonic
+            # midpoint, and a nearly flat 1.20e+01 -> 9.77 against the
+            # fermionic combination
+            self.assertLess(gaps[hi][0], 0.6 * gaps[lo][0],
+                            "no O(beta/Nmat) convergence to the bosonic "
+                            "u_matsubara_sum at Nmat {} -> {}".format(lo, hi))
+            self.assertGreater(gaps[hi][1], 0.7 * gaps[lo][1],
+                               "the FERMIONIC combination must NOT be the limit "
+                               "of the bosonic truncated sum (Nmat {} -> {})"
+                               .format(lo, hi))
+
+    @staticmethod
+    def _instantaneous_vertex(p, scale=0.6, seed=29):
+        """A parity-invariant, frequency-flat vertex on the ``(q)`` grid, plus
+        its spatial transform (what the IR kernel consumes)."""
+        from hwave.solver import eliashberg_dynamic as ed
+        norb = p["norb"]
+        rng = np.random.default_rng(seed)
+        V = rng.standard_normal((norb,)*4 + p["shape"]) * scale
+        V = 0.5 * (V + _reverse_q_and_orbitals(V))
+        return V, ed._spatial_ifftn(V.astype(complex), axes=(4, 5, 6))
+
+    def test_ir_kernel_with_instantaneous_vertex_commutes_with_parity(self):
+        """Measured before the fix: 8.05e-02, against 8e-16 for the same IR
+        kernel without the instantaneous term and 9e-16 for the uniform kernel
+        with it. After: 2.0e-14."""
+        from scipy.sparse.linalg import LinearOperator
+        from hwave.solver import eliashberg_dynamic as ed
+
+        p = _smooth_vertex_pieces(2, 4, 4, 1, beta=2.0, nmat=256, wmax=20.0,
+                                  symmetrize=True)
+        axF, beta, norb = p["axF"], p["beta"], p["norb"]
+        V_inst, V_inst_rt = self._instantaneous_vertex(p)
+        self.assertGreater(float(np.abs(V_inst_rt).max()), 0.0)
+        Vrt = ed._ir_vertex_to_rtau(p["V_n"], p["axB"], axF)
+
+        def operator(shape, matvec):
+            n = int(np.prod(shape))
+            return LinearOperator((n, n), matvec=matvec, dtype=complex)
+
+        # control: the SAME vertex on the uniform kernel (where the flat term
+        # is just one more bosonic frequency) commutes -- so the fixture is
+        # admissible and any IR leakage is the IR flat term, not the vertex
+        gap_u = (norb, norb) + p["shape"] + (p["nmat"],)
+        V_w_tot = p["V_w"] + V_inst[..., np.newaxis].astype(complex)
+        A_u = operator(gap_u, lambda v: ed.eliashberg_kernel_dynamic(
+            V_w_tot, p["G2_u"], v.reshape(gap_u), norb, beta).ravel())
+        gap_n = (norb, norb) + p["shape"] + (axF.n_freq,)
+        A_n = operator(gap_n, lambda v: ed.eliashberg_kernel_ir(
+            Vrt, p["G2_n"], v.reshape(gap_n), axF, beta,
+            V_inst_rt=V_inst_rt).ravel())
+        for eta in ("singlet", "triplet"):
+            self.assertLessEqual(ed._parity_leakage(A_u, gap_u, eta), 1e-10,
+                                 "uniform control, " + eta)
+            self.assertLessEqual(ed._parity_leakage(A_n, gap_n, eta), 1e-10,
+                                 "IR kernel, " + eta)
+
+    def _flat_term_vs_uniform(self, nmat, norb=2, shape=(4, 4, 1), beta=2.0,
+                              wmax=20.0, seed=17):
+        """Max relative IR-vs-uniform difference of the FLAT term ALONE (the
+        dynamic vertex is identically zero), on a probe whose ``F`` really
+        carries a ``1/(i w)`` tail: a frequency-FLAT pair bubble times a
+        single-pole gap. The physical bubble decays as ``1/w^2`` and would
+        hide the tau jump the two functionals differ by."""
+        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.ir_axis import IRAxis
+
+        Nx, Ny, Nz = shape
+        rng = np.random.default_rng(seed)
+        axF = IRAxis(beta=beta, wmax=wmax, eps=1e-8, statistics="F")
+        V_inst = rng.standard_normal((norb,)*4 + shape) * 0.6
+        V_inst_rt = ed._spatial_ifftn(V_inst.astype(complex), axes=(4, 5, 6))
+        G2_k = rng.standard_normal((norb,)*4 + shape).astype(complex)
+        ek = -0.6 * (np.cos(2*np.pi*np.arange(Nx)/Nx)[:, None, None]
+                     + np.cos(2*np.pi*np.arange(Ny)/Ny)[None, :, None]
+                     + np.cos(2*np.pi*np.arange(Nz)/Nz)[None, None, :])
+        base = (rng.standard_normal((norb, norb) + shape)
+                + 1j * rng.standard_normal((norb, norb) + shape))
+        w_u = (2*np.arange(nmat) + 1 - nmat) * np.pi / beta
+        w_n = axF.freq_n * np.pi / beta
+
+        def gap(w):
+            return (base[..., None]
+                    / (1j*w - ek[None, None, ..., None])).astype(complex)
+
+        G2_u = np.broadcast_to(G2_k[..., None],
+                               G2_k.shape + (nmat,)).astype(complex)
+        G2_n = np.broadcast_to(G2_k[..., None],
+                               G2_k.shape + (axF.n_freq,)).astype(complex)
+        V_u = np.broadcast_to(V_inst[..., None].astype(complex),
+                              G2_k.shape + (nmat,)).copy()
+        out_u = ed.eliashberg_kernel_dynamic(V_u, G2_u, gap(w_u), norb, beta)
+        zero_rt = np.zeros((norb,)*4 + shape + (axF.n_tau,), dtype=complex)
+        out_n = ed.eliashberg_kernel_ir(zero_rt, G2_n, gap(w_n), axF, beta,
+                                        V_inst_rt=V_inst_rt)
+        idx = (axF.freq_n - 1 + nmat) // 2
+        inside = (idx >= 0) & (idx < nmat)
+        return float(np.abs(out_n[..., inside] - out_u[..., idx[inside]]).max()
+                     / np.abs(out_u).max())
+
+    def test_ir_instantaneous_term_converges_to_uniform(self):
+        """The uniform grid represents the flat term as a single tau bin, i.e.
+        the Matsubara sum TRUNCATED at Nmat, so the two must differ by
+        O(beta / Nmat): doubling Nmat halves the difference. Measured before
+        the fix: 1.846e+00 -> 1.843e+00 (ratio 0.998, O(1) and non-convergent);
+        after: 4.379e-03 -> 2.185e-03 (ratio 0.499)."""
+        d128 = self._flat_term_vs_uniform(128)
+        d256 = self._flat_term_vs_uniform(256)
+        self.assertLess(d256, 0.6 * d128,
+                        "no Nmat convergence of the flat term: "
+                        "{:.3e} -> {:.3e}".format(d128, d256))
+        self.assertGreater(d256, 0.4 * d128,
+                           "the flat-term difference must HALVE (O(beta/Nmat)), "
+                           "not collapse: {:.3e} -> {:.3e}".format(d128, d256))
+        self.assertLess(d128, 1e-1,
+                        "flat term off by O(1): {:.3e}".format(d128))
+
+
+if __name__ == "__main__":
+    unittest.main()

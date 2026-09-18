@@ -1048,9 +1048,16 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     """The frequency-INDEPENDENT part of the pairing vertex: the bare
     ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
-    (CoulombIntra-only) model in the Kuroki convention this cancels
-    exactly (S+C = U-U = 0), which is why the issue-#57 defect stayed
-    invisible on the CoulombIntra-only test fixtures.
+    (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
+    intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
+    familiar +U while the TRIPLET one ``0.5 (C - S)`` vanishes; the triplet
+    term is nonzero wherever the assembled matrices have C != S, which is
+    the generic outcome of an inter-orbital U', a Hund / Ising term or an
+    off-site density interaction (particular combinations can cancel, e.g.
+    U' = J on the (ab,ab) element). On a frequency-EVEN pair amplitude the flat term is
+    insensitive to the tau = 0 jump of F (its even-l IR coefficients vanish),
+    which is why the issue-#57 defect stayed invisible on the shipped
+    fixtures, whose gaps are flat in frequency.
 
     The Kuroki Exchange/PairHop rejection is enforced by the delegate
     itself (``sc._reject_reduced_flex_unsupported``), so this route is
@@ -1083,11 +1090,26 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     never be fitted (``_ir_vertex_to_rtau`` would alias it into an
     uncontrolled smooth function); its tau integral is analytic instead:
     ``integral dtau e^{i w tau} V_inst delta(tau) F(tau) = V_inst F(0)``
-    with ``F(0) = (1/beta) sum_nu F(i nu)`` evaluated exactly through the
-    fermionic basis (``u_zero_plus``; F ~ 1/nu^2, so the equal-time value
-    is continuous and needs no 0^+ regularization). The uniform-grid
-    kernel needs no such split: its dense tau grid represents the delta as
-    a single bin.
+    with ``F(0) = (1/beta) sum_nu F(i nu)`` -- the UNREGULARIZED Matsubara
+    sum, i.e. the MIDPOINT ``0.5 * (F(0^+) + F(0^-))`` of the tau = 0 jump,
+    evaluated exactly through the fermionic basis
+    (``axF.u_matsubara_sum``).
+
+    It must NOT be ``u_zero_plus``: that is the one-sided ``F(0^+)``, the
+    midpoint PLUS half of the tau-jump. The jump half ANTI-commutes with
+    the frequency reversal ``i w -> -i w`` (on IR coefficients the node
+    reversal acts as ``c_l -> (-1)^(l+1) c_l``, and ``u_l(0^+)`` mixes both
+    parities), so with ``u_zero_plus`` the kernel stops commuting with the
+    combined parity operator as soon as the instantaneous vertex is nonzero
+    -- i.e. for any model with a CoulombInter term -- and its flat term does
+    not converge to the uniform-grid one at any Nmat. The earlier claim that
+    "F ~ 1/nu^2, so the equal-time value is continuous" holds only for the
+    particular smooth probes the shipped gates drive the kernel with; the
+    kernel is a linear operator and must be right on every input.
+
+    The uniform-grid kernel needs no such split: its dense tau grid
+    represents the delta as a single bin, which IS the Matsubara sum
+    truncated at Nmat.
     """
     xp = backend.array_module_of(G2_nodes)
     phi_nodes = xp.asarray(phi_nodes)
@@ -1099,7 +1121,7 @@ def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
     out = axF.tau_to_freq(_spatial_fftn(prod, axes=(2, 3, 4),
                                         workers=workers))
     if V_inst_rt is not None:
-        u0 = axF.u_zero_plus
+        u0 = axF.u_matsubara_sum
         if xp is not np:
             u0 = xp.asarray(u0)
         F0_r = _spatial_ifftn(F_coeff @ u0, axes=(2, 3, 4), workers=workers)
@@ -1152,6 +1174,248 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     return np.ascontiguousarray(gap).astype(complex).ravel()
 
 
+def build_seed(eli_param, pairing_type, norb, kx, ky, kz, gap_shape, use_ir, axF, nmat):
+    """The static init_gap form factor broadcast flat over the frequency
+    axis (normalized), and the optional eigenvector-continuation seed.
+
+    ``seed_vec`` is an optional eigenvector-continuation seed: a
+    ``gap_dynamic.npz`` from a neighbouring run (e.g. the next
+    temperature). Used as the ARPACK start vector AND to pick the
+    eigenpair that overlaps it -- tracking one physical branch across an
+    exceptional point of the non-Hermitian kernel, where the
+    algebraically-largest eigenvalue can jump between a real and a
+    complex branch. On the IR path the (uniform-grid) seed gap is refit
+    onto the IR fermionic nodes so it lives in the same eigenvector
+    space.
+    """
+    import hwave.sc as sc
+    init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
+    sigma_static = sc._initialize_gap(init_gap_mode, norb, kx, ky, kz)
+    phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy().astype(complex)
+    n0 = np.linalg.norm(phi0)
+    if n0 > 0:
+        phi0 /= n0
+    seed_vec = _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat)
+    return phi0, seed_vec
+
+
+def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0, seed_vec,
+                             use_ir, axF, nmat, logger_label="dynamic kernel",
+                             parity_leakage_policy="warn", parity_leakage_tol=1.0e-8):
+    """Solve for the leading Eliashberg eigenpair of ``matvec`` and gauge-fix
+    (and, on the IR path, densify) the resulting gap onto the uniform grid.
+
+    Shared eigen-driver behind the on-site and bond-resolved dynamic
+    solvers: the same ``scipy.sparse.linalg.LinearOperator`` +
+    ``sc._solve_leading`` machinery, parity leakage probe / iterate
+    projection / ARPACK eigenpair reordering, and gauge fix.
+
+    ``parity_leakage_policy``: ``"warn"`` (default) reproduces the historical
+    behaviour -- the cross-sector leakage probe runs only on the
+    ``solver_mode="iteration"`` path, and a leaky kernel there falls back to
+    an un-projected iteration with a logged warning. ``"refuse"`` runs the
+    probe up front, before any solve, on every solver mode, and raises
+    ``ValueError`` if the kernel does not commute with the channel's parity
+    within tolerance.
+
+    ``parity_leakage_tol`` (float >= 0) is that tolerance, the
+    ``[eliashberg] parity_leakage_tol`` key of the bond entries. Its default
+    ``1e-8`` is the historical hard-coded threshold, which is what the uniform
+    grid reaches; the bond entries raise it to ``2e-2`` under
+    ``matsubara_basis = "ir"``, where the IR representation of a uniform-FFT
+    archive carries a parity asymmetry of its own decaying as ``Nmat^-2``.
+    Under ``"refuse"`` a leakage in the band ``[0.1 * tol, tol)`` is accepted
+    with a WARNING.
+
+    Returns ``(lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
+    leakage)``, where ``leakage`` is the measured cross-sector leakage as a
+    float, or ``None`` when no probe ran (the ``"warn"`` policy on the
+    non-iteration solver modes).
+    """
+    from scipy.sparse.linalg import LinearOperator
+    import hwave.sc as sc
+
+    if parity_leakage_policy not in ("warn", "refuse"):
+        raise ValueError("parity_leakage_policy must be 'warn' or 'refuse', got {!r}"
+                         .format(parity_leakage_policy))
+    try:
+        tol_ok = parity_leakage_tol is not None \
+            and np.isfinite(float(parity_leakage_tol)) and float(parity_leakage_tol) >= 0.0
+    except (TypeError, ValueError):
+        tol_ok = False
+    if not tol_ok:
+        raise ValueError("parity_leakage_tol must be a finite number >= 0, got {!r}"
+                         .format(parity_leakage_tol))
+    parity_leakage_tol = float(parity_leakage_tol)
+    # the measured probe value, reported to the caller so the outputs can
+    # record it; stays None when no probe runs on this path
+    leakage = None
+
+    vec_size = int(np.prod(gap_shape))
+    solver_mode = eli_param.get("solver_mode", "iteration")
+    eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
+    num_eigenvalues = eli_param.get("num_eigenvalues", 10)
+    max_iter = eli_param.get("max_iter", 1000)
+    alpha = eli_param.get("alpha", 0.5)
+    tol = eli_param.get("convergence_tol", 1.0e-5)
+
+    def make_operator():
+        return LinearOperator((vec_size, vec_size), matvec=matvec, dtype=complex), vec_size
+
+    if parity_leakage_policy == "refuse":
+        A_probe, _ = make_operator()
+        leakage = _parity_leakage(A_probe, gap_shape, pairing_type)
+        if leakage > parity_leakage_tol:
+            raise ValueError(
+                "the {} does not commute with the combined parity (cross-sector leakage "
+                "{:.2e} > parity_leakage_tol = {:.2e}); the direct-term pairing kernel is the "
+                "physical kernel only on a definite-parity subspace, so this run is refused. "
+                "Likely causes: an asymmetric susceptibility archive, an IR fit error, or an "
+                "inconsistent S/C and chi pair. Remedies: use matsubara_basis = 'uniform', "
+                "tighten ir_tol / raise ir_wmax, regenerate the archive at a larger Nmat, or "
+                "raise [eliashberg] parity_leakage_tol if this leakage is acceptable."
+                .format(logger_label, leakage, parity_leakage_tol))
+        if parity_leakage_tol > 0.0 and leakage >= 0.1 * parity_leakage_tol:
+            logger.warning(
+                "The %s commutes with the combined parity only to %.2e, within a decade of "
+                "parity_leakage_tol = %.2e; the '%s' eigenvalue carries that much "
+                "cross-sector contamination.",
+                logger_label, leakage, parity_leakage_tol, pairing_type)
+
+    # Map [eliashberg] controls to the _solve_leading solver_mode string,
+    # exactly as calc_eliashberg does for the static path.
+    eigenvalue_match = None
+    # Mirrors sc.calc_eliashberg's eigenvalue_note (review fix I-2): when
+    # spectral_shift is active on this power-iteration path, the value
+    # written below is the SIGNED eigenvalue of the shifted-and-subtracted-
+    # back kernel rather than the unshifted UNSIGNED iterate norm, and that
+    # meaning change must be labelled in the output, not just logged.
+    eigenvalue_note = None
+    if solver_mode == "iteration":
+        # Mirror the static _solve_iteration: project every iterate onto the
+        # channel's combined-parity sector so numerical noise cannot let the
+        # power iteration drift into the opposite-parity (e.g. triplet) mode.
+        # The projection is legitimate only when the kernel commutes with P;
+        # probe the cross-sector leakage first and fall back to the
+        # un-projected iteration (with a warning) if it does not.
+        if leakage is None:              # not already measured by "refuse"
+            A_probe, _ = make_operator()
+            leakage = _parity_leakage(A_probe, gap_shape, pairing_type)
+        if leakage <= parity_leakage_tol:
+            def project_fn(flat):
+                return _project_parity_dynamic(
+                    flat.reshape(gap_shape), pairing_type).ravel()
+            # Project + normalize the seed, raising if it has no in-sector
+            # component (matches sc._solve_iteration's guard).
+            phi0 = _project_seed_dynamic(phi0, pairing_type)
+        else:
+            logger.warning(
+                "Dynamic Eliashberg kernel does not commute with parity "
+                "(cross-sector leakage %.2e); parity projection for the '%s' "
+                "channel is disabled and the un-projected iteration is used.",
+                leakage, pairing_type)
+            project_fn = None
+        # spectral_shift is honoured on the power-iteration path too: with a
+        # repulsive-dominant kernel (negative dominant eigenvalue) the iterate
+        # flips sign every step and the loop can never converge; iterating on
+        # K + sigma*I fixes that and sc._solve_leading subtracts sigma back, so
+        # the eigenvalue below is still the signed eigenvalue of K.
+        iteration_spectral_shift = eli_param.get("spectral_shift")
+        eigenvalue, sigma_flat, info = sc._solve_leading(
+            make_operator, vec_size, "iteration",
+            max_iter=max_iter, convergence_tol=tol, alpha=alpha,
+            init_vec=phi0.ravel(), project_fn=project_fn,
+            spectral_shift=iteration_spectral_shift)
+        eigenvalues_all = None
+        if iteration_spectral_shift is not None:
+            # Shifted power iteration: the value is the SIGNED eigenvalue of
+            # the original dynamic kernel only when sc._solve_leading's
+            # Rayleigh check validated it (<v|K|v>/<v|v> with a small
+            # residual). Otherwise ||(K + sigma*I) v|| - sigma is NOT an
+            # eigenvalue at all -- e.g. an insufficient sigma leaves the
+            # dominant shifted eigenvalue negative -- and the shared note
+            # labels it as an estimate so eigenvalue.dat cannot be misread.
+            eigenvalue_note = sc._shifted_eigenvalue_note(
+                "iteration", iteration_spectral_shift,
+                info.get("converged"), info.get("n_iter"), info,
+                kernel_label="dynamic kernel")
+    else:
+        # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
+        # Note: "both" degrades to eigenvalue-only here (the static path also
+        # runs a power-iteration leg); the ARPACK leading pair is returned.
+        if solver_mode == "both":
+            logger.warning(
+                "Dynamic solver_mode='both' runs the eigenvalue leg only; "
+                "the power-iteration cross-check is skipped.")
+        eigenvalue, sigma_flat, info = sc._solve_leading(
+            make_operator, vec_size, eigenvalue_method,
+            num_eigenvalues=num_eigenvalues,
+            sigma_shift=eli_param.get("sigma_shift"),
+            spectral_shift=eli_param.get("spectral_shift"),
+            seed_vec=seed_vec)
+        eigenvalues_all = info.get("eigenvalues")
+        vecs_all = info.get("eigenvectors")
+        # Promote the eigenpair with the channel's combined (k, orbital,
+        # frequency) parity so the reported leading lambda is the physical
+        # singlet/triplet solution -- not ARPACK's raw largest-|lambda|, which
+        # on real FLEX data can be an opposite-parity (wrong-channel) mode.
+        if eigenvalues_all is not None and vecs_all is not None:
+            eigenvalues_all, vecs_all, eigenvalue_match = \
+                _reorder_eigenpairs_by_parity_dynamic(
+                    eigenvalues_all, vecs_all, gap_shape, pairing_type)
+            eigenvalue = eigenvalues_all[0]
+            sigma_flat = vecs_all[:, 0]
+
+    lam = float(np.real(eigenvalue))
+    logger.info("%s leading eigenvalue lambda = %.6f", logger_label, lam)
+
+    # --- Outputs ---
+    # Gauge-fix the eigenvector (deterministic phase/normalization) so the
+    # written gap is reproducible across runs and linear-algebra backends.
+    gap_w = _fix_gauge(np.asarray(sigma_flat).reshape(gap_shape))
+    if use_ir:
+        # Densify the node-resolved gap back to the run's uniform grid so
+        # the output format/metadata is IDENTICAL to the uniform path (the
+        # gauge was fixed on nodes; re-fix after densification so the pivot
+        # convention refers to the written array). The npz records the IR
+        # provenance (design Sec. 3.2).
+        gap_w = _fix_gauge(axF.eval_to_uniform(
+            axF.fit_from_freq(gap_w), nmat))
+    return (lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
+            None if leakage is None else float(leakage))
+
+
+def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note, header_lines=()):
+    """Write the ``eigenvalue.dat`` leading-eigenvalue-and-spectrum file.
+
+    ``header_lines`` are written as additional ``# ...`` lines right after
+    the fixed first header line and before ``note`` -- e.g. the dynamic
+    solver's ``zero_chi_s``/``zero_chi_c`` diagnostic-flag line.
+    """
+    with open(path, "w") as fw:
+        fw.write("# Dynamic Eliashberg leading eigenvalue\n")
+        for line in header_lines:
+            fw.write("# {}\n".format(line))
+        if note:
+            for line in str(note).splitlines():
+                fw.write("# {}\n".format(line))
+        fw.write("{:.8e}\n".format(lam))
+        if eigenvalues_all is not None:
+            if eigenvalue_match is not None:
+                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                         "|eigenvalue|  match(1=channel-parity)\n")
+                for i, ev in enumerate(eigenvalues_all):
+                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e} {:d}\n".format(
+                        i, ev.real, ev.imag, abs(ev),
+                        int(bool(eigenvalue_match[i]))))
+            else:
+                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                         "|eigenvalue|\n")
+                for i, ev in enumerate(eigenvalues_all):
+                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
+                        i, ev.real, ev.imag, abs(ev)))
+
+
 def solve_dynamic(input_dict):
     """Solve the dynamic (frequency-resolved) Eliashberg equation.
 
@@ -1171,8 +1435,6 @@ def solve_dynamic(input_dict):
     float
         The leading (largest real part) Eliashberg eigenvalue lambda.
     """
-    from scipy.sparse.linalg import LinearOperator
-
     import hwave.sc as sc
 
     # spin-orbital mode is unsupported here exactly as on the static path;
@@ -1228,20 +1490,17 @@ def solve_dynamic(input_dict):
     Nk = Nx * Ny * Nz
 
     eli_param = input_dict.get("eliashberg", {})
-    # The bond-resolved channels are a STATIC-path feature; reject them here
-    # too so a direct solve_dynamic() call (bypassing calc_eliashberg's
-    # dispatch, which validates the same thing) cannot silently fall back to
-    # the scalar dynamic vertex.
-    sc._reject_bond_channels_dynamic(eli_param)
+    # bond_channels = true selects the bond-resolved pairing kernel, which is a
+    # different vertex entirely (spec 6). sc.calc_eliashberg dispatches to it
+    # FIRST, so that _validate_dynamic_prereqs runs before anything is read;
+    # this second, equivalent route only covers a DIRECT solve_dynamic() call,
+    # which must not be able to fall through to the scalar on-site vertex with
+    # the flag silently ignored. The flag goes through the same strict reader as
+    # every other bond option, so a typo is refused rather than read as false.
+    if sc._bond_bool_option(eli_param, "bond_channels", False):
+        from hwave.solver import eliashberg_bond_io
+        return eliashberg_bond_io.solve_dynamic_bond(input_dict)
     pairing_type = eli_param.get("pairing_type", "singlet")
-    # Mirror calc_eliashberg's config -> _solve_leading string mapping.
-    solver_mode = eli_param.get("solver_mode", "iteration")
-    eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
-    num_eigenvalues = eli_param.get("num_eigenvalues", 10)
-    max_iter = eli_param.get("max_iter", 1000)
-    alpha = eli_param.get("alpha", 0.5)
-    tol = eli_param.get("convergence_tol", 1.0e-5)
-    init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     use_gpu = _gpu_requested(eli_param)
     xp, gpu_active = backend.get_backend(
         use_gpu, logger=logger, required=_gpu_required_requested(eli_param))
@@ -1396,25 +1655,11 @@ def solve_dynamic(input_dict):
 
     # --- Seed: static init_gap form factor, broadcast flat across omega ---
     gap_shape = (norb, norb, Nx, Ny, Nz, nfreq_axis)
-    sigma_static = sc._initialize_gap(init_gap_mode, norb,
-                                      kx_array, ky_array, kz_array)
-    phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy()
-    phi0 = phi0.astype(complex)
-    n0 = np.linalg.norm(phi0)
-    if n0 > 0:
-        phi0 /= n0
+    phi0, seed_vec = build_seed(eli_param, pairing_type, norb, kx_array, ky_array,
+                                kz_array, gap_shape, use_ir, axF, nmat)
 
     vec_size = norb * norb * Nk * nfreq_axis
     assert phi0.size == vec_size
-
-    # Optional eigenvector-continuation seed: a gap_dynamic.npz from a
-    # neighbouring run (e.g. the next temperature). Used as the ARPACK start
-    # vector AND to pick the eigenpair that overlaps it -- tracking one physical
-    # branch across an exceptional point of the non-Hermitian kernel, where the
-    # algebraically-largest eigenvalue can jump between a real and a complex
-    # branch. On the IR path the (uniform-grid) seed gap is refit onto the IR
-    # fermionic nodes so it lives in the same eigenvector space.
-    seed_vec = _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat)
 
     # GPU path: park the two large invariants (pair bubble and vertex) on the
     # device once; every matvec then only moves the gap vector across PCIe.
@@ -1478,138 +1723,25 @@ def solve_dynamic(input_dict):
                 workers=fft_workers)
         return backend.to_host(out).ravel()
 
-    def make_operator():
-        op = LinearOperator((vec_size, vec_size), matvec=_matvec,
-                            dtype=complex)
-        return op, vec_size
-
-    # Map [eliashberg] controls to the _solve_leading solver_mode string,
-    # exactly as calc_eliashberg does for the static path.
-    eigenvalue_match = None
-    # Mirrors sc.calc_eliashberg's eigenvalue_note (review fix I-2): when
-    # spectral_shift is active on this power-iteration path, the value
-    # written below is the SIGNED eigenvalue of the shifted-and-subtracted-
-    # back kernel rather than the unshifted UNSIGNED iterate norm, and that
-    # meaning change must be labelled in the output, not just logged.
-    dynamic_eigenvalue_note = None
-    if solver_mode == "iteration":
-        # Mirror the static _solve_iteration: project every iterate onto the
-        # channel's combined-parity sector so numerical noise cannot let the
-        # power iteration drift into the opposite-parity (e.g. triplet) mode.
-        # The projection is legitimate only when the kernel commutes with P;
-        # probe the cross-sector leakage first and fall back to the
-        # un-projected iteration (with a warning) if it does not.
-        A_probe, _ = make_operator()
-        leak = _parity_leakage(A_probe, gap_shape, pairing_type)
-        if leak <= 1.0e-8:
-            def project_fn(flat):
-                return _project_parity_dynamic(
-                    flat.reshape(gap_shape), pairing_type).ravel()
-            # Project + normalize the seed, raising if it has no in-sector
-            # component (matches sc._solve_iteration's guard).
-            phi0 = _project_seed_dynamic(phi0, pairing_type)
-        else:
-            logger.warning(
-                "Dynamic Eliashberg kernel does not commute with parity "
-                "(cross-sector leakage %.2e); parity projection for the '%s' "
-                "channel is disabled and the un-projected iteration is used.",
-                leak, pairing_type)
-            project_fn = None
-        # spectral_shift is honoured on the power-iteration path too: with a
-        # repulsive-dominant kernel (negative dominant eigenvalue) the iterate
-        # flips sign every step and the loop can never converge; iterating on
-        # K + sigma*I fixes that and sc._solve_leading subtracts sigma back, so
-        # the eigenvalue below is still the signed eigenvalue of K.
-        iteration_spectral_shift = eli_param.get("spectral_shift")
-        eigenvalue, sigma_flat, info = sc._solve_leading(
-            make_operator, vec_size, "iteration",
-            max_iter=max_iter, convergence_tol=tol, alpha=alpha,
-            init_vec=phi0.ravel(), project_fn=project_fn,
-            spectral_shift=iteration_spectral_shift)
-        eigenvalues_all = None
-        if iteration_spectral_shift is not None:
-            # Shifted power iteration: the value is the SIGNED eigenvalue of
-            # the original dynamic kernel only when sc._solve_leading's
-            # Rayleigh check validated it (<v|K|v>/<v|v> with a small
-            # residual). Otherwise ||(K + sigma*I) v|| - sigma is NOT an
-            # eigenvalue at all -- e.g. an insufficient sigma leaves the
-            # dominant shifted eigenvalue negative -- and the shared note
-            # labels it as an estimate so eigenvalue.dat cannot be misread.
-            dynamic_eigenvalue_note = sc._shifted_eigenvalue_note(
-                "iteration", iteration_spectral_shift,
-                info.get("converged"), info.get("n_iter"), info,
-                kernel_label="dynamic kernel")
-    else:
-        # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
-        # Note: "both" degrades to eigenvalue-only here (the static path also
-        # runs a power-iteration leg); the ARPACK leading pair is returned.
-        if solver_mode == "both":
-            logger.warning(
-                "Dynamic solver_mode='both' runs the eigenvalue leg only; "
-                "the power-iteration cross-check is skipped.")
-        eigenvalue, sigma_flat, info = sc._solve_leading(
-            make_operator, vec_size, eigenvalue_method,
-            num_eigenvalues=num_eigenvalues,
-            sigma_shift=eli_param.get("sigma_shift"),
-            spectral_shift=eli_param.get("spectral_shift"),
-            seed_vec=seed_vec)
-        eigenvalues_all = info.get("eigenvalues")
-        vecs_all = info.get("eigenvectors")
-        # Promote the eigenpair with the channel's combined (k, orbital,
-        # frequency) parity so the reported leading lambda is the physical
-        # singlet/triplet solution -- not ARPACK's raw largest-|lambda|, which
-        # on real FLEX data can be an opposite-parity (wrong-channel) mode.
-        if eigenvalues_all is not None and vecs_all is not None:
-            eigenvalues_all, vecs_all, eigenvalue_match = \
-                _reorder_eigenpairs_by_parity_dynamic(
-                    eigenvalues_all, vecs_all, gap_shape, pairing_type)
-            eigenvalue = eigenvalues_all[0]
-            sigma_flat = vecs_all[:, 0]
-
-    lam = float(np.real(eigenvalue))
-    logger.info("Dynamic Eliashberg leading eigenvalue lambda = %.6f", lam)
+    # the on-site path keeps the historical "warn" policy and its default
+    # tolerance; the measured leakage is not part of its output format
+    lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, _leakage = \
+        run_leading_eigenproblem(
+            _matvec, gap_shape, eli_param, pairing_type, phi0=phi0,
+            seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
+            logger_label="Dynamic Eliashberg")
 
     # --- Outputs ---
-    # Gauge-fix the eigenvector (deterministic phase/normalization) so the
-    # written gap is reproducible across runs and linear-algebra backends.
-    gap_w = _fix_gauge(np.asarray(sigma_flat).reshape(gap_shape))
-    if use_ir:
-        # Densify the node-resolved gap back to the run's uniform grid so
-        # the output format/metadata is IDENTICAL to the uniform path (the
-        # gauge was fixed on nodes; re-fix after densification so the pivot
-        # convention refers to the written array). The npz records the IR
-        # provenance (design Sec. 3.2).
-        gap_w = _fix_gauge(axF.eval_to_uniform(
-            axF.fit_from_freq(gap_w), nmat))
     output_dir = input_dict["file"]["output"]["path_to_output"]
     os.makedirs(output_dir, exist_ok=True)
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
-    with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
-        fw.write("# Dynamic Eliashberg leading eigenvalue\n")
-        if zero_chi_s or zero_chi_c:
-            fw.write(
-                "# zero_chi_s={}  zero_chi_c={}\n".format(
-                    str(zero_chi_s).lower(), str(zero_chi_c).lower()
-                )
-            )
-        if dynamic_eigenvalue_note:
-            for line in str(dynamic_eigenvalue_note).splitlines():
-                fw.write("# {}\n".format(line))
-        fw.write("{:.8e}\n".format(lam))
-        if eigenvalues_all is not None:
-            if eigenvalue_match is not None:
-                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
-                         "|eigenvalue|  match(1=channel-parity)\n")
-                for i, ev in enumerate(eigenvalues_all):
-                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e} {:d}\n".format(
-                        i, ev.real, ev.imag, abs(ev),
-                        int(bool(eigenvalue_match[i]))))
-            else:
-                fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
-                         "|eigenvalue|\n")
-                for i, ev in enumerate(eigenvalues_all):
-                    fw.write("{:4d} {:15.8e} {:15.8e} {:15.8e}\n".format(
-                        i, ev.real, ev.imag, abs(ev)))
+    write_eigenvalue_file(
+        os.path.join(output_dir, eigenvalue_file), lam, eigenvalues_all,
+        eigenvalue_match, dynamic_eigenvalue_note,
+        header_lines=(
+            ["zero_chi_s={}  zero_chi_c={}".format(
+                str(zero_chi_s).lower(), str(zero_chi_c).lower())]
+            if (zero_chi_s or zero_chi_c) else []))
 
     gap_file = eli_param.get("output_gap", "gap.dat")
     # Provenance metadata is added ONLY on the opt-in IR path: the default

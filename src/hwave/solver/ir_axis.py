@@ -160,6 +160,17 @@ class IRAxis:
     u_beta_minus : ndarray (L,)
         Basis values u_l(beta^-), for equal-time observables
         (n = -Re[coeffs @ u_beta_minus] for a fermionic Green's function).
+    u_zero_plus : ndarray (L,)
+        Basis values u_l(0^+), the ONE-SIDED equal-time limit f(0^+).
+    u_matsubara_sum : ndarray (L,)
+        The coefficient contraction giving the UNREGULARIZED Matsubara sum
+        ``(1/beta) sum_n f(i w_n)``, i.e. the MIDPOINT of the tau = 0 jump.
+        The extension is anti-periodic for a fermion and periodic for a
+        boson, so the combination follows the statistics:
+        ``0.5 * (u_zero_plus - u_beta_minus)`` for ``'F'`` and
+        ``0.5 * (u_zero_plus + u_beta_minus)`` for ``'B'``. This -- not
+        ``u_zero_plus`` -- is what a frequency-flat (delta(tau)) vertex
+        multiplies.
     """
 
     def __init__(self, beta, wmax, eps, statistics):
@@ -238,10 +249,30 @@ class IRAxis:
             self._m["fit_tau"] @ self._m["eval_freq"])         # (n_tau, n_freq)
 
         self.u_beta_minus = basis.u(self.beta * (1.0 - 1e-15))  # (L,)
-        # u_l(0^+): equal-time evaluation at the other endpoint, e.g. the
-        # anomalous bubble F(tau=0) = (1/beta) sum_nu F(i nu) needed by the
-        # instantaneous-vertex term of the dynamic Eliashberg kernel.
+        # u_l(0^+): the ONE-SIDED equal-time evaluation at the other endpoint.
+        # Note that this is NOT the Matsubara sum (1/beta) sum_nu f(i nu) -- see
+        # u_matsubara_sum just below, which is what the frequency-flat term of
+        # the dynamic Eliashberg kernel multiplies.
         self.u_zero_plus = basis.u(self.beta * 1e-15)            # (L,)
+        # Weights of the UNREGULARIZED Matsubara sum
+        #     (1/beta) sum_{n = -inf}^{inf} f(i w_n)  =  coeffs @ u_matsubara_sum,
+        # i.e. the Fourier series of the (anti)periodic extension evaluated at
+        # tau = 0, which converges to the MIDPOINT of the jump:
+        #     0.5 * (f(0^+) + f(0^-)).
+        # The extension fixes f(0^-) from f(beta^-) and the sign DEPENDS ON THE
+        # STATISTICS: anti-periodic for a fermion (f(0^-) = -f(beta^-), hence
+        # the minus below) and periodic for a boson (f(0^-) = +f(beta^-)).
+        # Since u_l(beta - tau) = (-1)^l u_l(tau) the fermionic combination
+        # keeps only the odd-l part (the bosonic one only the even-l part), and
+        # that is exactly the piece INVARIANT under the node-axis reversal
+        # n -> -n. The raw u_zero_plus instead returns
+        # f(0^+) = midpoint + half the tau-jump, and the jump half
+        # ANTI-commutes with that reversal -- so a frequency-flat vertex, whose
+        # frequency convolution collapses to exactly this sum, must contract
+        # with u_matsubara_sum and never with u_zero_plus.
+        sign = -1.0 if self.statistics == "F" else +1.0
+        self.u_matsubara_sum = 0.5 * (np.asarray(self.u_zero_plus)
+                                      + sign * np.asarray(self.u_beta_minus))
 
         # device mirrors, filled lazily per array module
         self._device_m = {}
