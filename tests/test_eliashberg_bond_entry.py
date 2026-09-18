@@ -850,6 +850,16 @@ class TestInProcess(unittest.TestCase):
         from hwave.solver import eliashberg_bond as eb, eliashberg_dynamic as ed, \
             flex_bond as fb, backend as bk
         oom = bk._oom_error_types()[0] if bk._oom_error_types() else MemoryError
+
+        def oom_instance():
+            """The backend's device out-of-memory type where a device backend
+            is installed (CuPy's ``OutOfMemoryError(size, total)`` takes the
+            byte counts, not a message), ``MemoryError`` otherwise."""
+            try:
+                return oom("boom")
+            except TypeError:
+                return oom(1, 1)
+
         real_dress = fb._dress
 
         def dress_fails_only_for_the_pairing(*a, **k):
@@ -862,7 +872,7 @@ class TestInProcess(unittest.TestCase):
                 raise ValueError("denominator singular")
             return real_dress(*a, **k)
 
-        shared = [("accumulator", eb.PairVertexAccumulator, "add_dressed", oom("boom")),
+        shared = [("accumulator", eb.PairVertexAccumulator, "add_dressed", oom_instance()),
                   ("dress", fb, "_dress", dress_fails_only_for_the_pairing)]
         per_channel = [("solver", ed, "run_leading_eigenproblem", RuntimeError("no convergence")),
                        ("outputs", ed, "write_dynamic_outputs", OSError("disk full"))]

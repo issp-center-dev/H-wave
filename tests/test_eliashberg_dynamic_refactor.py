@@ -56,6 +56,32 @@ def _npz_members(path):
         return {k: np.asarray(d[k]) for k in d.files}
 
 
+def _assert_text_close(case, got, want, tag, rtol=1e-9):
+    """Compare two text outputs token by token: numeric tokens to a relative
+    tolerance, every other token exactly. The golden files were recorded on
+    one platform; another BLAS / FFT build differs in the last bits, which
+    the ``%.8e`` formatting can flip in the last printed digit."""
+    ga, gb = got.split(), want.split()
+    case.assertEqual(len(ga), len(gb), "{}: token count".format(tag))
+    for x, y in zip(ga, gb):
+        try:
+            fx, fy = float(x), float(y)
+        except ValueError:
+            case.assertEqual(x, y, tag)
+            continue
+        case.assertTrue(abs(fx - fy) <= rtol * max(1.0, abs(fy)),
+                        "{}: {} != {}".format(tag, x, y))
+
+
+def _assert_member_close(a, b, tag):
+    """Bitwise for non-float members, ``allclose`` for float / complex ones
+    (round-off of the platform's BLAS / FFT, not of the refactor)."""
+    if a.dtype.kind in "fc":
+        np.testing.assert_allclose(a, b, rtol=1e-10, atol=1e-13, err_msg=tag)
+    else:
+        np.testing.assert_array_equal(a, b, err_msg=tag)
+
+
 class TestDynamicGolden(unittest.TestCase):
     def test_outputs_match_golden(self):
         if not os.path.isdir(_GOLDEN):
@@ -68,12 +94,13 @@ class TestDynamicGolden(unittest.TestCase):
                 for fn in ("eigenvalue.dat", "gap.dat"):
                     with open(os.path.join(tmp, fn)) as fa, \
                             open(os.path.join(_GOLDEN, tag, fn)) as fb:
-                        self.assertEqual(fa.read(), fb.read(), "{} {}".format(tag, fn))
+                        _assert_text_close(self, fa.read(), fb.read(),
+                                           "{} {}".format(tag, fn))
                 a = _npz_members(os.path.join(tmp, "gap_dynamic.npz"))
                 b = _npz_members(os.path.join(_GOLDEN, tag, "gap_dynamic.npz"))
                 self.assertEqual(set(a), set(b), tag)
                 for k in a:
-                    np.testing.assert_array_equal(a[k], b[k], err_msg="{} {}".format(tag, k))
+                    _assert_member_close(a[k], b[k], "{} {}".format(tag, k))
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
