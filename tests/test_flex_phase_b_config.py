@@ -160,6 +160,61 @@ class TestPhaseBConfig(unittest.TestCase):
             logger.removeHandler(h)
         self.assertFalse([m for m in records if "longitudinal_bond" in m or "flex_hartree_fock" in m])
 
+    def test_longitudinal_bond_pairing_key(self):
+        s, _ = _build({"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                       "longitudinal_bond_pairing": "Both"})
+        self.assertEqual(s.longitudinal_bond_pairing, ("singlet", "triplet"))
+        s, _ = _build({"longitudinal_bond_channels": True, "flex_hartree_fock": True})
+        self.assertEqual(s.longitudinal_bond_pairing, "none")
+        self.assertIsNone(s._pairing_controls)
+        for bad in ({"longitudinal_bond_pairing": "singlet"},                       # no gate
+                    {"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                     "longitudinal_bond_pairing": "x"},
+                    {"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                     "longitudinal_bond_pairing": "singlet", "IterationMax": 0}):
+            with self.subTest(param=bad):
+                with self.assertRaises(ValueError):
+                    _build(bad)
+        import hwave.solver.flex as flex_mod
+        idict = {"path_to_input": _IN, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat"}
+        r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+        info = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                "param": {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+                          "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+                          "longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                          "longitudinal_bond_pairing": "singlet"}}
+        with self.assertRaisesRegex(ValueError, "longitudinal_bond_pairing"):
+            flex_mod.FLEX(r.get_param("ham"), {}, info, eliashberg_param={"pairing_type": "triplet"})
+
+    def test_pairing_controls_from_eliashberg_table(self):
+        import hwave.solver.flex as flex_mod
+        idict = {"path_to_input": _IN, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat"}
+        r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+               "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "longitudinal_bond_channels": True, "flex_hartree_fock": True}
+        info = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                "param": dict(par, longitudinal_bond_pairing="singlet")}
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s = flex_mod.FLEX(r.get_param("ham"), {}, info,
+                              eliashberg_param={"solver_mode": "eigenvalue",
+                                                "num_eigenvalues": 3, "gpu": True,
+                                                "chi0q_mode": "flex"})
+        self.assertEqual(s._pairing_controls.pairing_types, ("singlet",))
+        self.assertEqual(s._pairing_controls.solver_mode, "eigenvalue")
+        self.assertEqual(s._pairing_controls.num_eigenvalues, 3)
+        self.assertTrue(any("ignored in-process" in m for m in cm.output))
+        # a table with pairing "none" is INFO-only, and no controls are built
+        info_none = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                     "param": dict(par)}
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s = flex_mod.FLEX(r.get_param("ham"), {}, info_none,
+                              eliashberg_param={"pairing_type": "singlet"})
+        self.assertIsNone(s._pairing_controls)
+        self.assertTrue(any("ignored" in m for m in cm.output))
+
 
 class TestPhaseBDomainRefusals(unittest.TestCase):
 

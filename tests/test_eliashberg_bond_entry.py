@@ -350,3 +350,189 @@ class TestPostProcessingRuns(unittest.TestCase):
         for eta in ("singlet", "triplet"):
             self.assertAlmostEqual(lam[(eta, 128)], lam[(eta, 64)],
                                    delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)
+
+
+class TestInProcess(unittest.TestCase):
+    """The in-process entry at the end of the FLEX solve (spec 7, 10.2)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _outputs(self, tmp):
+        return {"path_to_output": tmp, "chiq_s": "chiq_s", "chiq_c": "chiq_c", "green": "green",
+                "sigma": "sigma", "longitudinal_bond": "longitudinal_bond"}
+
+    def test_outputs_written(self):                                # 10.2.6
+        s, r = _flex({"longitudinal_bond_pairing": "both", "IterationMax": 3})
+        gi = r.get_param("green")
+        s.solve(gi, self.tmp)
+        for eta in ("singlet", "triplet"):
+            self.assertIn("pairing_{}_eigenvalue".format(eta), gi)
+            self.assertNotIn("pairing_{}_error".format(eta), gi)
+        s.validate_output_paths(self._outputs(self.tmp), self.tmp)
+        s.save_results(self._outputs(self.tmp), gi)
+        for eta in ("singlet", "triplet"):
+            npz = os.path.join(self.tmp, "eliashberg_bond_{}.npz".format(eta))
+            with np.load(npz) as d:
+                for k in ("gap", "eigenvalue", "scf_converged", "state", "gap_bond_projection",
+                          "bond_delta_r"):
+                    self.assertIn(k, d.files, k)
+                self.assertEqual(str(d["pairing_type"]), eta)
+            with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:
+                txt = f.read()
+            self.assertIn("scf_converged=", txt)
+            self.assertIn("state=", txt)
+            self.assertTrue(os.path.exists(os.path.join(self.tmp, "gap_bond_{}.dat".format(eta))))
+            for stem in ("eliashberg_bond_{}.tmp.npz", "gap_bond_{}.tmp.dat",
+                         "eigenvalue_bond_{}.tmp.dat"):
+                self.assertFalse(os.path.exists(os.path.join(self.tmp, stem.format(eta))))
+        from hwave.solver import flex_bond
+        with self.assertRaisesRegex(ValueError, "resolve to the same file"):
+            flex_bond.resolve_output_paths(
+                dict(self._outputs(self.tmp), eliashberg_bond_singlet="chiq_s"),
+                self.tmp, ("chiq_s", "eliashberg_bond_singlet"))
+
+    def test_pairing_failure_keeps_flex_outputs(self):             # 10.2.7
+        from unittest import mock
+        from hwave.solver import eliashberg_bond as eb, eliashberg_dynamic as ed, \
+            flex_bond as fb, backend as bk
+        oom = bk._oom_error_types()[0] if bk._oom_error_types() else MemoryError
+        real_dress = fb._dress
+
+        def dress_fails_only_for_the_pairing(*a, **k):
+            """The FLEX map and the pairing re-dressing share ``_dress``; the
+            pairing passes ``iteration=None`` (argument 8), the map its own
+            iteration number. Only the pairing call fails, so the FLEX solve
+            itself still produces every artifact."""
+            iteration = a[7] if len(a) > 7 else k.get("iteration")
+            if iteration is None:
+                raise ValueError("denominator singular")
+            return real_dress(*a, **k)
+
+        shared = [("accumulator", eb.PairVertexAccumulator, "add_dressed", oom("boom")),
+                  ("dress", fb, "_dress", dress_fails_only_for_the_pairing)]
+        per_channel = [("solver", ed, "run_leading_eigenproblem", RuntimeError("no convergence")),
+                       ("outputs", ed, "write_dynamic_outputs", OSError("disk full"))]
+        for label, target, attr, exc in shared + per_channel:
+            tmp = tempfile.mkdtemp()
+            try:
+                s, r = _flex({"longitudinal_bond_pairing": "both", "IterationMax": 3})
+                gi = r.get_param("green")
+                with mock.patch.object(target, attr, side_effect=exc):
+                    s.solve(gi, tmp)                              # never raises
+                    for k in ("sigma", "green", "chiq_s", "longitudinal_bond_chi_s"):
+                        self.assertIn(k, gi, label)
+                    s.validate_output_paths(self._outputs(tmp), tmp)
+                    s.save_results(self._outputs(tmp), gi)
+                for fn in ("sigma.npz", "green.npz", "chiq_s.npz"):
+                    self.assertTrue(os.path.exists(os.path.join(tmp, fn)), label)
+                if label in ("accumulator", "dress"):
+                    for eta in ("singlet", "triplet"):
+                        self.assertIn("pairing_{}_error".format(eta), gi, label)
+                        self.assertFalse(os.path.exists(
+                            os.path.join(tmp, "eliashberg_bond_{}.npz".format(eta))), label)
+                    self.assertEqual(gi["pairing_singlet_error"], gi["pairing_triplet_error"])
+                else:
+                    # every channel fails the same way for a per-channel stage patched
+                    # globally; the failure is per channel and nothing of that channel
+                    # is published
+                    for eta in ("singlet", "triplet"):
+                        self.assertIn("pairing_{}_error".format(eta), gi, label)
+                        self.assertFalse(os.path.exists(
+                            os.path.join(tmp, "eliashberg_bond_{}.npz".format(eta))), label)
+                        self.assertFalse(os.path.exists(
+                            os.path.join(tmp, "eliashberg_bond_{}.tmp.npz".format(eta))), label)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        # per-channel isolation: patch the solver to fail on the FIRST call only
+        tmp = tempfile.mkdtemp()
+        try:
+            s, r = _flex({"longitudinal_bond_pairing": "both", "IterationMax": 3})
+            gi = r.get_param("green")
+            real = ed.run_leading_eigenproblem
+            calls = []
+
+            def flaky(*a, **k):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise RuntimeError("first channel fails")
+                return real(*a, **k)
+
+            with mock.patch.object(ed, "run_leading_eigenproblem", side_effect=flaky):
+                s.solve(gi, tmp)
+            self.assertIn("pairing_singlet_error", gi)
+            self.assertIn("pairing_triplet_eigenvalue", gi)
+            s.validate_output_paths(self._outputs(tmp), tmp)
+            s.save_results(self._outputs(tmp), gi)
+            self.assertTrue(os.path.exists(os.path.join(tmp, "eliashberg_bond_triplet.npz")))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "eliashberg_bond_singlet.npz")))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_solve_entry_preflight_refusal(self):                  # 10.2.8
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3})
+        s._pairing_controls = s._pairing_controls.__class__(
+            **dict(s._pairing_controls.__dict__, bond_memory_cap_gb=1e-9))
+        gi = r.get_param("green")
+        with self.assertRaisesRegex(ValueError, "matsubara_basis = 'ir'"):
+            s.solve(gi, self.tmp)
+
+    def test_flag_off_regression(self):                            # 10.2.4
+        ref = tempfile.mkdtemp()
+        try:
+            s1, r1 = _flex({"IterationMax": 3, "longitudinal_bond_output_full": True})
+            gi1 = r1.get_param("green")
+            s1.solve(gi1, ref)
+            s1.validate_output_paths(self._outputs(ref), ref)
+            s1.save_results(self._outputs(ref), gi1)
+            s2, r2 = _flex({"IterationMax": 3, "longitudinal_bond_output_full": True})
+            gi2 = r2.get_param("green")
+            s2.solve(gi2, self.tmp)
+            s2.validate_output_paths(self._outputs(self.tmp), self.tmp)
+            s2.save_results(self._outputs(self.tmp), gi2)
+            for fn in os.listdir(ref):
+                a, b = os.path.join(ref, fn), os.path.join(self.tmp, fn)
+                if fn.endswith(".npz"):
+                    with np.load(a) as da, np.load(b) as db:
+                        self.assertEqual(set(da.files), set(db.files), fn)
+                        for k in da.files:
+                            np.testing.assert_array_equal(da[k], db[k],
+                                                          err_msg="{} {}".format(fn, k))
+                else:
+                    with open(a, "rb") as fa, open(b, "rb") as fb:
+                        self.assertEqual(fa.read(), fb.read(), fn)
+            self.assertFalse(any(fn.startswith("eliashberg_bond")
+                                 for fn in os.listdir(self.tmp)))
+        finally:
+            shutil.rmtree(ref, ignore_errors=True)
+
+    @heavy
+    def test_inprocess_equals_postprocessing(self):                # 10.2.3
+        import hwave.sc as sc
+        flex_dir = tempfile.mkdtemp()
+        try:
+            _run_gate_1orb(flex_dir, pairing="both",
+                           eli={"solver_mode": "eigenvalue", "num_eigenvalues": 3})
+            for eta in ("singlet", "triplet"):
+                with np.load(os.path.join(flex_dir,
+                                          "eliashberg_bond_{}.npz".format(eta))) as d:
+                    lam_ip, gap_ip, evs = float(d["eigenvalue"]), d["gap"], d["eigenvalues_all"]
+                self.assertGreater(abs(evs[0] - evs[1]), 1e-3 * abs(evs[0]),
+                                   "isolated leading eigenvalue")
+                out = tempfile.mkdtemp()
+                try:
+                    lam_pp = sc.calc_eliashberg(_sc_input(flex_dir, out, 0.5, 64, (4, 4, 1),
+                                                          pairing_type=eta))
+                    with np.load(os.path.join(out, "gap_dynamic.npz")) as d:
+                        gap_pp = d["gap"]
+                finally:
+                    shutil.rmtree(out, ignore_errors=True)
+                self.assertAlmostEqual(lam_ip, lam_pp, delta=1e-10 * abs(lam_pp), msg=eta)
+                ov = abs(np.vdot(gap_ip, gap_pp)) / (np.linalg.norm(gap_ip)
+                                                     * np.linalg.norm(gap_pp))
+                self.assertAlmostEqual(ov, 1.0, delta=1e-8, msg=eta)
+        finally:
+            shutil.rmtree(flex_dir, ignore_errors=True)

@@ -362,3 +362,331 @@ def solve_dynamic_bond(input_dict):
                               gap_file=eli_param.get("output_gap", "gap.dat"),
                               extra_meta=extra)
     return lam
+
+
+# =============================================================================
+# Entry 2: in-process at the end of the FLEX solve (spec 7)
+# =============================================================================
+
+def _inprocess_axes(solver):
+    """The fermionic and bosonic IR axes of an in-process pairing run.
+
+    ``ir_wmax`` defaults to three times the sum of the full bandwidth and the
+    largest interaction matrix element, both read from the solve's OWN objects
+    (the diagonalised H0 and the momentum-space interaction), so the auto value
+    does not depend on files this entry never reads.
+    """
+    from . import backend as _bk
+    from .ir_axis import IRAxis
+    ctl = solver._pairing_controls
+    beta = 1.0 / solver.T
+    wmax = ctl.ir_wmax
+    if wmax is None:
+        ew = _bk.to_host(solver.H0_eigenvalue)
+        band = 2.0 * float(np.abs(ew).max())
+        inter = solver.ham_info.ham_inter_q
+        u = 0.0 if inter is None else float(np.abs(_bk.to_host(inter)).max())
+        wmax = 3.0 * (band + u)
+        logger.info("bond pairing IR: auto ir_wmax = %.6g", wmax)
+    axF = IRAxis(beta=beta, wmax=float(wmax), eps=ctl.ir_tol, statistics="F")
+    axB = IRAxis(beta=beta, wmax=float(wmax), eps=ctl.ir_tol, statistics="B")
+    return axF, axB
+
+
+def pairing_preflight(solver):
+    """Solve-entry admission (spec 7): refuse BEFORE the first FLEX map when
+    even the streaming residency cannot fit next to the FLEX solve's own
+    predicted peak.
+
+    The caps are the section-8 caps measured now MINUS what the bond gate has
+    already told us it will hold when the pairing step starts
+    (``solver._bond_est``). Raises ``ValueError``; the post-SCF admission
+    re-measures and is a per-channel error there, not an exception.
+    """
+    from . import backend as _bk
+    from . import eliashberg_bond as _eb
+    ctl = solver._pairing_controls
+    nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
+    B = solver._bond_view.n_channels
+    use_ir = ctl.matsubara_basis == "ir"
+    axF, axB = _inprocess_axes(solver) if use_ir else (None, None)
+    table = _eb.estimate_pair_memory(
+        nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=(axF.n_freq if use_ir else nmat),
+        nvol=nvol, norb=norb, B=B, num_eigenvalues=ctl.num_eigenvalues, residency="auto",
+        ir=use_ir, L_B=(axB.L if use_ir else 0), n_channels=len(ctl.pairing_types),
+        in_process=True)
+    host_cap_now = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
+        else 0.8 * _eb._host_available_bytes()
+    # estimate_bond_memory's "peak": 1.25 x (persistent + the largest phase)
+    flex_host_peak = float(solver._bond_est["peak"])
+    host_cap = host_cap_now - flex_host_peak
+    device_cap = host_cap
+    if getattr(solver, "use_gpu", False):
+        available = _bk.device_available_bytes()
+        if available is not None:
+            device_cap = 0.9 * float(available) - float(solver._bond_est.get("device_need", 0.0))
+    try:
+        residency = table.choose("auto", host_cap, device_cap)
+    except MemoryError as exc:
+        raise ValueError(
+            "longitudinal_bond_pairing: the pairing step would not fit after the FLEX solve "
+            "({}); set [eliashberg] matsubara_basis = 'ir' or raise bond_memory_cap_gb"
+            .format(exc))
+    logger.info("bond pairing preflight at solve entry: residency %s would fit; rows (GiB) %s",
+                residency, {k: round(v / _eb._GIB, 3) for k, v in table.rows.items()})
+
+
+def _record_backstop(green_info, etas, phase, exc):
+    """Record a failure the per-phase handlers did not see, without erasing a
+    more specific message one of them already stored."""
+    msg = "{}: {}: {}".format(phase, type(exc).__name__, exc)
+    logger.error("longitudinal_bond_pairing failed outside the per-phase handlers (%s): %s",
+                 phase, exc)
+    for eta in etas:
+        key = "pairing_{}_error".format(eta)
+        if key not in green_info:
+            green_info[key] = msg
+
+
+def _requested_types(solver):
+    ctl = getattr(solver, "_pairing_controls", None)
+    return () if ctl is None else tuple(ctl.pairing_types)
+
+
+def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
+    """The in-process pairing step at the end of the FLEX solve (spec 7).
+
+    NON-THROWING: every ``Exception`` and every device out-of-memory type is
+    caught per phase and recorded as ``pairing_<type>_error`` in ``green_info``
+    (``KeyboardInterrupt`` / ``SystemExit`` propagate), so a failure here never
+    reaches ``_solve_phase_b``'s handler and never costs the FLEX results.
+    A failure in a stage SHARED by several channels fails all of them with the
+    same root cause; the later per-channel stages fail that channel only.
+    """
+    from . import backend as _bk
+    try:
+        _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info)
+    except (Exception,) + tuple(_bk._oom_error_types()) as exc:
+        # the phase handlers below cover every failure the design foresees;
+        # this is the backstop that keeps the promise for the one it does not
+        _record_backstop(green_info, _requested_types(solver), "pairing", exc)
+
+
+def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
+    from . import backend as _bk
+    from . import bond_channels as _bc
+    from . import eliashberg_bond as _eb
+    from . import eliashberg_dynamic as _ed
+    ctl = solver._pairing_controls
+    xp = dev.xp
+    nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
+    nd = norb * norb
+    shape = tuple(int(x) for x in solver.lattice.shape)
+    Nx, Ny, Nz = shape
+    view = solver._bond_view
+    use_ir = ctl.matsubara_basis == "ir"
+    types = ctl.pairing_types
+    label_state = ("last_map_chi / final_green" if solver.scf_converged
+                   else "mixed: last-map chi, final green")
+    if not solver.scf_converged:
+        logger.warning("longitudinal_bond_pairing: the FLEX solve did not converge; the pairing "
+                       "eigenvalues are a diagnostic of a mixed state (%s)", label_state)
+    oom = tuple(_bk._oom_error_types())
+    caught = (Exception,) + oom
+
+    def fail(etas, phase, exc):
+        msg = "{}: {}: {}".format(phase, type(exc).__name__, exc)
+        logger.error("longitudinal_bond_pairing (%s) failed in phase %s: %s",
+                     ",".join(etas), phase, exc)
+        for eta in etas:
+            green_info["pairing_{}_error".format(eta)] = msg
+
+    try:
+        axF, axB = _inprocess_axes(solver) if use_ir else (None, None)
+        # the sc.py Green layout, from the SAME array green.npz carries, so the
+        # two entries build G2 from bit-identical data (spec 7, test 10.2.3)
+        g_host = _bk.to_host(green_kw)[0].reshape(
+            nmat, Nx, Ny, Nz, norb, norb).transpose(4, 5, 1, 2, 3, 0).copy()
+        if use_ir:
+            g_host = _ed._ir_compress(g_host, axF, nmat, "green")
+        G2 = xp.asarray(_ed.calc_g2_dynamic(g_host, beta))
+        del g_host
+        nfreq = axF.n_freq if use_ir else nmat
+    except caught as exc:
+        fail(types, "setup", exc)
+        return
+
+    # IR carries both channels through ONE accumulator (4.5); the uniform grid
+    # builds Gamma in the store's W slot, so one channel at a time
+    groups = [types] if use_ir else [(eta,) for eta in types]
+    for group in groups:
+        vertices = None
+        try:
+            if use_ir:
+                # the IR coefficients replace the W slot rather than joining it
+                store.release_slot("W")
+            acc = _eb.PairVertexAccumulator(
+                dev, pairing_types=group, nb=solver._bond_nb, nmat=nmat, nvol=nvol, nd=nd,
+                spatial_shape=shape, ir=((axF, axB) if use_ir else None),
+                out_store=(None if use_ir else store), out_slot="W",
+                ir_keep_static=ctl.ir_keep_static_chi,
+                workers=getattr(solver, "fft_workers", 1))
+
+            def stages(a):
+                a.add_dressed(store, cond_tol=_bc._BOND_COND_FLOOR,
+                              guard_freqs=solver.longitudinal_bond_guard_freqs)
+
+            stages(acc)
+            vertices = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)
+            del acc
+        except caught as exc:
+            fail(group, "vertex", exc)
+            continue
+        for eta in group:
+            try:
+                # the previous channel's device arrays are gone by now; give
+                # them back to the driver so this admission measures the truth
+                _bk.free_device_pool()
+                host_cap = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
+                    else 0.8 * _eb._host_available_bytes()
+                device_cap = host_cap if xp is np else 0.9 * _bk.device_available_bytes()
+                table = _eb.estimate_pair_memory(
+                    nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=nfreq, nvol=nvol,
+                    norb=norb, B=view.n_channels, num_eigenvalues=ctl.num_eigenvalues,
+                    residency="auto", ir=use_ir, L_B=(axB.L if use_ir else 0),
+                    n_channels=1, in_process=True)
+                V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape)
+                K = _eb.BondPairKernel(
+                    vertices[eta], G2, view, xp=xp, spatial_shape=shape, norb=norb, beta=beta,
+                    nfreq=nfreq, V_inst=V_inst, axF=axF, residency="auto", admission=table,
+                    host_cap=host_cap, device_cap=device_cap,
+                    workers=getattr(solver, "fft_workers", 1))
+                logger.info("longitudinal_bond_pairing (%s): kernel residency %s", eta, K.residency)
+                kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)
+                phi0, seed = _ed.build_seed(ctl.as_eli_param(), eta, norb, kx, ky, kz,
+                                            K.gap_shape, use_ir, axF, nmat)
+                lam, gap_w, evs, match, note = _ed.run_leading_eigenproblem(
+                    K.matvec, K.gap_shape, ctl.as_eli_param(), eta, phi0=phi0, seed_vec=seed,
+                    use_ir=use_ir, axF=axF, nmat=nmat,
+                    logger_label="bond pairing kernel ({})".format(eta),
+                    parity_leakage_policy="refuse")
+                meta = {"bond_channels": True,
+                        "bond_delta_r": np.asarray(view.delta_r, dtype=np.int64),
+                        "bond_reverse": np.asarray(view.reverse, dtype=np.int64),
+                        "bond_residency": K.residency,
+                        "scf_converged": bool(solver.scf_converged),
+                        "scf_iterations": int(solver.scf_iterations),
+                        "state": label_state,
+                        "matsubara_basis": ctl.matsubara_basis,
+                        "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, shape)}
+                if use_ir:
+                    meta.update({"ir_tol": axF.eps, "ir_wmax": axF.wmax, "ir_L": axF.L,
+                                 "bond_ir_fit_residual_rel": vertices[eta].fit_residual_rel})
+                green_info["pairing_{}_eigenvalue".format(eta)] = float(lam)
+                green_info["pairing_{}_eigenvalues".format(eta)] = \
+                    None if evs is None else np.asarray(evs)
+                green_info["pairing_{}_eigenvalue_match".format(eta)] = \
+                    None if match is None else np.asarray(match)
+                green_info["pairing_{}_gap".format(eta)] = gap_w
+                green_info["pairing_{}_meta".format(eta)] = meta
+                green_info["pairing_{}_note".format(eta)] = note
+                logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
+                            eta, float(lam), label_state)
+                del K
+            except caught as exc:
+                fail((eta,), "kernel/solver", exc)
+        del vertices
+
+
+def _tmp_name(path):
+    """``x.npz`` -> ``x.tmp.npz`` (numpy's savez suffix rule is satisfied)."""
+    root, ext = os.path.splitext(path)
+    return root + ".tmp" + ext
+
+
+def write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
+    """The three files of every successful pairing channel (spec 7).
+
+    Called from ``save_results`` AFTER every FLEX artifact. Each channel is
+    written under temporary names and then renamed in a fixed order (npz, gap,
+    eigenvalue); a write failure removes the temporaries and publishes nothing,
+    a rename failure leaves what was already renamed and reports the channel as
+    PARTIALLY published. Either way the message lands in
+    ``pairing_<type>_error`` and the next channel is still attempted -- this
+    function never raises.
+    """
+    try:
+        _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output)
+    except Exception as exc:
+        _record_backstop(green_info, _requested_types(solver), "outputs", exc)
+
+
+def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
+    from . import eliashberg_dynamic as _ed
+    from . import flex_bond as _fb
+    ctl = solver._pairing_controls
+    shape = tuple(int(x) for x in solver.lattice.shape)
+    kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)
+    for eta in ctl.pairing_types:
+        if "pairing_{}_error".format(eta) in green_info \
+                or "pairing_{}_gap".format(eta) not in green_info:
+            continue
+        # resolved INSIDE the guard: a name or a result this channel is missing
+        # is this channel's failure, not the next channel's
+        names, tmps = {}, {}
+        try:
+            for kind in ("eliashberg_bond", "gap_bond", "eigenvalue_bond"):
+                key = "{}_{}".format(kind, eta)
+                fn = str(info_outputfile.get(key, _fb._DEFAULT_FILES[key]))
+                if kind == "eliashberg_bond" and not fn.endswith(".npz"):
+                    fn += ".npz"
+                names[kind] = os.path.join(str(path_to_output), fn)
+                tmps[kind] = _tmp_name(names[kind])
+            meta = green_info["pairing_{}_meta".format(eta)]
+            extra = dict(meta)
+            evs = green_info.get("pairing_{}_eigenvalues".format(eta))
+            if evs is not None:
+                extra["eigenvalues_all"] = evs
+            _ed.write_dynamic_outputs(
+                str(path_to_output), green_info["pairing_{}_gap".format(eta)],
+                green_info["pairing_{}_eigenvalue".format(eta)], solver.T, eta,
+                kx, ky, kz, 1.0 / solver.T,
+                gap_file=os.path.basename(tmps["gap_bond"]),
+                npz_file=os.path.basename(tmps["eliashberg_bond"]), extra_meta=extra)
+            _ed.write_eigenvalue_file(
+                tmps["eigenvalue_bond"], green_info["pairing_{}_eigenvalue".format(eta)],
+                evs, green_info.get("pairing_{}_eigenvalue_match".format(eta)),
+                green_info.get("pairing_{}_note".format(eta)),
+                header_lines=["bond_channels=true",
+                              "scf_converged={}".format(str(meta["scf_converged"]).lower()),
+                              "state={}".format(meta["state"]),
+                              "residency={}".format(meta["bond_residency"])])
+        except Exception as exc:
+            for t in tmps.values():
+                try:
+                    os.remove(t)
+                except OSError:
+                    pass
+            green_info["pairing_{}_error".format(eta)] = \
+                "outputs: {}: {}".format(type(exc).__name__, exc)
+            logger.error("longitudinal_bond_pairing (%s): writing the outputs failed: %s",
+                         eta, exc)
+            continue
+        done = []
+        try:
+            for kind in ("eliashberg_bond", "gap_bond", "eigenvalue_bond"):
+                os.replace(tmps[kind], names[kind])
+                done.append(kind)
+        except OSError as exc:
+            missing = [k for k in tmps if k not in done]
+            for k in missing:
+                try:
+                    os.remove(tmps[k])
+                except OSError:
+                    pass
+            green_info["pairing_{}_error".format(eta)] = \
+                "outputs: partially published, missing {}: {}".format(missing, exc)
+            logger.error("longitudinal_bond_pairing (%s): PARTIALLY published (missing %s): %s",
+                         eta, missing, exc)
+            continue
+        logger.info("save_results: pairing (%s) outputs %s", eta, ", ".join(names.values()))

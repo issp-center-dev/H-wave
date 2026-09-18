@@ -163,7 +163,14 @@ HEAVY_TESTS = (
      "test_matches_direct_lehmann_sum",
      "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
      "single most expensive test in the suite"),
-    # --- tests/test_eliashberg_bond_entry.py -- post-processing entry ----
+    # --- tests/test_eliashberg_bond_entry.py -- the two pairing entries ---
+    ("test_eliashberg_bond_entry", "TestInProcess",
+     "test_inprocess_equals_postprocessing",
+     "real bond-gate FLEX run: in-process pairing vs hwave_sc on its archive -- "
+     "1.2 s measured, below the rule, and registered anyway because it is the "
+     "other half of the entry-level agreement case whose post-processing half "
+     "(TestPostProcessingRuns.test_uniform_lambda_and_outputs, below) is "
+     "registered: the two belong in the same shape of the suite"),
     ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
      "test_uniform_lambda_and_outputs",
      "two real bond-gate FLEX runs (4x4, Nmat 64 and 128) plus four hwave_sc "
