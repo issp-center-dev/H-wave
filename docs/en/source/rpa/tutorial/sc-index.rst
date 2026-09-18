@@ -1127,8 +1127,9 @@ re-run FLEX with ``write_densified = true``.
    Dynamic IR results computed with H-wave 1.0.x are incorrect for any
    model whose pairing vertex has a nonzero frequency-independent
    part — in particular anything with off-site
-   ``CoulombInter`` (pure on-site-``CoulombIntra`` models were
-   unaffected: their bare vertex term cancels exactly). Recompute such
+   ``CoulombInter`` (the shipped pure on-site-``CoulombIntra``
+   comparisons did not expose it; note that the bare singlet term of such
+   a model is :math:`+U`, not zero -- see the change note below). Recompute such
    runs; large changes in lambda are expected (they were the bug, not a
    physics change). The automatic ``ir_wmax`` estimate also changed to a
    dispersion-based bound and is now much smaller (and correct) on
