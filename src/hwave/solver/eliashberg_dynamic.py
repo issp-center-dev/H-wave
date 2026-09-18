@@ -1051,8 +1051,10 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
     intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
     familiar +U while the TRIPLET one ``0.5 (C - S)`` vanishes; the triplet
-    term becomes nonzero with any inter-orbital (U', Hund) or off-site
-    interaction. On a frequency-EVEN pair amplitude the flat term is
+    term is nonzero wherever the assembled matrices have C != S, which is
+    the generic outcome of an inter-orbital U', a Hund / Ising term or an
+    off-site density interaction (particular combinations can cancel, e.g.
+    U' = J on the (ab,ab) element). On a frequency-EVEN pair amplitude the flat term is
     insensitive to the tau = 0 jump of F (its even-l IR coefficients vanish),
     which is why the issue-#57 defect stayed invisible on the shipped
     fixtures, whose gaps are flat in frequency.

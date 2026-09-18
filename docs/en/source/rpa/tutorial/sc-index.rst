@@ -1161,9 +1161,11 @@ re-run FLEX with ``write_densified = true``.
    Who is affected. Any ``matsubara_basis = "ir"`` run whose instantaneous
    vertex is nonzero. In the singlet channel that is every model, the pure
    Hubbard model included (its bare singlet term is :math:`+U`); in the
-   triplet channel every model with an inter-orbital (:math:`U'`, Hund) or
-   off-site (``CoulombInter``, ``Hund``, ``Ising`` at :math:`R \neq 0`)
-   interaction. Re-run an earlier IR run if its log carried the "does not
+   triplet channel every model whose assembled spin and charge matrices
+   differ, which is the generic outcome of an inter-orbital (:math:`U'`,
+   Hund) or off-site (``CoulombInter``, ``Hund``, ``Ising`` at
+   :math:`R \neq 0`) interaction (particular combinations can cancel; a
+   pure Hubbard model has no bare triplet term). Re-run an earlier IR run if its log carried the "does not
    commute with parity" warning (its projection was off) or if its gap
    function is used, in particular triplet runs; eigenvalues of
    parity-projected singlet runs are unchanged.

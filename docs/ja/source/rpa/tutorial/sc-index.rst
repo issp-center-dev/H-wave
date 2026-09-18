@@ -1111,9 +1111,11 @@ FLEX 側が\ ``[mode.param] matsubara_basis = "ir"``\ かつ
    ``matsubara_basis = "ir"``\ の計算すべてです。singlet チャネルでは
    これはあらゆる模型が該当し、純粋な Hubbard 模型も含まれます
    （その裸の singlet 項は\ :math:`+U`\ です）。triplet チャネルでは、
+   組み上げたスピン行列と電荷行列が一致しない模型が該当します。これは
    軌道間（:math:`U'`\ 、Hund）またはオフサイト（:math:`R \neq 0`\ の
-   ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ）の相互作用を持つ
-   模型すべてが該当します。以前の IR 計算については、ログに
+   ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ）の相互作用がある
+   場合の一般的な帰結です（特定の組み合わせでは相殺し得ます。純粋な
+   Hubbard 模型には裸の triplet 項はありません）。以前の IR 計算については、ログに
    「does not commute with parity」の警告が出ていた場合（射影が無効に
    なっていました）、またはそのギャップ関数を利用する場合、特に
    triplet の計算では再実行してください。パリティ射影を行った

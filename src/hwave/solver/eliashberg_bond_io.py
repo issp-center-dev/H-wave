@@ -47,14 +47,19 @@ class PairingControls:
             if eta not in ("singlet", "triplet"):
                 raise ValueError("pairing type must be 'singlet' or 'triplet', got {!r}".format(eta))
 
-        def _nonzero_int(key, default):
+        def _fft_workers(key, default):
             """``scipy.fft`` worker counts: a positive count, or a negative one
-            that means "all cores but |n| - 1" (``-1`` = every core, the value
-            the dynamic-solver documentation names); ``0`` is meaningless."""
+            that ``scipy.fft`` reads as ``os.cpu_count() + 1 + n`` (``-1`` =
+            every core, the value the dynamic-solver documentation names) and
+            accepts only down to ``-os.cpu_count()``; ``0`` is refused by
+            ``scipy.fft`` itself. Checked here so the run fails at input
+            parsing, not at the first spatial FFT after the FLEX solve."""
             v = p.get(key, default)
-            if isinstance(v, bool) or int(v) != v or int(v) == 0:
-                raise ValueError("[eliashberg] {} must be a non-zero integer (negative = use all "
-                                 "cores), got {!r}".format(key, v))
+            floor = -(os.cpu_count() or 1)
+            if isinstance(v, bool) or int(v) != v or int(v) == 0 or int(v) < floor:
+                raise ValueError("[eliashberg] {} must be a positive integer or a negative one "
+                                 "down to {} (-1 = use all cores), got {!r}"
+                                 .format(key, floor, v))
             return int(v)
 
         def _pos_int(key, default):
@@ -112,7 +117,7 @@ class PairingControls:
             ir_fit_tol=_pos_float("ir_fit_tol", 0.5, allow_zero=True),
             parity_leakage_tol=_pos_float("parity_leakage_tol", None, allow_zero=True,
                                           allow_none=True),
-            fft_workers=_nonzero_int("fft_workers", 1),
+            fft_workers=_fft_workers("fft_workers", 1),
             bond_memory_cap_gb=_pos_float("bond_memory_cap_gb", None, allow_none=True))
 
     @property

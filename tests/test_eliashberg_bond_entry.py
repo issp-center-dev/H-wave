@@ -229,9 +229,17 @@ class TestPairingControls(unittest.TestCase):
             self.assertEqual(c.eigenvalue_method, method)
         self.assertEqual(PairingControls.from_param({"fft_workers": 4},
                                                     pairing_types=("singlet",)).fft_workers, 4)
-        # the documented "all cores" spelling of the dynamic solver stays valid
+        # the documented "all cores" spelling of the dynamic solver stays valid,
+        # down to the scipy.fft floor of -os.cpu_count(); one below is refused
+        # here rather than by the first FFT after the FLEX solve
+        import os
+        floor = -(os.cpu_count() or 1)
         self.assertEqual(PairingControls.from_param({"fft_workers": -1},
                                                     pairing_types=("singlet",)).fft_workers, -1)
+        self.assertEqual(PairingControls.from_param({"fft_workers": floor},
+                                                    pairing_types=("singlet",)).fft_workers, floor)
+        with self.assertRaisesRegex(ValueError, "fft_workers"):
+            PairingControls.from_param({"fft_workers": floor - 1}, pairing_types=("singlet",))
 
     def test_parity_leakage_tol_default_depends_on_the_basis(self):
         """``parity_leakage_tol`` is optional; ``None`` resolves to 1e-8 on the
