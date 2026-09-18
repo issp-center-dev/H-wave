@@ -2047,6 +2047,8 @@ class FLEX(RPA):
         if self.longitudinal_bond_output_full:
             out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
             out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+            out["longitudinal_bond_S"] = np.array(self._bond_S, copy=True)
+            out["longitudinal_bond_C"] = np.array(self._bond_C, copy=True)
         green_info.update(out)
         logger.info(
             "longitudinal_bond_channels (FLEX): chi0q/chiq_s/chiq_c are the channel-0 "
@@ -4023,7 +4025,8 @@ class FLEX(RPA):
             self.validate_output_paths(info_outputfile, path_to_output)
             _bond_static = {k: v for k, v in green_info.items()
                             if str(k).startswith("longitudinal_bond_")
-                            and not str(k).endswith("_w")}
+                            and not str(k).endswith("_w")
+                            and k not in ("longitudinal_bond_S", "longitudinal_bond_C")}
             if "chiq_s" not in green_info:
                 _last_map_omitted = True
                 logger.info("save_results: no map was executed (IterationMax=0); the last-map "
@@ -4263,9 +4266,12 @@ class FLEX(RPA):
             logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
                         "channel data)".format(file_name), 2 * chi_s_w.nbytes / 1024 ** 3)
             np.savez(file_name,
-                     bond_archive_schema=np.int64(1),
+                     bond_archive_schema=np.int64(2),
                      chi_s_w=chi_s_w,
                      chi_c_w=chi_c_w,
+                     S_bond=green_info["longitudinal_bond_S"],
+                     C_bond=green_info["longitudinal_bond_C"],
+                     norb=np.int64(self.norb),
                      freq_axis=np.str_("bosonic l -> 2l - nmat"),
                      beta=1.0 / self.T,
                      T=self.T,
