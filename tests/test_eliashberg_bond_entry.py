@@ -229,6 +229,9 @@ class TestPairingControls(unittest.TestCase):
             self.assertEqual(c.eigenvalue_method, method)
         self.assertEqual(PairingControls.from_param({"fft_workers": 4},
                                                     pairing_types=("singlet",)).fft_workers, 4)
+        # the documented "all cores" spelling of the dynamic solver stays valid
+        self.assertEqual(PairingControls.from_param({"fft_workers": -1},
+                                                    pairing_types=("singlet",)).fft_workers, -1)
 
     def test_parity_leakage_tol_default_depends_on_the_basis(self):
         """``parity_leakage_tol`` is optional; ``None`` resolves to 1e-8 on the

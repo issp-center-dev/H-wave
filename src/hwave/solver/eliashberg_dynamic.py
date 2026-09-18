@@ -1048,9 +1048,14 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     """The frequency-INDEPENDENT part of the pairing vertex: the bare
     ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
-    (CoulombIntra-only) model in the Kuroki convention this cancels
-    exactly (S+C = U-U = 0), which is why the issue-#57 defect stayed
-    invisible on the CoulombIntra-only test fixtures.
+    (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
+    intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
+    familiar +U while the TRIPLET one ``0.5 (C - S)`` vanishes; the triplet
+    term becomes nonzero with any inter-orbital (U', Hund) or off-site
+    interaction. On a frequency-EVEN pair amplitude the flat term is
+    insensitive to the tau = 0 jump of F (its even-l IR coefficients vanish),
+    which is why the issue-#57 defect stayed invisible on the shipped
+    fixtures, whose gaps are flat in frequency.
 
     The Kuroki Exchange/PairHop rejection is enforced by the delegate
     itself (``sc._reject_reduced_flex_unsupported``), so this route is
