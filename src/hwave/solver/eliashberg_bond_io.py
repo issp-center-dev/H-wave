@@ -157,20 +157,9 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     nvol = int(np.prod(cell))
     if delta_r.ndim != 2 or delta_r.shape[1] != 3 or tuple(delta_r[0]) != (0, 0, 0):
         raise ValueError("bond archive {}: delta_r must be (B, 3) with delta_r[0] = (0, 0, 0)".format(path))
-    # Each row must already be its own minimum-image representative modulo
-    # cell_shape (component r reduced into the canonical [-m/2, m/2) range
-    # per axis of modulus m) -- a raw value differing from that reduction
-    # (e.g. R and R + k*L on some axis) is the SAME physical bond stored
-    # non-canonically, i.e. it aliases another representative modulo the
-    # cell; and two rows may not share one canonical representative either.
-    half = np.asarray(cell, dtype=np.int64) // 2
-    reduced = np.mod(delta_r, cell)
-    reduced = np.where(reduced > half, reduced - np.asarray(cell, dtype=np.int64), reduced)
-    if not np.array_equal(reduced, delta_r) \
-            or len({tuple(int(x) for x in r) for r in reduced}) != B:
-        raise ValueError(
-            "bond archive {}: delta_r rows must be pairwise distinct modulo cell_shape {} and "
-            "already stored in canonical (minimum-image) form".format(path, cell))
+    mod = {tuple(int(x) for x in np.mod(r, cell)) for r in delta_r}
+    if len(mod) != B:
+        raise ValueError("bond archive {}: two channels of delta_r coincide modulo cell_shape {}".format(path, cell))
     if reverse.shape != (B,) or reverse[0] != 0 or np.any(reverse < 0) or np.any(reverse >= B) \
             or np.any(reverse[reverse] != np.arange(B)) or np.any(delta_r[reverse] != -delta_r):
         raise ValueError("bond archive {}: reverse is not the reversal involution of delta_r".format(path))

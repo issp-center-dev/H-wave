@@ -112,10 +112,31 @@ class TestLoadBondArchive(unittest.TestCase):
     def test_delta_r_aliasing_refused(self):
         with np.load(self.path) as d:
             dr = d["delta_r"].copy()
-        dr[1] = dr[1] + np.array([4, 0, 0])      # aliases modulo the 4x4x1 cell
-        self._rewrite(delta_r=dr)
+            reverse = d["reverse"]
+        (i,) = np.where((dr == np.array([1, 0, 0])).all(axis=1))
+        i = int(i[0])
+        j = int(reverse[i])
+
+        # Two DIFFERENT channels that coincide modulo the 4x4x1 cell: (2,0,0)
+        # and (-2,0,0) both reduce to (2,0,0) mod 4. The reversal involution
+        # (delta_r[reverse] == -delta_r) still holds, so only the modulo
+        # check can fire.
+        dr_alias = dr.copy()
+        dr_alias[i] = np.array([2, 0, 0])
+        dr_alias[j] = np.array([-2, 0, 0])
+        self._rewrite(delta_r=dr_alias)
         with self.assertRaisesRegex(ValueError, "modulo"):
             self._load()
+
+        # A full-period shift of one row (its OWN residue unchanged, so it
+        # does not collide with any other row) is NOT an alias and must be
+        # accepted: the loader checks pairwise distinctness modulo
+        # cell_shape, not that rows are already in canonical form.
+        dr_shifted = dr.copy()
+        dr_shifted[i] = dr[i] + np.array([4, 0, 0])
+        dr_shifted[j] = -dr_shifted[i]
+        self._rewrite(delta_r=dr_shifted)
+        self._load()      # must not raise
 
 
 class TestPairingControls(unittest.TestCase):
