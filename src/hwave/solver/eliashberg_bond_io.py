@@ -188,12 +188,26 @@ class _ArchiveView:
         self.n_channels = len(self.delta_r)
 
 
-def _frequency_batch(nmat, nvol, ND, host_cap):
-    """Frequency batch size of the vertex build: one batch (the seven
-    ``nb * nvol * ND**2`` complex workspaces of the spec-8 dressing row) stays
-    under a quarter of the host cap. At least 1, at most ``nmat``."""
+def _frequency_batch(nmat, nvol, ND, host_cap, device_cap=None):
+    """Frequency batch size of the vertex build: at least 1, at most ``nmat``.
+
+    One batch is the seven ``nb * nvol * ND**2`` complex workspaces of the
+    spec-8 dressing row, and that batch lives on BOTH sides -- the archive
+    member is sliced on the host and the slice is transferred to the array
+    module (``PairVertexAccumulator.add_channel`` -> ``to_device``), while
+    ``estimate_pair_memory`` charges ``dressing_workspace`` to every
+    residency's DEVICE need. Sizing ``nb`` from the host cap alone therefore
+    oversizes it on a device backend with plenty of host memory, and admission
+    then refuses a configuration a smaller ``nb`` would have passed. So the
+    batch is the smaller of the two quarter-cap limits, as the FLEX gate does
+    (:mod:`~hwave.solver.flex_bond`). ``device_cap=None`` means one address
+    space (numpy), where the host limit already covers both.
+    """
     per_l = 7 * nvol * ND * ND * 16
-    return max(1, min(int(nmat), int(0.25 * host_cap // max(1, per_l))))
+    nb = int(0.25 * host_cap // max(1, per_l))
+    if device_cap is not None:
+        nb = min(nb, int(0.25 * device_cap // max(1, per_l)))
+    return max(1, min(int(nmat), nb))
 
 
 def solve_dynamic_bond(input_dict):
@@ -285,7 +299,8 @@ def solve_dynamic_bond(input_dict):
     host_cap = (ctl.bond_memory_cap_gb * _eb._GIB) if ctl.bond_memory_cap_gb \
         else 0.8 * _eb._host_available_bytes()
     device_cap = host_cap if xp is np else 0.9 * _bk.device_available_bytes()
-    nb = _frequency_batch(nmat, nvol, arch.ND, host_cap)
+    nb = _frequency_batch(nmat, nvol, arch.ND, host_cap,
+                          device_cap=(None if xp is np else device_cap))
     table = _eb.estimate_pair_memory(
         nmat=nmat, ntau=(axF.n_tau if use_ir else 0), nfreq=nfreq, nvol=nvol, norb=norb,
         B=arch.B, num_eigenvalues=ctl.num_eigenvalues, residency="auto", ir=use_ir,

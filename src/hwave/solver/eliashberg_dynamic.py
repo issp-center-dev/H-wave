@@ -1432,6 +1432,16 @@ def solve_dynamic(input_dict):
     Nk = Nx * Ny * Nz
 
     eli_param = input_dict.get("eliashberg", {})
+    # bond_channels = true selects the bond-resolved pairing kernel, which is a
+    # different vertex entirely (spec 6). sc.calc_eliashberg dispatches to it
+    # FIRST, so that _validate_dynamic_prereqs runs before anything is read;
+    # this second, equivalent route only covers a DIRECT solve_dynamic() call,
+    # which must not be able to fall through to the scalar on-site vertex with
+    # the flag silently ignored. The flag goes through the same strict reader as
+    # every other bond option, so a typo is refused rather than read as false.
+    if sc._bond_bool_option(eli_param, "bond_channels", False):
+        from hwave.solver import eliashberg_bond_io
+        return eliashberg_bond_io.solve_dynamic_bond(input_dict)
     pairing_type = eli_param.get("pairing_type", "singlet")
     use_gpu = _gpu_requested(eli_param)
     xp, gpu_active = backend.get_backend(

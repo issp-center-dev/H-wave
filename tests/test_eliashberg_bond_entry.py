@@ -235,6 +235,20 @@ class TestPostProcessingGuards(unittest.TestCase):
         # the archive is missing in tmp: the message names the FLEX prerequisite
         self._refused("longitudinal_bond_output_full = true")
 
+    def test_direct_solve_dynamic_call_reaches_the_bond_path(self):
+        """A DIRECT ``solve_dynamic`` call (bypassing ``calc_eliashberg``'s
+        dispatch) must not silently run the scalar on-site vertex with
+        ``bond_channels = true`` ignored: it delegates to the bond entry, which
+        here gets as far as the missing archive."""
+        from hwave.solver import eliashberg_dynamic
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
+            eliashberg_dynamic.solve_dynamic(inp)
+        # and the strict reader still applies on that route
+        inp["eliashberg"]["bond_channels"] = "ture"
+        with self.assertRaisesRegex(ValueError, "bond_channels"):
+            eliashberg_dynamic.solve_dynamic(inp)
+
     def test_static_bond_guards_unchanged(self):
         import hwave.sc as sc
         inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
@@ -242,6 +256,37 @@ class TestPostProcessingGuards(unittest.TestCase):
         # the STATIC bond path still refuses chi0q_mode = "flex" (unchanged)
         with self.assertRaisesRegex(ValueError, "(?i)flex"):
             sc.calc_eliashberg(inp)
+
+
+class TestFrequencyBatch(unittest.TestCase):
+    """``_frequency_batch`` is a pure function of the two caps (spec 8): one
+    dressing batch of ``7 * nb * nvol * ND**2 * 16`` bytes lives on the host AND
+    on the device, so it must fit a quarter of BOTH caps."""
+
+    def _nb(self, host_gib, device_gib=None, nmat=64, nvol=16, ND=45):
+        from hwave.solver.eliashberg_bond_io import _frequency_batch
+        gib = 1024 ** 3
+        return _frequency_batch(nmat, nvol, ND, host_gib * gib,
+                                device_cap=(None if device_gib is None else device_gib * gib))
+
+    def test_host_only_and_device_limited(self):
+        per_l = 7 * 16 * 45 * 45 * 16                      # 3.629 MB per frequency
+        gib = 1024 ** 3
+        # one address space (numpy): the host cap alone decides
+        self.assertEqual(self._nb(1.0), min(64, int(0.25 * gib // per_l)))  # 73 -> nmat
+        self.assertEqual(self._nb(1.0, None), self._nb(1.0))
+        self.assertEqual(self._nb(0.1), int(0.25 * 0.1 * gib // per_l))     # 7
+        # a device backend with a roomy host: the DEVICE cap is what binds, and
+        # passing it must shrink nb (this is the whole point of the argument)
+        big_host = self._nb(64.0)
+        self.assertEqual(big_host, 64)                                  # nmat-capped
+        self.assertLess(self._nb(64.0, 0.05), big_host)
+        self.assertEqual(self._nb(64.0, 0.05), int(0.25 * 0.05 * gib // per_l))
+        # the smaller of the two always wins, either way round
+        self.assertEqual(self._nb(0.05, 64.0), self._nb(0.05))
+        # never zero, never above nmat
+        self.assertEqual(self._nb(1e-9, 1e-9), 1)
+        self.assertEqual(self._nb(1e6, 1e6, nmat=8), 8)
 
 
 class TestPostProcessingRuns(unittest.TestCase):
