@@ -257,9 +257,11 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 ``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
 ``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ・
 ``gap_sector_weights``\ ・\ ``gap_sector_labels``\ ・
-``iteration_projection``\ 。これらは返されたギャップの運動量・振動数
-パリティセクター4つの重み、その名前、およびべき乗反復が射影した
-セクター（``"channel"``\ ・\ ``"combined_parity"``\ ・\ ``"none"``\ ）です。
+``sector_selection``\ 。これらは返されたギャップの運動量・振動数
+パリティセクター4つの重み、その名前、およびその実行が選んだセクター
+（``"channel"``\ ・\ ``"combined_parity"``\ ・\ ``"none"``\ 。べき乗反復が
+射影したセクター、固有値ソルバーモードでは固有対の並べ替えが一致した
+段階）です。
 :ref:`動的ソルバーのペアリングチャネル <sc_dynamic_channels>`\ を参照）に
 加えて、\ ``bond_channels``\ （``true``\ ）、\ ``bond_delta_r`` /
 ``bond_reverse``\ （アーカイブのボンドトポロジー。上記の
@@ -283,8 +285,11 @@ ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 even_k_odd_w=... odd_k_odd_w=...``\ のヘッダー行（小数6桁）を
 1行持ちます。これは npz の\ ``gap_sector_weights``\ キーと同じ4つの
 数値です。その直後に
-``# iteration_projection=<channel|combined_parity|none>``\ の行が
-続きます。
+``# sector_selection=<channel|combined_parity|none>``\ の行が
+続きます。固有値表の\ ``match``\ 列の見出しも同じセクターに従い、
+``match(1=channel even-frequency sector)``\ または
+``match(1=combined-parity sector; no even-frequency eigenpair)``\ と
+なります。
 
 **インプロセスの経路** （``[mode.param]
 longitudinal_bond_pairing``\ ）。リクエストされたチャネル
@@ -315,7 +320,7 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
-  と\ ``# iteration_projection=...``\ のヘッダー行を持ちます。
+  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
 
 失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

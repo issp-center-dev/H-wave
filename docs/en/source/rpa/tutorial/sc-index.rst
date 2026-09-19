@@ -692,10 +692,12 @@ mode writes:
    - ``gap_sector_labels``: the names of those four sectors, in the same
      order: ``"even_k_even_w"``, ``"odd_k_even_w"``, ``"even_k_odd_w"``,
      ``"odd_k_odd_w"``.
-   - ``iteration_projection``: which sector the power iteration projected its
-     iterates onto -- ``"channel"``, ``"combined_parity"`` or ``"none"``
-     (always ``"none"`` for the eigenvalue solver modes); see the same
-     subsection.
+   - ``sector_selection``: the sector this run selected in -- ``"channel"``,
+     ``"combined_parity"`` or ``"none"``. On the power-iteration path it is
+     the sector the iterates were projected onto; on the eigenvalue solver
+     modes, which never project, it is the stage the eigenpair reordering
+     matched with, and therefore what the ``match`` column of
+     ``eigenvalue.dat`` means. See the same subsection.
 
 ``gap.dat``
    A single-frequency slice of the gap at the lowest positive Matsubara
@@ -715,16 +717,19 @@ Fermion antisymmetry fixes the combined parity of the gap under
 ``triplet``. Within that constraint the solver selects the conventional
 **even-frequency** sector of the requested channel, as described in the next
 subsection. The Arnoldi eigenpairs are reordered so that the channel mode
-leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries the same
-trailing ``match(1=channel-parity)`` column as the static output (``1`` in the
-requested sector, ``0`` outside it). If none of the ``num_eigenvalues``
-computed eigenpairs lies in either sector, the solver warns and falls
-back to the raw leading pair; increase ``num_eigenvalues`` or check
-``pairing_type`` in that case. The power-iteration path (``solver_mode =
+leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries a trailing
+``match`` column like the static output (``1`` in the matched sector, ``0``
+outside it). That column is **named after the sector that matched** --
+``match(1=channel even-frequency sector)``, or
+``match(1=combined-parity sector; no even-frequency eigenpair)`` when the
+fallback stage was used -- so a ``1`` never has to be guessed at. If none of
+the ``num_eigenvalues`` computed eigenpairs lies in either sector, the solver
+warns and falls back to the raw leading pair; increase ``num_eigenvalues`` or
+check ``pairing_type`` in that case. The power-iteration path (``solver_mode =
 "iteration"``) likewise projects every iterate onto the channel sector when the
 kernel preserves it, onto the wider combined-parity sector when it preserves
 only that, and not at all when it preserves neither (each fallback is warned
-about, and recorded as ``iteration_projection``).
+about). Both paths record what they used as ``sector_selection``.
 
 .. _sc_dynamic_channels:
 
@@ -777,12 +782,14 @@ the requested channel, and the weights say what it is instead.
    the iteration projects onto the combined-parity sector instead, with a
    warning, so the reported :math:`\lambda` is always a genuine eigenvalue and
    the sector weights show the composition of the gap that produced it. Which
-   case applied is recorded per run as ``iteration_projection``
+   case applied is recorded per run as ``sector_selection``
    (``"channel"``, ``"combined_parity"`` or ``"none"``) -- an npz key and the
-   ``# iteration_projection=...`` header line of the eigenvalue file. The
+   ``# sector_selection=...`` header line of the eigenvalue file. The
    eigenvalue solver modes never project; they order the computed eigenpairs,
    preferring the channel's even-frequency sector and falling back to its
-   combined-parity sector only if no eigenpair lies in it.
+   combined-parity sector only if no eigenpair lies in it. There
+   ``sector_selection`` names the stage that matched, which is also what the
+   ``match`` column of ``eigenvalue.dat`` is labelled with.
 
 .. warning::
 
