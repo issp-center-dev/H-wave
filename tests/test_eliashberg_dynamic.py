@@ -1156,11 +1156,11 @@ def test_outputs_written(tmp_path):
         "gap", "iomega", "T", "pairing_type", "frequency",
         "eigenvalue", "axis_order", "normalization",
         "momentum_convention", "gap_sector_weights",
-        "gap_sector_labels", "iteration_projection"}, \
+        "gap_sector_labels", "sector_selection"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
     # this synthetic archive does not conserve either parity, so the iteration
     # runs unprojected -- and says so
-    assert str(npz["iteration_projection"]) == "none"
+    assert str(npz["sector_selection"]) == "none"
     # the returned gap's composition over the four (k, frequency) sectors
     labels = [str(x) for x in npz["gap_sector_labels"]]
     assert labels == ["even_k_even_w", "odd_k_even_w", "even_k_odd_w",
@@ -1507,6 +1507,25 @@ def test_channel_projectors_are_even_frequency():
     assert all(v == 0.0 for v in wz.values())
 
 
+def test_singlet_projector_is_bit_identical_where_pk_is_the_identity():
+    """On a grid where every k is its own inverse and there is one orbital,
+    Pk is the identity, so the SINGLET projector reduces exactly to the
+    historical (1 + P)/2 -- bit for bit, which is what keeps such runs
+    numerically unchanged. The TRIPLET sector is empty there: its projector is
+    identically zero, not the historical (1 - P)/2."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 2, 2, 1, 8)
+    rng = np.random.default_rng(5)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    historical = 0.5 * (g + ed._reverse_kw_and_orbital(g))
+    assert np.array_equal(ed._project_parity_dynamic(g, "singlet"), historical)
+    assert np.array_equal(ed._project_parity_dynamic(g, "triplet"),
+                          np.zeros(shape, dtype=complex))
+    # ... and the historical odd projector is NOT zero, so the two genuinely
+    # differ for the triplet
+    assert np.linalg.norm(0.5 * (g - ed._reverse_kw_and_orbital(g))) > 0.0
+
+
 def test_reorder_promotes_channel_parity_eigenpair():
     """The odd mode has the larger eigenvalue but the singlet request must
     surface the (even k, even w) eigenpair as leading."""
@@ -1516,8 +1535,9 @@ def test_reorder_promotes_channel_parity_eigenpair():
     go = _pure_sector(gap_shape, "odd_k_even_w", 32)    # triplet
     vecs = np.column_stack([go.ravel(), ge.ravel()])   # odd first (col 0)
     vals = np.array([2.0 + 0j, 1.0 + 0j])              # odd has larger lambda
-    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
         vals, vecs, gap_shape, "singlet")
+    assert selection == "channel"
     # even (lambda=1) promoted to leading; match flags reordered with it
     assert np.isclose(rvals[0].real, 1.0)
     assert bool(match[0]) is True
@@ -1541,15 +1561,17 @@ def test_reorder_prefers_even_frequency_state():
     vecs = np.column_stack([A.ravel(), C.ravel(), B.ravel()])
     vals = np.array([0.9 + 0j, 0.7 + 0j, 0.5 + 0j])    # descending
 
-    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
         vals, vecs, gap_shape, "triplet")
+    assert selection == "channel"
     assert np.isclose(rvals[0].real, 0.5)
     assert bool(match[0]) is True
     assert int(match.sum()) == 1                       # A is NOT a triplet
     assert np.allclose(rvecs[:, 0], B.ravel(), atol=1e-12)
 
-    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
         vals, vecs, gap_shape, "singlet")
+    assert selection == "channel"
     assert np.isclose(rvals[0].real, 0.7)
     assert bool(match[0]) is True
     assert int(match.sum()) == 1                       # A is NOT a singlet
@@ -1644,11 +1666,36 @@ def test_channel_leakage_zero_for_sector_preserving_operator():
     assert ed._channel_leakage(_Op(swap), shape, "singlet") > 0.9
 
 
+def test_channel_leakage_is_none_and_the_iteration_refuses_an_empty_sector():
+    """On a 2-point-per-axis one-orbital grid no odd-k function exists, so the
+    triplet sector is empty: ``_channel_leakage`` reports ``None`` (not the
+    0.0 that would read as "perfectly preserved") and the iteration refuses
+    with a message that names the grid, not a generic seed failure."""
+    import pytest
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 2, 2, 1, 8)
+
+    def matvec(x):
+        return np.asarray(x).ravel()
+
+    assert ed._channel_leakage(_Op(matvec), shape, "triplet") is None
+    # the singlet sector on the same grid is NOT empty
+    assert ed._channel_leakage(_Op(matvec), shape, "singlet") == 0.0
+
+    rng = np.random.default_rng(3)
+    phi0 = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+    with pytest.raises(ValueError, match="empty on this k grid"):
+        ed.run_leading_eigenproblem(
+            matvec, shape, {"solver_mode": "iteration", "max_iter": 3},
+            "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
+            nmat=8)
+
+
 def test_iteration_falls_back_to_combined_parity_projection(caplog):
     """A kernel that commutes with the combined parity but mixes the frequency
     parity must not have its eigenproblem restricted to the even-frequency
     sector: the iteration projects onto the combined-parity sector instead,
-    says so, and records ``iteration_projection = "combined_parity"``."""
+    says so, and records ``sector_selection = "combined_parity"``."""
     import logging
     from hwave.solver import eliashberg_dynamic as ed
     shape = (1, 1, 4, 4, 1, 8)
@@ -1671,8 +1718,8 @@ def test_iteration_falls_back_to_combined_parity_projection(caplog):
             "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
             nmat=8)
     assert len(out) == 8
-    lam, _gap, _evs, _match, _note, leak, weights, projection = out
-    assert projection == "combined_parity"
+    lam, _gap, _evs, _match, _note, leak, weights, selection = out
+    assert selection == "combined_parity"
     assert leak is not None and leak < 1e-10       # combined parity IS a symmetry
     assert any("frequency parity is not a symmetry" in r.message
                for r in caplog.records), caplog.text
@@ -1692,14 +1739,60 @@ def test_reorder_falls_back_to_combined_parity_when_no_channel_eigenpair():
     eo = _pure_sector(gap_shape, "even_k_odd_w", 82)     # combined parity -1
     vecs = np.column_stack([eo.ravel(), oo.ravel()])
     vals = np.array([2.0 + 0j, 1.0 + 0j])
-    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
         vals, vecs, gap_shape, "singlet")
     # no even-frequency singlet exists here; the odd-frequency state with the
-    # singlet's combined parity is promoted instead
+    # singlet's combined parity is promoted instead, and the stage is named
+    assert selection == "combined_parity"
     assert np.isclose(rvals[0].real, 1.0)
     assert bool(match[0]) is True
     assert int(match.sum()) == 1
     assert np.allclose(rvecs[:, 0], oo.ravel(), atol=1e-12)
+    # neither stage matches a triplet request here (eo is combined-odd, but
+    # it is not an even-frequency triplet and oo is the wrong parity)
+    _rv, _rc, match_t, selection_t = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "triplet")
+    assert selection_t == "combined_parity"
+    assert bool(match_t[0]) is True and np.allclose(_rc[:, 0], eo.ravel())
+
+
+def test_eigenvalue_file_labels_the_combined_parity_fallback(tmp_path):
+    """When no eigenpair lies in the channel's even-frequency sector, the
+    match column must NOT be labelled as a channel-parity match -- that is the
+    ambiguity issue #209 removes -- and the file records the stage used."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    # every eigenvector of this operator is odd-frequency
+    v1 = _pure_sector(gap_shape, "odd_k_odd_w", 91).ravel()     # combined +1
+    v2 = _pure_sector(gap_shape, "even_k_odd_w", 92).ravel()    # combined -1
+    v3 = _pure_sector(gap_shape, "odd_k_odd_w", 93).ravel()
+    v3 = v3 - np.vdot(v1, v3) * v1
+    v3 /= np.linalg.norm(v3)
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        c1, c2, c3 = np.vdot(v1, x), np.vdot(v2, x), np.vdot(v3, x)
+        rest = x - c1 * v1 - c2 * v2 - c3 * v3
+        return 0.9 * c1 * v1 + 0.8 * c2 * v2 + 0.7 * c3 * v3 + 0.001 * rest
+
+    phi0 = _pure_sector(gap_shape, "even_k_even_w", 94)
+    out = ed.run_leading_eigenproblem(
+        matvec, gap_shape,
+        {"solver_mode": "eigenvalue", "num_eigenvalues": 3},
+        "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
+    lam, _gap, evs, match, note, _leak, _weights, selection = out
+    assert selection == "combined_parity"
+    assert np.isclose(lam, 0.9, atol=1e-6)
+
+    path = os.path.join(str(tmp_path), "eigenvalue.dat")
+    ed.write_eigenvalue_file(path, lam, evs, match, note, selection=selection)
+    with open(path) as fh:
+        text = fh.read()
+    assert "# sector_selection=combined_parity" in text
+    assert "match(1=combined-parity sector; no even-frequency eigenpair)" in text
+    assert "match(1=channel-parity)" not in text
+    assert "match(1=channel even-frequency sector)" not in text
 
 
 def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):

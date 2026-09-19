@@ -797,7 +797,7 @@ class TestInProcess(unittest.TestCase):
             with np.load(npz) as d:
                 for k in ("gap", "eigenvalue", "scf_converged", "state", "gap_bond_projection",
                           "bond_delta_r", "gap_sector_weights", "gap_sector_labels",
-                          "iteration_projection"):
+                          "sector_selection"):
                     self.assertIn(k, d.files, k)
                 self.assertEqual(str(d["pairing_type"]), eta)
                 # the in-process entry records the same two keys, under the
@@ -814,14 +814,14 @@ class TestInProcess(unittest.TestCase):
                 # so the iteration is NOT restricted to the channel sector --
                 # yet its leading eigenvector lands there anyway, which is
                 # exactly what the recorded weights are for
-                self.assertEqual(str(d["iteration_projection"]),
+                self.assertEqual(str(d["sector_selection"]),
                                  "combined_parity", eta)
             with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:
                 txt = f.read()
             self.assertIn("scf_converged=", txt)
             self.assertIn("state=", txt)
             self.assertIn("# gap_sector_weights even_k_even_w=", txt)
-            self.assertIn("# iteration_projection=combined_parity", txt)
+            self.assertIn("# sector_selection=combined_parity", txt)
             self.assertTrue(os.path.exists(os.path.join(self.tmp, "gap_bond_{}.dat".format(eta))))
             for stem in ("eliashberg_bond_{}.tmp.npz", "gap_bond_{}.tmp.dat",
                          "eigenvalue_bond_{}.tmp.dat"):
