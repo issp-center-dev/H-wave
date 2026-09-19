@@ -290,7 +290,10 @@ numbers as the ``gap_sector_weights`` npz key, followed by
 ``# sector_selection=<channel|combined_parity|none>``. The ``match`` column of
 the per-eigenvalue table is named after that same sector:
 ``match(1=channel even-frequency sector)`` or
-``match(1=combined-parity sector; no even-frequency eigenpair)``.
+``match(1=combined-parity sector; no even-frequency eigenpair)``. When
+``sector_selection`` is ``none`` (no eigenpair lay in either sector) the
+column keeps the historical label ``match(1=channel-parity)`` and every entry
+is ``0``.
 
 **In-process entry** (``[mode.param] longitudinal_bond_pairing``). For
 each requested channel (``singlet`` and/or ``triplet``) writes three files

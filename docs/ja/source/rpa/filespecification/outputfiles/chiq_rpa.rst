@@ -289,7 +289,9 @@ even_k_odd_w=... odd_k_odd_w=...``\ のヘッダー行（小数6桁）を
 続きます。固有値表の\ ``match``\ 列の見出しも同じセクターに従い、
 ``match(1=channel even-frequency sector)``\ または
 ``match(1=combined-parity sector; no even-frequency eigenpair)``\ と
-なります。
+なります。``sector_selection``\ が\ ``none``\ の場合（どちらのセクターにも
+固有対がなかった場合）は、列見出しは従来の\ ``match(1=channel-parity)``\ の
+ままで、値はすべて\ ``0``\ です。
 
 **インプロセスの経路** （``[mode.param]
 longitudinal_bond_pairing``\ ）。リクエストされたチャネル

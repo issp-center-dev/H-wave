@@ -1485,7 +1485,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     with a WARNING.
 
     Returns ``(lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
-    leakage, sector_weights, projection)``, where ``leakage`` is the measured
+    leakage, sector_weights, sector_selection)``, where ``leakage`` is the measured
     combined-parity cross-sector leakage as a float, or ``None`` when no probe
     ran (the ``"warn"`` policy on the non-iteration solver modes),
     ``sector_weights`` is ``gap_sector_weights`` of the returned uniform-grid
@@ -1578,8 +1578,8 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             # iterate for; say why instead of failing later on an empty seed
             raise ValueError(
                 "the '{}' even-frequency sector is empty on this k grid "
-                "(every k is its own inverse); use a grid with at least 3 "
-                "points per periodic axis or the singlet channel"
+                "(every k is its own inverse); use a grid with at least one "
+                "momentum axis of 3 or more points, or the singlet channel"
                 .format(pairing_type))
         if channel_leakage <= parity_leakage_tol:
             sector_selection = "channel"
