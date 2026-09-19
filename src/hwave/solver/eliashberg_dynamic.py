@@ -55,17 +55,38 @@ def _ir_keep_static_requested(eli_param):
 
 
 # ---------------------------------------------------------------------------
-# Channel-parity of the frequency-resolved gap
+# Channel sectors of the frequency-resolved gap
 #
-# The static path filters eigenpairs by the (k, orbital) parity operator P:
+# The static path filters eigenpairs by the (k, orbital) parity operator
 # Delta_{ab}(k) -> Delta_{ba}(-k) (sc._reverse_k_and_orbital), so a singlet
 # request never reports an odd-parity (triplet-sector) mode. The dynamic gap
 # carries an extra fermionic Matsubara axis, and fermion antisymmetry makes the
-# physical channel-parity the COMBINED operator
-#     P: Delta_{ab}(k, iw_n) -> Delta_{ba}(-k, -iw_n),
-# even (+) for singlet, odd (-) for triplet. This admits both a conventional
-# (even-k, even-w) and an odd-frequency (odd-k, odd-w) singlet, and rejects the
-# mixed even-w/odd-k mode that ARPACK's raw largest-|lambda| can surface.
+# COMBINED operator
+#     P: Delta_{ab}(k, iw_n) -> Delta_{ba}(-k, -iw_n)
+# the antisymmetry CONSTRAINT: even (+) for singlet, odd (-) for triplet.
+# That constraint alone is not a channel, because each of its eigenspaces
+# still contains two frequency parities:
+#     singlet (P = +1): (even k, even w) OR (odd k, odd w)
+#     triplet (P = -1): (odd k, even w)  OR (even k, odd w)
+# The conventional channels reported in the literature are the EVEN-FREQUENCY
+# sectors, so the projectors below select
+#     singlet -> (even k, even w),   triplet -> (odd k, even w).
+#
+# P factorises into two commuting involutions, and the split that matters is
+# the one the pairing kernel itself conserves:
+#     Qk: Delta_{ab}(k, iw_n) -> Delta_{ab}(-k, iw_n)   (momentum parity)
+#     Qw: Delta_{ab}(k, iw_n) -> Delta_{ba}(k, -iw_n)   (frequency parity)
+# with P = Qk Qw. The ORBITAL TRANSPOSE rides with the frequency reversal, not
+# with the momentum reversal: the pair bubble obeys
+# G2_{ac,bd}(k, iw) = conj(G2_{bd,ac}(k, -iw)) but has no separate a<->b
+# symmetry, so for norb > 1 the kernel commutes with Qk and with Qw (both to
+# machine precision, verified on the bond fixtures) while it does NOT commute
+# with the transpose attached to k. For norb = 1 the two splits coincide.
+#
+# Odd-frequency pairing (the other two sectors) is NOT solved for by this
+# module; a returned gap's weight in each of the four sectors is recorded by
+# ``gap_sector_weights`` so an impure result is visible in the outputs
+# (issue #209).
 # ---------------------------------------------------------------------------
 
 def _reverse_kw_and_orbital(gap_w):
@@ -92,10 +113,46 @@ def _reverse_kw_and_orbital(gap_w):
     return rev
 
 
-def _project_parity_dynamic(gap_w, pairing_type):
-    """Project a dynamic gap onto the channel's combined-parity sector.
+def _reverse_k_dynamic(gap_w):
+    """Return ``Delta_{ab}(-k, iw_n)``: the momentum half ``Qk`` of the
+    combined parity operator, frequency and orbitals untouched.
 
-    ``(1 +/- P)/2`` with ``+`` for singlet (even) and ``-`` for triplet (odd).
+    Same ``k -> -k`` FFT-grid reversal ``i -> (N - i) % N`` as
+    ``kgrid.reverse_fft_axes`` / ``sc._reverse_k_and_orbital``.
+    """
+    return reverse_fft_axes(gap_w, (2, 3, 4))
+
+
+def _reverse_w_and_orbital_dynamic(gap_w):
+    """Return ``Delta_{ba}(k, -iw_n)``: the frequency half ``Qw`` of the
+    combined parity operator, momentum untouched.
+
+    The last axis is reversed -- correct both on the centered fermionic uniform
+    grid (partner of index ``n`` is ``nmat - 1 - n``) and on the symmetric IR
+    fermionic nodes -- and the two orbital indices are swapped. The transpose
+    belongs here rather than with ``Qk``: only this split commutes with the
+    pairing kernel when ``norb > 1`` (see the section comment above). For
+    ``norb = 1`` it is a plain frequency reversal.
+    """
+    return np.swapaxes(gap_w[..., ::-1], 0, 1)
+
+
+def _project_parity_dynamic(gap_w, pairing_type):
+    """Project a dynamic gap onto the channel's EVEN-FREQUENCY sector.
+
+    The combined parity ``P = Qk Qw`` is the fermion-antisymmetry constraint
+    (``+`` singlet, ``-`` triplet), but each of its eigenspaces still holds an
+    even-frequency and an odd-frequency sector. The conventional channels are
+    the even-frequency ones, so this is the product of the momentum-parity
+    projector and the even-frequency projector,
+
+        ``0.25 * (g + s Qk g + Qw g + s Qk Qw g)``,  ``s = +1`` singlet,
+        ``s = -1`` triplet,
+
+    i.e. (even k, even w) for singlet and (odd k, even w) for triplet. It is
+    idempotent, and the singlet and triplet projectors are orthogonal. The two
+    odd-frequency sectors are annihilated by both: odd-frequency pairing is not
+    solved for here (issue #209).
     """
     if pairing_type == "singlet":
         sign = 1.0
@@ -105,12 +162,51 @@ def _project_parity_dynamic(gap_w, pairing_type):
         raise ValueError(
             "Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
                 pairing_type))
-    return 0.5 * (gap_w + sign * _reverse_kw_and_orbital(gap_w))
+    # Written as the composition (1 + Qw)/2 . (1 + s Qk)/2 rather than the
+    # expanded four-term sum: Qk and Qw commute, so the two are the same
+    # projector, but on a k-grid where Qk is the identity (every k its own
+    # inverse, e.g. a 2-point axis) the composition reduces BIT-identically to
+    # the historical (1 + s P)/2, so such runs are unchanged to the last digit.
+    half = 0.5 * (gap_w + sign * _reverse_k_dynamic(gap_w))
+    return 0.5 * (half + _reverse_w_and_orbital_dynamic(half))
+
+
+# labels and (Qk, Qw) signs of the four sectors, in the order they are written
+# to the outputs
+_SECTOR_LABELS = ("even_k_even_w", "odd_k_even_w", "even_k_odd_w",
+                  "odd_k_odd_w")
+_SECTOR_SIGNS = ((1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0))
+
+
+def gap_sector_weights(gap_w):
+    """Squared-norm fraction of ``gap_w`` in each of the four (momentum,
+    frequency) parity sectors of ``Qk`` and ``Qw``.
+
+    Returns a dict keyed by ``even_k_even_w`` (the conventional singlet),
+    ``odd_k_even_w`` (the conventional triplet), ``even_k_odd_w`` and
+    ``odd_k_odd_w`` (the two odd-frequency sectors this module does not solve
+    for). ``even_w`` / ``odd_w`` is the parity under ``Qw``, the frequency
+    reversal that carries the orbital transpose. The four projectors resolve
+    the identity, so the weights sum to 1; a zero gap reports all zeros
+    instead of dividing by zero.
+    """
+    gap_w = np.asarray(gap_w)
+    denom = float(np.linalg.norm(gap_w)) ** 2
+    if denom <= 0.0 or not np.isfinite(denom):
+        return {label: 0.0 for label in _SECTOR_LABELS}
+    gw = _reverse_w_and_orbital_dynamic(gap_w)
+    pk = _reverse_k_dynamic(gap_w)
+    pkw = _reverse_k_dynamic(gw)
+    out = {}
+    for label, (sk, sw) in zip(_SECTOR_LABELS, _SECTOR_SIGNS):
+        comp = 0.25 * (gap_w + sk * pk + sw * gw + sk * sw * pkw)
+        out[label] = float(np.linalg.norm(comp) ** 2 / denom)
+    return out
 
 
 def _is_parity_dynamic(gap_w, pairing_type, tol=0.9):
     """True when ``gap_w`` retains at least ``tol`` of its norm under the
-    channel's combined-parity projection (mirrors ``sc._is_gap_parity``)."""
+    channel's even-frequency sector projection (mirrors ``sc._is_gap_parity``)."""
     proj = _project_parity_dynamic(gap_w, pairing_type)
     n = np.linalg.norm(gap_w)
     if n == 0:
@@ -118,16 +214,43 @@ def _is_parity_dynamic(gap_w, pairing_type, tol=0.9):
     return np.linalg.norm(proj) / n >= tol
 
 
-def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
-    """Max fraction of ``A x`` that lands in the OPPOSITE parity sector.
+def _project_combined_parity_dynamic(gap_w, sign):
+    """``(1 + sign * P)/2`` with the COMBINED parity
+    ``P: Delta_ab(k, iw) -> Delta_ba(-k, -iw)``.
 
-    Zero (to numerical precision) iff the kernel commutes with the parity
-    operator, so parity projection of the power iteration is legitimate.
-    Mirrors ``sc._solve_iteration``'s centrosymmetry guard verbatim: for each
-    of ``n_probe`` random vectors and each parity sign, project the probe into
-    that sector, apply ``A``, and measure the norm fraction of the image that
-    lands in the opposite sector (denominator ``||A xp|| + 1e-300``). Uses the
-    same probe count as the static path (``sc._PARITY_GUARD_PROBES``).
+    The fermion-antisymmetry constraint itself, which is what the pairing
+    kernel actually commutes with (exactly, for every model tested: it is a
+    property of the pair bubble, not of the lattice). ``_parity_leakage``
+    measures against THIS operator; the channel projector above selects the
+    even-frequency sector inside it.
+    """
+    return 0.5 * (gap_w + sign * _reverse_kw_and_orbital(gap_w))
+
+
+def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
+    """Max fraction of ``A x`` that lands in the OPPOSITE combined-parity
+    sector.
+
+    Zero (to numerical precision) iff the kernel commutes with the combined
+    parity ``P``, i.e. iff the direct-term pairing kernel is the physical
+    kernel. Mirrors ``sc._solve_iteration``'s centrosymmetry guard verbatim:
+    for each of ``n_probe`` random vectors and each parity sign, project the
+    probe into that sector, apply ``A``, and measure the norm fraction of the
+    image that lands in the opposite sector (denominator
+    ``||A xp|| + 1e-300``). Uses the same probe count as the static path
+    (``sc._PARITY_GUARD_PROBES``).
+
+    It is deliberately measured against the COMBINED parity and not against
+    the narrower even-frequency channel sector of
+    ``_project_parity_dynamic``. The two halves ``Qk`` and ``Qw`` are separate
+    symmetries only when the model has the extra structure for it (any
+    single-orbital model, and centrosymmetric orbital-symmetric multi-orbital
+    ones); a general multi-orbital kernel conserves the product alone. Gating
+    on the sector would therefore refuse, or silently un-project, every
+    multi-orbital run -- while the quantity this number is used for (is the
+    kernel the physical one?) is a statement about ``P``. What the
+    even-frequency restriction then means when ``Qw`` is not a symmetry is
+    recorded per run by ``gap_sector_weights``.
     """
     # pairing_type is unused by design: the guard probes BOTH parity sectors
     # (even and odd), exactly as sc._solve_iteration does, so the leakage
@@ -140,14 +263,14 @@ def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
     for _ in range(n_probe):
         x = (rng.standard_normal(gap_shape)
              + 1j * rng.standard_normal(gap_shape))
-        for sign, pt in ((1.0, "singlet"), (-1.0, "triplet")):
-            xp = _project_parity_dynamic(x, pt)          # even (+) / odd (-)
+        for sign in (1.0, -1.0):
+            xp = _project_combined_parity_dynamic(x, sign)   # even (+)/odd (-)
             axp = A.matvec(xp.ravel()).reshape(gap_shape)
-            opp = "triplet" if pt == "singlet" else "singlet"
             denom = np.linalg.norm(axp) + 1.0e-300
-            leakage = max(leakage,
-                          np.linalg.norm(_project_parity_dynamic(axp, opp))
-                          / denom)
+            leakage = max(
+                leakage,
+                np.linalg.norm(_project_combined_parity_dynamic(axp, -sign))
+                / denom)
     return leakage
 
 
@@ -164,14 +287,16 @@ def _project_seed_dynamic(phi0, pairing_type):
     proj = _project_parity_dynamic(phi0, pairing_type)
     if np.linalg.norm(proj) < 1.0e-12 * (np.linalg.norm(phi0) + 1.0e-300):
         raise ValueError(
-            "Initial gap has no component in the '{}' parity sector; choose "
-            "an init_gap of the matching parity (even for singlet, odd for "
-            "triplet).".format(pairing_type))
+            "Initial gap has no component in the '{}' channel sector (even k "
+            "and even frequency for singlet, odd k and even frequency for "
+            "triplet); choose an init_gap of the matching k parity, and note "
+            "that a purely odd-frequency seed belongs to neither channel."
+            .format(pairing_type))
     return proj
 
 
 def _reorder_eigenpairs_by_parity_dynamic(vals, vecs, gap_shape, pairing_type):
-    """Promote eigenpairs whose gap has the channel's combined parity.
+    """Promote eigenpairs whose gap lies in the channel's even-frequency sector.
 
     Mirrors ``sc._reorder_eigenpairs_by_parity`` for the frequency-resolved
     gap so the reported leading dynamic eigenpair is the physical solution for
@@ -745,7 +870,7 @@ def _fix_gauge(phi_w):
 def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
                           gap_file="gap.dat", npz_file="gap_dynamic.npz",
-                          extra_meta=None):
+                          extra_meta=None, sector_weights=None):
     r"""Write the dynamic-Eliashberg gap outputs.
 
     Produces two files under ``output_dir``:
@@ -781,6 +906,12 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         Inverse temperature (accepted for signature symmetry; iomega uses T).
     gap_file, npz_file : str
         Output filenames.
+    sector_weights : dict, optional
+        ``gap_sector_weights(gap_w)``. When given, the npz also carries
+        ``gap_sector_weights`` (the four fractions, in the order of
+        ``gap_sector_labels``) and ``gap_sector_labels``. A caller that already
+        put those two keys into ``extra_meta`` (the in-process bond writer)
+        must not pass this as well; ``extra_meta`` wins.
     """
     os.makedirs(output_dir, exist_ok=True)
     norb = gap_w.shape[0]
@@ -796,6 +927,13 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                      "positive (lexicographic (orb1,orb2,kx,ky,kz,iomega) "
                      "tie-break)")
 
+    meta = dict(extra_meta or {})
+    if sector_weights is not None:
+        meta.setdefault("gap_sector_weights",
+                        np.array([float(sector_weights[label])
+                                  for label in _SECTOR_LABELS]))
+        meta.setdefault("gap_sector_labels", np.array(_SECTOR_LABELS))
+
     np.savez(
         os.path.join(output_dir, npz_file),
         gap=gap_w,
@@ -808,7 +946,7 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         normalization=normalization,
         # Fourier-sign provenance (issue #133): the gap is k-resolved
         momentum_convention="e_plus_ikR",  # = rpa.MOMENTUM_CONVENTION
-        **(extra_meta or {}),
+        **meta,
     )
 
     # gap.dat: the fermionic slice nearest omega = 0^+ (smallest positive w_n).
@@ -1228,9 +1366,10 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     with a WARNING.
 
     Returns ``(lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
-    leakage)``, where ``leakage`` is the measured cross-sector leakage as a
-    float, or ``None`` when no probe ran (the ``"warn"`` policy on the
-    non-iteration solver modes).
+    leakage, sector_weights)``, where ``leakage`` is the measured cross-sector
+    leakage as a float, or ``None`` when no probe ran (the ``"warn"`` policy on
+    the non-iteration solver modes), and ``sector_weights`` is
+    ``gap_sector_weights`` of the returned uniform-grid ``gap_w``.
     """
     from scipy.sparse.linalg import LinearOperator
     import hwave.sc as sc
@@ -1381,21 +1520,46 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # provenance (design Sec. 3.2).
         gap_w = _fix_gauge(axF.eval_to_uniform(
             axF.fit_from_freq(gap_w), nmat))
+    # Sector composition of what is actually returned: the solver only ever
+    # SELECTS the channel's even-frequency sector (projected iteration) or
+    # PREFERS it (eigenvalue reordering), so an impure result must be visible.
+    sector_weights = gap_sector_weights(gap_w)
+    channel_label = ("even_k_even_w" if pairing_type == "singlet"
+                     else "odd_k_even_w")
+    channel_weight = sector_weights[channel_label]
+    logger.info("leading '%s' gap: %s weight %.6f",
+                pairing_type, channel_label, channel_weight)
+    if channel_weight < 0.999:
+        logger.warning(
+            "the returned gap is not a pure %s even-frequency state: %s weight "
+            "%.6f (sector weights %s)", pairing_type, channel_label,
+            channel_weight,
+            "  ".join("{}={:.6f}".format(k, sector_weights[k])
+                      for k in _SECTOR_LABELS))
     return (lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
-            None if leakage is None else float(leakage))
+            None if leakage is None else float(leakage), sector_weights)
 
 
-def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note, header_lines=()):
+def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
+                          header_lines=(), sector_weights=None):
     """Write the ``eigenvalue.dat`` leading-eigenvalue-and-spectrum file.
 
     ``header_lines`` are written as additional ``# ...`` lines right after
     the fixed first header line and before ``note`` -- e.g. the dynamic
     solver's ``zero_chi_s``/``zero_chi_c`` diagnostic-flag line.
+
+    ``sector_weights`` (a ``gap_sector_weights`` dict) adds one more header
+    line, ``# gap_sector_weights even_k_even_w=... ...``, right after them.
     """
     with open(path, "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
         for line in header_lines:
             fw.write("# {}\n".format(line))
+        if sector_weights is not None:
+            fw.write("# gap_sector_weights {}\n".format(
+                " ".join("{}={:.6f}".format(label,
+                                            float(sector_weights[label]))
+                         for label in _SECTOR_LABELS)))
         if note:
             for line in str(note).splitlines():
                 fw.write("# {}\n".format(line))
@@ -1725,7 +1889,8 @@ def solve_dynamic(input_dict):
 
     # the on-site path keeps the historical "warn" policy and its default
     # tolerance; the measured leakage is not part of its output format
-    lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, _leakage = \
+    lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, \
+        _leakage, sector_weights = \
         run_leading_eigenproblem(
             _matvec, gap_shape, eli_param, pairing_type, phi0=phi0,
             seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
@@ -1741,7 +1906,8 @@ def solve_dynamic(input_dict):
         header_lines=(
             ["zero_chi_s={}  zero_chi_c={}".format(
                 str(zero_chi_s).lower(), str(zero_chi_c).lower())]
-            if (zero_chi_s or zero_chi_c) else []))
+            if (zero_chi_s or zero_chi_c) else []),
+        sector_weights=sector_weights)
 
     gap_file = eli_param.get("output_gap", "gap.dat")
     # Provenance metadata is added ONLY on the opt-in IR path: the default
@@ -1770,6 +1936,7 @@ def solve_dynamic(input_dict):
         beta,
         gap_file=gap_file,
         extra_meta=extra_meta or None,
+        sector_weights=sector_weights,
     )
 
     return lam

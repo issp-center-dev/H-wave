@@ -1155,8 +1155,22 @@ def test_outputs_written(tmp_path):
     assert set(npz.files) == {
         "gap", "iomega", "T", "pairing_type", "frequency",
         "eigenvalue", "axis_order", "normalization",
-        "momentum_convention"}, \
+        "momentum_convention", "gap_sector_weights",
+        "gap_sector_labels"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
+    # the returned gap's composition over the four (k, frequency) sectors
+    labels = [str(x) for x in npz["gap_sector_labels"]]
+    assert labels == ["even_k_even_w", "odd_k_even_w", "even_k_odd_w",
+                      "odd_k_odd_w"]
+    weights = np.asarray(npz["gap_sector_weights"], dtype=float)
+    assert np.isclose(weights.sum(), 1.0, atol=1e-10)
+    # a 2x2x1 grid carries no odd-k function, so both odd-k sectors are empty
+    # (this synthetic random archive does not commute with the frequency
+    # reversal, so the iteration runs unprojected and the gap keeps an
+    # odd-frequency admixture -- which is what the weights now record)
+    assert weights[1] == 0.0 and weights[3] == 0.0
+    recomputed = ed.gap_sector_weights(npz["gap"])
+    assert np.allclose(weights, [recomputed[lab] for lab in labels], atol=1e-12)
     assert str(npz["frequency"]) == "dynamic"
     assert npz["iomega"].shape == (m["nmat"],)
     assert npz["gap"].shape == (1, 1, 2, 2, 1, m["nmat"])
@@ -1384,6 +1398,39 @@ def _rand_gap(norb=2, Nx=1, Ny=4, Nz=1, nmat=4, seed=0):
     return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
 
 
+def _Pk(g):
+    """Delta_{ab}(-k, iw_n): the momentum reversal alone."""
+    from hwave.solver.kgrid import reverse_fft_axes
+    return reverse_fft_axes(g, (2, 3, 4))
+
+
+def _Pw(g):
+    """Delta_{ba}(k, -iw_n): the frequency reversal, with the orbital
+    transpose that the pairing kernel keeps attached to it."""
+    return np.swapaxes(g[..., ::-1], 0, 1)
+
+
+# (sign under Qk, sign under Qw) of each of the four sectors the combined
+# parity operator P = Qk Qw splits into.
+_SECTOR_SIGNS = (("even_k_even_w", (1.0, 1.0)),
+                 ("odd_k_even_w", (-1.0, 1.0)),
+                 ("even_k_odd_w", (1.0, -1.0)),
+                 ("odd_k_odd_w", (-1.0, -1.0)))
+
+
+def _sector_project(g, sector):
+    sk, sw = dict(_SECTOR_SIGNS)[sector]
+    return 0.25 * (g + sk * _Pk(g) + sw * _Pw(g) + sk * sw * _Pk(_Pw(g)))
+
+
+def _pure_sector(shape, sector, seed):
+    """A normalized random state living purely in one of the four sectors."""
+    rng = np.random.default_rng(seed)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    v = _sector_project(g, sector)
+    return v / np.linalg.norm(v)
+
+
 def test_reverse_kw_is_an_involution():
     from hwave.solver import eliashberg_dynamic as ed
     g = _rand_gap(seed=1)
@@ -1392,15 +1439,17 @@ def test_reverse_kw_is_an_involution():
 
 
 def test_parity_projectors_split_even_odd():
+    """The channel projectors select the EVEN-FREQUENCY sectors: (even k,
+    even w) for singlet, (odd k, even w) for triplet. The two odd-frequency
+    sectors -- also allowed by the combined parity -- belong to neither."""
     from hwave.solver import eliashberg_dynamic as ed
-    g = _rand_gap(seed=2)
-    P = ed._reverse_kw_and_orbital
-    ge = 0.5 * (g + P(g))   # combined-even  (P ge = ge)   -> singlet sector
-    go = 0.5 * (g - P(g))   # combined-odd   (P go = -go)  -> triplet sector
-    # even gap is fixed by the singlet projector, annihilated by triplet
+    shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(shape, "even_k_even_w", 2)    # conventional singlet
+    go = _pure_sector(shape, "odd_k_even_w", 3)     # conventional triplet
+    # even-k/even-w gap is fixed by the singlet projector, killed by triplet
     assert np.allclose(ed._project_parity_dynamic(ge, "singlet"), ge, atol=1e-12)
     assert np.linalg.norm(ed._project_parity_dynamic(ge, "triplet")) < 1e-10
-    # odd gap is fixed by the triplet projector, annihilated by singlet
+    # odd-k/even-w gap is fixed by the triplet projector, killed by singlet
     assert np.allclose(ed._project_parity_dynamic(go, "triplet"), go, atol=1e-12)
     assert np.linalg.norm(ed._project_parity_dynamic(go, "singlet")) < 1e-10
     # parity labels
@@ -1408,17 +1457,56 @@ def test_parity_projectors_split_even_odd():
     assert not ed._is_parity_dynamic(ge, "triplet")
     assert ed._is_parity_dynamic(go, "triplet")
     assert not ed._is_parity_dynamic(go, "singlet")
+    # the odd-frequency sectors are in NEITHER channel (they were reported as
+    # singlet / triplet by the combined-parity-only projector of issue #209)
+    for sector, seed in (("even_k_odd_w", 4), ("odd_k_odd_w", 5)):
+        gq = _pure_sector(shape, sector, seed)
+        for pt in ("singlet", "triplet"):
+            assert np.linalg.norm(ed._project_parity_dynamic(gq, pt)) < 1e-10
+            assert not ed._is_parity_dynamic(gq, pt)
+
+
+def test_channel_projectors_are_even_frequency():
+    """Structure of the two channel projectors and of gap_sector_weights."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (2, 2, 4, 4, 1, 8)
+    rng = np.random.default_rng(17)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    s = ed._project_parity_dynamic(g, "singlet")
+    t = ed._project_parity_dynamic(g, "triplet")
+    # singlet: even under the (k, orbital) reversal AND under w -> -w
+    assert np.allclose(_Pk(s), s, atol=1e-12)
+    assert np.allclose(_Pw(s), s, atol=1e-12)
+    # triplet: odd under (k, orbital), still even in frequency
+    assert np.allclose(_Pk(t), -t, atol=1e-12)
+    assert np.allclose(_Pw(t), t, atol=1e-12)
+    # idempotent and mutually orthogonal
+    assert np.allclose(ed._project_parity_dynamic(s, "singlet"), s, atol=1e-12)
+    assert np.allclose(ed._project_parity_dynamic(t, "triplet"), t, atol=1e-12)
+    assert np.linalg.norm(ed._project_parity_dynamic(s, "triplet")) < 1e-12
+    assert np.linalg.norm(ed._project_parity_dynamic(t, "singlet")) < 1e-12
+    # gap_sector_weights: unit vectors on the four pure states, sum 1 in general
+    for i, (label, _signs) in enumerate(_SECTOR_SIGNS):
+        w = ed.gap_sector_weights(_pure_sector(shape, label, 100 + i))
+        assert set(w) == {lab for lab, _ in _SECTOR_SIGNS}
+        assert np.isclose(w[label], 1.0, atol=1e-10)
+        for other, _ in _SECTOR_SIGNS:
+            if other != label:
+                assert abs(w[other]) < 1e-10
+    wg = ed.gap_sector_weights(g)
+    assert np.isclose(sum(wg.values()), 1.0, atol=1e-10)
+    # a zero gap reports all-zero weights instead of dividing by zero
+    wz = ed.gap_sector_weights(np.zeros(shape, dtype=complex))
+    assert all(v == 0.0 for v in wz.values())
 
 
 def test_reorder_promotes_channel_parity_eigenpair():
     """The odd mode has the larger eigenvalue but the singlet request must
-    surface the even (combined-parity +1) eigenpair as leading."""
+    surface the (even k, even w) eigenpair as leading."""
     from hwave.solver import eliashberg_dynamic as ed
-    gap_shape = (2, 2, 1, 4, 1, 4)
-    P = ed._reverse_kw_and_orbital
-    g = _rand_gap(seed=3)
-    ge = 0.5 * (g + P(g))              # even/singlet
-    go = 0.5 * (g - P(g))              # odd/triplet
+    gap_shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(gap_shape, "even_k_even_w", 31)   # singlet
+    go = _pure_sector(gap_shape, "odd_k_even_w", 32)    # triplet
     vecs = np.column_stack([go.ravel(), ge.ravel()])   # odd first (col 0)
     vals = np.array([2.0 + 0j, 1.0 + 0j])              # odd has larger lambda
     rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
@@ -1428,6 +1516,76 @@ def test_reorder_promotes_channel_parity_eigenpair():
     assert bool(match[0]) is True
     assert bool(match[1]) is False
     assert np.allclose(rvecs[:, 0], ge.ravel(), atol=1e-12)
+
+
+def test_reorder_prefers_even_frequency_state():
+    """Regression for issue #209: an odd-frequency (even k, odd w) mode has
+    combined parity -1 and the old projector promoted it for a triplet
+    request even though it is not a conventional triplet. The channels are
+    now the even-frequency sectors, so that mode matches NEITHER channel."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    A = _pure_sector(gap_shape, "even_k_odd_w", 41)    # odd frequency
+    B = _pure_sector(gap_shape, "odd_k_even_w", 42)    # conventional triplet
+    C = _pure_sector(gap_shape, "even_k_even_w", 43)   # conventional singlet
+    # distinct sectors are orthogonal
+    for x, y in ((A, B), (A, C), (B, C)):
+        assert abs(np.vdot(x.ravel(), y.ravel())) < 1e-12
+    vecs = np.column_stack([A.ravel(), C.ravel(), B.ravel()])
+    vals = np.array([0.9 + 0j, 0.7 + 0j, 0.5 + 0j])    # descending
+
+    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "triplet")
+    assert np.isclose(rvals[0].real, 0.5)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1                       # A is NOT a triplet
+    assert np.allclose(rvecs[:, 0], B.ravel(), atol=1e-12)
+
+    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "singlet")
+    assert np.isclose(rvals[0].real, 0.7)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1                       # A is NOT a singlet
+    assert np.allclose(rvecs[:, 0], C.ravel(), atol=1e-12)
+
+
+def test_projected_iteration_returns_even_frequency_triplet():
+    """The projected power iteration for a triplet request converges on the
+    (odd k, even w) state (lambda = 0.5), not on the larger odd-frequency
+    eigenvalue (0.9), and reports the sector weights of what it returned."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    A = _pure_sector(gap_shape, "even_k_odd_w", 51).ravel()
+    B = _pure_sector(gap_shape, "odd_k_even_w", 52).ravel()
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        ca, cb = np.vdot(A, x), np.vdot(B, x)
+        rest = x - ca * A - cb * B
+        return 0.9 * ca * A + 0.5 * cb * B + 0.01 * rest
+
+    # p_x-like seed: sin(kx), flat in frequency -> (odd k, even w)
+    kx = 2.0 * np.pi * np.arange(gap_shape[2]) / gap_shape[2]
+    phi0 = np.zeros(gap_shape, dtype=complex)
+    phi0 += np.sin(kx)[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis,
+                       np.newaxis]
+    phi0 /= np.linalg.norm(phi0)
+    # a small odd-frequency admixture: the combined-parity-only projector of
+    # issue #209 keeps it (A also has combined parity -1) and the iteration
+    # then converges on lambda = 0.9; the even-frequency projector removes it.
+    phi0 = phi0 + 0.05 * A.reshape(gap_shape)
+
+    out = ed.run_leading_eigenproblem(
+        matvec, gap_shape,
+        {"solver_mode": "iteration", "max_iter": 500,
+         "convergence_tol": 1e-8, "alpha": 0.5},
+        "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
+    assert len(out) == 7
+    lam, gap_w, _evs, _match, _note, _leak, weights = out
+    assert np.isclose(lam, 0.5, atol=1e-6)
+    assert weights["odd_k_even_w"] > 0.999
+    assert weights["even_k_odd_w"] < 1e-6
+    assert np.isclose(sum(weights.values()), 1.0, atol=1e-10)
 
 
 def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
@@ -1484,20 +1642,25 @@ def test_project_seed_dynamic_guard():
     sector (mirrors sc._solve_iteration's guard), else returns a normalized
     in-sector seed."""
     from hwave.solver import eliashberg_dynamic as ed
-    P = ed._reverse_kw_and_orbital
-    g = _rand_gap(seed=7)
-    ge = 0.5 * (g + P(g))   # even/singlet
-    go = 0.5 * (g - P(g))   # odd/triplet
+    shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(shape, "even_k_even_w", 71)   # singlet sector
+    go = _pure_sector(shape, "odd_k_even_w", 72)    # triplet sector
     # even seed survives the singlet projection, in-sector and non-zero, and is
     # returned WITHOUT renormalization (mirrors static _solve_iteration).
     s = ed._project_seed_dynamic(ge, "singlet")
     assert np.linalg.norm(s) > 0
-    assert np.allclose(s, ge, atol=1e-12)   # ge is already even -> unchanged
+    assert np.allclose(s, ge, atol=1e-12)   # ge is already in-sector
     assert ed._is_parity_dynamic(s, "singlet")
-    # a pure-odd seed has no singlet component -> raise
+    # a pure odd-k seed has no singlet component -> raise
     import pytest
-    with pytest.raises(ValueError, match="parity sector"):
+    with pytest.raises(ValueError, match="sector"):
         ed._project_seed_dynamic(go, "singlet")
+    # and so does an odd-FREQUENCY seed, for either channel
+    for sector, seed in (("even_k_odd_w", 73), ("odd_k_odd_w", 74)):
+        gq = _pure_sector(shape, sector, seed)
+        for pt in ("singlet", "triplet"):
+            with pytest.raises(ValueError, match="sector"):
+                ed._project_seed_dynamic(gq, pt)
 
 
 def test_parity_leakage_zero_for_commuting_operator():
@@ -1513,12 +1676,11 @@ def test_parity_leakage_zero_for_commuting_operator():
     ident = _Op(lambda x: x)
     assert ed._parity_leakage(ident, gap_shape, "singlet") < 1e-12
 
-    # elementwise multiply by a P-ODD field d (P d = -d): it maps an even probe
-    # to an odd image (and vice versa), i.e. the kernel does NOT commute with P,
-    # so every probe leaks fully into the opposite sector.
-    P = ed._reverse_kw_and_orbital
-    r = _rand_gap(seed=13)
-    d = 0.5 * (r - P(r))                 # odd projection -> P d = -d
+    # elementwise multiply by an (odd k, even w) field d: it maps a singlet
+    # probe to a triplet image (and vice versa), i.e. the kernel does NOT
+    # commute with the channel projection, so every probe leaks fully into the
+    # opposite channel sector.
+    d = _pure_sector(gap_shape, "odd_k_even_w", 13)
     def mult(x):
         return (d * x.reshape(gap_shape)).ravel()
     assert ed._parity_leakage(_Op(mult), gap_shape, "singlet") > 0.9

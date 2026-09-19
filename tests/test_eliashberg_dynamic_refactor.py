@@ -62,7 +62,14 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     one platform; another BLAS / FFT build differs in the last bits, which
     the ``%.8e`` formatting can flip in the last printed digit."""
     punct = "()[]{},;:"
-    ga, gb = got.split(), want.split()
+
+    def _strip(text):
+        # the sector-weight header line is new in this version and is not part
+        # of the recorded golden files; compare everything else verbatim
+        return "\n".join(ln for ln in text.splitlines()
+                         if not ln.startswith("# gap_sector_weights"))
+
+    ga, gb = _strip(got).split(), _strip(want).split()
     case.assertEqual(len(ga), len(gb), "{}: token count".format(tag))
     for x, y in zip(ga, gb):
         # a number may be wrapped in punctuation ("(spectral_shift=0.038),"):
@@ -107,9 +114,36 @@ class TestDynamicGolden(unittest.TestCase):
                                            "{} {}".format(tag, fn))
                 a = _npz_members(os.path.join(tmp, "gap_dynamic.npz"))
                 b = _npz_members(os.path.join(_GOLDEN, tag, "gap_dynamic.npz"))
-                self.assertEqual(set(a), set(b), tag)
-                for k in a:
+                # the current run may carry keys the golden predates (the
+                # sector weights); every golden key must still be there and
+                # unchanged
+                self.assertTrue(set(b) <= set(a), tag)
+                for k in b:
                     _assert_member_close(a[k], b[k], "{} {}".format(tag, k))
+                # the new keys, and the singlet gap's purity in the
+                # conventional (even k, even w) sector
+                self.assertIn("gap_sector_weights", a, tag)
+                self.assertIn("gap_sector_labels", a, tag)
+                labels = [str(x) for x in a["gap_sector_labels"]]
+                self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
+                                          "even_k_odd_w", "odd_k_odd_w"], tag)
+                w = np.asarray(a["gap_sector_weights"], dtype=float)
+                self.assertAlmostEqual(float(w.sum()), 1.0, places=9, msg=tag)
+                # a 2x2x1 grid has no odd-k function at all, so both odd-k
+                # sectors are empty. These fixtures are a synthetic random
+                # susceptibility archive whose kernel does not commute with
+                # the frequency reversal, so the gap keeps a sizeable
+                # odd-frequency admixture -- exactly what the new diagnostic
+                # is there to make visible, and the reason the purity of a
+                # returned gap is asserted on the physical fixtures instead.
+                self.assertEqual(float(w[1]), 0.0, tag)
+                self.assertEqual(float(w[3]), 0.0, tag)
+                # the recorded weights describe the gap stored next to them
+                from hwave.solver import eliashberg_dynamic as ed
+                recomputed = ed.gap_sector_weights(a["gap"])
+                for i, label in enumerate(labels):
+                    self.assertAlmostEqual(float(w[i]), recomputed[label],
+                                           places=10, msg=tag)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
@@ -172,7 +206,7 @@ class TestEigenDriverUnits(unittest.TestCase):
     def test_warn_completes_and_logs_existing_message(self):
         eli_param = {"solver_mode": "iteration", "max_iter": 3}
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
-            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage = \
+            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, weights = \
                 self.ed.run_leading_eigenproblem(
                     self.matvec, self.gap_shape, eli_param, "singlet",
                     phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
@@ -188,6 +222,10 @@ class TestEigenDriverUnits(unittest.TestCase):
         # probes on the iteration path)
         self.assertIsInstance(leakage, float)
         self.assertGreater(leakage, 1.0e-8)
+        # the driver also reports the sector composition of the gap it returns
+        self.assertEqual(set(weights), {"even_k_even_w", "odd_k_even_w",
+                                        "even_k_odd_w", "odd_k_odd_w"})
+        self.assertAlmostEqual(sum(weights.values()), 1.0, places=9)
 
     def test_parity_probe_runs_at_most_once_and_only_where_it_is_needed(self):
         """The probe is a full matvec pair, so a duplicate one silently
