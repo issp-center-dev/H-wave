@@ -256,8 +256,10 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 は、基本のキー集合（``gap``\ ・\ ``iomega``\ ・\ ``T``\ ・
 ``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
 ``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ・
-``gap_sector_weights``\ ・\ ``gap_sector_labels``\ 。後者2つは返された
-ギャップの運動量・振動数パリティセクター4つの重みとその名前です。
+``gap_sector_weights``\ ・\ ``gap_sector_labels``\ ・
+``iteration_projection``\ 。これらは返されたギャップの運動量・振動数
+パリティセクター4つの重み、その名前、およびべき乗反復が射影した
+セクター（``"channel"``\ ・\ ``"combined_parity"``\ ・\ ``"none"``\ ）です。
 :ref:`動的ソルバーのペアリングチャネル <sc_dynamic_channels>`\ を参照）に
 加えて、\ ``bond_channels``\ （``true``\ ）、\ ``bond_delta_r`` /
 ``bond_reverse``\ （アーカイブのボンドトポロジー。上記の
@@ -280,7 +282,9 @@ ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
 even_k_odd_w=... odd_k_odd_w=...``\ のヘッダー行（小数6桁）を
 1行持ちます。これは npz の\ ``gap_sector_weights``\ キーと同じ4つの
-数値です。
+数値です。その直後に
+``# iteration_projection=<channel|combined_parity|none>``\ の行が
+続きます。
 
 **インプロセスの経路** （``[mode.param]
 longitudinal_bond_pairing``\ ）。リクエストされたチャネル
@@ -311,7 +315,7 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
-  のヘッダー行を持ちます。
+  と\ ``# iteration_projection=...``\ のヘッダー行を持ちます。
 
 失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

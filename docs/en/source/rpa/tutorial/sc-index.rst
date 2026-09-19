@@ -692,6 +692,10 @@ mode writes:
    - ``gap_sector_labels``: the names of those four sectors, in the same
      order: ``"even_k_even_w"``, ``"odd_k_even_w"``, ``"even_k_odd_w"``,
      ``"odd_k_odd_w"``.
+   - ``iteration_projection``: which sector the power iteration projected its
+     iterates onto -- ``"channel"``, ``"combined_parity"`` or ``"none"``
+     (always ``"none"`` for the eigenvalue solver modes); see the same
+     subsection.
 
 ``gap.dat``
    A single-frequency slice of the gap at the lowest positive Matsubara
@@ -714,12 +718,13 @@ subsection. The Arnoldi eigenpairs are reordered so that the channel mode
 leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries the same
 trailing ``match(1=channel-parity)`` column as the static output (``1`` in the
 requested sector, ``0`` outside it). If none of the ``num_eigenvalues``
-computed eigenpairs lies in the requested sector, the solver warns and falls
+computed eigenpairs lies in either sector, the solver warns and falls
 back to the raw leading pair; increase ``num_eigenvalues`` or check
 ``pairing_type`` in that case. The power-iteration path (``solver_mode =
 "iteration"``) likewise projects every iterate onto the channel sector when the
-kernel commutes with parity (a centrosymmetric model); if it does not, the
-projection is disabled with a warning and the un-projected iteration is used.
+kernel preserves it, onto the wider combined-parity sector when it preserves
+only that, and not at all when it preserves neither (each fallback is warned
+about, and recorded as ``iteration_projection``).
 
 .. _sc_dynamic_channels:
 
@@ -730,9 +735,16 @@ The combined parity above is only the antisymmetry *constraint*; each of its
 two eigenspaces still contains two frequency parities. The channels the solver
 reports are the conventional **even-frequency** ones:
 
-- ``singlet``: even in :math:`\mathbf{k}`, even in frequency (with the two
-  orbital indices transposed);
+- ``singlet``: even in :math:`\mathbf{k}`, even in frequency;
 - ``triplet``: odd in :math:`\mathbf{k}`, even in frequency.
+
+Even frequency means invariance under
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\alpha\beta}(\mathbf{k}, -i\omega_n)` (the frequency alone, orbitals
+untouched); the momentum parity carries the orbital transpose,
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, i\omega_n)`, exactly as on the static path.
+Their product is the combined parity above.
 
 **Odd-frequency pairing is not solved for.** The remaining two sectors --
 odd :math:`\mathbf{k}` with odd frequency (combined parity :math:`+1`) and
@@ -755,14 +767,22 @@ the requested channel, and the weights say what it is instead.
 
 .. note::
 
-   The momentum and frequency parities are separately conserved by the pairing
-   kernel for any single-orbital model, and for multi-orbital models with the
-   corresponding lattice and orbital symmetry. A general multi-orbital kernel
-   conserves only their product (the antisymmetry constraint); the even-frequency
-   channel is then a *restriction* of the eigenproblem rather than an invariant
-   subspace, and the reported :math:`\lambda` is the leading eigenvalue of the
-   kernel restricted to that subspace. The recorded sector weights are what
-   makes the difference visible.
+   **The channel projection is applied only where the kernel conserves the
+   frequency parity** -- any single-orbital model, and multi-orbital models
+   with the corresponding lattice and orbital symmetry. A general multi-orbital
+   kernel conserves only the product of the two parities (the antisymmetry
+   constraint), and projecting the power iteration onto the narrower
+   even-frequency sector would then turn the eigenproblem into a restriction of
+   itself, whose leading value is not an eigenvalue of the kernel. In that case
+   the iteration projects onto the combined-parity sector instead, with a
+   warning, so the reported :math:`\lambda` is always a genuine eigenvalue and
+   the sector weights show the composition of the gap that produced it. Which
+   case applied is recorded per run as ``iteration_projection``
+   (``"channel"``, ``"combined_parity"`` or ``"none"``) -- an npz key and the
+   ``# iteration_projection=...`` header line of the eigenvalue file. The
+   eigenvalue solver modes never project; they order the computed eigenpairs,
+   preferring the channel's even-frequency sector and falling back to its
+   combined-parity sector only if no eigenpair lies in it.
 
 .. warning::
 
