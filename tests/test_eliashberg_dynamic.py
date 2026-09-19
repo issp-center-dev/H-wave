@@ -1156,8 +1156,11 @@ def test_outputs_written(tmp_path):
         "gap", "iomega", "T", "pairing_type", "frequency",
         "eigenvalue", "axis_order", "normalization",
         "momentum_convention", "gap_sector_weights",
-        "gap_sector_labels"}, \
+        "gap_sector_labels", "iteration_projection"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
+    # this synthetic archive does not conserve either parity, so the iteration
+    # runs unprojected -- and says so
+    assert str(npz["iteration_projection"]) == "none"
     # the returned gap's composition over the four (k, frequency) sectors
     labels = [str(x) for x in npz["gap_sector_labels"]]
     assert labels == ["even_k_even_w", "odd_k_even_w", "even_k_odd_w",
@@ -1399,19 +1402,20 @@ def _rand_gap(norb=2, Nx=1, Ny=4, Nz=1, nmat=4, seed=0):
 
 
 def _Pk(g):
-    """Delta_{ab}(-k, iw_n): the momentum reversal alone."""
+    """Delta_{ba}(-k, iw_n): the momentum reversal, carrying the orbital
+    transpose (as on the static path)."""
     from hwave.solver.kgrid import reverse_fft_axes
-    return reverse_fft_axes(g, (2, 3, 4))
+    return np.swapaxes(reverse_fft_axes(g, (2, 3, 4)), 0, 1)
 
 
 def _Pw(g):
-    """Delta_{ba}(k, -iw_n): the frequency reversal, with the orbital
-    transpose that the pairing kernel keeps attached to it."""
-    return np.swapaxes(g[..., ::-1], 0, 1)
+    """Delta_{ab}(k, -iw_n): the plain frequency reversal. Invariance under it
+    is what "even frequency" means."""
+    return g[..., ::-1]
 
 
-# (sign under Qk, sign under Qw) of each of the four sectors the combined
-# parity operator P = Qk Qw splits into.
+# (sign under Pk, sign under Pw) of each of the four sectors the combined
+# parity operator P = Pk Pw splits into.
 _SECTOR_SIGNS = (("even_k_even_w", (1.0, 1.0)),
                  ("odd_k_even_w", (-1.0, 1.0)),
                  ("even_k_odd_w", (1.0, -1.0)),
@@ -1474,11 +1478,14 @@ def test_channel_projectors_are_even_frequency():
     g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
     s = ed._project_parity_dynamic(g, "singlet")
     t = ed._project_parity_dynamic(g, "triplet")
-    # singlet: even under the (k, orbital) reversal AND under w -> -w
+    # singlet: even under the (k, orbital) reversal AND under the plain
+    # frequency reversal w -> -w (which is what "even frequency" means)
     assert np.allclose(_Pk(s), s, atol=1e-12)
+    assert np.allclose(s[..., ::-1], s, atol=1e-12)
     assert np.allclose(_Pw(s), s, atol=1e-12)
     # triplet: odd under (k, orbital), still even in frequency
     assert np.allclose(_Pk(t), -t, atol=1e-12)
+    assert np.allclose(t[..., ::-1], t, atol=1e-12)
     assert np.allclose(_Pw(t), t, atol=1e-12)
     # idempotent and mutually orthogonal
     assert np.allclose(ed._project_parity_dynamic(s, "singlet"), s, atol=1e-12)
@@ -1580,12 +1587,119 @@ def test_projected_iteration_returns_even_frequency_triplet():
         {"solver_mode": "iteration", "max_iter": 500,
          "convergence_tol": 1e-8, "alpha": 0.5},
         "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
-    assert len(out) == 7
-    lam, gap_w, _evs, _match, _note, _leak, weights = out
+    assert len(out) == 8
+    lam, gap_w, _evs, _match, _note, _leak, weights, projection = out
+    assert projection == "channel"
     assert np.isclose(lam, 0.5, atol=1e-6)
     assert weights["odd_k_even_w"] > 0.999
     assert weights["even_k_odd_w"] < 1e-6
     assert np.isclose(sum(weights.values()), 1.0, atol=1e-10)
+
+
+class _Op:
+    """Minimal LinearOperator stand-in for the leakage probes."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def matvec(self, x):
+        return self.fn(x)
+
+
+def test_channel_leakage_zero_for_sector_preserving_operator():
+    """``_channel_leakage`` is ~0 for a kernel that maps the channel sector
+    into itself, and O(1) for one that maps it out of the sector -- including
+    a kernel that respects the combined parity but mixes the frequency
+    parity, which ``_parity_leakage`` cannot see."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 4, 4, 1, 8)
+
+    # diagonal in the sector basis: every sector is an eigenspace
+    def diag(x):
+        g = np.asarray(x).reshape(shape)
+        out = np.zeros_like(g)
+        for i, (label, _s) in enumerate(_SECTOR_SIGNS):
+            out = out + (0.3 + 0.1 * i) * _sector_project(g, label)
+        return out.ravel()
+
+    for pt in ("singlet", "triplet"):
+        assert ed._channel_leakage(_Op(diag), shape, pt) < 1e-12
+        assert ed._parity_leakage(_Op(diag), shape, pt) < 1e-12
+
+    # swap one (even k, even w) vector with one (odd k, odd w) vector: both
+    # have combined parity +1, so the COMBINED probe sees nothing, while the
+    # singlet channel sector is mapped straight out of itself
+    u = _pure_sector(shape, "even_k_even_w", 61).ravel()
+    v = _pure_sector(shape, "odd_k_odd_w", 62).ravel()
+
+    def swap(x):
+        x = np.asarray(x).ravel()
+        cu, cv = np.vdot(u, x), np.vdot(v, x)
+        # the 0.01 * rest term keeps the image non-degenerate on a probe that
+        # is orthogonal to both u and v (a zero image would make the norm
+        # fraction meaningless)
+        return cu * v + cv * u + 0.01 * (x - cu * u - cv * v)
+
+    assert ed._parity_leakage(_Op(swap), shape, "singlet") < 1e-12
+    assert ed._channel_leakage(_Op(swap), shape, "singlet") > 0.9
+
+
+def test_iteration_falls_back_to_combined_parity_projection(caplog):
+    """A kernel that commutes with the combined parity but mixes the frequency
+    parity must not have its eigenproblem restricted to the even-frequency
+    sector: the iteration projects onto the combined-parity sector instead,
+    says so, and records ``iteration_projection = "combined_parity"``."""
+    import logging
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 4, 4, 1, 8)
+    u = _pure_sector(shape, "even_k_even_w", 71).ravel()
+    v = _pure_sector(shape, "odd_k_odd_w", 72).ravel()
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        cu, cv = np.vdot(u, x), np.vdot(v, x)
+        rest = x - cu * u - cv * v
+        return cu * v + cv * u + 0.01 * rest
+
+    phi0 = (0.6 * u + 0.8 * v).reshape(shape)
+
+    with caplog.at_level(logging.WARNING, logger="qlms.eliashberg_dynamic"):
+        out = ed.run_leading_eigenproblem(
+            matvec, shape,
+            {"solver_mode": "iteration", "max_iter": 500,
+             "convergence_tol": 1e-10, "alpha": 0.5},
+            "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
+            nmat=8)
+    assert len(out) == 8
+    lam, _gap, _evs, _match, _note, leak, weights, projection = out
+    assert projection == "combined_parity"
+    assert leak is not None and leak < 1e-10       # combined parity IS a symmetry
+    assert any("frequency parity is not a symmetry" in r.message
+               for r in caplog.records), caplog.text
+    # the eigenvalue is a genuine eigenvalue of the kernel (+1 on u + v),
+    # and the gap is the even/odd-frequency mixture that eigenvector is
+    assert np.isclose(lam, 1.0, atol=1e-6)
+    assert weights["even_k_even_w"] > 0.4
+    assert weights["odd_k_odd_w"] > 0.4
+
+
+def test_reorder_falls_back_to_combined_parity_when_no_channel_eigenpair():
+    """Two-stage matching: the channel sector first, and only if nothing lies
+    in it, the channel's combined-parity sector (with a warning)."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    oo = _pure_sector(gap_shape, "odd_k_odd_w", 81)      # combined parity +1
+    eo = _pure_sector(gap_shape, "even_k_odd_w", 82)     # combined parity -1
+    vecs = np.column_stack([eo.ravel(), oo.ravel()])
+    vals = np.array([2.0 + 0j, 1.0 + 0j])
+    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "singlet")
+    # no even-frequency singlet exists here; the odd-frequency state with the
+    # singlet's combined parity is promoted instead
+    assert np.isclose(rvals[0].real, 1.0)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1
+    assert np.allclose(rvecs[:, 0], oo.ravel(), atol=1e-12)
 
 
 def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):

@@ -63,11 +63,13 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     the ``%.8e`` formatting can flip in the last printed digit."""
     punct = "()[]{},;:"
 
+    _NEW_HEADERS = ("# gap_sector_weights", "# iteration_projection")
+
     def _strip(text):
-        # the sector-weight header line is new in this version and is not part
-        # of the recorded golden files; compare everything else verbatim
+        # these header lines are new in this version and are not part of the
+        # recorded golden files; compare everything else verbatim
         return "\n".join(ln for ln in text.splitlines()
-                         if not ln.startswith("# gap_sector_weights"))
+                         if not ln.startswith(_NEW_HEADERS))
 
     ga, gb = _strip(got).split(), _strip(want).split()
     case.assertEqual(len(ga), len(gb), "{}: token count".format(tag))
@@ -124,6 +126,10 @@ class TestDynamicGolden(unittest.TestCase):
                 # conventional (even k, even w) sector
                 self.assertIn("gap_sector_weights", a, tag)
                 self.assertIn("gap_sector_labels", a, tag)
+                self.assertIn("iteration_projection", a, tag)
+                # these fixtures conserve neither parity, so the iteration is
+                # unprojected and the recorded golden values are reproduced
+                self.assertEqual(str(a["iteration_projection"]), "none", tag)
                 labels = [str(x) for x in a["gap_sector_labels"]]
                 self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
                                           "even_k_odd_w", "odd_k_odd_w"], tag)
@@ -206,8 +212,8 @@ class TestEigenDriverUnits(unittest.TestCase):
     def test_warn_completes_and_logs_existing_message(self):
         eli_param = {"solver_mode": "iteration", "max_iter": 3}
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
-            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, weights = \
-                self.ed.run_leading_eigenproblem(
+            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
+                weights, projection = self.ed.run_leading_eigenproblem(
                     self.matvec, self.gap_shape, eli_param, "singlet",
                     phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
                     axF=None, nmat=4, parity_leakage_policy="warn")
@@ -226,6 +232,8 @@ class TestEigenDriverUnits(unittest.TestCase):
         self.assertEqual(set(weights), {"even_k_even_w", "odd_k_even_w",
                                         "even_k_odd_w", "odd_k_odd_w"})
         self.assertAlmostEqual(sum(weights.values()), 1.0, places=9)
+        # a kernel that commutes with neither: no projection at all
+        self.assertEqual(projection, "none")
 
     def test_parity_probe_runs_at_most_once_and_only_where_it_is_needed(self):
         """The probe is a full matvec pair, so a duplicate one silently
