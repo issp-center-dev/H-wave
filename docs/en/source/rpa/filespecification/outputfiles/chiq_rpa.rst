@@ -261,7 +261,11 @@ as the on-site dynamic solver -- ``gap_dynamic.npz``, ``gap.dat`` and
 override the names of ``gap.dat`` and ``eigenvalue.dat``) -- for the single
 ``pairing_type`` the run solves. ``gap_dynamic.npz`` gains, in addition to its base key set (``gap``,
 ``iomega``, ``T``, ``pairing_type``, ``frequency``, ``eigenvalue``,
-``axis_order``, ``normalization``, ``momentum_convention``): ``bond_channels``
+``axis_order``, ``normalization``, ``momentum_convention``,
+``gap_sector_weights`` and ``gap_sector_labels`` -- the returned gap's four
+momentum/frequency parity-sector weights and their names, see
+:ref:`Pairing channels of the dynamic solver <sc_dynamic_channels>`):
+``bond_channels``
 (``true``), ``bond_delta_r`` / ``bond_reverse`` (the archive's bond
 topology, matching ``longitudinal_bond_delta_r`` / ``longitudinal_bond_reverse``
 above), ``bond_archive`` (the resolved archive path), ``bond_residency``
@@ -275,6 +279,11 @@ Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
 vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
 ``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
 ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+
+Every dynamic-solver ``eigenvalue.dat`` -- the on-site one included -- also
+carries one ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
+even_k_odd_w=... odd_k_odd_w=...`` header line (six decimals), the same four
+numbers as the ``gap_sector_weights`` npz key.
 
 **In-process entry** (``[mode.param] longitudinal_bond_pairing``). For
 each requested channel (``singlet`` and/or ``triplet``) writes three files
@@ -300,7 +309,8 @@ of the pairing step never costs the FLEX results:
 - ``eigenvalue_bond_<type>.dat`` is the same format as ``eigenvalue.dat``,
   with header lines ``# bond_channels=true``,
   ``# scf_converged=<true|false>``, ``# state=<...>``,
-  ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+  ``# residency=<...>``, when computed ``# parity_leakage=<...>``, and the
+  ``# gap_sector_weights ...`` line described above.
 
 A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
 an eigensolver failure, a write failure) writes none of its three files;
