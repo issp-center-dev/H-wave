@@ -538,7 +538,10 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
         np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, momentum_convention="e_plus_ikR")
+        # Nmat matches the 4-point frequency axis: a metadata-less file is
+        # only centered when its axis IS the configured full grid (#186).
         input_dict = {"file": {"output": {"path_to_output": d}},
+                      "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
         _, _, _, conv = sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
         self.assertEqual(conv, "kuroki")
@@ -553,7 +556,10 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr,
                  chi_convention="kuroki", momentum_convention="e_plus_ikR")
+        # Nmat matches the 4-point frequency axis so the convention mismatch
+        # is what raises here, not the metadata-less static-slice guard.
         input_dict = {"file": {"output": {"path_to_output": d}},
+                      "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
         with self.assertRaises(ValueError):
             sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
