@@ -35,6 +35,55 @@ import unittest
 
 import numpy as np
 
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except ImportError:  # pragma: no cover - the guard degrades to a no-op
+    _threadpool_limits = None
+
+#: the BLAS thread limit held for the duration of this module (issue #200)
+_blas_limit = None
+
+
+def setUpModule():
+    """Run this module's FLEX solves with a single BLAS thread (issue #200).
+
+    On Linux with numpy's bundled OpenBLAS (reproduced on Python 3.11 /
+    numpy 1.26.4), the second FLEX general solve of this module crashes the
+    interpreter with a segmentation fault -- but only after another test of
+    the module has run in the SAME process: two solves are fine on their
+    own, and the whole module passes with ``OPENBLAS_NUM_THREADS=1``. No
+    Python traceback is produced; the fault is inside OpenBLAS's threaded
+    kernels re-entered from a second solve, not in H-wave. macOS (Accelerate)
+    never crashes. Holding a one-thread BLAS limit for the module removes the
+    condition without touching the solver; the fixtures are 4x4, so the cost
+    is negligible. Without ``threadpoolctl`` the guard is a no-op.
+    """
+    global _blas_limit
+    if _threadpool_limits is not None:
+        _blas_limit = _threadpool_limits(limits=1, user_api="blas")
+        _blas_limit.__enter__()
+
+
+def tearDownModule():
+    global _blas_limit
+    if _blas_limit is not None:
+        _blas_limit.__exit__(None, None, None)
+        _blas_limit = None
+
+
+@unittest.skipUnless(_threadpool_limits is not None, "threadpoolctl not installed")
+class TestModuleBlasThreadGuard(unittest.TestCase):
+    """The issue-#200 guard is installed while this module runs.
+
+    Asserts only that ``setUpModule`` entered the module-level BLAS limit --
+    the reported per-pool thread count is layer-dependent (an OpenMP-threaded
+    OpenBLAS does not always reflect it in ``threadpool_info``), so the crash
+    itself is the real acceptance and can only be seen on the reproducing
+    Linux environment (verified separately on chita)."""
+
+    def test_blas_thread_limit_is_installed(self):
+        self.assertIsNotNone(_blas_limit, "the module-level BLAS limit is not active")
+
 
 def _run_pair(path, interactions, cell, filling, flex_iters=1,
               inject=None, sub=(1, 1, 1)):

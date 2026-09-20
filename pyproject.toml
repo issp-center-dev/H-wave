@@ -37,6 +37,11 @@ mypy = "^1.0.0"
 pytest = "^7.0.0"
 pytest-cov = "^4.0.0"
 coverage = "^7.0.0"
+# Pins BLAS threads to 1 for tests/test_flex_offsite_general.py, which
+# otherwise segfaults under numpy's bundled OpenBLAS when two of its solves
+# run in one process (issue #200). Test-only; the module degrades to a no-op
+# when it is absent.
+threadpoolctl = "^3.0.0"
 
 [tool.poetry.scripts]
 hwave = "hwave.qlms:main"
