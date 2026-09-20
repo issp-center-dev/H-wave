@@ -1268,7 +1268,14 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
             import sparse_ir  # noqa: F401
         except ImportError:
             self.skipTest("sparse_ir not installed")
-        self._check({'matsubara_basis': 'ir', 'ir_wmax': 20.0}, "ir-densified")
+        # Nmat = 32 (not the base 8) so the uniform grid resolves the IR basis
+        # at Lambda = beta*wmax = 0.5*20 = 10 (L = 12): with only 8 uniform
+        # points the fit onto the coefficients is underdetermined, which the
+        # conditioning guard (issue #183) now refuses -- the earlier bare pinv
+        # returned a non-unique right inverse silently. The redundancy this
+        # test checks is a spin-block property, independent of Nmat.
+        self._check({'matsubara_basis': 'ir', 'ir_wmax': 20.0, 'Nmat': 32},
+                    "ir-densified")
 
 
 class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
