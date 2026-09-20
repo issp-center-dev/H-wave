@@ -442,7 +442,7 @@ def solve_dynamic_bond(input_dict):
         phi0, seed_vec = _ed.build_seed(ctl.as_eli_param(), pairing_type, norb, kx, ky, kz,
                                         kernel.gap_shape, use_ir, axF, nmat)
         lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
-            sector_weights, sector_selection = \
+            sector_weights, sector_selection, eigenvalue_selection = \
             _ed.run_leading_eigenproblem(
                 kernel.matvec, kernel.gap_shape, ctl.as_eli_param(), pairing_type, phi0=phi0,
                 seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
@@ -461,7 +461,8 @@ def solve_dynamic_bond(input_dict):
     _ed.write_eigenvalue_file(
         os.path.join(out_dir, eli_param.get("output_eigenvalue", "eigenvalue.dat")),
         lam, eigenvalues_all, eigenvalue_match, note, header_lines=head,
-        sector_weights=sector_weights, selection=sector_selection)
+        sector_weights=sector_weights, selection=sector_selection,
+        eigenvalue_selection=eigenvalue_selection)
     extra = {"bond_channels": True, "bond_delta_r": arch.delta_r, "bond_reverse": arch.reverse,
              "bond_archive": arch_path, "bond_residency": residency_used,
              "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, (Nx, Ny, Nz))}
@@ -473,7 +474,8 @@ def solve_dynamic_bond(input_dict):
     _ed.write_dynamic_outputs(out_dir, gap_w, lam, T, pairing_type, kx, ky, kz, beta,
                               gap_file=eli_param.get("output_gap", "gap.dat"),
                               extra_meta=extra, sector_weights=sector_weights,
-                              selection=sector_selection)
+                              selection=sector_selection,
+                              eigenvalue_selection=eigenvalue_selection)
     return lam
 
 
@@ -709,7 +711,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 phi0, seed = _ed.build_seed(ctl.as_eli_param(), eta, norb, kx, ky, kz,
                                             K.gap_shape, use_ir, axF, nmat)
                 lam, gap_w, evs, match, note, leakage, sector_weights, \
-                    sector_selection = _ed.run_leading_eigenproblem(
+                    sector_selection, eigenvalue_selection = \
+                    _ed.run_leading_eigenproblem(
                         K.matvec, K.gap_shape, ctl.as_eli_param(), eta, phi0=phi0,
                         seed_vec=seed, use_ir=use_ir, axF=axF, nmat=nmat,
                         logger_label="bond pairing kernel ({})".format(eta),
@@ -731,6 +734,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                              for label in _ed._SECTOR_LABELS]),
                         "gap_sector_labels": np.array(_ed._SECTOR_LABELS),
                         "sector_selection": str(sector_selection)}
+                if eigenvalue_selection is not None:
+                    meta["eigenvalue_selection"] = str(eigenvalue_selection)
                 if leakage is not None:
                     meta["bond_parity_leakage"] = float(leakage)
                 if use_ir:
@@ -845,7 +850,8 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                     {str(k): float(v) for k, v in zip(meta["gap_sector_labels"],
                                                       meta["gap_sector_weights"])}
                     if "gap_sector_weights" in meta else None),
-                selection=meta.get("sector_selection"))
+                selection=meta.get("sector_selection"),
+                eigenvalue_selection=meta.get("eigenvalue_selection"))
         except Exception as exc:
             for t in tmps.values():
                 try:

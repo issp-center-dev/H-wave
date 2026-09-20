@@ -306,13 +306,15 @@ class TestParityLeakageTolerance(unittest.TestCase):
         self.assertGreater(self.leak, 1.0e-8)
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
             out = self._run(parity_leakage_tol=1.5 * self.leak)
-        self.assertEqual(len(out), 8)
+        self.assertEqual(len(out), 9)
         self.assertIsInstance(out[5], float)
         self.assertAlmostEqual(out[5], self.leak)
         # the 7th element is the returned gap's sector composition, the 8th
-        # the sector the iteration projected onto
+        # the sector the iteration projected onto, the 9th which eigenvalue
+        # selection criterion produced the leading value
         self.assertAlmostEqual(sum(out[6].values()), 1.0, places=9)
         self.assertIn(out[7], ("channel", "combined_parity", "none"))
+        self.assertEqual(out[8], "iteration")
         self.assertTrue(any("parity_leakage_tol" in m for m in cm.output), cm.output)
 
     def test_tolerance_below_the_leakage_refuses_naming_the_key(self):
@@ -549,8 +551,13 @@ class TestPostProcessingRuns(unittest.TestCase):
             finally:
                 shutil.rmtree(flex_dir, ignore_errors=True)
         for eta in ("singlet", "triplet"):
+            # The reported eigenvalue is now the channel-projected leading value
+            # (issue #202), which equals the dense even-frequency channel
+            # eigenvalue exactly; on this 4x4 fixture its Nmat 64 -> 128
+            # convergence is ~2.6% (triplet), so the coarse cross-Nmat check
+            # uses a 3% band. Both Nmat take the same projected path.
             self.assertAlmostEqual(lam[(eta, 128)], lam[(eta, 64)],
-                                   delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)
+                                   delta=3e-2 * abs(lam[(eta, 64)]), msg=eta)
 
     @heavy
     def test_ir_lambda_arm_matches_uniform(self):           # 10.2.2 (IR half)

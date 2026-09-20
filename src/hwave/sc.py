@@ -5483,7 +5483,7 @@ def _shifted_eigenvalue_note(solver_mode, spectral_shift, converged, n_iter,
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
                    sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
-                   spectral_shift=None):
+                   spectral_shift=None, warn_negative_leading=True):
     """Shared leading-eigenpair driver behind the static Eliashberg solvers.
 
     This holds the ARPACK/shift-invert eigen-selection-and-ordering body of
@@ -5539,6 +5539,12 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         unchanged by the shift. ``"auto"`` estimates sigma from the spectral
         radius (see ``_resolve_iteration_shift`` for the iteration path).
         Rejected for every other mode.
+    warn_negative_leading : bool, optional
+        When True (default), the plain ``arnoldi`` (no ``spectral_shift``, no
+        ``seed_vec``) path logs an advisory if the leading eigenvalue comes out
+        negative. Pass False when the caller detects and handles that case
+        itself (e.g. the dynamic solver's automatic largest-real re-solve), so
+        the advisory is not emitted twice.
 
     Returns
     -------
@@ -5555,9 +5561,13 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         Flat, shape ``(vec_size,)``.
     eig_analysis : dict
         Eigenvalue-family modes: ``{"eigenvalues": vals, "eigenvectors": vecs,
-        "sigma_shift": sigma_shift}`` with ``vals`` ordered by descending real
-        part (``_order_eigenpairs``) and ``vecs`` the matching eigenvectors as
-        columns. "iteration" mode: ``{"converged": bool, "n_iter": int}`` --
+        "sigma_shift": sigma_shift, "selection": <str>}`` with ``vals`` ordered
+        by descending real part (``_order_eigenpairs``), ``vecs`` the matching
+        eigenvectors as columns, and ``selection`` the criterion actually used
+        -- ``"LM"`` (largest magnitude), ``"LR"`` (largest real part, a
+        ``spectral_shift`` was applied), ``"dense-LR"`` (the tiny-operator dense
+        eigendecomposition, ordered by real part) or ``"shift-invert"``.
+        "iteration" mode: ``{"converged": bool, "n_iter": int}`` --
         exactly the historical key set when no shift is requested -- plus,
         ONLY when a shift was actually applied (so the default path's dict is
         unchanged), ``spectral_shift`` (the sigma actually applied),
@@ -5758,7 +5768,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         vecs = vecs[:, :n_keep]
         return vals[0], vecs[:, 0], {"eigenvalues": vals,
                                      "eigenvectors": vecs,
-                                     "sigma_shift": sigma_shift}
+                                     "sigma_shift": sigma_shift,
+                                     "selection": "dense-LR"}
 
     max_ev = min(num_eigenvalues, vec_size - 2)
     if max_ev < 1:
@@ -5801,8 +5812,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                           dtype=A.dtype)
             vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=seed_vec)
             vals = vals - sig
+            selection_label = "LR"
         else:
             vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
+            selection_label = "LM"
 
     elif solver_mode.startswith("shift-invert"):
         if sigma_shift is None:
@@ -5824,6 +5837,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
             seed_vec=seed_vec
         )
+        selection_label = "shift-invert"
 
     # With a seed eigenvector, track the branch that overlaps it (eigenvector
     # continuation); otherwise order by largest real part (the physical SC
@@ -5841,8 +5855,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     # Require a meaningfully negative value (relative to the spectral scale)
     # so roundoff-scale negatives near a numerically-zero leading eigenvalue
     # do not trigger a misleading recommendation.
-    if (solver_mode == "arnoldi" and spectral_shift is None
-            and seed_vec is None and len(vals)):
+    if (warn_negative_leading and solver_mode == "arnoldi"
+            and spectral_shift is None and seed_vec is None and len(vals)):
         scale = float(np.max(np.abs(vals))) if len(vals) else 0.0
         neg_tol = 1.0e-8 * max(scale, 1.0)
         if vals[0].real < -neg_tol:
@@ -5853,7 +5867,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 "the largest-magnitude one.", vals[0].real)
 
     return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
-                                 "sigma_shift": sigma_shift}
+                                 "sigma_shift": sigma_shift,
+                                 "selection": selection_label}
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
