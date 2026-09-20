@@ -110,8 +110,51 @@ class TestStaticFreqPosition(unittest.TestCase):
         # legacy FLEX chi0q files store the FULL grid but a restricted
         # freq_index; the DATA axis is authoritative, so the caller slices
         # its center (with a warning) exactly as before the metadata
-        # handling was introduced
+        # handling was introduced -- accepted here ONLY because nfreq (8)
+        # equals config Nmat (8) and freq_index is a 0-based subset
         self.assertIsNone(_static_freq_position(np.arange(5), 8, 8, "f"))
+
+    def test_no_metadata_mismatched_nmat_raises(self):
+        # a pre-provenance file (freq_index=None) whose stored axis is NOT
+        # a full grid of the configured Nmat cannot be centered without
+        # possibly picking a finite frequency: refuse with instructions
+        with self.assertRaises(ValueError) as cm:
+            _static_freq_position(None, 8, 16, "f")
+        msg = str(cm.exception)
+        self.assertIn("Nmat", msg)
+        self.assertIn("regenerate", msg.lower())
+
+    def test_no_metadata_matching_nmat_returns_none(self):
+        # freq_index=None with nfreq == config Nmat is the only unambiguous
+        # centering case: the stored axis IS the configured full grid
+        self.assertIsNone(_static_freq_position(None, 8, 8, "f"))
+
+    def test_size_mismatch_mismatched_nmat_raises(self):
+        # length-mismatch metadata with nfreq (8) != config Nmat (16): the
+        # data axis is not provably the configured full grid, so centering
+        # could land on a finite frequency -- refuse with instructions
+        with self.assertRaises(ValueError) as cm:
+            _static_freq_position(np.arange(5), 8, 16, "f")
+        msg = str(cm.exception)
+        self.assertIn("Nmat", msg)
+        self.assertIn("regenerate", msg.lower())
+
+    def test_size_mismatch_matching_nmat_non_subset_raises(self):
+        # nfreq (8) == config Nmat (8) but freq_index is NOT a subset of
+        # 0..nfreq-1 (10 is out of range): the stored axis cannot be the
+        # configured 0-based full grid, so centering is unsafe -- refuse
+        freq_index = np.array([0, 1, 2, 3, 10])
+        with self.assertRaises(ValueError) as cm:
+            _static_freq_position(freq_index, 8, 8, "f")
+        msg = str(cm.exception)
+        self.assertIn("Nmat", msg)
+        self.assertIn("regenerate", msg.lower())
+
+    def test_odd_full_grid_center_is_unambiguous(self):
+        # an odd full grid: freq_index = 0..6 with nfreq == config Nmat == 7
+        # is the configured full grid, the only case where centering is
+        # unambiguous -- the zero bosonic frequency sits at nfreq // 2 = 3
+        self.assertEqual(_static_freq_position(np.arange(7), 7, 7, "f"), 3)
 
 
 class TestLoadChi0qStaticIndex(unittest.TestCase):
@@ -159,9 +202,11 @@ class TestLoadChi0qStaticIndex(unittest.TestCase):
         # 2-entry freq_index that happens to match the LAST axis length
         # (norb=2); the frequency axis of the 4D raw layout is ALWAYS axis 0,
         # so this is a length mismatch -> delegate (None), never a binding
-        # of freq_index to the orbital axis
+        # of freq_index to the orbital axis. Config Nmat == nfreq (16) and the
+        # freq_index entries are a 0-based subset, so #186 still accepts the
+        # data-axis center here.
         chi0q, static_index = self._write_and_load(
-            1024, np.array([7, 8]), 16, shape=(16, 4, 2, 2))
+            16, np.array([7, 8]), 16, shape=(16, 4, 2, 2))
         self.assertIsNone(static_index)
 
     def test_small_legacy_file_with_default_config_raises_with_guidance(self):
@@ -191,14 +236,29 @@ class TestLoadChi0qStaticIndex(unittest.TestCase):
     def test_ref_format_6d_without_metadata_delegates(self):
         # a metadata-less reference-format file must NOT get a static index
         # guessed from the wrong axis (shape[0] = norb); returning None lets
-        # the caller slice the center of the axis it actually uses
+        # the caller slice the center of the axis it actually uses. #186
+        # accepts this only when the data axis is the configured full grid
+        # (nfreq == config Nmat == 8).
         chi0q, static_index = self._write_and_load(
-            1024, None, 8, shape=(2, 2, 2, 1, 1, 8))
+            8, None, 8, shape=(2, 2, 2, 1, 1, 8))
         self.assertIsNone(static_index)
 
     def test_legacy_file_without_metadata_delegates(self):
-        chi0q, static_index = self._write_and_load(1024, None, 8)
+        # nfreq == config Nmat == 8: the metadata-less axis IS the configured
+        # full grid, so centering is unambiguous and delegation is accepted
+        chi0q, static_index = self._write_and_load(8, None, 8)
         self.assertIsNone(static_index)
+
+    def test_metadata_less_mismatched_config_raises(self):
+        # #186: a metadata-less file whose axis length (8) does not match
+        # config Nmat (1024) can no longer be centered by guessing -- it
+        # could be a restriction of a larger grid, so the loader refuses
+        # with actionable instructions instead of silently centering
+        with self.assertRaises(ValueError) as cm:
+            self._write_and_load(1024, None, 8)
+        msg = str(cm.exception)
+        self.assertIn("Nmat", msg)
+        self.assertIn("regenerate", msg.lower())
 
 
 class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
@@ -263,8 +323,10 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 np.savez(os.path.join(tmp, name),
                          chiq=chiq, chi_convention="kuroki", momentum_convention="e_plus_ikR")
+            # config Nmat == nfreq (8): the metadata-less axis IS the
+            # configured full grid, so #186 accepts the data-axis center
             input_dict = {
-                "mode": {"param": {"Nmat": 1024}},
+                "mode": {"param": {"Nmat": 8}},
                 "file": {"input": {"path_to_flex_output": tmp},
                          "output": {"path_to_output": tmp}},
             }
@@ -272,6 +334,31 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
                 input_dict, norb=1, Nx=2, Ny=1, Nz=1)
             self.assertEqual(chis.flat[0].real, 4.0,
                              "metadata-less file: center of the data axis")
+
+    def test_legacy_chiq_without_metadata_mismatched_config_raises(self):
+        # #186: metadata-less FLEX chiq whose axis length (8) does not match
+        # config Nmat (1024) can no longer be centered by guessing
+        from hwave.sc import _load_flex_susceptibilities
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nfreq, nvol, nd = 8, 2, 2
+            chiq = np.zeros((nfreq, nvol, nd, nd), dtype=np.complex128)
+            for i in range(nfreq):
+                chiq[i, :, 0, 0] = float(i)
+                chiq[i, :, 1, 1] = float(i)
+            for name in ("chiq_s.npz", "chiq_c.npz"):
+                np.savez(os.path.join(tmp, name),
+                         chiq=chiq, chi_convention="kuroki",
+                         momentum_convention="e_plus_ikR")
+            input_dict = {
+                "mode": {"param": {"Nmat": 1024}},
+                "file": {"input": {"path_to_flex_output": tmp},
+                         "output": {"path_to_output": tmp}},
+            }
+            with self.assertRaises(ValueError) as cm:
+                _load_flex_susceptibilities(
+                    input_dict, norb=1, Nx=2, Ny=1, Nz=1)
+            self.assertIn("Nmat", str(cm.exception))
 
 
 class TestComputeVerticesStaticIndex(unittest.TestCase):

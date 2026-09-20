@@ -995,11 +995,26 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
         reference format).
     """
     if freq_index is None:
-        logger.warning(
-            "chi0q file '{}' has no freq_index metadata; using the center "
-            "of the stored frequency axis as the static slice.".format(
-                file_name))
-        return None
+        # Pre-provenance file: with no metadata at all, the stored axis can
+        # only be centered safely when it IS the configured full grid
+        # (nfreq == config_nmat).  A stored axis of any other length could be
+        # a matsubara_frequency restriction of some run's grid, so nfreq//2
+        # might point at a finite frequency -- refuse to guess.
+        if nfreq == config_nmat:
+            logger.warning(
+                "chi0q file '{}' has no freq_index metadata; using the "
+                "center of the stored frequency axis as the static slice."
+                .format(file_name))
+            return None
+        raise ValueError(
+            "chi0q file '{}' has no freq_index metadata and its stored "
+            "frequency axis length {} does not match mode.param.Nmat = {}, "
+            "so the zero-frequency position cannot be determined: centering "
+            "the axis could pick a finite frequency of a restricted grid. "
+            "If the file holds a full grid, set mode.param.Nmat = {}; "
+            "otherwise regenerate it with a newer version (which records "
+            "nmat in the file)."
+            .format(file_name, nfreq, config_nmat, nfreq))
 
     freq_index = np.asarray(freq_index).ravel()
     if freq_index.size == 0:
@@ -1010,13 +1025,30 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
     if freq_index.size != nfreq:
         # Legacy FLEX files store the FULL grid but a restricted freq_index
         # (FLEX never applied the matsubara_frequency filter): the DATA axis
-        # is authoritative, so fall back to the pre-metadata behavior.
-        logger.warning(
+        # is authoritative, so fall back to the pre-metadata behavior -- but
+        # ONLY when the data axis is provably the configured full grid
+        # (nfreq == config_nmat) AND freq_index is a 0-based subset of it
+        # (set(freq_index) <= set(range(nfreq))).  Otherwise the stored axis
+        # could be a restriction of some other grid and centering could pick
+        # a finite frequency, so refuse to guess.
+        if nfreq == config_nmat and set(freq_index.tolist()) <= set(
+                range(nfreq)):
+            logger.warning(
+                "chi0q file '{}': freq_index length {} does not match the "
+                "frequency axis length {}; ignoring the metadata and using "
+                "the center of the stored frequency axis as the static "
+                "slice.".format(file_name, freq_index.size, nfreq))
+            return None
+        raise ValueError(
             "chi0q file '{}': freq_index length {} does not match the "
-            "frequency axis length {}; ignoring the metadata and using the "
-            "center of the stored frequency axis as the static slice."
-            .format(file_name, freq_index.size, nfreq))
-        return None
+            "frequency axis length {}, and the axis is not provably the "
+            "configured full grid (nfreq == mode.param.Nmat = {} with a "
+            "0-based freq_index), so the zero-frequency position cannot be "
+            "determined: centering the axis could pick a finite frequency "
+            "of a restricted grid. If the file holds a full grid, set "
+            "mode.param.Nmat = {}; otherwise regenerate it with a newer "
+            "version (which records nmat in the file)."
+            .format(file_name, freq_index.size, nfreq, config_nmat, nfreq))
 
     def _find(nmat_orig):
         # the zero bosonic frequency has ORIGINAL index nmat_orig//2
@@ -1309,30 +1341,28 @@ def _load_chi0q(input_dict, norb=None):
     # raw (nmat, nvol, norb^4; the last four axes are equal) or ref
     # (norb, norb, Nx, Ny, Nz, nmat; the first two axes are equal) --
     # disambiguate structurally, with the freq_index length only as the
-    # tiebreaker for degenerate shapes.  Without metadata
-    # _static_freq_position returns None and the caller slices the center
-    # of the axis it actually uses.
-    if freq_index is not None:
-        nfi = np.asarray(freq_index).size
-        if chi0q.ndim == 4:
+    # tiebreaker for degenerate shapes.  The length is computed even for
+    # metadata-less files: _static_freq_position now needs it to decide
+    # whether the stored axis IS the configured full grid (nfreq ==
+    # config_nmat, the only case where centering is unambiguous).
+    nfi = np.asarray(freq_index).size if freq_index is not None else None
+    if chi0q.ndim == 4:
+        nfreq = chi0q.shape[0]
+    elif chi0q.ndim == 8:
+        nfreq = chi0q.shape[-1]
+    elif chi0q.ndim == 6:
+        raw_like = len(set(chi0q.shape[2:])) == 1
+        ref_like = chi0q.shape[0] == chi0q.shape[1]
+        if raw_like and not ref_like:
             nfreq = chi0q.shape[0]
-        elif chi0q.ndim == 8:
+        elif ref_like and not raw_like:
             nfreq = chi0q.shape[-1]
-        elif chi0q.ndim == 6:
-            raw_like = len(set(chi0q.shape[2:])) == 1
-            ref_like = chi0q.shape[0] == chi0q.shape[1]
-            if raw_like and not ref_like:
-                nfreq = chi0q.shape[0]
-            elif ref_like and not raw_like:
-                nfreq = chi0q.shape[-1]
-            elif nfi == chi0q.shape[0]:
-                nfreq = chi0q.shape[0]
-            else:
-                nfreq = chi0q.shape[-1]
+        elif nfi is not None and nfi == chi0q.shape[0]:
+            nfreq = chi0q.shape[0]
         else:
             nfreq = chi0q.shape[-1]
     else:
-        nfreq = 0  # unused: no metadata -> _static_freq_position gives None
+        nfreq = chi0q.shape[-1]
     config_nmat = input_dict.get("mode", {}).get("param", {}).get("Nmat",
                                                                 _DEFAULT_NMAT)
     static_index = _static_freq_position(freq_index, nfreq, config_nmat,
