@@ -1350,7 +1350,16 @@ def _load_chi0q(input_dict, norb=None):
     # whether the stored axis IS the configured full grid (nfreq ==
     # config_nmat, the only case where centering is unambiguous).
     nfi = np.asarray(freq_index).size if freq_index is not None else None
-    if chi0q.ndim == 4:
+    if _qax == 1:
+        # raw layout (nfreq, nvol, norb...): frequency axis is axis 0
+        nfreq = chi0q.shape[0]
+    elif _qax == 2:
+        # spin-diagonal block-leading layout (2, nfreq, nvol, norb...)
+        nfreq = chi0q.shape[1]
+    elif _qax in ((2, 3, 4), (4, 5, 6)):
+        # reference layout (norb..., Nx, Ny, Nz, nfreq): axis is last
+        nfreq = chi0q.shape[-1]
+    elif chi0q.ndim == 4:
         nfreq = chi0q.shape[0]
     elif chi0q.ndim == 8:
         nfreq = chi0q.shape[-1]

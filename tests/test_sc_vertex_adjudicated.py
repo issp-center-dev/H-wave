@@ -278,7 +278,10 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
         np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(extra_s or {}), momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(extra_c or {}), momentum_convention="e_plus_ikR")
-        return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
+        # Nmat matches the 4-point frequency axis so the metadata-less static
+        # slice is the configured full grid (#186 no longer guesses otherwise)
+        return {"mode": {"param": {"Nmat": 4}},
+                "file": {"output": {"path_to_output": d}}, "eliashberg": {}}
 
     def _load(self, inp, interactions):
         import hwave.sc as sc
