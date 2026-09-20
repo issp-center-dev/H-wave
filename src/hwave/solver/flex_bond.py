@@ -189,10 +189,12 @@ def _at(iteration):
     return "" if iteration is None else " (SCF iteration {})".format(iteration)
 
 
-def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all"):
+def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
+           guard_policy="refuse", violations=None):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      cond_tol=cond_tol, guard_freqs=guard_freqs)
+                                      cond_tol=cond_tol, guard_freqs=guard_freqs,
+                                      guard_policy=guard_policy, violations=violations)
     except ValueError as exc:
         if iteration is None:
             raise
@@ -238,11 +240,15 @@ class DressResult:
     static_c: np.ndarray
     cond_min_s: float
     cond_min_c: float
+    #: violations tolerated under guard_policy = "warn" in THIS map, both
+    #: channels and both guard kinds (GitHub issue #199); always 0 under
+    #: the default "refuse" policy, which raises instead
+    guard_violations: int = 0
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
-                      second_order="takimoto", guard_freqs="all"):
+                      second_order="takimoto", guard_freqs="all", guard_policy="refuse"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -293,7 +299,16 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     ``W`` entirely on that module, then the collapses, the static slices
     and ``W`` itself are copied back to the host (``_bk.to_host``) before
     the ONE store write of the batch. On numpy (``dev.xp is np``) every
-    transfer is the identity, so this is byte-for-byte the host loop."""
+    transfer is the identity, so this is byte-for-byte the host loop.
+
+    ``cond_tol`` is the conditioning floor handed to every
+    :func:`~hwave.solver.bond_channels.dress_batch` call and
+    ``guard_policy`` its policy (GitHub issue #199): under ``"warn"`` a
+    violation of the conditioning guard (or, with
+    ``guard_freqs = "static"``, of the solve residual) is logged and the
+    map continues, and the number of such violations over BOTH channels
+    and the whole frequency grid is returned as
+    ``DressResult.guard_violations``."""
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
@@ -325,11 +340,15 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
     l_static = nmat // 2
     cond_s = cond_c = np.inf
+    # one list for the whole map: every warned guard violation of either
+    # channel and either guard kind (empty under guard_policy = "refuse")
+    violations = []
     for l0 in range(0, nmat, nb):
         l1 = min(nmat, l0 + nb)
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
         collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
-        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
+        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration,
+                             guard_freqs, guard_policy, violations)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
         collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -339,7 +358,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         chi_s_b -= cb
         W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         del chi_s_b
-        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs)
+        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration,
+                             guard_freqs, guard_policy, violations)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
         collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -378,7 +398,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         del W_b, cb
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
-                       cond_min_s=float(cond_s), cond_min_c=float(cond_c))
+                       cond_min_s=float(cond_s), cond_min_c=float(cond_c),
+                       guard_violations=len(violations))
 
 
 # =============================================================================
