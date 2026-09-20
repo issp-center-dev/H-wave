@@ -435,7 +435,11 @@ Parameters
   that is exactly singular, or that produces non-finite numbers, is
   refused under either policy. The number of tolerated violations of a
   run is recorded in the outputs as ``flex_guard_violations``, next to
-  ``flex_guard_policy``. Ignored with a warning unless
+  ``flex_guard_policy``: these are guard-violation EVENTS, not
+  iterations -- one per iteration for the density check, one per
+  offending (channel, bosonic frequency, q-point) finding for the bond
+  guard, so a single iteration can contribute several. Ignored with a
+  warning unless
   ``flex_hartree_fock`` or ``longitudinal_bond_channels`` is true.
 
 - ``longitudinal_bond_output_full``

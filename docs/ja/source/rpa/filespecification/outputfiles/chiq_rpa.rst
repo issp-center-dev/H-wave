@@ -214,8 +214,12 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``hf_density_source``\ 付き）・\ ``density_target_enforced``\ ・
 ``flex_guard_policy``\ （文字列。\ ``"refuse"``\ または\ ``"warn"``\ 。
 ``[mode.param] flex_guard_policy``\ で指定した設定）・
-``flex_guard_violations``\ （整数。\ ``"warn"``\ で通過させたガード違反の
-回数。最初の違反で停止する\ ``"refuse"``\ では\ ``0``\ ）が含まれます。
+``flex_guard_violations``\ （整数。\ ``"warn"``\ で通過させたガード違反
+**事象** の件数。反復の回数ではなく、等時刻密度の検査については1反復に
+つき1件、ボンドのガードについては該当する（チャネル, ボソン振動数,
+:math:`q`\ 点）ごとに1件を数えるため、1回の反復が複数件を寄与すること
+があります。最初の違反で停止する\ ``"refuse"``\ では\ ``0``\ ）が
+含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
 ``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg

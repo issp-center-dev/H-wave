@@ -222,9 +222,11 @@ susceptibilities, ``"final_state"`` for ``sigma`` / ``green``),
 describes, with ``hf_density_source``), ``density_target_enforced``,
 ``flex_guard_policy`` (string: ``"refuse"`` or ``"warn"``, the policy
 ``[mode.param] flex_guard_policy`` requested) and
-``flex_guard_violations`` (integer: how many guard violations the run was
-allowed to pass under ``"warn"``; ``0`` under ``"refuse"``, which ends the
-run at the first one).
+``flex_guard_violations`` (integer: how many guard-violation EVENTS the run
+was allowed to pass under ``"warn"`` -- one per iteration for the
+equal-time density check and one per offending (channel, bosonic frequency,
+q-point) finding of the bond guard, so a single iteration can contribute
+several; ``0`` under ``"refuse"``, which ends the run at the first one).
 With ``longitudinal_bond_output_full = true`` the dedicated archive
 (``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
 holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic

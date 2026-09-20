@@ -277,11 +277,15 @@ following operating rules apply.
   excursion.** It lets an iteration whose density symmetry or bond
   conditioning violates its tolerance continue instead of ending the
   run. Read the ``guards:`` lines afterwards and confirm that the
-  violation decays: the values must return above their tolerances and
-  stay there. The final state is checked regardless of the policy, so
-  a run that is still violating a guard at the end is refused with the
-  conditioning minima of the last map, and ``flex_guard_violations`` in
-  the outputs records how many iterations were let through.
+  violation decays: the density deviation must fall back below
+  ``flex_hf_density_tol``, ``cond_min`` must rise back above
+  ``longitudinal_bond_cond_tol``, and both must stay there. The final
+  state is checked regardless of the policy, so a run that is still
+  violating a guard at the end is refused with the conditioning minima
+  of the last map, and ``flex_guard_violations`` in the outputs counts
+  the violations that were let through -- one per iteration for the
+  density, and one per offending (channel, frequency, q-point) finding
+  for the bond guard, so a single iteration can contribute several.
 
 The tolerances themselves (``flex_hf_density_tol``,
 ``longitudinal_bond_cond_tol``) are knobs for a deliberately stiff
