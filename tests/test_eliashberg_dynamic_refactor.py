@@ -1,6 +1,15 @@
 """Golden files for the eigen-driver refactor: the on-site dynamic solver's
-outputs must not change (spec 5.3). The golden values are recorded ONCE from
-the pre-refactor code and stored under tests/eliashberg_dynamic_golden/."""
+outputs must not change (spec 5.3), stored under
+tests/eliashberg_dynamic_golden/.
+
+The ``iteration`` fixtures remain the values recorded from the pre-refactor
+code. The ``eigenvalue`` and ``both`` no-shift fixtures were regenerated once
+for issue #202: on this degenerate 2x2x1 grid the plain which='LM' set holds no
+positive channel eigenvalue, so the solver now re-solves for the largest real
+part (``eigenvalue_selection = "LR_retry"``) -- the pre-#202 goldens there were
+themselves an instance of the num_eigenvalues-dependent value the fix removes.
+This module is their regression baseline; the token comparison is unchanged (it
+still ignores only the new ``# ...`` header lines)."""
 import os
 import pathlib
 import shutil
@@ -305,11 +314,12 @@ class TestEigenDriverUnits(unittest.TestCase):
                              parity_leakage_policy="refuse"), 1)
 
     def test_both_probes_run_exactly_once_on_the_iteration_path(self):
-        """The iteration path now asks two questions -- is the kernel the
-        physical one (``_parity_leakage``), and is the channel sector
-        preserved (``_channel_leakage``) -- and each costs a matvec per probe
-        vector. Each must run exactly once there, and neither at all on the
-        eigenvalue family under the default policy."""
+        """The iteration path asks two questions -- is the kernel the physical
+        one (``_parity_leakage``), and is the channel sector preserved
+        (``_channel_leakage``) -- and each costs a matvec per probe vector. Each
+        must run exactly once there. The eigenvalue family (issue #202) also
+        asks the channel question once, to decide whether the projected solve is
+        valid, but never the parity one under the default policy."""
         from unittest import mock
 
         real_parity = self.ed._parity_leakage
@@ -341,10 +351,10 @@ class TestEigenDriverUnits(unittest.TestCase):
                              (1, 1))
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
             self.assertEqual(
-                run({"solver_mode": "eigenvalue", "num_eigenvalues": 2}), (0, 0))
+                run({"solver_mode": "eigenvalue", "num_eigenvalues": 2}), (0, 1))
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
             self.assertEqual(
-                run({"solver_mode": "both", "num_eigenvalues": 2}), (0, 0))
+                run({"solver_mode": "both", "num_eigenvalues": 2}), (0, 1))
 
     def test_invalid_policy_raises(self):
         eli_param = {"solver_mode": "iteration"}

@@ -551,8 +551,13 @@ class TestPostProcessingRuns(unittest.TestCase):
             finally:
                 shutil.rmtree(flex_dir, ignore_errors=True)
         for eta in ("singlet", "triplet"):
+            # The reported eigenvalue is now the channel-projected leading value
+            # (issue #202), which equals the dense even-frequency channel
+            # eigenvalue exactly; on this 4x4 fixture its Nmat 64 -> 128
+            # convergence is ~2.6% (triplet), so the coarse cross-Nmat check
+            # uses a 3% band. Both Nmat take the same projected path.
             self.assertAlmostEqual(lam[(eta, 128)], lam[(eta, 64)],
-                                   delta=2e-2 * abs(lam[(eta, 64)]), msg=eta)
+                                   delta=3e-2 * abs(lam[(eta, 64)]), msg=eta)
 
     @heavy
     def test_ir_lambda_arm_matches_uniform(self):           # 10.2.2 (IR half)

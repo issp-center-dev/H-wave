@@ -1764,22 +1764,27 @@ def test_reorder_falls_back_to_combined_parity_when_no_channel_eigenpair():
 def test_eigenvalue_file_labels_the_combined_parity_fallback(tmp_path):
     """When no eigenpair lies in the channel's even-frequency sector, the
     match column must NOT be labelled as a channel-parity match -- that is the
-    ambiguity issue #209 removes -- and the file records the stage used."""
+    ambiguity issue #209 removes -- and the file records the stage used.
+
+    The combined-parity fallback is reached only on the UNPROJECTED path, i.e.
+    when the kernel does NOT conserve the even-frequency channel (issue #202
+    projects a conserved channel instead). This kernel swaps the even-frequency
+    channel with an odd-frequency mode of the SAME combined parity, so it leaks
+    out of the channel (no projected solve) while its eigenvectors still lie in
+    the channel's combined-parity sector."""
     import os
     from hwave.solver import eliashberg_dynamic as ed
     gap_shape = (1, 1, 4, 4, 1, 8)
-    # every eigenvector of this operator is odd-frequency
-    v1 = _pure_sector(gap_shape, "odd_k_odd_w", 91).ravel()     # combined +1
-    v2 = _pure_sector(gap_shape, "even_k_odd_w", 92).ravel()    # combined -1
-    v3 = _pure_sector(gap_shape, "odd_k_odd_w", 93).ravel()
-    v3 = v3 - np.vdot(v1, v3) * v1
-    v3 /= np.linalg.norm(v3)
+    a = _pure_sector(gap_shape, "even_k_even_w", 91).ravel()   # channel, combined +1
+    b = _pure_sector(gap_shape, "odd_k_odd_w", 92).ravel()     # odd freq, combined +1
 
     def matvec(x):
         x = np.asarray(x).ravel()
-        c1, c2, c3 = np.vdot(v1, x), np.vdot(v2, x), np.vdot(v3, x)
-        rest = x - c1 * v1 - c2 * v2 - c3 * v3
-        return 0.9 * c1 * v1 + 0.8 * c2 * v2 + 0.7 * c3 * v3 + 0.001 * rest
+        ca, cb = np.vdot(a, x), np.vdot(b, x)
+        rest = x - ca * a - cb * b
+        # swap a <-> b: eigenvectors (a +- b)/sqrt(2), eigenvalues +-0.9, each an
+        # even/odd-frequency mixture of definite (singlet) combined parity
+        return 0.9 * ca * b + 0.9 * cb * a + 0.001 * rest
 
     phi0 = _pure_sector(gap_shape, "even_k_even_w", 94)
     out = ed.run_leading_eigenproblem(
@@ -2084,61 +2089,95 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             seed_vec=seed_vec, use_ir=False, axF=None, nmat=self.SHAPE[-1])
 
     def _masked_positive_kernel(self):
-        # channel holds ONE positive eigenvalue (+0.15) masked by three larger
-        # negative ones; the complement is a small positive (below +0.15)
-        basis = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 4, 10)
-        return _diagonal_kernel(basis, [0.15, -0.9, -0.7, -0.5], rest_scale=0.001)
+        # A kernel that CONSERVES the channel sector: the channel holds one
+        # small positive eigenvalue (+0.15), and there are TWO larger-REAL
+        # OPPOSITE-sector modes (+1.0, +0.8) that a plain which='LM' set surfaces
+        # first. The channel projection removes them, so the reported channel
+        # eigenvalue is +0.15 regardless of num_eigenvalues (issue #202).
+        channel = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 1, 10)[0]
+        op1 = _pure_sector(self.SHAPE, "odd_k_even_w", 20).ravel()
+        op2 = _pure_sector(self.SHAPE, "even_k_odd_w", 21).ravel()
+        return _diagonal_kernel([channel, op1, op2], [0.15, 1.0, 0.8],
+                                rest_scale=0.0)
 
     def _all_negative_kernel(self):
-        # channel holds only negative eigenvalues; the complement is far below
-        # them so the largest REAL part is the least-negative channel mode
+        # Channel-conserving, but every channel eigenvalue is negative and the
+        # complement is far below them: the channel's largest REAL part is the
+        # least-negative mode, which the projected solve must report (not a
+        # spurious zero from the null space).
         basis = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 3, 30)
         return (_diagonal_kernel(basis, [-0.9, -0.7, -0.5], rest_scale=-3.0),
                 basis)
 
-    def test_plain_arnoldi_retries_and_reports_positive(self):
+    def _non_conserving_kernel(self):
+        # Maps the channel sector OUT of itself (swap with an odd-frequency
+        # mode), so the channel projection is not valid and the run falls back
+        # to the unprojected LM -> LR retry.
+        u = _pure_sector(self.SHAPE, "even_k_even_w", 40).ravel()
+        w = _pure_sector(self.SHAPE, "even_k_odd_w", 41).ravel()
+
+        def matvec(x):
+            x = np.asarray(x).ravel().astype(complex)
+            cu, cw = np.vdot(u, x), np.vdot(w, x)
+            rest = x - cu * u - cw * w
+            return 0.9 * cu * w + 0.9 * cw * u + 0.001 * rest
+        return matvec
+
+    def test_projected_solve_independent_of_num_eigenvalues(self):
+        # Reproducing test for issue #202 (fix round 1): on a channel-conserving
+        # kernel with larger-real opposite-sector modes, a short and a long
+        # num_eigenvalues must report the SAME channel eigenvalue (the sector's
+        # true leading, +0.15). Before the projected solve, num_eigenvalues=2
+        # reported +1.0 and =6 reported +0.15.
         matvec = self._masked_positive_kernel()
+        results = {}
+        for k in (2, 6):
+            with _capture_dynamic_warnings() as recs:
+                out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                         "num_eigenvalues": k})
+            self.assertEqual(len(out), 9)
+            lam, _g, _e, _m, note, _l, _w, sector, selection = out
+            results[k] = lam
+            self.assertAlmostEqual(lam, 0.15, places=5)
+            self.assertEqual(selection, "LR_projected")
+            self.assertEqual(sector, "channel")
+            self.assertIsNone(note)
+            self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+        self.assertAlmostEqual(results[2], results[6], places=8)
+
+    def test_projected_solve_repulsive_channel_reports_least_negative(self):
+        matvec, _basis = self._all_negative_kernel()
         with _capture_dynamic_warnings() as recs:
             out = self._run(matvec, {"solver_mode": "eigenvalue",
                                      "num_eigenvalues": 2})
-        self.assertEqual(len(out), 9)
-        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
-        self.assertAlmostEqual(lam, 0.15, places=5)
-        self.assertEqual(selection, "LR_retry")
-        resolves = [r for r in recs
-                    if "re-solving with spectral_shift" in r.getMessage()]
-        self.assertEqual(len(resolves), 1, [r.getMessage() for r in recs])
-        self.assertIsNotNone(note)
-        self.assertIn("second solve with spectral_shift='auto'", note)
+        lam, _g, _e, _m, _note, _l, _w, sector, selection = out
+        self.assertAlmostEqual(lam, -0.5, places=5)   # least negative in channel
+        self.assertEqual(selection, "LR_projected")
+        self.assertEqual(sector, "channel")
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
 
-    def test_spectral_shift_given_is_LR_without_retry(self):
-        matvec = self._masked_positive_kernel()
-        with _capture_dynamic_warnings() as recs:
-            out = self._run(matvec, {"solver_mode": "eigenvalue",
-                                     "num_eigenvalues": 2,
-                                     "spectral_shift": "auto"})
-        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
-        self.assertAlmostEqual(lam, 0.15, places=5)
-        self.assertEqual(selection, "LR")
-        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
-                             for r in recs))
-
-    def test_large_num_eigenvalues_keeps_LM_no_retry(self):
-        matvec = self._masked_positive_kernel()
-        with _capture_dynamic_warnings() as recs:
-            out = self._run(matvec, {"solver_mode": "eigenvalue",
-                                     "num_eigenvalues": 8})
-        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
-        self.assertAlmostEqual(lam, 0.15, places=5)
-        self.assertEqual(selection, "LM")
-        self.assertIsNone(note)
-        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
-                             for r in recs))
-
-    def test_all_negative_retries_to_least_negative(self):
+    def test_projected_solve_runs_a_single_leading_solve(self):
+        # "no more than one extra solve on any path": the projected path solves
+        # the projected operator exactly once (the scale preliminary is a raw
+        # ARPACK pass, not a _solve_leading call).
         import hwave.sc as sc
-        matvec, _basis = self._all_negative_kernel()
+        matvec = self._masked_positive_kernel()
         calls = []
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(1)
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            self._run(matvec, {"solver_mode": "eigenvalue",
+                               "num_eigenvalues": 3})
+        self.assertEqual(len(calls), 1, "projected path must not re-solve")
+
+    def test_non_conserving_falls_back_to_unprojected_retry(self):
+        matvec = self._non_conserving_kernel()
+        calls = []
+        import hwave.sc as sc
         real_solve = sc._solve_leading
 
         def counting(*a, **k):
@@ -2149,30 +2188,62 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             with _capture_dynamic_warnings() as recs:
                 out = self._run(matvec, {"solver_mode": "eigenvalue",
                                          "num_eigenvalues": 2})
-        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
-        # exactly one retry: two solves, the second with spectral_shift="auto"
+        selection = out[8]
+        note = out[4]
+        self.assertEqual(selection, "LR_retry")
+        # exactly one extra solve: the plain LM solve then the auto re-solve
         self.assertEqual(len(calls), 2, calls)
         self.assertEqual(calls[1], "auto")
-        self.assertEqual(selection, "LR_retry")
-        self.assertAlmostEqual(lam, -0.5, places=5)   # least negative in channel
         self.assertIsNotNone(note)
-        self.assertIn("second solve with spectral_shift='auto'", note)
         self.assertEqual(
             1, len([r for r in recs
                     if "re-solving with spectral_shift" in r.getMessage()]))
 
-    def test_seeded_run_does_not_retry(self):
+    def test_seeded_run_is_not_projected(self):
         matvec, basis = self._all_negative_kernel()
-        seed = basis[2]                        # the -0.5 channel eigenvector
+        seed = basis[2]                        # a channel eigenvector
         with _capture_dynamic_warnings() as recs:
             out = self._run(matvec, {"solver_mode": "eigenvalue",
                                      "num_eigenvalues": 2}, seed_vec=seed)
-        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
-        self.assertEqual(selection, "LM")
-        self.assertLess(lam, 0.0)              # the seeded branch is negative
+        selection = out[8]
+        note = out[4]
+        self.assertNotEqual(selection, "LR_projected")
         self.assertIsNone(note)
-        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
-                             for r in recs))
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+
+    def test_dense_path_reports_dense_selection(self):
+        # A 2-dimensional operator routes through _solve_leading's dense path,
+        # which is a largest-real solve, not "LM"; the provenance must say so and
+        # no redundant re-solve may run (should_fix #3/#4). A seed keeps the run
+        # on the unprojected path so the dense selection is what is reported.
+        from hwave.solver import eliashberg_dynamic as ed
+        import hwave.sc as sc
+        shape = (1, 1, 1, 1, 1, 2)
+        M = np.array([[0.3, 0.1], [0.05, 0.2]], dtype=complex)
+
+        def matvec(x):
+            return M @ np.asarray(x).ravel()
+
+        phi0 = np.ones(shape, dtype=complex)
+        phi0 /= np.linalg.norm(phi0)
+        seed = np.array([1.0, 0.0], dtype=complex)
+        calls = []
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(1)
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            with _capture_dynamic_warnings() as recs:
+                out = ed.run_leading_eigenproblem(
+                    matvec, shape, {"solver_mode": "eigenvalue",
+                                    "num_eigenvalues": 2},
+                    "singlet", phi0=phi0, seed_vec=seed, use_ir=False, axF=None,
+                    nmat=2)
+        self.assertEqual(out[8], "dense-LR")
+        self.assertEqual(len(calls), 1, "dense path must not re-solve")
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
 
     def test_eigenvalue_selection_in_file_header_and_npz(self):
         from hwave.solver import eliashberg_dynamic as ed
@@ -2185,17 +2256,17 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             kz = np.linspace(0.0, 2 * np.pi, self.SHAPE[4], endpoint=False)
             ed.write_dynamic_outputs(
                 tmp, gap, 0.15, 0.5, "singlet", kx, ky, kz, 2.0,
-                eigenvalue_selection="LR_retry")
+                eigenvalue_selection="LR_projected")
             with np.load(_os.path.join(tmp, "gap_dynamic.npz"),
                          allow_pickle=False) as d:
                 self.assertIn("eigenvalue_selection", d.files)
-                self.assertEqual(str(d["eigenvalue_selection"]), "LR_retry")
+                self.assertEqual(str(d["eigenvalue_selection"]), "LR_projected")
             ev_path = _os.path.join(tmp, "eigenvalue.dat")
             ed.write_eigenvalue_file(ev_path, 0.15, None, None, None,
-                                     eigenvalue_selection="LR_retry")
+                                     eigenvalue_selection="LR_projected")
             with open(ev_path) as fh:
                 text = fh.read()
-            self.assertIn("# eigenvalue_selection: LR_retry", text)
+            self.assertIn("# eigenvalue_selection: LR_projected", text)
             # omitted when None
             ev_path2 = _os.path.join(tmp, "eigenvalue2.dat")
             ed.write_eigenvalue_file(ev_path2, 0.15, None, None, None)
