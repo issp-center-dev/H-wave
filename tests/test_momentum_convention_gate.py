@@ -178,8 +178,12 @@ class TestValidatorHardening(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             sc._load_chi0q(inp)
         self.assertIn("BOTH", str(cm.exception))
+        # The tag resolves the momentum axes; freq_index/nmat provenance
+        # resolves the (2-point) frequency axis so #186 does not have to guess
+        # the static slice for this restricted-length axis.
         np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload,
-                 momentum_convention=MOMENTUM_CONVENTION)
+                 momentum_convention=MOMENTUM_CONVENTION,
+                 freq_index=np.array([3, 4]), nmat=8)
         sc._load_chi0q(inp)   # tag decides; must not raise here
 
     def test_non_cubic_permuted_and_negative_axes(self):
@@ -371,8 +375,13 @@ class TestRound4Hardening(unittest.TestCase):
                 tmp = tempfile.TemporaryDirectory()
                 self.addCleanup(tmp.cleanup)
                 d = tmp.name
+                # freq_index/nmat provenance resolves the (2-point, under the
+                # ref reading) frequency axis so #186 does not guess the static
+                # slice; the raw/ref STRUCTURAL routing under test is driven by
+                # norb and is unaffected by this metadata.
                 np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload,
-                         momentum_convention=MOMENTUM_CONVENTION)
+                         momentum_convention=MOMENTUM_CONVENTION,
+                         freq_index=np.array([3, 4]), nmat=8)
                 inp = {"mode": {"param": {"T": 1.0, "Nmat": 8,
                                           "CellShape": [2, 2, 2]}},
                        "file": {"input": {"path_to_flex_output": d},
