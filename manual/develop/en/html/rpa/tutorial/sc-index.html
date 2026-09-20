@@ -252,7 +252,12 @@ nodal <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&qu
 <li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: Maximum number of self-consistent iterations.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: Convergence criterion on the gap function.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: Number of eigenvalues to compute in eigenvalue mode.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: Number of eigenvalues to compute in eigenvalue mode.
+On the dynamic path this now controls only how many eigenvalues are listed,
+not which one is reported as leading: when the kernel conserves the channel’s
+even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
+solve restricted to that sector (see <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> below), whose
+largest-real eigenvalue does not depend on <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: Apply the analytic Matsubara tail correction to the pair
@@ -289,7 +294,20 @@ positive <span class="math notranslate nohighlight">\(\sigma\)</span> larger tha
 eigenvalue (so <span class="math notranslate nohighlight">\(A + \sigma I\)</span> has an all-positive-real spectrum).
 Recommended whenever the leading eigenvalue comes out negative or you scan
 weakly-pairing systems (low pressure, quasi-1D). Note this differs from
-<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> above (a shift-invert <em>target</em>, not a spectral shift).</p></li>
+<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> above (a shift-invert <em>target</em>, not a spectral shift). On the
+dynamic path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) the largest-real selection is applied
+automatically for the channel (issue #202): when the kernel conserves the
+channel’s even-frequency sector, the leading eigenvalue comes from a
+symmetry-valid solve restricted to that sector (<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span>
+<span class="pre">&quot;LR_projected&quot;</span></code>), whose largest-real eigenvalue is num_eigenvalues-
+independent; when it does not conserve the sector and a plain <code class="docutils literal notranslate"><span class="pre">arnoldi</span></code> set
+holds no positive channel eigenvalue, the solver instead re-solves once with
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>). Both are recorded in
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> (see below). A user-supplied <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> still
+applies to the unprojected path; a seeded (eigenvector-continuation) run is
+never re-solved, so a repulsive-dominant temperature scan should set
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> for every point to keep the seeded continuation
+consistent with the leading value.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> runs the kernel-apply (matvec/matmat, the FFT convolution)
 on the GPU (CuPy) for <strong>both</strong> <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and
 <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>). The eigensolver itself (ARPACK
@@ -739,6 +757,16 @@ the sector the iterates were projected onto; on the eigenvalue solver
 modes, which never project, it is the stage the eigenpair reordering
 matched with, and therefore what the <code class="docutils literal notranslate"><span class="pre">match</span></code> column of
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> means. See the same subsection.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>: which selection criterion produced the reported
+leading eigenvalue – <code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code> (a symmetry-valid solve restricted
+to a conserved channel sector, the num_eigenvalues-independent criterion),
+<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> (plain <code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>, largest magnitude), <code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
+set by the user, largest real part), <code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code> (the automatic
+largest-real re-solve when an unprojected <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> set held no positive
+channel eigenvalue), <code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code> (the tiny-operator dense largest-real
+path), <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (the power iteration). Also
+written as the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code> header line of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>.</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>A single-frequency slice of the gap at the lowest positive Matsubara
@@ -818,12 +846,41 @@ warning, so the reported <span class="math notranslate nohighlight">\(\lambda\)<
 the sector weights show the composition of the gap that produced it. Which
 case applied is recorded per run as <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>
 (<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>) – an npz key and the
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> header line of the eigenvalue file. The
-eigenvalue solver modes never project; they order the computed eigenpairs,
-preferring the channel’s even-frequency sector and falling back to its
-combined-parity sector only if no eigenpair lies in it. There
-<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> names the stage that matched, which is also what the
-<code class="docutils literal notranslate"><span class="pre">match</span></code> column of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> is labelled with.</p>
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> header line of the eigenvalue file. On the
+eigenvalue solver family, when the kernel conserves the channel’s
+even-frequency sector the leading eigenpair comes from a solve restricted to
+that sector (<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;channel&quot;</span></code>, issue #202); otherwise the
+computed eigenpairs are ordered, preferring the channel’s even-frequency
+sector and falling back to its combined-parity sector only if no eigenpair
+lies in it. There <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> names the stage that matched, which is
+also what the <code class="docutils literal notranslate"><span class="pre">match</span></code> column of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> is labelled with.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Leading eigenvalue independent of</strong> <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>. The plain
+<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code> method asks ARPACK for the eigenvalues of largest <em>magnitude</em>
+(<code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>), so a small positive (attractive) channel eigenvalue can be
+absent from a short list dominated by larger-real opposite-sector or repulsive
+modes – and the reported leading value would then depend on
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>. When the kernel conserves the channel’s even-frequency
+sector, the dynamic solver instead solves the kernel <em>restricted to that
+sector</em> (the same projector the power iteration uses), whose largest-real
+eigenvalue is the channel’s Tc eigenvalue independent of <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>;
+if that sector is repulsive the answer is its least-repulsive (largest-real)
+eigenvalue. When the kernel does not conserve the sector, an unprojected
+<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> set holding no positive channel eigenvalue is re-solved <strong>once</strong> with
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real part) as a best effort. Which
+criterion was used is recorded as <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> –
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code> (user <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>),
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code> (the automatic re-solve), <code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>
+or <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> – both as an npz key and as the
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code> header line of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Setting
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> up front avoids the extra solve on the
+unprojected path. The reference
+for the leading positive eigenvalue is <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> (the
+self-consistent power iteration, with <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> when the
+kernel is repulsive-dominant): it converges to the mode of largest real part
+directly and does not depend on <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> at all.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>

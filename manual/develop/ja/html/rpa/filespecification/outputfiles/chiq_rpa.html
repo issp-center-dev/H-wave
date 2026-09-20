@@ -275,11 +275,18 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>・
 <code class="docutils literal notranslate"><span class="pre">axis_order</span></code>・<code class="docutils literal notranslate"><span class="pre">normalization</span></code>・<code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>・
 <code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>・<code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>・
-<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>。これらは返されたギャップの運動量・振動数
-パリティセクター4つの重み、その名前、およびその実行が選んだセクター
+<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>。これらは返された
+ギャップの運動量・振動数
+パリティセクター4つの重み、その名前、その実行が選んだセクター
 （<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>。べき乗反復が
 射影したセクター、固有値ソルバーモードでは固有対の並べ替えが一致した
-段階）です。
+段階）、および報告される主固有値を生んだ選択基準
+（<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>＝保存されたチャネルセクターに制限した対称性整合な解
+（<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>非依存の基準）、<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>＝素の<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>の絶対値
+最大、<code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code>＝利用者指定の<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>による実部最大、
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>＝非射影の<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>集合に正のチャネル固有値が無かったときの
+実部最大を求める自動再求解、<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>＝微小演算子の稠密な実部最大解、
+<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>）です。
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-channels"><span class="std std-ref">動的ソルバーのペアリングチャネル</span></a>を参照）に
 加えて、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>（<code class="docutils literal notranslate"><span class="pre">true</span></code>）、<code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> /
 <code class="docutils literal notranslate"><span class="pre">bond_reverse</span></code>（アーカイブのボンドトポロジー。上記の
@@ -302,7 +309,8 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <span class="pre">even_k_odd_w=...</span> <span class="pre">odd_k_odd_w=...</span></code>のヘッダー行（小数6桁）を
 1行持ちます。これは npz の<code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>キーと同じ4つの
 数値です。その直後に
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=&lt;channel|combined_parity|none&gt;</span></code>の行が
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=&lt;channel|combined_parity|none&gt;</span></code>の行、続いて
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">&lt;LR_projected|LM|LR|LR_retry|dense-LR|shift-invert|iteration&gt;</span></code>の行が
 続きます。固有値表の<code class="docutils literal notranslate"><span class="pre">match</span></code>列の見出しも同じセクターに従い、
 <code class="docutils literal notranslate"><span class="pre">match(1=channel</span> <span class="pre">even-frequency</span> <span class="pre">sector)</span></code>または
 <code class="docutils literal notranslate"><span class="pre">match(1=combined-parity</span> <span class="pre">sector;</span> <span class="pre">no</span> <span class="pre">even-frequency</span> <span class="pre">eigenpair)</span></code>と

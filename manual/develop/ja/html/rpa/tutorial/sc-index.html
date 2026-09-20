@@ -250,7 +250,12 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: 自己無撞着反復の最大回数。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: 混合パラメータ（0: 混合なし、1: 古い解を完全保持）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: ギャップ関数の収束条件。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: 固有値モードで計算する固有値の数。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: 固有値モードで計算する固有値の数。
+動的経路では、これは列挙される固有値の個数を決めるだけで、どれが主固有値
+として報告されるかは決めなくなりました。カーネルがチャネルの偶振動数
+セクターを保存する場合、主固有値はそのセクターに制限した対称性整合な解
+（下記の<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を参照）から取られ、その実部最大の固有値は
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存しません。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>（デフォルト）、<code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>、
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
@@ -284,7 +289,18 @@ SC固有値）を求めます。シフトは内部で差し引かれるので、
 <em>絶対値</em> より大きい正の<span class="math notranslate nohighlight">\(\sigma\)</span>を与えます（<span class="math notranslate nohighlight">\(A + \sigma I\)</span>の
 スペクトルが全て正の実部になるように）。主固有値が負になる場合や、対形成が
 弱い系（低圧・擬1次元）を走査する場合に推奨します。上記の<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>
-（shift-invert のターゲット）とは別物である点に注意してください。</p></li>
+（shift-invert のターゲット）とは別物である点に注意してください。動的経路
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）では、チャネルについて実部最大の選択が自動で
+適用されます（issue #202）。カーネルがチャネルの偶振動数セクターを保存する
+場合、主固有値はそのセクターに制限した対称性整合な解（<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span>
+<span class="pre">=</span> <span class="pre">&quot;LR_projected&quot;</span></code>）から取られ、その実部最大の固有値は<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>
+に依存しません。セクターを保存せず、かつ素の<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>の集合に正のチャネル
+固有値が含まれない場合は、代わりに<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>で一度だけ
+解き直します（<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>）。いずれも<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>に記録
+されます（下記参照）。利用者が指定した<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>は非射影の経路に
+適用されます。シード（固有ベクトル継続）付きの実行は解き直されないため、斥力
+優勢な温度スキャンでは各点で<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を指定して、シード
+継続を主固有値と一致させてください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code>でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
 実行します。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>の <strong>両方</strong> に
 対応します（デフォルト<code class="docutils literal notranslate"><span class="pre">false</span></code>）。固有値ソルバー本体（ARPACK Arnoldi・べき乗
@@ -718,6 +734,15 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 反復ベクトルを射影したセクターを、（射影を行わない）固有値ソルバーモードでは
 固有対の並べ替えが一致した段階を表し、後者は<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の
 <code class="docutils literal notranslate"><span class="pre">match</span></code>列の意味そのものです。同じ節を参照してください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>: 報告される主固有値を生んだ選択基準。
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>（保存されたチャネルセクターに制限した対称性整合な解。
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>非依存の基準）・<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>（素の<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>、絶対値
+最大）・<code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code>（利用者指定の<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>、実部最大）・
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>（非射影の<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>集合に正のチャネル固有値が無かった
+ときの、実部最大を求める自動再求解）・<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>（微小演算子の稠密な
+実部最大解）・<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>（べき乗反復）のいずれか
+です。<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>には<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code>ヘッダー行と
+しても書き出されます。</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>最小の正の松原振動数（インデックス<code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>）におけるギャップの単一振動数
@@ -794,11 +819,36 @@ bond エントリの<code class="docutils literal notranslate"><span class="pre"
 常にカーネル本来の固有値となります。ギャップの内訳はセクター重みが示します。
 どちらの場合であったかは、<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>）として npz のキーおよび固有値ファイルの
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> ヘッダー行に記録されます。固有値ソルバーモードは
-射影を行わず、計算された固有対を並べ替えるだけです。その際はチャネルの偶振動数
-セクターを優先し、そこに固有対が無い場合にのみ結合パリティセクターへ
-フォールバックします。この場合の<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>は一致した段階を表し、
-<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">match</span></code>列の見出しもそれに従います。</p>
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> ヘッダー行に記録されます。固有値ソルバー系では、
+カーネルがチャネルの偶振動数セクターを保存する場合、主固有対はそのセクターに
+制限した解から得られます（<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;channel&quot;</span></code>、issue #202）。
+保存しない場合は計算された固有対を並べ替え、チャネルの偶振動数セクターを優先し、
+そこに固有対が無い場合にのみ結合パリティセクターへフォールバックします。この
+場合の<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>は一致した段階を表し、<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の
+<code class="docutils literal notranslate"><span class="pre">match</span></code>列の見出しもそれに従います。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>主固有値は</strong> <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> <strong>に依存しません。</strong> 素の<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>
+は ARPACK に <em>絶対値</em> 最大の固有値（<code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>）を要求するため、より
+大きな実部をもつ逆セクターや斥力的なモードに埋もれて、小さな正（引力的）の
+チャネル固有値が短いリストから欠落することがあり、その場合に報告される主固有値は
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存してしまいます。カーネルがチャネルの偶振動数
+セクターを保存する場合、動的ソルバーはそのセクターに制限したカーネル
+（べき乗反復と同じ射影）を解き、その実部最大の固有値はチャネルの Tc 固有値で
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存しません。そのセクターが斥力的なら答えは最も斥力の
+弱い（実部最大の）固有値です。セクターを保存しない場合は、非射影の<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>
+集合に正のチャネル固有値が無ければ<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>（実部最大）で
+<strong>一度だけ</strong>解き直します（ベストエフォート）。用いた基準は
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>として記録されます（<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>・
+<code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code>（利用者指定の<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>）・<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>（自動再求解）・
+<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>）。npz のキーとしても、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code> ヘッダー行としても
+書き出されます。あらかじめ<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を指定しておけば非射影
+経路での追加の求解は生じません。主となる正の固有値の基準は<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>
+（自己無撞着なべき乗反復。斥力優勢のときは<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を
+併用）です。これは実部最大のモードに直接収束し、<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>には
+まったく依存しません。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>

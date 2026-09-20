@@ -203,6 +203,11 @@ This section controls the Eliashberg solver. Key parameters:
 - ``alpha``: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).
 - ``convergence_tol``: Convergence criterion on the gap function.
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
+  On the dynamic path this now controls only how many eigenvalues are listed,
+  not which one is reported as leading: when the kernel conserves the channel's
+  even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
+  solve restricted to that sector (see ``spectral_shift`` below), whose
+  largest-real eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
@@ -239,7 +244,20 @@ This section controls the Eliashberg solver. Key parameters:
   eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
   Recommended whenever the leading eigenvalue comes out negative or you scan
   weakly-pairing systems (low pressure, quasi-1D). Note this differs from
-  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
+  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift). On the
+  dynamic path (``frequency = "dynamic"``) the largest-real selection is applied
+  automatically for the channel (issue #202): when the kernel conserves the
+  channel's even-frequency sector, the leading eigenvalue comes from a
+  symmetry-valid solve restricted to that sector (``eigenvalue_selection =
+  "LR_projected"``), whose largest-real eigenvalue is num_eigenvalues-
+  independent; when it does not conserve the sector and a plain ``arnoldi`` set
+  holds no positive channel eigenvalue, the solver instead re-solves once with
+  ``spectral_shift = "auto"`` (``"LR_retry"``). Both are recorded in
+  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift`` still
+  applies to the unprojected path; a seeded (eigenvector-continuation) run is
+  never re-solved, so a repulsive-dominant temperature scan should set
+  ``spectral_shift = "auto"`` for every point to keep the seeded continuation
+  consistent with the leading value.
 - ``gpu``: ``true`` runs the kernel-apply (matvec/matmat, the FFT convolution)
   on the GPU (CuPy) for **both** ``frequency = "dynamic"`` and
   ``frequency = "static"`` (default ``false``). The eigensolver itself (ARPACK
@@ -698,6 +716,16 @@ mode writes:
      modes, which never project, it is the stage the eigenpair reordering
      matched with, and therefore what the ``match`` column of
      ``eigenvalue.dat`` means. See the same subsection.
+   - ``eigenvalue_selection``: which selection criterion produced the reported
+     leading eigenvalue -- ``"LR_projected"`` (a symmetry-valid solve restricted
+     to a conserved channel sector, the num_eigenvalues-independent criterion),
+     ``"LM"`` (plain ``arnoldi``, largest magnitude), ``"LR"`` (``spectral_shift``
+     set by the user, largest real part), ``"LR_retry"`` (the automatic
+     largest-real re-solve when an unprojected ``"LM"`` set held no positive
+     channel eigenvalue), ``"dense-LR"`` (the tiny-operator dense largest-real
+     path), ``"shift-invert"``, or ``"iteration"`` (the power iteration). Also
+     written as the ``# eigenvalue_selection: ...`` header line of
+     ``eigenvalue.dat``.
 
 ``gap.dat``
    A single-frequency slice of the gap at the lowest positive Matsubara
@@ -784,12 +812,41 @@ the requested channel, and the weights say what it is instead.
    the sector weights show the composition of the gap that produced it. Which
    case applied is recorded per run as ``sector_selection``
    (``"channel"``, ``"combined_parity"`` or ``"none"``) -- an npz key and the
-   ``# sector_selection=...`` header line of the eigenvalue file. The
-   eigenvalue solver modes never project; they order the computed eigenpairs,
-   preferring the channel's even-frequency sector and falling back to its
-   combined-parity sector only if no eigenpair lies in it. There
-   ``sector_selection`` names the stage that matched, which is also what the
-   ``match`` column of ``eigenvalue.dat`` is labelled with.
+   ``# sector_selection=...`` header line of the eigenvalue file. On the
+   eigenvalue solver family, when the kernel conserves the channel's
+   even-frequency sector the leading eigenpair comes from a solve restricted to
+   that sector (``sector_selection = "channel"``, issue #202); otherwise the
+   computed eigenpairs are ordered, preferring the channel's even-frequency
+   sector and falling back to its combined-parity sector only if no eigenpair
+   lies in it. There ``sector_selection`` names the stage that matched, which is
+   also what the ``match`` column of ``eigenvalue.dat`` is labelled with.
+
+.. note::
+
+   **Leading eigenvalue independent of** ``num_eigenvalues``. The plain
+   ``arnoldi`` method asks ARPACK for the eigenvalues of largest *magnitude*
+   (``which='LM'``), so a small positive (attractive) channel eigenvalue can be
+   absent from a short list dominated by larger-real opposite-sector or repulsive
+   modes -- and the reported leading value would then depend on
+   ``num_eigenvalues``. When the kernel conserves the channel's even-frequency
+   sector, the dynamic solver instead solves the kernel *restricted to that
+   sector* (the same projector the power iteration uses), whose largest-real
+   eigenvalue is the channel's Tc eigenvalue independent of ``num_eigenvalues``;
+   if that sector is repulsive the answer is its least-repulsive (largest-real)
+   eigenvalue. When the kernel does not conserve the sector, an unprojected
+   ``"LM"`` set holding no positive channel eigenvalue is re-solved **once** with
+   ``spectral_shift = "auto"`` (largest real part) as a best effort. Which
+   criterion was used is recorded as ``eigenvalue_selection`` --
+   ``"LR_projected"``, ``"LM"``, ``"LR"`` (user ``spectral_shift``),
+   ``"LR_retry"`` (the automatic re-solve), ``"dense-LR"``, ``"shift-invert"``
+   or ``"iteration"`` -- both as an npz key and as the
+   ``# eigenvalue_selection: ...`` header line of ``eigenvalue.dat``. Setting
+   ``spectral_shift = "auto"`` up front avoids the extra solve on the
+   unprojected path. The reference
+   for the leading positive eigenvalue is ``solver_mode = "iteration"`` (the
+   self-consistent power iteration, with ``spectral_shift = "auto"`` when the
+   kernel is repulsive-dominant): it converges to the mode of largest real part
+   directly and does not depend on ``num_eigenvalues`` at all.
 
 .. warning::
 

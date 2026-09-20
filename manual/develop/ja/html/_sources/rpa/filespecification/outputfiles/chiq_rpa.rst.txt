@@ -271,11 +271,18 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 ``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
 ``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ・
 ``gap_sector_weights``\ ・\ ``gap_sector_labels``\ ・
-``sector_selection``\ 。これらは返されたギャップの運動量・振動数
-パリティセクター4つの重み、その名前、およびその実行が選んだセクター
+``sector_selection``\ ・\ ``eigenvalue_selection``\ 。これらは返された
+ギャップの運動量・振動数
+パリティセクター4つの重み、その名前、その実行が選んだセクター
 （``"channel"``\ ・\ ``"combined_parity"``\ ・\ ``"none"``\ 。べき乗反復が
 射影したセクター、固有値ソルバーモードでは固有対の並べ替えが一致した
-段階）です。
+段階）、および報告される主固有値を生んだ選択基準
+（``"LR_projected"``\ ＝保存されたチャネルセクターに制限した対称性整合な解
+（``num_eigenvalues``\ 非依存の基準）、``"LM"``\ ＝素の\ ``arnoldi``\ の絶対値
+最大、``"LR"``\ ＝利用者指定の\ ``spectral_shift``\ による実部最大、
+``"LR_retry"``\ ＝非射影の\ ``"LM"``\ 集合に正のチャネル固有値が無かったときの
+実部最大を求める自動再求解、``"dense-LR"``\ ＝微小演算子の稠密な実部最大解、
+``"shift-invert"``\ 、``"iteration"``\ ）です。
 :ref:`動的ソルバーのペアリングチャネル <sc_dynamic_channels>`\ を参照）に
 加えて、\ ``bond_channels``\ （``true``\ ）、\ ``bond_delta_r`` /
 ``bond_reverse``\ （アーカイブのボンドトポロジー。上記の
@@ -299,7 +306,8 @@ ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 even_k_odd_w=... odd_k_odd_w=...``\ のヘッダー行（小数6桁）を
 1行持ちます。これは npz の\ ``gap_sector_weights``\ キーと同じ4つの
 数値です。その直後に
-``# sector_selection=<channel|combined_parity|none>``\ の行が
+``# sector_selection=<channel|combined_parity|none>``\ の行、続いて
+``# eigenvalue_selection: <LR_projected|LM|LR|LR_retry|dense-LR|shift-invert|iteration>``\ の行が
 続きます。固有値表の\ ``match``\ 列の見出しも同じセクターに従い、
 ``match(1=channel even-frequency sector)``\ または
 ``match(1=combined-parity sector; no even-frequency eigenpair)``\ と

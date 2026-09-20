@@ -280,11 +280,20 @@ override the names of <code class="docutils literal notranslate"><span class="pr
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> the run solves. <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> gains, in addition to its base key set (<code class="docutils literal notranslate"><span class="pre">gap</span></code>,
 <code class="docutils literal notranslate"><span class="pre">iomega</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">frequency</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>,
 <code class="docutils literal notranslate"><span class="pre">axis_order</span></code>, <code class="docutils literal notranslate"><span class="pre">normalization</span></code>, <code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>,
-<code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code> and <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> –
+<code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>, <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> and
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> –
 the returned gap’s four momentum/frequency parity-sector weights, their names,
-and the sector the run selected in (<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code> or
+the sector the run selected in (<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code> or
 <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>: the sector the power iteration projected onto, or on the
-eigenvalue solver modes the stage the eigenpair reordering matched with); see
+eigenvalue solver modes the stage the eigenpair reordering matched with), and
+the selection criterion that produced the reported leading eigenvalue
+(<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code> = a symmetry-valid solve restricted to a conserved channel
+sector, the num_eigenvalues-independent criterion; <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> = plain <code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>
+largest magnitude; <code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code> = user <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> largest real part;
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code> = the automatic largest-real re-solve when an unprojected
+<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> set held no positive channel eigenvalue; <code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code> = the
+tiny-operator dense largest-real path; <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>; or
+<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>); see
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-channels"><span class="std std-ref">Pairing channels of the dynamic solver</span></a>):
 <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>
 (<code class="docutils literal notranslate"><span class="pre">true</span></code>), <code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_reverse</span></code> (the archive’s bond
@@ -304,7 +313,10 @@ vertex, real <code class="docutils literal notranslate"><span class="pre">ndarra
 carries one <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">even_k_even_w=...</span> <span class="pre">odd_k_even_w=...</span>
 <span class="pre">even_k_odd_w=...</span> <span class="pre">odd_k_odd_w=...</span></code> header line (six decimals), the same four
 numbers as the <code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code> npz key, followed by
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=&lt;channel|combined_parity|none&gt;</span></code>. The <code class="docutils literal notranslate"><span class="pre">match</span></code> column of
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=&lt;channel|combined_parity|none&gt;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">&lt;LR_projected|LM|LR|LR_retry|dense-LR|shift-invert|iteration&gt;</span></code>.
+The
+<code class="docutils literal notranslate"><span class="pre">match</span></code> column of
 the per-eigenvalue table is named after that same sector:
 <code class="docutils literal notranslate"><span class="pre">match(1=channel</span> <span class="pre">even-frequency</span> <span class="pre">sector)</span></code> or
 <code class="docutils literal notranslate"><span class="pre">match(1=combined-parity</span> <span class="pre">sector;</span> <span class="pre">no</span> <span class="pre">even-frequency</span> <span class="pre">eigenpair)</span></code>. When
