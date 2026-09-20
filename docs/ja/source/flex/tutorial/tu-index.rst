@@ -504,10 +504,15 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartree_fock = true``\
 を単独で指定した場合は通常の FLEX の GPU 経路が使われます（下記\ ``gpu``\ の
 項を参照）。\ ``longitudinal_bond_channels = true``\ （\ ``flex_hartree_fock = true``\
-が前提）の場合は代わりに、ドレッシング・有効相互作用・自己エネルギー
-の転送が GPU 上で実行され、ボンド配列はホストメモリに置かれたまま振動数
+が前提）の場合は代わりに、ボンドバブル・ドレッシング・有効相互作用・自己
+エネルギーの転送がすべて GPU 上で実行されます。Green 関数は反復をまたいで
+デバイス上に置かれたままで、バブルもそこで組み立てられるため、1回のマップで
+ホストへ渡るのはバブルの結果（チャネル対ごとに1ブロック）と、従来どおりの
+縮約および静的スライスです。ボンド配列自体はホストメモリに置かれたまま振動数
 バッチを1つずつ転送します。バッチ幅はホスト側の上限（``longitudinal_bond_memory_cap_gb``\
-）とデバイスの空きメモリの両方に照らして選ばれます（``longitudinal_bond_freq_batch``\
+）とデバイスの空きメモリの両方に照らして選ばれ、デバイス側の表には
+``dressing``\ ・\ ``transport``\ と並んで\ ``bubble``\ の行が現れます
+（``longitudinal_bond_freq_batch``\
 を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
 範囲で CPU 実行と一致します。出力には\ ``longitudinal_bond_device``\ と
 ``longitudinal_bond_nb``\ が記録されます。\ ``longitudinal_bond_guard_freqs =
