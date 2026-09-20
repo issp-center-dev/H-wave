@@ -685,6 +685,19 @@ mode writes:
      all components and its largest-magnitude component is rotated
      real-positive, so the stored gap is reproducible across runs and
      linear-algebra backends.
+   - ``gap_sector_weights``: four real numbers summing to 1 -- the fraction of
+     :math:`\|\phi\|^2` in each momentum/frequency parity sector of the
+     returned gap (see
+     :ref:`Pairing channels of the dynamic solver <sc_dynamic_channels>`).
+   - ``gap_sector_labels``: the names of those four sectors, in the same
+     order: ``"even_k_even_w"``, ``"odd_k_even_w"``, ``"even_k_odd_w"``,
+     ``"odd_k_odd_w"``.
+   - ``sector_selection``: the sector this run selected in -- ``"channel"``,
+     ``"combined_parity"`` or ``"none"``. On the power-iteration path it is
+     the sector the iterates were projected onto; on the eigenvalue solver
+     modes, which never project, it is the stage the eigenpair reordering
+     matched with, and therefore what the ``match`` column of
+     ``eigenvalue.dat`` means. See the same subsection.
 
 ``gap.dat``
    A single-frequency slice of the gap at the lowest positive Matsubara
@@ -700,18 +713,94 @@ Like the static solver, the dynamic mode reports the leading eigenpair **of the
 requested pairing channel**, not merely the algebraically largest eigenvalue.
 Fermion antisymmetry fixes the combined parity of the gap under
 :math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
-\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)`: even for ``singlet`` (this admits
-both a conventional even-frequency and an odd-frequency singlet) and odd for
-``triplet``. The Arnoldi eigenpairs are reordered so that the channel-parity
-mode leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries the same
-trailing ``match(1=channel-parity)`` column as the static output (``1`` in the
-requested sector, ``0`` in the opposite one). If none of the ``num_eigenvalues``
-computed eigenpairs lies in the requested sector, the solver warns and falls
-back to the raw leading pair; increase ``num_eigenvalues`` or check
-``pairing_type`` in that case. The power-iteration path (``solver_mode =
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)`: even for ``singlet`` and odd for
+``triplet``. Within that constraint the solver selects the conventional
+**even-frequency** sector of the requested channel, as described in the next
+subsection. The Arnoldi eigenpairs are reordered so that the channel mode
+leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries a trailing
+``match`` column like the static output (``1`` in the matched sector, ``0``
+outside it). That column is **named after the sector that matched** --
+``match(1=channel even-frequency sector)``, or
+``match(1=combined-parity sector; no even-frequency eigenpair)`` when the
+fallback stage was used -- so a ``1`` never has to be guessed at. If none of
+the ``num_eigenvalues`` computed eigenpairs lies in either sector, the solver
+warns and falls back to the raw leading pair; increase ``num_eigenvalues`` or
+check ``pairing_type`` in that case. The power-iteration path (``solver_mode =
 "iteration"``) likewise projects every iterate onto the channel sector when the
-kernel commutes with parity (a centrosymmetric model); if it does not, the
-projection is disabled with a warning and the un-projected iteration is used.
+kernel preserves it, onto the wider combined-parity sector when it preserves
+only that, and not at all when it preserves neither (each fallback is warned
+about). Both paths record what they used as ``sector_selection``.
+
+.. _sc_dynamic_channels:
+
+Pairing channels of the dynamic solver
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The combined parity above is only the antisymmetry *constraint*; each of its
+two eigenspaces still contains two frequency parities. The channels the solver
+reports are the conventional **even-frequency** ones:
+
+- ``singlet``: even in :math:`\mathbf{k}`, even in frequency;
+- ``triplet``: odd in :math:`\mathbf{k}`, even in frequency.
+
+Even frequency means invariance under
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\alpha\beta}(\mathbf{k}, -i\omega_n)` (the frequency alone, orbitals
+untouched); the momentum parity carries the orbital transpose,
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, i\omega_n)`, exactly as on the static path.
+Their product is the combined parity above.
+
+**Odd-frequency pairing is not solved for.** The remaining two sectors --
+odd :math:`\mathbf{k}` with odd frequency (combined parity :math:`+1`) and
+even :math:`\mathbf{k}` with odd frequency (combined parity :math:`-1`) --
+are annihilated by both channel projectors.
+
+Each run records what it actually returned: the four sector weights
+(squared-norm fractions, summing to 1) are written to ``gap_dynamic.npz`` /
+``eliashberg_bond_<type>.npz`` as ``gap_sector_weights`` with their names in
+``gap_sector_labels``, and as a header line
+
+.. code-block::
+
+   # gap_sector_weights even_k_even_w=1.000000 odd_k_even_w=0.000000 even_k_odd_w=0.000000 odd_k_odd_w=0.000000
+
+in ``eigenvalue.dat`` (and in the bond entries' ``eigenvalue_bond_<type>.dat``).
+The solver logs the channel's own weight at ``INFO`` and warns when it falls
+below ``0.999`` -- the returned gap is then not a pure even-frequency state of
+the requested channel, and the weights say what it is instead.
+
+.. note::
+
+   **The channel projection is applied only where the kernel conserves the
+   frequency parity** -- any single-orbital model, and multi-orbital models
+   with the corresponding lattice and orbital symmetry. A general multi-orbital
+   kernel conserves only the product of the two parities (the antisymmetry
+   constraint), and projecting the power iteration onto the narrower
+   even-frequency sector would then turn the eigenproblem into a restriction of
+   itself, whose leading value is not an eigenvalue of the kernel. In that case
+   the iteration projects onto the combined-parity sector instead, with a
+   warning, so the reported :math:`\lambda` is always a genuine eigenvalue and
+   the sector weights show the composition of the gap that produced it. Which
+   case applied is recorded per run as ``sector_selection``
+   (``"channel"``, ``"combined_parity"`` or ``"none"``) -- an npz key and the
+   ``# sector_selection=...`` header line of the eigenvalue file. The
+   eigenvalue solver modes never project; they order the computed eigenpairs,
+   preferring the channel's even-frequency sector and falling back to its
+   combined-parity sector only if no eigenpair lies in it. There
+   ``sector_selection`` names the stage that matched, which is also what the
+   ``match`` column of ``eigenvalue.dat`` is labelled with.
+
+.. warning::
+
+   **Changed in this version.** Earlier versions selected the eigenpair by the
+   combined parity alone. A reported ``triplet`` could therefore be an
+   odd-frequency (even :math:`\mathbf{k}`, odd frequency) state, and -- more
+   rarely -- a reported ``singlet`` an odd :math:`\mathbf{k}`/odd-frequency
+   one, since both carry the right combined parity. Triplet results of the
+   dynamic solver obtained before this version should be recomputed; singlet
+   runs whose gap already sits in the (even :math:`\mathbf{k}`, even frequency)
+   sector are numerically unchanged.
 
 .. _sc_channel_decomposition:
 

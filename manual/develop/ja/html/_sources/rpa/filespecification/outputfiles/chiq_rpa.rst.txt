@@ -255,7 +255,14 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 -- を、その実行が解く単一の\ ``pairing_type``\ について書き出します。\ ``gap_dynamic.npz``
 は、基本のキー集合（``gap``\ ・\ ``iomega``\ ・\ ``T``\ ・
 ``pairing_type``\ ・\ ``frequency``\ ・\ ``eigenvalue``\ ・
-``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ）に
+``axis_order``\ ・\ ``normalization``\ ・\ ``momentum_convention``\ ・
+``gap_sector_weights``\ ・\ ``gap_sector_labels``\ ・
+``sector_selection``\ 。これらは返されたギャップの運動量・振動数
+パリティセクター4つの重み、その名前、およびその実行が選んだセクター
+（``"channel"``\ ・\ ``"combined_parity"``\ ・\ ``"none"``\ 。べき乗反復が
+射影したセクター、固有値ソルバーモードでは固有対の並べ替えが一致した
+段階）です。
+:ref:`動的ソルバーのペアリングチャネル <sc_dynamic_channels>`\ を参照）に
 加えて、\ ``bond_channels``\ （``true``\ ）、\ ``bond_delta_r`` /
 ``bond_reverse``\ （アーカイブのボンドトポロジー。上記の
 ``longitudinal_bond_delta_r`` / ``longitudinal_bond_reverse``\ に
@@ -272,6 +279,19 @@ parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
 ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
 場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
+
+動的ソルバーの\ ``eigenvalue.dat``\ は、オンサイトのものも含めて
+``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
+even_k_odd_w=... odd_k_odd_w=...``\ のヘッダー行（小数6桁）を
+1行持ちます。これは npz の\ ``gap_sector_weights``\ キーと同じ4つの
+数値です。その直後に
+``# sector_selection=<channel|combined_parity|none>``\ の行が
+続きます。固有値表の\ ``match``\ 列の見出しも同じセクターに従い、
+``match(1=channel even-frequency sector)``\ または
+``match(1=combined-parity sector; no even-frequency eigenpair)``\ と
+なります。``sector_selection``\ が\ ``none``\ の場合（どちらのセクターにも
+固有対がなかった場合）は、列見出しは従来の\ ``match(1=channel-parity)``\ の
+ままで、値はすべて\ ``0``\ です。
 
 **インプロセスの経路** （``[mode.param]
 longitudinal_bond_pairing``\ ）。リクエストされたチャネル
@@ -301,7 +321,8 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   形式で、\ ``# bond_channels=true``\ ・
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
-  parity_leakage=<...>``\ のヘッダー行を持ちます。
+  parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
+  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
 
 失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

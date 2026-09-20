@@ -726,6 +726,19 @@ mode writes:</p>
 all components and its largest-magnitude component is rotated
 real-positive, so the stored gap is reproducible across runs and
 linear-algebra backends.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>: four real numbers summing to 1 – the fraction of
+<span class="math notranslate nohighlight">\(\|\phi\|^2\)</span> in each momentum/frequency parity sector of the
+returned gap (see
+<a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">Pairing channels of the dynamic solver</span></a>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>: the names of those four sectors, in the same
+order: <code class="docutils literal notranslate"><span class="pre">&quot;even_k_even_w&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;odd_k_even_w&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;even_k_odd_w&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;odd_k_odd_w&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>: the sector this run selected in – <code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>. On the power-iteration path it is
+the sector the iterates were projected onto; on the eigenvalue solver
+modes, which never project, it is the stage the eigenpair reordering
+matched with, and therefore what the <code class="docutils literal notranslate"><span class="pre">match</span></code> column of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> means. See the same subsection.</p></li>
 </ul>
 </dd>
 <dt><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code></dt><dd><p>A single-frequency slice of the gap at the lowest positive Matsubara
@@ -742,18 +755,87 @@ the slice index and its <span class="math notranslate nohighlight">\(\omega_n\)<
 requested pairing channel</strong>, not merely the algebraically largest eigenvalue.
 Fermion antisymmetry fixes the combined parity of the gap under
 <span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
-\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)\)</span>: even for <code class="docutils literal notranslate"><span class="pre">singlet</span></code> (this admits
-both a conventional even-frequency and an odd-frequency singlet) and odd for
-<code class="docutils literal notranslate"><span class="pre">triplet</span></code>. The Arnoldi eigenpairs are reordered so that the channel-parity
-mode leads, and the per-eigenvalue table in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> carries the same
-trailing <code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code> column as the static output (<code class="docutils literal notranslate"><span class="pre">1</span></code> in the
-requested sector, <code class="docutils literal notranslate"><span class="pre">0</span></code> in the opposite one). If none of the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>
-computed eigenpairs lies in the requested sector, the solver warns and falls
-back to the raw leading pair; increase <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or check
-<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> in that case. The power-iteration path (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)\)</span>: even for <code class="docutils literal notranslate"><span class="pre">singlet</span></code> and odd for
+<code class="docutils literal notranslate"><span class="pre">triplet</span></code>. Within that constraint the solver selects the conventional
+<strong>even-frequency</strong> sector of the requested channel, as described in the next
+subsection. The Arnoldi eigenpairs are reordered so that the channel mode
+leads, and the per-eigenvalue table in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> carries a trailing
+<code class="docutils literal notranslate"><span class="pre">match</span></code> column like the static output (<code class="docutils literal notranslate"><span class="pre">1</span></code> in the matched sector, <code class="docutils literal notranslate"><span class="pre">0</span></code>
+outside it). That column is <strong>named after the sector that matched</strong> –
+<code class="docutils literal notranslate"><span class="pre">match(1=channel</span> <span class="pre">even-frequency</span> <span class="pre">sector)</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">match(1=combined-parity</span> <span class="pre">sector;</span> <span class="pre">no</span> <span class="pre">even-frequency</span> <span class="pre">eigenpair)</span></code> when the
+fallback stage was used – so a <code class="docutils literal notranslate"><span class="pre">1</span></code> never has to be guessed at. If none of
+the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> computed eigenpairs lies in either sector, the solver
+warns and falls back to the raw leading pair; increase <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> or
+check <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> in that case. The power-iteration path (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
 <span class="pre">&quot;iteration&quot;</span></code>) likewise projects every iterate onto the channel sector when the
-kernel commutes with parity (a centrosymmetric model); if it does not, the
-projection is disabled with a warning and the un-projected iteration is used.</p>
+kernel preserves it, onto the wider combined-parity sector when it preserves
+only that, and not at all when it preserves neither (each fallback is warned
+about). Both paths record what they used as <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>.</p>
+</section>
+<section id="pairing-channels-of-the-dynamic-solver">
+<span id="sc-dynamic-channels"></span><h3>Pairing channels of the dynamic solver<a class="headerlink" href="#pairing-channels-of-the-dynamic-solver" title="Link to this heading">¶</a></h3>
+<p>The combined parity above is only the antisymmetry <em>constraint</em>; each of its
+two eigenspaces still contains two frequency parities. The channels the solver
+reports are the conventional <strong>even-frequency</strong> ones:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">singlet</span></code>: even in <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>, even in frequency;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">triplet</span></code>: odd in <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>, even in frequency.</p></li>
+</ul>
+<p>Even frequency means invariance under
+<span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\alpha\beta}(\mathbf{k}, -i\omega_n)\)</span> (the frequency alone, orbitals
+untouched); the momentum parity carries the orbital transpose,
+<span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, i\omega_n)\)</span>, exactly as on the static path.
+Their product is the combined parity above.</p>
+<p><strong>Odd-frequency pairing is not solved for.</strong> The remaining two sectors –
+odd <span class="math notranslate nohighlight">\(\mathbf{k}\)</span> with odd frequency (combined parity <span class="math notranslate nohighlight">\(+1\)</span>) and
+even <span class="math notranslate nohighlight">\(\mathbf{k}\)</span> with odd frequency (combined parity <span class="math notranslate nohighlight">\(-1\)</span>) –
+are annihilated by both channel projectors.</p>
+<p>Each run records what it actually returned: the four sector weights
+(squared-norm fractions, summing to 1) are written to <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> /
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code> as <code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code> with their names in
+<code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>, and as a header line</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># gap_sector_weights even_k_even_w=1.000000 odd_k_even_w=0.000000 even_k_odd_w=0.000000 odd_k_odd_w=0.000000
+</pre></div>
+</div>
+<p>in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (and in the bond entries’ <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>).
+The solver logs the channel’s own weight at <code class="docutils literal notranslate"><span class="pre">INFO</span></code> and warns when it falls
+below <code class="docutils literal notranslate"><span class="pre">0.999</span></code> – the returned gap is then not a pure even-frequency state of
+the requested channel, and the weights say what it is instead.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>The channel projection is applied only where the kernel conserves the
+frequency parity</strong> – any single-orbital model, and multi-orbital models
+with the corresponding lattice and orbital symmetry. A general multi-orbital
+kernel conserves only the product of the two parities (the antisymmetry
+constraint), and projecting the power iteration onto the narrower
+even-frequency sector would then turn the eigenproblem into a restriction of
+itself, whose leading value is not an eigenvalue of the kernel. In that case
+the iteration projects onto the combined-parity sector instead, with a
+warning, so the reported <span class="math notranslate nohighlight">\(\lambda\)</span> is always a genuine eigenvalue and
+the sector weights show the composition of the gap that produced it. Which
+case applied is recorded per run as <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>
+(<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>) – an npz key and the
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> header line of the eigenvalue file. The
+eigenvalue solver modes never project; they order the computed eigenpairs,
+preferring the channel’s even-frequency sector and falling back to its
+combined-parity sector only if no eigenpair lies in it. There
+<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> names the stage that matched, which is also what the
+<code class="docutils literal notranslate"><span class="pre">match</span></code> column of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> is labelled with.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>Changed in this version.</strong> Earlier versions selected the eigenpair by the
+combined parity alone. A reported <code class="docutils literal notranslate"><span class="pre">triplet</span></code> could therefore be an
+odd-frequency (even <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>, odd frequency) state, and – more
+rarely – a reported <code class="docutils literal notranslate"><span class="pre">singlet</span></code> an odd <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>/odd-frequency
+one, since both carry the right combined parity. Triplet results of the
+dynamic solver obtained before this version should be recomputed; singlet
+runs whose gap already sits in the (even <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>, even frequency)
+sector are numerically unchanged.</p>
+</div>
 </section>
 <section id="channel-decomposition-diagnostic">
 <span id="sc-channel-decomposition"></span><h3>Channel decomposition (diagnostic)<a class="headerlink" href="#channel-decomposition-diagnostic" title="Link to this heading">¶</a></h3>

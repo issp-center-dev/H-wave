@@ -259,7 +259,14 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 -- を、その実行が解く単一の<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>について書き出します。<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>
 は、基本のキー集合（<code class="docutils literal notranslate"><span class="pre">gap</span></code>・<code class="docutils literal notranslate"><span class="pre">iomega</span></code>・<code class="docutils literal notranslate"><span class="pre">T</span></code>・
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>・
-<code class="docutils literal notranslate"><span class="pre">axis_order</span></code>・<code class="docutils literal notranslate"><span class="pre">normalization</span></code>・<code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>）に
+<code class="docutils literal notranslate"><span class="pre">axis_order</span></code>・<code class="docutils literal notranslate"><span class="pre">normalization</span></code>・<code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>・
+<code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>・<code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>・
+<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>。これらは返されたギャップの運動量・振動数
+パリティセクター4つの重み、その名前、およびその実行が選んだセクター
+（<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>。べき乗反復が
+射影したセクター、固有値ソルバーモードでは固有対の並べ替えが一致した
+段階）です。
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-channels"><span class="std std-ref">動的ソルバーのペアリングチャネル</span></a>を参照）に
 加えて、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>（<code class="docutils literal notranslate"><span class="pre">true</span></code>）、<code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> /
 <code class="docutils literal notranslate"><span class="pre">bond_reverse</span></code>（アーカイブのボンドトポロジー。上記の
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_delta_r</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_reverse</span></code>に
@@ -276,6 +283,18 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <span class="pre">ir_fit_tol</span></code>を参照）を持ちます。<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>には
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された
 場合は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行が追加されます。</p>
+<p>動的ソルバーの<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>は、オンサイトのものも含めて
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">even_k_even_w=...</span> <span class="pre">odd_k_even_w=...</span>
+<span class="pre">even_k_odd_w=...</span> <span class="pre">odd_k_odd_w=...</span></code>のヘッダー行（小数6桁）を
+1行持ちます。これは npz の<code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>キーと同じ4つの
+数値です。その直後に
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=&lt;channel|combined_parity|none&gt;</span></code>の行が
+続きます。固有値表の<code class="docutils literal notranslate"><span class="pre">match</span></code>列の見出しも同じセクターに従い、
+<code class="docutils literal notranslate"><span class="pre">match(1=channel</span> <span class="pre">even-frequency</span> <span class="pre">sector)</span></code>または
+<code class="docutils literal notranslate"><span class="pre">match(1=combined-parity</span> <span class="pre">sector;</span> <span class="pre">no</span> <span class="pre">even-frequency</span> <span class="pre">eigenpair)</span></code>と
+なります。<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>が<code class="docutils literal notranslate"><span class="pre">none</span></code>の場合（どちらのセクターにも
+固有対がなかった場合）は、列見出しは従来の<code class="docutils literal notranslate"><span class="pre">match(1=channel-parity)</span></code>の
+ままで、値はすべて<code class="docutils literal notranslate"><span class="pre">0</span></code>です。</p>
 <p><strong>インプロセスの経路</strong> （<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
 <span class="pre">longitudinal_bond_pairing</span></code>）。リクエストされたチャネル
 （<code class="docutils literal notranslate"><span class="pre">singlet</span></code>・<code class="docutils literal notranslate"><span class="pre">triplet</span></code>のいずれか、または両方）ごとに、
@@ -304,7 +323,8 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 形式で、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された場合は<code class="docutils literal notranslate"><span class="pre">#</span>
-<span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行を持ちます。</p></li>
+<span class="pre">parity_leakage=&lt;...&gt;</span></code>、および上記の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">...</span></code>
+と<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>のヘッダー行を持ちます。</p></li>
 </ul>
 <p>失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの
