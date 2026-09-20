@@ -204,19 +204,32 @@ otherwise into the ``chiq_s`` file (which always exists; the charge-channel
 static keys are then found in ``chiq_s.npz`` -- an INFO line says so). The
 archive additionally carries ``longitudinal_bond_guard_freqs`` (string:
 ``"all"`` or ``"static"``, the frequency coverage of the bond dressing's
-conditioning guard), ``longitudinal_bond_device`` (string: ``"cupy"`` or
+conditioning guard), ``longitudinal_bond_cond_tol`` (float: the
+conditioning floor that guard compared ``longitudinal_bond_cond_min_s`` /
+``_c`` against, ``[mode.param] longitudinal_bond_cond_tol``),
+``longitudinal_bond_device`` (string: ``"cupy"`` or
 ``"numpy"``, the backend that ran the bond solve) and
 ``longitudinal_bond_nb`` (integer, the frequency batch actually used). The
 ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
-``chiq_s``, ``chiq_c``, ``chiq``, ``sigma`` and ``green``) also carries the
+``chiq_s``, ``chiq_c``, ``chiq``, ``sigma`` and ``green``) -- which includes
+every run with ``longitudinal_bond_channels = true``, since the bond gate
+requires the Hartree-Fock term -- also carries the
 provenance block ``scf_converged``, ``scf_iterations``, ``map_iteration``,
 ``state_iteration``, ``scf_sigma_residual``, ``scf_green_residual``,
 ``scf_component_residual``, ``payload_kind`` (``"last_map"`` for the
 susceptibilities, ``"final_state"`` for ``sigma`` / ``green``),
 ``hf_density_error`` (the density-closure error of the state the payload
-describes, with ``hf_density_source``) and ``density_target_enforced``.
+describes, with ``hf_density_source``), ``density_target_enforced``,
+``flex_guard_policy`` (string: ``"refuse"`` or ``"warn"``, the policy
+``[mode.param] flex_guard_policy`` requested) and
+``flex_guard_violations`` (integer: how many guard-violation EVENTS the run
+was allowed to pass under ``"warn"`` -- one per iteration for the
+equal-time density check and one per offending (channel, bosonic frequency,
+q-point) finding of the bond guard, so a single iteration can contribute
+several; ``0`` when no violation occurred, and always ``0`` under
+``"refuse"``, which ends the run at the first one).
 With ``longitudinal_bond_output_full = true`` the dedicated archive
 (``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
 holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic
@@ -227,7 +240,8 @@ vertices ``S_bond`` and ``C_bond`` (complex ``ndarray(nvol, ND, ND)``, the
 same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
 ``T``, ``nmat``, ``cell_shape``, the momentum-convention markers,
 ``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen static
-keys, the ``longitudinal_bond_guard_freqs`` / ``longitudinal_bond_device``
+keys, the ``longitudinal_bond_guard_freqs`` /
+``longitudinal_bond_cond_tol`` / ``longitudinal_bond_device``
 / ``longitudinal_bond_nb`` members and the provenance block; nothing else
 duplicates these arrays. ``S_bond`` and ``C_bond`` are the input the
 bond-resolved dynamic Eliashberg pairing solver needs in addition to

@@ -684,6 +684,37 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
 _BOND_COND_FLOOR = 1.0e-3
 
 
+def bond_conditioning_score(mat):
+    """Score the conditioning of the enlarged RPA denominator blocks of
+    ``mat`` `(Nx, Ny, Nz, ND, ND)`; pure, never raises.
+
+    Returns ``(worst, iq, ratio_iq, pole_iq, smin_iq, smax_iq)``: the guard
+    score ``worst`` (the minimum over q of the smaller of the two criteria
+    documented in :func:`_check_bond_conditioning`), the FLATTENED q index
+    ``iq`` attaining it, and that q block's relative ratio
+    ``sigma_min/sigma_max``, absolute pole distance
+    ``sigma_min/max(1, sigma_max)`` and two extreme singular values.
+
+    :func:`_check_bond_conditioning` is the raising wrapper around this
+    function, and a warn-and-continue policy (GitHub issue #199) reads the
+    same score without one -- so the two can never quote different numbers.
+    """
+    Nx, Ny, Nz, ND, _ = mat.shape
+    sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = sv[:, -1] / sv[:, 0]
+    # A zero (or non-finite) largest singular value means the block is the zero
+    # matrix -- as singular as it gets.
+    ratio = np.where(np.isfinite(ratio), ratio, 0.0)
+    # Absolute pole distance on the natural scale of I -/+ chi_bar V.
+    pole = sv[:, -1] / np.maximum(1.0, sv[:, 0])
+    pole = np.where(np.isfinite(pole), pole, 0.0)
+    score = np.minimum(ratio, pole)
+    iq = int(np.argmin(score))
+    return (float(score[iq]), iq, float(ratio[iq]), float(pole[iq]),
+            float(sv[iq, -1]), float(sv[iq, 0]))
+
+
 def _check_bond_conditioning(name, mat, cond_tol):
     """Refuse a singular / nearly singular enlarged RPA denominator.
 
@@ -720,19 +751,8 @@ def _check_bond_conditioning(name, mat, cond_tol):
     """
     if cond_tol is None:
         return None
-    Nx, Ny, Nz, ND, _ = mat.shape
-    sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratio = sv[:, -1] / sv[:, 0]
-    # A zero (or non-finite) largest singular value means the block is the zero
-    # matrix -- as singular as it gets.
-    ratio = np.where(np.isfinite(ratio), ratio, 0.0)
-    # Absolute pole distance on the natural scale of I -/+ chi_bar V.
-    pole = sv[:, -1] / np.maximum(1.0, sv[:, 0])
-    pole = np.where(np.isfinite(pole), pole, 0.0)
-    score = np.minimum(ratio, pole)
-    iq = int(np.argmin(score))
-    worst = float(score[iq])
+    Ny, Nz = mat.shape[1], mat.shape[2]
+    worst, iq, ratio_iq, pole_iq, smin_iq, smax_iq = bond_conditioning_score(mat)
     if worst > cond_tol:
         return worst
     qx, rem = divmod(iq, Ny * Nz)
@@ -747,8 +767,8 @@ def _check_bond_conditioning(name, mat, cond_tol):
         "interaction strength, raise the temperature, refine/reduce the "
         "q-grid, or -- if you deliberately want to study the stiff regime -- "
         "lower cond_tol.".format(
-            name, qx, qy, qz, float(ratio[iq]), float(pole[iq]), cond_tol,
-            sv[iq, -1], sv[iq, 0], name))
+            name, qx, qy, qz, ratio_iq, pole_iq, cond_tol,
+            smin_iq, smax_iq, name))
 
 
 def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
@@ -3491,7 +3511,16 @@ def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
 
 
 _GUARD_FREQS = ("all", "static")
+_GUARD_POLICIES = ("refuse", "warn")
 _STATIC_RESIDUAL_TOL = 1e-6
+
+
+def _at(iteration):
+    """`` (SCF iteration N)`` for a warning raised inside a self-consistency,
+    the empty string outside one. A refusal gets the same suffix from
+    ``flex_bond._dress``, which owns the iteration; a warning does not pass
+    through there, so it is appended here."""
+    return "" if iteration is None else " (SCF iteration {})".format(iteration)
 
 
 def solve_residual(mat, chi, cb):
@@ -3506,7 +3535,8 @@ def solve_residual(mat, chi, cb):
 
 
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
-                guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL):
+                guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
+                guard_policy="refuse", violations=None, iteration=None):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3531,12 +3561,29 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     denominator can still return a small residual while its result is
     dominated by amplified round-off. ``"static"`` therefore does not
     detect every near singularity -- use ``"all"`` whenever the run may
-    approach the instability."""
+    approach the instability.
+
+    ``guard_policy`` (GitHub issue #199): ``"refuse"`` (the default) is the
+    behaviour above. Under ``"warn"`` the conditioning guard and the
+    ``"static"`` residual guard LOG their finding instead of raising and
+    the batch is returned anyway, so that a transient excursion of a
+    self-consistency can pass; an EXACTLY singular solve and a non-finite
+    residual still raise, because there is nothing finite to continue
+    with. When ``violations`` is a list, one dict
+    ``{"channel", "l", "q", "kind", "value", "iteration"}`` is appended per
+    warned violation (``kind`` is ``"conditioning"`` or ``"residual"``).
+    Nothing is logged or recorded before the solve has succeeded: a warning
+    states that the dressing continues, and a batch that ends in a refusal
+    did not continue. ``iteration``, when given, names the self-consistency
+    iteration in the warnings and in the records."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
         raise ValueError("dress_batch: guard_freqs must be one of {}, got {!r}"
                          .format(list(_GUARD_FREQS), guard_freqs))
+    if guard_policy not in _GUARD_POLICIES:
+        raise ValueError("dress_batch: guard_policy must be one of {}, got {!r}"
+                         .format(list(_GUARD_POLICIES), guard_policy))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
     # array-like inputs are coerced once the module is known (the identity for
@@ -3556,26 +3603,48 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     idx = xp.arange(ND)
     mat[:, :, idx, idx] += 1.0
 
+    # warnings held back until there is a result to continue with:
+    # (format, args, violation record)
+    pending = []
+
     def _guard(mat_h, i_offset):
         # mat_h: HOST (n, ND, ND); i_offset: flattened index of its first row
+        if cond_tol is None:
+            return None
+        blocks = mat_h.reshape(-1, 1, 1, ND, ND)
+        worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+        if worst > cond_tol:
+            return worst
+        i += i_offset
+        l = l0 + i // nvol
+        q = i % nvol
+        qx, rem = divmod(q, Ny * Nz)
+        qy, qz = divmod(rem, Nz)
+        if guard_policy == "warn":
+            # DEFERRED: the solve below can still refuse this batch, and a
+            # warning that says the dressing continues must not outlive it
+            pending.append((
+                "dress_batch: flex_guard_policy = \"warn\": the %s RPA denominator is "
+                "singular or nearly singular at bosonic Matsubara index %d (grid index "
+                "l=%d) and q-point index (%d, %d, %d): sigma_min/sigma_max = %.3e, "
+                "sigma_min/max(1, sigma_max) = %.3e; the smaller of the two is <= "
+                "cond_tol = %.3e (sigma_min = %.3e, sigma_max = %.3e). The dressing "
+                "continues with an amplified result." + _at(iteration),
+                (channel, 2 * l - nmat, l, qx, qy, qz, ratio_i, pole_i, cond_tol,
+                 smin_i, smax_i),
+                {"channel": channel, "l": int(l), "q": int(q), "kind": "conditioning",
+                 "value": float(worst), "iteration": iteration}))
+            return worst
         try:
-            return _check_bond_conditioning(channel, mat_h.reshape(-1, 1, 1, ND, ND), cond_tol)
+            _check_bond_conditioning(channel, blocks, cond_tol)
         except ValueError as exc:
-            import re
-            m = re.search(r"q-point index \((\d+), 0, 0\)", str(exc))
-            if m is None:
-                raise
-            i = int(m.group(1)) + i_offset
-            l = l0 + i // nvol
-            q = i % nvol
-            qx, rem = divmod(q, Ny * Nz)
-            qy, qz = divmod(rem, Nz)
             raise ValueError(
                 "dress_batch: the {} RPA denominator is singular or nearly singular at "
                 "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
                 "the bond path has entered the instability region. Reduce the interaction "
                 "strength, raise the temperature, refine or reduce the q grid, or lower "
                 "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz)) from exc
+        raise AssertionError("dress_batch: the conditioning guard and its score disagree")
 
     l_static = nmat // 2
     cond_min = None
@@ -3595,8 +3664,27 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 "failed ({}): an unchecked slice of the frequency batch starting at grid index "
                 "l={} is exactly singular. Use guard_freqs = \"all\" to locate it, or reduce the "
                 "interaction / raise the temperature.".format(channel, exc, l0)) from exc
+    elif guard_policy == "warn":
+        # the conditioning guard no longer stops an amplified solve, so the
+        # exactly singular case reaches xp.linalg.solve here; name it
+        LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
+        try:
+            chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+        except LinAlgError as exc:
+            raise ValueError(
+                "dress_batch: the {} solve failed ({}): a slice of the frequency batch "
+                "starting at grid index l={} is EXACTLY singular, which flex_guard_policy = "
+                "\"warn\" cannot continue from (it tolerates a nearly singular denominator, "
+                "not a singular one). Reduce the interaction strength or raise the "
+                "temperature.".format(channel, exc, l0)) from exc
     else:
         chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    # the solve returned: the conditioning findings held back above describe a
+    # dressing that really did continue, so they are reported now
+    for fmt, args, record in pending:
+        logger.warning(fmt, *args)
+        if violations is not None:
+            violations.append(record)
     if guard_freqs == "static":
         r = solve_residual(mat, chi, cb)
         worst = int(xp.argmax(r))
@@ -3606,12 +3694,26 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
             q = worst % nvol
             qx, rem = divmod(q, Ny * Nz)
             qy, qz = divmod(rem, Nz)
-            raise ValueError(
-                "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
-                "residual ||mat chi - chibar||_F / max(1, ||chibar||_F) = {:.3e} exceeds {:.1e} "
-                "at bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
-                "the unchecked slice is singular or nearly singular. Use guard_freqs = \"all\" to "
-                "locate it, or reduce the interaction / raise the temperature."
-                .format(channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz))
+            if guard_policy == "warn" and np.isfinite(r_max):
+                logger.warning(
+                    "dress_batch: flex_guard_policy = \"warn\": with "
+                    "longitudinal_bond_guard_freqs = \"static\" the %s solve residual "
+                    "||mat chi - chibar||_F / max(1, ||chibar||_F) = %.3e exceeds %.1e at "
+                    "bosonic Matsubara index %d (grid index l=%d) and q-point index "
+                    "(%d, %d, %d); the unchecked slice is singular or nearly singular. "
+                    "The dressing continues with that result." + _at(iteration),
+                    channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz)
+                if violations is not None:
+                    violations.append({"channel": channel, "l": int(l), "q": int(q),
+                                       "kind": "residual", "value": float(r_max),
+                                       "iteration": iteration})
+            else:
+                raise ValueError(
+                    "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
+                    "residual ||mat chi - chibar||_F / max(1, ||chibar||_F) = {:.3e} exceeds {:.1e} "
+                    "at bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+                    "the unchecked slice is singular or nearly singular. Use guard_freqs = \"all\" to "
+                    "locate it, or reduce the interaction / raise the temperature."
+                    .format(channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz))
     del mat, flat
     return chi, (None if cond_min is None else float(cond_min))

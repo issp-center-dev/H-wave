@@ -269,7 +269,16 @@ class FLEX(RPA):
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb",
                           "longitudinal_bond_guard_freqs",
-                          "longitudinal_bond_pairing")
+                          "longitudinal_bond_pairing",
+                          "longitudinal_bond_cond_tol")
+
+    #: defaults of the guard keys of GitHub issue #199 -- the tolerance of the
+    #: Hermitian symmetry of the equal-time density, the conditioning floor of
+    #: the bond RPA denominator (the historical ``bond_channels._BOND_COND_FLOOR``)
+    #: and the policy a violation DURING the self-consistency is treated with.
+    _GUARD_DENSITY_TOL = 1.0e-8
+    _GUARD_BOND_COND_TOL = 1.0e-3
+    _GUARD_POLICIES = ("refuse", "warn")
 
     _SECOND_ORDER_VALUES = ("local", "takimoto")
     #: the accepted ``longitudinal_bond_pairing`` values and the channel tuple
@@ -303,6 +312,54 @@ class FLEX(RPA):
         return out
 
     @staticmethod
+    def _parse_guard_density_tol(param, hf_on):
+        """``flex_hf_density_tol`` (issue #199): the relative Frobenius
+        tolerance of the Hermitian symmetry ``rho_ab(r) = conj(rho_ba(-r))``
+        of the equal-time density. Meaningful only with the Hartree-Fock
+        term, so with ``flex_hartree_fock`` off a set key is warned about
+        once and ignored (the stale-key pattern)."""
+        import numbers
+        default = FLEX._GUARD_DENSITY_TOL
+        if "flex_hf_density_tol" not in param:
+            return default
+        if not hf_on:
+            logger.warning(
+                "[mode.param] flex_hf_density_tol set but flex_hartree_fock is not true; "
+                "the equal-time density is not evaluated, so the key is ignored (the "
+                "default %.1e is kept).", default)
+            return default
+        v = param["flex_hf_density_tol"]
+        if (isinstance(v, bool) or not isinstance(v, numbers.Real)
+                or not np.isfinite(v) or float(v) <= 0.0):
+            raise ValueError(
+                "[mode.param] flex_hf_density_tol must be a finite number > 0 (the relative "
+                "Frobenius tolerance of the Hermitian symmetry rho_ab(r) = conj(rho_ba(-r)) "
+                "of the equal-time density), got {!r}".format(v))
+        return float(v)
+
+    @staticmethod
+    def _parse_guard_policy(param, active):
+        """``flex_guard_policy`` (issue #199): ``"refuse"`` (the default) or
+        ``"warn"``. Meaningful only while Phase B is active; otherwise a set
+        key is warned about once and ignored."""
+        if "flex_guard_policy" not in param:
+            return "refuse"
+        if not active:
+            logger.warning(
+                "[mode.param] flex_guard_policy set but neither flex_hartree_fock nor "
+                "longitudinal_bond_channels is true; no Phase B guard runs, so the key is "
+                "ignored (the default \"refuse\" is kept).")
+            return "refuse"
+        v = param["flex_guard_policy"]
+        if not isinstance(v, str) or v.strip().lower() not in FLEX._GUARD_POLICIES:
+            raise ValueError(
+                "[mode.param] flex_guard_policy must be \"refuse\" (a guard violation ends "
+                "the run; the default) or \"warn\" (a violation DURING the self-consistency "
+                "is logged with the iteration and the location and the iteration continues; "
+                "the checks of the final state still refuse), got {!r}".format(v))
+        return v.strip().lower()
+
+    @staticmethod
     def _parse_phase_b_keys(info_mode):
         """Refusal precedence steps 1-3 on the RAW ``[mode.param]`` (before
         any numerical state exists). Returns the parsed values as a dict;
@@ -321,6 +378,12 @@ class FLEX(RPA):
         active = hf_on or gate_on
         out["active"] = active
         stale = [k for k in FLEX._PHASE_B_BOND_KEYS if k in param]
+        # the guard keys of issue #199: the two that are not bond-only are
+        # parsed (or warned about and ignored) on EVERY path, so that the
+        # three attributes always exist with the documented defaults
+        out["flex_hf_density_tol"] = FLEX._parse_guard_density_tol(param, hf_on)
+        out["flex_guard_policy"] = FLEX._parse_guard_policy(param, active)
+        out["longitudinal_bond_cond_tol"] = FLEX._GUARD_BOND_COND_TOL
         # the in-process pairing selector is validated on EVERY path (the value
         # domain first, then the gate coupling), so that a stale or misspelled
         # key is never silently ignored -- the gate-off branches below return
@@ -430,6 +493,16 @@ class FLEX(RPA):
                 "can return a tiny residual for a nearly singular denominator, so \"static\" does "
                 "NOT detect every near singularity), got {!r}".format(gf))
         out["longitudinal_bond_guard_freqs"] = gf.strip().lower()
+        ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
+        if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
+                or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_cond_tol must be a finite number in (0, 1) "
+                "(the conditioning floor of the enlarged bond RPA denominator, applied to "
+                "both the relative sigma_min/sigma_max and the absolute "
+                "sigma_min/max(1, sigma_max); default {:.1e}), got {!r}".format(
+                    FLEX._GUARD_BOND_COND_TOL, ct))
+        out["longitudinal_bond_cond_tol"] = float(ct)
         return out
 
     def _install_phase_b_keys(self):
@@ -444,6 +517,13 @@ class FLEX(RPA):
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
         self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
         self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
+        # the guard surface of issue #199
+        self.flex_hf_density_tol = raw["flex_hf_density_tol"]
+        self.longitudinal_bond_cond_tol = raw["longitudinal_bond_cond_tol"]
+        self.flex_guard_policy = raw["flex_guard_policy"]
+        #: transient guard violations tolerated under flex_guard_policy =
+        #: "warn" in THIS run (reset at solve entry)
+        self.flex_guard_violations = 0
         self._phase_b_active = raw["active"]
         if self._phase_b_active and str(self.calc_scheme).lower() != "general":
             raise ValueError(
@@ -1488,6 +1568,9 @@ class FLEX(RPA):
         self.state_iteration = 0
         self.hf_density_error_map = float("nan")
         self.hf_density_error_state = float("nan")
+        # the guard violations counted under flex_guard_policy = "warn" are
+        # per RUN, like every other provenance member reset here
+        self.flex_guard_violations = 0
 
     def _provenance_block(self, payload_kind):
         """The provenance block of every archive of an active Phase B run
@@ -1505,6 +1588,8 @@ class FLEX(RPA):
                                       else self.hf_density_error_state),
             "hf_density_source": payload_kind,
             "density_target_enforced": bool(self.calc_mu),
+            "flex_guard_policy": self.flex_guard_policy,
+            "flex_guard_violations": int(self.flex_guard_violations),
         }
 
     def _second_order_members(self):
@@ -1519,12 +1604,29 @@ class FLEX(RPA):
         return {"flex_second_order": np.array(self.flex_second_order, dtype="<U8"),
                 "flex_second_order_schema": np.int64(1)}
 
-    def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target):
-        """rho, the density-closure check and Sigma_HF for one map."""
+    def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target, iteration=None):
+        """rho, the density-closure check and Sigma_HF for one map.
+
+        The Hermitian symmetry of the equal-time density is refused at
+        ``flex_hf_density_tol`` under ``flex_guard_policy = "refuse"``; under
+        ``"warn"`` the deviation is only measured, and one warning naming
+        ``iteration`` (the SCF iteration this map belongs to) is logged
+        before the projected density is used anyway (GitHub issue #199).
+        The density-closure check against the target is NOT part of the
+        policy: an unclosed chemical-potential search still ends the run."""
         from hwave.solver import flex_hf, hartree_fock as _hf
         shape = tuple(int(x) for x in self.lattice.shape)
         heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], np.asarray(static)[0, 0])
-        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+        warn = self.flex_guard_policy == "warn"
+        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape,
+                                      sym_tol=None if warn else self.flex_hf_density_tol)
+        if warn and dens.hermitian_deviation > self.flex_hf_density_tol:
+            logger.warning(
+                "FLEX iteration %s: the equal-time density violates rho_ab(r) = "
+                "conj(rho_ba(-r)) (relative deviation %.3e > flex_hf_density_tol %.1e); "
+                "flex_guard_policy = \"warn\": the density is projected and the iteration "
+                "continues", iteration, dens.hermitian_deviation, self.flex_hf_density_tol)
+            self.flex_guard_violations += 1
         if self.calc_mu:
             dev = abs(dens.n_per_spin - Ncond_target)
             if dev > 1e-10 * max(1.0, abs(Ncond_target)):
@@ -1917,9 +2019,12 @@ class FLEX(RPA):
                                                  .format(iteration + 1))
                 with self._traced("density_hf"):
                     dens, sigma_hf, _ = self._phase_b_density_and_hf(
-                        green_kw, state.static, mu, beta, Ncond_target)
+                        green_kw, state.static, mu, beta, Ncond_target, iteration=iteration + 1)
                     self.hf_density_error_map = abs(
                         2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                    # kept for the per-iteration guard line below (the arrays
+                    # of the density result are released with it)
+                    dens_hermitian = float(dens.hermitian_deviation)
                     del dens
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if gate:
@@ -1957,6 +2062,16 @@ class FLEX(RPA):
                 done, count = counter.update(res_sigma, res_g, res_comp)
                 logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
                             .format(res_sigma, res_g, res_comp, count))
+                # the guard diagnostics of this map (issue #199): the values the
+                # tolerances are compared against, iteration by iteration, so that
+                # an approach to an instability is visible before it refuses
+                guards = "  guards: density hermitian {:.3e} (tol {:.1e})".format(
+                    dens_hermitian, self.flex_hf_density_tol)
+                if gate:
+                    guards += "  bond cond_min spin {:.3e} charge {:.3e} (tol {:.1e})".format(
+                        self._bond_last.cond_min_s, self._bond_last.cond_min_c,
+                        self.longitudinal_bond_cond_tol)
+                logger.info(guards)
                 if self._iteration_hook is not None:
                     payload = dict(
                         iteration=iteration + 1, mu=float(mu),
@@ -2006,7 +2121,13 @@ class FLEX(RPA):
                 green_kw = self._calc_dressed_green(beta, mu, sigma)
                 if not np.all(np.isfinite(green_kw)):
                     raise _hf.NonFiniteError("non-finite final-state Green function")
-                dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape)
+                # the FINAL state is refused at flex_hf_density_tol whatever the
+                # policy is: flex_guard_policy tolerates a transient excursion of
+                # the self-consistency, not a result that violates the symmetry
+                dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape,
+                                              sym_tol=self.flex_hf_density_tol)
+                if gate:
+                    self._refuse_final_bond_guard()
                 if self.calc_mu:
                     # NOT named `dev`: that name holds the solve-scoped bond
                     # device context here, which the pairing hook below needs
@@ -2053,6 +2174,37 @@ class FLEX(RPA):
                                 "outputs (sigma, green, physics) of the seed state are stored.")
         logger.info("End FLEX calculations")
 
+    def _refuse_final_bond_guard(self):
+        """Refuse a FINAL state that sits inside the instability region of
+        the bond gate (GitHub issue #199).
+
+        ``flex_guard_policy = "warn"`` tolerates a violation DURING the
+        self-consistency; here the last map is the answer, so a violation of
+        ITS dressing ends the run. The message separates the two guards that
+        can speak -- the conditioning guard and, under
+        ``longitudinal_bond_guard_freqs = "static"``, the solve residual of an
+        unchecked slice. ``cond_min_s``/``cond_min_c`` are the conditioning
+        scores of that map; under ``"static"`` they are the minima over the
+        zero-frequency slice alone, not over the whole grid.
+
+        A no-op when no map ran (IterationMax = 0) or when nothing was
+        warned about, which is always the case under ``"refuse"``: that
+        policy has already raised."""
+        res = getattr(self, "_bond_last", None)
+        if res is None or int(res.guard_violations) <= 0:
+            return
+        n = int(res.guard_violations)
+        m = int(res.guard_residual_violations)
+        raise ValueError(
+            "longitudinal_bond_channels: the LAST FLEX map violated the bond guard "
+            "{} time(s) ({} conditioning, {} residual; longitudinal_bond_cond_tol = {:.1e}, "
+            "cond_min spin {:.3e} / charge {:.3e}); flex_guard_policy = \"warn\" tolerates "
+            "transient violations only. The final state is inside the instability region: "
+            "reduce the interaction, raise the temperature, or lower "
+            "longitudinal_bond_cond_tol deliberately.".format(
+                n, n - m, m, self.longitudinal_bond_cond_tol,
+                res.cond_min_s, res.cond_min_c))
+
     def _phase_b_bond_map(self, store, dev, green_kw, green_scf, green0_tail, beta, iteration):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
         dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
@@ -2085,7 +2237,9 @@ class FLEX(RPA):
                     factors=((self._second_order_device or self._second_order_factors)
                              if xp is not np else self._second_order_factors),
                     second_order=self.flex_second_order,
-                    guard_freqs=self.longitudinal_bond_guard_freqs)
+                    guard_freqs=self.longitudinal_bond_guard_freqs,
+                    cond_tol=self.longitudinal_bond_cond_tol,
+                    guard_policy=self.flex_guard_policy)
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
                     store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
@@ -2099,6 +2253,8 @@ class FLEX(RPA):
                          _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
             raise
         self._bond_last = res
+        # the transient violations this map was allowed to pass (issue #199)
+        self.flex_guard_violations += int(res.guard_violations)
         r6 = (nmat, nvol, norb, norb, norb, norb)
         return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
                 res.collapse_c.reshape(r6), sigma_fluct)
@@ -2136,6 +2292,7 @@ class FLEX(RPA):
             "longitudinal_bond_schema": np.int64(1),
             "longitudinal_bond_source": np.str_("last_map"),
             "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
+            "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
             "longitudinal_bond_device": np.str_(getattr(self, "_bond_xp_name", "numpy")),
             "longitudinal_bond_nb": np.int64(self._bond_nb),
         }
