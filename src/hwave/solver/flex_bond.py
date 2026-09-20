@@ -107,7 +107,11 @@ class BondDeviceContext:
     """Owner of the IMMUTABLE bond inputs for one ``_solve_phase_b`` call
     (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``, the on-site
     ``S_on``, ``C_on``, their sum ``SpC_on`` (formed on the host here, once),
-    the mixed-block pair permutation ``perm`` and the block-weight ``mask``.
+    the mixed-block pair permutation ``perm``, the block-weight ``mask``
+    and the bubble's tau-space tail ``green0_tail`` (issue #196: the
+    bubble computes on the module of the Green function, which the SCF
+    loop already keeps on the device, so its tail belongs to the
+    solve-scoped device set rather than to a per-iteration transfer).
     Construction transfers them to the array module ``xp`` exactly once
     (``_bk.to_device``; the identity on numpy, so the CPU path gets the
     host arrays themselves); every SCF iteration reuses them. A context
@@ -116,9 +120,10 @@ class BondDeviceContext:
     it AFTER the memory preflight (its allocation is part of the predicted
     device need) and nothing else creates device copies of the vertices."""
 
-    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask")
+    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail")
 
-    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None):
+    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None,
+                 green0_tail=None):
         self.xp = xp
         # SpC_on exists only when BOTH are present, so one of them alone would
         # be silently dropped into a context whose SpC_on is None
@@ -128,7 +133,8 @@ class BondDeviceContext:
                              .format("None" if S_on is None else "an array",
                                      "None" if C_on is None else "an array"))
         SpC_on = None if (S_on is None or C_on is None) else np.asarray(S_on) + np.asarray(C_on)
-        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
+        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask,
+                    green0_tail=green0_tail)
         self._arrays = {k: (None if host[k] is None else _bk.to_device(host[k], xp))
                         for k in self._NAMES}
         self._released = False
@@ -141,7 +147,7 @@ class BondDeviceContext:
         return False
 
     def __getattr__(self, name):
-        # attribute access for the seven arrays; everything else is normal
+        # attribute access for the owned arrays; everything else is normal
         if name in BondDeviceContext._NAMES:
             arrays = self.__dict__.get("_arrays")
             if self.__dict__.get("_released", True) or arrays is None:
@@ -161,8 +167,27 @@ class BondDeviceContext:
 def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, workers):
     """Fill ``store['chibar']`` pair by pair from ``bubble._iter_bond_dynamic``
     (spec 3.1). ``green_scf`` is the TAIL-SUBTRACTED single-block Green
-    function the general bubble consumes; ``green0_tail`` its tail."""
+    function the general bubble consumes; ``green0_tail`` its tail.
+
+    The bubble computes on the ARRAY MODULE of ``green_scf`` (issue
+    #196): handed a device-resident Green function it runs the whole
+    per-pair pipeline on the device and only the finished block crosses
+    to the host store below. ``green0_tail`` must therefore live on the
+    same module as ``green_scf`` -- a mismatch is refused here, by name,
+    rather than as the backend-equality message of
+    ``bubble._validate_dense_inputs``. Nothing is transferred here: the
+    caller owns the placement of both arrays."""
     from .hartree_fock import NonFiniteError
+    if green0_tail is not None:
+        xp_g = _bk.array_module_of(green_scf)
+        xp_t = _bk.array_module_of(green0_tail)
+        if xp_t is not xp_g:
+            raise ValueError(
+                "assemble_bubble: green0_tail lives on {} but green_scf on {}; the bond "
+                "bubble computes on the array module of green_scf, so its paired tail has "
+                "to be on that same module (transfer it once per solve, e.g. through "
+                "BondDeviceContext(green0_tail=...))".format(
+                    getattr(xp_t, "__name__", xp_t), getattr(xp_g, "__name__", xp_g)))
     for (alpha, beta_), block in _bubble._iter_bond_dynamic(
             green_scf, green0_tail, beta, view, spatial_shape=tuple(spatial_shape),
             workers=workers):

@@ -1987,7 +1987,13 @@ class FLEX(RPA):
                 try:
                     dev = stack.enter_context(flex_bond.BondDeviceContext(
                         xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
-                        perm, mask))
+                        perm, mask,
+                        # the bubble's tail joins the solve-scoped device set
+                        # (issue #196): the bubble computes on the module of the
+                        # Green function, which the loop already keeps on the
+                        # device, so the tail is transferred once instead of
+                        # every map. self.green0_tail is the host copy.
+                        green0_tail=self.green0_tail))
                 except _bk._oom_error_types() as exc:
                     # the vertex transfer is the first bond allocation on the
                     # device; the same diagnostic as the per-iteration handler
@@ -2029,7 +2035,7 @@ class FLEX(RPA):
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if gate:
                     chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
-                        store, dev, green_kw, green_scf, green0_tail, beta, iteration + 1)
+                        store, dev, green_kw, green_scf, beta, iteration + 1)
                 else:
                     chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
                     assert chi0q_raw.shape[0] == 1
@@ -2205,15 +2211,19 @@ class FLEX(RPA):
                 n, n - m, m, self.longitudinal_bond_cond_tol,
                 res.cond_min_s, res.cond_min_c))
 
-    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, green0_tail, beta, iteration):
+    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
         dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
         collapses (``acbd`` layout) and Sigma_fluct.
 
         ``dev`` is the solve-scoped :class:`~hwave.solver.flex_bond.BondDeviceContext`
-        owning the vertices; its array module drives the dressing and the
-        transport. The block store stays host-resident either way -- the
-        kernels move one frequency batch (and one W block pair) at a time."""
+        owning the vertices and the bubble's tail; its array module drives
+        every phase of the map. ``green_scf`` is used where it already
+        lives -- on the GPU backend the bubble too runs on the device
+        (issue #196), so nothing of the Green function crosses to the host
+        here. The block store stays host-resident either way: the bubble
+        brings back one channel-pair block at a time and the kernels move
+        one frequency batch (and one W block pair) at a time."""
         from hwave.solver import flex_bond
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         nd = norb * norb
@@ -2221,9 +2231,16 @@ class FLEX(RPA):
         workers = getattr(self, "fft_workers", 1)
         xp = dev.xp
         with self._traced("bubble"):
+            if iteration == 1:
+                # provenance next to the other per-solve backend lines: the
+                # bubble follows the Green function's module (issue #196)
+                logger.info("longitudinal_bond_channels (FLEX): bond bubble on %s",
+                            _bk.array_module_of(green_scf).__name__)
+            # green_scf arrives in the module the SCF loop runs on and stays
+            # there; dev.green0_tail was transferred to that same module once
+            # per solve. Both are the identity on the numpy backend.
             flex_bond.assemble_bubble(
-                store, _bk.to_host(green_scf),
-                None if green0_tail is None else _bk.to_host(green0_tail),
+                store, green_scf, dev.green0_tail,
                 beta, self._bond_view, shape, workers)
         try:
             with self._traced("dressing"):

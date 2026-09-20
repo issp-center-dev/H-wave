@@ -595,6 +595,71 @@ class TestDeviceContextFailure(unittest.TestCase):
         self.assertTrue(any("device context" in m for m in cm.output), cm.output)
 
 
+class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):
+    """Issue #196: the bond bubble is assembled on whatever array module
+    the SCF loop is already on. On the numpy backend every transfer is
+    the identity, so what is observable here is the ABSENCE of the
+    per-iteration host copy of the Green function, the tail coming from
+    the solve-scoped device context, and the one provenance log line."""
+
+    def _run(self, iterations=2):
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+        seen_green, seen_tail, copied, contexts = [], [], set(), []
+        real_assemble = flex_bond.assemble_bubble
+        real_to_host = backend.to_host
+        real_ctx = flex_bond.BondDeviceContext
+
+        def _assemble(store, green_scf, green0_tail, *a, **k):
+            seen_green.append(id(green_scf))
+            seen_tail.append(green0_tail)
+            return real_assemble(store, green_scf, green0_tail, *a, **k)
+
+        def _to_host(arr):
+            copied.add(id(arr))
+            return real_to_host(arr)
+
+        class _ctx(real_ctx):
+            # a subclass rather than a wrapper function: the context looks
+            # its own _NAMES up by module-global name
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self.green0_tail)
+
+        # coeff_tail != 0 so that green_scf is a distinct object from
+        # green_kw (which the convergence check does copy to the host)
+        s, r = _flex({"coeff_tail": 1.0, "IterationMax": iterations})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with mock.patch.object(flex_bond, "assemble_bubble", _assemble), \
+                    mock.patch.object(flex_bond, "BondDeviceContext", _ctx), \
+                    mock.patch.object(backend, "to_host", _to_host), \
+                    self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s.solve(gi, out)
+        return s, seen_green, seen_tail, copied, contexts, cm.output
+
+    def test_green_function_is_not_copied_to_the_host_for_the_bubble(self):
+        s, seen_green, _, copied, _, _ = self._run()
+        self.assertEqual(len(seen_green), 2)
+        for gid in seen_green:
+            self.assertNotIn(gid, copied)
+
+    def test_tail_comes_from_the_device_context(self):
+        s, _, seen_tail, _, contexts, _ = self._run()
+        self.assertIsNotNone(s.green0_tail)
+        self.assertEqual(len(contexts), 1)
+        # numpy: BondDeviceContext hands the host array straight back
+        self.assertIs(contexts[0], s.green0_tail)
+        for tail in seen_tail:
+            self.assertIs(tail, contexts[0])
+
+    def test_the_bubble_module_is_logged_once_per_solve(self):
+        _, _, _, _, _, records = self._run()
+        hits = [m for m in records if "bond bubble on" in m]
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("numpy", hits[0])
+
+
 class TestStandaloneHFAdmissibility(unittest.TestCase):
 
     def test_complex_offsite_coefficient_and_offsite_exchange_refused_at_preflight(self):
