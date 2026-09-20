@@ -333,3 +333,54 @@ def test_ir_native_sigma_init_seeds_ir_run(tmp_path, caplog):
     assert any("beta" in r.getMessage().lower()
                and "sigma_init" in r.getMessage()
                for r in caplog.records)
+
+
+def test_pure_hubbard_singlet_ir_reproduces_the_uniform_leading_eigenvalue(tmp_path):
+    """Issue #207: for a PURE on-site Hubbard model (CoulombIntra only), whose
+    pairing vertex has a nonzero frequency-independent (+U) singlet term, the
+    dynamic-Eliashberg SINGLET leading eigenvalue on matsubara_basis = "ir"
+    reproduces the matsubara_basis = "uniform" value to basis-truncation
+    accuracy. This backs the migration-note statement that a pure on-site run's
+    leading eigenvalue was already right (only its eigenvector/parity behaviour
+    was affected by the instantaneous-prescription defect); the large-lambda
+    shifts the note warns about need a large static susceptibility (off-site
+    CoulombInter), not present here. The flat +U constant is kept as a flat
+    operator (issue #203), not aliased into the bosonic IR fit.
+    """
+    try:
+        import sparse_ir  # noqa: F401
+    except ImportError:
+        pytest.skip("sparse_ir not installed")
+    from hwave.solver import eliashberg_dynamic as ed
+    out = str(tmp_path)
+    # a converged UNIFORM (densified) pure-Hubbard FLEX run
+    solver, gi = _make_solver(iteration_max=60)          # CoulombIntra = 2.5, uniform
+    solver.solve(gi, out)
+    assert solver.scf_converged
+    solver.save_results({"path_to_output": out, "chi0q": "chi0q",
+                         "sigma": "sigma", "green": "green"}, gi)
+
+    def _lam(basis):
+        eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+               "solver_mode": "eigenvalue", "eigenvalue_method": "arnoldi",
+               "num_eigenvalues": 8, "spectral_shift": "auto",
+               "init_gap": "d_x2y2", "pairing_type": "singlet",
+               "matsubara_basis": basis}
+        if basis == "ir":
+            eli["ir_wmax"] = 12.0
+        return ed.solve_dynamic({
+            "mode": {"param": {"T": 0.5, "CellShape": [4, 4, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 64, "filling": 0.5}},
+            "file": {"input": {"interaction": {
+                        "path_to_input": "tests/rpa/input",
+                        "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                        "CoulombIntra": "coulombintra.dat"}},
+                     "output": {"path_to_output": out}},
+            "eliashberg": eli})
+
+    lam_u = _lam("uniform")
+    lam_ir = _lam("ir")
+    assert np.isfinite(lam_u) and np.isfinite(lam_ir)
+    # the measured relative difference is ~1.8e-4; a comfortably looser bound
+    # protects the note's claim without being platform-fragile
+    assert abs(lam_ir - lam_u) < 2e-3 * abs(lam_u), (lam_u, lam_ir)
