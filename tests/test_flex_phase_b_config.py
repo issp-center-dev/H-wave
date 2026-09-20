@@ -103,6 +103,89 @@ class TestPhaseBConfig(unittest.TestCase):
         s, _ = _build()
         self.assertEqual(s.longitudinal_bond_guard_freqs, "all")
 
+    def test_guard_tolerance_and_policy_defaults(self):
+        """The three guard keys of GitHub issue #199 always exist, on every
+        branch of the parser (the inactive one included)."""
+        import hwave.solver.flex as flex_mod
+        s, _ = _build()
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-3)
+        self.assertEqual(s.flex_guard_policy, "refuse")
+        for param in ({}, {"flex_hartree_fock": True},
+                      {"flex_hartree_fock": True, "longitudinal_bond_channels": True}):
+            with self.subTest(param=sorted(param)):
+                out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(param)})
+                self.assertEqual(out["flex_hf_density_tol"], 1e-8)
+                self.assertEqual(out["longitudinal_bond_cond_tol"], 1e-3)
+                self.assertEqual(out["flex_guard_policy"], "refuse")
+
+    def test_guard_keys_are_case_insensitive(self):
+        s, _ = _build({"Flex_Hartree_Fock": True, "LONGITUDINAL_Bond_Channels": True,
+                       "FLEX_HF_Density_Tol": 1e-6,
+                       "Longitudinal_Bond_Cond_Tol": 1e-5,
+                       "Flex_Guard_Policy": "WARN"})
+        self.assertEqual(s.flex_hf_density_tol, 1e-6)
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-5)
+        self.assertEqual(s.flex_guard_policy, "warn")
+
+    def test_guard_key_refusals(self):
+        hf = {"flex_hartree_fock": True}
+        gate = {"flex_hartree_fock": True, "longitudinal_bond_channels": True}
+        cases = [
+            (dict(hf, flex_hf_density_tol=0.0), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=-1e-8), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=True), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol="x"), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=float("inf")),
+             "flex_hf_density_tol must be a finite number > 0"),
+            (dict(gate, longitudinal_bond_cond_tol=0.0),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=1.0),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=True),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol="x"),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=float("nan")),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(hf, flex_guard_policy="stop"), "flex_guard_policy must be"),
+            (dict(hf, flex_guard_policy=1), "flex_guard_policy must be"),
+        ]
+        for extra, fragment in cases:
+            with self.subTest(extra=sorted(extra.items(), key=lambda kv: str(kv))):
+                with self.assertRaises(ValueError) as cm:
+                    _build(extra)
+                self.assertIn(fragment, str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            _build(dict(hf, flex_guard_policy="stop"))
+        msg = str(cm.exception)
+        self.assertIn("\"refuse\"", msg)
+        self.assertIn("\"warn\"", msg)
+
+    def test_guard_keys_ignored_when_phase_b_is_inactive(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hf_density_tol": 1e-4})
+        self.assertTrue(any("flex_hf_density_tol" in m for m in cm.output))
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_guard_policy": "warn"})
+        self.assertTrue(any("flex_guard_policy" in m for m in cm.output))
+        self.assertEqual(s.flex_guard_policy, "refuse")
+        # and flex_hf_density_tol is warned-and-ignored with the Hartree-Fock
+        # term off even when the bond gate key is absent
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hf_density_tol": 1e-4, "flex_guard_policy": "warn"})
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        self.assertEqual(s.flex_guard_policy, "refuse")
+
+    def test_bond_cond_tol_is_listed_in_the_stale_bond_warning(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_cond_tol": 1e-6})
+        msgs = [m for m in cm.output if "longitudinal_bond_cond_tol" in m]
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("longitudinal_bond_channels is not", msgs[0])
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-3)
+
     def test_gpu_true_is_accepted_with_the_gate(self):
         """No refusal at config time; without cupy the backend falls back to numpy
         with the usual warning (the general path's behaviour)."""
