@@ -996,11 +996,15 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
     """
     if freq_index is None:
         # Pre-provenance file: with no metadata at all, the stored axis can
-        # only be centered safely when it IS the configured full grid
-        # (nfreq == config_nmat).  A stored axis of any other length could be
-        # a matsubara_frequency restriction of some run's grid, so nfreq//2
+        # only be centered safely when the choice of slice is unambiguous.
+        # A single-frequency axis (nfreq == 1) is such a case: index 0 is the
+        # ONLY slice, so centering cannot pick a different (finite) frequency
+        # -- this is the common static-only chi0q reduced to its zero
+        # bosonic-frequency component.  A full grid of the configured size
+        # (nfreq == config_nmat) is the other.  Any other length could be a
+        # matsubara_frequency restriction of some run's grid, so nfreq//2
         # might point at a finite frequency -- refuse to guess.
-        if nfreq == config_nmat:
+        if nfreq == 1 or nfreq == config_nmat:
             logger.warning(
                 "chi0q file '{}' has no freq_index metadata; using the "
                 "center of the stored frequency axis as the static slice."

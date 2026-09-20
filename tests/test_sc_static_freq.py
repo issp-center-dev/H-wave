@@ -125,9 +125,16 @@ class TestStaticFreqPosition(unittest.TestCase):
         self.assertIn("regenerate", msg.lower())
 
     def test_no_metadata_matching_nmat_returns_none(self):
-        # freq_index=None with nfreq == config Nmat is the only unambiguous
-        # centering case: the stored axis IS the configured full grid
+        # freq_index=None with nfreq == config Nmat: the stored axis IS the
+        # configured full grid, so centering is unambiguous
         self.assertIsNone(_static_freq_position(None, 8, 8, "f"))
+
+    def test_no_metadata_single_frequency_returns_none(self):
+        # freq_index=None with a single-frequency axis (nfreq == 1): index 0
+        # is the ONLY slice, so centering is unambiguous even when nfreq does
+        # not match config Nmat -- this is the common static-only chi0q file
+        # reduced to its zero-frequency component
+        self.assertIsNone(_static_freq_position(None, 1, 1024, "f"))
 
     def test_size_mismatch_mismatched_nmat_raises(self):
         # length-mismatch metadata with nfreq (8) != config Nmat (16): the
