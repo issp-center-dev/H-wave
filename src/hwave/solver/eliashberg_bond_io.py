@@ -159,14 +159,41 @@ def _npz_member_header(path, name):
     return tuple(int(x) for x in shape), dtype
 
 
+def _npy_header(path):
+    """(shape, dtype) of a raw ``.npy`` file from its header, without loading
+    it -- the sidecar-layout counterpart of :func:`_npz_member_header` (issue
+    #205)."""
+    with open(path, "rb") as fh:
+        version = _npfmt.read_magic(fh)
+        if version == (1, 0):
+            shape, fortran, dtype = _npfmt.read_array_header_1_0(fh)
+        elif version == (2, 0):
+            shape, fortran, dtype = _npfmt.read_array_header_2_0(fh)
+        else:
+            raise ValueError(
+                "npy file {}: unsupported .npy format version {}".format(path, version))
+    return tuple(int(x) for x in shape), dtype
+
+
 class BondArchive:
-    def __init__(self, path, small, chi_shape):
+    def __init__(self, path, small, chi_shape, sidecar=None):
         self.path = path
         for k, v in small.items():
             setattr(self, k, v)
         self.chi_shape = chi_shape
+        #: for the sidecar layout (issue #205), {member name -> resolved .npy
+        #: path}; None (or absent name) means the member lives inside the npz
+        self.sidecar = dict(sidecar or {})
 
     def member(self, name):
+        if name in self.sidecar:
+            # the sidecar layout returns a memory-mapped array: the frequency
+            # batches downstream read only their own bytes, so the member is
+            # never fully resident. The whole-array np.isfinite scan is dropped
+            # HERE (it would materialise the memmap); finiteness is enforced
+            # per frequency batch downstream (PairVertexAccumulator._absorb, and
+            # _dress guards the solve).
+            return np.load(self.sidecar[name], mmap_mode="r")
         with np.load(self.path) as d:
             arr = np.asarray(d[name])
         if not np.all(np.isfinite(arr)):
@@ -234,6 +261,18 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
                 "longitudinal_bond_output_full = true".format(path, schema))
         if schema != 2:
             raise ValueError("bond archive {}: unsupported archive schema {}".format(path, schema))
+        # the on-disk layout (issue #205): "npz" (the default; the two big
+        # channel members live inside this file) or "sidecar" (they are raw
+        # .npy files named here and read next to the index). An archive written
+        # before this field existed has no member and is the npz layout.
+        layout = str(d["bond_archive_layout"]) if "bond_archive_layout" in files else "npz"
+        if layout not in ("npz", "sidecar"):
+            raise ValueError("bond archive {}: unsupported bond_archive_layout {!r}".format(path, layout))
+        if layout == "sidecar":
+            chi_files = {name: str(_require(d, name + "_file", path))
+                         for name in ("chi_s_w", "chi_c_w")}
+        else:
+            chi_files = None
         index_order = str(_require(d, "index_order", path))
         if index_order != _INDEX_ORDER:
             raise ValueError("bond archive {}: index_order {!r} != {!r}".format(path, index_order, _INDEX_ORDER))
@@ -290,16 +329,31 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     for name, arr in (("S_bond", S_bond), ("C_bond", C_bond)):
         if arr.shape != (nvol, ND, ND) or not np.all(np.isfinite(arr)):
             raise ValueError("bond archive {}: {} must be finite with shape {}, got {}".format(path, name, (nvol, ND, ND), arr.shape))
+    sidecar_paths = {}
+    base_dir = os.path.dirname(path)
     for name in ("chi_s_w", "chi_c_w"):
-        try:
-            shape, dtype = _npz_member_header(path, name)
-        except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
-            raise _archive_contract_error(path, exc)
+        if layout == "sidecar":
+            # resolve the sidecar .npy next to the index and read its header
+            # WITHOUT loading it; a missing or garbage file is the same refusal
+            member_path = chi_files[name] if os.path.isabs(chi_files[name]) \
+                else os.path.join(base_dir, chi_files[name])
+            try:
+                if not os.path.exists(member_path):
+                    raise FileNotFoundError(member_path)
+                shape, dtype = _npy_header(member_path)
+            except (OSError, ValueError) as exc:
+                raise _archive_contract_error(path, exc)
+            sidecar_paths[name] = member_path
+        else:
+            try:
+                shape, dtype = _npz_member_header(path, name)
+            except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+                raise _archive_contract_error(path, exc)
         if shape != (nmat, nvol, ND, ND) or np.dtype(dtype) != np.dtype(np.complex128):
             raise ValueError("bond archive {}: {} must be complex128 of shape {}, got {} {}".format(path, name, (nmat, nvol, ND, ND), shape, dtype))
     small = dict(S_bond=S_bond, C_bond=C_bond, delta_r=delta_r, reverse=reverse, types=types, B=B, ND=ND,
                  nmat=nmat, nvol=nvol, cell_shape=cell, beta=beta, norb=int(norb))
-    return BondArchive(path, small, (nmat, nvol, ND, ND))
+    return BondArchive(path, small, (nmat, nvol, ND, ND), sidecar=sidecar_paths)
 
 
 class _ArchiveView:

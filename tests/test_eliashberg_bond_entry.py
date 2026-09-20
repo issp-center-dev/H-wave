@@ -26,6 +26,28 @@ def _run_gate(tmp, output_full=True, extra=None, inter=None):
     return s, gi
 
 
+def _npz_to_sidecar(index_path):
+    """Rewrite a schema-2 npz archive at ``index_path`` into the sidecar
+    layout from the SAME data (an independent oracle for the writer): the two
+    channel members move to ``.npy`` files next to the index, which then names
+    them and carries bond_archive_layout = "sidecar"."""
+    with np.load(index_path) as d:
+        members = {k: d[k] for k in d.files}
+    chi_s = members.pop("chi_s_w")
+    chi_c = members.pop("chi_c_w")
+    stem = os.path.basename(index_path)[:-4] if index_path.endswith(".npz") \
+        else os.path.basename(index_path)
+    s_base = "{}_chi_s_w.npy".format(stem)
+    c_base = "{}_chi_c_w.npy".format(stem)
+    out_dir = os.path.dirname(index_path)
+    np.save(os.path.join(out_dir, s_base), chi_s)
+    np.save(os.path.join(out_dir, c_base), chi_c)
+    members["bond_archive_layout"] = np.str_("sidecar")
+    members["chi_s_w_file"] = np.str_(s_base)
+    members["chi_c_w_file"] = np.str_(c_base)
+    np.savez(index_path, **members)
+
+
 class TestArchiveSchema2(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -281,6 +303,78 @@ class TestLoadBondArchive(unittest.TestCase):
             call(no_chi)
         # the valid archive still loads
         self._load()
+
+
+class TestSidecarLoader(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.s, self.gi = _run_gate(self.tmp)
+        self.path = os.path.join(self.tmp, "longitudinal_bond.npz")
+        self.s_npy = os.path.join(self.tmp, "longitudinal_bond_chi_s_w.npy")
+        self.c_npy = os.path.join(self.tmp, "longitudinal_bond_chi_c_w.npy")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _load(self, **kw):
+        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        args = dict(norb=self.s.norb, nmat_expected=self.s.nmat,
+                    cell_shape_expected=tuple(int(x) for x in self.s.lattice.shape),
+                    beta_expected=1.0 / self.s.T)
+        args.update(kw)
+        return load_bond_archive(self.path, **args)
+
+    def test_sidecar_member_is_a_memmap_npz_member_is_plain(self):
+        # the default npz layout returns a plain, fully-resident array
+        a_npz = self._load()
+        m_npz = a_npz.member("chi_s_w")
+        self.assertNotIsInstance(m_npz, np.memmap)
+        # the sidecar layout returns a lazily-read memmap
+        _npz_to_sidecar(self.path)
+        a = self._load()
+        m = a.member("chi_s_w")
+        self.assertIsInstance(m, np.memmap)
+        self.assertEqual(m.shape, a.chi_shape)
+        self.assertEqual(m.dtype, np.dtype(np.complex128))
+        np.testing.assert_array_equal(np.asarray(m), self.gi["longitudinal_bond_chi_s_w"])
+
+    def test_old_archive_without_layout_field_loads_as_npz(self):
+        # an archive written before this field existed has no
+        # bond_archive_layout member and must still load as the npz layout
+        with np.load(self.path) as d:
+            self.assertIn("bond_archive_layout", d.files)
+            members = {k: d[k] for k in d.files if k != "bond_archive_layout"}
+        np.savez(self.path, **members)
+        a = self._load()
+        m = a.member("chi_c_w")
+        self.assertNotIsInstance(m, np.memmap)
+        np.testing.assert_array_equal(m, self.gi["longitudinal_bond_chi_c_w"])
+
+    def test_missing_sidecar_is_refused_with_the_contract(self):
+        _npz_to_sidecar(self.path)
+        os.remove(self.s_npy)
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            self._load()
+
+    def test_garbage_sidecar_is_refused_with_the_contract(self):
+        _npz_to_sidecar(self.path)
+        with open(self.c_npy, "wb") as fh:
+            fh.write(b"not a real npy file")
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            self._load()
+
+    def test_wrong_shape_sidecar_is_refused(self):
+        _npz_to_sidecar(self.path)
+        np.save(self.s_npy, np.zeros((2, 2), dtype=np.complex128))
+        with self.assertRaisesRegex(ValueError, "chi_s_w"):
+            self._load()
+
+    def test_wrong_dtype_sidecar_is_refused(self):
+        _npz_to_sidecar(self.path)
+        np.save(self.s_npy, np.zeros(self.s.nmat * self.s.lattice.nvol, dtype=np.float64)
+                .reshape(self.s.nmat, self.s.lattice.nvol, 1, 1))
+        with self.assertRaisesRegex(ValueError, "chi_s_w"):
+            self._load()
 
 
 class TestPairingControls(unittest.TestCase):
@@ -601,6 +695,42 @@ class TestDeviceProbeFallback(unittest.TestCase):
 
 
 class TestPostProcessingRuns(unittest.TestCase):
+    def test_sidecar_layout_matches_npz_layout(self):      # 10.2 (issue #205)
+        """The bond archive written in the sidecar layout, memory-mapped by
+        post-processing, gives the IDENTICAL leading eigenvalue and gap as the
+        default single-file layout on the SAME data: one FLEX run, its archive
+        solved once as npz and once after rewriting it into the sidecar layout
+        (the two big members moved to .npy files next to the index)."""
+        import hwave.sc as sc
+        flex_dir = tempfile.mkdtemp()
+        out_npz = tempfile.mkdtemp()
+        out_side = tempfile.mkdtemp()
+        try:
+            _run_gate_1orb(flex_dir, nmat=16)
+            lam_npz = sc.calc_eliashberg(_sc_input(flex_dir, out_npz, 0.5, 16, (4, 4, 1)))
+            with np.load(os.path.join(out_npz, "gap_dynamic.npz")) as d:
+                gap_npz = np.array(d["gap"])
+            # the default archive still holds the channels inline
+            with np.load(os.path.join(flex_dir, "longitudinal_bond.npz")) as d:
+                self.assertEqual(str(d["bond_archive_layout"]), "npz")
+                self.assertIn("chi_s_w", d.files)
+            # rewrite it in place into the sidecar layout and solve again
+            _npz_to_sidecar(os.path.join(flex_dir, "longitudinal_bond.npz"))
+            self.assertTrue(os.path.exists(
+                os.path.join(flex_dir, "longitudinal_bond_chi_s_w.npy")))
+            lam_side = sc.calc_eliashberg(_sc_input(flex_dir, out_side, 0.5, 16, (4, 4, 1)))
+            with np.load(os.path.join(out_side, "gap_dynamic.npz")) as d:
+                gap_side = np.array(d["gap"])
+            self.assertTrue(np.isfinite(lam_npz))
+            self.assertAlmostEqual(lam_side, lam_npz, delta=1e-13 * max(1.0, abs(lam_npz)))
+            # the leading eigenvalue matches to 1e-13; the eigenvector (gap) is
+            # identical up to the eigensolver's reduction-order noise (a memmap
+            # can take a different BLAS path), which is a few 1e-13
+            np.testing.assert_allclose(gap_side, gap_npz, rtol=1e-9, atol=1e-11)
+        finally:
+            for d in (flex_dir, out_npz, out_side):
+                shutil.rmtree(d, ignore_errors=True)
+
     def test_uniform_lambda_and_outputs(self):              # 10.2.2 (uniform half)
         """A real bond-gate FLEX run, then ``hwave_sc`` on its archive for both
         pairing channels: the leading eigenvalue is a finite real number, the
