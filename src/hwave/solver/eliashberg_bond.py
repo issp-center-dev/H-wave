@@ -116,6 +116,7 @@ class PairVertexAccumulator:
         self.ir = ir
         self.ir_keep_static = bool(ir_keep_static)
         self._done = set()
+        self._tainted = False
         self._finished = False
         self._resid_mode = False
         self._resid_type = None
@@ -146,12 +147,21 @@ class PairVertexAccumulator:
             self._a = {st: np.zeros((self.B, self.B)) for st in self._STAGES}
 
     # -- stages -----------------------------------------------------------
+    def _refuse_if_tainted(self):
+        """A stage that raised after absorbing some of its batches leaves the
+        additive target partially updated; it cannot be un-absorbed cheaply, so
+        the only safe recovery is to rebuild the accumulator."""
+        if self._tainted:
+            raise RuntimeError("PairVertexAccumulator: a previous stage failed partway; "
+                               "the partial vertex cannot be reused -- rebuild the accumulator")
+
     def _check_open(self, stages):
         """Refuse a stage after ``finish`` (the caller already holds the frozen
         vertex) and a stage that was already absorbed (which would double-count
         it silently). Both checks run BEFORE anything is absorbed; the residual
         replay of :meth:`finish` is exempt from the second one, being a
         deliberate second pass over the same stages."""
+        self._refuse_if_tainted()
         if self._finished:
             raise RuntimeError("PairVertexAccumulator: finished")
         if self._resid_mode:
@@ -167,17 +177,23 @@ class PairVertexAccumulator:
         both contributions for every requested pairing type."""
         self._check_open(self._STAGES)
         xp, S, C = self.xp, self.dev.S, self.dev.C
-        for l0 in range(0, self.nmat, self.nb):
-            l1 = min(self.nmat, l0 + self.nb)
-            cb = _bk.to_device(source.get_freq_batch("chibar", l0, l1), xp)
-            chi_s_b, _ = _fb._dress(cb, S, "spin", l0, self.nmat, self.shape, cond_tol,
-                                    None, guard_freqs)
-            self._absorb("spin", S[None] @ chi_s_b @ S[None], l0, l1)
-            del chi_s_b
-            chi_c_b, _ = _fb._dress(cb, C, "charge", l0, self.nmat, self.shape, cond_tol,
-                                    None, guard_freqs)
-            self._absorb("charge", C[None] @ chi_c_b @ C[None], l0, l1)
-            del chi_c_b, cb
+        try:
+            for l0 in range(0, self.nmat, self.nb):
+                l1 = min(self.nmat, l0 + self.nb)
+                cb = _bk.to_device(source.get_freq_batch("chibar", l0, l1), xp)
+                chi_s_b, _ = _fb._dress(cb, S, "spin", l0, self.nmat, self.shape, cond_tol,
+                                        None, guard_freqs)
+                self._absorb("spin", S[None] @ chi_s_b @ S[None], l0, l1)
+                del chi_s_b
+                chi_c_b, _ = _fb._dress(cb, C, "charge", l0, self.nmat, self.shape, cond_tol,
+                                        None, guard_freqs)
+                self._absorb("charge", C[None] @ chi_c_b @ C[None], l0, l1)
+                del chi_c_b, cb
+        except Exception:
+            # a batch was absorbed before this raise; the partial vertex cannot
+            # be un-absorbed, so refuse any later reuse of the accumulator
+            self._tainted = True
+            raise
         self._done.update(self._STAGES)
 
     def add_channel(self, channel, source, name):
@@ -188,11 +204,17 @@ class PairVertexAccumulator:
             raise ValueError("channel must be 'spin' or 'charge', got {!r}".format(channel))
         self._check_open((channel,))
         V = self.dev.S if channel == "spin" else self.dev.C
-        for l0 in range(0, self.nmat, self.nb):
-            l1 = min(self.nmat, l0 + self.nb)
-            chi_b = _bk.to_device(source.get_freq_batch(name, l0, l1), self.xp)
-            self._absorb(channel, V[None] @ chi_b @ V[None], l0, l1)
-            del chi_b
+        try:
+            for l0 in range(0, self.nmat, self.nb):
+                l1 = min(self.nmat, l0 + self.nb)
+                chi_b = _bk.to_device(source.get_freq_batch(name, l0, l1), self.xp)
+                self._absorb(channel, V[None] @ chi_b @ V[None], l0, l1)
+                del chi_b
+        except Exception:
+            # a batch was absorbed before this raise; the partial vertex cannot
+            # be un-absorbed, so refuse any later reuse of the accumulator
+            self._tainted = True
+            raise
         self._done.add(channel)
 
     def _absorb(self, channel, P, l0, l1):
@@ -239,6 +261,7 @@ class PairVertexAccumulator:
         target slot. IR: the residual pass of spec 4.5 (replayed through
         ``stage_callable``), the ``ir_fit_tol`` refusal / warning band and the
         frozen :class:`PairVertexIR` per pairing type."""
+        self._refuse_if_tainted()
         if self._finished:
             raise RuntimeError("PairVertexAccumulator: finished")
         for st in self._STAGES:

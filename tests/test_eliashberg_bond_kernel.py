@@ -112,6 +112,46 @@ class TestAccumulator(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "finished"):
                 acc2.add_dressed(fx["store"], cond_tol=1e-6)
 
+    def test_add_channel_that_raises_midway_taints_the_accumulator(self):
+        """``_absorb`` can raise AFTER earlier frequency batches were already
+        absorbed. A caller that catches and retries the stage would then
+        double-count the absorbed batches, so the accumulator refuses any
+        further use until it is rebuilt."""
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
+        with _dev(fx) as dev:
+            bad = fx["chi_s"].copy()
+            bad[2, 0, 0, 0] = np.nan       # non-finite in the SECOND batch [2, 4)
+            src = ArrayBlockSource({"chi_s_w": bad, "chi_c_w": fx["chi_c"]}, 1)
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=2, nmat=4,
+                                        nvol=4, nd=1, spatial_shape=(2, 2, 1))
+            with self.assertRaisesRegex(ValueError, r"non-finite .* batch \[2, 4\)"):
+                acc.add_channel("spin", src, "chi_s_w")
+            # the first batch was absorbed before the raise; a retry must NOT
+            # silently double-count it
+            for retry in (lambda: acc.add_channel("spin", src, "chi_s_w"),
+                          lambda: acc.add_channel("charge", src, "chi_c_w"),
+                          lambda: acc.add_dressed(fx["store"], cond_tol=1e-6),
+                          lambda: acc.finish()):
+                with self.assertRaisesRegex(RuntimeError, "failed partway"):
+                    retry()
+
+    def test_add_dressed_that_raises_midway_taints_the_accumulator(self):
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
+        with _dev(fx) as dev:
+            bad = fx["chibar"].copy()
+            bad[2] = np.nan                # non-finite in the SECOND batch [2, 4)
+            src = ArrayBlockSource({"chibar": bad}, 1)
+            acc = PairVertexAccumulator(dev, pairing_types=("singlet",), nb=2, nmat=4,
+                                        nvol=4, nd=1, spatial_shape=(2, 2, 1))
+            with self.assertRaises(Exception):
+                acc.add_dressed(src, cond_tol=1e-6)
+            with self.assertRaisesRegex(RuntimeError, "failed partway"):
+                acc.add_dressed(fx["store"], cond_tol=1e-6)
+            with self.assertRaisesRegex(RuntimeError, "failed partway"):
+                acc.finish()
+
     def test_ir_finish_refuses_a_stage_callable_that_replays_nothing(self):
         """A callable that replays no stage leaves r = a = 0, which would read as
         a perfect fit AND silently disable the constant-vs-scale refusal."""
