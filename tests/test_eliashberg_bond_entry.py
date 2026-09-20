@@ -183,6 +183,50 @@ class TestLoadBondArchive(unittest.TestCase):
         self._rewrite(delta_r=dr_shifted)
         self._load()      # must not raise
 
+    def test_malformed_archive_reports_the_contract(self):
+        """A truncated / garbage file, or one missing a required member, must
+        surface as a ValueError naming the archive contract, not a bare
+        KeyError / BadZipFile / EOFError from deep in numpy."""
+        from hwave.solver.eliashberg_bond_io import load_bond_archive
+
+        def call(p):
+            return load_bond_archive(
+                p, norb=self.s.norb, nmat_expected=self.s.nmat,
+                cell_shape_expected=tuple(int(x) for x in self.s.lattice.shape),
+                beta_expected=1.0 / self.s.T)
+
+        # a nonexistent path (the existing explicit message, naming the path)
+        gone = os.path.join(self.tmp, "does_not_exist.npz")
+        with self.assertRaisesRegex(ValueError, r"does_not_exist\.npz"):
+            call(gone)
+        # a few random bytes at a .npz path
+        junk = os.path.join(self.tmp, "junk.npz")
+        with open(junk, "wb") as f:
+            f.write(os.urandom(41))
+        with self.assertRaisesRegex(ValueError, r"junk\.npz.*not a valid bond archive"):
+            call(junk)
+        # a completely empty file
+        empty = os.path.join(self.tmp, "empty.npz")
+        open(empty, "wb").close()
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            call(empty)
+        # a valid npz that is missing one required member
+        with np.load(self.path) as d:
+            members = {k: d[k] for k in d.files if k != "index_order"}
+        sub = os.path.join(self.tmp, "sub.npz")
+        np.savez(sub, **members)
+        with self.assertRaisesRegex(ValueError, r"sub\.npz.*not a valid bond archive"):
+            call(sub)
+        # a missing chi member (read by header, not np.load) is caught too
+        with np.load(self.path) as d:
+            members = {k: d[k] for k in d.files if k != "chi_c_w"}
+        no_chi = os.path.join(self.tmp, "no_chi.npz")
+        np.savez(no_chi, **members)
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            call(no_chi)
+        # the valid archive still loads
+        self._load()
+
 
 class TestPairingControls(unittest.TestCase):
     def test_defaults_and_validation(self):
@@ -874,6 +918,81 @@ class TestInProcess(unittest.TestCase):
         leftovers = [os.path.join(d, f) for d, _, fs in os.walk(self.tmp) for f in fs
                      if ".tmp" in f]
         self.assertEqual(leftovers, [])
+
+    def _dir_snapshot(self, tmp):
+        return {os.path.join(d, f) for d, _, fs in os.walk(tmp) for f in fs}
+
+    def test_publication_rolls_back_over_previous_outputs(self):
+        """A rename that fails partway must leave the PREVIOUS outputs of the
+        channel intact -- neither a mix of new and old files nor a hole."""
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3})
+        gi = r.get_param("green")
+        s.solve(gi, self.tmp)
+        self.assertNotIn("pairing_singlet_error", gi)
+        s.validate_output_paths(self._outputs(self.tmp), self.tmp)
+        s.save_results(self._outputs(self.tmp), gi)
+        self.assertNotIn("pairing_singlet_error", gi)
+        targets = {k: os.path.join(self.tmp, fn) for k, fn in (
+            ("eliashberg_bond", "eliashberg_bond_singlet.npz"),
+            ("gap_bond", "gap_bond_singlet.dat"),
+            ("eigenvalue_bond", "eigenvalue_bond_singlet.dat"))}
+        # overwrite the three published files with distinctive sentinels so that
+        # a file which is NOT rolled back would be detectably different
+        sentinels = {}
+        for i, (k, p) in enumerate(targets.items()):
+            data = ("previous-{}-{}\n".format(k, i)).encode() * (i + 1)
+            with open(p, "wb") as f:
+                f.write(data)
+            sentinels[k] = data
+        before = self._dir_snapshot(self.tmp)
+        real = os.replace
+        state = {"failed": False}
+
+        def fake_replace(src, dst):
+            if dst == targets["gap_bond"] and not state["failed"]:
+                state["failed"] = True
+                raise OSError("disk full on the second publication")
+            return real(src, dst)
+
+        with mock.patch("hwave.solver.eliashberg_bond_io.os.replace", side_effect=fake_replace):
+            s.save_results(self._outputs(self.tmp), gi)
+        # every previous file is byte-identical to its sentinel (restored)
+        for k, p in targets.items():
+            with open(p, "rb") as f:
+                self.assertEqual(f.read(), sentinels[k], k)
+        # no temp or backup file survives; the directory is exactly as before
+        self.assertEqual(self._dir_snapshot(self.tmp), before)
+        self.assertIn("pairing_singlet_error", gi)
+        self.assertIn("restored", gi["pairing_singlet_error"])
+
+    def test_publication_failure_on_first_publish_leaves_no_partials(self):
+        """No previous files: a failure on the second rename must leave NONE of
+        the channel's three output files behind, and record the error."""
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3})
+        gi = r.get_param("green")
+        s.solve(gi, self.tmp)
+        self.assertNotIn("pairing_singlet_error", gi)
+        s.validate_output_paths(self._outputs(self.tmp), self.tmp)
+        names = ("eliashberg_bond_singlet.npz", "gap_bond_singlet.dat",
+                 "eigenvalue_bond_singlet.dat")
+        gap_target = os.path.join(self.tmp, "gap_bond_singlet.dat")
+        real = os.replace
+        state = {"failed": False}
+
+        def fake_replace(src, dst):
+            if dst == gap_target and not state["failed"]:
+                state["failed"] = True
+                raise OSError("disk full on the second publication")
+            return real(src, dst)
+
+        with mock.patch("hwave.solver.eliashberg_bond_io.os.replace", side_effect=fake_replace):
+            s.save_results(self._outputs(self.tmp), gi)
+        for fn in names:
+            self.assertFalse(os.path.exists(os.path.join(self.tmp, fn)), fn)
+        leftovers = [f for f in os.listdir(self.tmp)
+                     if ".tmp" in f or ".bak" in f]
+        self.assertEqual(leftovers, [])
+        self.assertIn("pairing_singlet_error", gi)
 
     def test_pairing_failure_keeps_flex_outputs(self):             # 10.2.7
         from unittest import mock
