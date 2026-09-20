@@ -558,11 +558,18 @@ Both are <code class="docutils literal notranslate"><span class="pre">calc_schem
 both run on the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, via CuPy) as well as on the CPU: on
 its own, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> uses the ordinary FLEX GPU path (see
 the <code class="docutils literal notranslate"><span class="pre">gpu</span></code> option below); with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
-(which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) the dressing, the effective
-interaction and the self-energy transport run on the GPU instead, while
-the bond arrays stay in host memory and are transferred one frequency
-batch at a time – the batch is chosen against both the host cap
-(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>) and the free device memory
+(which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) the bond bubble, the
+dressing, the effective interaction and the self-energy transport all run
+on the GPU instead. The Green function stays on the device from one
+iteration to the next and the bubble is assembled there from it, so for
+the bubble assembly what crosses to the host per map is its result alone
+– one block per channel pair. The dressing and the self-energy transport
+move their own data as before (the frequency batches of the effective
+interaction, then the collapses and the static slices).
+The bond arrays themselves stay in host memory and are transferred one
+frequency batch at a time; the batch is chosen against both the host cap
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>) and the free device memory, whose
+table carries a <code class="docutils literal notranslate"><span class="pre">bubble</span></code> row beside <code class="docutils literal notranslate"><span class="pre">dressing</span></code> and <code class="docutils literal notranslate"><span class="pre">transport</span></code>
 (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> overrides both and is refused when it
 exceeds either). Results agree with the CPU path to round-off; the
 outputs record <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>.

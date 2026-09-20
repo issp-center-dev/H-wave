@@ -526,9 +526,16 @@ continuation スイープでは<code class="docutils literal notranslate"><span 
 （式と適用範囲は<a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。いずれも<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
 スピンフリー・一様格子のオプションで、いずれも CPU に加えて
 GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>、CuPy 経由）でも実行できます。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を単独で指定した場合は通常の FLEX の GPU 経路が使われます（下記<code class="docutils literal notranslate"><span class="pre">gpu</span></code>の
-項を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）の場合は代わりに、ドレッシング・有効相互作用・自己エネルギー
-の転送が GPU 上で実行され、ボンド配列はホストメモリに置かれたまま振動数
-バッチを1つずつ転送します。バッチ幅はホスト側の上限（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>）とデバイスの空きメモリの両方に照らして選ばれます（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
+項を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）の場合は代わりに、ボンドバブル・ドレッシング・有効相互作用・自己
+エネルギーの転送がすべて GPU 上で実行されます。Green 関数は反復をまたいで
+デバイス上に置かれたままで、バブルもそこで組み立てられるため、バブルの
+組み立てに関して1回のマップでホストへ渡るのはその結果（チャネル対ごとに
+1ブロック）だけです。ドレッシングと自己エネルギーの転送は従来どおり
+それぞれのデータ（有効相互作用の振動数バッチ、続いて縮約と静的スライス）を
+やり取りします。ボンド配列自体はホストメモリに置かれたまま振動数
+バッチを1つずつ転送します。バッチ幅はホスト側の上限（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>）とデバイスの空きメモリの両方に照らして選ばれ、デバイス側の表には
+<code class="docutils literal notranslate"><span class="pre">dressing</span></code>・<code class="docutils literal notranslate"><span class="pre">transport</span></code>と並んで<code class="docutils literal notranslate"><span class="pre">bubble</span></code>の行が現れます
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
 範囲で CPU 実行と一致します。出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>と
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>が記録されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
 <span class="pre">&quot;all&quot;</span></code>で一度検査した後は、本番の GPU 実行を<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>に切り替えられます。
