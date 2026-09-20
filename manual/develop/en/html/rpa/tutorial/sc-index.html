@@ -1292,14 +1292,28 @@ tolerance.</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
-<p>Dynamic IR results computed with H-wave 1.0.x are incorrect for any
-model whose pairing vertex has a nonzero frequency-independent
-part — in particular anything with off-site
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (the shipped pure on-site-<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>
-comparisons did not expose it; note that the bare singlet term of such
-a model is <span class="math notranslate nohighlight">\(+U\)</span>, not zero – see the change note below). Recompute such
-runs; large changes in lambda are expected (they were the bug, not a
-physics change). The automatic <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> estimate also changed to a
+<p>Dynamic IR results computed with H-wave 1.0.x can carry a
+frequency-independent (instantaneous) part of the pairing vertex
+incorrectly: 1.0.x fitted that constant into the bosonic IR basis,
+where a <span class="math notranslate nohighlight">\(\delta(\tau)\)</span> component is aliased, instead of keeping
+it as a flat operator. How much the reported leading eigenvalue moves
+depends on how large that constant is <em>relative to the dynamic
+vertex</em>. It is large — and <code class="docutils literal notranslate"><span class="pre">lambda</span></code> shifts substantially — for a
+model with a large static susceptibility, i.e. off-site
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> near a charge instability. For a <strong>pure on-site
+Hubbard model</strong> the constant is present (the bare singlet term is
+<span class="math notranslate nohighlight">\(+U\)</span>, not zero — see the change note below) but small next to the
+dynamic part, and the singlet <strong>leading eigenvalue is reproduced</strong> on
+the IR basis to basis-truncation accuracy: a check on the shipped
+single-band fixture (<span class="math notranslate nohighlight">\(U = 2.5\)</span>, <span class="math notranslate nohighlight">\(4\times4\)</span>, <span class="math notranslate nohighlight">\(T = 0.5\)</span>,
+<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>) gives a uniform-vs-IR relative difference of
+<span class="math notranslate nohighlight">\(1.8\times10^{-4}\)</span> at a pinned <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>. So recompute a 1.0.x IR
+run when it declared an off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (large <code class="docutils literal notranslate"><span class="pre">lambda</span></code>
+changes are expected there — they were the bug, not a physics change);
+a pure on-site run’s leading eigenvalue was already right, though its
+gap eigenvector and any unprojected iteration were affected by the
+separate instantaneous-prescription defect described in the change note
+below. The automatic <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> estimate also changed to a
 dispersion-based bound and is now much smaller (and correct) on
 realistic multi-hopping models.</p>
 </div>

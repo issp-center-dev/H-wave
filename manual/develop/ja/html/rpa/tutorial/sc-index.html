@@ -1228,14 +1228,24 @@ CPU の空間 FFT にのみ作用します。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
-<p>1.0.x で計算した動的IRの結果は、ペアリング頂点にν非依存成分を
-持つモデル——特にオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
-を含む系——では誤りです（同梱のオンサイト<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>のみの
-比較ではこの不具合は現れませんでした。なお、そのような模型でも裸の
-singlet 項はゼロではなく<span class="math notranslate nohighlight">\(+U\)</span>です——下の変更に関する注意を
-参照）。該当する計算は再実行して
-ください。λの大きな変化は想定どおりです（変化分がバグであり、物理の
-変更ではありません）。また自動<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>推定は分散ベースに変わり、
+<p>1.0.x で計算した動的IRの結果は、ペアリング頂点の振動数非依存
+（瞬間的）成分を誤って扱うことがあります。1.0.x はその定数をボゾンIR
+基底へフィットしていたため、<span class="math notranslate nohighlight">\(\delta(\tau)\)</span>成分がエイリアス
+されます（平坦な演算子として保持するのが正しい）。報告される先頭固有値が
+どれだけ動くかは、その定数が <strong>動的頂点に対してどれだけ大きいか</strong> で
+決まります。静的感受率が大きい系、すなわち電荷不安定性近傍のオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>では大きく、<code class="docutils literal notranslate"><span class="pre">lambda</span></code>は大幅に変化します。
+<strong>純オンサイト Hubbard 模型</strong> では定数は存在する（裸の singlet 項は
+ゼロではなく<span class="math notranslate nohighlight">\(+U\)</span>——下の変更に関する注意を参照）ものの動的成分に
+比べて小さく、singlet の <strong>先頭固有値は</strong> IR基底で打ち切り精度で
+<strong>再現されます</strong>。同梱の1バンド模型（<span class="math notranslate nohighlight">\(U = 2.5\)</span>、
+<span class="math notranslate nohighlight">\(4\times4\)</span>、<span class="math notranslate nohighlight">\(T = 0.5\)</span>、<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code>）で
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>を固定して確認すると、一様格子とIRの相対差は
+<span class="math notranslate nohighlight">\(1.8\times10^{-4}\)</span>です。したがって、オフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
+を宣言していた 1.0.x のIR計算は再実行してください（そこでの<code class="docutils literal notranslate"><span class="pre">lambda</span></code>
+の大きな変化は想定どおりで、変化分がバグであり物理の変更ではありません）。
+純オンサイト計算の先頭固有値は既に正しく、ギャップの固有ベクトルや
+非射影の反復のみが、下の変更に関する注意で述べる別の瞬間項の扱いの不具合の
+影響を受けていました。また自動<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>推定は分散ベースに変わり、
 現実的な多ホッピング模型では大幅に小さい（正しい）値になります。</p>
 </div>
 <div class="admonition warning" id="sc-dynamic-ir-instantaneous">
