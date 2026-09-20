@@ -537,9 +537,11 @@ the ``gpu`` option below); with ``longitudinal_bond_channels = true``
 (which requires ``flex_hartree_fock = true``) the bond bubble, the
 dressing, the effective interaction and the self-energy transport all run
 on the GPU instead. The Green function stays on the device from one
-iteration to the next and the bubble is assembled there from it, so what
-crosses to the host per map is the bubble's result -- one block per
-channel pair -- and then the collapses and the static slices as before.
+iteration to the next and the bubble is assembled there from it, so for
+the bubble assembly what crosses to the host per map is its result alone
+-- one block per channel pair. The dressing and the self-energy transport
+move their own data as before (the frequency batches of the effective
+interaction, then the collapses and the static slices).
 The bond arrays themselves stay in host memory and are transferred one
 frequency batch at a time; the batch is chosen against both the host cap
 (``longitudinal_bond_memory_cap_gb``) and the free device memory, whose
