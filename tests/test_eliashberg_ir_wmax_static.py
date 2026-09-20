@@ -127,6 +127,41 @@ def test_ir_compress_keep_constant_does_not_bypass_conditioning_guard():
                      drop_constant=True, keep_constant=True)
 
 
+def test_ir_compress_return_constant_extracts_offset_without_aliasing():
+    """Issue #203: return_constant EXTRACTS the frequency-flat component and
+    returns it separately -- the nodes are the pure dynamic part (identical to
+    a plain drop), and the constant matches the injected offset -- so the
+    caller can keep it as a flat operator instead of aliasing it into the
+    smooth basis."""
+    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.ir_axis import IRAxis
+    beta, nmat = 50.0, 512
+    axB = IRAxis(beta=beta, wmax=4.0, eps=1.0e-8, statistics="B")
+    nu = (2 * np.arange(nmat) - nmat) * np.pi / beta
+    g = 1.7
+    chi_clean = 2.0 * g / (nu ** 2 + g ** 2) * (1.0 - np.exp(-beta * g))
+    const = 0.4 * float(np.abs(chi_clean).max())
+    arr = (chi_clean + const)[None, :].astype(np.complex128)
+    nodes, c = _ir_compress(arr, axB, nmat, "chiq_s",
+                            drop_constant=True, return_constant=True)
+    assert nodes.shape == (1, axB.n_freq)
+    assert c.shape == (1,)
+    # the extracted constant recovers the injected offset
+    np.testing.assert_allclose(c[0], const, rtol=1e-3, atol=1e-6)
+    # the nodes are the pure dynamic part -- identical to a plain drop
+    dropped = _ir_compress(arr, axB, nmat, "chiq_s", drop_constant=True)
+    np.testing.assert_allclose(nodes[0], dropped[0], atol=1e-8)
+
+
+def test_ir_compress_return_constant_requires_drop_constant():
+    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.ir_axis import IRAxis
+    axB = IRAxis(beta=50.0, wmax=4.0, eps=1.0e-8, statistics="B")
+    arr = np.ones((1, 512), dtype=np.complex128)
+    with pytest.raises(ValueError, match="return_constant requires drop_constant"):
+        _ir_compress(arr, axB, 512, "chiq_s", return_constant=True)
+
+
 def test_ir_compress_keep_constant_retains_offset():
     """Mechanistic check at a SANE wmax: a representable bosonic function plus a
     known moderate constant. drop recovers the clean function; keep returns the
