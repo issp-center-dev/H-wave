@@ -722,7 +722,12 @@ idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.da
          "CoulombIntra": "coulombintra.dat", "CoulombInter": "coulombinter.dat"}
 r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
 par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 256,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir"}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir",
+       # Pin ir_wmax on BOTH revisions so the IR basis is identical: issue #184
+       # changed the FLEX auto ir_wmax default (mu-aware), so leaving it out
+       # would compare two different bases rather than the takimoto kernel this
+       # test is about (the reference revision's auto value is the old one).
+       "ir_wmax": 20.0}
 if so != "absent":
     par["flex_second_order"] = so
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
@@ -851,3 +856,118 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     finally:
         for d in (fixture, a, b):
             shutil.rmtree(d, ignore_errors=True)
+
+
+# --- issue #184: one mu-aware ir_wmax estimator for FLEX and Eliashberg ------
+
+def _write_1orb_offset_fixture(dirpath, e0=5.0, t=1.0, U=4.0):
+    """A 1-orbital 1D-dispersion fixture with an ON-SITE energy offset e0.
+
+    eps(k) = e0 - 2 t cos(kx): band [e0-2t, e0+2t], centred at e0. The offset
+    shifts the band far from zero WITHOUT widening it -- exactly the case the
+    pre-#184 FLEX estimator (2*max|eps|) double-counted.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "1\n"
+            "    0.000000000000000e+00     0.000000000000000e+00"
+            "     0.000000000000000e+00\n")
+    transfer = ("Transfer in wannier90-like format for uhfk\n"
+                "1\n3\n 1 1 1\n"
+                "   0    0    0    1    1   {:.12f}   0.000000000000\n"
+                "   1    0    0    1    1   {:.12f}   0.000000000000\n"
+                "  -1    0    0    1    1   {:.12f}   0.000000000000\n"
+                ).format(e0, -t, -t)
+    coulombintra = ("CoulombIntra in wannier90-like format for uhfk\n"
+                    "1\n1\n 1\n"
+                    "   0    0    0    1    1   {:.12f}   0.000000000000\n"
+                    ).format(U)
+    with open(os.path.join(dirpath, "geom.dat"), "w") as f:
+        f.write(geom)
+    with open(os.path.join(dirpath, "transfer.dat"), "w") as f:
+        f.write(transfer)
+    with open(os.path.join(dirpath, "coulombintra.dat"), "w") as f:
+        f.write(coulombintra)
+
+
+def _make_1orb_offset_solver(e0=5.0, t=1.0, U=4.0, T=2.0, mu=5.0, filling=None):
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    dirpath = os.path.join(tempfile.gettempdir(), "hwave_flex_1orb_offset")
+    _write_1orb_offset_fixture(dirpath, e0=e0, t=t, U=U)
+    info_input = {'path_to_input': dirpath, 'interaction': {
+        'path_to_input': dirpath, 'Geometry': 'geom.dat',
+        'Transfer': 'transfer.dat', 'CoulombIntra': 'coulombintra.dat'}}
+    ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+    param = {'T': T, 'CellShape': [8, 1, 1], 'SubShape': [1, 1, 1],
+             'Nmat': 64, 'IterationMax': 2, 'Mix': 0.3, 'EPS': 8,
+             'matsubara_basis': 'ir'}
+    if filling is None:
+        param['mu'] = mu
+    else:
+        param['filling'] = filling
+    info_mode = {'mode': 'FLEX', 'param': param, 'calc_scheme': 'general'}
+    gi = read_input_k.QLMSkInput(info_input).get_param("green")
+    solver = solver_flex.FLEX(ham, {}, info_mode)
+    return solver, gi
+
+
+def _flex_auto_wmax(solver, gi):
+    solver._calc_epsilon_k(gi)
+    beta = 1.0 / solver.T
+    solver._ir_setup(beta)
+    return solver._ir_axF.wmax
+
+
+def test_flex_and_eliashberg_ir_wmax_agree_with_onsite_offset():
+    """Anti-regression for #184: the FLEX and dynamic-Eliashberg auto ir_wmax
+    are the SAME number for a model with a nonzero on-site offset -- neither
+    lets the offset leak in, and both are mu-aware."""
+    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    e0, t, U = 5.0, 1.0, 4.0
+    beta = 1.0 / 2.0
+
+    solver, gi = _make_1orb_offset_solver(e0=e0, t=t, U=U, T=2.0, mu=e0)
+    wmax_flex = _flex_auto_wmax(solver, gi)
+    u_flex = float(np.abs(np.asarray(solver.ham_info.ham_inter_q)).max())
+
+    # Eliashberg on the SAME physical model. Feed it the SAME interaction
+    # scale so the comparison isolates the (now unified) mu-aware band half-
+    # range: eps(k) = e0 - 2 t cos(kx), mu at the band centre e0.
+    hr = {((0, 0, 0), (0, 0)): e0,
+          ((1, 0, 0), (0, 0)): -t,
+          ((-1, 0, 0), (0, 0)): -t}
+    wmax_eli = _ir_auto_wmax(hr, {"u": np.array([[u_flex]])},
+                             norb=1, beta=beta, mu=e0)
+
+    assert wmax_flex == pytest.approx(wmax_eli, rel=1e-9)
+    # Both remove the offset: band half-range is 2 t, NOT e0 + 2 t (=7) and
+    # certainly not the old 2*max|eps| (=14).
+    assert wmax_flex / 3.0 - u_flex == pytest.approx(2.0 * t, abs=1e-9)
+    assert wmax_flex < 3.0 * (2.0 * (e0 + 2.0 * t) + u_flex)
+
+
+def test_flex_auto_wmax_matches_shared_estimator_calc_mu_path():
+    """The FLEX calc_mu (filling) path resolves mu the same way its own mu
+    search does and feeds the shared estimator: half filling puts mu at the
+    band centre, so the offset is removed there too."""
+    from hwave.solver.ir_axis import auto_wmax
+    e0, t, U = 5.0, 1.0, 4.0
+    solver, gi = _make_1orb_offset_solver(e0=e0, t=t, U=U, T=2.0, filling=0.5)
+    wmax_flex = _flex_auto_wmax(solver, gi)
+    ew = np.asarray(solver.H0_eigenvalue)
+    u_flex = float(np.abs(np.asarray(solver.ham_info.ham_inter_q)).max())
+    # mu at half filling is the band centre e0 -> shared estimator with mu=e0.
+    assert wmax_flex == pytest.approx(auto_wmax(ew, e0, u_flex), rel=1e-9)
+
+
+def test_flex_explicit_ir_wmax_is_unchanged():
+    """A run that sets ir_wmax explicitly must be untouched by #184."""
+    solver, gi = _make_1orb_offset_solver()
+    solver.ir_wmax = 12.5
+    solver._calc_epsilon_k(gi)
+    solver._ir_setup(1.0 / solver.T)
+    assert solver._ir_axF.wmax == pytest.approx(12.5)

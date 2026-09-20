@@ -57,6 +57,31 @@ _logger = logging.getLogger(__name__)
 #: point the shipped tests rely on it has over four decades of margin.
 IR_FIT_RESIDUAL_MAX = 1e-11
 
+#: Roundtrip-residual ceiling for the TALL uniform-grid / arbitrary-frequency
+#: fit designs (issue #183), a SEPARATE, looser bound from the square node
+#: matrices above. A coarse uniform grid legitimately samples the L basis
+#: functions less well than sparse-ir's own optimal node sets, so its
+#: coefficient roundtrip max|pinv(design)@design - I| is naturally larger --
+#: measured 4e-10 at the shipped beta=50, wmax=8 fixture with nmat=64, which
+#: the strict 1e-11 node bound would wrongly reject. This ceiling instead
+#: tracks the classic cond ~ 1e10 danger line (residual ~ cond*eps_machine),
+#: which is exactly where the OLD freq-point path already warned. Measured at
+#: beta=50, wmax=8, nmat=64: healthy Lambda=400 gives 4e-10; raising wmax so
+#: the coarse grid can no longer resolve the growing basis drives it through
+#: 1.5e-5 (Lambda=800) to ~0.2 (Lambda>=1200) -- the unbounded regime #183
+#: reported (dynamic eigenvalue ~1e18). 1e-6 clears every healthy case by
+#: >60x and sits >5 decades below the ill-conditioned ones.
+IR_UNIFORM_FIT_RESIDUAL_MAX = 1e-6
+
+#: rcond for the tall fit pseudo-inverses (issue #183). np.linalg.pinv drops
+#: singular values below rcond * max_sv. This sits far below the smallest
+#: singular-value ratio of any design this guard ACCEPTS (cond <~ 1e10), so
+#: those pinvs are bit-for-bit identical to the default-rcond result; it only
+#: bites once Lambda = beta*wmax is pushed so high the uniform grid cannot
+#: resolve the L basis functions, capping the otherwise ~1e18 amplification to
+#: a finite matrix the roundtrip check then rejects with an actionable error.
+_FIT_PINV_RCOND = 1e-12
+
 
 def _cond_str(mat):
     """Condition number of ``mat`` rendered for an error message.
@@ -72,6 +97,43 @@ def _cond_str(mat):
         return "{:.3e}".format(float(np.linalg.cond(mat)))
     except (np.linalg.LinAlgError, ValueError, FloatingPointError):
         return "unavailable"
+
+
+def auto_wmax(eigenvalues, mu, interaction_scale, *, factor=3.0,
+              param_hint="[mode.param] ir_wmax"):
+    """Heuristic default for the IR real-frequency cutoff ``ir_wmax`` shared
+    by FLEX and the dynamic Eliashberg solver (issue #184).
+
+    Returns ``factor * (max|eigenvalues - mu| + interaction_scale)``: the
+    spectral half-range measured ABOUT the chemical potential ``mu`` plus the
+    largest interaction scale, times a safety ``factor`` (design Sec. 4). The
+    chemical potential is what sets where the spectral weight sits relative to
+    zero, so subtracting it means an on-site energy offset that shifts the
+    band WITHOUT widening it does not leak into the estimate (the pre-#57
+    ``2 * max|eps|`` form double-counted exactly that offset).
+
+    Both call sites must produce the SAME number for the same physical model,
+    so this is the one place the formula lives. ``param_hint`` names the config
+    key to set explicitly in the raised message ("[mode.param] ir_wmax" for
+    FLEX, "[eliashberg] ir_wmax" for the dynamic solver); the caller's own
+    mu resolution and interaction scale are passed in.
+
+    Raises ``ValueError`` (not a bare nan/inf) when the result is not a
+    positive finite float -- a degenerate model (zero bandwidth and zero
+    interaction) or a non-finite input -- with the actionable remedy.
+    """
+    evals = np.asarray(eigenvalues)
+    band = float(np.abs(evals - float(mu)).max())
+    u = float(interaction_scale)
+    wmax = float(factor) * (band + u)
+    if not np.isfinite(wmax) or wmax <= 0.0:
+        raise ValueError(
+            "ir_wmax auto-estimate is not a positive finite number "
+            "(spectral half-range max|eps - mu| = {}, interaction scale = {}, "
+            "factor {} gave {}); set {} explicitly (a real-frequency bandwidth "
+            "in the same energy units as the Hamiltonian).".format(
+                band, u, factor, wmax, param_hint))
+    return wmax
 
 
 def _import_sparse_ir():
@@ -357,6 +419,70 @@ class IRAxis:
                     self._params_str(), axis_name, n_nodes, self.L,
                     _cond_str(eval_mat), residual,
                     IR_FIT_RESIDUAL_MAX, self._REMEDY))
+        return pinv
+
+    #: Remedy for the LARGE-Lambda failure of the tall fit designs (issue
+    #: #183) -- the opposite direction from ``_REMEDY`` above: here the fit is
+    #: ill-conditioned because beta*wmax is too LARGE for the sampling grid to
+    #: resolve, so the fix is to shrink Lambda or sample it more finely.
+    _FIT_REMEDY = ("Lower ir_wmax (or raise the temperature) so beta*wmax is "
+                   "smaller, increase Nmat so the uniform grid resolves the "
+                   "basis, or loosen ir_tol.")
+
+    def _pinv_checked_fit(self, design, name, ncol):
+        """Pseudo-invert a TALL least-squares fit design matrix ``design``
+        (n_points, ncol) and verify it inverts in coefficient space -- the
+        generalization of :meth:`_pinv_checked` to the uniform-grid and
+        arbitrary-frequency fits that :meth:`uniform_matrices` and
+        :meth:`_freq_points_fit_matrix` build (issue #183).
+
+        ``ncol`` is the number of fit columns: ``L`` for the plain fit, or
+        ``L + 1`` for the augmented fit whose extra constant column isolates a
+        frequency-independent component. The conditioning contract is the SAME
+        coefficient-space roundtrip quantity as the square node guard, here the
+        (ncol x ncol) LEFT product ``max|pinv(design) @ design - I_ncol|``
+        (n_points >> ncol), but compared against the looser, tall-fit-specific
+        :data:`IR_UNIFORM_FIT_RESIDUAL_MAX`: a coarse uniform grid resolves the
+        basis less well than sparse-ir's own node sets, so its healthy residual
+        is larger than the strict node bound would allow.
+
+        As ``Lambda = beta * wmax`` grows the sampling grid can no longer
+        resolve the L basis functions and the bare ``pinv`` amplified without
+        bound (#183 measured the dynamic eigenvalue reaching ~1e18); the
+        explicit :data:`_FIT_PINV_RCOND` caps that and this check rejects the
+        result with an ``ir_wmax`` / ``ir_tol`` / ``Nmat`` remedy instead of
+        returning a silently-wrong fit.
+        """
+        n_points = design.shape[0]
+        if n_points < ncol:
+            raise ValueError(
+                "IR fit is underdetermined at {}: the {} design matrix has "
+                "only {} sample point(s) for {} fit column(s), so the "
+                "least-squares fit onto the IR coefficients is not unique and "
+                "its matrices would be meaningless. {}".format(
+                    self._params_str(), name, n_points, ncol, self._FIT_REMEDY))
+        try:
+            pinv = np.linalg.pinv(design, rcond=_FIT_PINV_RCOND)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                "IR fit is not constructible at {}: pseudo-inverting the {} "
+                "design matrix ({}x{}) failed ({}). {}".format(
+                    self._params_str(), name, n_points, ncol, exc,
+                    self._FIT_REMEDY))
+        residual = float(np.max(np.abs(
+            pinv @ design - np.eye(ncol, dtype=pinv.dtype))))
+        if not (residual <= IR_UNIFORM_FIT_RESIDUAL_MAX):
+            raise ValueError(
+                "IR fit is ill-conditioned at {}: the {} design matrix "
+                "({}x{}, condition number {}) does not admit a reliable fit -- "
+                "its coefficient roundtrip residual "
+                "max|pinv(design)@design - I| is {:.3e}, above the tolerated "
+                "{:.1e}. The fit matrices built from it would be silently "
+                "wrong -- issue #183 measured the dynamic eigenvalue growing "
+                "without bound as ir_wmax is raised. {}".format(
+                    self._params_str(), name, n_points, ncol,
+                    _cond_str(design), residual,
+                    IR_UNIFORM_FIT_RESIDUAL_MAX, self._FIT_REMEDY))
         return pinv
 
     # -- matrix access with backend dispatch ---------------------------------
@@ -650,22 +776,13 @@ class IRAxis:
         if key not in self._device_m:
             design = np.ascontiguousarray(
                 self._basis.uhat(freq_n).T)             # (npts, L)
-            rank = np.linalg.matrix_rank(design)
-            if rank < self.L:
-                raise ValueError(
-                    "fit_from_freq_points: the design matrix for this node "
-                    "set is rank-deficient ({} < L={}); the node set cannot "
-                    "determine the coefficients.".format(rank, self.L))
-            sv = np.linalg.svd(design, compute_uv=False)
-            cond = float(sv[0] / sv[-1])
-            if cond > 1e10:
-                _logger.warning(
-                    "fit_from_freq_points: ill-conditioned node set "
-                    "(cond=%.2e); the fit may amplify noise.", cond)
-            else:
-                _logger.debug("fit_from_freq_points: cond=%.2e", cond)
-            self._device_m[key] = np.ascontiguousarray(
-                np.linalg.pinv(design).T)               # (npts, L)
+            # Guard the fit exactly as the uniform grid is (issue #183):
+            # rank-deficient or ill-conditioned node sets now RAISE the
+            # actionable, contextual error instead of a bare pinv that
+            # silently amplifies noise into physics.
+            pinv = self._pinv_checked_fit(
+                design, "arbitrary-frequency", self.L)
+            self._device_m[key] = np.ascontiguousarray(pinv.T)  # (npts, L)
 
     # -- uniform-grid (centered H-wave) interface ----------------------------
 
@@ -691,10 +808,17 @@ class IRAxis:
             eval_u = self._basis.uhat(self._uniform_n(nmat)).T   # (nmat, L)
             ev = np.ascontiguousarray(eval_u.T)                   # (L, nmat)
             design = eval_u
+            ncol = self.L
             if with_constant:
                 design = np.hstack([eval_u,
                                     np.ones((nmat, 1), dtype=eval_u.dtype)])
-            fit = np.ascontiguousarray(np.linalg.pinv(design).T)  # (nmat, L[+1])
+                ncol = self.L + 1
+            # Guarded pinv (issue #183): at large Lambda = beta*wmax the coarse
+            # uniform grid can no longer resolve the L basis functions and the
+            # bare pinv amplified without bound; _pinv_checked_fit caps that and
+            # raises an actionable error rather than returning a garbage fit.
+            pinv = self._pinv_checked_fit(design, "uniform-grid", ncol)
+            fit = np.ascontiguousarray(pinv.T)                    # (nmat, L[+1])
             self._device_m[key] = (fit, ev)
         return self._device_m[key]
 

@@ -131,10 +131,12 @@ def _dyn_input(outdir, nmat=64, extra=None):
     }
 
 
-def _write_converged_run(outdir, native):
+def _write_converged_run(outdir, native, extra_param=None):
     extra = {'matsubara_basis': 'ir'}
     if native:
         extra['write_densified'] = False
+    if extra_param:
+        extra.update(extra_param)
     solver, gi = _make_solver(extra_param=extra, iteration_max=60)
     solver.solve(gi, outdir)
     assert solver.scf_converged
@@ -174,7 +176,13 @@ def test_dynamic_ir_native_chain_matches_densified_chain(tmp_path):
     nat = tmp_path / "nat"
     den = tmp_path / "den"
     nat.mkdir(); den.mkdir()
-    solver, gi = _write_converged_run(str(nat), native=True)
+    # The IR-native chain refits the file's nodes onto the dynamic run's axis,
+    # so the two must share a basis: pin the SAME ir_wmax on the FLEX write and
+    # the dynamic read (issue #184 unified the auto estimate but the FLEX and
+    # dynamic solvers still read mu/interaction from different places, so their
+    # auto values can differ by a node and leave the file one node short).
+    solver, gi = _write_converged_run(str(nat), native=True,
+                                      extra_param={"ir_wmax": 12.0})
     axF, axB = solver._ir_axF, solver._ir_axB
     nmat = solver.nmat
     # offline densify of the SAME arrays -> the reference densified files
@@ -191,8 +199,8 @@ def test_dynamic_ir_native_chain_matches_densified_chain(tmp_path):
                          "sigma": "sigma", "green": "green",
                          "chiq_s": "chiq_s", "chiq_c": "chiq_c"}, gi_d)
 
-    lam_n = ed.solve_dynamic(_dyn_input(str(nat)))
-    lam_d = ed.solve_dynamic(_dyn_input(str(den)))
+    lam_n = ed.solve_dynamic(_dyn_input(str(nat), extra={"ir_wmax": 12.0}))
+    lam_d = ed.solve_dynamic(_dyn_input(str(den), extra={"ir_wmax": 12.0}))
     assert abs(lam_n - lam_d) < 1e-4 * abs(lam_d), (lam_n, lam_d)
 
 
@@ -271,7 +279,10 @@ def test_refit_nodes_rejects_wrong_sector_and_node_count():
 def test_dynamic_native_memory_guard_uses_node_count(tmp_path, monkeypatch):
     from hwave.solver import eliashberg_dynamic as ed
     out = str(tmp_path)
-    solver, _ = _write_converged_run(out, native=True)
+    # Shared basis for the native FLEX file and the dynamic read (see the chain
+    # test above): pin the SAME ir_wmax on both sides.
+    solver, _ = _write_converged_run(out, native=True,
+                                     extra_param={"ir_wmax": 12.0})
     captured = {}
     real = ed.check_memory
 
@@ -280,8 +291,12 @@ def test_dynamic_native_memory_guard_uses_node_count(tmp_path, monkeypatch):
         return real(norb, Nk, nmat, mem_limit_gb)
 
     monkeypatch.setattr(ed, "check_memory", spy)
-    ed.solve_dynamic(_dyn_input(out))
-    assert captured["nmat"] == solver._ir_axB.n_freq
+    ed.solve_dynamic(_dyn_input(out, extra={"ir_wmax": 12.0}))
+    # the guard sizes from the MAX file node count over chis/chic (bosonic)
+    # and green (fermionic); at a given wmax the fermionic axis can carry one
+    # more node than the bosonic one, so compare against the max of the two.
+    assert captured["nmat"] == max(solver._ir_axF.n_freq,
+                                   solver._ir_axB.n_freq)
 
 
 def test_ir_native_sigma_init_seeds_ir_run(tmp_path, caplog):

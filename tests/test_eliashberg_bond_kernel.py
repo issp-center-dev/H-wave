@@ -116,7 +116,11 @@ class TestAccumulator(unittest.TestCase):
         """A callable that replays no stage leaves r = a = 0, which would read as
         a perfect fit AND silently disable the constant-vs-scale refusal."""
         from hwave.solver.eliashberg_bond import PairVertexAccumulator
-        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0)
+        # nmat must resolve the augmented fit (L+1 columns at Lambda=beta*wmax=24,
+        # L=17): the #183 conditioning guard now refuses an underdetermined
+        # uniform grid, and this test is about the stage-replay refusal, not the
+        # fit dimensions -- so use a grid that comfortably determines the fit.
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=64, beta=2.0)
         axF, axB = _axes(fx["beta"])
 
         def stages(acc):

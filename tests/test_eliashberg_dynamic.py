@@ -2274,3 +2274,99 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
                 self.assertNotIn("eigenvalue_selection", fh.read())
         finally:
             _shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- issue #203: on-site static chi kept as a flat operator, like the bond ---
+
+def _write_static_dominated_flex(outdir, C0, Nx=4, Ny=4, Nz=1, nmat=256,
+                                 beta=2.0):
+    """A FLEX output whose spin susceptibility is STATIC-DOMINATED: a large
+    frequency-flat component ``C0`` plus a small dynamic bump. This is the
+    near-critical regime issue #57/#203 care about; on the IR path the flat
+    component must be retained as an operator, not aliased into the bosonic
+    fit. green is a plain non-interacting Green function on the cos band."""
+    import os
+    os.makedirs(outdir, exist_ok=True)
+    nvol = Nx * Ny * Nz
+    kx = 2 * np.pi * np.arange(Nx) / Nx
+    ky = 2 * np.pi * np.arange(Ny) / Ny
+    eps = (-2 * (np.cos(kx)[:, None] + np.cos(ky)[None, :])).reshape(nvol)
+    nf = 2 * np.arange(nmat) + 1 - nmat
+    wf = nf * np.pi / beta
+    green = np.empty((1, nmat, nvol, 1, 1), dtype=complex)
+    for v in range(nvol):
+        green[0, :, v, 0, 0] = 1.0 / (1j * wf - eps[v])
+    nb = 2 * np.arange(nmat) - nmat
+    wb = nb * np.pi / beta
+    g = 1.5
+    dyn = 0.3 / (1.0 + (wb / g) ** 2)
+    chis = np.empty((nmat, nvol, 1, 1), dtype=complex)
+    chic = np.empty((nmat, nvol, 1, 1), dtype=complex)
+    for v in range(nvol):
+        chis[:, v, 0, 0] = C0 + dyn              # large flat + small dynamic
+        chic[:, v, 0, 0] = 0.05 + 0.02 / (1.0 + (wb / g) ** 2)
+    np.savez(os.path.join(outdir, "chiq_s.npz"), chiq_s=chis,
+             chi_convention="myo", chi_orbital_layout="acbd",
+             momentum_convention="e_plus_ikR")
+    np.savez(os.path.join(outdir, "chiq_c.npz"), chiq_c=chic,
+             chi_convention="myo", chi_orbital_layout="acbd",
+             momentum_convention="e_plus_ikR")
+    np.savez(os.path.join(outdir, "green.npz"), green=green,
+             momentum_convention="e_plus_ikR")
+
+
+def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
+                          ir_wmax=10.0):
+    from hwave.solver import eliashberg_dynamic as ed
+    eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+           "pairing_type": "singlet", "solver_mode": "iteration",
+           "num_eigenvalues": 1, "max_iter": 200}
+    if basis != "uniform":
+        eli["matsubara_basis"] = basis
+        eli["ir_wmax"] = ir_wmax
+        if keep_static:
+            eli["ir_keep_static_chi"] = True
+    inp = {"mode": {"param": {"T": 0.5, "CellShape": [4, 4, 1],
+                              "SubShape": [1, 1, 1], "Nmat": 256,
+                              "filling": 0.5}},
+           "file": {"input": {"interaction": {
+                        "path_to_input": indir, "Geometry": "geom.dat",
+                        "Transfer": "transfer.dat",
+                        "CoulombIntra": "coulombintra.dat"}},
+                    "output": {"path_to_output": outdir}},
+           "eliashberg": eli}
+    return ed.solve_dynamic(inp)
+
+
+def test_ir_keep_static_chi_matches_uniform_for_large_flat_component(tmp_path):
+    """Issue #203: with a static-dominated spin susceptibility, the IR path
+    with ir_keep_static_chi retains the flat component as an operator (like the
+    bond path) and its leading eigenvalue AGREES with the uniform-grid result.
+    Dropping the constant instead (no keep_static) loses the static weight and
+    gives a badly wrong eigenvalue -- and the OLD keep behaviour, which added
+    the flat constant back onto every frequency node, aliased it into the
+    bosonic IR fit and was also wrong."""
+    pytest.importorskip("sparse_ir")
+    import os
+    indir = str(tmp_path / "in")
+    os.makedirs(indir, exist_ok=True)
+    _write_geom_transfer_coulomb(indir, norb=1)
+    out_u = str(tmp_path / "out_u")
+    out_ir = str(tmp_path / "out_ir")
+    out_ir_nk = str(tmp_path / "out_ir_nk")
+    for d in (out_u, out_ir, out_ir_nk):
+        _write_static_dominated_flex(d, C0=3.0)
+
+    lam_u = _solve_dynamic_lambda(indir, out_u, "uniform")
+    lam_ir = _solve_dynamic_lambda(indir, out_ir, "ir", keep_static=True)
+    lam_ir_nokeep = _solve_dynamic_lambda(indir, out_ir_nk, "ir",
+                                          keep_static=False)
+
+    assert np.isfinite(lam_u) and np.isfinite(lam_ir)
+    # the retained flat operator reproduces the uniform-grid eigenvalue
+    assert abs(lam_ir - lam_u) / abs(lam_u) < 2e-2, \
+        "lam_ir={} lam_u={}".format(lam_ir, lam_u)
+    # dropping the large static component instead is far off: keeping it matters
+    assert abs(lam_ir_nokeep - lam_u) / abs(lam_u) > 0.2, \
+        "dropping the static component should be wrong: nokeep={} u={}".format(
+            lam_ir_nokeep, lam_u)

@@ -1243,22 +1243,19 @@ def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
         if mu is None:
             mu = (sc._determine_mu(evals, beta, float(filling), norb)
                   if filling is not None else 0.0)
-        band = float(np.abs(evals - float(mu)).max())
         u = 0.0
         for arr in inter_k.values():
             u = max(u, float(np.abs(np.asarray(arr)).max()))
-        wmax = 3.0 * (band + u)
     except Exception as exc:
         raise ValueError(
             "ir_wmax auto-estimate failed ({}); set [eliashberg] ir_wmax "
             "explicitly (a real-frequency bandwidth in the same energy "
             "units as the Hamiltonian).".format(exc))
-    if not np.isfinite(wmax) or wmax <= 0.0:
-        raise ValueError(
-            "ir_wmax auto-estimate is not a positive finite number "
-            "(spectral range + interaction scale gave {}); set [eliashberg] "
-            "ir_wmax explicitly.".format(wmax))
-    return wmax
+    # The band-plus-interaction formula and its positivity check are the one
+    # shared estimator (issue #184): ir_axis.auto_wmax, mu-aware, identical to
+    # the FLEX side. Its ValueError already names [eliashberg] ir_wmax.
+    from hwave.solver.ir_axis import auto_wmax
+    return auto_wmax(evals, mu, u, param_hint="[eliashberg] ir_wmax")
 
 
 def _ir_axes_for_run(eli_param, beta, hr, inter_k, norb, mu=None, filling=None):
@@ -1281,7 +1278,7 @@ def _ir_axes_for_run(eli_param, beta, hr, inter_k, norb, mu=None, filling=None):
 
 def _ir_compress(arr, ax, nmat, label, drop_constant=False,
                  keep_constant=False, error_on_large_constant=True,
-                 max_chunk_bytes=1 << 28):
+                 return_constant=False, max_chunk_bytes=1 << 28):
     """Fit a centered-uniform-grid array (..., nmat) to IR and return its
     values on the sparse frequency nodes (..., n_freq).
 
@@ -1310,10 +1307,25 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
     kernels the same densified data and asserts operator equivalence, not data
     fidelity). A constant above 5% of the data scale (but below it) still warns.
     The largest constant is logged.
+
+    ``return_constant=True`` (requires ``drop_constant=True``, issue #203) is
+    the CORRECT handling of a static-dominated susceptibility: the frequency-
+    independent component is NOT added back onto the smooth frequency nodes
+    (where it would be a delta(tau) aliased into the bosonic basis) but is
+    returned SEPARATELY, so the caller can retain it as a flat operator
+    contracted through ``u_matsubara_sum`` -- exactly the bond path's mechanism.
+    In that mode the large-constant refusal is suppressed (the constant is
+    being kept, not discarded) and the returned nodes are the pure dynamic
+    part; the return value is the tuple ``(nodes, constant)`` where ``constant``
+    has shape ``arr.shape[:-1]``.
     """
+    if return_constant and not drop_constant:
+        raise ValueError("_ir_compress: return_constant requires drop_constant")
     lead = arr.reshape(-1, nmat)
     rows = max(1, int(max_chunk_bytes // max(1, arr.itemsize * nmat)))
     out = np.empty((lead.shape[0], ax.n_freq), dtype=np.complex128)
+    const_out = (np.empty((lead.shape[0], 1), dtype=np.complex128)
+                 if return_constant else None)
     fit_m, _ = ax.uniform_matrices(nmat, with_constant=drop_constant)
     resid = 0.0
     const_max = 0.0
@@ -1330,6 +1342,8 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
             if keep_constant:
                 node = node + const
             out[s:s + rows] = node
+            if return_constant:
+                const_out[s:s + rows] = const
         else:
             coeffs = sol
             resid = max(resid, float(
@@ -1339,12 +1353,13 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
     logger.info("IR compress %-8s: nmat=%d -> nodes=%d (L=%d), max uniform "
                 "residual %.3e (rel %.3e)%s", label, nmat, ax.n_freq, ax.L,
                 resid, resid / scale,
-                ((", retained" if keep_constant else ", discarded")
+                ((", retained" if (keep_constant or return_constant)
+                  else ", discarded")
                  + " frequency-independent constant %.3e" % const_max)
                 if drop_constant else "")
     if drop_constant:
-        if (not keep_constant and error_on_large_constant
-                and const_max > scale):
+        if (not keep_constant and not return_constant
+                and error_on_large_constant and const_max > scale):
             raise ValueError(
                 "IR compress {}: the discarded frequency-independent component "
                 "({:.3e}) exceeds the data scale ({:.3e}). It cannot be the "
@@ -1366,13 +1381,17 @@ def _ir_compress(arr, ax, nmat, label, drop_constant=False,
                 "value may indicate an unexpected constant in the input data -- "
                 "check the FLEX output / increase [mode.param] Nmat in the FLEX "
                 "run.%s", label, const_max, scale,
-                " (retained via ir_keep_static_chi)" if keep_constant else "")
+                " (retained via ir_keep_static_chi)"
+                if (keep_constant or return_constant) else "")
     if resid > 1.0e3 * ax.eps * scale:
         logger.warning(
             "IR fit residual for %s is large (rel %.3e > 1e3*ir_tol); the "
             "object may exceed the basis bandwidth -- raise ir_wmax or "
             "tighten ir_tol.", label, resid / scale)
-    return out.reshape(arr.shape[:-1] + (ax.n_freq,))
+    nodes = out.reshape(arr.shape[:-1] + (ax.n_freq,))
+    if return_constant:
+        return nodes, const_out.reshape(arr.shape[:-1])
+    return nodes
 
 
 def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
@@ -2095,6 +2114,11 @@ def solve_dynamic(input_dict):
     # sparse symmetric node axis unchanged. The full uniform tensors of the
     # VERTEX and G2 are never built on the IR path.
     axF = axB = None
+    # Retained static (frequency-flat) components of the on-site
+    # susceptibilities (issue #203): filled only on the IR path with
+    # ir_keep_static_chi, and carried to the vertex assembly as a flat
+    # operator rather than aliased into the bosonic IR fit.
+    chi_static_s = chi_static_c = None
     if use_ir:
         axF, axB = _ir_axes_for_run(eli_param, beta, hr, inter_k, norb,
                                     mu=mode_param.get("mu"),
@@ -2128,28 +2152,32 @@ def solve_dynamic(input_dict):
             nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
         else:
             keep_static = _ir_keep_static_requested(eli_param)
+            # issue #203: with ir_keep_static_chi, the frequency-flat component
+            # of the susceptibility is EXTRACTED (return_constant) and kept as a
+            # separate flat operator below, NOT added back onto the smooth
+            # frequency nodes (where a delta(tau) constant would be aliased into
+            # the bosonic IR basis, the very failure the #57 fix was for). The
+            # nodes carry the pure dynamic part; the constant becomes part of
+            # the instantaneous vertex, contracted through u_matsubara_sum --
+            # the same mechanism the bond path uses for its retained constant.
             if zero_chi_s:
                 chis_w = np.zeros(chis_w.shape[:-1] + (axB.n_freq,), dtype=chis_w.dtype)
+            elif keep_static:
+                chis_w, chi_static_s = _ir_compress(
+                    chis_w, axB, nmat, "chiq_s",
+                    drop_constant=True, return_constant=True)
             else:
                 chis_w = _ir_compress(
-                    chis_w,
-                    axB,
-                    nmat,
-                    "chiq_s",
-                    drop_constant=True,
-                    keep_constant=keep_static,
-                )
+                    chis_w, axB, nmat, "chiq_s", drop_constant=True)
             if zero_chi_c:
                 chic_w = np.zeros(chic_w.shape[:-1] + (axB.n_freq,), dtype=chic_w.dtype)
+            elif keep_static:
+                chic_w, chi_static_c = _ir_compress(
+                    chic_w, axB, nmat, "chiq_c",
+                    drop_constant=True, return_constant=True)
             else:
                 chic_w = _ir_compress(
-                    chic_w,
-                    axB,
-                    nmat,
-                    "chiq_c",
-                    drop_constant=True,
-                    keep_constant=keep_static,
-                )
+                    chic_w, axB, nmat, "chiq_c", drop_constant=True)
             green_w = _ir_compress(green_w, axF, nmat, "green")
     nfreq_axis = axF.n_freq if use_ir else nmat
 
@@ -2244,15 +2272,38 @@ def solve_dynamic(input_dict):
                                        pairing_type=pairing_type,
                                        convention=chi_convention,
                                        sc_matrices=sc_mats)
-        inst_scale = float(np.abs(V_inst).max())
-        if inst_scale > 0.0:
+        # Issue #203: the retained static (frequency-flat) susceptibility feeds
+        # a frequency-flat vertex contribution that belongs with the
+        # instantaneous delta(tau) operator, NOT the bosonic IR fit. The vertex
+        # is linear in chi, so the TOTAL flat operator is the full vertex
+        # evaluated at the static constant, full_vertex(chi_static) = V_inst +
+        # (chi-dependent flat part); every dynamic node still carries the bare
+        # V_inst, so only V_inst is removed from the nodes while the kernel
+        # contracts this full flat operator through u_matsubara_sum (the same
+        # mechanism the bond path uses for its retained constant).
+        V_flat = V_inst
+        if chi_static_s is not None or chi_static_c is not None:
+            zero_c = np.zeros((Nx, Ny, Nz, norb ** 2, norb ** 2),
+                              dtype=np.complex128)
+            cs = chi_static_s if chi_static_s is not None else zero_c
+            cc = chi_static_c if chi_static_c is not None else zero_c
+            V_flat = sc._compute_vertices_flex(
+                cs, cc, inter_k, norb, Nx, Ny, Nz,
+                pairing_type=pairing_type, convention=chi_convention,
+                sc_matrices=sc_mats)
+            logger.info("IR: retained static susceptibility folded into the "
+                        "instantaneous vertex operator (max |V_static_chi| = "
+                        "%.6g).", float(np.abs(V_flat - V_inst).max()))
+        inst_bare_scale = float(np.abs(V_inst).max())
+        if inst_bare_scale > 0.0:
             logger.info("IR: instantaneous vertex part split off "
-                        "analytically (max |V_inst| = %.6g).", inst_scale)
+                        "analytically (max |V_inst| = %.6g).", inst_bare_scale)
             # xp.asarray: on the GPU path Vs_q_w is already a device array
             # (moved above), while V_inst is host-built -- the subtraction
             # must not mix backends. Plain no-op cast on numpy.
             Vs_q_w = Vs_q_w - xp.asarray(V_inst)[..., np.newaxis]
-            V_inst_rt = _spatial_ifftn(V_inst.astype(complex),
+        if float(np.abs(V_flat).max()) > 0.0:
+            V_inst_rt = _spatial_ifftn(V_flat.astype(complex),
                                        axes=(4, 5, 6), workers=fft_workers)
             if gpu_active:
                 V_inst_rt = xp.asarray(V_inst_rt)
