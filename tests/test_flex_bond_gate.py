@@ -520,9 +520,9 @@ class TestDeviceAdmission(unittest.TestCase):
         at1 = flex_bond.estimate_bond_memory(
             device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
         rows = at1["device_rows"]
-        need1 = 1.25 * (rows["vertices_static"] + rows["flex_arrays"]
-                        + rows["second_order_factors"]
-                        + max(rows["bubble"], rows["dressing"], rows["transport"]))
+        phases = ("bubble", "dressing", "transport")
+        need1 = 1.25 * (sum(v for k, v in rows.items() if k not in phases)
+                        + max(rows[k] for k in phases))
         avail = int(need1 * 1.001 / 0.9)
         fake_xp = types.SimpleNamespace(__name__="cupy")
         with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
@@ -614,6 +614,54 @@ class TestDeviceContextFailure(unittest.TestCase):
                     with self.assertRaises(_Oom):
                         s.solve(gi, out)
         self.assertTrue(any("device context" in m for m in cm.output), cm.output)
+
+    def test_bubble_allocation_failure_names_the_phase_and_releases(self):
+        """The bubble allocates on the device now (issue #196), so an
+        out-of-memory error there must reach the same per-iteration
+        diagnostic as the dressing and the transport -- naming the bubble
+        and the iteration -- and everything the map holds must be released
+        on the way out."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        stores, contexts = [], []
+        real_store = flex_bond.BondBlockStore
+        real_ctx = flex_bond.BondDeviceContext
+
+        class _Store(real_store):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                stores.append(self)
+
+        class _Ctx(real_ctx):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self)
+
+        def boom(*a, **k):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 2})
+        gi = r.get_param("green")
+        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond, "BondBlockStore", _Store), \
+                mock.patch.object(flex_bond, "BondDeviceContext", _Ctx), \
+                mock.patch.object(flex_bond, "assemble_bubble", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        line = [m for m in cm.output if "bond-gate device allocation failed" in m]
+        self.assertEqual(len(line), 1, cm.output)
+        self.assertIn("bubble", line[0])
+        self.assertIn("iteration 1", line[0])
+        self.assertEqual(len(stores), 1)
+        self.assertTrue(stores[0].released)
+        self.assertEqual(len(contexts), 1)
+        self.assertTrue(contexts[0].released)
 
 
 class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):

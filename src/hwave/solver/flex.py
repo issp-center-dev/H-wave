@@ -2240,19 +2240,23 @@ class FLEX(RPA):
         shape = tuple(int(x) for x in self.lattice.shape)
         workers = getattr(self, "fft_workers", 1)
         xp = dev.xp
-        with self._traced("bubble"):
-            if iteration == 1:
-                # provenance next to the other per-solve backend lines: the
-                # bubble follows the Green function's module (issue #196)
-                logger.info("longitudinal_bond_channels (FLEX): bond bubble on %s",
-                            _bk.array_module_of(green_scf).__name__)
-            # green_scf arrives in the module the SCF loop runs on and stays
-            # there; dev.green0_tail was transferred to that same module once
-            # per solve. Both are the identity on the numpy backend.
-            flex_bond.assemble_bubble(
-                store, green_scf, dev.green0_tail,
-                beta, self._bond_view, shape, workers)
+        # the phase the one out-of-memory handler below names; every block
+        # that allocates on the device sets it before entering
+        phase = "bubble"
         try:
+            with self._traced("bubble"):
+                if iteration == 1:
+                    # provenance next to the other per-solve backend lines: the
+                    # bubble follows the Green function's module (issue #196)
+                    logger.info("longitudinal_bond_channels (FLEX): bond bubble on %s",
+                                _bk.array_module_of(green_scf).__name__)
+                # green_scf arrives in the module the SCF loop runs on and stays
+                # there; dev.green0_tail was transferred to that same module once
+                # per solve. Both are the identity on the numpy backend.
+                flex_bond.assemble_bubble(
+                    store, green_scf, dev.green0_tail,
+                    beta, self._bond_view, shape, workers)
+            phase = "dressing"
             with self._traced("dressing"):
                 res = flex_bond.dress_and_build_w(
                     store, dev, nb=self._bond_nb,
@@ -2267,16 +2271,18 @@ class FLEX(RPA):
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy)
+            phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
                     store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
         except _bk._oom_error_types() as exc:
             # no retry: a smaller batch mid-SCF would change the arithmetic
-            # of this solve. The iteration, the batch size and the pool
-            # occupancy are logged, then the error propagates -- solve()
+            # of this solve. The phase, the iteration, the batch size and the
+            # pool occupancy are logged, then the error propagates -- solve()
             # drops every partial result on the way out (spec 3.5).
-            logger.error("bond-gate device allocation failed at iteration %d with frequency "
-                         "batch %d (device pool used %.3f GiB): %s", iteration, self._bond_nb,
+            logger.error("bond-gate device allocation failed during the %s at iteration %d "
+                         "with frequency batch %d (device pool used %.3f GiB): %s",
+                         phase, iteration, self._bond_nb,
                          _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
             raise
         self._bond_last = res
