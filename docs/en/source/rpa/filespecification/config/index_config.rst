@@ -456,6 +456,25 @@ Parameters
   size is logged before writing. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_output_layout``
+
+  **Type :**
+  String (``"npz"`` (default) or ``"sidecar"``; case-insensitive; FLEX
+  mode only)
+
+  **Description :**
+  On-disk layout of the dynamic bond archive. ``"npz"`` writes a single
+  file with ``chi_s_w`` / ``chi_c_w`` inside it. ``"sidecar"`` writes the
+  index file (everything except the two channels, plus the fields
+  ``bond_archive_layout``, ``chi_s_w_file`` and ``chi_c_w_file``) at the
+  same path, and each channel as a raw ``.npy`` file next to it
+  (``<name>_chi_s_w.npy`` / ``<name>_chi_c_w.npy``). Post-processing
+  memory-maps those ``.npy`` files, reading one frequency batch at a
+  time, so a large channel member is never fully resident. Meaningful
+  only with ``longitudinal_bond_output_full = true`` (no archive is
+  written otherwise); a ``"sidecar"`` request without it is ignored with
+  a warning.
+
 - ``longitudinal_bond_freq_batch``
 
   **Type :**

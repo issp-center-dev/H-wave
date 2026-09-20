@@ -399,6 +399,25 @@ TOML形式
   ログに出力されます。\ ``longitudinal_bond_channels = true``\ でない
   場合は警告付きで無視されます。
 
+- ``longitudinal_bond_output_layout``
+
+  **形式 :** str型 (``"npz"``\ （デフォルト）または\ ``"sidecar"``\ 。
+  大文字小文字を区別しません。FLEXモードのみ)
+
+  **説明 :**
+  動的ボンドアーカイブのディスク上のレイアウトです。\ ``"npz"``\ は
+  ``chi_s_w`` / ``chi_c_w``\ を内部に含む単一ファイルを書き出します。
+  ``"sidecar"``\ は、同じパスにインデックスファイル（2つのチャネル以外
+  すべてに加え、\ ``bond_archive_layout``\ ・\ ``chi_s_w_file``\ ・
+  ``chi_c_w_file``\ の各フィールド）を書き出し、各チャネルをその隣に
+  素の\ ``.npy``\ ファイル（``<name>_chi_s_w.npy`` /
+  ``<name>_chi_c_w.npy``\ ）として書き出します。後処理はこれらの
+  ``.npy``\ ファイルをメモリマップし、振動数バッチを1つずつ読み込む
+  ため、大きなチャネルメンバー全体がメモリに常駐することはありません。
+  ``longitudinal_bond_output_full = true``\ のときにのみ意味を持ちます
+  （それ以外ではアーカイブは書き出されません）。\ ``longitudinal_bond_output_full``\
+  が false のまま\ ``"sidecar"``\ を指定した場合は警告付きで無視されます。
+
 - ``longitudinal_bond_freq_batch``
 
   **形式 :** int型 (デフォルトは自動選択。FLEXモードのみ)
