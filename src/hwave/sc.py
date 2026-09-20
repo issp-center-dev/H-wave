@@ -25,7 +25,7 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_k
 from hwave.solver import npy_header as _npy_header
 from numpy.fft import fftn, ifftn
-from scipy.optimize import bisect, brentq
+from scipy.optimize import brentq
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 
 import hwave
