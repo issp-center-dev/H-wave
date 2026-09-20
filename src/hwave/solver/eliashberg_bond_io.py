@@ -192,8 +192,12 @@ class BondArchive:
             # never fully resident. The whole-array np.isfinite scan is dropped
             # HERE (it would materialise the memmap); finiteness is enforced
             # per frequency batch downstream (PairVertexAccumulator._absorb, and
-            # _dress guards the solve).
-            return np.load(self.sidecar[name], mmap_mode="r")
+            # _dress guards the solve). A file that became unreadable between
+            # load and use raises the archive-contract error, not a bare one.
+            try:
+                return np.load(self.sidecar[name], mmap_mode="r")
+            except (OSError, ValueError) as exc:
+                raise _archive_contract_error(self.path, exc)
         with np.load(self.path) as d:
             arr = np.asarray(d[name])
         if not np.all(np.isfinite(arr)):
@@ -341,6 +345,14 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
                 if not os.path.exists(member_path):
                     raise FileNotFoundError(member_path)
                 shape, dtype = _npy_header(member_path)
+                # the header alone does not prove the data body is present: a
+                # truncated payload passes _npy_header but fails only later on
+                # the real read. Constructing the memmap validates the file is
+                # large enough for the declared array (without reading it), so a
+                # short file is refused HERE rather than during pairing setup.
+                m = np.load(member_path, mmap_mode="r")
+                m._mmap.close()
+                del m
             except (OSError, ValueError) as exc:
                 raise _archive_contract_error(path, exc)
             sidecar_paths[name] = member_path

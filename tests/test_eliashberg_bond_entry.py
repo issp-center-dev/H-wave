@@ -376,6 +376,20 @@ class TestSidecarLoader(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "chi_s_w"):
             self._load()
 
+    def test_truncated_sidecar_payload_is_refused(self):
+        # a .npy whose header is intact but whose data body is cut short must
+        # be caught during validation, not surface as a bare exception later
+        _npz_to_sidecar(self.path)
+        from numpy.lib import format as npfmt
+        with open(self.s_npy, "rb") as fh:
+            npfmt.read_magic(fh)
+            npfmt.read_array_header_1_0(fh)
+            data_offset = fh.tell()
+        with open(self.s_npy, "r+b") as fh:
+            fh.truncate(data_offset + 16)      # header + a few bytes only
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            self._load()
+
 
 class TestPairingControls(unittest.TestCase):
     def test_defaults_and_validation(self):
