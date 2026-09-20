@@ -1006,6 +1006,11 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
     ref_desc = ("the file's recorded nmat = {}".format(ref_nmat)
                 if file_nmat is not None
                 else "mode.param.Nmat = {}".format(ref_nmat))
+    # the same reference phrased as a requirement, for the message that
+    # states what nfreq would have to equal
+    ref_req = ("the file's recorded nmat ({})".format(ref_nmat)
+               if file_nmat is not None
+               else "mode.param.Nmat ({})".format(ref_nmat))
     if file_nmat is not None:
         ref_advice = (
             "The file records nmat = {}, so its stored axis is a "
@@ -1080,10 +1085,10 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
         raise ValueError(
             "chi0q file '{}': freq_index length {} does not match the "
             "frequency axis length {}, and the axis is not provably a full "
-            "grid (nfreq == {} with a 0-based freq_index), so the "
+            "grid (nfreq must equal {}, with a 0-based freq_index), so the "
             "zero-frequency position cannot be determined: centering the "
             "axis could pick a finite frequency of a restricted grid. {}"
-            .format(file_name, freq_index.size, nfreq, ref_desc, ref_advice))
+            .format(file_name, freq_index.size, nfreq, ref_req, ref_advice))
 
     def _find(nmat_orig):
         # the zero bosonic frequency has ORIGINAL index nmat_orig//2
