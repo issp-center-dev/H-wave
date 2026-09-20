@@ -1028,7 +1028,19 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
         # (nfreq == ref_nmat) is the other.  Any other length could be a
         # matsubara_frequency restriction of some run's grid, so nfreq//2
         # might point at a finite frequency -- refuse to guess.
-        if nfreq == 1 or nfreq == ref_nmat:
+        if nfreq == 1:
+            # Ruling (#186 review): a static-only chi0q holds exactly the
+            # zero bosonic frequency by construction, so keep accepting the
+            # singleton -- but state the assumption instead of reporting a
+            # generic centering.
+            logger.warning(
+                "chi0q file '{}' has no freq_index metadata and a single "
+                "stored frequency slice; assuming it is the zero bosonic "
+                "frequency (a static-only file) -- regenerate the file "
+                "with a newer version to record freq_index/nmat if it is "
+                "not.".format(file_name))
+            return None
+        if nfreq == ref_nmat:
             logger.warning(
                 "chi0q file '{}' has no freq_index metadata; using the "
                 "center of the stored frequency axis as the static slice."

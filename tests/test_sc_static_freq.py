@@ -6,6 +6,7 @@ chi0q.npz; freq_index records the original indices (zero frequency sits at
 original index Nmat//2).  Loading such a file and slicing at nfreq//2
 silently uses a finite-frequency chi0 as the static limit.
 """
+import logging
 import os
 import tempfile
 import unittest
@@ -135,6 +136,36 @@ class TestStaticFreqPosition(unittest.TestCase):
         # not match config Nmat -- this is the common static-only chi0q file
         # reduced to its zero-frequency component
         self.assertIsNone(_static_freq_position(None, 1, 1024, "f"))
+
+    def test_no_metadata_single_frequency_states_the_assumption(self):
+        # The acceptance above rests on an assumption the user cannot see in
+        # the data: that the single stored slice is the zero bosonic
+        # frequency (what a static-only run writes).  The warning must say
+        # so, not just report that the axis was centered.
+        records = []
+
+        class _Collect(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _Collect()
+        hw_logger = logging.getLogger("hwave_sc")
+        prev_level = hw_logger.level
+        hw_logger.addHandler(handler)
+        hw_logger.setLevel(logging.WARNING)
+        try:
+            self.assertIsNone(_static_freq_position(None, 1, 1024, "f"))
+        finally:
+            hw_logger.removeHandler(handler)
+            hw_logger.setLevel(prev_level)
+
+        msgs = [r.getMessage() for r in records
+                if r.levelno >= logging.WARNING]
+        self.assertTrue(msgs, "the singleton acceptance must warn")
+        joined = " ".join(msgs)
+        self.assertIn("single stored frequency slice", joined)
+        self.assertIn("zero bosonic frequency", joined)
+        self.assertIn("regenerate", joined.lower())
 
     def test_size_mismatch_mismatched_nmat_raises(self):
         # length-mismatch metadata with nfreq (8) != config Nmat (16): the
