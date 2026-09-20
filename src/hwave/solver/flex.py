@@ -1622,7 +1622,7 @@ class FLEX(RPA):
                                       sym_tol=None if warn else self.flex_hf_density_tol)
         if warn and dens.hermitian_deviation > self.flex_hf_density_tol:
             logger.warning(
-                "FLEX iteration %d: the equal-time density violates rho_ab(r) = "
+                "FLEX iteration %s: the equal-time density violates rho_ab(r) = "
                 "conj(rho_ba(-r)) (relative deviation %.3e > flex_hf_density_tol %.1e); "
                 "flex_guard_policy = \"warn\": the density is projected and the iteration "
                 "continues", iteration, dens.hermitian_deviation, self.flex_hf_density_tol)
@@ -2178,12 +2178,14 @@ class FLEX(RPA):
         """Refuse a FINAL state that sits inside the instability region of
         the bond gate (GitHub issue #199).
 
-        ``flex_guard_policy = "warn"`` tolerates a conditioning violation
-        DURING the self-consistency; here the last map is the answer, so a
-        violation of ITS dressing ends the run. ``cond_min_s``/``cond_min_c``
-        are the guard scores of that map -- with
-        ``longitudinal_bond_guard_freqs = "static"`` they are the minima over
-        the zero-frequency slice alone, not over the whole grid.
+        ``flex_guard_policy = "warn"`` tolerates a violation DURING the
+        self-consistency; here the last map is the answer, so a violation of
+        ITS dressing ends the run. The message separates the two guards that
+        can speak -- the conditioning guard and, under
+        ``longitudinal_bond_guard_freqs = "static"``, the solve residual of an
+        unchecked slice. ``cond_min_s``/``cond_min_c`` are the conditioning
+        scores of that map; under ``"static"`` they are the minima over the
+        zero-frequency slice alone, not over the whole grid.
 
         A no-op when no map ran (IterationMax = 0) or when nothing was
         warned about, which is always the case under ``"refuse"``: that
@@ -2191,13 +2193,16 @@ class FLEX(RPA):
         res = getattr(self, "_bond_last", None)
         if res is None or int(res.guard_violations) <= 0:
             return
+        n = int(res.guard_violations)
+        m = int(res.guard_residual_violations)
         raise ValueError(
-            "longitudinal_bond_channels: the LAST FLEX map violated the conditioning guard "
-            "{} time(s) (longitudinal_bond_cond_tol = {:.1e}, cond_min spin {:.3e} / charge "
-            "{:.3e}); flex_guard_policy = \"warn\" tolerates transient violations only. The "
-            "final state is inside the instability region: reduce the interaction, raise the "
-            "temperature, or lower longitudinal_bond_cond_tol deliberately.".format(
-                int(res.guard_violations), self.longitudinal_bond_cond_tol,
+            "longitudinal_bond_channels: the LAST FLEX map violated the bond guard "
+            "{} time(s) ({} conditioning, {} residual; longitudinal_bond_cond_tol = {:.1e}, "
+            "cond_min spin {:.3e} / charge {:.3e}); flex_guard_policy = \"warn\" tolerates "
+            "transient violations only. The final state is inside the instability region: "
+            "reduce the interaction, raise the temperature, or lower "
+            "longitudinal_bond_cond_tol deliberately.".format(
+                n, n - m, m, self.longitudinal_bond_cond_tol,
                 res.cond_min_s, res.cond_min_c))
 
     def _phase_b_bond_map(self, store, dev, green_kw, green_scf, green0_tail, beta, iteration):

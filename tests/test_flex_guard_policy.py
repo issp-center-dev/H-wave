@@ -124,19 +124,46 @@ class TestPhaseBDensityGuardPolicy(unittest.TestCase):
             self._run("refuse", 1.0e-3)
         self.assertIn("rho_ab(r)", str(cm.exception))
 
+    def test_the_warning_formats_without_an_iteration(self):
+        """``iteration`` is optional, so the message must format when it is
+        absent -- a formatting error would be swallowed by logging and
+        printed to stderr as "--- Logging error ---"."""
+        import contextlib
+        import io
+        import hwave.solver.flex_hf as flex_hf
+        from hwave.solver import hartree_fock as hf
+        st = _DensityStub("warn", 1e-8)
+        real_density, fake = _violating_density(1.0e-3)
+        real_map = flex_hf.hf_map
+        flex_hf.hf_map = lambda rho_r, tables, shape, norb: np.zeros(
+            (rho_r.shape[0], norb, norb), dtype=complex)
+        hf.equal_time_density = fake
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                    st.s._phase_b_density_and_hf(st.green, st.static, 0.0, st.beta, 0.0)
+        finally:
+            hf.equal_time_density = real_density
+            flex_hf.hf_map = real_map
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("FLEX iteration None", "\n".join(cm.output))
+        self.assertEqual(st.s.flex_guard_violations, 1)
+
     def test_a_raised_tolerance_lets_the_deviation_through_under_refuse(self):
         st, (dens, _sig, _h) = self._run("refuse", 1.0e-3, tol=1.0e-2)
         self.assertEqual(dens.hermitian_deviation, 1.0e-3)
         self.assertEqual(st.s.flex_guard_violations, 0)
 
 
-def _dress_result(guard_violations, cond_s=1.0e-5, cond_c=2.0e-5):
+def _dress_result(guard_violations, cond_s=1.0e-5, cond_c=2.0e-5, residual=0):
     from hwave.solver.flex_bond import DressResult
     z = np.zeros((1, 1, 1, 1), dtype=complex)
     return DressResult(collapse0=z, collapse_s=z, collapse_c=z,
                        static_s=z[0], static_c=z[0],
                        cond_min_s=cond_s, cond_min_c=cond_c,
-                       guard_violations=guard_violations)
+                       guard_violations=guard_violations,
+                       guard_residual_violations=residual)
 
 
 class TestFinalBondGuardRefusal(unittest.TestCase):
@@ -155,10 +182,28 @@ class TestFinalBondGuardRefusal(unittest.TestCase):
             s._refuse_final_bond_guard()
         msg = str(cm.exception)
         self.assertIn("3 time(s)", msg)
+        self.assertIn("3 conditioning, 0 residual", msg)
         self.assertIn("longitudinal_bond_cond_tol = 1.0e-03", msg)
         self.assertIn("1.000e-05", msg)
         self.assertIn("2.000e-05", msg)
         self.assertIn("instability region", msg)
+
+    def test_a_residual_only_map_is_named_as_such(self):
+        """The reduced "static" guard judges the unchecked slices by their
+        solve residual; a map that tripped only that must not be reported as
+        a conditioning violation."""
+        s = self._solver(_dress_result(1, residual=1))
+        with self.assertRaises(ValueError) as cm:
+            s._refuse_final_bond_guard()
+        msg = str(cm.exception)
+        self.assertIn("1 time(s)", msg)
+        self.assertIn("0 conditioning, 1 residual", msg)
+
+    def test_a_mixed_map_counts_both_kinds(self):
+        s = self._solver(_dress_result(5, residual=2))
+        with self.assertRaises(ValueError) as cm:
+            s._refuse_final_bond_guard()
+        self.assertIn("3 conditioning, 2 residual", str(cm.exception))
 
     def test_a_clean_final_map_passes(self):
         self._solver(_dress_result(0))._refuse_final_bond_guard()
@@ -197,6 +242,60 @@ class TestGuardDiagnosticsInTheLog(unittest.TestCase):
         with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
             s.solve(r.get_param("green"), _OUT)
         self.assertFalse([m for m in cm.output if "guards:" in m])
+
+
+class TestFinalStateIsNotCoveredByThePolicy(unittest.TestCase):
+
+    def test_the_final_state_density_is_refused_under_warn(self):
+        """A solve whose density keeps violating the symmetry ends in a
+        refusal even under ``"warn"``: the map is tolerated (and counted
+        WHILE the solve runs), the final state is not.
+
+        After the refusal the counter reads 0 again -- a failed solve drops
+        every solve-produced member, this provenance one included, so that a
+        later reader cannot mistake it for the record of a result."""
+        from hwave.solver import hartree_fock as hf
+        s, r = _flex({"flex_hartree_fock": True, "flex_guard_policy": "warn",
+                      "IterationMax": 1})
+        os.makedirs(_OUT, exist_ok=True)
+        gi = r.get_param("green")
+        seen = []
+        s._iteration_hook = lambda d: seen.append(s.flex_guard_violations)
+        real_density, fake = _violating_density(1.0e-3)
+        hf.equal_time_density = fake
+        try:
+            with self.assertRaises(ValueError) as cm:
+                s.solve(gi, _OUT)
+        finally:
+            hf.equal_time_density = real_density
+        self.assertIn("rho_ab(r)", str(cm.exception))
+        self.assertEqual(seen, [1])                           # the map was tolerated, once
+        self.assertEqual(s.flex_guard_violations, 0)          # and the failure left nothing
+        self.assertNotIn("green", gi)                         # nothing produced survives
+
+
+class TestIterationMaxZero(unittest.TestCase):
+    """No map ran, so there is nothing for the policy to tolerate and
+    nothing for the final bond check to judge."""
+
+    def test_hartree_fock_only(self):
+        s, r = _flex({"flex_hartree_fock": True, "flex_guard_policy": "warn",
+                      "IterationMax": 0})
+        os.makedirs(_OUT, exist_ok=True)
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s.solve(r.get_param("green"), _OUT)
+        self.assertFalse([m for m in cm.output if "guards:" in m])
+        self.assertEqual(s.flex_guard_violations, 0)
+
+    def test_bond_gate(self):
+        s, r = _flex({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                      "flex_guard_policy": "warn", "Nmat": 8, "IterationMax": 0})
+        os.makedirs(_OUT, exist_ok=True)
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s.solve(r.get_param("green"), _OUT)
+        self.assertFalse([m for m in cm.output if "guards:" in m])
+        self.assertEqual(s.flex_guard_violations, 0)
+        self.assertIsNone(getattr(s, "_bond_last", None))
 
 
 class TestGuardProvenance(unittest.TestCase):

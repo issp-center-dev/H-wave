@@ -194,7 +194,11 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
-                                      guard_policy=guard_policy, violations=violations)
+                                      guard_policy=guard_policy, violations=violations,
+                                      # the warnings of a tolerated violation do not
+                                      # pass through the refusal wrapper below, so the
+                                      # iteration reaches them at the source
+                                      iteration=iteration)
     except ValueError as exc:
         if iteration is None:
             raise
@@ -244,6 +248,10 @@ class DressResult:
     #: channels and both guard kinds (GitHub issue #199); always 0 under
     #: the default "refuse" policy, which raises instead
     guard_violations: int = 0
+    #: how many of those were findings of the reduced "static" mode's solve
+    #: RESIDUAL rather than of the conditioning guard (the conditioning count
+    #: is the difference), so a diagnostic can name the guard that spoke
+    guard_residual_violations: int = 0
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
@@ -308,7 +316,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     ``guard_freqs = "static"``, of the solve residual) is logged and the
     map continues, and the number of such violations over BOTH channels
     and the whole frequency grid is returned as
-    ``DressResult.guard_violations``."""
+    ``DressResult.guard_violations``, of which
+    ``DressResult.guard_residual_violations`` were residual findings."""
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
@@ -399,7 +408,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
                        cond_min_s=float(cond_s), cond_min_c=float(cond_c),
-                       guard_violations=len(violations))
+                       guard_violations=len(violations),
+                       guard_residual_violations=sum(1 for v in violations
+                                                     if v["kind"] == "residual"))
 
 
 # =============================================================================
