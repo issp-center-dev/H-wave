@@ -26,6 +26,8 @@ class ArrayBlockSource:
 
     def __init__(self, arrays, nd):
         self.nd = int(nd)
+        if self.nd <= 0:
+            raise ValueError("ArrayBlockSource: nd must be a positive integer, got {}".format(nd))
         self._a = {}
         shape = None
         for k, v in arrays.items():
@@ -817,8 +819,24 @@ def gap_bond_projection(gap_w, view, spatial_shape):
     -------
     ndarray, shape ``(B, norb, norb, nfreq)``
     """
-    nx, ny, nz = spatial_shape
+    spatial = tuple(spatial_shape)
+    if len(spatial) != 3 or not all(
+            float(x).is_integer() and int(x) > 0
+            for x in spatial):
+        raise ValueError("gap_bond_projection: spatial_shape must be three positive integers, "
+                         "got {}".format(spatial_shape))
+    nx, ny, nz = (int(x) for x in spatial)
     gap = np.asarray(gap_w)
+    if gap.ndim != 6:
+        raise ValueError("gap_bond_projection: gap_w must be 6-D (norb, norb, Nx, Ny, Nz, nfreq), "
+                         "got shape {}".format(gap.shape))
+    if tuple(int(x) for x in gap.shape[2:5]) != (nx, ny, nz):
+        raise ValueError("gap_bond_projection: gap_w spatial axes {} do not match spatial_shape "
+                         "{}".format(tuple(gap.shape[2:5]), (nx, ny, nz)))
+    n_channels = int(view.n_channels)
+    if n_channels < 1 or n_channels != len(view.delta_r):
+        raise ValueError("gap_bond_projection: view.n_channels ({}) must equal len(view.delta_r) "
+                         "({}) and be at least 1".format(view.n_channels, len(view.delta_r)))
     kx = 2 * np.pi * np.arange(nx) / nx
     ky = 2 * np.pi * np.arange(ny) / ny
     kz = 2 * np.pi * np.arange(nz) / nz

@@ -611,6 +611,54 @@ class TestKernelUniform(unittest.TestCase):
         for mm in range(fx["B"]):
             np.testing.assert_allclose(psi[mm], 1.0 if mm == m else 0.0, atol=1e-12)
 
+    def test_gap_bond_projection_validates_inputs(self):
+        import types
+        from hwave.solver.eliashberg_bond import gap_bond_projection
+        fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2)
+        nx, ny, nz = fx["spatial_shape"]
+        rng = np.random.default_rng(3)
+        good = (rng.standard_normal((1, 1, nx, ny, nz, 2))
+                + 1j * rng.standard_normal((1, 1, nx, ny, nz, 2)))
+        # a VALID call is bit-identical to the pre-hardening contraction
+        ref = np.empty((fx["B"], 1, 1, 2), complex)
+        kx = 2 * np.pi * np.arange(nx) / nx
+        ky = 2 * np.pi * np.arange(ny) / ny
+        kz = 2 * np.pi * np.arange(nz) / nz
+        KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing="ij")
+        for mm, R in enumerate(fx["view"].delta_r):
+            ph = np.exp(-1j * (KX * R[0] + KY * R[1] + KZ * R[2]))
+            ref[mm] = np.einsum("xyz,abxyzn->abn", ph, good) / (nx * ny * nz)
+        np.testing.assert_array_equal(
+            gap_bond_projection(good, fx["view"], fx["spatial_shape"]), ref)
+        # a 5-D gap
+        with self.assertRaisesRegex(ValueError, "6-D"):
+            gap_bond_projection(good[..., 0], fx["view"], fx["spatial_shape"])
+        # spatial axes disagree with spatial_shape (both shapes named)
+        with self.assertRaisesRegex(ValueError, "spatial axes"):
+            gap_bond_projection(good, fx["view"], (nx + 1, ny, nz))
+        # a bad spatial_shape: wrong length, or a non-positive extent
+        with self.assertRaisesRegex(ValueError, "three positive"):
+            gap_bond_projection(good, fx["view"], (nx, ny))
+        with self.assertRaisesRegex(ValueError, "three positive"):
+            gap_bond_projection(np.zeros((1, 1, nx, ny, 0, 2), complex),
+                                fx["view"], (nx, ny, 0))
+        # a view whose channel count disagrees with its bond list
+        bad_view = types.SimpleNamespace(n_channels=fx["B"] + 1, delta_r=fx["view"].delta_r)
+        with self.assertRaisesRegex(ValueError, "n_channels"):
+            gap_bond_projection(good, bad_view, fx["spatial_shape"])
+        empty_view = types.SimpleNamespace(n_channels=0, delta_r=())
+        with self.assertRaisesRegex(ValueError, "n_channels"):
+            gap_bond_projection(good, empty_view, fx["spatial_shape"])
+
+    def test_array_block_source_rejects_nonpositive_nd(self):
+        from hwave.solver.eliashberg_bond import ArrayBlockSource
+        arrays = {"x": np.zeros((2, 2, 4, 4), complex)}
+        for bad in (0, -1, -4):
+            with self.assertRaisesRegex(ValueError, "nd must be a positive integer"):
+                ArrayBlockSource(arrays, nd=bad)
+        src = ArrayBlockSource(arrays, nd=2)
+        self.assertEqual((src.nmat, src.nvol, src.ND, src.B), (2, 2, 4, 2))
+
     def test_instantaneous_vertex_single_band_equals_onsite(self):   # 10.1.12
         import hwave.sc as sc
         from hwave.solver import eliashberg_dynamic as ed
