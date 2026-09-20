@@ -722,7 +722,12 @@ idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.da
          "CoulombIntra": "coulombintra.dat", "CoulombInter": "coulombinter.dat"}
 r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
 par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 256,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir"}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir",
+       # Pin ir_wmax on BOTH revisions so the IR basis is identical: issue #184
+       # changed the FLEX auto ir_wmax default (mu-aware), so leaving it out
+       # would compare two different bases rather than the takimoto kernel this
+       # test is about (the reference revision's auto value is the old one).
+       "ir_wmax": 20.0}
 if so != "absent":
     par["flex_second_order"] = so
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
