@@ -1322,7 +1322,13 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <td><p>auto</p></td>
 <td><p>IR基底の実周波数バンド幅（ハミルトニアンと同じエネルギー単位）。
 省略時はバンド幅と相互作用スケールから自動推定（推定不能なら明示指定を
-求めるエラー）。係数テールの減衰診断が常時走り、帯域不足は警告されます。</p></td>
+求めるエラー）。係数テールの減衰診断が常時走り、帯域不足は警告されます。
+自動推定値は<code class="docutils literal notranslate"><span class="pre">3*(max|eps</span> <span class="pre">-</span> <span class="pre">mu|</span> <span class="pre">+</span> <span class="pre">相互作用)</span></code>（化学ポテンシャルを
+基準にしたスペクトル半幅＋最大相互作用スケール）で、動的 Eliashberg
+ソルバと同一です。これにより FLEX から Eliashberg へ渡す際に同じ基底に
+揃います。（以前は<code class="docutils literal notranslate"><span class="pre">3*(2*max|eps|</span> <span class="pre">+</span> <span class="pre">相互作用)</span></code>で、オンサイトの
+エネルギーオフセットを二重に数えていました。<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>を明示指定した
+実行は影響を受けません。）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
 <td><p>str</p></td>

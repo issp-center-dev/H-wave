@@ -332,7 +332,11 @@ representation; see <a class="reference internal" href="#sc-dynamic-ir-en"><span
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>: real-frequency bandwidth of the IR basis, in the same energy
 units as the Hamiltonian (auto-estimated from the dispersion spectral range
 <code class="docutils literal notranslate"><span class="pre">max|eps_k</span> <span class="pre">-</span> <span class="pre">mu|</span></code> and the interaction scale when omitted; if the estimate
-cannot be formed, the solver fails fast and asks for an explicit value).</p></li>
+cannot be formed, the solver fails fast and asks for an explicit value).
+The auto estimate is <code class="docutils literal notranslate"><span class="pre">3*(max|eps_k</span> <span class="pre">-</span> <span class="pre">mu|</span> <span class="pre">+</span> <span class="pre">interaction)</span></code> – the spectral
+half-range measured about the chemical potential plus the largest interaction
+scale. The FLEX solver now uses the identical estimator, so a FLEX -&gt;
+Eliashberg pair with an auto <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> lands on the same IR basis.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>). When the
 spin/charge susceptibility is static-dominated (large and nearly frequency-
 independent within the sampled window, i.e. the near-critical regime), the
@@ -343,6 +347,21 @@ component exceeds the data scale the solver aborts with guidance. Set this to
 <code class="docutils literal notranslate"><span class="pre">true</span></code> to retain the static component instead of aborting (alternatively
 lower <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> or increase the FLEX <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>).</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Keep</strong> <span class="math notranslate nohighlight">\(\beta\,\omega_\mathrm{max}\)</span> <strong>above the truncation floor.</strong>
+The ill-conditioning guard on the IR fit only catches a bandwidth that is
+too <em>large</em> for the sampling grid; it cannot see the opposite failure. At
+<em>small</em> <span class="math notranslate nohighlight">\(\Lambda = \beta\,\omega_\mathrm{max}\)</span> the fit stays perfectly
+well-conditioned yet the basis is simply too narrow to represent the
+Green function’s band edges, so it carries a silent basis-truncation error
+– of order 1% once <span class="math notranslate nohighlight">\(\omega_\mathrm{max}\)</span> no longer reaches a
+band-edge single-pole Green function to the requested <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>. Keep
+<span class="math notranslate nohighlight">\(\beta\,\omega_\mathrm{max}\)</span> above that floor: use the automatic
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> estimate (which targets it by construction) or set an explicit
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> <span class="math notranslate nohighlight">\(\ge 3\,(\text{bandwidth} + \text{interaction})\)</span> as the
+safe lower bound.</p>
+</div>
 </section>
 </section>
 <section id="interaction-definition-files">

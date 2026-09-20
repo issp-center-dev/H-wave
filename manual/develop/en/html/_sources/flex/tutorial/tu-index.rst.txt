@@ -1296,6 +1296,12 @@ The FLEX solver accepts the following parameters in the
        scale when omitted (a fail-fast error asks for an explicit value if
        the estimate cannot be formed). An always-on coefficient-decay
        diagnostic warns when the bandwidth is insufficient.
+       The auto estimate is ``3*(max|eps - mu| + interaction)``, i.e. the
+       spectral half-range measured about the chemical potential plus the
+       largest interaction scale, matching the dynamic Eliashberg solver so a
+       FLEX -> Eliashberg pair lands on the same basis. (Earlier releases used
+       ``3*(2*max|eps| + interaction)``, which double-counted an on-site
+       energy offset; runs that set ``ir_wmax`` explicitly are unaffected.)
    * - ``sigma_init_on_error``
      - str
      - "warn"

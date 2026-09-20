@@ -283,6 +283,10 @@ This section controls the Eliashberg solver. Key parameters:
   units as the Hamiltonian (auto-estimated from the dispersion spectral range
   ``max|eps_k - mu|`` and the interaction scale when omitted; if the estimate
   cannot be formed, the solver fails fast and asks for an explicit value).
+  The auto estimate is ``3*(max|eps_k - mu| + interaction)`` -- the spectral
+  half-range measured about the chemical potential plus the largest interaction
+  scale. The FLEX solver now uses the identical estimator, so a FLEX ->
+  Eliashberg pair with an auto ``ir_wmax`` lands on the same IR basis.
 - ``ir_keep_static_chi``: ``true`` / ``false`` (default ``false``). When the
   spin/charge susceptibility is static-dominated (large and nearly frequency-
   independent within the sampled window, i.e. the near-critical regime), the
@@ -292,6 +296,21 @@ This section controls the Eliashberg solver. Key parameters:
   component exceeds the data scale the solver aborts with guidance. Set this to
   ``true`` to retain the static component instead of aborting (alternatively
   lower ``ir_wmax`` or increase the FLEX ``Nmat``).
+
+.. note::
+
+   **Keep** :math:`\beta\,\omega_\mathrm{max}` **above the truncation floor.**
+   The ill-conditioning guard on the IR fit only catches a bandwidth that is
+   too *large* for the sampling grid; it cannot see the opposite failure. At
+   *small* :math:`\Lambda = \beta\,\omega_\mathrm{max}` the fit stays perfectly
+   well-conditioned yet the basis is simply too narrow to represent the
+   Green function's band edges, so it carries a silent basis-truncation error
+   -- of order 1% once :math:`\omega_\mathrm{max}` no longer reaches a
+   band-edge single-pole Green function to the requested ``ir_tol``. Keep
+   :math:`\beta\,\omega_\mathrm{max}` above that floor: use the automatic
+   ``ir_wmax`` estimate (which targets it by construction) or set an explicit
+   ``ir_wmax`` :math:`\ge 3\,(\text{bandwidth} + \text{interaction})` as the
+   safe lower bound.
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

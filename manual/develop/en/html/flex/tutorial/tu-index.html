@@ -1369,7 +1369,13 @@ unnecessary (ignored).</p></td>
 Hamiltonian); auto-estimated from the band range and interaction
 scale when omitted (a fail-fast error asks for an explicit value if
 the estimate cannot be formed). An always-on coefficient-decay
-diagnostic warns when the bandwidth is insufficient.</p></td>
+diagnostic warns when the bandwidth is insufficient.
+The auto estimate is <code class="docutils literal notranslate"><span class="pre">3*(max|eps</span> <span class="pre">-</span> <span class="pre">mu|</span> <span class="pre">+</span> <span class="pre">interaction)</span></code>, i.e. the
+spectral half-range measured about the chemical potential plus the
+largest interaction scale, matching the dynamic Eliashberg solver so a
+FLEX -&gt; Eliashberg pair lands on the same basis. (Earlier releases used
+<code class="docutils literal notranslate"><span class="pre">3*(2*max|eps|</span> <span class="pre">+</span> <span class="pre">interaction)</span></code>, which double-counted an on-site
+energy offset; runs that set <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> explicitly are unaffected.)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
 <td><p>str</p></td>
