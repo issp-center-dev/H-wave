@@ -522,7 +522,7 @@ class TestDeviceAdmission(unittest.TestCase):
         rows = at1["device_rows"]
         need1 = 1.25 * (rows["vertices_static"] + rows["flex_arrays"]
                         + rows["second_order_factors"]
-                        + max(rows["dressing"], rows["transport"]))
+                        + max(rows["bubble"], rows["dressing"], rows["transport"]))
         avail = int(need1 * 1.001 / 0.9)
         fake_xp = types.SimpleNamespace(__name__="cupy")
         with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
@@ -547,9 +547,9 @@ class TestDeviceAdmission(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_transfer_volume_counts_the_static_slices_and_sigma(self):
-        """Every device -> host copy of one iteration is accounted for: the W
-        batches, the guard copies, the collapses, the two static ND x ND
-        slices and the returned self-energy."""
+        """Every device -> host copy of one iteration is accounted for: the
+        bubble blocks, the W batches, the guard copies, the collapses, the
+        two static ND x ND slices and the returned self-energy."""
         import hwave.solver.flex as flex_mod
         for mode in ("all", "static"):
             with self.subTest(guard=mode):
@@ -564,10 +564,31 @@ class TestDeviceAdmission(unittest.TestCase):
                 u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
                 S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
                 guard_all = mode == "all"
-                d2h = (u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                # the leading u is the bubble: B^2 blocks of Nmat nvol P^2 16,
+                # brought back one channel pair at a time (issue #196)
+                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
                        + (0 if guard_all else 2 * S_b) + G_b)
                 gib = 1024.0 ** 3
                 self.assertIn("{:.4f}".format(d2h / gib), line)
+
+    def test_transfer_volume_does_not_count_a_green_function_copy(self):
+        """The bubble runs on the device, so the Green function no longer
+        crosses to the host once per map (issue #196): the reported D2H
+        must be the bubble-block figure, not that plus a G."""
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        est = s._bond_est
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s._log_bond_transfer_volume(est)
+        line = [m for m in cm.output if "transfer volume" in m][0]
+        u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+        S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+        d2h = u + 3 * u + 3 * C_b + 2 * S_b + G_b
+        gib = 1024.0 ** 3
+        self.assertIn("{:.4f}".format(d2h / gib), line)
+        self.assertNotIn("{:.4f}".format((d2h + 2 * G_b) / gib), line)
 
 
 class TestDeviceContextFailure(unittest.TestCase):
@@ -605,18 +626,21 @@ class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):
     def _run(self, iterations=2):
         import hwave.solver.backend as backend
         import hwave.solver.flex_bond as flex_bond
-        seen_green, seen_tail, copied, contexts = [], [], set(), []
+        # the arrays themselves, not their ids: a freed array's id can be
+        # handed straight to the next allocation, which would make an
+        # identity test by id silently wrong
+        seen_green, seen_tail, copied, contexts = [], [], [], []
         real_assemble = flex_bond.assemble_bubble
         real_to_host = backend.to_host
         real_ctx = flex_bond.BondDeviceContext
 
         def _assemble(store, green_scf, green0_tail, *a, **k):
-            seen_green.append(id(green_scf))
+            seen_green.append(green_scf)
             seen_tail.append(green0_tail)
             return real_assemble(store, green_scf, green0_tail, *a, **k)
 
         def _to_host(arr):
-            copied.add(id(arr))
+            copied.append(arr)
             return real_to_host(arr)
 
         class _ctx(real_ctx):
@@ -641,8 +665,8 @@ class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):
     def test_green_function_is_not_copied_to_the_host_for_the_bubble(self):
         s, seen_green, _, copied, _, _ = self._run()
         self.assertEqual(len(seen_green), 2)
-        for gid in seen_green:
-            self.assertNotIn(gid, copied)
+        for green in seen_green:
+            self.assertFalse(any(c is green for c in copied))
 
     def test_tail_comes_from_the_device_context(self):
         s, _, seen_tail, _, contexts, _ = self._run()

@@ -582,14 +582,19 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
       the measurement point, so counting it is a deliberate margin
       rather than a missing allocation --
 
-    plus two phase rows that are never simultaneously live:
+    plus three phase rows that are never simultaneously live:
+    ``bubble = max(prep, pair)`` -- the same expression as the host row,
+    which was derived for exactly this allocation pattern (the tau-space
+    Green function, its FFT-grid reversal, and the per-pair block before
+    its host copy), and a DEVICE row since issue #196 put the bond
+    bubble on the solver's array module --
     ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
     dressing solve and ``transport = 6 * C`` during the bond
     self-energy transport. The device need at a batch size is therefore
     ``1.25 * (vertices_static + flex_arrays + second_order_factors +
-    max(dressing(nb), transport))`` against ``device_cap = 0.9 *
+    max(bubble, dressing(nb), transport))`` against ``device_cap = 0.9 *
     device_available``. Refusal at ``nb = 1``
-    names whichever of the two phase rows does not fit; an explicit
+    names whichever of the three phase rows is the largest; an explicit
     ``freq_batch`` is checked against both the host and the device
     table; otherwise the selected ``nb`` is ``min`` of the largest
     batch each table admits, and the dict gains ``device_rows``,
@@ -691,20 +696,24 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
                           "second_order_factors": int(factor_bytes)}
         dev_persistent_sum = sum(dev_persistent.values())
+        dev_bubble = max(prep, pair)
         def _dev_rows(n):
             rows = dict(dev_persistent)
+            rows["bubble"] = dev_bubble
             rows["dressing"] = 7 * n * nvol * ND * ND * it
             rows["transport"] = transport
             return rows
         def _dev_need(n):
             r = _dev_rows(n)
-            return 1.25 * (dev_persistent_sum + max(r["dressing"], r["transport"]))
+            return 1.25 * (dev_persistent_sum
+                           + max(r["bubble"], r["dressing"], r["transport"]))
         dev_cap = 0.9 * float(device_available)
         def _dev_table(n):
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
                              for k, v in _dev_rows(n).items())
         if _dev_need(1) > dev_cap:
-            phase = "dressing" if 7 * nvol * ND * ND * it >= transport else "transport"
+            phase = max((("bubble", dev_bubble), ("dressing", 7 * nvol * ND * ND * it),
+                         ("transport", transport)), key=lambda kv: kv[1])[0]
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
                 "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "

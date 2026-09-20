@@ -298,9 +298,19 @@ class TestDeviceMemoryTable(unittest.TestCase):
                 7 * nvol * ND * ND * it)             # dressing per batch row
 
     @classmethod
+    def _bubble(cls):
+        """The bubble's device temporaries -- the same expression as the
+        host row, which was derived for that allocation pattern."""
+        it, nvol, P, ND, nmat = cls._IT, cls._NVOL, cls._P, cls._ND, cls._NMAT
+        prep = it * nvol * (ND ** 2 + 4 * P * (nmat + 2))
+        pair = it * nvol * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
+        return max(prep, pair)
+
+    @classmethod
     def _need(cls, nb, factor_bytes=0):
         S, G, C, per = cls._sym()
-        return 1.25 * (5 * S + 5 * G + factor_bytes + max(per * nb, 6 * C))
+        return 1.25 * (5 * S + 5 * G + factor_bytes
+                       + max(per * nb, 6 * C, cls._bubble()))
 
     def test_device_rows_and_selection(self):
         from hwave.solver.flex_bond import estimate_bond_memory
@@ -312,6 +322,9 @@ class TestDeviceMemoryTable(unittest.TestCase):
         self.assertEqual(est["device_rows"]["flex_arrays"], 5 * G)
         self.assertEqual(est["device_rows"]["second_order_factors"], 0)
         self.assertEqual(est["device_rows"]["transport"], 6 * C)
+        # the bubble runs on the device too (issue #196), so its temporaries
+        # are a device phase row with the host row's expression
+        self.assertEqual(est["device_rows"]["bubble"], self._bubble())
         nb = est["device_nb"]
         self.assertEqual(est["device_rows"]["dressing"], per * nb)
         self.assertLessEqual(self._need(nb), 0.9 * 2.0e8)
@@ -362,6 +375,63 @@ class TestDeviceMemoryTable(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("longitudinal_bond_freq_batch", msg)
         self.assertIn("device", msg.lower())
+
+
+class TestDeviceBubbleRow(unittest.TestCase):
+    """A shape whose BUBBLE is the largest of the three device phase rows
+    (issue #196). ``B = 5``, ``norb = 1``, ``Nmat = 32``, ``nvol = 8``:
+    the bubble's per-pair buffers grow with ``Nmat`` while the dressing
+    batch does not, and the transport's ``6 C`` stays below them at
+    ``norb = 1``."""
+
+    _KW = dict(nmat=32, nvol=8, norb=1, B=5, depth=0, output_full=False, split_seed=False,
+               n_types=1, freq_batch=None, cap_gb=200.0, mixing="linear")
+
+    _IT, _NVOL, _P, _ND, _NMAT, _B = 16, 8, 1, 5, 32, 5
+
+    @classmethod
+    def _rows(cls):
+        it, nvol, P, ND, nmat = cls._IT, cls._NVOL, cls._P, cls._ND, cls._NMAT
+        prep = it * nvol * (ND ** 2 + 4 * P * (nmat + 2))
+        pair = it * nvol * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
+        return dict(bubble=max(prep, pair),
+                    transport=6 * nmat * nvol * P * P * it,
+                    dressing1=7 * 1 * nvol * ND * ND * it,
+                    persistent=5 * nvol * ND * ND * it + 5 * nmat * nvol * P * it)
+
+    def test_the_fixture_really_is_bubble_dominated(self):
+        r = self._rows()
+        self.assertGreater(r["bubble"], r["transport"])
+        self.assertGreater(r["bubble"], r["dressing1"])
+
+    def test_device_need_takes_the_bubble_row(self):
+        from hwave.solver.flex_bond import estimate_bond_memory
+        r = self._rows()
+        need1 = 1.25 * (r["persistent"] + r["bubble"])
+        need2 = 1.25 * (r["persistent"] + 2 * r["dressing1"])
+        self.assertGreater(need2, need1)          # nb = 2 is dressing-dominated
+        # admit nb = 1 and refuse nb = 2, so the selected batch is 1 and the
+        # bubble is the phase row the need is built on
+        avail = int((need1 + need2) / 2 / 0.9)
+        est = estimate_bond_memory(device_available=avail, **self._KW)
+        self.assertEqual(est["device_nb"], 1)
+        self.assertEqual(est["device_rows"]["bubble"], r["bubble"])
+        self.assertAlmostEqual(est["device_need"], need1, delta=1e-6 * need1)
+
+    def test_refusal_names_the_bubble_when_it_is_the_largest_row(self):
+        from hwave.solver.flex_bond import estimate_bond_memory
+        with self.assertRaises(ValueError) as cm:
+            estimate_bond_memory(device_available=1000, **self._KW)
+        msg = str(cm.exception)
+        self.assertIn("device", msg.lower())
+        self.assertIn("'bubble'", msg)
+
+    def test_the_table_print_carries_the_row(self):
+        from hwave.solver.flex_bond import estimate_bond_memory
+        r = self._rows()
+        need1 = 1.25 * (r["persistent"] + r["bubble"])
+        est = estimate_bond_memory(device_available=int(need1 * 1.5 / 0.9), **self._KW)
+        self.assertIn("bubble", est["device_table"])
 
 
 if __name__ == "__main__":

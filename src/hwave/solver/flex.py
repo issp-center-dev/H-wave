@@ -1827,11 +1827,18 @@ class FLEX(RPA):
 
     def _log_bond_transfer_volume(self, est):
         """Host <-> device traffic of one SCF iteration at the selected
-        frequency batch (spec 4.6), logged once per solve. Per batch the
-        dressing moves one chibar batch in and one W batch out -- over a
-        whole iteration one full (Nmat, nvol, ND, ND) buffer each way,
-        since the batches tile the frequency axis -- plus two
-        batch-sized reads for the conditioning guard under
+        frequency batch (spec 4.6), logged once per solve.
+
+        The bubble is assembled on the device from the Green function the
+        SCF loop already holds there (issue #196), so no Green function
+        and no tail cross per iteration -- the tail is a one-off transfer
+        of the solve's device context. What the bubble does move is its
+        RESULT: the B^2 channel-pair blocks, one at a time, into the
+        host block store, i.e. one full (Nmat, nvol, ND, ND) buffer per
+        map. Per batch the dressing then moves one chibar batch back in
+        and one W batch out -- again one full buffer each way over a
+        whole iteration, since the batches tile the frequency axis --
+        plus two batch-sized reads for the conditioning guard under
         ``guard_freqs = "all"`` and two more for the full dynamic
         susceptibilities under ``longitudinal_bond_output_full``; the
         transport moves the B^2 blocks of W in and the collapses out.
@@ -1841,15 +1848,16 @@ class FLEX(RPA):
         two directions of one iteration are
 
             H2D = U + B^2 C
-            D2H = U (1 + 2 [guard = all] + 2 [output_full])
+            D2H = U + U (1 + 2 [guard = all] + 2 [output_full])
                   + 2 S + 2 S [guard = static] + 3 C + G
 
-        where the ``2 S`` terms are the two static ND x ND slices the
-        dressing always brings back and, under ``"static"``, the two
-        guard copies of that same slice (the ``"all"`` guard instead
-        copies the whole batch, which is the ``2 U`` term); ``3 C`` are
-        the three channel-0 collapses and ``G`` the self-energy the
-        transport returns."""
+        where the leading ``U`` is the bubble's ``B^2`` blocks (``B^2 C``
+        written in the ND symbols); the ``2 S`` terms are the two static
+        ND x ND slices the dressing always brings back and, under
+        ``"static"``, the two guard copies of that same slice (the
+        ``"all"`` guard instead copies the whole batch, which is the
+        ``2 U`` term); ``3 C`` are the three channel-0 collapses and
+        ``G`` the self-energy the transport returns."""
         from hwave.solver import flex_bond
         gib = flex_bond._GIB
         nb, nmat = int(est["nb"]), int(est["nmat"])
@@ -1859,7 +1867,9 @@ class FLEX(RPA):
         u_total = nmat * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
         h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
-        d2h = (u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
+        d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
+               u_total
+               + u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
                # the two static slices, plus the "static" guard's two copies of
                # that slice ("all" copies the whole batch, counted above)
                + 2 * int(est["S_bytes"]) * (1 if guard_all else 2)
