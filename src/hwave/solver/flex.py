@@ -4586,30 +4586,60 @@ class FLEX(RPA):
                                                          "longitudinal_bond.npz"))
             chi_s_w = green_info["longitudinal_bond_chi_s_w"]
             chi_c_w = green_info["longitudinal_bond_chi_c_w"]
+            layout = getattr(self, "longitudinal_bond_output_layout", "npz")
             logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
-                        "channel data)".format(file_name), 2 * chi_s_w.nbytes / 1024 ** 3)
-            np.savez(file_name,
-                     bond_archive_schema=np.int64(2),
-                     chi_s_w=chi_s_w,
-                     chi_c_w=chi_c_w,
-                     S_bond=green_info["longitudinal_bond_S"],
-                     C_bond=green_info["longitudinal_bond_C"],
-                     norb=np.int64(self.norb),
-                     freq_axis=np.str_("bosonic l -> 2l - nmat"),
-                     beta=1.0 / self.T,
-                     T=self.T,
-                     nmat=self.nmat,
-                     cell_shape=np.array(self.lattice.shape),
-                     momentum_convention=MOMENTUM_CONVENTION,
-                     wavevector_unit=self.kvec,
-                     wavevector_index=self.wavenum_table,
-                     index_order=green_info["longitudinal_bond_index_order"],
-                     delta_r=green_info["longitudinal_bond_delta_r"],
-                     reverse=green_info["longitudinal_bond_reverse"],
-                     types=green_info["longitudinal_bond_types"],
-                     **_bond_static,
-                     **self._provenance_block("last_map"),
-                     **self._second_order_members())
+                        "channel data, layout {})".format(file_name, layout),
+                        2 * chi_s_w.nbytes / 1024 ** 3)
+            # every archive member EXCEPT the schema stamp and the two big
+            # channel susceptibilities: the two are written inside the index
+            # npz (default) or, under the sidecar layout, as separate
+            # memory-mappable .npy files next to it (issue #205)
+            tail_members = dict(
+                S_bond=green_info["longitudinal_bond_S"],
+                C_bond=green_info["longitudinal_bond_C"],
+                norb=np.int64(self.norb),
+                freq_axis=np.str_("bosonic l -> 2l - nmat"),
+                beta=1.0 / self.T,
+                T=self.T,
+                nmat=self.nmat,
+                cell_shape=np.array(self.lattice.shape),
+                momentum_convention=MOMENTUM_CONVENTION,
+                wavevector_unit=self.kvec,
+                wavevector_index=self.wavenum_table,
+                index_order=green_info["longitudinal_bond_index_order"],
+                delta_r=green_info["longitudinal_bond_delta_r"],
+                reverse=green_info["longitudinal_bond_reverse"],
+                types=green_info["longitudinal_bond_types"],
+                **_bond_static,
+                **self._provenance_block("last_map"),
+                **self._second_order_members())
+            if layout == "sidecar":
+                # the sidecar basenames next to the index: the index basename
+                # with .npz replaced by _<member>.npy (post-processing resolves
+                # them relative to the index's directory)
+                base = os.path.basename(file_name)
+                stem = base[:-4] if base.endswith(".npz") else base
+                s_base = "{}_chi_s_w.npy".format(stem)
+                c_base = "{}_chi_c_w.npy".format(stem)
+                out_dir = os.path.dirname(file_name)
+                # np.save writes a plain, memory-mappable .npy array
+                np.save(os.path.join(out_dir, s_base), chi_s_w)
+                np.save(os.path.join(out_dir, c_base), chi_c_w)
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         bond_archive_layout=np.str_("sidecar"),
+                         chi_s_w_file=np.str_(s_base),
+                         chi_c_w_file=np.str_(c_base),
+                         **tail_members)
+            else:
+                # the default single-file archive, unchanged on disk except for
+                # the added bond_archive_layout scalar
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         chi_s_w=chi_s_w,
+                         chi_c_w=chi_c_w,
+                         bond_archive_layout=np.str_("npz"),
+                         **tail_members)
             logger.info("save_results: save the bond archive in file {}".format(file_name))
 
         # In-process pairing (spec 7): AFTER every FLEX artifact, in its own

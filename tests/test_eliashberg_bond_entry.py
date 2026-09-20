@@ -48,6 +48,61 @@ class TestArchiveSchema2(unittest.TestCase):
         self.assertNotIn("longitudinal_bond_S", gi)
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "longitudinal_bond.npz")))
 
+    def test_default_npz_layout_stamps_the_layout_field(self):
+        _run_gate(self.tmp)
+        with np.load(os.path.join(self.tmp, "longitudinal_bond.npz")) as d:
+            self.assertEqual(str(d["bond_archive_layout"]), "npz")
+            self.assertIn("chi_s_w", d.files)
+            self.assertIn("chi_c_w", d.files)
+        # the default layout writes no sidecar .npy files
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "longitudinal_bond_chi_s_w.npy")))
+
+
+class TestSidecarWriter(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_sidecar_index_drops_the_channels_and_names_the_files(self):
+        s, gi = _run_gate(self.tmp, extra={"longitudinal_bond_output_layout": "sidecar"})
+        index = os.path.join(self.tmp, "longitudinal_bond.npz")
+        s_npy = os.path.join(self.tmp, "longitudinal_bond_chi_s_w.npy")
+        c_npy = os.path.join(self.tmp, "longitudinal_bond_chi_c_w.npy")
+        self.assertTrue(os.path.exists(index) and os.path.exists(s_npy) and os.path.exists(c_npy))
+        with np.load(index) as d:
+            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(str(d["bond_archive_layout"]), "sidecar")
+            self.assertNotIn("chi_s_w", d.files)
+            self.assertNotIn("chi_c_w", d.files)
+            self.assertEqual(str(d["chi_s_w_file"]), "longitudinal_bond_chi_s_w.npy")
+            self.assertEqual(str(d["chi_c_w_file"]), "longitudinal_bond_chi_c_w.npy")
+            # every other member the default archive carries is still present
+            self.assertIn("S_bond", d.files)
+            self.assertIn("delta_r", d.files)
+        # the .npy sidecars hold exactly the channel data of the run
+        np.testing.assert_array_equal(np.load(s_npy), gi["longitudinal_bond_chi_s_w"])
+        np.testing.assert_array_equal(np.load(c_npy), gi["longitudinal_bond_chi_c_w"])
+
+    def test_sidecar_index_carries_the_same_small_members_as_npz(self):
+        tmp_npz = tempfile.mkdtemp()
+        try:
+            _run_gate(tmp_npz)
+            _run_gate(self.tmp, extra={"longitudinal_bond_output_layout": "sidecar"})
+            with np.load(os.path.join(tmp_npz, "longitudinal_bond.npz")) as dn, \
+                    np.load(os.path.join(self.tmp, "longitudinal_bond.npz")) as ds:
+                npz_only = set(dn.files) - set(ds.files)
+                self.assertEqual(npz_only, {"chi_s_w", "chi_c_w"})
+                sidecar_only = set(ds.files) - set(dn.files)
+                self.assertEqual(sidecar_only, {"chi_s_w_file", "chi_c_w_file"})
+                for k in set(dn.files) & set(ds.files):
+                    if k == "bond_archive_layout":
+                        continue
+                    np.testing.assert_array_equal(dn[k], ds[k], err_msg=k)
+        finally:
+            shutil.rmtree(tmp_npz, ignore_errors=True)
+
 
 class TestLoadBondArchive(unittest.TestCase):
     def setUp(self):
@@ -1180,7 +1235,7 @@ BOND_REFERENCE_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND"
 #: (1 -> 2). Every other member of the archive -- and every other output
 #: file -- must come out of both revisions bit for bit.
 _ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema",
-                            "longitudinal_bond_cond_tol"))
+                            "longitudinal_bond_cond_tol", "bond_archive_layout"))
 
 #: The provenance members the guard-policy work (issue #199) adds to EVERY
 #: archive of a Hartree-Fock / bond-gate run, the bond archive included:
