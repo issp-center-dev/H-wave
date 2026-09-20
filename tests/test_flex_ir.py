@@ -344,7 +344,9 @@ def test_ir_wmax_explicit_override_and_decay_warning(caplog):
     """An explicit ir_wmax is honored verbatim, and an insufficient
     bandwidth must trip the always-on coefficient-decay diagnostic.
 
-    ir_wmax is 3.0 against an auto-estimate of 37.5 for this fixture, so the
+    ir_wmax is 3.0 against an auto-estimate of 22.5 for this fixture
+    (mu-aware ``3*(max|eps - mu| + interaction)`` = 3*(5 + 2.5); mu = 0 here),
+    so the
     override is unambiguously "smaller than what the solver would pick" while
     staying constructible on every supported sparse-ir. It was 0.5
     (Lambda = beta*wmax = 1.0), which sparse-ir 1.1.7 samples with only TWO

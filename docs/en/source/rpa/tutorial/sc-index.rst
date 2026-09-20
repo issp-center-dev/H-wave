@@ -283,6 +283,10 @@ This section controls the Eliashberg solver. Key parameters:
   units as the Hamiltonian (auto-estimated from the dispersion spectral range
   ``max|eps_k - mu|`` and the interaction scale when omitted; if the estimate
   cannot be formed, the solver fails fast and asks for an explicit value).
+  The auto estimate is ``3*(max|eps_k - mu| + interaction)`` -- the spectral
+  half-range measured about the chemical potential plus the largest interaction
+  scale. The FLEX solver now uses the identical estimator, so a FLEX ->
+  Eliashberg pair with an auto ``ir_wmax`` lands on the same IR basis.
 - ``ir_keep_static_chi``: ``true`` / ``false`` (default ``false``). When the
   spin/charge susceptibility is static-dominated (large and nearly frequency-
   independent within the sampled window, i.e. the near-critical regime), the

@@ -1243,22 +1243,19 @@ def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
         if mu is None:
             mu = (sc._determine_mu(evals, beta, float(filling), norb)
                   if filling is not None else 0.0)
-        band = float(np.abs(evals - float(mu)).max())
         u = 0.0
         for arr in inter_k.values():
             u = max(u, float(np.abs(np.asarray(arr)).max()))
-        wmax = 3.0 * (band + u)
     except Exception as exc:
         raise ValueError(
             "ir_wmax auto-estimate failed ({}); set [eliashberg] ir_wmax "
             "explicitly (a real-frequency bandwidth in the same energy "
             "units as the Hamiltonian).".format(exc))
-    if not np.isfinite(wmax) or wmax <= 0.0:
-        raise ValueError(
-            "ir_wmax auto-estimate is not a positive finite number "
-            "(spectral range + interaction scale gave {}); set [eliashberg] "
-            "ir_wmax explicitly.".format(wmax))
-    return wmax
+    # The band-plus-interaction formula and its positivity check are the one
+    # shared estimator (issue #184): ir_axis.auto_wmax, mu-aware, identical to
+    # the FLEX side. Its ValueError already names [eliashberg] ir_wmax.
+    from hwave.solver.ir_axis import auto_wmax
+    return auto_wmax(evals, mu, u, param_hint="[eliashberg] ir_wmax")
 
 
 def _ir_axes_for_run(eli_param, beta, hr, inter_k, norb, mu=None, filling=None):

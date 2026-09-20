@@ -74,6 +74,43 @@ def _cond_str(mat):
         return "unavailable"
 
 
+def auto_wmax(eigenvalues, mu, interaction_scale, *, factor=3.0,
+              param_hint="[mode.param] ir_wmax"):
+    """Heuristic default for the IR real-frequency cutoff ``ir_wmax`` shared
+    by FLEX and the dynamic Eliashberg solver (issue #184).
+
+    Returns ``factor * (max|eigenvalues - mu| + interaction_scale)``: the
+    spectral half-range measured ABOUT the chemical potential ``mu`` plus the
+    largest interaction scale, times a safety ``factor`` (design Sec. 4). The
+    chemical potential is what sets where the spectral weight sits relative to
+    zero, so subtracting it means an on-site energy offset that shifts the
+    band WITHOUT widening it does not leak into the estimate (the pre-#57
+    ``2 * max|eps|`` form double-counted exactly that offset).
+
+    Both call sites must produce the SAME number for the same physical model,
+    so this is the one place the formula lives. ``param_hint`` names the config
+    key to set explicitly in the raised message ("[mode.param] ir_wmax" for
+    FLEX, "[eliashberg] ir_wmax" for the dynamic solver); the caller's own
+    mu resolution and interaction scale are passed in.
+
+    Raises ``ValueError`` (not a bare nan/inf) when the result is not a
+    positive finite float -- a degenerate model (zero bandwidth and zero
+    interaction) or a non-finite input -- with the actionable remedy.
+    """
+    evals = np.asarray(eigenvalues)
+    band = float(np.abs(evals - float(mu)).max())
+    u = float(interaction_scale)
+    wmax = float(factor) * (band + u)
+    if not np.isfinite(wmax) or wmax <= 0.0:
+        raise ValueError(
+            "ir_wmax auto-estimate is not a positive finite number "
+            "(spectral half-range max|eps - mu| = {}, interaction scale = {}, "
+            "factor {} gave {}); set {} explicitly (a real-frequency bandwidth "
+            "in the same energy units as the Hamiltonian).".format(
+                band, u, factor, wmax, param_hint))
+    return wmax
+
+
 def _import_sparse_ir():
     """Import sparse_ir (separated out so tests can monkeypatch a missing
     installation)."""

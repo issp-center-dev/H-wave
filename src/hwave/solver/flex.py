@@ -2314,21 +2314,31 @@ class FLEX(RPA):
         """Build the fermionic/bosonic IR axes once per solve."""
         if self._ir_axF is not None:
             return
-        from hwave.solver.ir_axis import IRAxis
+        from hwave.solver.ir_axis import IRAxis, auto_wmax
+        import hwave.sc as sc
         wmax = self.ir_wmax
         if wmax is None:
             ew = _bk.to_host(self.H0_eigenvalue)
-            band = 2.0 * float(np.abs(ew).max())
             u = float(np.abs(_bk.to_host(
                 self.ham_info.ham_inter_q)).max())
-            wmax = 3.0 * (band + u)
-            if not np.isfinite(wmax) or wmax <= 0.0:
-                raise ValueError(
-                    "ir_wmax auto-estimate is not a positive finite number "
-                    "(band bound {} + interaction scale {}); set "
-                    "[mode.param] ir_wmax explicitly (a real-frequency "
-                    "bandwidth in the same energy units as the "
-                    "Hamiltonian).".format(band, u))
+            # mu-aware spectral half-range (issue #184): the SAME estimator the
+            # dynamic Eliashberg solver uses, so a FLEX -> Eliashberg pair lands
+            # on a matching basis. mu is not yet resolved at _ir_setup (solve()
+            # sets self.mu later), so resolve it here exactly as FLEX's own mu
+            # search does: a fixed configured mu when calc_mu is off, else the
+            # mu that reproduces FLEX's target electron count on H0. The counter
+            # is the plain sum over ALL H0 eigenvalues equal to Ncond_target
+            # (Ncond halved for spin-free, as _find_mu does) -- reproduced by
+            # _determine_mu on the flattened spectrum with a per-entry target.
+            if self.calc_mu:
+                Ncond_target = (self.Ncond / 2 if self.spin_mode == "spin-free"
+                                else self.Ncond)
+                filling = float(Ncond_target) / float(ew.size)
+                mu = sc._determine_mu(
+                    np.asarray(ew).reshape(-1, 1, 1, 1), beta, filling, 1)
+            else:
+                mu = float(self.mu_value)
+            wmax = auto_wmax(ew, mu, u, param_hint="[mode.param] ir_wmax")
             logger.info("IR: auto ir_wmax = %.6g (override with "
                         "[mode.param] ir_wmax)", wmax)
         wmax = float(wmax)
