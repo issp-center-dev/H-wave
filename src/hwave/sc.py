@@ -25,7 +25,7 @@ from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_k
 from hwave.solver import npy_header as _npy_header
 from numpy.fft import fftn, ifftn
-from scipy.optimize import bisect
+from scipy.optimize import bisect, brentq
 from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 
 import hwave
@@ -1748,11 +1748,22 @@ def _calc_eigenvalues(epsilon_k):
 
 
 def _determine_mu(eigenvalues, beta, n_target, norb):
-    """Determine chemical potential using bisection.
+    """Determine chemical potential, matching RPA's search to round-off.
 
     The filling convention follows the reference code: n_target is the
     number of electrons per orbital per spin channel. For example,
     n_target=0.75 means 3/4 filling per spin.
+
+    Historically this used a plain ``scipy.optimize.bisect`` with default
+    tolerances, whose particle-number residual sat well above round-off and
+    disagreed with ``RPA._find_mu`` (#185).  It now uses the SAME machinery
+    as RPA: ``brentq`` with ``xtol=1e-14`` bracketed on the eigenvalue span
+    (falling back to the wide bracket only when that span is not
+    sign-bracketed), followed by the transactional Newton polish
+    ``rpa._polish_mu_root``, and it reuses ``rpa._masked_fermi_delta_n`` so
+    the overflow-guarded Fermi arithmetic (and the particle-number residual
+    it drives to round-off) is bit-for-bit identical to RPA's.  The former
+    overflow cutoff of 100 becomes the ``ene_cutoff`` of the masked helper.
 
     Parameters
     ----------
@@ -1770,18 +1781,40 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     mu : float
         Chemical potential.
     """
+    from hwave.solver import rpa as _rpa
+
     Nx, Ny, Nz = eigenvalues.shape[:3]
     nvol = Nx * Ny * Nz
+    T = 1.0 / beta
+    ene_cutoff = 100.0
+    w = np.asarray(eigenvalues)
 
-    def _calc_n(mu):
-        x = beta * (eigenvalues - mu)
-        fermi = np.where(x > 100, 0.0, np.where(x < -100, 1.0, 1.0 / (1.0 + np.exp(x))))
-        total_n = np.sum(fermi)
-        return float(total_n / nvol - n_target * norb)
+    # RPA counts an UNNORMALIZED sum over all (k, band) entries of one spin
+    # block; sc.py's per-nvol target is n_target * norb, so the matching
+    # unnormalized target is n_target * norb * nvol.  Same eigenvalues, same
+    # physical per-spin filling as RPA._find_mu.
+    target = n_target * norb * nvol
 
-    emin = np.min(eigenvalues)
-    emax = np.max(eigenvalues)
-    mu = bisect(_calc_n, emin - 10.0, emax + 10.0)
+    def _delta_n_and_deriv(mu):
+        return _rpa._masked_fermi_delta_n(w, T, mu, target, ene_cutoff)
+
+    def _calc_delta_n(mu):
+        return _delta_n_and_deriv(mu)[0]
+
+    ev = np.sort(w.flatten())
+    lo, hi = float(ev[0]), float(ev[-1])
+
+    bracketed = (_calc_delta_n(lo) * _calc_delta_n(hi)) < 0.0
+    if bracketed:
+        mu = brentq(_calc_delta_n, lo, hi, xtol=1e-14)
+    else:
+        # fall back to the historical wide bracket
+        mu = brentq(_calc_delta_n, lo - 10.0, hi + 10.0, xtol=1e-14)
+
+    # Transactional Newton polish (#160): drives the particle-number residual
+    # toward round-off; never returns a worse root than brentq's.
+    mu = _rpa._polish_mu_root(_delta_n_and_deriv, mu,
+                              bracket=(lo, hi) if bracketed else None)
     return float(mu)
 
 
