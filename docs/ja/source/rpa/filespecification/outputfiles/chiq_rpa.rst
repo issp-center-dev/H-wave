@@ -206,7 +206,9 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
-``green``\ ）には来歴ブロック\ ``scf_converged``\ ・\ ``scf_iterations``\ ・
+``green``\ 。ボンドゲートは Hartree-Fock 項を必要とするため、
+``longitudinal_bond_channels = true``\ の計算もすべて含まれます）
+には来歴ブロック\ ``scf_converged``\ ・\ ``scf_iterations``\ ・
 ``map_iteration``\ ・\ ``state_iteration``\ ・\ ``scf_sigma_residual``\ ・
 ``scf_green_residual``\ ・\ ``scf_component_residual``\ ・\ ``payload_kind``
 （感受率は\ ``"last_map"``\ 、\ ``sigma`` / ``green``\ は\ ``"final_state"``\ ）・
@@ -218,8 +220,8 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 **事象** の件数。反復の回数ではなく、等時刻密度の検査については1反復に
 つき1件、ボンドのガードについては該当する（チャネル, ボソン振動数,
 :math:`q`\ 点）ごとに1件を数えるため、1回の反復が複数件を寄与すること
-があります。最初の違反で停止する\ ``"refuse"``\ では\ ``0``\ ）が
-含まれます。
+があります。違反がなければ\ ``0``\ で、最初の違反で停止する
+``"refuse"``\ では常に\ ``0``\ ）が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
 ``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
