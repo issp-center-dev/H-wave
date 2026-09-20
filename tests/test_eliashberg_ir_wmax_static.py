@@ -88,9 +88,9 @@ def test_ir_auto_wmax_solves_mu_from_filling():
 def _static_dominated_illcond(beta=50.0, wmax=200.0, nmat=512):
     """A static-dominated bosonic chi in the pathological regime: a sharp
     static (nu=0) Lorentzian peak fitted with a huge basis (Lambda=beta*wmax=1e4,
-    exactly the issue's over-large auto-wmax). The augmented fit is
-    ill-conditioned and the constant column blows up ABOVE the data scale --
-    the definitive signature that dropping it is unsafe. Returns (axB, arr)."""
+    exactly the issue's over-large auto-wmax). At this Lambda the coarse
+    uniform grid can no longer resolve the L basis functions, so the augmented
+    fit is ill-conditioned (cond ~ 1e15). Returns (axB, arr)."""
     from hwave.solver.ir_axis import IRAxis
     axB = IRAxis(beta=beta, wmax=wmax, eps=1.0e-8, statistics="B")
     nu = (2 * np.arange(nmat) - nmat) * np.pi / beta
@@ -99,23 +99,32 @@ def _static_dominated_illcond(beta=50.0, wmax=200.0, nmat=512):
     return axB, chi[None, :].astype(np.complex128)
 
 
-def test_ir_compress_errors_when_constant_exceeds_data_scale():
+def test_ir_compress_illconditioned_augmented_fit_raises():
+    """At the pathological Lambda=1e4, the augmented uniform fit is genuinely
+    ill-conditioned. The #183 conditioning guard now catches this at the
+    pseudo-inverse -- the root cause -- and raises an actionable error naming
+    ir_wmax, superseding the earlier downstream "constant exceeds the data
+    scale" proxy (which was only ever a symptom of the same ill-conditioning).
+    """
     from hwave.solver.eliashberg_dynamic import _ir_compress
     axB, arr = _static_dominated_illcond()
-    # Discarded constant (~7.6e2) exceeds the data scale (~6.3e1): the run must
-    # abort rather than silently return a physically-wrong object.
-    with pytest.raises(ValueError, match="exceeds the data scale"):
+    with pytest.raises(ValueError, match="ir_wmax") as exc:
         _ir_compress(arr, axB, 512, "chiq_s", drop_constant=True)
+    assert "ill-conditioned" in str(exc.value)
 
 
-def test_ir_compress_keep_constant_does_not_error():
+def test_ir_compress_keep_constant_does_not_bypass_conditioning_guard():
+    """keep_constant retains the static component instead of dropping it, but
+    it cannot rescue a fit whose OTHER coefficients are ill-conditioned: the
+    pseudo-inverse is built either way, so the #183 guard still fires at the
+    pathological Lambda. (The correct remedy at a sane Lambda -- retaining the
+    flat component as an operator -- is exercised by the on-site static path.)
+    """
     from hwave.solver.eliashberg_dynamic import _ir_compress
     axB, arr = _static_dominated_illcond()
-    # keep_constant retains the static component instead of dropping it, so the
-    # pathological ill-conditioning no longer aborts the run.
-    out = _ir_compress(arr, axB, 512, "chiq_s",
-                       drop_constant=True, keep_constant=True)
-    assert out.shape == (1, axB.n_freq)
+    with pytest.raises(ValueError, match="ir_wmax"):
+        _ir_compress(arr, axB, 512, "chiq_s",
+                     drop_constant=True, keep_constant=True)
 
 
 def test_ir_compress_keep_constant_retains_offset():

@@ -432,5 +432,110 @@ class TestSkipsWithoutSparseIR(unittest.TestCase):
             _mod._import_sparse_ir = saved
 
 
+@unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
+class TestUniformFitConditioningGuard(unittest.TestCase):
+    """Issue #183: the TALL uniform-grid / arbitrary-frequency fit
+    pseudo-inverses were unguarded, so at large ``Lambda = beta*wmax`` the
+    coarse sampling grid could no longer resolve the L basis functions and
+    the fit amplified without bound (the dynamic eigenvalue reached ~1e18).
+    ``_pinv_checked_fit`` now measures the coefficient roundtrip and either
+    accepts (well-conditioned) or raises a contextual error naming ir_wmax."""
+
+    def _axis(self, beta=HEALTHY_BETA, wmax=HEALTHY_WMAX, statistics="F"):
+        from hwave.solver.ir_axis import IRAxis
+        return IRAxis(beta=beta, wmax=wmax, eps=EPS, statistics=statistics)
+
+    def test_uniform_fit_healthy_passes_within_bound(self):
+        import hwave.solver.ir_axis as _mod
+        ax = self._axis()
+        # nmat comfortably resolves the basis: fit builds, and its own
+        # coefficient roundtrip stays within the tall-fit residual bound.
+        fit, ev = ax.uniform_matrices(256)
+        eye = np.eye(ax.L)
+        resid = float(np.max(np.abs(ev @ fit - eye)))
+        self.assertLessEqual(resid, _mod.IR_UNIFORM_FIT_RESIDUAL_MAX)
+
+    def test_uniform_fit_raises_on_large_lambda(self):
+        # Same beta and a coarse nmat, but ir_wmax raised so far that the
+        # grid can no longer resolve the growing basis: the build must RAISE
+        # the actionable error naming ir_wmax, not return unbounded values.
+        ax = self._axis(wmax=24.0)   # Lambda = 1200, residual ~0.2 at nmat=64
+        with self.assertRaises(ValueError) as ctx:
+            ax.uniform_matrices(64)
+        msg = str(ctx.exception)
+        self.assertIn("ir_wmax", msg)
+        self.assertIn("ill-conditioned", msg)
+
+    def test_with_constant_fit_is_guarded_and_healthy_passes(self):
+        ax = self._axis()
+        # augmented (L+1) fit at a healthy point: builds, shape carries the
+        # constant column.
+        fit, ev = ax.uniform_matrices(256, with_constant=True)
+        self.assertEqual(fit.shape, (256, ax.L + 1))
+        # ill-conditioned: the augmented fit raises too.
+        ax_bad = self._axis(wmax=32.0)
+        with self.assertRaises(ValueError) as ctx:
+            ax_bad.uniform_matrices(64, with_constant=True)
+        self.assertIn("ir_wmax", str(ctx.exception))
+
+    def test_uniform_fit_bit_identical_to_unguarded_when_wellconditioned(self):
+        """The guarded fit must not perturb a well-conditioned result: the
+        explicit rcond truncates nothing there, so the fit matrix is
+        bit-for-bit the unguarded default-rcond pinv."""
+        ax = self._axis()
+        nmat = 256
+        fit, _ = ax.uniform_matrices(nmat)
+        eval_u = ax._basis.uhat(ax._uniform_n(nmat)).T          # (nmat, L)
+        unguarded = np.ascontiguousarray(np.linalg.pinv(eval_u).T)
+        self.assertTrue(np.array_equal(fit, unguarded))
+
+    def test_pinv_checked_fit_unit_accepts_and_rejects(self):
+        import hwave.solver.ir_axis as _mod
+        ax = self._axis()
+        ncol = 6
+        rng = np.random.default_rng(0)
+        # Well-conditioned tall design: accepted, and bit-identical to the
+        # unguarded default-rcond pinv (no singular value is truncated).
+        good = rng.standard_normal((80, ncol)) + 0j
+        pinv = ax._pinv_checked_fit(good, "unit-good", ncol)
+        self.assertTrue(np.array_equal(pinv, np.linalg.pinv(good)))
+        # Near-rank-deficient tall design (a column ~parallel to another):
+        # the tiny singular value is truncated, the roundtrip breaks, RAISE.
+        bad = rng.standard_normal((80, ncol)) + 0j
+        bad[:, -1] = bad[:, 0] + 1e-14 * bad[:, -1]
+        with self.assertRaises(ValueError) as ctx:
+            ax._pinv_checked_fit(bad, "unit-bad", ncol)
+        self.assertIn("ir_wmax", str(ctx.exception))
+        # Structurally underdetermined (fewer points than columns): RAISE.
+        with self.assertRaises(ValueError) as ctx:
+            ax._pinv_checked_fit(rng.standard_normal((ncol - 1, ncol)) + 0j,
+                                 "unit-short", ncol)
+        self.assertIn("underdetermined", str(ctx.exception))
+
+    def test_uniform_fit_contract_over_wmax_ladder(self):
+        """Module-philosophy contract (no fixed regime point assumed):
+        sweeping ir_wmax up at a fixed coarse nmat must produce at least one
+        contextual rejection, and every point that DOES build must keep its
+        fit within the residual bound -- never a silently unbounded fit."""
+        import hwave.solver.ir_axis as _mod
+        nmat = 64
+        rejected, built = [], []
+        for wmax in (8.0, 24.0, 48.0, 96.0):
+            ax = self._axis(wmax=wmax)
+            try:
+                fit, ev = ax.uniform_matrices(nmat)
+            except ValueError as exc:
+                # every rejection is the contextual, actionable error
+                self.assertIn("ir_wmax", str(exc))
+                rejected.append(wmax)
+                continue
+            resid = float(np.max(np.abs(ev @ fit - np.eye(ax.L))))
+            self.assertLessEqual(resid, _mod.IR_UNIFORM_FIT_RESIDUAL_MAX,
+                                 "built wmax={} escaped the bound".format(wmax))
+            built.append(wmax)
+        self.assertTrue(rejected, "no ill-conditioned point was rejected")
+        self.assertIn(8.0, built)
+
+
 if __name__ == "__main__":
     unittest.main()
