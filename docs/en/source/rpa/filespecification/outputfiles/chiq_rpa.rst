@@ -269,10 +269,13 @@ the sector the run selected in (``"channel"``, ``"combined_parity"`` or
 ``"none"``: the sector the power iteration projected onto, or on the
 eigenvalue solver modes the stage the eigenpair reordering matched with), and
 the selection criterion that produced the reported leading eigenvalue
-(``"LM"`` = plain ``arnoldi`` largest magnitude, ``"LR"`` = user
-``spectral_shift`` largest real part, ``"LR_retry"`` = the automatic re-solve
-for the largest real part when the ``"LM"`` set held no positive channel
-eigenvalue, ``"shift-invert"``, or ``"iteration"``); see
+(``"LR_projected"`` = a symmetry-valid solve restricted to a conserved channel
+sector, the num_eigenvalues-independent criterion; ``"LM"`` = plain ``arnoldi``
+largest magnitude; ``"LR"`` = user ``spectral_shift`` largest real part;
+``"LR_retry"`` = the automatic largest-real re-solve when an unprojected
+``"LM"`` set held no positive channel eigenvalue; ``"dense-LR"`` = the
+tiny-operator dense largest-real path; ``"shift-invert"``; or
+``"iteration"``); see
 :ref:`Pairing channels of the dynamic solver <sc_dynamic_channels>`):
 ``bond_channels``
 (``true``), ``bond_delta_r`` / ``bond_reverse`` (the archive's bond
@@ -294,7 +297,8 @@ carries one ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
 even_k_odd_w=... odd_k_odd_w=...`` header line (six decimals), the same four
 numbers as the ``gap_sector_weights`` npz key, followed by
 ``# sector_selection=<channel|combined_parity|none>`` and
-``# eigenvalue_selection: <LM|LR|LR_retry|shift-invert|iteration>``. The
+``# eigenvalue_selection: <LR_projected|LM|LR|LR_retry|dense-LR|shift-invert|iteration>``.
+The
 ``match`` column of
 the per-eigenvalue table is named after that same sector:
 ``match(1=channel even-frequency sector)`` or
