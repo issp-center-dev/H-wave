@@ -232,7 +232,7 @@ class TestStaticFreqPosition(unittest.TestCase):
 
 class TestLoadChi0qStaticIndex(unittest.TestCase):
     def _write_and_load(self, nmat_config, freq_index, nfreq, file_nmat=None,
-                        shape=None):
+                        shape=None, cell_shape=None, norb=None):
         with tempfile.TemporaryDirectory() as tmp:
             if shape is None:
                 shape = (nfreq, 4, 1, 1)
@@ -243,11 +243,16 @@ class TestLoadChi0qStaticIndex(unittest.TestCase):
             if file_nmat is not None:
                 kwargs["nmat"] = file_nmat
             np.savez(os.path.join(tmp, "chi0q.npz"), **kwargs)
+            param = {"Nmat": nmat_config}
+            if cell_shape is not None:
+                param["CellShape"] = list(cell_shape)
+                kwargs["momentum_convention"] = "e_plus_ikR"
+                np.savez(os.path.join(tmp, "chi0q.npz"), **kwargs)
             input_dict = {
-                "mode": {"param": {"Nmat": nmat_config}},
+                "mode": {"param": param},
                 "file": {"output": {"path_to_output": tmp}},
             }
-            return _load_chi0q(input_dict)
+            return _load_chi0q(input_dict, norb=norb)
 
     def test_restricted_file_returns_true_static_index(self):
         chi0q, static_index = self._write_and_load(8, np.arange(2, 7), 5)
@@ -321,6 +326,47 @@ class TestLoadChi0qStaticIndex(unittest.TestCase):
         # full grid, so centering is unambiguous and delegation is accepted
         chi0q, static_index = self._write_and_load(8, None, 8)
         self.assertIsNone(static_index)
+
+    def test_spin_diagonal_5d_frequency_axis_is_axis_one(self):
+        # spin-diagonal layout (2, nfreq, nvol, norb, norb): the frequency
+        # axis is axis 1.  Without CellShape the layout cannot be resolved
+        # from the config, but the leading 2 identifies it structurally --
+        # taking the LAST axis would read an ORBITAL length as nfreq.
+        chi0q, static_index = self._write_and_load(
+            8, np.arange(2, 7), 5, file_nmat=8, shape=(2, 5, 4, 1, 1))
+        self.assertEqual(static_index, 2)
+
+    def test_spin_diagonal_7d_frequency_axis_is_axis_one(self):
+        # same for the 4-orbital-index spin-diagonal layout
+        # (2, nfreq, nvol, norb, norb, norb, norb)
+        chi0q, static_index = self._write_and_load(
+            8, np.arange(2, 7), 5, file_nmat=8, shape=(2, 5, 4, 1, 1, 1, 1))
+        self.assertEqual(static_index, 2)
+
+    def test_spin_diagonal_5d_with_cell_shape_frequency_axis_is_axis_one(self):
+        # the CellShape-resolved route must agree with the structural one
+        chi0q, static_index = self._write_and_load(
+            8, np.arange(2, 7), 5, file_nmat=8, shape=(2, 5, 4, 2, 2),
+            cell_shape=(4, 1, 1), norb=2)
+        self.assertEqual(static_index, 2)
+
+    def test_metadata_less_spin_diagonal_5d_full_grid_accepted(self):
+        # metadata-less spin-diagonal file whose frequency axis (8) IS the
+        # configured full grid: accepted (delegated center).  Reading the
+        # last axis instead would see the orbital length 2 and refuse.
+        chi0q, static_index = self._write_and_load(
+            8, None, 8, shape=(2, 8, 4, 2, 2))
+        self.assertIsNone(static_index)
+
+    def test_metadata_less_spin_diagonal_7d_full_grid_accepted(self):
+        chi0q, static_index = self._write_and_load(
+            8, None, 8, shape=(2, 8, 4, 2, 2, 2, 2))
+        self.assertIsNone(static_index)
+
+    def test_metadata_less_spin_diagonal_5d_mismatched_config_raises(self):
+        # and the guard still bites when that axis is NOT the full grid
+        with self.assertRaises(ValueError):
+            self._write_and_load(1024, None, 8, shape=(2, 8, 4, 2, 2))
 
     def test_metadata_less_mismatched_config_raises(self):
         # #186: a metadata-less file whose axis length (8) does not match

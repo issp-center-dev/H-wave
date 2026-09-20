@@ -1372,7 +1372,8 @@ def _load_chi0q(input_dict, norb=None):
     freq_index, file_nmat = _read_freq_meta(data)
     # Identify the frequency axis from the array LAYOUT, never from the
     # freq_index length (a restricted freq_index can coincidentally match
-    # an orbital axis).  4D raw: axis 0.  8D ref: last axis.  6D is either
+    # an orbital axis).  4D raw: axis 0.  8D ref: last axis.  5D/7D
+    # spin-diagonal (leading 2): axis 1.  6D is either
     # raw (nmat, nvol, norb^4; the last four axes are equal) or ref
     # (norb, norb, Nx, Ny, Nz, nmat; the first two axes are equal) --
     # disambiguate structurally, with the freq_index length only as the
@@ -1390,6 +1391,13 @@ def _load_chi0q(input_dict, norb=None):
     elif _qax in ((2, 3, 4), (4, 5, 6)):
         # reference layout (norb..., Nx, Ny, Nz, nfreq): axis is last
         nfreq = chi0q.shape[-1]
+    elif chi0q.ndim in (5, 7) and chi0q.shape[0] == 2:
+        # spin-diagonal block-leading layout, identifiable from the array
+        # structure alone: the routing above leaves _qax unset when the run
+        # carries no CellShape, and the last axis is an ORBITAL axis here,
+        # so reading it as the frequency length would feed the full-grid
+        # check the wrong number.
+        nfreq = chi0q.shape[1]
     elif chi0q.ndim == 4:
         nfreq = chi0q.shape[0]
     elif chi0q.ndim == 8:
@@ -1406,6 +1414,14 @@ def _load_chi0q(input_dict, norb=None):
         else:
             nfreq = chi0q.shape[-1]
     else:
+        # layout not resolved by any of the above: keep the historical
+        # last-axis reading, but say so -- for an unsupported shape that
+        # axis is a guess, and the static-slice guard downstream judges a
+        # length this function could not identify.
+        logger.debug(
+            "chi0q file '{}': shape {} matches no known layout; taking the "
+            "last axis as the frequency axis".format(file_name,
+                                                     chi0q.shape))
         nfreq = chi0q.shape[-1]
     config_nmat = input_dict.get("mode", {}).get("param", {}).get("Nmat",
                                                                 _DEFAULT_NMAT)
