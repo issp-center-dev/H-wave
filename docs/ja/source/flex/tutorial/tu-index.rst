@@ -167,7 +167,7 @@ Kanamori頂点を **保持** します。これはMochizuki--Yanase--Ogata (MYO)
 
 .. _flex_second_order_tutorial:
 
-有効相互作用の2次（``flex_second_order``）
+有効相互作用の2次（``flex_second_order``\ ）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``calc_scheme = "general"``\ では、有効相互作用の2次の部分
@@ -262,7 +262,7 @@ FLEX の1反復のコストは\ ``"local"``\ で約 1.2 倍です。以前収束
   します（``[file.input] sigma_init``\ ）。掃引の最低温度からいきなり
   計算すると、降順のはしごなら収束する点でも失敗することがあります。
 - **Anderson 混合の結果は線形混合で計算し直して確認する。** 1軌道
-  Hubbard モデルの :math:`U = 8t` では、Anderson 混合が非物理的な
+  Hubbard モデルの :math:`U = 8t`\ では、Anderson 混合が非物理的な
   不動点（対形成固有値が増大せず飽和する解）に落ち着く例が観測されて
   います。報告する前に同じ点を線形混合で再計算してください。
 - ``[mode.param]``\ で ``flex_guard_policy = "warn"`` **を設定するのは
@@ -1373,9 +1373,9 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    送出し、``enable_spin_orbital``\ にも対応していません。オフサイト項は
    ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ について受理されます
    （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
-   **ring の頂点には** Hartree（密度）部分 :math:`V(q)` としてのみ入り、
+   **ring の頂点には** Hartree（密度）部分 :math:`V(q)`\ としてのみ入り、
    オフサイト項の交換
-   （Fock）交差は :math:`q` のみの頂点では表現できないため含まれません
+   （Fock）交差は :math:`q`\ のみの頂点では表現できないため含まれません
    （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
    ただし **2次** については、デフォルトの
    ``flex_second_order = "local"``\ がこれらの項の直接スケルトンと
@@ -1388,7 +1388,7 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    :ref:`rpa_longitudinal_bond`\ を参照。Hartree-Fock FLEX では自己無撞着に
    取り込まれます。:ref:`flex_bond_hf_tutorial`\ を参照）。
    オフサイトの\ ``Exchange``\ と\ ``PairHop``\ は\ ``ValueError``\ と
-   なります。オフサイトの\ ``Exchange``\ には、:math:`q` に依存する
+   なります。オフサイトの\ ``Exchange``\ には、:math:`q`\ に依存する
    スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。
    その物理はスピン反転（transverse）型で、この spin-free 経路では計算されず、
    わずかに残る部分は bond 分解した頂点を必要とします。オフサイトの
