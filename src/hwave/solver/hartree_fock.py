@@ -305,10 +305,16 @@ class DensityResult:
     ``rho_r[r, a, b] = <c^dag_a(0) c_b(r)>`` (per spin, per cell), its
     reciprocal-space form reconstructed from the projected ``rho_r``, and
     the per-spin particle number ``n_per_spin = Nvol * Re Tr rho_r(0)``.
-    Arrays are private, non-aliased and read-only."""
+    Arrays are private, non-aliased and read-only.
+
+    ``hermitian_deviation`` is the relative Frobenius deviation of
+    ``rho_ab(r) = conj(rho_ba(-r))`` measured BEFORE the projection -- the
+    quantity :func:`equal_time_density` compares against ``sym_tol``, and
+    the one a warn-and-continue policy reads per iteration."""
     rho_k: np.ndarray
     rho_r: np.ndarray
     n_per_spin: float
+    hermitian_deviation: float = 0.0
 
 
 def heff_eigenpairs(H0_k, sigma_static, rel=1e-10):
@@ -338,6 +344,13 @@ def equal_time_density(green_kw, heff_eig, mu, beta, shape, *, sym_tol=1e-8):
     Hermitian symmetry ``rho_ab(r) = conj(rho_ba(-r))`` is validated
     (relative Frobenius error ``<= sym_tol``, else ``ValueError``) and
     projected; non-finite input raises :class:`NonFiniteError`.
+
+    ``sym_tol=None`` disables the REFUSAL only (the warn-and-continue
+    policy of GitHub issue #199): the deviation is still measured and
+    published as ``DensityResult.hermitian_deviation``, the density is
+    still projected, a non-finite deviation still raises
+    :class:`NonFiniteError`, and the ``Tr rho(0)`` imaginary-part check is
+    unchanged. The caller then decides what to do with the deviation.
     """
     G = np.asarray(green_kw)
     if G.ndim != 5 or G.shape[0] != 1:
@@ -369,7 +382,7 @@ def equal_time_density(green_kw, heff_eig, mu, beta, shape, *, sym_tol=1e-8):
     err = float(np.linalg.norm((rho_r - rev).ravel())) / max(1.0, float(np.linalg.norm(rho_r.ravel())))
     if not np.isfinite(err):
         raise NonFiniteError("equal_time_density: non-finite density")
-    if err > sym_tol:
+    if sym_tol is not None and err > sym_tol:
         raise ValueError(
             "equal_time_density: the equal-time density violates rho_ab(r) = "
             "conj(rho_ba(-r)) (relative deviation {:.3e} > {:.1e}); the Green "
@@ -386,4 +399,5 @@ def equal_time_density(green_kw, heff_eig, mu, beta, shape, *, sym_tol=1e-8):
     n_per_spin = float(nvol * tr0.real)
     rho_k.flags.writeable = False
     rho_r.flags.writeable = False
-    return DensityResult(rho_k=rho_k, rho_r=rho_r, n_per_spin=n_per_spin)
+    return DensityResult(rho_k=rho_k, rho_r=rho_r, n_per_spin=n_per_spin,
+                         hermitian_deviation=err)

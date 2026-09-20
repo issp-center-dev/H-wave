@@ -110,6 +110,40 @@ class TestEqualTimeDensity(unittest.TestCase):
             Gb = G.copy(); Gb[:, :, 0, 0, 1] += 0.5
             hf.equal_time_density(Gb, heff, self.mu, self.beta, self.shape)
 
+    def test_hermitian_deviation_is_published(self):
+        """The relative Frobenius deviation of rho_ab(r) = conj(rho_ba(-r))
+        is a RESULT, not only the quantity of the refusal: the warn-and-
+        continue policy of GitHub issue #199 reads it per iteration."""
+        from hwave.solver import hartree_fock as hf
+        G = _green(self.H0, 0.0, self.mu, self.beta, self.nmat)[None]
+        heff = hf.heff_eigenpairs(self.H0, np.zeros_like(self.H0))
+        res = hf.equal_time_density(G, heff, self.mu, self.beta, self.shape)
+        self.assertIsInstance(res.hermitian_deviation, float)
+        self.assertLess(res.hermitian_deviation, 1e-8)
+
+    def test_sym_tol_none_projects_and_reports_the_deviation(self):
+        """``sym_tol=None`` disables the REFUSAL only: the same deviation is
+        reported, the density is still projected, and the value matches the
+        one the refusing call quotes."""
+        import re
+        from hwave.solver import hartree_fock as hf
+        G = _green(self.H0, 0.0, self.mu, self.beta, self.nmat)[None]
+        heff = hf.heff_eigenpairs(self.H0, np.zeros_like(self.H0))
+        Gb = G.copy(); Gb[:, :, 0, 0, 1] += 0.5
+        with self.assertRaises(ValueError) as cm:
+            hf.equal_time_density(Gb, heff, self.mu, self.beta, self.shape)
+        quoted = re.search(r"relative deviation ([0-9.]+e[-+][0-9]+)", str(cm.exception))
+        self.assertIsNotNone(quoted)
+        res = hf.equal_time_density(Gb, heff, self.mu, self.beta, self.shape, sym_tol=None)
+        self.assertGreater(res.hermitian_deviation, 1e-8)
+        self.assertAlmostEqual(res.hermitian_deviation / float(quoted.group(1)), 1.0, places=3)
+        # the projection still happened: the returned rho_r is exactly symmetric
+        rev = np.conj(np.swapaxes(res.rho_r, -1, -2)).reshape(self.L, 1, 1, self.norb, self.norb)
+        for ax in (0, 1, 2):
+            rev = np.flip(np.roll(rev, -1, axis=ax), axis=ax)
+        np.testing.assert_allclose(res.rho_r, rev.reshape(self.L, self.norb, self.norb),
+                                   rtol=0, atol=1e-14)
+
 
 if __name__ == "__main__":
     unittest.main()
