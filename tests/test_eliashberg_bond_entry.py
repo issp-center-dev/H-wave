@@ -725,38 +725,72 @@ class TestPostProcessingRuns(unittest.TestCase):
     def test_sidecar_layout_matches_npz_layout(self):      # 10.2 (issue #205)
         """The bond archive written in the sidecar layout, memory-mapped by
         post-processing, gives the IDENTICAL leading eigenvalue and gap as the
-        default single-file layout on the SAME data: one FLEX run, its archive
-        solved once as npz and once after rewriting it into the sidecar layout
-        (the two big members moved to .npy files next to the index)."""
+        default single-file layout on the SAME data. One FLEX run; its archive
+        is solved once as npz and once after rewriting it into the sidecar
+        layout (the two big members moved to .npy files next to the index),
+        on BOTH the uniform and the IR pairing paths -- the IR residual pass
+        re-reads each sidecar member, so it exercises repeated memmap
+        open/close.
+
+        The leading eigenvalue matches to 1e-13 (measured |diff| 5.3e-15). The
+        output gap is already gauge-fixed (_fix_gauge), so it is compared
+        directly at rtol = 0, atol = 1e-11; the measured gap max|diff| is
+        3.2e-13 (uniform) / 1.9e-14 (IR) at Nmat 64 -- the eigensolver's
+        reduction-order noise, since a memmap can take a different BLAS path.
+        """
         import hwave.sc as sc
-        flex_dir = tempfile.mkdtemp()
-        out_npz = tempfile.mkdtemp()
-        out_side = tempfile.mkdtemp()
+        bases = [dict(tag="uniform", kw={})]
         try:
-            _run_gate_1orb(flex_dir, nmat=16)
-            lam_npz = sc.calc_eliashberg(_sc_input(flex_dir, out_npz, 0.5, 16, (4, 4, 1)))
-            with np.load(os.path.join(out_npz, "gap_dynamic.npz")) as d:
-                gap_npz = np.array(d["gap"])
-            # the default archive still holds the channels inline
-            with np.load(os.path.join(flex_dir, "longitudinal_bond.npz")) as d:
+            import sparse_ir  # noqa: F401
+            bases.append(dict(tag="ir", kw=dict(matsubara_basis="ir", ir_tol=1e-8,
+                                                ir_keep_static_chi=True)))
+        except ImportError:
+            pass
+        flex_dir = tempfile.mkdtemp()
+        try:
+            _run_gate_1orb(flex_dir, nmat=64)
+            index = os.path.join(flex_dir, "longitudinal_bond.npz")
+            # solve every basis on the intact npz archive FIRST (the sidecar
+            # rewrite below is one-way)
+            ref = {}
+            for b in bases:
+                out = tempfile.mkdtemp()
+                try:
+                    ref[b["tag"]] = self._solve_lambda_gap(sc, flex_dir, out, b["kw"])
+                finally:
+                    shutil.rmtree(out, ignore_errors=True)
+            with np.load(index) as d:
                 self.assertEqual(str(d["bond_archive_layout"]), "npz")
                 self.assertIn("chi_s_w", d.files)
-            # rewrite it in place into the sidecar layout and solve again
-            _npz_to_sidecar(os.path.join(flex_dir, "longitudinal_bond.npz"))
+            # rewrite the archive in place into the sidecar layout
+            _npz_to_sidecar(index)
             self.assertTrue(os.path.exists(
                 os.path.join(flex_dir, "longitudinal_bond_chi_s_w.npy")))
-            lam_side = sc.calc_eliashberg(_sc_input(flex_dir, out_side, 0.5, 16, (4, 4, 1)))
-            with np.load(os.path.join(out_side, "gap_dynamic.npz")) as d:
-                gap_side = np.array(d["gap"])
-            self.assertTrue(np.isfinite(lam_npz))
-            self.assertAlmostEqual(lam_side, lam_npz, delta=1e-13 * max(1.0, abs(lam_npz)))
-            # the leading eigenvalue matches to 1e-13; the eigenvector (gap) is
-            # identical up to the eigensolver's reduction-order noise (a memmap
-            # can take a different BLAS path), which is a few 1e-13
-            np.testing.assert_allclose(gap_side, gap_npz, rtol=1e-9, atol=1e-11)
+            with np.load(index) as d:
+                self.assertEqual(str(d["bond_archive_layout"]), "sidecar")
+                self.assertNotIn("chi_s_w", d.files)
+            for b in bases:
+                out = tempfile.mkdtemp()
+                try:
+                    lam_side, gap_side = self._solve_lambda_gap(sc, flex_dir, out, b["kw"])
+                finally:
+                    shutil.rmtree(out, ignore_errors=True)
+                lam_npz, gap_npz = ref[b["tag"]]
+                self.assertTrue(np.isfinite(lam_npz))
+                self.assertAlmostEqual(lam_side, lam_npz,
+                                       delta=1e-13 * max(1.0, abs(lam_npz)), msg=b["tag"])
+                maxdiff = float(np.max(np.abs(gap_side - gap_npz)))
+                np.testing.assert_allclose(gap_side, gap_npz, rtol=0, atol=1e-11,
+                                           err_msg="{}: gap max|diff|={:.3e}".format(b["tag"], maxdiff))
         finally:
-            for d in (flex_dir, out_npz, out_side):
-                shutil.rmtree(d, ignore_errors=True)
+            shutil.rmtree(flex_dir, ignore_errors=True)
+
+    @staticmethod
+    def _solve_lambda_gap(sc, flex_dir, out, kw):
+        lam = sc.calc_eliashberg(_sc_input(flex_dir, out, 0.5, 64, (4, 4, 1), **kw))
+        with np.load(os.path.join(out, "gap_dynamic.npz")) as d:
+            gap = np.array(d["gap"])
+        return lam, gap
 
     def test_uniform_lambda_and_outputs(self):              # 10.2.2 (uniform half)
         """A real bond-gate FLEX run, then ``hwave_sc`` on its archive for both
