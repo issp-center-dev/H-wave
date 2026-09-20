@@ -1345,6 +1345,7 @@ class TestDressBatchGuardPolicy(unittest.TestCase):
                                    cond_tol=None, guard_policy=policy)
 
     def test_the_warnings_name_the_scf_iteration(self):
+        import logging
         from hwave.solver import bond_channels as bc
         cb, W = _batch_denominator_fixture(1.0e-4, "spin")
         violations = []
@@ -1360,18 +1361,31 @@ class TestDressBatchGuardPolicy(unittest.TestCase):
                            guard_policy="warn", violations=violations)
         self.assertNotIn("SCF iteration", "\n".join(cm.output))
         self.assertIsNone(violations[0]["iteration"])
-        # the residual guard of the reduced "static" mode says so too
+        # the residual guard of the reduced "static" mode says so too. Its
+        # trigger -- the solve residual of a near-singular unchecked slice --
+        # is BLAS-dependent (it can be exactly 0 on some LAPACK builds), so the
+        # branch is exercised by fixing the residual monitor above the
+        # tolerance rather than by a fixture that may or may not produce one.
         cb = np.zeros((1, 2, 2, 2), complex)
         Wr = np.zeros((2, 2, 2), complex)
         for q in range(2):
-            cb[0, q] = np.eye(2)
-        Wr[1] = np.eye(2) - np.array([[1.0, 1.0], [1.0, 1.0 + 1.0e-13]], complex)
+            cb[0, q] = np.eye(2)          # mat = identity: the solve is clean
         violations = []
-        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+        records = []
+        logger = logging.getLogger("qlms.solver.bond_channels")
+        h = logging.Handler(); h.emit = lambda rec: records.append(rec.getMessage())
+        old_level = logger.level
+        logger.addHandler(h); logger.setLevel(logging.WARNING)
+        orig_residual = bc.solve_residual
+        bc.solve_residual = lambda *a, **k: np.array([[0.0, 1.0e-3]])   # q = 1 over tol
+        try:
             bc.dress_batch(cb, Wr, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
-                           guard_freqs="static", residual_tol=1.0e-30,
+                           guard_freqs="static", residual_tol=1.0e-6,
                            guard_policy="warn", violations=violations, iteration=5)
-        self.assertIn("(SCF iteration 5)", "\n".join(cm.output))
+        finally:
+            bc.solve_residual = orig_residual
+            logger.removeHandler(h); logger.setLevel(old_level)
+        self.assertIn("(SCF iteration 5)", "\n".join(records))
         self.assertEqual([(v["kind"], v["iteration"]) for v in violations], [("residual", 5)])
 
     def test_invalid_guard_policy_is_refused(self):
@@ -1386,28 +1400,44 @@ class TestDressBatchGuardPolicy(unittest.TestCase):
 
     def test_warn_also_tolerates_the_static_residual_guard(self):
         """With guard_freqs = "static" an unchecked slice is judged by its
-        solve residual; under "warn" that finding is logged, not raised."""
+        solve residual; under "warn" that finding is logged, not raised, and
+        under "refuse" it is raised.
+
+        nmat = 2 puts the static slice at l = 1, outside this one-frequency
+        batch, so only the residual guard speaks. The residual of a
+        near-singular structured 2x2 solve is BLAS-dependent (it can be exactly
+        0 on some LAPACK builds), so the guard's branch is exercised by fixing
+        the residual monitor above the tolerance rather than by a fixture that
+        may or may not produce one; the denominator itself is the identity, so
+        the solve is clean and chi is finite."""
+        import logging
         from hwave.solver import bond_channels as bc
-        # nmat = 2 puts the static slice at l = 1, outside this one-frequency
-        # batch, so only the residual guard speaks. The q = 1 denominator is
-        # nearly singular and NOT diagonal, so its solve leaves a residual.
         cb = np.zeros((1, 2, 2, 2), complex)
         W = np.zeros((2, 2, 2), complex)
         for q in range(2):
-            cb[0, q] = np.eye(2)
-        W[1] = np.eye(2) - np.array([[1.0, 1.0], [1.0, 1.0 + 1.0e-13]], complex)
+            cb[0, q] = np.eye(2)          # mat = identity: the solve is clean
         violations = []
-        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+        records = []
+        logger = logging.getLogger("qlms.solver.bond_channels")
+        h = logging.Handler(); h.emit = lambda rec: records.append(rec.getMessage())
+        old_level = logger.level
+        logger.addHandler(h); logger.setLevel(logging.WARNING)
+        orig_residual = bc.solve_residual
+        bc.solve_residual = lambda *a, **k: np.array([[0.0, 1.0e-3]])   # q = 1 over tol
+        try:
             chi, _ = bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
-                                    guard_freqs="static", residual_tol=1.0e-30,
+                                    guard_freqs="static", residual_tol=1.0e-6,
                                     guard_policy="warn", violations=violations)
-        self.assertIn('flex_guard_policy = "warn"', "\n".join(cm.output))
+            # and the same finding is refused under the default policy
+            with self.assertRaises(ValueError):
+                bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                               guard_freqs="static", residual_tol=1.0e-6)
+        finally:
+            bc.solve_residual = orig_residual
+            logger.removeHandler(h); logger.setLevel(old_level)
+        self.assertIn('flex_guard_policy = "warn"', "\n".join(records))
         self.assertTrue(np.all(np.isfinite(chi)))
         self.assertEqual([v["kind"] for v in violations], ["residual"])
-        # and the same batch is refused under the default policy
-        with self.assertRaises(ValueError):
-            bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
-                           guard_freqs="static", residual_tol=1.0e-30)
 
 
 # --- the on-site (Delta r = 0) diagonal must be REAL -----------------------
