@@ -79,6 +79,19 @@ class TestArchiveSchema2(unittest.TestCase):
         # the default layout writes no sidecar .npy files
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "longitudinal_bond_chi_s_w.npy")))
 
+    def test_default_npz_member_order_appends_layout_last(self):
+        # every pre-existing member keeps its position; bond_archive_layout is
+        # appended LAST, so removing it reproduces exactly the schema-2 order
+        _run_gate(self.tmp)
+        with np.load(os.path.join(self.tmp, "longitudinal_bond.npz")) as d:
+            files = list(d.files)
+        self.assertEqual(files.count("bond_archive_layout"), 1)
+        self.assertEqual(files[-1], "bond_archive_layout")
+        # the leading positional prefix is unchanged (schema, then the two
+        # channels, then S_bond ...)
+        self.assertEqual(files[:5],
+                         ["bond_archive_schema", "chi_s_w", "chi_c_w", "S_bond", "C_bond"])
+
 
 class TestSidecarWriter(unittest.TestCase):
     def setUp(self):

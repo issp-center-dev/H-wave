@@ -4632,14 +4632,16 @@ class FLEX(RPA):
                          chi_c_w_file=np.str_(c_base),
                          **tail_members)
             else:
-                # the default single-file archive, unchanged on disk except for
-                # the added bond_archive_layout scalar
+                # the default single-file archive: every pre-existing member
+                # keeps its exact positional order and bond_archive_layout is
+                # APPENDED last, so the ordered prefix is byte-for-byte what the
+                # schema-2 reference archive writes (issue #205)
                 np.savez(file_name,
                          bond_archive_schema=np.int64(2),
                          chi_s_w=chi_s_w,
                          chi_c_w=chi_c_w,
-                         bond_archive_layout=np.str_("npz"),
-                         **tail_members)
+                         **tail_members,
+                         bond_archive_layout=np.str_("npz"))
             logger.info("save_results: save the bond archive in file {}".format(file_name))
 
         # In-process pairing (spec 7): AFTER every FLEX artifact, in its own
