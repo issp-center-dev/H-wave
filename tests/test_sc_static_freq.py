@@ -157,6 +157,41 @@ class TestStaticFreqPosition(unittest.TestCase):
         self.assertIn("Nmat", msg)
         self.assertIn("regenerate", msg.lower())
 
+    def test_no_metadata_file_nmat_full_grid_accepted(self):
+        # the PRODUCER's recorded nmat is the authoritative provenance: an
+        # axis equal to it is provably a full grid, so centering is
+        # unambiguous even when the consuming run's Nmat differs
+        self.assertIsNone(
+            _static_freq_position(None, 8, 1024, "f", file_nmat=8))
+
+    def test_no_metadata_file_nmat_mismatch_raises(self):
+        # the file records a 16-point grid but stores only 8 slices: a
+        # restriction, so centering could pick a finite frequency -- refuse,
+        # naming the file's own nmat as the reference that was used
+        with self.assertRaises(ValueError) as cm:
+            _static_freq_position(None, 8, 8, "f", file_nmat=16)
+        msg = str(cm.exception)
+        self.assertIn("nmat", msg)
+        self.assertIn("16", msg)
+        self.assertIn("regenerate", msg.lower())
+
+    def test_size_mismatch_file_nmat_full_grid_accepted(self):
+        # length-mismatch metadata, but the data axis equals the file's own
+        # recorded nmat: provably the full grid of the producing run, so the
+        # data-axis center is accepted regardless of the config Nmat
+        self.assertIsNone(
+            _static_freq_position(np.arange(5), 8, 1024, "f", file_nmat=8))
+
+    def test_size_mismatch_file_nmat_mismatch_raises(self):
+        # the file records a 16-point grid but stores 8 slices with a
+        # mismatched freq_index: not provably a full grid -- refuse
+        with self.assertRaises(ValueError) as cm:
+            _static_freq_position(np.arange(5), 8, 8, "f", file_nmat=16)
+        msg = str(cm.exception)
+        self.assertIn("nmat", msg)
+        self.assertIn("16", msg)
+        self.assertIn("regenerate", msg.lower())
+
     def test_odd_full_grid_center_is_unambiguous(self):
         # an odd full grid: freq_index = 0..6 with nfreq == config Nmat == 7
         # is the configured full grid, the only case where centering is

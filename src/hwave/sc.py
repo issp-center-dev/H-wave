@@ -983,7 +983,11 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
     file_name : str
         For error messages.
     file_nmat : int or None
-        The nmat metadata from the npz file, if present.
+        The nmat metadata from the npz file, if present.  When present it
+        is the authoritative full-grid reference everywhere in this
+        function -- including the two metadata-poor fallbacks, where a
+        stored axis equal to the producer's own nmat is provably a full
+        grid even if the consuming run's Nmat differs.
 
     Returns
     -------
@@ -994,17 +998,37 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
         the caller can identify that axis reliably, e.g. for the 6D
         reference format).
     """
+    # The full-grid reference: the PRODUCER's own recorded grid size when the
+    # file carries one (authoritative provenance -- a stored axis equal to it
+    # is provably a full grid whatever the consuming run's Nmat is), else the
+    # configured Nmat.
+    ref_nmat = int(file_nmat) if file_nmat is not None else config_nmat
+    ref_desc = ("the file's recorded nmat = {}".format(ref_nmat)
+                if file_nmat is not None
+                else "mode.param.Nmat = {}".format(ref_nmat))
+    if file_nmat is not None:
+        ref_advice = (
+            "The file records nmat = {}, so its stored axis is a "
+            "restriction of that grid: regenerate it holding the full "
+            "grid, or with a matsubara_frequency range covering nmat//2 "
+            "(which records freq_index).".format(ref_nmat))
+    else:
+        ref_advice = (
+            "If the file holds a full grid, set mode.param.Nmat = {}; "
+            "otherwise regenerate it with a newer version (which records "
+            "nmat in the file).".format(nfreq))
+
     if freq_index is None:
         # Pre-provenance file: with no metadata at all, the stored axis can
         # only be centered safely when the choice of slice is unambiguous.
         # A single-frequency axis (nfreq == 1) is such a case: index 0 is the
         # ONLY slice, so centering cannot pick a different (finite) frequency
         # -- this is the common static-only chi0q reduced to its zero
-        # bosonic-frequency component.  A full grid of the configured size
-        # (nfreq == config_nmat) is the other.  Any other length could be a
+        # bosonic-frequency component.  A full grid of the reference size
+        # (nfreq == ref_nmat) is the other.  Any other length could be a
         # matsubara_frequency restriction of some run's grid, so nfreq//2
         # might point at a finite frequency -- refuse to guess.
-        if nfreq == 1 or nfreq == config_nmat:
+        if nfreq == 1 or nfreq == ref_nmat:
             logger.warning(
                 "chi0q file '{}' has no freq_index metadata; using the "
                 "center of the stored frequency axis as the static slice."
@@ -1012,13 +1036,10 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
             return None
         raise ValueError(
             "chi0q file '{}' has no freq_index metadata and its stored "
-            "frequency axis length {} does not match mode.param.Nmat = {}, "
-            "so the zero-frequency position cannot be determined: centering "
-            "the axis could pick a finite frequency of a restricted grid. "
-            "If the file holds a full grid, set mode.param.Nmat = {}; "
-            "otherwise regenerate it with a newer version (which records "
-            "nmat in the file)."
-            .format(file_name, nfreq, config_nmat, nfreq))
+            "frequency axis length {} does not match {}, so the "
+            "zero-frequency position cannot be determined: centering the "
+            "axis could pick a finite frequency of a restricted grid. {}"
+            .format(file_name, nfreq, ref_desc, ref_advice))
 
     freq_index = np.asarray(freq_index).ravel()
     if freq_index.size == 0:
@@ -1030,12 +1051,13 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
         # Legacy FLEX files store the FULL grid but a restricted freq_index
         # (FLEX never applied the matsubara_frequency filter): the DATA axis
         # is authoritative, so fall back to the pre-metadata behavior -- but
-        # ONLY when the data axis is provably the configured full grid
-        # (nfreq == config_nmat) AND freq_index is a 0-based subset of it
-        # (set(freq_index) <= set(range(nfreq))).  Otherwise the stored axis
-        # could be a restriction of some other grid and centering could pick
-        # a finite frequency, so refuse to guess.
-        if nfreq == config_nmat and set(freq_index.tolist()) <= set(
+        # ONLY when the data axis is provably a full grid of the reference
+        # size (nfreq == ref_nmat, the file's own recorded nmat when it has
+        # one, else the configured Nmat) AND freq_index is a 0-based subset
+        # of it (set(freq_index) <= set(range(nfreq))).  Otherwise the stored
+        # axis could be a restriction of some other grid and centering could
+        # pick a finite frequency, so refuse to guess.
+        if nfreq == ref_nmat and set(freq_index.tolist()) <= set(
                 range(nfreq)):
             logger.warning(
                 "chi0q file '{}': freq_index length {} does not match the "
@@ -1045,14 +1067,11 @@ def _static_freq_position(freq_index, nfreq, config_nmat, file_name,
             return None
         raise ValueError(
             "chi0q file '{}': freq_index length {} does not match the "
-            "frequency axis length {}, and the axis is not provably the "
-            "configured full grid (nfreq == mode.param.Nmat = {} with a "
-            "0-based freq_index), so the zero-frequency position cannot be "
-            "determined: centering the axis could pick a finite frequency "
-            "of a restricted grid. If the file holds a full grid, set "
-            "mode.param.Nmat = {}; otherwise regenerate it with a newer "
-            "version (which records nmat in the file)."
-            .format(file_name, freq_index.size, nfreq, config_nmat, nfreq))
+            "frequency axis length {}, and the axis is not provably a full "
+            "grid (nfreq == {} with a 0-based freq_index), so the "
+            "zero-frequency position cannot be determined: centering the "
+            "axis could pick a finite frequency of a restricted grid. {}"
+            .format(file_name, freq_index.size, nfreq, ref_desc, ref_advice))
 
     def _find(nmat_orig):
         # the zero bosonic frequency has ORIGINAL index nmat_orig//2
