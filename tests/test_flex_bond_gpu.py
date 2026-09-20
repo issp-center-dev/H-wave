@@ -20,9 +20,11 @@ is an absolute statement about each result rather than a comparison of
 the two. Set ``HWAVE_GPU_EQUIV_REPORT=1`` to print the measured maxima of
 every comparison (off in a normal run, which stays quiet).
 """
+import contextlib
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -148,6 +150,92 @@ class TestDressBatchEquivalence(_GpuCase):
         chi_bar, S, _C = _problem(nmat=4, nvol=2, nd=2, B=2, seed=8)
         chi_bar = chi_bar * 1e-14
         self._check(chi_bar, S, "spin", "all", "near-zero bubble")
+
+
+def _bubble_fixture(norb=2, shape=(4, 4, 1), nmat=8, beta=2.0, seed=11):
+    """A physical bond fixture (Hermitian k-even hopping, bare Green
+    function, a three-channel bond set) plus a NONZERO frequency-constant
+    tau-space tail, so that the equal-time endpoint branch of
+    ``bubble._prepare_dense`` is exercised on both backends."""
+    from tests.eliashberg_bond_fixtures import physical_fixture
+    fx = physical_fixture(norb=norb, shape=shape, nmat=nmat, beta=beta, seed=seed)
+    rng = np.random.default_rng(seed + 1)
+    nvol = fx["nvol"]
+    t = rng.normal(size=(nvol, norb, norb)) + 1j * rng.normal(size=(nvol, norb, norb))
+    t = 0.25 * (t + np.conj(t).swapaxes(-2, -1))
+    tail = np.broadcast_to(t[None, None], fx["green"].shape).copy()
+    return fx, np.ascontiguousarray(fx["green"]), tail
+
+
+class TestBubbleEquivalence(_GpuCase):
+    """``flex_bond.assemble_bubble`` on numpy and on cupy (issue #196).
+
+    The bubble kernel is array-module generic, so a device-resident Green
+    function makes the whole per-pair pipeline -- the Matsubara
+    transform, the spatial FFTs, the reversal and the pair contraction --
+    run on the device; only the finished block crosses to the host store.
+    This case pins that the two backends produce the same ``chibar``, and
+    that the cupy run really took the device rather than falling back to
+    a host copy somewhere on the way in."""
+
+    def _assemble(self, xp, fx, green, tail, seen=None):
+        from hwave.solver import bubble, flex_bond as fb
+        from hwave.solver import backend as bk
+        nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
+        real_prepare = bubble._prepare_dense
+
+        def _spy(green_kw, *a, **k):
+            seen.append(bk.array_module_of(green_kw).__name__)
+            return real_prepare(green_kw, *a, **k)
+        store = fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar",))
+        ctx = fb.BondDeviceContext(xp, fx["S"], fx["C"], green0_tail=tail)
+        with store, ctx:
+            g = bk.to_device(green, xp)
+            self.assertEqual(type(g).__module__.split(".")[0],
+                             "cupy" if xp is not np else "numpy")
+            patch = (mock.patch.object(bubble, "_prepare_dense", _spy)
+                     if seen is not None else contextlib.nullcontext())
+            with patch:
+                fb.assemble_bubble(store, g, ctx.green0_tail, fx["beta"], fx["view"],
+                                   fx["spatial_shape"], 1)
+            return {(m, mp): store.get_pair("chibar", m, mp).copy()
+                    for m in range(fx["B"]) for mp in range(fx["B"])}
+
+    def test_chibar_matches_block_by_block(self):
+        fx, green, tail = _bubble_fixture()
+        seen_cpu, seen_gpu = [], []
+        ref = self._assemble(np, fx, green, tail, seen_cpu)
+        out = self._assemble(self.cupy, fx, green, tail, seen_gpu)
+        # the bubble ran where the Green function was, with no host detour
+        self.assertEqual(set(seen_cpu), {"numpy"})
+        self.assertEqual(set(seen_gpu), {"cupy"})
+        self.assertEqual(sorted(out), sorted(ref))
+        for key in sorted(ref):
+            _deviation("chibar {}".format(key), out[key], ref[key])
+            np.testing.assert_allclose(out[key], ref[key], rtol=1e-10, atol=1e-12)
+
+    def test_context_holds_the_tail_on_the_device_and_releases_it(self):
+        from hwave.solver import flex_bond as fb
+        fx, _green, tail = _bubble_fixture()
+        with fb.BondDeviceContext(self.cupy, fx["S"], fx["C"], green0_tail=tail) as dev:
+            self.assertEqual(type(dev.green0_tail).__module__.split(".")[0], "cupy")
+            np.testing.assert_array_equal(self.cupy.asnumpy(dev.green0_tail), tail)
+        self.assertTrue(dev.released)
+        with self.assertRaises(RuntimeError):
+            dev.green0_tail
+
+    def test_a_host_tail_with_a_device_green_function_is_refused(self):
+        from hwave.solver import backend as bk, flex_bond as fb
+        fx, green, tail = _bubble_fixture()
+        nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
+        with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar",)) as store:
+            with self.assertRaises(ValueError) as cm:
+                fb.assemble_bubble(store, bk.to_device(green, self.cupy), tail,
+                                   fx["beta"], fx["view"], fx["spatial_shape"], 1)
+        msg = str(cm.exception)
+        self.assertIn("green0_tail", msg)
+        self.assertIn("cupy", msg)
+        self.assertIn("numpy", msg)
 
 
 class TestDressAndBuildWEquivalence(_GpuCase):

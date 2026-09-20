@@ -109,6 +109,47 @@ class TestBubbleAssembly(unittest.TestCase):
         np.testing.assert_allclose(ch0.reshape(nmat, nvol, norb, norb, norb, norb), ref, rtol=0, atol=1e-12)
 
 
+class TestBubbleTailModule(unittest.TestCase):
+    """``assemble_bubble`` computes on the module of ``green_scf`` (issue
+    #196), so a tail from another module is a caller error and must be
+    named as such at the entry rather than deep inside the kernel. There
+    is one array module on this machine, so the two modules are faked."""
+
+    def test_tail_on_a_different_module_is_refused_by_name(self):
+        from hwave.solver import flex_bond
+        modules = {}
+
+        def _module_of(arr):
+            return modules.get(id(arr), np)
+        green = np.zeros((1, 4, 4, 1, 1), dtype=complex)
+        tail = np.zeros_like(green)
+        modules[id(green)] = _FakeModule("cupy")
+        modules[id(tail)] = _FakeModule("numpy")
+        with mock.patch.object(flex_bond._bk, "array_module_of", _module_of):
+            with self.assertRaises(ValueError) as cm:
+                flex_bond.assemble_bubble(None, green, tail, 1.0, None, (4, 1, 1), 1)
+        msg = str(cm.exception)
+        self.assertIn("green0_tail", msg)
+        self.assertIn("cupy", msg)
+        self.assertIn("numpy", msg)
+
+    def test_matching_modules_are_accepted(self):
+        """The same guard must not fire when both live on one module -- the
+        numpy path has to stay exactly as it was."""
+        from hwave.solver import flex_bond
+        green = np.zeros((1, 4, 4, 1, 1), dtype=complex)
+        tail = np.zeros_like(green)
+        with self.assertRaises(Exception) as cm:
+            flex_bond.assemble_bubble(None, green, tail, 1.0, None, (4, 1, 1), 1)
+        # it got past the module guard and failed on the fake bond set instead
+        self.assertNotIn("green0_tail", str(cm.exception))
+
+
+class _FakeModule:
+    def __init__(self, name):
+        self.__name__ = name
+
+
 class TestBondDeviceContext(unittest.TestCase):
 
     def _arrays(self):
@@ -138,6 +179,43 @@ class TestBondDeviceContext(unittest.TestCase):
         self.assertTrue(dev.released)
         with self.assertRaises(RuntimeError):
             dev.S
+
+    def test_green0_tail_is_owned_and_released(self):
+        """The bubble now computes on the module of the Green function, so
+        the tail it is paired with is a solve-scoped device array of the
+        context rather than a per-iteration transfer (issue #196)."""
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        tail = np.arange(6, dtype=complex).reshape(1, 2, 3)
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask,
+                               green0_tail=tail) as dev:
+            self.assertIs(dev.green0_tail, tail)          # numpy: the identity
+        self.assertTrue(dev.released)
+        with self.assertRaises(RuntimeError):
+            dev.green0_tail
+
+    def test_green0_tail_defaults_to_none(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+            self.assertIsNone(dev.green0_tail)
+
+    def test_green0_tail_is_transferred_once(self):
+        from hwave.solver import flex_bond
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        tail = np.zeros((1, 2, 3), dtype=complex)
+        seen = []
+        fake_xp = object()
+
+        def _to_device(a, xp):
+            seen.append(id(a))
+            return a
+        with mock.patch.object(flex_bond._bk, "to_device", _to_device):
+            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask,
+                                             green0_tail=tail):
+                pass
+        self.assertEqual(len(seen), 8)         # the seven vertices plus the tail
+        self.assertEqual(seen.count(id(tail)), 1)
 
     def test_transfer_uses_to_device_once_per_array(self):
         from hwave.solver import flex_bond
@@ -196,7 +274,7 @@ class TestDeviceContextOptional(unittest.TestCase):
             self.assertIs(dev.xp, np)
             np.testing.assert_array_equal(dev.S, S)
             np.testing.assert_array_equal(dev.C, 2 * S)
-            for name in ("S_on", "C_on", "SpC_on", "perm", "mask"):
+            for name in ("S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail"):
                 self.assertIsNone(getattr(dev, name))
 
     def test_full_construction_unchanged(self):

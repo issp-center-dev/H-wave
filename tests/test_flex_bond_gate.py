@@ -520,9 +520,9 @@ class TestDeviceAdmission(unittest.TestCase):
         at1 = flex_bond.estimate_bond_memory(
             device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
         rows = at1["device_rows"]
-        need1 = 1.25 * (rows["vertices_static"] + rows["flex_arrays"]
-                        + rows["second_order_factors"]
-                        + max(rows["dressing"], rows["transport"]))
+        phases = ("bubble", "dressing", "transport")
+        need1 = 1.25 * (sum(v for k, v in rows.items() if k not in phases)
+                        + max(rows[k] for k in phases))
         avail = int(need1 * 1.001 / 0.9)
         fake_xp = types.SimpleNamespace(__name__="cupy")
         with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
@@ -547,9 +547,9 @@ class TestDeviceAdmission(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_transfer_volume_counts_the_static_slices_and_sigma(self):
-        """Every device -> host copy of one iteration is accounted for: the W
-        batches, the guard copies, the collapses, the two static ND x ND
-        slices and the returned self-energy."""
+        """Every device -> host copy of one iteration is accounted for: the
+        bubble blocks, the W batches, the guard copies, the collapses, the
+        two static ND x ND slices and the returned self-energy."""
         import hwave.solver.flex as flex_mod
         for mode in ("all", "static"):
             with self.subTest(guard=mode):
@@ -564,10 +564,31 @@ class TestDeviceAdmission(unittest.TestCase):
                 u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
                 S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
                 guard_all = mode == "all"
-                d2h = (u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                # the leading u is the bubble: B^2 blocks of Nmat nvol P^2 16,
+                # brought back one channel pair at a time (issue #196)
+                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
                        + (0 if guard_all else 2 * S_b) + G_b)
                 gib = 1024.0 ** 3
                 self.assertIn("{:.4f}".format(d2h / gib), line)
+
+    def test_transfer_volume_does_not_count_a_green_function_copy(self):
+        """The bubble runs on the device, so the Green function no longer
+        crosses to the host once per map (issue #196): the reported D2H
+        must be the bubble-block figure, not that plus a G."""
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        est = s._bond_est
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s._log_bond_transfer_volume(est)
+        line = [m for m in cm.output if "transfer volume" in m][0]
+        u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+        S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+        d2h = u + 3 * u + 3 * C_b + 2 * S_b + G_b
+        gib = 1024.0 ** 3
+        self.assertIn("{:.4f}".format(d2h / gib), line)
+        self.assertNotIn("{:.4f}".format((d2h + 2 * G_b) / gib), line)
 
 
 class TestDeviceContextFailure(unittest.TestCase):
@@ -593,6 +614,122 @@ class TestDeviceContextFailure(unittest.TestCase):
                     with self.assertRaises(_Oom):
                         s.solve(gi, out)
         self.assertTrue(any("device context" in m for m in cm.output), cm.output)
+
+    def test_bubble_allocation_failure_names_the_phase_and_releases(self):
+        """The bubble allocates on the device now (issue #196), so an
+        out-of-memory error there must reach the same per-iteration
+        diagnostic as the dressing and the transport -- naming the bubble
+        and the iteration -- and everything the map holds must be released
+        on the way out."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        stores, contexts = [], []
+        real_store = flex_bond.BondBlockStore
+        real_ctx = flex_bond.BondDeviceContext
+
+        class _Store(real_store):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                stores.append(self)
+
+        class _Ctx(real_ctx):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self)
+
+        def boom(*a, **k):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 2})
+        gi = r.get_param("green")
+        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond, "BondBlockStore", _Store), \
+                mock.patch.object(flex_bond, "BondDeviceContext", _Ctx), \
+                mock.patch.object(flex_bond, "assemble_bubble", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        line = [m for m in cm.output if "bond-gate device allocation failed" in m]
+        self.assertEqual(len(line), 1, cm.output)
+        self.assertIn("bubble", line[0])
+        self.assertIn("iteration 1", line[0])
+        self.assertEqual(len(stores), 1)
+        self.assertTrue(stores[0].released)
+        self.assertEqual(len(contexts), 1)
+        self.assertTrue(contexts[0].released)
+
+
+class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):
+    """Issue #196: the bond bubble is assembled on whatever array module
+    the SCF loop is already on. On the numpy backend every transfer is
+    the identity, so what is observable here is the ABSENCE of the
+    per-iteration host copy of the Green function, the tail coming from
+    the solve-scoped device context, and the one provenance log line."""
+
+    def _run(self, iterations=2):
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+        # the arrays themselves, not their ids: a freed array's id can be
+        # handed straight to the next allocation, which would make an
+        # identity test by id silently wrong
+        seen_green, seen_tail, copied, contexts = [], [], [], []
+        real_assemble = flex_bond.assemble_bubble
+        real_to_host = backend.to_host
+        real_ctx = flex_bond.BondDeviceContext
+
+        def _assemble(store, green_scf, green0_tail, *a, **k):
+            seen_green.append(green_scf)
+            seen_tail.append(green0_tail)
+            return real_assemble(store, green_scf, green0_tail, *a, **k)
+
+        def _to_host(arr):
+            copied.append(arr)
+            return real_to_host(arr)
+
+        class _ctx(real_ctx):
+            # a subclass rather than a wrapper function: the context looks
+            # its own _NAMES up by module-global name
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self.green0_tail)
+
+        # coeff_tail != 0 so that green_scf is a distinct object from
+        # green_kw (which the convergence check does copy to the host)
+        s, r = _flex({"coeff_tail": 1.0, "IterationMax": iterations})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with mock.patch.object(flex_bond, "assemble_bubble", _assemble), \
+                    mock.patch.object(flex_bond, "BondDeviceContext", _ctx), \
+                    mock.patch.object(backend, "to_host", _to_host), \
+                    self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s.solve(gi, out)
+        return s, seen_green, seen_tail, copied, contexts, cm.output
+
+    def test_green_function_is_not_copied_to_the_host_for_the_bubble(self):
+        s, seen_green, _, copied, _, _ = self._run()
+        self.assertEqual(len(seen_green), 2)
+        for green in seen_green:
+            self.assertFalse(any(c is green for c in copied))
+
+    def test_tail_comes_from_the_device_context(self):
+        s, _, seen_tail, _, contexts, _ = self._run()
+        self.assertIsNotNone(s.green0_tail)
+        self.assertEqual(len(contexts), 1)
+        # numpy: BondDeviceContext hands the host array straight back
+        self.assertIs(contexts[0], s.green0_tail)
+        for tail in seen_tail:
+            self.assertIs(tail, contexts[0])
+
+    def test_the_bubble_module_is_logged_once_per_solve(self):
+        _, _, _, _, _, records = self._run()
+        hits = [m for m in records if "bond bubble on" in m]
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("numpy", hits[0])
 
 
 class TestStandaloneHFAdmissibility(unittest.TestCase):

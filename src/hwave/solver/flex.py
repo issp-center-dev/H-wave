@@ -1827,11 +1827,18 @@ class FLEX(RPA):
 
     def _log_bond_transfer_volume(self, est):
         """Host <-> device traffic of one SCF iteration at the selected
-        frequency batch (spec 4.6), logged once per solve. Per batch the
-        dressing moves one chibar batch in and one W batch out -- over a
-        whole iteration one full (Nmat, nvol, ND, ND) buffer each way,
-        since the batches tile the frequency axis -- plus two
-        batch-sized reads for the conditioning guard under
+        frequency batch (spec 4.6), logged once per solve.
+
+        The bubble is assembled on the device from the Green function the
+        SCF loop already holds there (issue #196), so no Green function
+        and no tail cross per iteration -- the tail is a one-off transfer
+        of the solve's device context. What the bubble does move is its
+        RESULT: the B^2 channel-pair blocks, one at a time, into the
+        host block store, i.e. one full (Nmat, nvol, ND, ND) buffer per
+        map. Per batch the dressing then moves one chibar batch back in
+        and one W batch out -- again one full buffer each way over a
+        whole iteration, since the batches tile the frequency axis --
+        plus two batch-sized reads for the conditioning guard under
         ``guard_freqs = "all"`` and two more for the full dynamic
         susceptibilities under ``longitudinal_bond_output_full``; the
         transport moves the B^2 blocks of W in and the collapses out.
@@ -1841,15 +1848,16 @@ class FLEX(RPA):
         two directions of one iteration are
 
             H2D = U + B^2 C
-            D2H = U (1 + 2 [guard = all] + 2 [output_full])
+            D2H = U + U (1 + 2 [guard = all] + 2 [output_full])
                   + 2 S + 2 S [guard = static] + 3 C + G
 
-        where the ``2 S`` terms are the two static ND x ND slices the
-        dressing always brings back and, under ``"static"``, the two
-        guard copies of that same slice (the ``"all"`` guard instead
-        copies the whole batch, which is the ``2 U`` term); ``3 C`` are
-        the three channel-0 collapses and ``G`` the self-energy the
-        transport returns."""
+        where the leading ``U`` is the bubble's ``B^2`` blocks (``B^2 C``
+        written in the ND symbols); the ``2 S`` terms are the two static
+        ND x ND slices the dressing always brings back and, under
+        ``"static"``, the two guard copies of that same slice (the
+        ``"all"`` guard instead copies the whole batch, which is the
+        ``2 U`` term); ``3 C`` are the three channel-0 collapses and
+        ``G`` the self-energy the transport returns."""
         from hwave.solver import flex_bond
         gib = flex_bond._GIB
         nb, nmat = int(est["nb"]), int(est["nmat"])
@@ -1859,7 +1867,9 @@ class FLEX(RPA):
         u_total = nmat * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
         h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
-        d2h = (u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
+        d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
+               u_total
+               + u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
                # the two static slices, plus the "static" guard's two copies of
                # that slice ("all" copies the whole batch, counted above)
                + 2 * int(est["S_bytes"]) * (1 if guard_all else 2)
@@ -1987,7 +1997,13 @@ class FLEX(RPA):
                 try:
                     dev = stack.enter_context(flex_bond.BondDeviceContext(
                         xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
-                        perm, mask))
+                        perm, mask,
+                        # the bubble's tail joins the solve-scoped device set
+                        # (issue #196): the bubble computes on the module of the
+                        # Green function, which the loop already keeps on the
+                        # device, so the tail is transferred once instead of
+                        # every map. self.green0_tail is the host copy.
+                        green0_tail=self.green0_tail))
                 except _bk._oom_error_types() as exc:
                     # the vertex transfer is the first bond allocation on the
                     # device; the same diagnostic as the per-iteration handler
@@ -2029,7 +2045,7 @@ class FLEX(RPA):
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if gate:
                     chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
-                        store, dev, green_kw, green_scf, green0_tail, beta, iteration + 1)
+                        store, dev, green_kw, green_scf, beta, iteration + 1)
                 else:
                     chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
                     assert chi0q_raw.shape[0] == 1
@@ -2205,27 +2221,42 @@ class FLEX(RPA):
                 n, n - m, m, self.longitudinal_bond_cond_tol,
                 res.cond_min_s, res.cond_min_c))
 
-    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, green0_tail, beta, iteration):
+    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
         dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
         collapses (``acbd`` layout) and Sigma_fluct.
 
         ``dev`` is the solve-scoped :class:`~hwave.solver.flex_bond.BondDeviceContext`
-        owning the vertices; its array module drives the dressing and the
-        transport. The block store stays host-resident either way -- the
-        kernels move one frequency batch (and one W block pair) at a time."""
+        owning the vertices and the bubble's tail; its array module drives
+        every phase of the map. ``green_scf`` is used where it already
+        lives -- on the GPU backend the bubble too runs on the device
+        (issue #196), so nothing of the Green function crosses to the host
+        here. The block store stays host-resident either way: the bubble
+        brings back one channel-pair block at a time and the kernels move
+        one frequency batch (and one W block pair) at a time."""
         from hwave.solver import flex_bond
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         nd = norb * norb
         shape = tuple(int(x) for x in self.lattice.shape)
         workers = getattr(self, "fft_workers", 1)
         xp = dev.xp
-        with self._traced("bubble"):
-            flex_bond.assemble_bubble(
-                store, _bk.to_host(green_scf),
-                None if green0_tail is None else _bk.to_host(green0_tail),
-                beta, self._bond_view, shape, workers)
+        # the phase the one out-of-memory handler below names; every block
+        # that allocates on the device sets it before entering
+        phase = "bubble"
         try:
+            with self._traced("bubble"):
+                if iteration == 1:
+                    # provenance next to the other per-solve backend lines: the
+                    # bubble follows the Green function's module (issue #196)
+                    logger.info("longitudinal_bond_channels (FLEX): bond bubble on %s",
+                                _bk.array_module_of(green_scf).__name__)
+                # green_scf arrives in the module the SCF loop runs on and stays
+                # there; dev.green0_tail was transferred to that same module once
+                # per solve. Both are the identity on the numpy backend.
+                flex_bond.assemble_bubble(
+                    store, green_scf, dev.green0_tail,
+                    beta, self._bond_view, shape, workers)
+            phase = "dressing"
             with self._traced("dressing"):
                 res = flex_bond.dress_and_build_w(
                     store, dev, nb=self._bond_nb,
@@ -2240,16 +2271,18 @@ class FLEX(RPA):
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy)
+            phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
                     store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
         except _bk._oom_error_types() as exc:
             # no retry: a smaller batch mid-SCF would change the arithmetic
-            # of this solve. The iteration, the batch size and the pool
-            # occupancy are logged, then the error propagates -- solve()
+            # of this solve. The phase, the iteration, the batch size and the
+            # pool occupancy are logged, then the error propagates -- solve()
             # drops every partial result on the way out (spec 3.5).
-            logger.error("bond-gate device allocation failed at iteration %d with frequency "
-                         "batch %d (device pool used %.3f GiB): %s", iteration, self._bond_nb,
+            logger.error("bond-gate device allocation failed during the %s at iteration %d "
+                         "with frequency batch %d (device pool used %.3f GiB): %s",
+                         phase, iteration, self._bond_nb,
                          _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
             raise
         self._bond_last = res

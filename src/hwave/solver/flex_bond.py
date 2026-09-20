@@ -107,7 +107,11 @@ class BondDeviceContext:
     """Owner of the IMMUTABLE bond inputs for one ``_solve_phase_b`` call
     (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``, the on-site
     ``S_on``, ``C_on``, their sum ``SpC_on`` (formed on the host here, once),
-    the mixed-block pair permutation ``perm`` and the block-weight ``mask``.
+    the mixed-block pair permutation ``perm``, the block-weight ``mask``
+    and the bubble's tau-space tail ``green0_tail`` (issue #196: the
+    bubble computes on the module of the Green function, which the SCF
+    loop already keeps on the device, so its tail belongs to the
+    solve-scoped device set rather than to a per-iteration transfer).
     Construction transfers them to the array module ``xp`` exactly once
     (``_bk.to_device``; the identity on numpy, so the CPU path gets the
     host arrays themselves); every SCF iteration reuses them. A context
@@ -116,9 +120,10 @@ class BondDeviceContext:
     it AFTER the memory preflight (its allocation is part of the predicted
     device need) and nothing else creates device copies of the vertices."""
 
-    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask")
+    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail")
 
-    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None):
+    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None,
+                 green0_tail=None):
         self.xp = xp
         # SpC_on exists only when BOTH are present, so one of them alone would
         # be silently dropped into a context whose SpC_on is None
@@ -128,7 +133,8 @@ class BondDeviceContext:
                              .format("None" if S_on is None else "an array",
                                      "None" if C_on is None else "an array"))
         SpC_on = None if (S_on is None or C_on is None) else np.asarray(S_on) + np.asarray(C_on)
-        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask)
+        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask,
+                    green0_tail=green0_tail)
         self._arrays = {k: (None if host[k] is None else _bk.to_device(host[k], xp))
                         for k in self._NAMES}
         self._released = False
@@ -141,7 +147,7 @@ class BondDeviceContext:
         return False
 
     def __getattr__(self, name):
-        # attribute access for the seven arrays; everything else is normal
+        # attribute access for the owned arrays; everything else is normal
         if name in BondDeviceContext._NAMES:
             arrays = self.__dict__.get("_arrays")
             if self.__dict__.get("_released", True) or arrays is None:
@@ -161,8 +167,27 @@ class BondDeviceContext:
 def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, workers):
     """Fill ``store['chibar']`` pair by pair from ``bubble._iter_bond_dynamic``
     (spec 3.1). ``green_scf`` is the TAIL-SUBTRACTED single-block Green
-    function the general bubble consumes; ``green0_tail`` its tail."""
+    function the general bubble consumes; ``green0_tail`` its tail.
+
+    The bubble computes on the ARRAY MODULE of ``green_scf`` (issue
+    #196): handed a device-resident Green function it runs the whole
+    per-pair pipeline on the device and only the finished block crosses
+    to the host store below. ``green0_tail`` must therefore live on the
+    same module as ``green_scf`` -- a mismatch is refused here, by name,
+    rather than as the backend-equality message of
+    ``bubble._validate_dense_inputs``. Nothing is transferred here: the
+    caller owns the placement of both arrays."""
     from .hartree_fock import NonFiniteError
+    if green0_tail is not None:
+        xp_g = _bk.array_module_of(green_scf)
+        xp_t = _bk.array_module_of(green0_tail)
+        if xp_t is not xp_g:
+            raise ValueError(
+                "assemble_bubble: green0_tail lives on {} but green_scf on {}; the bond "
+                "bubble computes on the array module of green_scf, so its paired tail has "
+                "to be on that same module (transfer it once per solve, e.g. through "
+                "BondDeviceContext(green0_tail=...))".format(
+                    getattr(xp_t, "__name__", xp_t), getattr(xp_g, "__name__", xp_g)))
     for (alpha, beta_), block in _bubble._iter_bond_dynamic(
             green_scf, green0_tail, beta, view, spatial_shape=tuple(spatial_shape),
             workers=workers):
@@ -508,6 +533,18 @@ _TRANSPORT_OPS_WARN = 1.0e11
 _GIB = float(1024 ** 3)
 
 
+#: the device phase rows, in the order a refusal names them when two of
+#: them are exactly equal
+_DEV_PHASE_ORDER = ("bubble", "dressing", "transport")
+
+
+def _largest_dev_phase(rows):
+    """Name of the largest device phase row in ``rows``; an exact tie goes
+    to the earlier name of :data:`_DEV_PHASE_ORDER`."""
+    return max(_DEV_PHASE_ORDER,
+               key=lambda k: (rows[k], -_DEV_PHASE_ORDER.index(k)))
+
+
 def dressing_ops(nmat, nvol, ND):
     """Operation count of the two dense ND x ND solves over all (l, q)."""
     return 2.0 * nmat * nvol * float(ND) ** 3
@@ -551,24 +588,43 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     * ``flex_arrays = 5 * G``: the SCF loop's device Green functions and
       self-energies, allocated per iteration INSIDE the loop and so not
       yet part of the measured reading;
+    * ``green0_tail = G``: the bubble's tau-space tail, transferred to the
+      device by the vertex context right after the measurement (issue
+      #196). It is counted unconditionally: the tail exists whenever
+      ``coeff_tail != 0``, and counting it when there is none is a
+      deliberate margin, as with ``second_order_factors``;
     * ``second_order_factors = factor_bytes``: the device mirror of the
       compiled factor pack, which exists exactly when the pack does
       (``flex_second_order = "local"``). The mirror is already live at
       the measurement point, so counting it is a deliberate margin
       rather than a missing allocation --
 
-    plus two phase rows that are never simultaneously live:
+    plus three phase rows that are never simultaneously live:
+    ``bubble = max(prep, pair)`` -- the CPU expression, taken over as a
+    DEVICE row since issue #196 put the bond bubble on the solver's
+    array module. It is an UPPER BOUND there: the streamed device kernel
+    never holds the static ``S``-sized buffers the host row was derived
+    with, so the real device allocation is smaller --
     ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
     dressing solve and ``transport = 6 * C`` during the bond
     self-energy transport. The device need at a batch size is therefore
-    ``1.25 * (vertices_static + flex_arrays + second_order_factors +
-    max(dressing(nb), transport))`` against ``device_cap = 0.9 *
+    ``1.25 * (vertices_static + flex_arrays + green0_tail +
+    second_order_factors + max(bubble, dressing(nb), transport))``
+    against ``device_cap = 0.9 *
     device_available``. Refusal at ``nb = 1``
-    names whichever of the two phase rows does not fit; an explicit
+    names whichever of the three phase rows is the largest (an exact tie
+    goes to the earlier of ``bubble``, ``dressing``, ``transport``); an explicit
     ``freq_batch`` is checked against both the host and the device
     table; otherwise the selected ``nb`` is ``min`` of the largest
     batch each table admits, and the dict gains ``device_rows``,
-    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``."""
+    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``.
+
+    Giving ``device_available`` also changes ONE host row: the bubble no
+    longer allocates its temporaries on the host, which then holds only
+    the finished channel-pair block on its way into the store, so the
+    host ``bubble`` row becomes ``C``. The first, host-only preflight
+    call runs before the backend is known and keeps the CPU expression,
+    which is the conservative reading of the two."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -597,6 +653,10 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     prep = it * nvol * (ND ** 2 + 4 * P * (nmat + 2))
     pair = it * nvol * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
     per_batch = 6 * nvol * ND * ND * it
+    # On the GPU path the bubble's temporaries are the DEVICE's (issue
+    # #196); the host only holds the one finished channel-pair block that
+    # is on its way into the store, i.e. C bytes.
+    host_bubble = C if device_available is not None else max(prep, pair)
 
     def _phase_rows(nb):
         return {
@@ -605,7 +665,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             # their workspace (4 H), rho_k/rho_r (2 H), rho_so/out (8 H), the
             # kernel's spin-major temporaries (20 H), the owning Sigma_HF copy (H)
             "density_hf": 2 * G + 4 * H + 2 * H + 8 * H + 20 * H + H,
-            "bubble": max(prep, pair),
+            "bubble": host_bubble,
             "dressing": per_batch * nb,
             "transport": 4 * G + 4 * C,
             # materialised new total, green_inv + inverse + workspace, the G
@@ -664,22 +724,26 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         vertices = 5 * S
         transport = 6 * C
         dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
+                          "green0_tail": G,
                           "second_order_factors": int(factor_bytes)}
         dev_persistent_sum = sum(dev_persistent.values())
+        dev_bubble = max(prep, pair)
         def _dev_rows(n):
             rows = dict(dev_persistent)
+            rows["bubble"] = dev_bubble
             rows["dressing"] = 7 * n * nvol * ND * ND * it
             rows["transport"] = transport
             return rows
         def _dev_need(n):
             r = _dev_rows(n)
-            return 1.25 * (dev_persistent_sum + max(r["dressing"], r["transport"]))
+            return 1.25 * (dev_persistent_sum
+                           + max(r["bubble"], r["dressing"], r["transport"]))
         dev_cap = 0.9 * float(device_available)
         def _dev_table(n):
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
                              for k, v in _dev_rows(n).items())
         if _dev_need(1) > dev_cap:
-            phase = "dressing" if 7 * nvol * ND * ND * it >= transport else "transport"
+            phase = _largest_dev_phase(_dev_rows(1))
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
                 "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
