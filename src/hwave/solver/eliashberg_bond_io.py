@@ -793,6 +793,41 @@ def write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
         _record_backstop(green_info, _requested_types(solver), "outputs", exc)
 
 
+def _rollback_publication(order, names, tmps, done, backups):
+    """Undo a partial publication of one channel, best-effort and never raising.
+
+    Restores every target that had a previous file (from its backup), removes
+    any target that was freshly published without a previous file, drops the
+    temporaries that were not published, and clears any leftover backups.
+    Returns the list of targets that could NOT be put back to their previous
+    state (empty on a clean rollback)."""
+    could_not_restore = []
+    for kind, bak in backups.items():
+        try:
+            os.replace(bak, names[kind])       # bak -> target, consuming bak
+        except OSError:
+            could_not_restore.append(kind)
+    for kind in done:
+        if kind not in backups:
+            try:
+                os.remove(names[kind])
+            except OSError:
+                could_not_restore.append(kind)
+    for kind in order:
+        if kind not in done:
+            try:
+                os.remove(tmps[kind])
+            except OSError:
+                pass
+    for bak in backups.values():
+        if os.path.exists(bak):
+            try:
+                os.remove(bak)
+            except OSError:
+                pass
+    return could_not_restore
+
+
 def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
     from . import eliashberg_dynamic as _ed
     from . import flex_bond as _fb
@@ -863,21 +898,41 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
             logger.error("longitudinal_bond_pairing (%s): writing the outputs failed: %s",
                          eta, exc)
             continue
+        # transactional publication: move every pre-existing target aside to a
+        # unique backup, replace each temp into its target, and on ANY failure
+        # roll the whole channel back so the run never sees a mix of new and
+        # old files (all-or-nothing).
+        order = ("eliashberg_bond", "gap_bond", "eigenvalue_bond")
         done = []
+        backups = {}
         try:
-            for kind in ("eliashberg_bond", "gap_bond", "eigenvalue_bond"):
+            for kind in order:
+                if os.path.exists(names[kind]):
+                    bak = "{}.bak-{}-{}".format(names[kind], os.getpid(),
+                                                secrets.token_hex(4))
+                    os.replace(names[kind], bak)
+                    backups[kind] = bak
+            for kind in order:
                 os.replace(tmps[kind], names[kind])
                 done.append(kind)
         except OSError as exc:
-            missing = [k for k in tmps if k not in done]
-            for k in missing:
-                try:
-                    os.remove(tmps[k])
-                except OSError:
-                    pass
-            green_info["pairing_{}_error".format(eta)] = \
-                "outputs: partially published, missing {}: {}".format(missing, exc)
-            logger.error("longitudinal_bond_pairing (%s): PARTIALLY published (missing %s): %s",
-                         eta, missing, exc)
+            could_not_restore = _rollback_publication(order, names, tmps, done, backups)
+            if could_not_restore:
+                green_info["pairing_{}_error".format(eta)] = \
+                    "outputs: partially published, could not restore {}: {}".format(
+                        could_not_restore, exc)
+                logger.error("longitudinal_bond_pairing (%s): PARTIALLY published; rollback could "
+                             "not restore %s: %s", eta, could_not_restore, exc)
+            else:
+                green_info["pairing_{}_error".format(eta)] = \
+                    "outputs: publication failed, previous outputs restored: {}: {}".format(
+                        type(exc).__name__, exc)
+                logger.error("longitudinal_bond_pairing (%s): publication failed, previous "
+                             "outputs restored: %s", eta, exc)
             continue
+        for bak in backups.values():
+            try:
+                os.remove(bak)
+            except OSError:
+                pass
         logger.info("save_results: pairing (%s) outputs %s", eta, ", ".join(names.values()))
