@@ -197,6 +197,9 @@ Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写�
 INFO ログにその旨が出力されます）。このアーカイブにはさらに
 ``longitudinal_bond_guard_freqs``\ （文字列。\ ``"all"``\ または\ ``"static"``\ 。
 ボンド分解したドレッシングの条件数ガードが検査する振動数の範囲）、
+``longitudinal_bond_cond_tol``\ （浮動小数点数。そのガードが
+``longitudinal_bond_cond_min_s`` / ``_c``\ を判定した条件数の下限値。
+``[mode.param] longitudinal_bond_cond_tol``\ ）、
 ``longitudinal_bond_device``\ （文字列。\ ``"cupy"``\ または\ ``"numpy"``\ 。
 ボンド分解した解法を実行したバックエンド）、\ ``longitudinal_bond_nb``\ （整数。
 実際に使用された振動数バッチ幅）が格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
@@ -208,7 +211,11 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``scf_green_residual``\ ・\ ``scf_component_residual``\ ・\ ``payload_kind``
 （感受率は\ ``"last_map"``\ 、\ ``sigma`` / ``green``\ は\ ``"final_state"``\ ）・
 ``hf_density_error``\ （そのペイロードが記述する状態の密度閉包誤差。
-``hf_density_source``\ 付き）・\ ``density_target_enforced``\ が含まれます。
+``hf_density_source``\ 付き）・\ ``density_target_enforced``\ ・
+``flex_guard_policy``\ （文字列。\ ``"refuse"``\ または\ ``"warn"``\ 。
+``[mode.param] flex_guard_policy``\ で指定した設定）・
+``flex_guard_violations``\ （整数。\ ``"warn"``\ で通過させたガード違反の
+回数。最初の違反で停止する\ ``"refuse"``\ では\ ``0``\ ）が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
 ``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
@@ -219,7 +226,8 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と\ ``norb``\ 、
 ``beta``\ ・\ ``T``\ ・\ ``nmat``\ ・\ ``cell_shape``\ ・運動量規約マーカー・
 ``index_order``\ ・\ ``delta_r``\ ・\ ``reverse``\ ・\ ``types``\ 、16個の静的キー、
-``longitudinal_bond_guard_freqs``\ ・\ ``longitudinal_bond_device``\ ・
+``longitudinal_bond_guard_freqs``\ ・\ ``longitudinal_bond_cond_tol``\ ・
+``longitudinal_bond_device``\ ・
 ``longitudinal_bond_nb``\ 、来歴ブロックが格納されます。これらの配列を重複して
 持つファイルは他にありません。\ ``S_bond``\ と\ ``C_bond``\ は、下記の
 ボンド分解した動的 Eliashberg 対形成ソルバーが\ ``chi_s_w`` / ``chi_c_w``

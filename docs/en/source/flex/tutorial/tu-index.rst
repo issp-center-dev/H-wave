@@ -247,6 +247,47 @@ logged; if warm-starting such a seed stalls under
 ``flex_second_order = "takimoto"`` to match the kernel the seed was
 produced with.
 
+
+.. _flex_near_instability:
+
+Operating near an instability
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A strongly coupled run can approach a magnetic or charge instability:
+the Stoner factor climbs above about 0.99, or the ``guards:`` line of
+the log reports a bond conditioning minimum (``cond_min``) within an
+order of magnitude of ``longitudinal_bond_cond_tol``. In that regime
+the self-consistency is stiff, several fixed points can exist, and the
+following operating rules apply.
+
+- **Mix in small linear steps.** Use ``mixing_scheme = "linear"`` with
+  ``Mix <= 0.03``. Larger steps overshoot into the instability region,
+  where the dressed vertices are enormous and the guard stops the run.
+- **Warm-start in small temperature steps.** Walk down in temperature
+  and start each run from the converged self-energy of the previous,
+  slightly higher temperature (``[file.input] sigma_init``). A cold
+  start at the lowest temperature of a sweep can fail where the
+  descending ladder converges.
+- **Cross-check an Anderson-mixing result by a linear recomputation.**
+  Anderson mixing has been observed to land on an unphysical fixed
+  point -- one whose pairing eigenvalue saturates instead of growing --
+  on the single-band Hubbard model at :math:`U = 8t`. Recompute the
+  same point with linear mixing before reporting it.
+- **Use** ``flex_guard_policy = "warn"`` **only for a transient
+  excursion.** It lets an iteration whose density symmetry or bond
+  conditioning violates its tolerance continue instead of ending the
+  run. Read the ``guards:`` lines afterwards and confirm that the
+  violation decays: the values must return above their tolerances and
+  stay there. The final state is checked regardless of the policy, so
+  a run that is still violating a guard at the end is refused with the
+  conditioning minima of the last map, and ``flex_guard_violations`` in
+  the outputs records how many iterations were let through.
+
+The tolerances themselves (``flex_hf_density_tol``,
+``longitudinal_bond_cond_tol``) are knobs for a deliberately stiff
+study, not a way to silence a guard: lowering a floor lets a run
+continue with numbers that are dominated by amplified round-off.
+
 Sample 1: Single-orbital Hubbard model
 -----------------------------------------
 
