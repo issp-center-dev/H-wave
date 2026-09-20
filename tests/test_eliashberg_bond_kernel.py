@@ -79,6 +79,61 @@ class TestAccumulator(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"non-finite .* batch \[0, 2\)"):
                 acc.add_channel("spin", src, "chi_s_w")
 
+    def test_add_channel_checks_the_raw_member_before_the_contraction(self):
+        """The raw channel batch is finiteness-checked BEFORE the V @ chi @ V
+        contraction (issue #205), so the sidecar member()'s dropped whole-array
+        scan is truly enforced per batch on the member itself. A NaN or an Inf
+        in the first, a middle, or the last frequency batch raises from
+        add_channel naming the batch, and the offending batch is never
+        contracted. Both a plain array source (npz) and a memory-mapped source
+        (sidecar) are exercised."""
+        import os
+        import shutil
+        import tempfile
+        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=6)
+        # nb = 2 -> batches [0, 2) [2, 4) [4, 6); bad frequency -> (batch, span)
+        cases = {0: (0, "[0, 2)"), 3: (2, "[2, 4)"), 5: (4, "[4, 6)")}
+        tmpdir = tempfile.mkdtemp()
+        try:
+            for badval in (np.nan, np.inf):
+                for freq, (l0, span) in cases.items():
+                    bad = fx["chi_s"].copy()
+                    bad[freq, 0, 0, 0] = badval
+                    npy = os.path.join(tmpdir, "chi.npy")
+                    np.save(npy, bad)
+                    mm = np.load(npy, mmap_mode="r")
+                    self.assertIsInstance(mm, np.memmap)
+                    for label, arr in (("npz", bad), ("sidecar", mm)):
+                        with self.subTest(badval=badval, freq=freq, layout=label):
+                            src = ArrayBlockSource({"chi_s_w": arr}, 1)
+                            with _dev(fx) as dev:
+                                acc = PairVertexAccumulator(dev, pairing_types=("singlet",),
+                                                            nb=2, nmat=6, nvol=4, nd=1,
+                                                            spatial_shape=(2, 2, 1))
+                                absorbed = []
+                                real_absorb = acc._absorb
+
+                                def spy(channel, P, a, b, _r=real_absorb, _s=absorbed):
+                                    _s.append((a, b))
+                                    return _r(channel, P, a, b)
+
+                                with mock.patch.object(acc, "_absorb", side_effect=spy):
+                                    with self.assertRaises(ValueError) as cm:
+                                        acc.add_channel("spin", src, "chi_s_w")
+                                msg = str(cm.exception)
+                                # the raw-member (pre-contraction) message, not
+                                # _absorb's post-contraction "contribution"
+                                self.assertIn("channel member", msg)
+                                self.assertIn(span, msg)
+                                # the offending batch was NEVER contracted; only
+                                # the good batches before it were
+                                self.assertNotIn((l0, min(6, l0 + 2)), absorbed)
+                                self.assertEqual(len(absorbed), l0 // 2)
+                    del mm
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def test_lifecycle_guards(self):
         """Adding the same stage twice would DOUBLE-COUNT it silently, and
         adding anything after ``finish`` would mutate a vertex the caller
