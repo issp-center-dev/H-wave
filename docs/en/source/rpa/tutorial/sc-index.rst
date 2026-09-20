@@ -297,6 +297,21 @@ This section controls the Eliashberg solver. Key parameters:
   ``true`` to retain the static component instead of aborting (alternatively
   lower ``ir_wmax`` or increase the FLEX ``Nmat``).
 
+.. note::
+
+   **Keep** :math:`\beta\,\omega_\mathrm{max}` **above the truncation floor.**
+   The ill-conditioning guard on the IR fit only catches a bandwidth that is
+   too *large* for the sampling grid; it cannot see the opposite failure. At
+   *small* :math:`\Lambda = \beta\,\omega_\mathrm{max}` the fit stays perfectly
+   well-conditioned yet the basis is simply too narrow to represent the
+   Green function's band edges, so it carries a silent basis-truncation error
+   -- of order 1% once :math:`\omega_\mathrm{max}` no longer reaches a
+   band-edge single-pole Green function to the requested ``ir_tol``. Keep
+   :math:`\beta\,\omega_\mathrm{max}` above that floor: use the automatic
+   ``ir_wmax`` estimate (which targets it by construction) or set an explicit
+   ``ir_wmax`` :math:`\ge 3\,(\text{bandwidth} + \text{interaction})` as the
+   safe lower bound.
+
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
