@@ -306,9 +306,13 @@ class TestParityLeakageTolerance(unittest.TestCase):
         self.assertGreater(self.leak, 1.0e-8)
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
             out = self._run(parity_leakage_tol=1.5 * self.leak)
-        self.assertEqual(len(out), 6)
+        self.assertEqual(len(out), 8)
         self.assertIsInstance(out[5], float)
         self.assertAlmostEqual(out[5], self.leak)
+        # the 7th element is the returned gap's sector composition, the 8th
+        # the sector the iteration projected onto
+        self.assertAlmostEqual(sum(out[6].values()), 1.0, places=9)
+        self.assertIn(out[7], ("channel", "combined_parity", "none"))
         self.assertTrue(any("parity_leakage_tol" in m for m in cm.output), cm.output)
 
     def test_tolerance_below_the_leakage_refuses_naming_the_key(self):
@@ -792,13 +796,32 @@ class TestInProcess(unittest.TestCase):
             npz = os.path.join(self.tmp, "eliashberg_bond_{}.npz".format(eta))
             with np.load(npz) as d:
                 for k in ("gap", "eigenvalue", "scf_converged", "state", "gap_bond_projection",
-                          "bond_delta_r"):
+                          "bond_delta_r", "gap_sector_weights", "gap_sector_labels",
+                          "sector_selection"):
                     self.assertIn(k, d.files, k)
                 self.assertEqual(str(d["pairing_type"]), eta)
+                # the in-process entry records the same two keys, under the
+                # same names, as the file entry; the projected iteration
+                # returns a gap in the channel's even-frequency sector
+                labels = [str(x) for x in d["gap_sector_labels"]]
+                self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
+                                          "even_k_odd_w", "odd_k_odd_w"])
+                w = dict(zip(labels, np.asarray(d["gap_sector_weights"], dtype=float)))
+                self.assertAlmostEqual(sum(w.values()), 1.0, places=9)
+                own = "even_k_even_w" if eta == "singlet" else "odd_k_even_w"
+                self.assertGreater(w[own], 0.999, (eta, w))
+                # this two-orbital kernel conserves only the combined parity,
+                # so the iteration is NOT restricted to the channel sector --
+                # yet its leading eigenvector lands there anyway, which is
+                # exactly what the recorded weights are for
+                self.assertEqual(str(d["sector_selection"]),
+                                 "combined_parity", eta)
             with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:
                 txt = f.read()
             self.assertIn("scf_converged=", txt)
             self.assertIn("state=", txt)
+            self.assertIn("# gap_sector_weights even_k_even_w=", txt)
+            self.assertIn("# sector_selection=combined_parity", txt)
             self.assertTrue(os.path.exists(os.path.join(self.tmp, "gap_bond_{}.dat".format(eta))))
             for stem in ("eliashberg_bond_{}.tmp.npz", "gap_bond_{}.tmp.dat",
                          "eigenvalue_bond_{}.tmp.dat"):

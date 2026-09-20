@@ -62,7 +62,28 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     one platform; another BLAS / FFT build differs in the last bits, which
     the ``%.8e`` formatting can flip in the last printed digit."""
     punct = "()[]{},;:"
-    ga, gb = got.split(), want.split()
+
+    _NEW_HEADERS = ("# gap_sector_weights", "# sector_selection")
+    # the per-eigenvalue match column is now NAMED by the sector that matched;
+    # the golden files carry the old unqualified label. Map the new labels back
+    # so the label may differ but every ROW must still agree.
+    _MATCH_LABELS = ("match(1=channel even-frequency sector)",
+                     "match(1=combined-parity sector; "
+                     "no even-frequency eigenpair)")
+
+    def _strip(text):
+        # these header lines are new in this version and are not part of the
+        # recorded golden files; compare everything else verbatim
+        out = []
+        for ln in text.splitlines():
+            if ln.startswith(_NEW_HEADERS):
+                continue
+            for label in _MATCH_LABELS:
+                ln = ln.replace(label, "match(1=channel-parity)")
+            out.append(ln)
+        return "\n".join(out)
+
+    ga, gb = _strip(got).split(), _strip(want).split()
     case.assertEqual(len(ga), len(gb), "{}: token count".format(tag))
     for x, y in zip(ga, gb):
         # a number may be wrapped in punctuation ("(spectral_shift=0.038),"):
@@ -107,9 +128,49 @@ class TestDynamicGolden(unittest.TestCase):
                                            "{} {}".format(tag, fn))
                 a = _npz_members(os.path.join(tmp, "gap_dynamic.npz"))
                 b = _npz_members(os.path.join(_GOLDEN, tag, "gap_dynamic.npz"))
-                self.assertEqual(set(a), set(b), tag)
-                for k in a:
+                # the current run may carry keys the golden predates (the
+                # sector weights); every golden key must still be there and
+                # unchanged
+                self.assertTrue(set(b) <= set(a), tag)
+                for k in b:
                     _assert_member_close(a[k], b[k], "{} {}".format(tag, k))
+                # the new keys, and the singlet gap's purity in the
+                # conventional (even k, even w) sector
+                self.assertIn("gap_sector_weights", a, tag)
+                self.assertIn("gap_sector_labels", a, tag)
+                self.assertIn("sector_selection", a, tag)
+                # These fixtures conserve neither parity, so the iteration
+                # cases run unprojected; and on a 2x2x1 one-orbital grid the
+                # channel sector equals the combined-parity sector, so the
+                # eigenvalue cases find no eigenpair in either -- both report
+                # "none", and the recorded golden values are reproduced.
+                self.assertEqual(str(a["sector_selection"]), "none", tag)
+                # a "none" selection keeps the historical match-column label,
+                # so the golden text is unchanged there too
+                with open(os.path.join(tmp, "eigenvalue.dat")) as fh:
+                    ev_text = fh.read()
+                self.assertIn("# sector_selection=none", ev_text, tag)
+                self.assertNotIn("even-frequency sector", ev_text, tag)
+                labels = [str(x) for x in a["gap_sector_labels"]]
+                self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
+                                          "even_k_odd_w", "odd_k_odd_w"], tag)
+                w = np.asarray(a["gap_sector_weights"], dtype=float)
+                self.assertAlmostEqual(float(w.sum()), 1.0, places=9, msg=tag)
+                # a 2x2x1 grid has no odd-k function at all, so both odd-k
+                # sectors are empty. These fixtures are a synthetic random
+                # susceptibility archive whose kernel does not commute with
+                # the frequency reversal, so the gap keeps a sizeable
+                # odd-frequency admixture -- exactly what the new diagnostic
+                # is there to make visible, and the reason the purity of a
+                # returned gap is asserted on the physical fixtures instead.
+                self.assertEqual(float(w[1]), 0.0, tag)
+                self.assertEqual(float(w[3]), 0.0, tag)
+                # the recorded weights describe the gap stored next to them
+                from hwave.solver import eliashberg_dynamic as ed
+                recomputed = ed.gap_sector_weights(a["gap"])
+                for i, label in enumerate(labels):
+                    self.assertAlmostEqual(float(w[i]), recomputed[label],
+                                           places=10, msg=tag)
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
@@ -172,8 +233,8 @@ class TestEigenDriverUnits(unittest.TestCase):
     def test_warn_completes_and_logs_existing_message(self):
         eli_param = {"solver_mode": "iteration", "max_iter": 3}
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
-            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage = \
-                self.ed.run_leading_eigenproblem(
+            lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
+                weights, selection = self.ed.run_leading_eigenproblem(
                     self.matvec, self.gap_shape, eli_param, "singlet",
                     phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
                     axF=None, nmat=4, parity_leakage_policy="warn")
@@ -188,6 +249,12 @@ class TestEigenDriverUnits(unittest.TestCase):
         # probes on the iteration path)
         self.assertIsInstance(leakage, float)
         self.assertGreater(leakage, 1.0e-8)
+        # the driver also reports the sector composition of the gap it returns
+        self.assertEqual(set(weights), {"even_k_even_w", "odd_k_even_w",
+                                        "even_k_odd_w", "odd_k_odd_w"})
+        self.assertAlmostEqual(sum(weights.values()), 1.0, places=9)
+        # a kernel that commutes with neither: no projection at all
+        self.assertEqual(selection, "none")
 
     def test_parity_probe_runs_at_most_once_and_only_where_it_is_needed(self):
         """The probe is a full matvec pair, so a duplicate one silently
@@ -224,6 +291,48 @@ class TestEigenDriverUnits(unittest.TestCase):
                              parity_leakage_policy="refuse"), 1)
         self.assertEqual(run({"solver_mode": "iteration", "max_iter": 3},
                              parity_leakage_policy="refuse"), 1)
+
+    def test_both_probes_run_exactly_once_on_the_iteration_path(self):
+        """The iteration path now asks two questions -- is the kernel the
+        physical one (``_parity_leakage``), and is the channel sector
+        preserved (``_channel_leakage``) -- and each costs a matvec per probe
+        vector. Each must run exactly once there, and neither at all on the
+        eigenvalue family under the default policy."""
+        from unittest import mock
+
+        real_parity = self.ed._parity_leakage
+        real_channel = self.ed._channel_leakage
+
+        def run(eli_param):
+            parity_calls, channel_calls = [], []
+
+            def count_parity(*a, **k):
+                parity_calls.append(1)
+                return real_parity(*a, **k)
+
+            def count_channel(*a, **k):
+                channel_calls.append(1)
+                return real_channel(*a, **k)
+
+            with mock.patch.object(self.ed, "_parity_leakage",
+                                   side_effect=count_parity), \
+                    mock.patch.object(self.ed, "_channel_leakage",
+                                      side_effect=count_channel):
+                self.ed.run_leading_eigenproblem(
+                    self.matvec, self.gap_shape, eli_param, "singlet",
+                    phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
+                    axF=None, nmat=4)
+            return len(parity_calls), len(channel_calls)
+
+        with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
+            self.assertEqual(run({"solver_mode": "iteration", "max_iter": 3}),
+                             (1, 1))
+        with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
+            self.assertEqual(
+                run({"solver_mode": "eigenvalue", "num_eigenvalues": 2}), (0, 0))
+        with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING"):
+            self.assertEqual(
+                run({"solver_mode": "both", "num_eigenvalues": 2}), (0, 0))
 
     def test_invalid_policy_raises(self):
         eli_param = {"solver_mode": "iteration"}
