@@ -1292,13 +1292,87 @@ class TestDressBatchGuardPolicy(unittest.TestCase):
 
     def test_an_exactly_singular_block_still_raises_under_warn(self):
         """There is nothing finite to continue with: the policy tolerates a
-        NEARLY singular denominator, not an exactly singular solve."""
+        NEARLY singular denominator, not an exactly singular solve.
+
+        Nothing may be reported as tolerated either -- the warning claims the
+        dressing continues, and a run that ends here did not continue."""
+        import logging
         from hwave.solver import bond_channels as bc
         cb, W = _batch_denominator_fixture(0.0, "spin")
-        with self.assertRaises(ValueError) as cm:
-            bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
-                           guard_policy="warn")
+        violations = []
+        records = []
+        logger = logging.getLogger("qlms.solver.bond_channels")
+        h = logging.Handler(); h.emit = lambda rec: records.append(rec.getMessage())
+        logger.addHandler(h)
+        try:
+            with self.assertRaises(ValueError) as cm:
+                bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                               guard_policy="warn", violations=violations)
+        finally:
+            logger.removeHandler(h)
         self.assertIn("spin", str(cm.exception))
+        self.assertEqual(violations, [])
+        self.assertFalse([m for m in records if "continues" in m])
+
+    def test_a_disabled_guard_scores_nothing_under_either_policy(self):
+        """``cond_tol = None`` disables the conditioning guard itself: no
+        score, no warning -- and an exactly singular solve still raises."""
+        import logging
+        from hwave.solver import bond_channels as bc
+        for policy in ("refuse", "warn"):
+            with self.subTest(policy=policy):
+                cb, W = _batch_denominator_fixture(1.0e-4, "spin")
+                violations = []
+                records = []
+                logger = logging.getLogger("qlms.solver.bond_channels")
+                h = logging.Handler(); h.emit = lambda rec: records.append(rec.getMessage())
+                logger.addHandler(h)
+                try:
+                    chi, cond = bc.dress_batch(cb, W, "spin", l0=0, nmat=2,
+                                               spatial_shape=(2, 1, 1), cond_tol=None,
+                                               guard_policy=policy, violations=violations)
+                finally:
+                    logger.removeHandler(h)
+                self.assertIsNone(cond)
+                self.assertTrue(np.all(np.isfinite(chi)))
+                self.assertEqual(violations, [])
+                self.assertEqual(records, [])
+                cb, W = _batch_denominator_fixture(0.0, "spin")
+                # with no guard the "refuse" path reaches the solver itself,
+                # whose LinAlgError is not a ValueError in every numpy
+                with self.assertRaises((ValueError, np.linalg.LinAlgError)):
+                    bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                                   cond_tol=None, guard_policy=policy)
+
+    def test_the_warnings_name_the_scf_iteration(self):
+        from hwave.solver import bond_channels as bc
+        cb, W = _batch_denominator_fixture(1.0e-4, "spin")
+        violations = []
+        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+            bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                           guard_policy="warn", violations=violations, iteration=5)
+        self.assertIn("(SCF iteration 5)", "\n".join(cm.output))
+        self.assertEqual(violations[0]["iteration"], 5)
+        # without one the message ends as before
+        violations = []
+        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+            bc.dress_batch(cb, W, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                           guard_policy="warn", violations=violations)
+        self.assertNotIn("SCF iteration", "\n".join(cm.output))
+        self.assertIsNone(violations[0]["iteration"])
+        # the residual guard of the reduced "static" mode says so too
+        cb = np.zeros((1, 2, 2, 2), complex)
+        Wr = np.zeros((2, 2, 2), complex)
+        for q in range(2):
+            cb[0, q] = np.eye(2)
+        Wr[1] = np.eye(2) - np.array([[1.0, 1.0], [1.0, 1.0 + 1.0e-13]], complex)
+        violations = []
+        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+            bc.dress_batch(cb, Wr, "spin", l0=0, nmat=2, spatial_shape=(2, 1, 1),
+                           guard_freqs="static", residual_tol=1.0e-30,
+                           guard_policy="warn", violations=violations, iteration=5)
+        self.assertIn("(SCF iteration 5)", "\n".join(cm.output))
+        self.assertEqual([(v["kind"], v["iteration"]) for v in violations], [("residual", 5)])
 
     def test_invalid_guard_policy_is_refused(self):
         from hwave.solver import bond_channels as bc

@@ -3515,6 +3515,14 @@ _GUARD_POLICIES = ("refuse", "warn")
 _STATIC_RESIDUAL_TOL = 1e-6
 
 
+def _at(iteration):
+    """`` (SCF iteration N)`` for a warning raised inside a self-consistency,
+    the empty string outside one. A refusal gets the same suffix from
+    ``flex_bond._dress``, which owns the iteration; a warning does not pass
+    through there, so it is appended here."""
+    return "" if iteration is None else " (SCF iteration {})".format(iteration)
+
+
 def solve_residual(mat, chi, cb):
     """Per-(l, q) solve residual ``||mat chi - cb||_F / max(1, ||cb||_F)``
     (Frobenius norms of the ND x ND blocks; zero-safe: the same ``max(1, .)``
@@ -3528,7 +3536,7 @@ def solve_residual(mat, chi, cb):
 
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
-                guard_policy="refuse", violations=None):
+                guard_policy="refuse", violations=None, iteration=None):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3562,8 +3570,12 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     self-consistency can pass; an EXACTLY singular solve and a non-finite
     residual still raise, because there is nothing finite to continue
     with. When ``violations`` is a list, one dict
-    ``{"channel", "l", "q", "kind", "value"}`` is appended per warned
-    violation (``kind`` is ``"conditioning"`` or ``"residual"``)."""
+    ``{"channel", "l", "q", "kind", "value", "iteration"}`` is appended per
+    warned violation (``kind`` is ``"conditioning"`` or ``"residual"``).
+    Nothing is logged or recorded before the solve has succeeded: a warning
+    states that the dressing continues, and a batch that ends in a refusal
+    did not continue. ``iteration``, when given, names the self-consistency
+    iteration in the warnings and in the records."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3591,6 +3603,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     idx = xp.arange(ND)
     mat[:, :, idx, idx] += 1.0
 
+    # warnings held back until there is a result to continue with:
+    # (format, args, violation record)
+    pending = []
+
     def _guard(mat_h, i_offset):
         # mat_h: HOST (n, ND, ND); i_offset: flattened index of its first row
         if cond_tol is None:
@@ -3605,18 +3621,19 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         qx, rem = divmod(q, Ny * Nz)
         qy, qz = divmod(rem, Nz)
         if guard_policy == "warn":
-            logger.warning(
+            # DEFERRED: the solve below can still refuse this batch, and a
+            # warning that says the dressing continues must not outlive it
+            pending.append((
                 "dress_batch: flex_guard_policy = \"warn\": the %s RPA denominator is "
                 "singular or nearly singular at bosonic Matsubara index %d (grid index "
                 "l=%d) and q-point index (%d, %d, %d): sigma_min/sigma_max = %.3e, "
                 "sigma_min/max(1, sigma_max) = %.3e; the smaller of the two is <= "
                 "cond_tol = %.3e (sigma_min = %.3e, sigma_max = %.3e). The dressing "
-                "continues with an amplified result.",
-                channel, 2 * l - nmat, l, qx, qy, qz, ratio_i, pole_i, cond_tol,
-                smin_i, smax_i)
-            if violations is not None:
-                violations.append({"channel": channel, "l": int(l), "q": int(q),
-                                   "kind": "conditioning", "value": float(worst)})
+                "continues with an amplified result." + _at(iteration),
+                (channel, 2 * l - nmat, l, qx, qy, qz, ratio_i, pole_i, cond_tol,
+                 smin_i, smax_i),
+                {"channel": channel, "l": int(l), "q": int(q), "kind": "conditioning",
+                 "value": float(worst), "iteration": iteration}))
             return worst
         try:
             _check_bond_conditioning(channel, blocks, cond_tol)
@@ -3662,6 +3679,12 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 "temperature.".format(channel, exc, l0)) from exc
     else:
         chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+    # the solve returned: the conditioning findings held back above describe a
+    # dressing that really did continue, so they are reported now
+    for fmt, args, record in pending:
+        logger.warning(fmt, *args)
+        if violations is not None:
+            violations.append(record)
     if guard_freqs == "static":
         r = solve_residual(mat, chi, cb)
         worst = int(xp.argmax(r))
@@ -3678,11 +3701,12 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                     "||mat chi - chibar||_F / max(1, ||chibar||_F) = %.3e exceeds %.1e at "
                     "bosonic Matsubara index %d (grid index l=%d) and q-point index "
                     "(%d, %d, %d); the unchecked slice is singular or nearly singular. "
-                    "The dressing continues with that result.",
+                    "The dressing continues with that result." + _at(iteration),
                     channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz)
                 if violations is not None:
                     violations.append({"channel": channel, "l": int(l), "q": int(q),
-                                       "kind": "residual", "value": float(r_max)})
+                                       "kind": "residual", "value": float(r_max),
+                                       "iteration": iteration})
             else:
                 raise ValueError(
                     "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "

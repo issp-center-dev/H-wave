@@ -187,6 +187,56 @@ class TestDressAndBuildWDevice(unittest.TestCase):
                     np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-14)
 
 
+class TestDressGuardPolicyPassThrough(unittest.TestCase):
+    """``flex_bond._dress`` owns the SCF iteration, so both the refusals and
+    the warnings of a tolerated violation must name it (GitHub issue #199)."""
+
+    @staticmethod
+    def _near_singular(nb=1, nvol=2):
+        """(chi_bar_b, W) whose spin denominator is nearly singular at q = 1
+        in every frequency of the batch."""
+        cb = np.zeros((nb, nvol, 2, 2), complex)
+        W = np.zeros((nvol, 2, 2), complex)
+        cb[:, :] = np.eye(2)
+        W[1] = np.eye(2) - np.array([[1.0, 1.0], [1.0, 1.0 + 1.0e-13]], complex)
+        return cb, W
+
+    def test_the_conditioning_warning_names_the_iteration(self):
+        from hwave.solver import flex_bond
+        cb, W = self._near_singular()
+        violations = []
+        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+            chi, cond = flex_bond._dress(cb, W, "spin", 0, 2, (2, 1, 1), 1.0e-3, 3,
+                                         "all", "warn", violations)
+        self.assertIn("(SCF iteration 3)", "\n".join(cm.output))
+        self.assertTrue(np.all(np.isfinite(chi)))
+        self.assertEqual([v["iteration"] for v in violations], [3])
+
+    def test_the_static_mode_warning_names_the_iteration(self):
+        """``guard_freqs = "static"`` still SVD-checks the zero-frequency
+        slice, and that warning carries the iteration too. (The residual
+        guard of the unchecked slices is reached only through an explicit
+        ``residual_tol``, which ``_dress`` does not expose; it is covered at
+        the ``dress_batch`` level.)"""
+        from hwave.solver import flex_bond
+        cb, W = self._near_singular(nb=2)            # the batch holds l = 0 and l = 1
+        violations = []
+        with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+            chi, _ = flex_bond._dress(cb, W, "spin", 0, 2, (2, 1, 1), 1.0e-3, 3,
+                                      "static", "warn", violations)
+        self.assertIn("(SCF iteration 3)", "\n".join(cm.output))
+        self.assertTrue(np.all(np.isfinite(chi)))
+        self.assertEqual([v["iteration"] for v in violations], [3])
+
+    def test_a_refusal_still_names_the_iteration_once(self):
+        from hwave.solver import flex_bond
+        cb, W = self._near_singular()
+        with self.assertRaises(ValueError) as cm:
+            flex_bond._dress(cb, W, "spin", 0, 2, (2, 1, 1), 1.0e-3, 3, "all", "refuse", None)
+        msg = str(cm.exception)
+        self.assertEqual(msg.count("SCF iteration 3"), 1)
+
+
 class TestDressBatchGuardModes(unittest.TestCase):
 
     def test_all_is_the_default_and_unchanged(self):
