@@ -324,6 +324,26 @@ Parameters
   member). The default does not depend on ``gpu``. Ignored with a
   warning unless ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_cond_tol``
+
+  **Type :**
+  Float (default value is ``1e-3``)
+
+  **Description :**
+  Conditioning floor the guard above compares the enlarged bond RPA
+  denominator :math:`1 \mp \bar\chi V` against (must be a finite number
+  strictly between 0 and 1). Both the relative
+  :math:`\sigma_{\min}/\sigma_{\max}` and the absolute
+  :math:`\sigma_{\min}/\max(1, \sigma_{\max})` are required to stay
+  above it; the smaller of the two, minimized over the checked
+  frequencies and q-points, is the ``cond_min`` value reported on the
+  ``guards:`` line of the log per iteration and written to the outputs
+  (``longitudinal_bond_cond_min_s`` / ``_c``), and the floor itself is
+  recorded as ``longitudinal_bond_cond_tol``. Lower it only to study a
+  deliberately stiff regime: below the floor the dressed vertices are
+  dominated by amplified round-off. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``longitudinal_bond_pairing``
 
   **Type :**
@@ -374,6 +394,53 @@ Parameters
   and ``hwave_sigma_split``). Mandatory (``true``) when
   ``longitudinal_bond_channels = true`` in FLEX mode. With ``false``
   every output is unchanged.
+
+- ``flex_hf_density_tol``
+
+  **Type :**
+  Float (default value is ``1e-8``; FLEX mode only)
+
+  **Description :**
+  Tolerance of the Hermitian symmetry :math:`\rho_{ab}(r) =
+  \rho_{ba}(-r)^{*}` of the equal-time density, as a relative Frobenius
+  deviation (must be a finite number greater than zero). The density is
+  always projected onto the symmetric part; this key decides how large a
+  deviation before that projection is still acceptable. The value is
+  reported for every iteration on the ``guards:`` line of the log. Raise
+  it only deliberately -- a large deviation means the dressed Green
+  function is not the Green function of a Hermitian problem. Ignored
+  with a warning unless ``flex_hartree_fock = true``.
+
+- ``flex_guard_policy``
+
+  **Type :**
+  String (``"refuse"`` or ``"warn"``; case-insensitive; default
+  ``"refuse"``; FLEX mode only)
+
+  **Description :**
+  What a guard violation DURING the self-consistency does.
+  ``"refuse"`` (default) ends the run, as in previous versions.
+  ``"warn"`` logs the violation with its iteration and its location
+  (for the density, the deviation and the tolerance; for the bond
+  conditioning guard, the channel, the bosonic Matsubara index, the
+  q-point and both conditioning numbers) and continues the iteration.
+  It is meant for a strongly coupled run that passes through a
+  transient excursion near an instability and recovers; read the
+  ``guards:`` lines of the log to confirm that the violation decays
+  (see :ref:`flex_near_instability`). The checks of the FINAL state are NOT
+  covered by the policy: the equal-time density of the final state is
+  still refused at ``flex_hf_density_tol``, and a last map that needed
+  the policy to finish is refused as well, because that state lies
+  inside the instability region instead of passing through it. A solve
+  that is exactly singular, or that produces non-finite numbers, is
+  refused under either policy. The number of tolerated violations of a
+  run is recorded in the outputs as ``flex_guard_violations``, next to
+  ``flex_guard_policy``: these are guard-violation EVENTS, not
+  iterations -- one per iteration for the density check, one per
+  offending (channel, bosonic frequency, q-point) finding for the bond
+  guard, so a single iteration can contribute several. Ignored with a
+  warning unless
+  ``flex_hartree_fock`` or ``longitudinal_bond_channels`` is true.
 
 - ``longitudinal_bond_output_full``
 

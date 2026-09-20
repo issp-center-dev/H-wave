@@ -253,6 +253,81 @@ logged; if warm-starting such a seed stalls under
 <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> to match the kernel the seed was
 produced with.</p>
 </section>
+<section id="operating-near-an-instability">
+<span id="flex-near-instability"></span><h3>Operating near an instability<a class="headerlink" href="#operating-near-an-instability" title="Link to this heading">¶</a></h3>
+<p>A strongly coupled run can approach a magnetic or charge instability:
+the Stoner factor climbs above about 0.99, or the <code class="docutils literal notranslate"><span class="pre">guards:</span></code> line of
+the log reports a bond conditioning minimum (<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>) within an
+order of magnitude of <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_cond_tol</span></code>. In
+that regime the self-consistency is stiff, several fixed points can
+exist, and the following operating rules apply. Every key named in
+this subsection belongs to the <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> table:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"linear"</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">flex_guard_policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"warn"</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>Mix in small linear steps.</strong> Use <code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;linear&quot;</span></code> with
+<code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">&lt;=</span> <span class="pre">0.03</span></code>. Larger steps overshoot into the instability region,
+where the dressed vertices are enormous and the guard stops the run.</p></li>
+<li><p><strong>Warm-start in small temperature steps.</strong> Walk down in temperature
+and start each run from the converged self-energy of the previous,
+slightly higher temperature (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>). A cold
+start at the lowest temperature of a sweep can fail where the
+descending ladder converges.</p></li>
+<li><p><strong>Cross-check an Anderson-mixing result by a linear recomputation.</strong>
+Anderson mixing has been observed to land on an unphysical fixed
+point – one whose pairing eigenvalue saturates instead of growing –
+on the single-band Hubbard model at <span class="math notranslate nohighlight">\(U = 8t\)</span>. Recompute the
+same point with linear mixing before reporting it.</p></li>
+<li><p><strong>Set</strong> <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code> <strong>in</strong> <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code> <strong>only
+for a transient excursion.</strong> It lets an iteration whose equal-time
+density symmetry (<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>) or bond conditioning
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>) violates its tolerance continue
+instead of ending the run. An exactly singular solve, or non-finite
+numbers, still end the run under either policy: the policy tolerates
+a nearly singular denominator, not a singular one. The final state
+is checked regardless of the policy, so the run is refused when the
+equal-time density of the final state deviates by more than
+<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>, and also when the last map needed the
+policy for a bond-guard violation – that refusal reports the
+conditioning minima of the last map. <code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code> in
+the outputs counts the violations that were let through: one per
+iteration for the density, and one per offending (channel,
+frequency, q-point) finding for the bond guard, so a single
+iteration can contribute several.</p></li>
+</ul>
+<p>Read the <code class="docutils literal notranslate"><span class="pre">guards:</span></code> line the solver logs for each iteration and
+confirm that the violation decays: the density deviation must fall
+back below <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">cond_min</span></code> must rise back above
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>, and both must stay there.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>guards: density hermitian 3.2e-10 (tol 1.0e-08)  bond cond_min spin 4.1e-03 charge 2.7e-01 (tol 1.0e-03)
+</pre></div>
+</div>
+<p>The line reports the relative Frobenius deviation of the Hermitian
+symmetry of the equal-time density against <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>
+and, with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, the smallest
+conditioning score of the spin and of the charge RPA denominator of
+that iteration’s map against <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>.</p>
+<p>In a sweep, keep the default <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code> for the
+automated runs and turn <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> on for a single point you have
+already diagnosed; a post-processing script should check that
+<code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code> is <code class="docutils literal notranslate"><span class="pre">0</span></code> before accepting a converged result.
+Since the count is per event, one stiff iteration of the bond guard
+can contribute many of them – read the <code class="docutils literal notranslate"><span class="pre">guards:</span></code> lines to see how
+many iterations were actually affected.</p>
+<p>The tolerances themselves (<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>,
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>) are knobs for a deliberately stiff
+study, not a way to silence a guard: lowering a floor lets a run
+continue with numbers that are dominated by amplified round-off.
+Raising <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code> or lowering
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code> is therefore not the remedy for a
+final-state refusal – a smaller <code class="docutils literal notranslate"><span class="pre">Mix</span></code> and finer temperature steps
+are.</p>
+</section>
 </section>
 <section id="sample-1-single-orbital-hubbard-model">
 <h2><span class="section-number">6.1.3. </span>Sample 1: Single-orbital Hubbard model<a class="headerlink" href="#sample-1-single-orbital-hubbard-model" title="Link to this heading">¶</a></h2>

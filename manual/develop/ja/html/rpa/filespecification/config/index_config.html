@@ -297,6 +297,23 @@ GPU メモリは対象外）です。推定値はログに出力され、上限�
 <code class="docutils literal notranslate"><span class="pre">gpu</span></code>に依存しません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 でない場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">1e-3</span></code>)</p>
+<p><strong>説明 :</strong>
+上記のガードがボンド分解した RPA 分母 <span class="math notranslate nohighlight">\(1 \mp \bar\chi V\)</span>を
+判定する条件数の下限値です（有限かつ 0 &lt; 値 &lt; 1）。相対的な
+<span class="math notranslate nohighlight">\(\sigma_{\min}/\sigma_{\max}\)</span>と絶対的な
+<span class="math notranslate nohighlight">\(\sigma_{\min}/\max(1, \sigma_{\max})\)</span>の両方がこの値を
+上回る必要があります。両者の小さい方を、検査対象の振動数と
+<span class="math notranslate nohighlight">\(q\)</span>点について最小化した値が、反復ごとにログの<code class="docutils literal notranslate"><span class="pre">guards:</span></code>
+行に出力され、出力ファイルにも記録される<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>）です。下限値自体も
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>として記録されます。意図的に厳しい
+領域を調べる場合にのみ引き下げてください。下限を下回った領域では
+ドレスされたバーテックスは増幅された丸め誤差に支配されます。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで
+無視されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。大文字小文字を区別しません。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>。
@@ -347,6 +364,43 @@ GPU 経路が使われます。
 （<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>と<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>を参照）。FLEX モードで
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とする場合は<code class="docutils literal notranslate"><span class="pre">true</span></code>が必須
 です。<code class="docutils literal notranslate"><span class="pre">false</span></code>では全ての出力が従来と同一です。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code></p>
+<p><strong>形式 :</strong> float型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">1e-8</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+等時刻密度のエルミート対称性 <span class="math notranslate nohighlight">\(\rho_{ab}(r) =
+\rho_{ba}(-r)^{*}\)</span>に対する許容値で、相対 Frobenius 偏差として
+与えます（有限かつ正の数）。密度は常に対称成分に射影されますが、
+この値は射影前の偏差がどこまで許容されるかを決めます。偏差は反復
+ごとにログの<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行に出力されます。大きな偏差はドレスド
+グリーン関数がエルミートな問題のものではないことを意味するため、
+引き上げる際は意図的に行ってください。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>
+でない場合は警告付きで無視されます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code></p>
+<p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>。大文字小文字を
+区別しません。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code>。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+自己無撞着計算の <strong>途中</strong> でガードに違反した場合の扱いを指定します。
+デフォルトの<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code>は旧バージョンと同じく実行を停止します。
+<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>は違反を反復回数と発生箇所とともに記録して反復を継続
+します（密度については偏差と許容値、ボンドの条件数ガードについては
+チャネル・ボソン松原添字・<span class="math notranslate nohighlight">\(q\)</span>点・両方の条件数）。不安定性
+近傍を一時的に通過して回復するような強結合計算のためのオプションです。
+違反が減衰していくことをログの<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行で確認してください
+（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-near-instability"><span class="std std-ref">不安定性近傍での計算</span></a>を参照）。<strong>最終状態</strong> の検査には
+この設定は適用されません。最終状態の等時刻密度は
+<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>で拒否され、最後の写像がこの設定に頼って
+完了した場合も拒否されます。その状態は不安定領域を通過中なのではなく
+不安定領域の内部にあるためです。厳密に特異な連立方程式や非有限な値が
+生じた場合は、いずれの設定でも拒否されます。許容した違反の件数は
+<code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code>として<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code>とともに
+出力に記録されます。これは反復の回数ではなく違反 <strong>事象</strong> の件数で、
+密度の検査については1反復につき1件、ボンドのガードについては該当する
+（チャネル, ボソン振動数, <span class="math notranslate nohighlight">\(q\)</span>点）ごとに1件を数えるため、1回の
+反復が複数件を寄与することがあります。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>または
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>が<code class="docutils literal notranslate"><span class="pre">true</span></code>でない場合は警告付きで
+無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>

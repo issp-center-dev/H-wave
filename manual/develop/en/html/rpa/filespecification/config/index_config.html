@@ -350,6 +350,24 @@ guard and is recorded in the outputs (<code class="docutils literal notranslate"
 member). The default does not depend on <code class="docutils literal notranslate"><span class="pre">gpu</span></code>. Ignored with a
 warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is <code class="docutils literal notranslate"><span class="pre">1e-3</span></code>)</p>
+<p><strong>Description :</strong>
+Conditioning floor the guard above compares the enlarged bond RPA
+denominator <span class="math notranslate nohighlight">\(1 \mp \bar\chi V\)</span> against (must be a finite number
+strictly between 0 and 1). Both the relative
+<span class="math notranslate nohighlight">\(\sigma_{\min}/\sigma_{\max}\)</span> and the absolute
+<span class="math notranslate nohighlight">\(\sigma_{\min}/\max(1, \sigma_{\max})\)</span> are required to stay
+above it; the smaller of the two, minimized over the checked
+frequencies and q-points, is the <code class="docutils literal notranslate"><span class="pre">cond_min</span></code> value reported on the
+<code class="docutils literal notranslate"><span class="pre">guards:</span></code> line of the log per iteration and written to the outputs
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>), and the floor itself is
+recorded as <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>. Lower it only to study a
+deliberately stiff regime: below the floor the dressed vertices are
+dominated by amplified round-off. Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>Type :</strong>
 String (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>;
@@ -396,6 +414,49 @@ initial static self-energy instead of being folded into the band;
 and <code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span></code>). Mandatory (<code class="docutils literal notranslate"><span class="pre">true</span></code>) when
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> in FLEX mode. With <code class="docutils literal notranslate"><span class="pre">false</span></code>
 every output is unchanged.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code></p>
+<p><strong>Type :</strong>
+Float (default value is <code class="docutils literal notranslate"><span class="pre">1e-8</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Tolerance of the Hermitian symmetry <span class="math notranslate nohighlight">\(\rho_{ab}(r) =
+\rho_{ba}(-r)^{*}\)</span> of the equal-time density, as a relative Frobenius
+deviation (must be a finite number greater than zero). The density is
+always projected onto the symmetric part; this key decides how large a
+deviation before that projection is still acceptable. The value is
+reported for every iteration on the <code class="docutils literal notranslate"><span class="pre">guards:</span></code> line of the log. Raise
+it only deliberately – a large deviation means the dressed Green
+function is not the Green function of a Hermitian problem. Ignored
+with a warning unless <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code></p>
+<p><strong>Type :</strong>
+String (<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>; case-insensitive; default
+<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+What a guard violation DURING the self-consistency does.
+<code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code> (default) ends the run, as in previous versions.
+<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> logs the violation with its iteration and its location
+(for the density, the deviation and the tolerance; for the bond
+conditioning guard, the channel, the bosonic Matsubara index, the
+q-point and both conditioning numbers) and continues the iteration.
+It is meant for a strongly coupled run that passes through a
+transient excursion near an instability and recovers; read the
+<code class="docutils literal notranslate"><span class="pre">guards:</span></code> lines of the log to confirm that the violation decays
+(see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-near-instability"><span class="std std-ref">Operating near an instability</span></a>). The checks of the FINAL state are NOT
+covered by the policy: the equal-time density of the final state is
+still refused at <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>, and a last map that needed
+the policy to finish is refused as well, because that state lies
+inside the instability region instead of passing through it. A solve
+that is exactly singular, or that produces non-finite numbers, is
+refused under either policy. The number of tolerated violations of a
+run is recorded in the outputs as <code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code>, next to
+<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code>: these are guard-violation EVENTS, not
+iterations – one per iteration for the density check, one per
+offending (channel, bosonic frequency, q-point) finding for the bond
+guard, so a single iteration can contribute several. Ignored with a
+warning unless
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> or <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> is true.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p>
 <p><strong>Type :</strong>

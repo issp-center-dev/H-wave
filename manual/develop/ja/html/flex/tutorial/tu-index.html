@@ -169,13 +169,13 @@ Phys. Rev. Lett. <strong>104</strong>, 157001 (2010).</p>
 </aside>
 <aside class="footnote brackets" id="id15" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id11">1</a>,<a role="doc-backlink" href="#id39">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id11">1</a>,<a role="doc-backlink" href="#id40">2</a>)</span>
 <p>M. Mochizuki, Y. Yanase, and M. Ogata,
 J. Phys. Soc. Jpn. (cond-mat/0407094).</p>
 </aside>
 <aside class="footnote brackets" id="id16" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a role="doc-backlink" href="#id12">1</a>,<a role="doc-backlink" href="#id40">2</a>)</span>
+<span class="backrefs">(<a role="doc-backlink" href="#id12">1</a>,<a role="doc-backlink" href="#id41">2</a>)</span>
 <p>T. Takimoto, T. Hotta, and K. Ueda,
 Phys. Rev. B <strong>69</strong>, 104504 (2004); cond-mat/0309575.</p>
 </aside>
@@ -237,11 +237,83 @@ FLEX の1反復のコストは<code class="docutils literal notranslate"><span c
 ウォームスタートして収束しない場合は、<span class="math notranslate nohighlight">\(\Sigma = 0\)</span>から計算し直すか、
 シードに合わせて<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>を指定してください。</p>
 </section>
+<section id="flex-near-instability">
+<span id="id17"></span><h3>不安定性近傍での計算<a class="headerlink" href="#flex-near-instability" title="Link to this heading">¶</a></h3>
+<p>強結合の計算は磁気的・電荷的な不安定性に近づくことがあります。Stoner
+因子がおよそ 0.99 を超える、あるいはログの<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行が報告する
+ボンドの条件数の最小値（<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>）が
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_cond_tol</span></code>の1桁以内に入る、といった
+状況です。この領域では自己無撞着計算が硬く（stiff）なり、不動点が複数
+存在し得ます。以下の運用指針に従ってください。なお、この節で挙げる
+キーはすべて<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>テーブルのものです。</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"linear"</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.02</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">flex_guard_policy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"warn"</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>線形混合を小さな刻みで使う。</strong> <code class="docutils literal notranslate"><span class="pre">mixing_scheme</span> <span class="pre">=</span> <span class="pre">&quot;linear&quot;</span></code>と
+<code class="docutils literal notranslate"><span class="pre">Mix</span> <span class="pre">&lt;=</span> <span class="pre">0.03</span></code>を用います。刻みが大きいと不安定領域へ行き過ぎ、
+ドレスされたバーテックスが発散的に大きくなってガードが実行を
+停止します。</p></li>
+<li><p><strong>温度を小刻みに下げてウォームスタートする。</strong> 温度を降順にたどり、
+各計算は1つ前のわずかに高い温度で収束した自己エネルギーから開始
+します（<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>）。掃引の最低温度からいきなり
+計算すると、降順のはしごなら収束する点でも失敗することがあります。</p></li>
+<li><p><strong>Anderson 混合の結果は線形混合で計算し直して確認する。</strong> 1軌道
+Hubbard モデルの <span class="math notranslate nohighlight">\(U = 8t\)</span> では、Anderson 混合が非物理的な
+不動点（対形成固有値が増大せず飽和する解）に落ち着く例が観測されて
+います。報告する前に同じ点を線形混合で再計算してください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>で <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code> <strong>を設定するのは
+一時的な逸脱を通すときだけにする。</strong> 等時刻密度の対称性
+（<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>）やボンドの条件数
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>）が許容値に違反した反復を、実行を
+停止せずに継続させる設定です。厳密に特異な連立方程式や非有限な値が
+生じた場合は、いずれの設定でも実行は停止します。この設定が許容するのは
+特異に近い分母であって、特異な分母ではありません。最終状態の検査はこの
+設定によらず行われるため、最終状態の等時刻密度の偏差が
+<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>を超える場合も、最後の写像がボンドのガードの
+違反をこの設定で通り抜けていた場合も、実行は拒否されます（後者の拒否は
+最後の写像の条件数の最小値を報告します）。通過させた違反の件数は出力の
+<code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code>に記録されます。これは反復の回数ではなく
+違反 <strong>事象</strong> の件数で、密度については1反復につき1件、ボンドのガードに
+ついては該当する（チャネル, 振動数, <span class="math notranslate nohighlight">\(q\)</span>点）ごとに1件を数える
+ため、1回の反復が複数件を寄与することがあります。</p></li>
+</ul>
+<p>反復ごとに出力される<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行を読み、違反が減衰していること
+（密度の偏差が<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>を下回り、<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>が
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>を上回るところまで戻り、そのまま留まる
+こと）を確認してください。</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>guards: density hermitian 3.2e-10 (tol 1.0e-08)  bond cond_min spin 4.1e-03 charge 2.7e-01 (tol 1.0e-03)
+</pre></div>
+</div>
+<p>この行は、等時刻密度のエルミート対称性の相対 Frobenius 偏差を
+<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>と並べて示し、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>の場合はさらに、その反復の写像におけるスピン・電荷 RPA 分母の
+条件数の最小値を<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>と並べて示します。</p>
+<p>掃引では自動実行の側はデフォルトの<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code>
+のままにし、<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>は原因を確認した個別の点にのみ使ってください。
+後処理スクリプトでは、収束した結果を採用する前に
+<code class="docutils literal notranslate"><span class="pre">flex_guard_violations</span></code>が<code class="docutils literal notranslate"><span class="pre">0</span></code>であることを確認してください。
+件数は事象単位で数えるため、ボンドのガードでは硬い反復が1回あるだけで
+多数の件数になり得ます。実際に影響を受けた反復の数は<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行で
+確認してください。</p>
+<p>許容値そのもの（<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>・
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>）は、意図的に硬い領域を調べるための
+つまみであり、ガードを黙らせるためのものではありません。下限を
+引き下げれば、増幅された丸め誤差に支配された数値のまま計算が
+続いてしまいます。したがって、最終状態で拒否されたときの対処は
+<code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>を引き上げることでも
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>を引き下げることでもありません。
+<code class="docutils literal notranslate"><span class="pre">Mix</span></code>をより小さくし、温度の刻みをより細かくしてください。</p>
+</section>
 </section>
 <section id="hubbard">
 <h2><span class="section-number">6.1.3. </span>サンプル 1: 1軌道Hubbardモデル<a class="headerlink" href="#hubbard" title="Link to this heading">¶</a></h2>
-<section id="id17">
-<h3>モデル<a class="headerlink" href="#id17" title="Link to this heading">¶</a></h3>
+<section id="id18">
+<h3>モデル<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
 <p>最初のサンプルは、二次元正方格子上のハーフフィリング (<span class="math notranslate nohighlight">\(n = 1\)</span>)
 における <strong>1軌道Hubbardモデル</strong> です。</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-6">
@@ -255,8 +327,8 @@ FLEX の1反復のコストは<code class="docutils literal notranslate"><span c
 <p>このモデルは<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>にピークを持つ
 強い反強磁性 (AF) スピンゆらぎを示すことが知られています。</p>
 </section>
-<section id="id18">
-<h3>入力ファイルの準備<a class="headerlink" href="#id18" title="Link to this heading">¶</a></h3>
+<section id="id19">
+<h3>入力ファイルの準備<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
 <p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/1orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -346,8 +418,8 @@ FLEX の1反復のコストは<code class="docutils literal notranslate"><span c
 </div>
 <p>オンサイトクーロン斥力<span class="math notranslate nohighlight">\(U = 4.0\)</span>。</p>
 </section>
-<section id="id19">
-<h3>計算の実行<a class="headerlink" href="#id19" title="Link to this heading">¶</a></h3>
+<section id="id20">
+<h3>計算の実行<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/1orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -367,8 +439,8 @@ FLEX converged after 64 iterations
 </pre></div>
 </div>
 </section>
-<section id="id20">
-<h3>計算結果<a class="headerlink" href="#id20" title="Link to this heading">¶</a></h3>
+<section id="id21">
+<h3>計算結果<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h3>
 <p>収束後、ソルバーは<code class="docutils literal notranslate"><span class="pre">output</span></code>ディレクトリに以下の出力ファイルを生成します:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>: 裸感受率<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q}, i\nu_m)\)</span></p></li>
@@ -531,35 +603,35 @@ hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-trans
 作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
 ブロックに縮約します）。<code class="docutils literal notranslate"><span class="pre">--force</span></code>で既存の出力を上書きします。</p>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id45">
+<figure class="align-center" id="id46">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.1 </span><span class="caption-text">ハーフフィリングにおける1軌道Hubbardモデルの静的スピン感受率
 <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q})\)</span>。
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフェルミ面の
-ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id45" title="Link to this image">¶</a></p>
+ネスティングに起因する強い反強磁性スピンゆらぎを示しています。</span><a class="headerlink" href="#id46" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id46">
+<figure class="align-center" id="id47">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace.png"><img alt="../../_images/sigma_kspace.png" src="../../_images/sigma_kspace.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.2 </span><span class="caption-text">最低松原周波数における自己エネルギーの虚部。
 k依存性はスピンゆらぎによる準粒子の散乱を反映しており、
-反強磁性ホットスポット付近でより強いダンピングを示します。</span><a class="headerlink" href="#id46" title="Link to this image">¶</a></p>
+反強磁性ホットスポット付近でより強いダンピングを示します。</span><a class="headerlink" href="#id47" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id47">
+<figure class="align-center" id="id48">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara.png"><img alt="../../_images/sigma_matsubara.png" src="../../_images/sigma_matsubara.png" style="width: 80%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.3 </span><span class="caption-text">選択されたk点での自己エネルギーの周波数依存性。
 虚部<span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n) &lt; 0\)</span>は
 準粒子のダンピングを示し、高周波数での
-<span class="math notranslate nohighlight">\(1/\omega_n\)</span>テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id47" title="Link to this image">¶</a></p>
+<span class="math notranslate nohighlight">\(1/\omega_n\)</span>テイルはフェルミ液体的振る舞いを示します。</span><a class="headerlink" href="#id48" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
@@ -697,8 +769,8 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>から自動的に選択します。選択された方式は
 出力に<code class="docutils literal notranslate"><span class="pre">bond_residency</span></code>として記録されます。</p>
 </section>
-<section id="id21">
-<h4>単一バンドの例（両方の経路）<a class="headerlink" href="#id21" title="Link to this heading">¶</a></h4>
+<section id="id22">
+<h4>単一バンドの例（両方の経路）<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h4>
 <p>オンサイト<span class="math notranslate nohighlight">\(U = 4t\)</span>と最近接<span class="math notranslate nohighlight">\(V = t\)</span>を持つ
 32x32格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> 1024 で、両方のペアリングチャネルをインプロセスで
 解く例です:</p>
@@ -878,8 +950,8 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 デフォルトが、一様格子の<code class="docutils literal notranslate"><span class="pre">1e-8</span></code>よりも IR 基底で緩い<code class="docutils literal notranslate"><span class="pre">2e-2</span></code>
 になっている理由です。</p>
 </section>
-<section id="id22">
-<h4>収束していない FLEX 計算での対形成<a class="headerlink" href="#id22" title="Link to this heading">¶</a></h4>
+<section id="id23">
+<h4>収束していない FLEX 計算での対形成<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h4>
 <p>インプロセスの対形成ステップは、FLEX の SCF ループが収束しなかった
 場合でも実行されます（計算コストはすでに払われているため）。
 カーネルは <strong>最後の</strong> 写像のドレスされた感受率と <strong>最終</strong> （混合後）の
@@ -896,10 +968,10 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 </section>
 </section>
 </section>
-<section id="id23">
-<h2><span class="section-number">6.1.4. </span>サンプル 2: 2軌道Hubbardモデル<a class="headerlink" href="#id23" title="Link to this heading">¶</a></h2>
 <section id="id24">
-<h3>モデル<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h3>
+<h2><span class="section-number">6.1.4. </span>サンプル 2: 2軌道Hubbardモデル<a class="headerlink" href="#id24" title="Link to this heading">¶</a></h2>
+<section id="id25">
+<h3>モデル<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
 <p>2番目のサンプルは、軌道間クーロン相互作用とフント結合を含む
 <strong>2軌道Hubbardモデル</strong> です:</p>
 <div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
@@ -913,8 +985,8 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 <p><span class="math notranslate nohighlight">\(U = 4.0\)</span>, <span class="math notranslate nohighlight">\(V = 1.0\)</span>, <span class="math notranslate nohighlight">\(J = 0.5\)</span>,
 温度<span class="math notranslate nohighlight">\(T = 1.0\)</span>を使用します。</p>
 </section>
-<section id="id25">
-<h3>入力ファイルの準備<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
+<section id="id26">
+<h3>入力ファイルの準備<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
 <p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -1017,8 +1089,8 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 </div>
 <p>フント結合<span class="math notranslate nohighlight">\(J = 0.5\)</span>。</p>
 </section>
-<section id="id26">
-<h3>計算の実行<a class="headerlink" href="#id26" title="Link to this heading">¶</a></h3>
+<section id="id27">
+<h3>計算の実行<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/2orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -1038,42 +1110,42 @@ FLEX converged after 59 iterations
 </div>
 <p>（粒子ホール対称なハーフフィリング模型のため<span class="math notranslate nohighlight">\(\mu = 0\)</span>となります。）</p>
 </section>
-<section id="id27">
-<h3>計算結果<a class="headerlink" href="#id27" title="Link to this heading">¶</a></h3>
+<section id="id28">
+<h3>計算結果<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h3>
 <p><strong>スピン感受率</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
-<figure class="align-center" id="id48">
+<figure class="align-center" id="id49">
 <a class="reference internal image-reference" href="../../_images/chi_s1.png"><img alt="../../_images/chi_s1.png" src="../../_images/chi_s1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.4 </span><span class="caption-text">2軌道モデルの静的スピン感受率。
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, \pi)\)</span>のピークはフント結合により増強されており、
 各サイト内での強磁性的な配列を促進しつつ、
-サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id48" title="Link to this image">¶</a></p>
+サイト間の反強磁性相関を許容しています。</span><a class="headerlink" href="#id49" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギー</strong> <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(\mathbf{k}, i\omega_0)\)</span>:</p>
-<figure class="align-center" id="id49">
+<figure class="align-center" id="id50">
 <a class="reference internal image-reference" href="../../_images/sigma_kspace1.png"><img alt="../../_images/sigma_kspace1.png" src="../../_images/sigma_kspace1.png" style="width: 60%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.5 </span><span class="caption-text">2軌道モデルの自己エネルギー虚部。
-軌道依存のk構造は多軌道系における異なる散乱チャネルを反映しています。</span><a class="headerlink" href="#id49" title="Link to this image">¶</a></p>
+軌道依存のk構造は多軌道系における異なる散乱チャネルを反映しています。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id50">
+<figure class="align-center" id="id51">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara1.png"><img alt="../../_images/sigma_matsubara1.png" src="../../_images/sigma_matsubara1.png" style="width: 80%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.6 </span><span class="caption-text">2軌道モデルの自己エネルギーの周波数依存性。
 1軌道の場合と比較して大きな振幅は、
-軌道間相互作用による増強された相関を反映しています。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
+軌道間相互作用による増強された相関を反映しています。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 </section>
-<section id="id28">
-<h2><span class="section-number">6.1.5. </span>プロット<a class="headerlink" href="#id28" title="Link to this heading">¶</a></h2>
+<section id="id29">
+<h2><span class="section-number">6.1.5. </span>プロット<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
 <p>上記の図は以下のプロットスクリプトで再現できます:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample
 $<span class="w"> </span>python<span class="w"> </span>plot_results.py
@@ -1085,8 +1157,8 @@ $<span class="w"> </span>python<span class="w"> </span>../plot_results.py
 </pre></div>
 </div>
 </section>
-<section id="id29">
-<h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id29" title="Link to this heading">¶</a></h2>
+<section id="id30">
+<h2><span class="section-number">6.1.6. </span>出力ファイル形式<a class="headerlink" href="#id30" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは以下の内容を持つNumPy <code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルを生成します:</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
@@ -1169,7 +1241,7 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 </section>
 </section>
 <section id="flex-params">
-<span id="id30"></span><h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#flex-params" title="Link to this heading">¶</a></h2>
+<span id="id31"></span><h2><span class="section-number">6.1.7. </span>FLEX固有のパラメータ<a class="headerlink" href="#flex-params" title="Link to this heading">¶</a></h2>
 <p>FLEXソルバーは<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションで以下のパラメータを受け付けます:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -1430,11 +1502,11 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 プリフライトは、実行のメモリ余裕が乏しい場合すでに警告を出します）。</p>
 </div>
 </section>
-<section id="id32">
-<h2><span class="section-number">6.1.8. </span>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id32" title="Link to this heading">¶</a></h2>
 <section id="id33">
-<h3>モデル<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h3>
-<p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id35" id="id34" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a> が提案した
+<h2><span class="section-number">6.1.8. </span>サンプル 3: 鉄系超伝導体2軌道モデル<a class="headerlink" href="#id33" title="Link to this heading">¶</a></h2>
+<section id="id34">
+<h3>モデル<a class="headerlink" href="#id34" title="Link to this heading">¶</a></h3>
+<p>3番目のサンプルは、Raghu et al. <a class="footnote-reference brackets" href="#id36" id="id35" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a> が提案した
 <strong>鉄系超伝導体の2軌道最小モデル</strong> です。
 Fe-As面を正方格子（1-Fe単位胞）上の<span class="math notranslate nohighlight">\(d_{xz}\)</span>と
 <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道で記述します。</p>
@@ -1465,15 +1537,15 @@ Fe-As面を正方格子（1-Fe単位胞）上の<span class="math notranslate no
 <span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>における強いスピンゆらぎを駆動します。
 これが鉄系超伝導体の特徴的な物理です。</p>
 <aside class="footnote-list brackets">
-<aside class="footnote brackets" id="id35" role="doc-footnote">
-<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id34">5</a><span class="fn-bracket">]</span></span>
+<aside class="footnote brackets" id="id36" role="doc-footnote">
+<span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id35">5</a><span class="fn-bracket">]</span></span>
 <p>S. Raghu, X.-L. Qi, C.-X. Liu, D. J. Scalapino, and S.-C. Zhang,
 Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </aside>
 </aside>
 </section>
-<section id="id36">
-<h3>入力ファイルの準備<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
+<section id="id37">
+<h3>入力ファイルの準備<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h3>
 <p>サンプルファイルは<code class="docutils literal notranslate"><span class="pre">docs/ja/source/flex/sample/iron_2orb/</span></code>にあります。</p>
 <p><strong>パラメータファイル</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[log]
@@ -1590,8 +1662,8 @@ Phys. Rev. B <strong>77</strong>, 220503(R) (2008).</p>
 </pre></div>
 </div>
 </section>
-<section id="id37">
-<h3>計算の実行<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h3>
+<section id="id38">
+<h3>計算の実行<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h3>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>docs/ja/source/flex/sample/iron_2orb
 $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 </pre></div>
@@ -1610,10 +1682,10 @@ FLEX converged after 62 iterations
 </pre></div>
 </div>
 </section>
-<section id="id38">
-<h3>計算結果<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h3>
+<section id="id39">
+<h3>計算結果<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
 <p><strong>スピン・電荷感受率</strong>:</p>
-<figure class="align-center" id="id51">
+<figure class="align-center" id="id52">
 <a class="reference internal image-reference" href="../../_images/chi_spin_charge.png"><img alt="../../_images/chi_spin_charge.png" src="../../_images/chi_spin_charge.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -1622,29 +1694,29 @@ FLEX converged after 62 iterations
 スピン感受率は<span class="math notranslate nohighlight">\(\mathbf{Q} = (\pi, 0)\)</span>および<span class="math notranslate nohighlight">\((0, \pi)\)</span>に
 ピークを持ち、ホールポケットと電子ポケット間のネスティングを反映しています。
 これは単一バンドHubbardモデル（<span class="math notranslate nohighlight">\((\pi, \pi)\)</span>にピーク）とは
-定性的に異なります。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
+定性的に異なります。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>軌道分解自己エネルギー</strong>:</p>
-<figure class="align-center" id="id52">
+<figure class="align-center" id="id53">
 <a class="reference internal image-reference" href="../../_images/sigma_orbital.png"><img alt="../../_images/sigma_orbital.png" src="../../_images/sigma_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.8 </span><span class="caption-text">最低松原周波数での軌道分解自己エネルギー虚部。
 <span class="math notranslate nohighlight">\(d_{xz}\)</span>軌道は<span class="math notranslate nohighlight">\(k_y\)</span>方向でより強い散乱を示し、
 <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は<span class="math notranslate nohighlight">\(k_x\)</span>方向で強い散乱を示します。
-この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
+この軌道異方性はフェルミ面の軌道構造に起因します。</span><a class="headerlink" href="#id53" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>自己エネルギーの周波数依存性</strong>:</p>
-<figure class="align-center" id="id53">
+<figure class="align-center" id="id54">
 <a class="reference internal image-reference" href="../../_images/sigma_matsubara_orbital.png"><img alt="../../_images/sigma_matsubara_orbital.png" src="../../_images/sigma_matsubara_orbital.png" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-number">図 6.9 </span><span class="caption-text">高対称k点での軌道分解自己エネルギーの周波数依存性。
 <span class="math notranslate nohighlight">\(M = (\pi, 0)\)</span>において<span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道は
 <span class="math notranslate nohighlight">\(d_{xz}\)</span>よりも強くダンピングされ、
-軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id53" title="Link to this image">¶</a></p>
+軌道選択的な相関を反映しています。</span><a class="headerlink" href="#id54" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>プロットスクリプト</strong>:</p>
@@ -1663,8 +1735,8 @@ FLEX converged after 62 iterations
 モデルと相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）を用い、off-diagonalな完全なKanamori頂点
 （スピンフリップのHund結合およびペアホッピング／交換項）を保持します。
-これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id39" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
-（THU <a class="footnote-reference brackets" href="#id16" id="id40" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
+これは常磁性の完全頂点MYO定式化 <a class="footnote-reference brackets" href="#id15" id="id40" role="doc-noteref"><span class="fn-bracket">[</span>3<span class="fn-bracket">]</span></a>
+（THU <a class="footnote-reference brackets" href="#id16" id="id41" role="doc-noteref"><span class="fn-bracket">[</span>4<span class="fn-bracket">]</span></a> により裏付けられる）です。</p>
 <p>この版は、Hund／交換／ペアホッピングのoff-diagonal頂点が重要となる
 多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
 十分な場合に適しています。なお<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>スキームは
@@ -1767,10 +1839,10 @@ FLEX converged after 62 iterations
 </li>
 </ul>
 </section>
-<section id="id41">
-<h2><span class="section-number">6.1.11. </span>実装の詳細と制限事項<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h2>
 <section id="id42">
-<h3>対応する相互作用型<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
+<h2><span class="section-number">6.1.11. </span>実装の詳細と制限事項<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h2>
+<section id="id43">
+<h3>対応する相互作用型<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
 <p>FLEXソルバーは以下の相互作用型に対応しています:</p>
 <table class="docutils align-default">
 <colgroup>
@@ -1831,8 +1903,8 @@ FLEX converged after 62 iterations
 分解して指定してください。</p>
 </div>
 </section>
-<section id="id43">
-<h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
+<section id="id44">
+<h3>相互作用の運動量依存性（長距離相互作用）<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h3>
 <p>相互作用はWannier90形式の入力ファイルで指定します。
 各行の形式は<code class="docutils literal notranslate"><span class="pre">rx</span> <span class="pre">ry</span> <span class="pre">rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">Re</span> <span class="pre">Im</span></code>であり、
 <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>は実空間の格子ベクトルです。</p>
@@ -1854,8 +1926,8 @@ q非依存な相互作用<span class="math notranslate nohighlight">\(W(\mathbf{
 入力ファイルに指定する必要があります。</p>
 </div>
 </section>
-<section id="id44">
-<h3>スピン・電荷チャネル分解の制約<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h3>
+<section id="id45">
+<h3>スピン・電荷チャネル分解の制約<a class="headerlink" href="#id45" title="Link to this heading">¶</a></h3>
 <p>FLEXソルバーは、自己エネルギーの計算において相互作用テンソルを
 スピンチャネルとチャネルに分解します。
 この分解では、4体相互作用テンソル
@@ -1935,14 +2007,14 @@ U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <li class="toctree-l3"><a class="reference internal" href="#id1">6.1.1. 概要</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id3">6.1.2. 理論</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#hubbard">6.1.3. サンプル 1: 1軌道Hubbardモデル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id23">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id28">6.1.5. プロット</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id29">6.1.6. 出力ファイル形式</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id24">6.1.4. サンプル 2: 2軌道Hubbardモデル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id29">6.1.5. プロット</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id30">6.1.6. 出力ファイル形式</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#flex-params">6.1.7. FLEX固有のパラメータ</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id32">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id33">6.1.8. サンプル 3: 鉄系超伝導体2軌道モデル</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#b-general">6.1.9. サンプル 3b: 完全頂点（general）版</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#tips">6.1.10. Tips</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id41">6.1.11. 実装の詳細と制限事項</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id42">6.1.11. 実装の詳細と制限事項</a></li>
 </ul>
 </li>
 </ul>

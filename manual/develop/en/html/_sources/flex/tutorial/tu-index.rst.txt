@@ -247,6 +247,90 @@ logged; if warm-starting such a seed stalls under
 ``flex_second_order = "takimoto"`` to match the kernel the seed was
 produced with.
 
+
+.. _flex_near_instability:
+
+Operating near an instability
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A strongly coupled run can approach a magnetic or charge instability:
+the Stoner factor climbs above about 0.99, or the ``guards:`` line of
+the log reports a bond conditioning minimum (``cond_min``) within an
+order of magnitude of ``[mode.param] longitudinal_bond_cond_tol``. In
+that regime the self-consistency is stiff, several fixed points can
+exist, and the following operating rules apply. Every key named in
+this subsection belongs to the ``[mode.param]`` table:
+
+.. code-block:: toml
+
+   [mode.param]
+     mixing_scheme = "linear"
+     Mix = 0.02
+     flex_hartree_fock = true
+     flex_guard_policy = "warn"
+
+- **Mix in small linear steps.** Use ``mixing_scheme = "linear"`` with
+  ``Mix <= 0.03``. Larger steps overshoot into the instability region,
+  where the dressed vertices are enormous and the guard stops the run.
+- **Warm-start in small temperature steps.** Walk down in temperature
+  and start each run from the converged self-energy of the previous,
+  slightly higher temperature (``[file.input] sigma_init``). A cold
+  start at the lowest temperature of a sweep can fail where the
+  descending ladder converges.
+- **Cross-check an Anderson-mixing result by a linear recomputation.**
+  Anderson mixing has been observed to land on an unphysical fixed
+  point -- one whose pairing eigenvalue saturates instead of growing --
+  on the single-band Hubbard model at :math:`U = 8t`. Recompute the
+  same point with linear mixing before reporting it.
+- **Set** ``flex_guard_policy = "warn"`` **in** ``[mode.param]`` **only
+  for a transient excursion.** It lets an iteration whose equal-time
+  density symmetry (``flex_hf_density_tol``) or bond conditioning
+  (``longitudinal_bond_cond_tol``) violates its tolerance continue
+  instead of ending the run. An exactly singular solve, or non-finite
+  numbers, still end the run under either policy: the policy tolerates
+  a nearly singular denominator, not a singular one. The final state
+  is checked regardless of the policy, so the run is refused when the
+  equal-time density of the final state deviates by more than
+  ``flex_hf_density_tol``, and also when the last map needed the
+  policy for a bond-guard violation -- that refusal reports the
+  conditioning minima of the last map. ``flex_guard_violations`` in
+  the outputs counts the violations that were let through: one per
+  iteration for the density, and one per offending (channel,
+  frequency, q-point) finding for the bond guard, so a single
+  iteration can contribute several.
+
+Read the ``guards:`` line the solver logs for each iteration and
+confirm that the violation decays: the density deviation must fall
+back below ``flex_hf_density_tol``, ``cond_min`` must rise back above
+``longitudinal_bond_cond_tol``, and both must stay there.
+
+.. code-block:: text
+
+      guards: density hermitian 3.2e-10 (tol 1.0e-08)  bond cond_min spin 4.1e-03 charge 2.7e-01 (tol 1.0e-03)
+
+The line reports the relative Frobenius deviation of the Hermitian
+symmetry of the equal-time density against ``flex_hf_density_tol``
+and, with ``longitudinal_bond_channels = true``, the smallest
+conditioning score of the spin and of the charge RPA denominator of
+that iteration's map against ``longitudinal_bond_cond_tol``.
+
+In a sweep, keep the default ``flex_guard_policy = "refuse"`` for the
+automated runs and turn ``"warn"`` on for a single point you have
+already diagnosed; a post-processing script should check that
+``flex_guard_violations`` is ``0`` before accepting a converged result.
+Since the count is per event, one stiff iteration of the bond guard
+can contribute many of them -- read the ``guards:`` lines to see how
+many iterations were actually affected.
+
+The tolerances themselves (``flex_hf_density_tol``,
+``longitudinal_bond_cond_tol``) are knobs for a deliberately stiff
+study, not a way to silence a guard: lowering a floor lets a run
+continue with numbers that are dominated by amplified round-off.
+Raising ``flex_hf_density_tol`` or lowering
+``longitudinal_bond_cond_tol`` is therefore not the remedy for a
+final-state refusal -- a smaller ``Mix`` and finer temperature steps
+are.
+
 Sample 1: Single-orbital Hubbard model
 -----------------------------------------
 
