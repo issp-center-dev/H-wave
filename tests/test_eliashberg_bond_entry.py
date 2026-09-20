@@ -1030,7 +1030,19 @@ BOND_REFERENCE_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND"
 #: in order to check them, and the schema stamp that announces all three
 #: (1 -> 2). Every other member of the archive -- and every other output
 #: file -- must come out of both revisions bit for bit.
-_ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema"))
+_ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema",
+                            "longitudinal_bond_cond_tol"))
+
+#: The provenance members the guard-policy work (issue #199) adds to EVERY
+#: archive of a Hartree-Fock / bond-gate run, the bond archive included:
+#: the requested policy and the number of tolerated violations. With the
+#: default policy they are the constant pair ``("refuse", 0)`` -- asserted
+#: below -- and they carry no numerical content, so their presence is not a
+#: compatibility break; every member the reference wrote must still come out
+#: bit for bit. ``longitudinal_bond_cond_tol`` (the conditioning floor the
+#: bond archive now records, the historical ``1e-3``) is the same kind of
+#: addition and is listed in :data:`_ARCHIVE_DELTA` with the bond members.
+_PROVENANCE_DELTA = frozenset(("flex_guard_policy", "flex_guard_violations"))
 
 #: The driver both revisions run: one ``qlms.run`` on an input dict read from
 #: a file. A file rather than an argument because the reference tree is
@@ -1071,8 +1083,9 @@ def _bond_compat_input(out_dir):
 class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
     """spec 10.2.4: with the pairing absent, this branch reproduces the
     revision it was cut from (:data:`BOND_REFERENCE_COMMIT`) file by file --
-    the archive's two new vertex members, ``norb`` and the schema stamp
-    excepted.
+    the archive's two new vertex members, ``norb``, the schema stamp and the
+    recorded conditioning floor (:data:`_ARCHIVE_DELTA`), and the provenance
+    pair of the guard policy (:data:`_PROVENANCE_DELTA`) excepted.
 
     The comparison needs a SECOND source tree, provisioned by CI as a
     detached worktree and pointed at by :data:`BOND_REFERENCE_PATH_ENV`;
@@ -1133,20 +1146,43 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                 continue
             with np.load(a) as da, np.load(b) as db:
                 if fn != "longitudinal_bond.npz":
-                    self.assertEqual(set(da.files), set(db.files), fn)
+                    # every member the reference wrote, bit for bit; the only
+                    # members this side may add are the provenance pair
+                    self.assertEqual(set(da.files) - set(db.files), set(),
+                                     "{}: members the reference wrote are missing".format(fn))
+                    added = set(db.files) - set(da.files)
+                    # ... plus, where the bond members are written (the
+                    # chiq_s / chiq_c archives carry them too), the recorded
+                    # conditioning floor
+                    self.assertTrue(_PROVENANCE_DELTA <= added, (fn, added))
+                    self.assertTrue(added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"},
+                                    (fn, added))
                     for k in da.files:
                         np.testing.assert_array_equal(da[k], db[k],
                                                       err_msg="{} {}".format(fn, k))
+                    self._assert_default_provenance(db, fn)
+                    if "longitudinal_bond_cond_tol" in added:
+                        self.assertEqual(float(db["longitudinal_bond_cond_tol"]), 1.0e-3, fn)
                     continue
-                # the one file this branch may change, and only in the four
-                # named members
+                # the one file this branch may change, and only in the named
+                # members
                 self.assertEqual(set(da.files) - set(db.files), set(),
                                  "the archive dropped members the reference wrote")
                 added = set(db.files) - set(da.files)
                 changed = {k for k in da.files if not self._identical(da[k], db[k])}
-                self.assertEqual(added | changed, set(_ARCHIVE_DELTA))
+                self.assertEqual(added | changed, set(_ARCHIVE_DELTA | _PROVENANCE_DELTA))
                 for k in set(da.files) - _ARCHIVE_DELTA:
                     np.testing.assert_array_equal(da[k], db[k],
                                                   err_msg="{} {}".format(fn, k))
                 self.assertEqual(int(da["bond_archive_schema"]), 1)
                 self.assertEqual(int(db["bond_archive_schema"]), 2)
+                self.assertEqual(float(db["longitudinal_bond_cond_tol"]), 1.0e-3)
+                self._assert_default_provenance(db, fn)
+
+    def _assert_default_provenance(self, db, fn):
+        """The provenance pair of issue #199 at its default: the reference
+        revision has no guard policy, so this side must report the refusing
+        policy and no tolerated violation -- anything else would mean the
+        comparison ran under a different guard than the reference did."""
+        self.assertEqual(str(db["flex_guard_policy"]), "refuse", fn)
+        self.assertEqual(int(db["flex_guard_violations"]), 0, fn)
