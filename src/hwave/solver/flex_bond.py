@@ -533,6 +533,18 @@ _TRANSPORT_OPS_WARN = 1.0e11
 _GIB = float(1024 ** 3)
 
 
+#: the device phase rows, in the order a refusal names them when two of
+#: them are exactly equal
+_DEV_PHASE_ORDER = ("bubble", "dressing", "transport")
+
+
+def _largest_dev_phase(rows):
+    """Name of the largest device phase row in ``rows``; an exact tie goes
+    to the earlier name of :data:`_DEV_PHASE_ORDER`."""
+    return max(_DEV_PHASE_ORDER,
+               key=lambda k: (rows[k], -_DEV_PHASE_ORDER.index(k)))
+
+
 def dressing_ops(nmat, nvol, ND):
     """Operation count of the two dense ND x ND solves over all (l, q)."""
     return 2.0 * nmat * nvol * float(ND) ** 3
@@ -576,6 +588,11 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     * ``flex_arrays = 5 * G``: the SCF loop's device Green functions and
       self-energies, allocated per iteration INSIDE the loop and so not
       yet part of the measured reading;
+    * ``green0_tail = G``: the bubble's tau-space tail, transferred to the
+      device by the vertex context right after the measurement (issue
+      #196). It is counted unconditionally: the tail exists whenever
+      ``coeff_tail != 0``, and counting it when there is none is a
+      deliberate margin, as with ``second_order_factors``;
     * ``second_order_factors = factor_bytes``: the device mirror of the
       compiled factor pack, which exists exactly when the pack does
       (``flex_second_order = "local"``). The mirror is already live at
@@ -583,22 +600,31 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
       rather than a missing allocation --
 
     plus three phase rows that are never simultaneously live:
-    ``bubble = max(prep, pair)`` -- the same expression as the host row,
-    which was derived for exactly this allocation pattern (the tau-space
-    Green function, its FFT-grid reversal, and the per-pair block before
-    its host copy), and a DEVICE row since issue #196 put the bond
-    bubble on the solver's array module --
+    ``bubble = max(prep, pair)`` -- the CPU expression, taken over as a
+    DEVICE row since issue #196 put the bond bubble on the solver's
+    array module. It is an UPPER BOUND there: the streamed device kernel
+    never holds the static ``S``-sized buffers the host row was derived
+    with, so the real device allocation is smaller --
     ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
     dressing solve and ``transport = 6 * C`` during the bond
     self-energy transport. The device need at a batch size is therefore
-    ``1.25 * (vertices_static + flex_arrays + second_order_factors +
-    max(bubble, dressing(nb), transport))`` against ``device_cap = 0.9 *
+    ``1.25 * (vertices_static + flex_arrays + green0_tail +
+    second_order_factors + max(bubble, dressing(nb), transport))``
+    against ``device_cap = 0.9 *
     device_available``. Refusal at ``nb = 1``
-    names whichever of the three phase rows is the largest; an explicit
+    names whichever of the three phase rows is the largest (an exact tie
+    goes to the earlier of ``bubble``, ``dressing``, ``transport``); an explicit
     ``freq_batch`` is checked against both the host and the device
     table; otherwise the selected ``nb`` is ``min`` of the largest
     batch each table admits, and the dict gains ``device_rows``,
-    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``."""
+    ``device_need``, ``device_cap``, ``device_nb`` and ``device_table``.
+
+    Giving ``device_available`` also changes ONE host row: the bubble no
+    longer allocates its temporaries on the host, which then holds only
+    the finished channel-pair block on its way into the store, so the
+    host ``bubble`` row becomes ``C``. The first, host-only preflight
+    call runs before the backend is known and keeps the CPU expression,
+    which is the conservative reading of the two."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -627,6 +653,10 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     prep = it * nvol * (ND ** 2 + 4 * P * (nmat + 2))
     pair = it * nvol * (2 * ND ** 2 + 3 * nmat * P ** 2 + 2 * nmat * P + 8 * P)
     per_batch = 6 * nvol * ND * ND * it
+    # On the GPU path the bubble's temporaries are the DEVICE's (issue
+    # #196); the host only holds the one finished channel-pair block that
+    # is on its way into the store, i.e. C bytes.
+    host_bubble = C if device_available is not None else max(prep, pair)
 
     def _phase_rows(nb):
         return {
@@ -635,7 +665,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             # their workspace (4 H), rho_k/rho_r (2 H), rho_so/out (8 H), the
             # kernel's spin-major temporaries (20 H), the owning Sigma_HF copy (H)
             "density_hf": 2 * G + 4 * H + 2 * H + 8 * H + 20 * H + H,
-            "bubble": max(prep, pair),
+            "bubble": host_bubble,
             "dressing": per_batch * nb,
             "transport": 4 * G + 4 * C,
             # materialised new total, green_inv + inverse + workspace, the G
@@ -694,6 +724,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         vertices = 5 * S
         transport = 6 * C
         dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
+                          "green0_tail": G,
                           "second_order_factors": int(factor_bytes)}
         dev_persistent_sum = sum(dev_persistent.values())
         dev_bubble = max(prep, pair)
@@ -712,8 +743,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
                              for k, v in _dev_rows(n).items())
         if _dev_need(1) > dev_cap:
-            phase = max((("bubble", dev_bubble), ("dressing", 7 * nvol * ND * ND * it),
-                         ("transport", transport)), key=lambda kv: kv[1])[0]
+            phase = _largest_dev_phase(_dev_rows(1))
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
                 "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
