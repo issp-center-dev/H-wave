@@ -1289,14 +1289,28 @@ re-run FLEX with ``write_densified = true``.
 
 .. warning::
 
-   Dynamic IR results computed with H-wave 1.0.x are incorrect for any
-   model whose pairing vertex has a nonzero frequency-independent
-   part — in particular anything with off-site
-   ``CoulombInter`` (the shipped pure on-site-``CoulombIntra``
-   comparisons did not expose it; note that the bare singlet term of such
-   a model is :math:`+U`, not zero -- see the change note below). Recompute such
-   runs; large changes in lambda are expected (they were the bug, not a
-   physics change). The automatic ``ir_wmax`` estimate also changed to a
+   Dynamic IR results computed with H-wave 1.0.x can carry a
+   frequency-independent (instantaneous) part of the pairing vertex
+   incorrectly: 1.0.x fitted that constant into the bosonic IR basis,
+   where a :math:`\delta(\tau)` component is aliased, instead of keeping
+   it as a flat operator. How much the reported leading eigenvalue moves
+   depends on how large that constant is *relative to the dynamic
+   vertex*. It is large — and ``lambda`` shifts substantially — for a
+   model with a large static susceptibility, i.e. off-site
+   ``CoulombInter`` near a charge instability. For a **pure on-site
+   Hubbard model** the constant is present (the bare singlet term is
+   :math:`+U`, not zero — see the change note below) but small next to the
+   dynamic part, and the singlet **leading eigenvalue is reproduced** on
+   the IR basis to basis-truncation accuracy: a check on the shipped
+   single-band fixture (:math:`U = 2.5`, :math:`4\times4`, :math:`T = 0.5`,
+   ``Nmat = 64``) gives a uniform-vs-IR relative difference of
+   :math:`1.8\times10^{-4}` at a pinned ``ir_wmax``. So recompute a 1.0.x IR
+   run when it declared an off-site ``CoulombInter`` (large ``lambda``
+   changes are expected there — they were the bug, not a physics change);
+   a pure on-site run's leading eigenvalue was already right, though its
+   gap eigenvector and any unprojected iteration were affected by the
+   separate instantaneous-prescription defect described in the change note
+   below. The automatic ``ir_wmax`` estimate also changed to a
    dispersion-based bound and is now much smaller (and correct) on
    realistic multi-hopping models.
 
