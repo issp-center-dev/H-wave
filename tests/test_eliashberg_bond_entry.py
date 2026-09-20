@@ -306,13 +306,15 @@ class TestParityLeakageTolerance(unittest.TestCase):
         self.assertGreater(self.leak, 1.0e-8)
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
             out = self._run(parity_leakage_tol=1.5 * self.leak)
-        self.assertEqual(len(out), 8)
+        self.assertEqual(len(out), 9)
         self.assertIsInstance(out[5], float)
         self.assertAlmostEqual(out[5], self.leak)
         # the 7th element is the returned gap's sector composition, the 8th
-        # the sector the iteration projected onto
+        # the sector the iteration projected onto, the 9th which eigenvalue
+        # selection criterion produced the leading value
         self.assertAlmostEqual(sum(out[6].values()), 1.0, places=9)
         self.assertIn(out[7], ("channel", "combined_parity", "none"))
+        self.assertEqual(out[8], "iteration")
         self.assertTrue(any("parity_leakage_tol" in m for m in cm.output), cm.output)
 
     def test_tolerance_below_the_leakage_refuses_naming_the_key(self):

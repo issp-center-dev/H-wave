@@ -63,7 +63,8 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     the ``%.8e`` formatting can flip in the last printed digit."""
     punct = "()[]{},;:"
 
-    _NEW_HEADERS = ("# gap_sector_weights", "# sector_selection")
+    _NEW_HEADERS = ("# gap_sector_weights", "# sector_selection",
+                    "# eigenvalue_selection")
     # the per-eigenvalue match column is now NAMED by the sector that matched;
     # the golden files carry the old unqualified label. Map the new labels back
     # so the label may differ but every ROW must still agree.
@@ -139,12 +140,22 @@ class TestDynamicGolden(unittest.TestCase):
                 self.assertIn("gap_sector_weights", a, tag)
                 self.assertIn("gap_sector_labels", a, tag)
                 self.assertIn("sector_selection", a, tag)
+                # Every case now records which selection criterion produced the
+                # leading eigenvalue (issue #202).
+                self.assertIn("eigenvalue_selection", a, tag)
                 # These fixtures conserve neither parity, so the iteration
                 # cases run unprojected; and on a 2x2x1 one-orbital grid the
                 # channel sector equals the combined-parity sector, so the
                 # eigenvalue cases find no eigenpair in either -- both report
-                # "none", and the recorded golden values are reproduced.
+                # "none". The eigenvalue/both cases hold no positive channel
+                # eigenvalue in the plain which='LM' set, so issue #202's
+                # automatic re-solve reports the largest-real eigenvalue
+                # (eigenvalue_selection "LR_retry"); the iteration cases select
+                # by the power loop.
                 self.assertEqual(str(a["sector_selection"]), "none", tag)
+                self.assertEqual(
+                    str(a["eigenvalue_selection"]),
+                    "iteration" if mode == "iteration" else "LR_retry", tag)
                 # a "none" selection keeps the historical match-column label,
                 # so the golden text is unchanged there too
                 with open(os.path.join(tmp, "eigenvalue.dat")) as fh:
@@ -234,7 +245,8 @@ class TestEigenDriverUnits(unittest.TestCase):
         eli_param = {"solver_mode": "iteration", "max_iter": 3}
         with self.assertLogs("qlms.eliashberg_dynamic", level="WARNING") as cm:
             lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
-                weights, selection = self.ed.run_leading_eigenproblem(
+                weights, selection, _eig_selection = \
+                self.ed.run_leading_eigenproblem(
                     self.matvec, self.gap_shape, eli_param, "singlet",
                     phi0=self.phi0, seed_vec=self.seed_vec, use_ir=False,
                     axF=None, nmat=4, parity_leakage_policy="warn")

@@ -1156,8 +1156,11 @@ def test_outputs_written(tmp_path):
         "gap", "iomega", "T", "pairing_type", "frequency",
         "eigenvalue", "axis_order", "normalization",
         "momentum_convention", "gap_sector_weights",
-        "gap_sector_labels", "sector_selection"}, \
+        "gap_sector_labels", "sector_selection",
+        "eigenvalue_selection"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
+    # the iteration path records its selection criterion (issue #202)
+    assert str(npz["eigenvalue_selection"]) == "iteration"
     # this synthetic archive does not conserve either parity, so the iteration
     # runs unprojected -- and says so
     assert str(npz["sector_selection"]) == "none"
@@ -1609,9 +1612,11 @@ def test_projected_iteration_returns_even_frequency_triplet():
         {"solver_mode": "iteration", "max_iter": 500,
          "convergence_tol": 1e-8, "alpha": 0.5},
         "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
-    assert len(out) == 8
-    lam, gap_w, _evs, _match, _note, _leak, weights, projection = out
+    assert len(out) == 9
+    lam, gap_w, _evs, _match, _note, _leak, weights, projection, \
+        eig_selection = out
     assert projection == "channel"
+    assert eig_selection == "iteration"
     assert np.isclose(lam, 0.5, atol=1e-6)
     assert weights["odd_k_even_w"] > 0.999
     assert weights["even_k_odd_w"] < 1e-6
@@ -1717,8 +1722,8 @@ def test_iteration_falls_back_to_combined_parity_projection(caplog):
              "convergence_tol": 1e-10, "alpha": 0.5},
             "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
             nmat=8)
-    assert len(out) == 8
-    lam, _gap, _evs, _match, _note, leak, weights, selection = out
+    assert len(out) == 9
+    lam, _gap, _evs, _match, _note, leak, weights, selection, _eig_sel = out
     assert selection == "combined_parity"
     assert leak is not None and leak < 1e-10       # combined parity IS a symmetry
     assert any("frequency parity is not a symmetry" in r.message
@@ -1781,7 +1786,7 @@ def test_eigenvalue_file_labels_the_combined_parity_fallback(tmp_path):
         matvec, gap_shape,
         {"solver_mode": "eigenvalue", "num_eigenvalues": 3},
         "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
-    lam, _gap, evs, match, note, _leak, _weights, selection = out
+    lam, _gap, evs, match, note, _leak, _weights, selection, _eig_sel = out
     assert selection == "combined_parity"
     assert np.isclose(lam, 0.9, atol=1e-6)
 
@@ -1940,9 +1945,16 @@ def _dyn_input(tmp_path, extra_eli):
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
     m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    # This 2x2x1 one-orbital fixture is repulsive-dominant: the largest-REAL
+    # eigenvalue is not the largest-magnitude one, so a plain which='LM' set
+    # would trigger issue #202's automatic re-solve on the un-seeded run while
+    # a seeded run (which does not re-solve, by design) would still track the
+    # LM branch, and the two would disagree. Selecting by largest real part up
+    # front (spectral_shift="auto") is the documented way to keep a seeded
+    # continuation consistent with the un-seeded leading run.
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
            "pairing_type": "singlet", "solver_mode": "eigenvalue",
-           "num_eigenvalues": 6}
+           "num_eigenvalues": 6, "spectral_shift": "auto"}
     eli.update(extra_eli)
     return {
         "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
@@ -1989,3 +2001,205 @@ def test_seed_gap_nmat_mismatch_raises(tmp_path):
     inp, _ = _dyn_input(tmp_path, {"seed_eigenvector": bad})        # run Nmat=8
     with pytest.raises(ValueError, match="Nmat"):
         ed.solve_dynamic(inp)
+
+
+# ---------------------------------------------------------------------------
+# Issue #202: the dynamic Arnoldi leading eigenvalue must not depend on
+# num_eigenvalues. A plain arnoldi set (which='LM', largest MAGNITUDE) can miss
+# a small POSITIVE channel eigenvalue that is masked by larger repulsive
+# (negative) ones; the driver must re-solve once with spectral_shift="auto"
+# (which='LR', largest REAL part) and report that instead.
+# ---------------------------------------------------------------------------
+import os as _os
+import shutil as _shutil
+import tempfile as _tempfile
+import logging as _logging
+import unittest as _unittest
+from contextlib import contextmanager as _contextmanager
+from unittest import mock as _mock
+
+
+@_contextmanager
+def _capture_dynamic_warnings():
+    """Capture WARNING records of the ``qlms.eliashberg_dynamic`` logger with a
+    handler attached directly to it, and force its level, so the assertion does
+    not depend on logging state another module left behind in the full
+    ``unittest discover`` run (assertLogs alone is fragile under that order)."""
+    lg = _logging.getLogger("qlms.eliashberg_dynamic")
+    records = []
+
+    class _Collect(_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Collect()
+    handler.setLevel(_logging.WARNING)
+    prev_level = lg.level
+    lg.addHandler(handler)
+    lg.setLevel(_logging.WARNING)
+    try:
+        yield records
+    finally:
+        lg.removeHandler(handler)
+        lg.setLevel(prev_level)
+
+
+def _orthonormal_in_sector(shape, sector, n, seed0):
+    """``n`` orthonormal random states, all living purely in ``sector``."""
+    vecs = []
+    for i in range(n):
+        v = _pure_sector(shape, sector, seed0 + i).ravel()
+        for u in vecs:
+            v = v - np.vdot(u, v) * u
+        nrm = np.linalg.norm(v)
+        assert nrm > 1e-8, "sector too small for {} vectors".format(n)
+        vecs.append(v / nrm)
+    return vecs
+
+
+def _diagonal_kernel(basis, eigs, rest_scale):
+    """A kernel diagonal in ``basis`` (eigenvalue ``eigs[i]`` on ``basis[i]``)
+    and equal to ``rest_scale`` on the orthogonal complement."""
+    def matvec(x):
+        x = np.asarray(x).ravel().astype(complex)
+        out = np.zeros_like(x)
+        rest = x.copy()
+        for u, lam in zip(basis, eigs):
+            c = np.vdot(u, x)
+            out = out + lam * c * u
+            rest = rest - c * u
+        return out + rest_scale * rest
+    return matvec
+
+
+class TestDynamicArnoldiSelection(_unittest.TestCase):
+    SHAPE = (1, 1, 4, 4, 1, 8)          # singlet channel = even_k_even_w
+    CHANNEL = "even_k_even_w"
+
+    def _run(self, matvec, eli_param, *, seed_vec=None):
+        from hwave.solver import eliashberg_dynamic as ed
+        return ed.run_leading_eigenproblem(
+            matvec, self.SHAPE, eli_param, "singlet",
+            phi0=_pure_sector(self.SHAPE, self.CHANNEL, 900),
+            seed_vec=seed_vec, use_ir=False, axF=None, nmat=self.SHAPE[-1])
+
+    def _masked_positive_kernel(self):
+        # channel holds ONE positive eigenvalue (+0.15) masked by three larger
+        # negative ones; the complement is a small positive (below +0.15)
+        basis = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 4, 10)
+        return _diagonal_kernel(basis, [0.15, -0.9, -0.7, -0.5], rest_scale=0.001)
+
+    def _all_negative_kernel(self):
+        # channel holds only negative eigenvalues; the complement is far below
+        # them so the largest REAL part is the least-negative channel mode
+        basis = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 3, 30)
+        return (_diagonal_kernel(basis, [-0.9, -0.7, -0.5], rest_scale=-3.0),
+                basis)
+
+    def test_plain_arnoldi_retries_and_reports_positive(self):
+        matvec = self._masked_positive_kernel()
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 2})
+        self.assertEqual(len(out), 9)
+        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
+        self.assertAlmostEqual(lam, 0.15, places=5)
+        self.assertEqual(selection, "LR_retry")
+        resolves = [r for r in recs
+                    if "re-solving with spectral_shift" in r.getMessage()]
+        self.assertEqual(len(resolves), 1, [r.getMessage() for r in recs])
+        self.assertIsNotNone(note)
+        self.assertIn("second solve with spectral_shift='auto'", note)
+
+    def test_spectral_shift_given_is_LR_without_retry(self):
+        matvec = self._masked_positive_kernel()
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 2,
+                                     "spectral_shift": "auto"})
+        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
+        self.assertAlmostEqual(lam, 0.15, places=5)
+        self.assertEqual(selection, "LR")
+        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
+                             for r in recs))
+
+    def test_large_num_eigenvalues_keeps_LM_no_retry(self):
+        matvec = self._masked_positive_kernel()
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 8})
+        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
+        self.assertAlmostEqual(lam, 0.15, places=5)
+        self.assertEqual(selection, "LM")
+        self.assertIsNone(note)
+        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
+                             for r in recs))
+
+    def test_all_negative_retries_to_least_negative(self):
+        import hwave.sc as sc
+        matvec, _basis = self._all_negative_kernel()
+        calls = []
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(k.get("spectral_shift"))
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            with _capture_dynamic_warnings() as recs:
+                out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                         "num_eigenvalues": 2})
+        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
+        # exactly one retry: two solves, the second with spectral_shift="auto"
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[1], "auto")
+        self.assertEqual(selection, "LR_retry")
+        self.assertAlmostEqual(lam, -0.5, places=5)   # least negative in channel
+        self.assertIsNotNone(note)
+        self.assertIn("second solve with spectral_shift='auto'", note)
+        self.assertEqual(
+            1, len([r for r in recs
+                    if "re-solving with spectral_shift" in r.getMessage()]))
+
+    def test_seeded_run_does_not_retry(self):
+        matvec, basis = self._all_negative_kernel()
+        seed = basis[2]                        # the -0.5 channel eigenvector
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 2}, seed_vec=seed)
+        lam, _gap, _evs, _match, note, _leak, _weights, _sector, selection = out
+        self.assertEqual(selection, "LM")
+        self.assertLess(lam, 0.0)              # the seeded branch is negative
+        self.assertIsNone(note)
+        self.assertFalse(any("re-solving with spectral_shift" in r.getMessage()
+                             for r in recs))
+
+    def test_eigenvalue_selection_in_file_header_and_npz(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        tmp = _tempfile.mkdtemp()
+        try:
+            gap = np.zeros(self.SHAPE, dtype=complex)
+            gap[0, 0, 0, 0, 0, self.SHAPE[-1] // 2] = 1.0
+            kx = np.linspace(0.0, 2 * np.pi, self.SHAPE[2], endpoint=False)
+            ky = np.linspace(0.0, 2 * np.pi, self.SHAPE[3], endpoint=False)
+            kz = np.linspace(0.0, 2 * np.pi, self.SHAPE[4], endpoint=False)
+            ed.write_dynamic_outputs(
+                tmp, gap, 0.15, 0.5, "singlet", kx, ky, kz, 2.0,
+                eigenvalue_selection="LR_retry")
+            with np.load(_os.path.join(tmp, "gap_dynamic.npz"),
+                         allow_pickle=False) as d:
+                self.assertIn("eigenvalue_selection", d.files)
+                self.assertEqual(str(d["eigenvalue_selection"]), "LR_retry")
+            ev_path = _os.path.join(tmp, "eigenvalue.dat")
+            ed.write_eigenvalue_file(ev_path, 0.15, None, None, None,
+                                     eigenvalue_selection="LR_retry")
+            with open(ev_path) as fh:
+                text = fh.read()
+            self.assertIn("# eigenvalue_selection: LR_retry", text)
+            # omitted when None
+            ev_path2 = _os.path.join(tmp, "eigenvalue2.dat")
+            ed.write_eigenvalue_file(ev_path2, 0.15, None, None, None)
+            with open(ev_path2) as fh:
+                self.assertNotIn("eigenvalue_selection", fh.read())
+        finally:
+            _shutil.rmtree(tmp, ignore_errors=True)

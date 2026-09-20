@@ -983,7 +983,7 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
                           gap_file="gap.dat", npz_file="gap_dynamic.npz",
                           extra_meta=None, sector_weights=None,
-                          selection=None):
+                          selection=None, eigenvalue_selection=None):
     r"""Write the dynamic-Eliashberg gap outputs.
 
     Produces two files under ``output_dir``:
@@ -1029,6 +1029,10 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         ``run_leading_eigenproblem``'s ``sector_selection``, written under that
         name. As with ``sector_weights``, ``extra_meta`` wins when it already
         carries the key.
+    eigenvalue_selection : str, optional
+        ``run_leading_eigenproblem``'s ``eigenvalue_selection`` (issue #202),
+        written under that name when not ``None``. As with ``selection``,
+        ``extra_meta`` wins when it already carries the key.
     """
     os.makedirs(output_dir, exist_ok=True)
     norb = gap_w.shape[0]
@@ -1052,6 +1056,8 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         meta.setdefault("gap_sector_labels", np.array(_SECTOR_LABELS))
     if selection is not None:
         meta.setdefault("sector_selection", str(selection))
+    if eigenvalue_selection is not None:
+        meta.setdefault("eigenvalue_selection", str(eigenvalue_selection))
 
     np.savez(
         os.path.join(output_dir, npz_file),
@@ -1485,7 +1491,13 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     with a WARNING.
 
     Returns ``(lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
-    leakage, sector_weights, sector_selection)``, where ``leakage`` is the measured
+    leakage, sector_weights, sector_selection, eigenvalue_selection)``, where
+    ``eigenvalue_selection`` names the criterion that produced the reported
+    leading eigenvalue -- ``"LM"`` (plain arnoldi, largest magnitude), ``"LR"``
+    (user ``spectral_shift``, largest real part), ``"LR_retry"`` (the automatic
+    re-solve of issue #202, when the ``"LM"`` set held no positive channel
+    eigenvalue), ``"shift-invert"``, ``"iteration"``, or ``"subspace"`` -- and
+    ``leakage`` is the measured
     combined-parity cross-sector leakage as a float, or ``None`` when no probe
     ran (the ``"warn"`` policy on the non-iteration solver modes),
     ``sector_weights`` is ``gap_sector_weights`` of the returned uniform-grid
@@ -1561,6 +1573,12 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     # its iterates onto, or -- on the eigenvalue solver family, which never
     # projects -- the stage the eigenpair reordering matched with.
     sector_selection = "none"
+    # Which selection criterion produced the reported leading eigenvalue, for
+    # the outputs (issue #202): "LM" (plain arnoldi, largest magnitude),
+    # "LR" (user spectral_shift, largest real part), "LR_retry" (the automatic
+    # re-solve when LM held no positive channel eigenvalue), "shift-invert",
+    # "iteration", or "subspace".
+    eigenvalue_selection = None
     if solver_mode == "iteration":
         # Mirror the static _solve_iteration: project every iterate onto the
         # requested sector so numerical noise cannot let the power iteration
@@ -1622,6 +1640,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             init_vec=phi0.ravel(), project_fn=project_fn,
             spectral_shift=iteration_spectral_shift)
         eigenvalues_all = None
+        eigenvalue_selection = "iteration"
         if iteration_spectral_shift is not None:
             # Shifted power iteration: the value is the SIGNED eigenvalue of
             # the original dynamic kernel only when sc._solve_leading's
@@ -1642,11 +1661,12 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             logger.warning(
                 "Dynamic solver_mode='both' runs the eigenvalue leg only; "
                 "the power-iteration cross-check is skipped.")
+        user_spectral_shift = eli_param.get("spectral_shift")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, eigenvalue_method,
             num_eigenvalues=num_eigenvalues,
             sigma_shift=eli_param.get("sigma_shift"),
-            spectral_shift=eli_param.get("spectral_shift"),
+            spectral_shift=user_spectral_shift,
             seed_vec=seed_vec)
         eigenvalues_all = info.get("eigenvalues")
         vecs_all = info.get("eigenvectors")
@@ -1661,6 +1681,68 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                     eigenvalues_all, vecs_all, gap_shape, pairing_type)
             eigenvalue = eigenvalues_all[0]
             sigma_flat = vecs_all[:, 0]
+
+        # Classify which criterion produced this reported leading eigenvalue.
+        if eigenvalue_method == "arnoldi":
+            # plain which='LM' unless the user asked for a spectral_shift, in
+            # which case _solve_leading used which='LR' (largest real part)
+            eigenvalue_selection = "LR" if user_spectral_shift is not None else "LM"
+        elif eigenvalue_method.startswith("shift-invert"):
+            eigenvalue_selection = "shift-invert"
+        elif eigenvalue_method == "subspace":
+            eigenvalue_selection = "subspace"
+        else:
+            eigenvalue_selection = eigenvalue_method
+
+        # Issue #202: a plain which='LM' set asks ARPACK for the largest
+        # MAGNITUDE, which can omit a small positive (attractive) channel
+        # eigenvalue masked by larger repulsive (negative) ones -- so the
+        # reported leading lambda then depends on num_eigenvalues. When the LM
+        # set holds no positive channel eigenvalue, re-solve ONCE with
+        # spectral_shift="auto" (which='LR', largest REAL part), which does not.
+        # A user spectral_shift already used which='LR'; a seeded run tracks a
+        # continuation branch on purpose (its leading pair may be negative by
+        # design); neither is re-solved.
+        if (eigenvalue_selection == "LM" and seed_vec is None
+                and eigenvalues_all is not None):
+            vals_arr = np.asarray(eigenvalues_all)
+            scale = float(np.max(np.abs(vals_arr))) if vals_arr.size else 0.0
+            neg_tol = 1.0e-8 * max(1.0, scale)
+            no_match = (sector_selection == "none"
+                        or eigenvalue_match is None
+                        or not bool(np.any(eigenvalue_match)))
+            leading_re = float(np.real(eigenvalue))
+            if no_match or leading_re < -neg_tol:
+                logger.warning(
+                    "%s: arnoldi (which='LM', num_eigenvalues=%d) returned no "
+                    "positive '%s' eigenvalue (leading Re(lambda) = %.4g); "
+                    "re-solving with spectral_shift = \"auto\" (largest real "
+                    "part) -- set [eliashberg] spectral_shift = \"auto\" or use "
+                    "solver_mode = \"iteration\" to avoid the extra solve",
+                    logger_label, num_eigenvalues, pairing_type, leading_re)
+                eigenvalue, sigma_flat, info = sc._solve_leading(
+                    make_operator, vec_size, eigenvalue_method,
+                    num_eigenvalues=num_eigenvalues,
+                    sigma_shift=eli_param.get("sigma_shift"),
+                    spectral_shift="auto",
+                    seed_vec=seed_vec)
+                eigenvalues_all = info.get("eigenvalues")
+                vecs_all = info.get("eigenvectors")
+                if eigenvalues_all is not None and vecs_all is not None:
+                    eigenvalues_all, vecs_all, eigenvalue_match, \
+                        sector_selection = _reorder_eigenpairs_by_parity_dynamic(
+                            eigenvalues_all, vecs_all, gap_shape, pairing_type)
+                    eigenvalue = eigenvalues_all[0]
+                    sigma_flat = vecs_all[:, 0]
+                eigenvalue_selection = "LR_retry"
+                retry_note = (
+                    "eigenvalue selection: which='LM' with num_eigenvalues={} "
+                    "returned no positive '{}' eigenvalue (Re(lambda) = {:.4g}); "
+                    "the values below come from a second solve with "
+                    "spectral_shift='auto' (largest real part)".format(
+                        num_eigenvalues, pairing_type, leading_re))
+                eigenvalue_note = (retry_note if not eigenvalue_note
+                                   else eigenvalue_note + "\n" + retry_note)
 
     lam = float(np.real(eigenvalue))
     logger.info("%s leading eigenvalue lambda = %.6f", logger_label, lam)
@@ -1695,7 +1777,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                       for k in _SECTOR_LABELS))
     return (lam, gap_w, eigenvalues_all, eigenvalue_match, eigenvalue_note,
             None if leakage is None else float(leakage), sector_weights,
-            sector_selection)
+            sector_selection, eigenvalue_selection)
 
 
 #: name of the per-eigenvalue match column, by the sector the run selected in.
@@ -1712,7 +1794,7 @@ _MATCH_COLUMN = {
 
 def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
                           header_lines=(), sector_weights=None,
-                          selection=None):
+                          selection=None, eigenvalue_selection=None):
     """Write the ``eigenvalue.dat`` leading-eigenvalue-and-spectrum file.
 
     ``header_lines`` are written as additional ``# ...`` lines right after
@@ -1723,6 +1805,9 @@ def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
     line, ``# gap_sector_weights even_k_even_w=... ...``, right after them, and
     ``selection`` (``run_leading_eigenproblem``'s ``sector_selection``) adds
     ``# sector_selection=<channel|combined_parity|none>`` after that.
+    ``eigenvalue_selection`` (issue #202), when not ``None``, adds
+    ``# eigenvalue_selection: <LM|LR|LR_retry|shift-invert|iteration|subspace>``
+    after that.
 
     ``selection`` also NAMES the per-eigenvalue ``match`` column, which means a
     different thing in each case: an even-frequency channel match, or only a
@@ -1740,6 +1825,8 @@ def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
                          for label in _SECTOR_LABELS)))
         if selection is not None:
             fw.write("# sector_selection={}\n".format(selection))
+        if eigenvalue_selection is not None:
+            fw.write("# eigenvalue_selection: {}\n".format(eigenvalue_selection))
         if note:
             for line in str(note).splitlines():
                 fw.write("# {}\n".format(line))
@@ -2072,7 +2159,7 @@ def solve_dynamic(input_dict):
     # the on-site path keeps the historical "warn" policy and its default
     # tolerance; the measured leakage is not part of its output format
     lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, \
-        _leakage, sector_weights, sector_selection = \
+        _leakage, sector_weights, sector_selection, eigenvalue_selection = \
         run_leading_eigenproblem(
             _matvec, gap_shape, eli_param, pairing_type, phi0=phi0,
             seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
@@ -2089,7 +2176,8 @@ def solve_dynamic(input_dict):
             ["zero_chi_s={}  zero_chi_c={}".format(
                 str(zero_chi_s).lower(), str(zero_chi_c).lower())]
             if (zero_chi_s or zero_chi_c) else []),
-        sector_weights=sector_weights, selection=sector_selection)
+        sector_weights=sector_weights, selection=sector_selection,
+        eigenvalue_selection=eigenvalue_selection)
 
     gap_file = eli_param.get("output_gap", "gap.dat")
     # Provenance metadata is added ONLY on the opt-in IR path: the default
@@ -2120,6 +2208,7 @@ def solve_dynamic(input_dict):
         extra_meta=extra_meta or None,
         sector_weights=sector_weights,
         selection=sector_selection,
+        eigenvalue_selection=eigenvalue_selection,
     )
 
     return lam
