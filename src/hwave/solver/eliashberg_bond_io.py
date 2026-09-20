@@ -189,12 +189,42 @@ def _as_index_array(member, name, path):
     return arr.astype(np.int64)
 
 
+#: what a schema-2 bond archive is, named in every "malformed file" refusal
+_ARCHIVE_CONTRACT = ("not a valid bond archive (schema-2, written by FLEX with "
+                     "longitudinal_bond_channels = true and "
+                     "longitudinal_bond_output_full = true)")
+
+
+def _archive_contract_error(path, exc):
+    """The uniform refusal for a truncated / garbage / incomplete archive,
+    preserving the underlying failure for the traceback (as ``raise ... from``
+    would, so the caller writes ``raise _archive_contract_error(...)``)."""
+    err = ValueError("bond archive {}: {}".format(path, _ARCHIVE_CONTRACT))
+    err.__cause__ = exc
+    err.__suppress_context__ = True
+    return err
+
+
+def _require(d, key, path):
+    """One member of an open archive, or the contract ValueError if it is
+    missing (bare ``KeyError``) or unreadable (a truncated member surfaces as a
+    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access)."""
+    try:
+        return d[key]
+    except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+        raise _archive_contract_error(path, exc)
+
+
 def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected):
     from hwave.solver.rpa import check_momentum_marker
     if not os.path.exists(path):
         raise ValueError("bond archive not found: {} (post-processing needs a FLEX run with "
                          "longitudinal_bond_channels = true and longitudinal_bond_output_full = true)".format(path))
-    with np.load(path) as d:
+    try:
+        d = np.load(path)
+    except (zipfile.BadZipFile, EOFError, OSError, ValueError) as exc:
+        raise _archive_contract_error(path, exc)
+    with d:
         files = set(d.files)
         schema = int(d["bond_archive_schema"]) if "bond_archive_schema" in files else 0
         if schema == 1 or "S_bond" not in files:
@@ -204,19 +234,22 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
                 "longitudinal_bond_output_full = true".format(path, schema))
         if schema != 2:
             raise ValueError("bond archive {}: unsupported archive schema {}".format(path, schema))
-        if str(d["index_order"]) != _INDEX_ORDER:
-            raise ValueError("bond archive {}: index_order {!r} != {!r}".format(path, str(d["index_order"]), _INDEX_ORDER))
-        if str(d["freq_axis"]) != _FREQ_AXIS:
-            raise ValueError("bond archive {}: freq_axis {!r} != {!r}".format(path, str(d["freq_axis"]), _FREQ_AXIS))
-        if int(d["norb"]) != int(norb):
-            raise ValueError("bond archive {}: norb {} != the geometry's {}".format(path, int(d["norb"]), norb))
-        nmat = int(d["nmat"])
+        index_order = str(_require(d, "index_order", path))
+        if index_order != _INDEX_ORDER:
+            raise ValueError("bond archive {}: index_order {!r} != {!r}".format(path, index_order, _INDEX_ORDER))
+        freq_axis = str(_require(d, "freq_axis", path))
+        if freq_axis != _FREQ_AXIS:
+            raise ValueError("bond archive {}: freq_axis {!r} != {!r}".format(path, freq_axis, _FREQ_AXIS))
+        archive_norb = int(_require(d, "norb", path))
+        if archive_norb != int(norb):
+            raise ValueError("bond archive {}: norb {} != the geometry's {}".format(path, archive_norb, norb))
+        nmat = int(_require(d, "nmat", path))
         if nmat != int(nmat_expected):
             raise ValueError("bond archive {}: nmat {} != this run's Nmat {}".format(path, nmat, nmat_expected))
-        cell = tuple(int(x) for x in d["cell_shape"])
+        cell = tuple(int(x) for x in _require(d, "cell_shape", path))
         if cell != tuple(int(x) for x in cell_shape_expected):
             raise ValueError("bond archive {}: cell_shape {} != this run's {}".format(path, cell, tuple(cell_shape_expected)))
-        beta = float(d["beta"])
+        beta = float(_require(d, "beta", path))
         # every comparison with nan is false, so an archive whose beta is nan
         # would pass the relative check below and the run would proceed on an
         # unknown temperature
@@ -229,10 +262,11 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         if abs(beta - beta_expected) > 1e-10 * max(1.0, abs(beta_expected)):
             raise ValueError("bond archive {}: beta {} != this run's {}".format(path, beta, beta_expected))
         check_momentum_marker(d, path)
-        delta_r = _as_index_array(d["delta_r"], "delta_r", path)
-        reverse = _as_index_array(d["reverse"], "reverse", path)
-        types = tuple(str(t) for t in np.asarray(d["types"]).ravel())
-        S_bond = np.asarray(d["S_bond"]); C_bond = np.asarray(d["C_bond"])
+        delta_r = _as_index_array(_require(d, "delta_r", path), "delta_r", path)
+        reverse = _as_index_array(_require(d, "reverse", path), "reverse", path)
+        types = tuple(str(t) for t in np.asarray(_require(d, "types", path)).ravel())
+        S_bond = np.asarray(_require(d, "S_bond", path))
+        C_bond = np.asarray(_require(d, "C_bond", path))
     # the rank check comes BEFORE shape[0] is read as the channel count
     if delta_r.ndim != 2 or delta_r.shape[1] != 3 or delta_r.shape[0] < 1:
         raise ValueError("bond archive {}: delta_r must be (B, 3) with delta_r[0] = (0, 0, 0)".format(path))
@@ -257,7 +291,10 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         if arr.shape != (nvol, ND, ND) or not np.all(np.isfinite(arr)):
             raise ValueError("bond archive {}: {} must be finite with shape {}, got {}".format(path, name, (nvol, ND, ND), arr.shape))
     for name in ("chi_s_w", "chi_c_w"):
-        shape, dtype = _npz_member_header(path, name)
+        try:
+            shape, dtype = _npz_member_header(path, name)
+        except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+            raise _archive_contract_error(path, exc)
         if shape != (nmat, nvol, ND, ND) or np.dtype(dtype) != np.dtype(np.complex128):
             raise ValueError("bond archive {}: {} must be complex128 of shape {}, got {} {}".format(path, name, (nmat, nvol, ND, ND), shape, dtype))
     small = dict(S_bond=S_bond, C_bond=C_bond, delta_r=delta_r, reverse=reverse, types=types, B=B, ND=ND,

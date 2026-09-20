@@ -183,6 +183,50 @@ class TestLoadBondArchive(unittest.TestCase):
         self._rewrite(delta_r=dr_shifted)
         self._load()      # must not raise
 
+    def test_malformed_archive_reports_the_contract(self):
+        """A truncated / garbage file, or one missing a required member, must
+        surface as a ValueError naming the archive contract, not a bare
+        KeyError / BadZipFile / EOFError from deep in numpy."""
+        from hwave.solver.eliashberg_bond_io import load_bond_archive
+
+        def call(p):
+            return load_bond_archive(
+                p, norb=self.s.norb, nmat_expected=self.s.nmat,
+                cell_shape_expected=tuple(int(x) for x in self.s.lattice.shape),
+                beta_expected=1.0 / self.s.T)
+
+        # a nonexistent path (the existing explicit message, naming the path)
+        gone = os.path.join(self.tmp, "does_not_exist.npz")
+        with self.assertRaisesRegex(ValueError, r"does_not_exist\.npz"):
+            call(gone)
+        # a few random bytes at a .npz path
+        junk = os.path.join(self.tmp, "junk.npz")
+        with open(junk, "wb") as f:
+            f.write(os.urandom(41))
+        with self.assertRaisesRegex(ValueError, r"junk\.npz.*not a valid bond archive"):
+            call(junk)
+        # a completely empty file
+        empty = os.path.join(self.tmp, "empty.npz")
+        open(empty, "wb").close()
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            call(empty)
+        # a valid npz that is missing one required member
+        with np.load(self.path) as d:
+            members = {k: d[k] for k in d.files if k != "index_order"}
+        sub = os.path.join(self.tmp, "sub.npz")
+        np.savez(sub, **members)
+        with self.assertRaisesRegex(ValueError, r"sub\.npz.*not a valid bond archive"):
+            call(sub)
+        # a missing chi member (read by header, not np.load) is caught too
+        with np.load(self.path) as d:
+            members = {k: d[k] for k in d.files if k != "chi_c_w"}
+        no_chi = os.path.join(self.tmp, "no_chi.npz")
+        np.savez(no_chi, **members)
+        with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
+            call(no_chi)
+        # the valid archive still loads
+        self._load()
+
 
 class TestPairingControls(unittest.TestCase):
     def test_defaults_and_validation(self):
