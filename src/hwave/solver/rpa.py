@@ -3890,6 +3890,7 @@ class RPA:
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
+        polish_bracket = None
         bracketed = (_calc_delta_n(ev[0]) * _calc_delta_n(ev[-1])) < 0.0
         if bracketed:
             logger.debug("RPA._find_mu: try brentq")
@@ -3897,19 +3898,68 @@ class RPA:
                                     xtol=1e-14, full_output=True,
                                     disp=False)
             is_converged = r.converged
+            if is_converged:
+                polish_bracket = (ev[0], ev[-1])
+        if not is_converged:
+            # Widened bracket (#218): a near-full / near-empty filling at
+            # finite T puts the root outside the eigenvalue span, where the
+            # unbracketed newton below stalls on the flat asymptote. Seed
+            # the margin at S = max(ene_cutoff, 40): at ev[0] - T*S every
+            # level is masked out (delta_n = -Ncond) and at ev[-1] + T*S
+            # every level has x <= -40, where 1/(1+exp(x)) is exactly 1.0
+            # in double precision (delta_n = count - Ncond), so the
+            # endpoints bracket every 0 < Ncond < count for any positive
+            # ene_cutoff. Rounding at the eigenvalue ulp can shrink the
+            # realised margin (a fully absorbed one is replaced by the
+            # adjacent float), so the margin is doubled until the EVALUATED
+            # signs bracket the root (bounded). At T*S = 10 the seed is the
+            # bracket hwave_sc._determine_mu uses. Targets outside
+            # (0, count), overflowing endpoints and a failed sign search
+            # fall through to the legacy newton path unchanged.
+            count = w.size
+            if np.isfinite(Ncond) and 0.0 < Ncond < count:
+                margin = max(ene_cutoff, 40.0)
+                for _ in range(8):
+                    lo = ev[0] - T * margin
+                    hi = ev[-1] + T * margin
+                    # A margin absorbed by the eigenvalue ulp (the sum
+                    # rounds back onto the eigenvalue) is replaced by the
+                    # adjacent float, which lies >= 2*T*margin away and so
+                    # meets the same mask / saturation bounds.
+                    if not lo < ev[0]:
+                        lo = np.nextafter(ev[0], -np.inf)
+                    if not ev[-1] < hi:
+                        hi = np.nextafter(ev[-1], np.inf)
+                    if not (np.isfinite(lo) and np.isfinite(hi)):
+                        break
+                    d_lo = _calc_delta_n(lo)
+                    d_hi = _calc_delta_n(hi)
+                    if not (np.isfinite(d_lo) and np.isfinite(d_hi)):
+                        break
+                    if d_lo < 0.0 < d_hi:
+                        logger.debug(
+                            "RPA._find_mu: try brentq on the widened bracket")
+                        mu, r = optimize.brentq(_calc_delta_n, lo, hi,
+                                                xtol=1e-14, full_output=True,
+                                                disp=False)
+                        is_converged = r.converged
+                        if is_converged:
+                            polish_bracket = (lo, hi)
+                        break
+                    margin *= 2.0
         if not is_converged:
             logger.debug("RPA._find_mu: try newton")
             mu, r = optimize.newton(_calc_delta_n, ev[0], full_output=True)
             is_converged = r.converged
-            bracketed = False
+            polish_bracket = None
         if not is_converged:
             logger.error("RPA._find_mu: not converged. abort")
             sys.exit(1)
 
         # Transactional Newton polish (#160): drives the particle-number
-        # residual toward round-off; never returns a worse root.
-        mu = _polish_mu_root(_delta_n_and_deriv, mu,
-                             bracket=(ev[0], ev[-1]) if bracketed else None)
+        # residual toward round-off; never returns a worse root. The
+        # bracket (if any) is the one the accepted brentq solve used.
+        mu = _polish_mu_root(_delta_n_and_deriv, mu, bracket=polish_bracket)
 
         logger.info("RPA._find_mu: mu = {}".format(mu))
 

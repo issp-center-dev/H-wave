@@ -146,10 +146,11 @@ class TestScMuMatchesRpa(unittest.TestCase):
 
     def test_wide_bracket_fallback_near_full_is_accurate(self):
         # The mirror case: a near-full band, root ABOVE every eigenvalue.
-        # RPA's own fallback (a secant search started at the band bottom)
-        # cannot solve this one -- delta_n flattens onto its horizontal
-        # asymptote above the band -- so the reference here is an
-        # independent bisection of the same particle-number residual.
+        # Before #218 RPA's fallback (a secant search started at the band
+        # bottom) could not solve this one -- delta_n flattens onto its
+        # horizontal asymptote above the band -- so the reference is an
+        # independent bisection of the same particle-number residual;
+        # since #218 RPA retries on a widened bracket and is compared too.
         Nx, Ny, norb, n_target, beta = 8, 8, 1, 1.0 - 1.0e-6, 10.0
         ev = _cosine_band(Nx, Ny, norb)
         nvol = Nx * Ny
@@ -180,6 +181,13 @@ class TestScMuMatchesRpa(unittest.TestCase):
         self.assertLessEqual(abs(mu_sc - mu_ref),
                              max(1.0e-12, 2.0 * plateau))
 
+        _dist, mu_rpa = RPA._find_mu(_Host(w), Ncond, T)
+        self.assertGreater(mu_rpa, hi)
+        res_rpa, _ = _masked_fermi_delta_n(w, T, mu_rpa, Ncond, 100.0)
+        self.assertLessEqual(abs(res_rpa), 1.0e-12)
+        self.assertLessEqual(abs(mu_sc - mu_rpa),
+                             max(1.0e-12, 2.0 * plateau))
+
     def test_endpoint_root_at_band_bottom_matches_rpa(self):
         # delta_n(lo) == 0.0 EXACTLY: the strict product < 0 bracketing test
         # rejects the span, so the wide-bracket fallback must still find the
@@ -205,10 +213,12 @@ class TestScMuMatchesRpa(unittest.TestCase):
         self.assertLessEqual(abs(res_sc), 1.0e-12)
 
     def test_endpoint_root_at_band_top(self):
-        # The mirror endpoint: delta_n(hi) == 0.0 exactly.  RPA's fallback
-        # cannot solve an at-or-above-band root (see the near-full case), so
-        # the assertion here is the root itself, which the construction of
-        # the target pins exactly.
+        # The mirror endpoint: delta_n(hi) == 0.0 exactly.  The strict
+        # product < 0 test rejects the span here too; before #218 RPA's
+        # fallback could not solve an at-or-above-band root, so the primary
+        # assertion is the root itself, which the construction of the
+        # target pins exactly; since #218 RPA's widened bracket finds it
+        # and is compared as well.
         Nx, Ny, norb, beta = 8, 8, 1, 10.0
         ev = _cosine_band(Nx, Ny, norb)
         n_target, edge = _target_with_root_at(ev, beta, "hi", norb)
@@ -223,8 +233,14 @@ class TestScMuMatchesRpa(unittest.TestCase):
         mu_sc = _determine_mu(ev, beta, n_target, norb)
         self.assertLessEqual(abs(mu_sc - edge), 1.0e-12)
 
-        res_sc, _ = _masked_fermi_delta_n(w, T, mu_sc, Ncond, 100.0)
+        res_sc, dn_sc = _masked_fermi_delta_n(w, T, mu_sc, Ncond, 100.0)
         self.assertLessEqual(abs(res_sc), 1.0e-12)
+
+        _dist, mu_rpa = RPA._find_mu(_Host(w), Ncond, T)
+        res_rpa, _ = _masked_fermi_delta_n(w, T, mu_rpa, Ncond, 100.0)
+        self.assertLessEqual(abs(res_rpa), 1.0e-12)
+        plateau = float(np.spacing(Ncond) / dn_sc)
+        self.assertLessEqual(abs(mu_rpa - edge), max(1.0e-12, 2.0 * plateau))
 
 
 if __name__ == "__main__":
