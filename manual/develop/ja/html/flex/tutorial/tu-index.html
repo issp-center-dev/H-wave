@@ -263,7 +263,7 @@ FLEX の1反復のコストは<code class="docutils literal notranslate"><span c
 します（<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>）。掃引の最低温度からいきなり
 計算すると、降順のはしごなら収束する点でも失敗することがあります。</p></li>
 <li><p><strong>Anderson 混合の結果は線形混合で計算し直して確認する。</strong> 1軌道
-Hubbard モデルの <span class="math notranslate nohighlight">\(U = 8t\)</span> では、Anderson 混合が非物理的な
+Hubbard モデルの <span class="math notranslate nohighlight">\(U = 8t\)</span>では、Anderson 混合が非物理的な
 不動点（対形成固有値が増大せず飽和する解）に落ち着く例が観測されて
 います。報告する前に同じ点を線形混合で再計算してください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>で <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code> <strong>を設定するのは
@@ -1443,9 +1443,9 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 送出し、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>にも対応していません。オフサイト項は
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>について受理されます
 （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
-<strong>ring の頂点には</strong> Hartree（密度）部分 <span class="math notranslate nohighlight">\(V(q)\)</span> としてのみ入り、
+<strong>ring の頂点には</strong> Hartree（密度）部分 <span class="math notranslate nohighlight">\(V(q)\)</span>としてのみ入り、
 オフサイト項の交換
-（Fock）交差は <span class="math notranslate nohighlight">\(q\)</span> のみの頂点では表現できないため含まれません
+（Fock）交差は <span class="math notranslate nohighlight">\(q\)</span>のみの頂点では表現できないため含まれません
 （RPA ring と同じ近似で、ソルバーはその旨の警告をログに出します）。
 ただし <strong>2次</strong> については、デフォルトの
 <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>がこれらの項の直接スケルトンと
@@ -1458,7 +1458,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <a class="reference internal" href="../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照。Hartree-Fock FLEX では自己無撞着に
 取り込まれます。<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）</span></a>を参照）。
 オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>と
-なります。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>には、<span class="math notranslate nohighlight">\(q\)</span> に依存する
+なります。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>には、<span class="math notranslate nohighlight">\(q\)</span>に依存する
 スピン・電荷頂点で表せる効果がありません（厳密対角化で確認済み）。
 その物理はスピン反転（transverse）型で、この spin-free 経路では計算されず、
 わずかに残る部分は bond 分解した頂点を必要とします。オフサイトの

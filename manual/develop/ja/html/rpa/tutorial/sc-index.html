@@ -742,7 +742,7 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 最大絶対値の成分が実正になるよう回転されます。これにより保存されるギャップは
 実行ごと・線形代数バックエンドごとに再現可能です。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gap_sector_weights</span></code>: 総和が 1 となる 4 つの実数 -- 返されたギャップの
-<span class="math notranslate nohighlight">\(\|\phi\|^2\)</span> が、運動量・振動数のパリティセクターそれぞれに占める割合です
+<span class="math notranslate nohighlight">\(\|\phi\|^2\)</span>が、運動量・振動数のパリティセクターそれぞれに占める割合です
 （<a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">動的ソルバーのペアリングチャネル</span></a>を参照）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gap_sector_labels</span></code>: 上と同じ順序での 4 つのセクター名、すなわち
 <code class="docutils literal notranslate"><span class="pre">&quot;even_k_even_w&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;odd_k_even_w&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;even_k_odd_w&quot;</span></code>,
@@ -800,8 +800,8 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 さらに 2 つの振動数パリティを含みます。ソルバーが報告するチャネルは、従来型の
 <strong>偶振動数</strong> セクターです。</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">singlet</span></code>: <span class="math notranslate nohighlight">\(\mathbf{k}\)</span> について偶、振動数について偶。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">triplet</span></code>: <span class="math notranslate nohighlight">\(\mathbf{k}\)</span> について奇、振動数について偶。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">singlet</span></code>: <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>について偶、振動数について偶。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">triplet</span></code>: <span class="math notranslate nohighlight">\(\mathbf{k}\)</span>について奇、振動数について偶。</p></li>
 </ul>
 <p>ここで「振動数について偶」とは
 <span class="math notranslate nohighlight">\(\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
@@ -812,8 +812,8 @@ H-wave が書き出すファイルは常に整合したタグを持つため、�
 \phi_{\beta\alpha}(-\mathbf{k}, i\omega_n)\)</span> です。両者の積が上記の結合パリティに
 なります。</p>
 <p><strong>奇振動数ペアリングは解きません。</strong> 残る 2 つのセクター、すなわち
-<span class="math notranslate nohighlight">\(\mathbf{k}\)</span> 奇・振動数奇（結合パリティ <span class="math notranslate nohighlight">\(+1\)</span>）と
-<span class="math notranslate nohighlight">\(\mathbf{k}\)</span> 偶・振動数奇（結合パリティ <span class="math notranslate nohighlight">\(-1\)</span>）は、どちらの
+<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>奇・振動数奇（結合パリティ <span class="math notranslate nohighlight">\(+1\)</span>）と
+<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>偶・振動数奇（結合パリティ <span class="math notranslate nohighlight">\(-1\)</span>）は、どちらの
 チャネル射影演算子によっても消去されます。</p>
 <p>各実行は、実際に返されたギャップの内訳を記録します。4 つのセクターの重み
 （ノルム二乗の割合、総和は 1）は<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> /
@@ -833,11 +833,11 @@ bond エントリの<code class="docutils literal notranslate"><span class="pre"
 多軌道カーネルは 2 つのパリティの積（反対称性の制約）のみを保存します。その場合に
 より狭い偶振動数セクターへ射影すると、固有値問題がそれ自身の <em>制限</em> になり、得られる
 値はカーネルの固有値ではなくなります。そこで、そのような場合には反復ベクトルを
-結合パリティセクターへ射影し（警告を出します）、報告される <span class="math notranslate nohighlight">\(\lambda\)</span> は
+結合パリティセクターへ射影し（警告を出します）、報告される <span class="math notranslate nohighlight">\(\lambda\)</span>は
 常にカーネル本来の固有値となります。ギャップの内訳はセクター重みが示します。
 どちらの場合であったかは、<code class="docutils literal notranslate"><span class="pre">sector_selection</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;channel&quot;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">&quot;combined_parity&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>）として npz のキーおよび固有値ファイルの
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> ヘッダー行に記録されます。固有値ソルバー系では、
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>ヘッダー行に記録されます。固有値ソルバー系では、
 カーネルがチャネルの偶振動数セクターを保存する場合、主固有対はそのセクターに
 制限した解から得られます（<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;channel&quot;</span></code>、issue #202）。
 保存しない場合は計算された固有対を並べ替え、チャネルの偶振動数セクターを優先し、
@@ -861,7 +861,7 @@ bond エントリの<code class="docutils literal notranslate"><span class="pre"
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>として記録されます（<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code>（利用者指定の<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>）・<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>（自動再求解）・
 <code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>）。npz のキーとしても、
-<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code> ヘッダー行としても
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code>ヘッダー行としても
 書き出されます。あらかじめ<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を指定しておけば非射影
 経路での追加の求解は生じません。主となる正の固有値の基準は<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>
 （自己無撞着なべき乗反復。斥力優勢のときは<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を
@@ -873,9 +873,9 @@ bond エントリの<code class="docutils literal notranslate"><span class="pre"
 <p><strong>本バージョンでの変更点。</strong> 以前のバージョンは結合パリティのみで固有対を
 選んでいました。そのため報告された<code class="docutils literal notranslate"><span class="pre">triplet</span></code>が奇振動数（<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>
 偶・振動数奇）の状態であることがあり、まれには報告された<code class="docutils literal notranslate"><span class="pre">singlet</span></code>が
-<span class="math notranslate nohighlight">\(\mathbf{k}\)</span> 奇・振動数奇の状態であることもありました。いずれも結合
+<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>奇・振動数奇の状態であることもありました。いずれも結合
 パリティは正しいためです。本バージョンより前に動的ソルバーで得た三重項の結果は
-再計算してください。ギャップが既に（<span class="math notranslate nohighlight">\(\mathbf{k}\)</span> 偶・振動数偶）
+再計算してください。ギャップが既に（<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>偶・振動数偶）
 セクターにある一重項の計算は、数値的に変わりません。</p>
 </div>
 </section>
