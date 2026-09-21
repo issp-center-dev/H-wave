@@ -705,7 +705,7 @@ def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     caught = (Exception,)
     try:
         from . import backend as _bk
-        caught = (Exception,) + tuple(_bk._oom_error_types())
+        caught = (Exception,) + tuple(_bk.oom_error_types())
         _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info)
     except caught as exc:
         # the phase handlers below cover every failure the design foresees;
@@ -732,7 +732,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     if not solver.scf_converged:
         logger.warning("longitudinal_bond_pairing: the FLEX solve did not converge; the pairing "
                        "eigenvalues are a diagnostic of a mixed state (%s)", label_state)
-    oom = tuple(_bk._oom_error_types())
+    oom = tuple(_bk.oom_error_types())
     caught = (Exception,) + oom
 
     def fail(etas, phase, exc):

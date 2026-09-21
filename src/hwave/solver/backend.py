@@ -204,16 +204,21 @@ def device_available_bytes():
         return None
 
 
-def _oom_error_types():
+def oom_error_types():
     """The exception types a device allocation failure raises, as a tuple
     usable directly in an ``except`` clause: ``(cupy.cuda.memory.
     OutOfMemoryError,)`` when cupy imports, else the empty tuple (which
-    matches nothing, so the same handler is inert on the numpy path)."""
+    matches nothing, so the same handler is inert on the numpy path).
+    Public since issue #198 (the solvers catch it by this name)."""
     try:
         cupy = _import_cupy()
         return (cupy.cuda.memory.OutOfMemoryError,)
     except Exception:            # noqa: BLE001 - no cupy means no device error
         return ()
+
+
+#: the pre-#198 private name, kept for out-of-tree callers
+_oom_error_types = oom_error_types
 
 
 def device_pool_used_bytes():

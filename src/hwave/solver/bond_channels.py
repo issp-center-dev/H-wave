@@ -715,13 +715,68 @@ def bond_conditioning_score(mat):
             float(sv[iq, -1]), float(sv[iq, 0]))
 
 
-def _check_bond_conditioning(name, mat, cond_tol):
+class BondConditioningError(ValueError):
+    """A refusal of the conditioning guard, with its location and criteria
+    as attributes (issue #198) rather than only in the message: ``channel``
+    (``"spin"`` / ``"charge"``), ``iq`` (the flattened q index on the grid
+    the guard scored), ``q`` (its ``(qx, qy, qz)`` decode), ``l`` (the
+    bosonic grid index when the refusal comes from a frequency batch, else
+    ``None``), the guard score ``worst`` and the two criteria ``ratio``
+    (``sigma_min/sigma_max``) and ``pole`` (``sigma_min/max(1,
+    sigma_max)``) of that block, its ``smin`` / ``smax`` and the
+    ``cond_tol`` they were held to. A ``ValueError``, so every existing
+    handler keeps catching it."""
+
+    def __init__(self, message, *, channel, iq, q, worst, ratio, pole, smin, smax,
+                 cond_tol, l=None):
+        super().__init__(message)
+        self.channel = channel
+        self.iq = int(iq)
+        self.q = tuple(int(x) for x in q)
+        self.l = None if l is None else int(l)
+        self.worst = float(worst)
+        self.ratio = float(ratio)
+        self.pole = float(pole)
+        self.smin = float(smin)
+        self.smax = float(smax)
+        self.cond_tol = float(cond_tol)
+
+
+def _conditioning_refusal(name, score, cond_tol, Ny, Nz):
+    """The :class:`BondConditioningError` for a failing guard ``score`` (the
+    tuple :func:`bond_conditioning_score` returns) on a ``(Nx, Ny, Nz)``
+    q grid. Building the refusal from an existing score means a caller
+    that already scored the block never decomposes it a second time."""
+    worst, iq, ratio_iq, pole_iq, smin_iq, smax_iq = score
+    qx, rem = divmod(int(iq), Ny * Nz)
+    qy, qz = divmod(rem, Nz)
+    return BondConditioningError(
+        "dress_bond: the {} RPA denominator is singular or nearly singular at "
+        "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e}, "
+        "sigma_min/max(1, sigma_max) = {:.3e}; the smaller of the two is "
+        "<= cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The "
+        "bond path has entered the {} instability region, where the dressed "
+        "vertices are enormous and numerically meaningless. Reduce the "
+        "interaction strength, raise the temperature, refine/reduce the "
+        "q-grid, or -- if you deliberately want to study the stiff regime -- "
+        "lower cond_tol.".format(
+            name, qx, qy, qz, ratio_iq, pole_iq, cond_tol,
+            smin_iq, smax_iq, name),
+        channel=name, iq=iq, q=(qx, qy, qz), worst=worst, ratio=ratio_iq,
+        pole=pole_iq, smin=smin_iq, smax=smax_iq, cond_tol=cond_tol)
+
+
+def _check_bond_conditioning(name, mat, cond_tol, score=None):
     """Refuse a singular / nearly singular enlarged RPA denominator.
 
     Returns the guard score (the minimum over q of the smaller of the two
     criteria below) when the block passes, ``None`` when ``cond_tol`` is
-    ``None`` (guard disabled); raises ``ValueError`` otherwise (#181 Tier 3
-    Phase A: the score is published as ``longitudinal_bond_cond_min_*``).
+    ``None`` (guard disabled); raises :class:`BondConditioningError` (a
+    ``ValueError``) otherwise (#181 Tier 3 Phase A: the score is published
+    as ``longitudinal_bond_cond_min_*``). ``score`` is an already computed
+    :func:`bond_conditioning_score` of ``mat`` (issue #198: a caller that
+    scored the block for another purpose passes it in and no second
+    decomposition runs); omitted, the block is scored here.
 
     ``np.linalg.solve`` raises a bare ``LinAlgError("Singular matrix")`` on an
     exactly singular block -- with no indication of WHICH channel or WHICH
@@ -752,23 +807,12 @@ def _check_bond_conditioning(name, mat, cond_tol):
     if cond_tol is None:
         return None
     Ny, Nz = mat.shape[1], mat.shape[2]
-    worst, iq, ratio_iq, pole_iq, smin_iq, smax_iq = bond_conditioning_score(mat)
+    if score is None:
+        score = bond_conditioning_score(mat)
+    worst = score[0]
     if worst > cond_tol:
         return worst
-    qx, rem = divmod(iq, Ny * Nz)
-    qy, qz = divmod(rem, Nz)
-    raise ValueError(
-        "dress_bond: the {} RPA denominator is singular or nearly singular at "
-        "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e}, "
-        "sigma_min/max(1, sigma_max) = {:.3e}; the smaller of the two is "
-        "<= cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The "
-        "bond path has entered the {} instability region, where the dressed "
-        "vertices are enormous and numerically meaningless. Reduce the "
-        "interaction strength, raise the temperature, refine/reduce the "
-        "q-grid, or -- if you deliberately want to study the stiff regime -- "
-        "lower cond_tol.".format(
-            name, qx, qy, qz, ratio_iq, pole_iq, cond_tol,
-            smin_iq, smax_iq, name))
+    raise _conditioning_refusal(name, score, cond_tol, Ny, Nz)
 
 
 def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
@@ -3635,16 +3679,19 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 {"channel": channel, "l": int(l), "q": int(q), "kind": "conditioning",
                  "value": float(worst), "iteration": iteration}))
             return worst
-        try:
-            _check_bond_conditioning(channel, blocks, cond_tol)
-        except ValueError as exc:
-            raise ValueError(
-                "dress_batch: the {} RPA denominator is singular or nearly singular at "
-                "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
-                "the bond path has entered the instability region. Reduce the interaction "
-                "strength, raise the temperature, refine or reduce the q grid, or lower "
-                "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz)) from exc
-        raise AssertionError("dress_batch: the conditioning guard and its score disagree")
+        # the guard's own refusal is built from the score computed above
+        # (no second decomposition, issue #198); `blocks` is (n, 1, 1, ND,
+        # ND), so its q index is the flattened position inside this call
+        cause = _conditioning_refusal(
+            channel, (worst, i - i_offset, ratio_i, pole_i, smin_i, smax_i), cond_tol, 1, 1)
+        raise BondConditioningError(
+            "dress_batch: the {} RPA denominator is singular or nearly singular at "
+            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+            "the bond path has entered the instability region. Reduce the interaction "
+            "strength, raise the temperature, refine or reduce the q grid, or lower "
+            "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz),
+            channel=channel, iq=q, q=(qx, qy, qz), l=l, worst=worst, ratio=ratio_i,
+            pole=pole_i, smin=smin_i, smax=smax_i, cond_tol=cond_tol) from cause
 
     l_static = nmat // 2
     cond_min = None

@@ -1,5 +1,5 @@
 """backend helpers added for the bond-gate GPU path: to_device, device_available_bytes,
-gpu_available, _oom_error_types, device_pool_used_bytes. All tests run without a GPU
+gpu_available, oom_error_types, device_pool_used_bytes. All tests run without a GPU
 (cupy is mocked)."""
 import types
 import unittest
@@ -106,7 +106,7 @@ class TestOomHelpers(unittest.TestCase):
         def _no():
             raise ImportError("no cupy")
         with mock.patch.object(backend, "_import_cupy", _no):
-            self.assertEqual(backend._oom_error_types(), ())
+            self.assertEqual(backend.oom_error_types(), ())
 
     def test_error_types_carry_the_cupy_exception(self):
         class _Oom(Exception):
@@ -114,11 +114,11 @@ class TestOomHelpers(unittest.TestCase):
         cupy = _fake_cupy()
         cupy.cuda.memory = types.SimpleNamespace(OutOfMemoryError=_Oom)
         with mock.patch.object(backend, "_import_cupy", lambda: cupy):
-            self.assertEqual(backend._oom_error_types(), (_Oom,))
+            self.assertEqual(backend.oom_error_types(), (_Oom,))
             # usable as an except clause
             try:
                 raise _Oom("out of memory")
-            except backend._oom_error_types():
+            except backend.oom_error_types():
                 caught = True
             self.assertTrue(caught)
 

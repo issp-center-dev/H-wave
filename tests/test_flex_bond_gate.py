@@ -607,8 +607,9 @@ class TestDeviceContextFailure(unittest.TestCase):
 
         s, r = _flex({"IterationMax": 1})
         gi = r.get_param("green")
-        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
-                mock.patch.object(flex_bond, "BondDeviceContext", boom):
+        # the solve builds its context through the factory (issue #198)
+        with mock.patch.object(backend, "oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond.BondDeviceContext, "for_view", boom):
             with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
                 with tempfile.TemporaryDirectory() as out:
                     with self.assertRaises(_Oom):
@@ -646,7 +647,7 @@ class TestDeviceContextFailure(unittest.TestCase):
 
         s, r = _flex({"IterationMax": 2})
         gi = r.get_param("green")
-        with mock.patch.object(backend, "_oom_error_types", lambda: (_Oom,)), \
+        with mock.patch.object(backend, "oom_error_types", lambda: (_Oom,)), \
                 mock.patch.object(flex_bond, "BondBlockStore", _Store), \
                 mock.patch.object(flex_bond, "BondDeviceContext", _Ctx), \
                 mock.patch.object(flex_bond, "assemble_bubble", boom):
