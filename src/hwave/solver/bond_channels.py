@@ -3790,6 +3790,12 @@ _GUARD_FREQS = ("all", "static")
 _GUARD_POLICIES = ("refuse", "warn")
 _STATIC_RESIDUAL_TOL = 1e-6
 
+_GUARD_METHODS = ("auto", "svd", "interval")
+#: what guard_method = "auto" means per array module (issue #197). The
+#: interval guard ships DISABLED by default; the cupy entry flips to
+#: "interval" in the measurement-gated commit of the same change.
+_GUARD_AUTO = {"numpy": "svd", "cupy": "svd"}
+
 
 def _at(iteration):
     """`` (SCF iteration N)`` for a warning raised inside a self-consistency,
@@ -3812,7 +3818,8 @@ def solve_residual(mat, chi, cb):
 
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
-                guard_policy="refuse", violations=None, iteration=None):
+                guard_policy="refuse", violations=None, iteration=None,
+                guard_method="auto", stats=None):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3851,7 +3858,19 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     Nothing is logged or recorded before the solve has succeeded: a warning
     states that the dressing continues, and a batch that ends in a refusal
     did not continue. ``iteration``, when given, names the self-consistency
-    iteration in the warnings and in the records."""
+    iteration in the warnings and in the records.
+
+    ``guard_method`` (issue #197): ``"svd"`` decomposes every guarded block
+    on the host, as before; ``"interval"`` scores the same blocks through
+    :func:`resolve_conditioning_guard` (device bounds plus an exact host
+    decomposition of only the blocks that could be the minimum) and
+    reproduces the ``"svd"`` path's outputs exactly; ``"auto"`` (the
+    default) resolves through :data:`_GUARD_AUTO` by the array module of
+    ``chi_bar_b`` -- today it selects ``"svd"`` on every module, so this
+    keyword ships with no behaviour change. When ``stats`` is a dict,
+    ``stats["guard_exact_blocks"]`` and ``stats["guard_blocks"]`` are
+    incremented by the number of blocks decomposed exactly and the number
+    of blocks guarded, for every guarded slice."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3860,8 +3879,13 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     if guard_policy not in _GUARD_POLICIES:
         raise ValueError("dress_batch: guard_policy must be one of {}, got {!r}"
                          .format(list(_GUARD_POLICIES), guard_policy))
+    if guard_method not in _GUARD_METHODS:
+        raise ValueError("dress_batch: guard_method must be one of {}, got {!r}"
+                         .format(list(_GUARD_METHODS), guard_method))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
+    if guard_method == "auto":
+        guard_method = _GUARD_AUTO["numpy" if xp is np else "cupy"]
     # array-like inputs are coerced once the module is known (the identity for
     # an array of that module, so the device path never takes a copy)
     cb = xp.asarray(chi_bar_b)
@@ -3883,12 +3907,22 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     # (format, args, violation record)
     pending = []
 
-    def _guard(mat_h, i_offset):
-        # mat_h: HOST (n, ND, ND); i_offset: flattened index of its first row
+    def _guard(mat_d, i_offset):
+        # mat_d: (n, ND, ND) on xp (host under "svd", as before); i_offset:
+        # flattened index of its first row
         if cond_tol is None:
             return None
-        blocks = mat_h.reshape(-1, 1, 1, ND, ND)
-        worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+        n = int(mat_d.shape[0])
+        if guard_method == "interval":
+            worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = \
+                resolve_conditioning_guard(mat_d, xp, cond_tol)
+        else:
+            blocks = _bk.to_host(mat_d).reshape(-1, 1, 1, ND, ND)
+            worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+            n_exact = n
+        if stats is not None:
+            stats["guard_exact_blocks"] = stats.get("guard_exact_blocks", 0) + n_exact
+            stats["guard_blocks"] = stats.get("guard_blocks", 0) + n
         if worst > cond_tol:
             return worst
         i += i_offset
@@ -3928,10 +3962,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     l_static = nmat // 2
     cond_min = None
     if guard_freqs == "all":
-        cond_min = _guard(_bk.to_host(mat).reshape(nb * nvol, ND, ND), 0)
+        cond_min = _guard(mat.reshape(nb * nvol, ND, ND), 0)
     elif l0 <= l_static < l0 + nb:
         i = l_static - l0
-        cond_min = _guard(_bk.to_host(mat[i]).reshape(nvol, ND, ND), i * nvol)
+        cond_min = _guard(mat[i].reshape(nvol, ND, ND), i * nvol)
     flat = mat.reshape(nb * nvol, ND, ND)
     if guard_freqs == "static":
         LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)

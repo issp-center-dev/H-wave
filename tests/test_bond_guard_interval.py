@@ -273,3 +273,69 @@ class TestResolver(unittest.TestCase):
             ref = bc.bond_conditioning_score(blocks.reshape(64, 1, 1, ND, ND))
             out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
             self.assertEqual(out[:6], ref, seed)
+
+
+class TestDressBatchGuardMethod(unittest.TestCase):
+
+    def _batch(self, sigma_min=1.0e-9, l_bad=1, q_bad=1, nb=3, nvol=2):
+        cb = np.zeros((nb, nvol, 2, 2), dtype=complex)
+        for l in range(nb):
+            for q in range(nvol):
+                c = 0.3 if (l, q) != (l_bad, q_bad) else 1.0 - sigma_min
+                cb[l, q] = c * np.eye(2)
+        W = np.broadcast_to(np.eye(2, dtype=complex), (nvol, 2, 2)).copy()
+        return cb, W
+
+    def test_rejects_an_unknown_method(self):
+        cb, W = self._batch(sigma_min=0.5)
+        with self.assertRaises(ValueError) as cm:
+            bc.dress_batch(cb, W, "spin", l0=0, nmat=16, spatial_shape=(2, 1, 1), guard_method="fast")
+        self.assertIn("guard_method", str(cm.exception))
+
+    def test_auto_is_svd_on_numpy(self):
+        self.assertEqual(bc._GUARD_AUTO["numpy"], "svd")
+        cb, W = self._batch(sigma_min=0.5)
+        with mock.patch.object(bc, "resolve_conditioning_guard",
+                               side_effect=AssertionError("interval path must not run")):
+            bc.dress_batch(cb, W, "spin", l0=0, nmat=16, spatial_shape=(2, 1, 1))
+
+    def test_interval_reproduces_the_refusal(self):
+        cb, W = self._batch()
+        outs = []
+        for method in ("svd", "interval"):
+            with self.assertRaises(bc.BondConditioningError) as cm:
+                bc.dress_batch(cb, W, "spin", l0=4, nmat=16, spatial_shape=(2, 1, 1),
+                               guard_method=method)
+            e = cm.exception
+            outs.append((str(e), e.channel, e.l, e.iq, e.q, e.worst, e.ratio, e.pole, e.smin, e.smax))
+        self.assertEqual(outs[0], outs[1])
+
+    def test_interval_reproduces_a_passing_batch_and_counts(self):
+        cb, W = self._batch(sigma_min=0.5)
+        ref, c_ref = bc.dress_batch(cb, W, "charge", l0=0, nmat=16, spatial_shape=(2, 1, 1))
+        stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
+        out, c_out = bc.dress_batch(cb, W, "charge", l0=0, nmat=16, spatial_shape=(2, 1, 1),
+                                    guard_method="interval", stats=stats)
+        np.testing.assert_array_equal(out, ref)
+        self.assertEqual(c_out, c_ref)
+        self.assertEqual(stats["guard_blocks"], 6)
+        self.assertLessEqual(stats["guard_exact_blocks"], 6)
+        self.assertGreaterEqual(stats["guard_exact_blocks"], 1)
+
+    def test_static_mode_counts_only_the_slice(self):
+        cb, W = self._batch(sigma_min=0.5)
+        stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
+        bc.dress_batch(cb, W, "spin", l0=6, nmat=16, spatial_shape=(2, 1, 1),
+                       guard_freqs="static", guard_method="interval", stats=stats)
+        self.assertEqual(stats["guard_blocks"], 2)
+
+    def test_warn_records_are_identical(self):
+        cb, W = self._batch()
+        recs = []
+        for method in ("svd", "interval"):
+            v = []
+            with self.assertLogs("qlms.solver.bond_channels", level="WARNING") as cm:
+                bc.dress_batch(cb, W, "spin", l0=4, nmat=16, spatial_shape=(2, 1, 1),
+                               guard_policy="warn", violations=v, guard_method=method)
+            recs.append((v, cm.output))
+        self.assertEqual(recs[0], recs[1])
