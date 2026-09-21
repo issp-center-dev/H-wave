@@ -50,6 +50,59 @@ def _transport_problem():
     return store, G, beta, view, (4, 4, 1), norb
 
 
+def _transport_problem_multichannel():
+    """A B >= 3 bond-topology counterpart of :func:`_transport_problem`
+    (issue #198 item 2): ``calc_self_energy_bond``'s rolled-block branch
+    (``xp.roll`` for ``alpha != beta``, ``flex_bond.py`` around line 490)
+    only ever runs, on the GPU, through the B = 1 fixture above's
+    end-to-end use in ``test_flex_bond_gpu.py::TestTransportEquivalence``
+    -- which never takes that branch, since a single channel never has an
+    ``alpha != beta`` pair. This fixture forces it.
+
+    Built exactly the way
+    ``TestTransport.test_hermitian_consistency_of_the_transport`` below
+    builds its view: a ``CoulombInter`` declaration with two distinct
+    off-site bond directions (+-x, +-y), which resolves to ``B = 5``
+    channels (the on-site channel plus the four declared directions) with
+    non-zero ``view.delta_r`` shifts on the off-site ones. ``W`` is a
+    random complex ``(nmat, nvol, ND, ND)`` array (seed 1)."""
+    from hwave.solver import bond_channels as bc
+    from hwave.solver.flex_bond import BondBlockStore
+    s, _ = _flex()
+    s._calc_epsilon_k({})
+    nmat, nvol, norb, nd = s.nmat, s.lattice.nvol, s.norb, s.norb ** 2
+    beta = 0.5
+    decl = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.3, ((-1, 0, 0), (1, 0)): 0.3,
+                             ((0, 1, 0), (0, 0)): 0.2, ((0, -1, 0), (0, 0)): 0.2}}
+    topo = bc.resolve_bond_topology(decl, np.eye(3), norb, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+    view = bc.BondSetView(topo)
+    ND = view.n_channels * nd
+    rng = np.random.default_rng(1)
+    W = rng.normal(size=(nmat, nvol, ND, ND)) + 1j * rng.normal(size=(nmat, nvol, ND, ND))
+    G = _green(s, beta)
+    store = BondBlockStore(nmat, nvol, ND, nd, ("W",))
+    store.put_freq_batch("W", 0, nmat, W)
+    return store, G, beta, view, (4, 4, 1), norb
+
+
+class TestTransportMultichannelFixture(unittest.TestCase):
+    """Host-side sanity of :func:`_transport_problem_multichannel`: it is
+    genuinely multichannel (not accidentally B = 1 again), and the
+    production transport runs on it and returns finite values of the
+    documented shape."""
+
+    def test_fixture_is_genuinely_multichannel(self):
+        from hwave.solver.flex_bond import calc_self_energy_bond
+        store, G, beta, view, shape, norb = _transport_problem_multichannel()
+        self.assertGreaterEqual(view.n_channels, 3)
+        R = np.asarray(view.delta_r)
+        self.assertTrue(np.any(R != 0))
+        with store:
+            sig = calc_self_energy_bond(store, G, beta, view, shape, norb, 1)
+        self.assertEqual(sig.shape, G.shape)
+        self.assertTrue(np.all(np.isfinite(sig)))
+
+
 class TestTransport(unittest.TestCase):
 
     def test_b1_reduces_to_calc_self_energy_general(self):

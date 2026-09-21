@@ -1,5 +1,6 @@
 """Frequency-batched bond dressing, the effective interaction and the
 collapses (spec 2026-09-06 sections 3.2-3.3)."""
+import types
 import unittest
 
 import numpy as np
@@ -81,8 +82,7 @@ class TestDressAndBuildW(unittest.TestCase):
         layout alone. The synthetic problem has ``nd = 4`` (norb = 2) and a
         random, orbital-asymmetric ``chi_bar``/``S``/``C``, so it sees the
         permutation."""
-        from hwave.solver.flex_bond import (BondBlockStore, BondDeviceContext,
-                                            _mixed_pair_permutation, dress_and_build_w)
+        from hwave.solver.flex_bond import BondBlockStore, BondDeviceContext, dress_and_build_w
         from hwave.solver.second_order import dense_w2
         chi_bar, S, C = _problem(nmat=6, nvol=4, nd=4, B=3)
         nmat, nvol, ND = chi_bar.shape[:3]
@@ -96,10 +96,9 @@ class TestDressAndBuildW(unittest.TestCase):
                     store.put_freq_batch("chibar", 0, nmat, chi_bar)
                     S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
                     C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
-                    perm = _mixed_pair_permutation(ND // nd, nd, int(round(nd ** 0.5)))
-                    mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5
-                    mask[:nd, :nd] = 0.0
-                    with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                    view = types.SimpleNamespace(n_channels=ND // nd)
+                    norb = int(round(nd ** 0.5))
+                    with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb) as dev:
                         res = dress_and_build_w(store, dev, nb=4,
                                                 output_full=output_full, nmat=nmat,
                                                 nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
@@ -160,12 +159,11 @@ class TestDressAndBuildWDevice(unittest.TestCase):
         nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1]
         nd = 4
         S_on = S[:, :nd, :nd].copy(); C_on = C[:, :nd, :nd].copy()
-        perm = fb._mixed_pair_permutation(ND // nd, nd, 2)
-        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        view = types.SimpleNamespace(n_channels=ND // nd)
         outs = {}
         for nb in (1, 3, nmat // 2, nmat):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+                    fb.BondDeviceContext.for_view(np, S, C, S_on, C_on, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 puts = []
                 orig = store.put_freq_batch

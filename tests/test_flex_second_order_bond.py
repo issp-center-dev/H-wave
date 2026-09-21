@@ -7,6 +7,7 @@ the mixed second-order blocks carry the pair permutation of spec
 formula of that permutation at norb = 3; the memory table carries the
 factor row."""
 import tempfile
+import types
 import unittest
 
 import numpy as np
@@ -60,15 +61,13 @@ class TestBondGate(unittest.TestCase):
         G = s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
         B = s._bond_view.n_channels
         ND = B * nd
-        perm = (np.arange(ND) if identity_permutation
-               else flex_bond._mixed_pair_permutation(B, nd, norb))
-        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
         with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, None, beta, s._bond_view, (4, 4, 1), 1)
             cb = np.array(store.get_freq_batch("chibar", 0, nmat))
-            with flex_bond.BondDeviceContext(np, s._bond_S, s._bond_C, s._bond_S_on,
-                                             s._bond_C_on, perm, mask) as dev:
+            with flex_bond.BondDeviceContext.for_view(
+                    np, s._bond_S, s._bond_C, s._bond_S_on, s._bond_C_on, s._bond_view, norb,
+                    perm=np.arange(ND) if identity_permutation else None) as dev:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                             nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(4, 4, 1),
                                             factors=s._second_order_factors,
@@ -231,11 +230,10 @@ class TestBondGate(unittest.TestCase):
         S = np.broadcast_to(np.diag(diag), (nvol, ND, ND)).copy()
         C = np.broadcast_to(np.diag(0.7 * diag[::-1]), (nvol, ND, ND)).copy()
         zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
-        perm = flex_bond._mixed_pair_permutation(B, nd, norb)
-        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        view = types.SimpleNamespace(n_channels=B)
         with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
             store.put_freq_batch("chibar", 0, nmat, cb)
-            with flex_bond.BondDeviceContext(np, S, C, zero_on, zero_on, perm, mask) as dev:
+            with flex_bond.BondDeviceContext.for_view(np, S, C, zero_on, zero_on, view, norb) as dev:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat,
                                             output_full=False, nmat=nmat, nvol=nvol, nd=nd,
                                             spatial_shape=shape, factors=None,
@@ -278,13 +276,13 @@ class TestBondGate(unittest.TestCase):
         is refused, not silently truncated by ``B = ND // nd``: the pair
         index the permutation builds (``m * nd + a * norb + b``) describes a
         block layout that such a matrix does not have."""
-        from hwave.solver.flex_bond import (BondDeviceContext, _mixed_pair_permutation,
-                                            dress_and_build_w)
+        from hwave.solver.flex_bond import (BondDeviceContext, mixed_block_mask,
+                                            _mixed_pair_permutation, dress_and_build_w)
         nvol, nd, ND = 2, 4, 6
         S = np.zeros((nvol, ND, ND), complex)
         norb = int(round(nd ** 0.5))
         perm = _mixed_pair_permutation(ND // nd, nd, norb)
-        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        mask = mixed_block_mask(ND // nd, nd)
         with BondDeviceContext(np, S, S, S, S, perm, mask) as dev:
             with self.assertRaises(ValueError) as cm:
                 dress_and_build_w(None, dev, nb=2, output_full=False,
@@ -294,16 +292,14 @@ class TestBondGate(unittest.TestCase):
         self.assertIn("nd = 4", str(cm.exception))
 
     def test_local_without_factors_is_refused(self):
-        from hwave.solver.flex_bond import (BondBlockStore, BondDeviceContext,
-                                            _mixed_pair_permutation, dress_and_build_w)
+        from hwave.solver.flex_bond import BondBlockStore, BondDeviceContext, dress_and_build_w
         nmat, nvol, nd, B = 2, 2, 1, 1
         ND = B * nd
         S = np.zeros((nvol, ND, ND), complex)
         norb = int(round(nd ** 0.5))
-        perm = _mixed_pair_permutation(B, nd, norb)
-        mask = np.zeros((ND, ND)); mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
+        view = types.SimpleNamespace(n_channels=B)
         with BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                BondDeviceContext(np, S, S, S, S, perm, mask) as dev:
+                BondDeviceContext.for_view(np, S, S, S, S, view, norb) as dev:
             with self.assertRaises(ValueError) as cm:
                 dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                   nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),

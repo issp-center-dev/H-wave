@@ -1041,7 +1041,7 @@ class TestInProcessHookBoundary(unittest.TestCase):
         take the FLEX results with it."""
         from hwave.solver import backend as bk, eliashberg_bond_io as io
         gi = {}
-        with mock.patch.object(bk, "_oom_error_types", side_effect=RuntimeError("probe boom")):
+        with mock.patch.object(bk, "oom_error_types", side_effect=RuntimeError("probe boom")):
             with self.assertLogs("qlms.solver.eliashberg_bond", "ERROR"):
                 io.run_inprocess_pairing(self._solver(), None, None, None, 1.0, gi)
         self.assertIn("probe boom", gi["pairing_singlet_error"])
@@ -1244,7 +1244,7 @@ class TestInProcess(unittest.TestCase):
         from unittest import mock
         from hwave.solver import eliashberg_bond as eb, eliashberg_dynamic as ed, \
             flex_bond as fb, backend as bk
-        oom = bk._oom_error_types()[0] if bk._oom_error_types() else MemoryError
+        oom = bk.oom_error_types()[0] if bk.oom_error_types() else MemoryError
 
         def oom_instance():
             """The backend's device out-of-memory type where a device backend

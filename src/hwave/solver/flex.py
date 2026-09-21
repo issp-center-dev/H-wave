@@ -2017,22 +2017,20 @@ class FLEX(RPA):
                 # after the memory preflight measured the device (spec 4.2);
                 # every iteration's dressing reuses them. On numpy the
                 # context holds the host arrays themselves.
-                perm = flex_bond._mixed_pair_permutation(self._bond_view.n_channels, nd, norb)
-                mask = np.zeros((self._bond_view.n_channels * nd,) * 2)
-                mask[:nd, :] = 0.5
-                mask[:, :nd] = 0.5
-                mask[:nd, :nd] = 0.0
+                # The pair permutation and the block-weight mask of the
+                # second-order term are derived from the bond view inside
+                # the factory (issue #198).
                 try:
-                    dev = stack.enter_context(flex_bond.BondDeviceContext(
+                    dev = stack.enter_context(flex_bond.BondDeviceContext.for_view(
                         xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
-                        perm, mask,
+                        self._bond_view, norb,
                         # the bubble's tail joins the solve-scoped device set
                         # (issue #196): the bubble computes on the module of the
                         # Green function, which the loop already keeps on the
                         # device, so the tail is transferred once instead of
                         # every map. self.green0_tail is the host copy.
                         green0_tail=self.green0_tail))
-                except _bk._oom_error_types() as exc:
+                except _bk.oom_error_types() as exc:
                     # the vertex transfer is the first bond allocation on the
                     # device; the same diagnostic as the per-iteration handler
                     # in _phase_b_bond_map, naming the phase that failed
@@ -2303,7 +2301,7 @@ class FLEX(RPA):
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
                     store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
-        except _bk._oom_error_types() as exc:
+        except _bk.oom_error_types() as exc:
             # no retry: a smaller batch mid-SCF would change the arithmetic
             # of this solve. The phase, the iteration, the batch size and the
             # pool occupancy are logged, then the error propagates -- solve()

@@ -139,6 +139,31 @@ class BondDeviceContext:
                         for k in self._NAMES}
         self._released = False
 
+    @classmethod
+    def for_view(cls, xp, S, C, S_on, C_on, view, norb, green0_tail=None, *, perm=None):
+        """The context for the bond view ``view`` (issue #198): derives the
+        pair permutation from :func:`_mixed_pair_permutation` (looked up on
+        the module, so a test may still replace it) and the block-weight
+        mask from :func:`mixed_block_mask`, both from ``view.n_channels``
+        and ``nd = norb * norb``. ``perm`` overrides the permutation (the
+        identity-permutation control of the second-order tests). Refuses a
+        vertex whose trailing two dimensions are not ``(n_channels * nd,
+        n_channels * nd)``; the shapes are read off the arrays as given
+        (host or device -- nothing is converted here)."""
+        nd = norb * norb
+        B = int(view.n_channels)
+        ND = B * nd
+        for label, V in (("S", S), ("C", C)):
+            shape = tuple(np.shape(V))
+            if shape[-2:] != (ND, ND):
+                raise ValueError("BondDeviceContext.for_view: the vertex {} has trailing "
+                                 "shape {}, not the (ND, ND) = ({}, {}) of view.n_channels "
+                                 "* norb**2 = {} * {}".format(label, shape[-2:], ND, ND, B, nd))
+        if perm is None:
+            perm = _mixed_pair_permutation(B, nd, norb)
+        return cls(xp, S, C, S_on, C_on, perm, mixed_block_mask(B, nd),
+                   green0_tail=green0_tail)
+
     def __enter__(self):
         return self
 
@@ -227,7 +252,15 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
     except ValueError as exc:
         if iteration is None:
             raise
-        raise ValueError("{}{}".format(exc, _at(iteration))) from exc
+        message = "{}{}".format(exc, _at(iteration))
+        if isinstance(exc, _bc.BondConditioningError):
+            # keep the structured refusal (issue #198) on the exception the
+            # production path exposes, with the iteration appended
+            raise _bc.BondConditioningError(
+                message, channel=exc.channel, iq=exc.iq, q=exc.q, l=exc.l, worst=exc.worst,
+                ratio=exc.ratio, pole=exc.pole, smin=exc.smin, smax=exc.smax,
+                cond_tol=exc.cond_tol) from exc
+        raise ValueError(message) from exc
     xp = _bk.array_module_of(chi_b)
     if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
@@ -258,6 +291,24 @@ def _mixed_pair_permutation(B, nd, norb):
             for l2 in range(norb):
                 perm[m * nd + l1 * norb + l2] = m * nd + l2 * norb + l1
     return perm
+
+
+def mixed_block_mask(B, nd):
+    """Block-weight mask of the second-order MIXED term on the ``(B nd)``
+    pair axis (issue #198: one home for what the caller and the tests used
+    to spell out inline): ``0.5`` on the channel-0 row and column blocks
+    (the mixed on-site x bond blocks, taken once as the exchange
+    skeleton), ``0`` on the channel-0 / channel-0 block (the channel-0
+    second order is added separately) and ``0`` on every bond / bond
+    block (their ring second order is the direct skeleton again). Applied
+    as ``A *= 0.5 * mask`` to ``S chibar S + C chibar C`` in
+    :func:`dress_and_build_w`. ``float64`` ``(B nd, B nd)``."""
+    ND = B * nd
+    mask = np.zeros((ND, ND))
+    mask[:nd, :] = 0.5
+    mask[:, :nd] = 0.5
+    mask[:nd, :nd] = 0.0
+    return mask
 
 
 @_dataclass(frozen=True)

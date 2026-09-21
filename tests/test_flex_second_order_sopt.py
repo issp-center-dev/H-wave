@@ -249,11 +249,8 @@ def _one_map_sigma(rows, gate):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, np.zeros_like(G), _BETA, s._bond_view, _SHAPE, 1)
-            perm = flex_bond._mixed_pair_permutation(B, nd, norb)
-            mask = np.zeros((B * nd, B * nd))
-            mask[:nd, :] = 0.5; mask[:, :nd] = 0.5; mask[:nd, :nd] = 0.0
-            with flex_bond.BondDeviceContext(np, s._bond_S, s._bond_C, s._bond_S_on,
-                                             s._bond_C_on, perm, mask) as dev:
+            with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C, s._bond_S_on,
+                                                       s._bond_C_on, s._bond_view, norb) as dev:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False, nmat=nmat,
                                             nvol=nvol, nd=nd, spatial_shape=_SHAPE,
                                             factors=s._second_order_factors, second_order="local")

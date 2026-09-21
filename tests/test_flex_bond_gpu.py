@@ -23,6 +23,7 @@ every comparison (off in a normal run, which stays quiet).
 import contextlib
 import os
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -248,15 +249,11 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
         S_on = np.ascontiguousarray(S[:, :nd, :nd])
         C_on = np.ascontiguousarray(C[:, :nd, :nd])
-        perm = fb._mixed_pair_permutation(ND // nd, nd, 2)
-        mask = np.zeros((ND, ND))
-        mask[:nd, :] = 0.5
-        mask[:, :nd] = 0.5
-        mask[:nd, :nd] = 0.0
+        view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(xp, nb):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext(xp, S, C, S_on, C_on, perm, mask) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
@@ -285,6 +282,57 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                 self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
 
+    def test_output_full_susceptibilities_match(self):
+        """``output_full=True`` (issue #198 item 3): the batched dressed
+        susceptibilities ``chi_s_w`` / ``chi_c_w`` the store writes alongside
+        ``W`` -- otherwise covered on the GPU only through ``output_full``'s
+        DressResult fields, never through the store's own full-frequency
+        arrays."""
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        S_on = np.ascontiguousarray(S[:, :nd, :nd])
+        C_on = np.ascontiguousarray(C[:, :nd, :nd])
+        view = types.SimpleNamespace(n_channels=ND // nd)
+
+        def run(xp, nb):
+            with fb.BondBlockStore(nmat, nvol, ND, nd,
+                                   ("chibar", "W", "chi_s_w", "chi_c_w")) as store, \
+                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                res = fb.dress_and_build_w(store, dev, nb=nb, output_full=True, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                           second_order="takimoto")
+                return (store.get_freq_batch("W", 0, nmat).copy(),
+                        store.get_freq_batch("chi_s_w", 0, nmat).copy(),
+                        store.get_freq_batch("chi_c_w", 0, nmat).copy(), res)
+
+        W_ref, chi_s_ref, chi_c_ref, r_ref = run(np, nmat)
+        mat = np.eye(ND)[None, None] - chi_bar @ S[None]
+        cm = _cond_max(mat)
+        for nb in sorted({1, 3, nmat // 2, nmat}):
+            with self.subTest(nb=nb):
+                W, chi_s_w, chi_c_w, r = run(self.cupy, nb)
+                _deviation("W (nb={})".format(nb), W, W_ref)
+                _deviation("chi_s_w (nb={})".format(nb), chi_s_w, chi_s_ref)
+                _deviation("chi_c_w (nb={})".format(nb), chi_c_w, chi_c_ref)
+                np.testing.assert_allclose(W, W_ref, rtol=1e-10 * cm,
+                                           atol=1e-12 * np.max(np.abs(W_ref)))
+                np.testing.assert_allclose(chi_s_w, chi_s_ref, rtol=1e-10 * cm,
+                                           atol=1e-12 * np.max(np.abs(chi_s_ref)))
+                np.testing.assert_allclose(chi_c_w, chi_c_ref, rtol=1e-10 * cm,
+                                           atol=1e-12 * np.max(np.abs(chi_c_ref)))
+                np.testing.assert_allclose(r.collapse_s, r_ref.collapse_s,
+                                           rtol=1e-10 * cm, atol=1e-13)
+                np.testing.assert_allclose(r.collapse_c, r_ref.collapse_c,
+                                           rtol=1e-10 * cm, atol=1e-13)
+                np.testing.assert_allclose(r.static_s, r_ref.static_s,
+                                           rtol=1e-10 * cm, atol=1e-13)
+                np.testing.assert_allclose(r.static_c, r_ref.static_c,
+                                           rtol=1e-10 * cm, atol=1e-13)
+                self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
+                self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
+
 
 class TestTransportEquivalence(_GpuCase):
     """``flex_bond.calc_self_energy_bond`` (spec 4.3) in both array modules."""
@@ -300,6 +348,23 @@ class TestTransportEquivalence(_GpuCase):
         self.assertEqual(type(out_d).__module__.split(".")[0], "cupy")
         out = self.cupy.asnumpy(out_d)
         _deviation("sigma (bond transport)", out, ref)
+        np.testing.assert_allclose(out, ref, rtol=1e-11, atol=1e-13 * np.max(np.abs(ref)))
+
+    def test_sigma_matches_multichannel(self):
+        """The B >= 3 counterpart (issue #198 item 2): the B = 1 fixture
+        above never takes the rolled-block branch (``xp.roll`` for
+        ``alpha != beta``) of ``calc_self_energy_bond``, since a single
+        channel has no off-diagonal (alpha, beta) pair. This fixture does."""
+        from tests.test_flex_bond_sigma_transport import _transport_problem_multichannel
+        from hwave.solver import flex_bond as fb
+        store, green_kw, beta, view, shape, norb = _transport_problem_multichannel()
+        with store:
+            ref = fb.calc_self_energy_bond(store, green_kw, beta, view, shape, norb, 1)
+            out_d = fb.calc_self_energy_bond(store, green_kw, beta, view, shape, norb, 1,
+                                             xp=self.cupy)
+        self.assertEqual(type(out_d).__module__.split(".")[0], "cupy")
+        out = self.cupy.asnumpy(out_d)
+        _deviation("sigma (bond transport, multichannel)", out, ref)
         np.testing.assert_allclose(out, ref, rtol=1e-11, atol=1e-13 * np.max(np.abs(ref)))
 
 
