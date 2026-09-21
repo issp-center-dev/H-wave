@@ -405,11 +405,17 @@ class TestOutputs(unittest.TestCase):
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
     def test_guard_method_provenance(self):
+        from hwave.solver import bond_channels as _bc
         s, r = _flex({"IterationMax": 2})
         gi = r.get_param("green")
         with tempfile.TemporaryDirectory() as out:
             s.solve(gi, out)
         self.assertEqual(str(gi["longitudinal_bond_guard_method"]), "svd")
+        # the recorded value must come from the same resolver dress_batch
+        # used (issue #197 review), not a literal -- on this numpy solve
+        # that resolver still names "svd"
+        self.assertEqual(str(gi["longitudinal_bond_guard_method"]),
+                         _bc._resolve_guard_method("auto", np, np.complex128))
         self.assertEqual(int(gi["longitudinal_bond_guard_blocks_per_iteration"]),
                          int(gi["longitudinal_bond_guard_exact_blocks_max"]))
         self.assertGreaterEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),

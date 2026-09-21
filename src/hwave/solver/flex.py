@@ -2209,7 +2209,7 @@ class FLEX(RPA):
                     green_info["chiq_s"] = self.chi_s
                     green_info["chiq_c"] = self.chi_c
                     if gate:
-                        self._phase_b_publish_bond(green_info, store)
+                        self._phase_b_publish_bond(green_info, store, dev.xp)
                         if getattr(self, "_pairing_controls", None) is not None:
                             # spec 7: NON-THROWING. The store (chibar of the
                             # last map), the bond device context and the
@@ -2334,10 +2334,13 @@ class FLEX(RPA):
         return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
                 res.collapse_c.reshape(r6), sigma_fluct)
 
-    def _phase_b_publish_bond(self, green_info, store):
+    def _phase_b_publish_bond(self, green_info, store, xp):
         """The sixteen static ``longitudinal_bond_*`` keys of the LAST map
         (Phase A schema), ``longitudinal_bond_source`` and, with
-        ``longitudinal_bond_output_full``, the detached dynamic channels."""
+        ``longitudinal_bond_output_full``, the detached dynamic channels.
+        ``xp`` is the array module the bond map dressed on (``dev.xp`` of
+        the caller, the same module :func:`bond_channels.dress_batch`
+        resolved ``"auto"`` against for this map, issue #197)."""
         from hwave.solver import bond_channels as _bc
         res = self._bond_last
         topo = self._bond_topo
@@ -2345,6 +2348,13 @@ class FLEX(RPA):
         nd = norb * norb
         delta_r = np.asarray(topo.delta_r, dtype=np.int64)
         xp_name = getattr(self, "_bond_xp_name", "numpy")
+        # the recorded guard method must come from the same resolver
+        # dress_batch used, dtype and all (issue #197 review): the store's
+        # chibar slot is always allocated complex128 (BondBlockStore.__init__),
+        # so a zero-copy one-row peek is enough to name that dtype without a
+        # device transfer
+        guard_method = _bc._resolve_guard_method(
+            "auto", xp, store.get_freq_batch("chibar", 0, 1).dtype)
         out = {
             "longitudinal_bond_chi_s": res.static_s,
             "longitudinal_bond_chi_c": res.static_c,
@@ -2372,8 +2382,7 @@ class FLEX(RPA):
             "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
             "longitudinal_bond_device": np.str_(xp_name),
             "longitudinal_bond_nb": np.int64(self._bond_nb),
-            "longitudinal_bond_guard_method": np.str_(
-                _bc._GUARD_AUTO["numpy" if xp_name == "numpy" else "cupy"]),
+            "longitudinal_bond_guard_method": np.str_(guard_method),
             "longitudinal_bond_guard_exact_blocks_total": np.int64(self._bond_guard_exact_total),
             "longitudinal_bond_guard_exact_blocks_max": np.int64(self._bond_guard_exact_max),
             "longitudinal_bond_guard_blocks_per_iteration": np.int64(self._bond_guard_blocks),
