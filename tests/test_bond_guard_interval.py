@@ -196,3 +196,80 @@ class TestIntervalContainment(unittest.TestCase):
                 mock.patch.object(np.linalg, "inv", mock.Mock(side_effect=_Oom("device"))):
             with self.assertRaises(_Oom):
                 bc.bond_conditioning_interval(_near_identity(2, 6), np)
+
+
+class TestExactSet(unittest.TestCase):
+
+    def _interval(self, low, up, valid=None):
+        low = np.asarray(low, float); up = np.asarray(up, float)
+        valid = np.ones(len(low), bool) if valid is None else np.asarray(valid, bool)
+        return bc.GuardInterval(sigma_max_low=np.ones(len(low)), sigma_max_up=np.ones(len(low)),
+                                sigma_min_low=low, sigma_min_up=up,
+                                rho=np.zeros(len(low)), valid=valid)
+
+    def test_candidates_within_the_margin_of_the_smallest_upper_end(self):
+        # score = sigma_min here (sigma_max ends are 1)
+        iv = self._interval(low=[0.05, 0.30, 0.09, 0.50], up=[0.2, 0.6, 0.1, 0.9])
+        # U = 0.1; margin 2 -> low <= 0.2: blocks 0 and 2
+        np.testing.assert_array_equal(bc.select_exact_blocks(iv), [0, 2])
+        np.testing.assert_array_equal(bc.select_exact_blocks(iv, margin=1.0), [0, 2])
+        np.testing.assert_array_equal(bc.select_exact_blocks(iv, margin=4.0), [0, 1, 2])
+
+    def test_invalid_blocks_are_always_included_and_ignored_for_u(self):
+        iv = self._interval(low=[0.0, 0.30, 0.09], up=[np.inf, 0.6, 0.1], valid=[False, True, True])
+        np.testing.assert_array_equal(bc.select_exact_blocks(iv), [0, 2])
+
+    def test_all_invalid_selects_everything(self):
+        iv = self._interval(low=[0, 0], up=[np.inf, np.inf], valid=[False, False])
+        np.testing.assert_array_equal(bc.select_exact_blocks(iv), [0, 1])
+
+
+class TestResolver(unittest.TestCase):
+
+    def _stack(self, scores, seed=0):
+        return np.stack([_with_singular_values([1.0] * (ND - 1) + [s], seed=seed + i)
+                         for i, s in enumerate(scores)])
+
+    def test_matches_the_full_stack_scorer(self):
+        blocks = self._stack([0.5, 0.02, 0.3, 0.8, 0.05])
+        ref = bc.bond_conditioning_score(blocks.reshape(5, 1, 1, ND, ND))
+        out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
+        self.assertEqual(out[:6], ref)                 # exact float equality
+        worst, i, _r, _p, _smin, _smax, n_exact, n_blocks = out
+        self.assertEqual(i, 1)
+        self.assertEqual(n_blocks, 5)
+        self.assertLess(n_exact, 5)                    # 0.02 is far below 0.05 * ... the rest
+        self.assertGreaterEqual(n_exact, 1)
+
+    def test_tied_minima_report_the_first_index(self):
+        A = _with_singular_values([1.0] * (ND - 1) + [0.01], seed=3)
+        blocks = np.stack([A * 1.0, _with_singular_values([1.0] * ND, seed=4), A.copy()])
+        ref = bc.bond_conditioning_score(blocks.reshape(3, 1, 1, ND, ND))
+        out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
+        self.assertEqual(out[:6], ref)
+        self.assertEqual(out[1], 0)
+
+    def test_singular_member_is_decomposed_and_located(self):
+        blocks = self._stack([0.5, 0.4, 0.3])
+        blocks[1] = 0.0
+        ref = bc.bond_conditioning_score(blocks.reshape(3, 1, 1, ND, ND))
+        out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
+        self.assertEqual(out[:6], ref)
+        self.assertEqual(out[1], 1)
+        self.assertGreaterEqual(out[6], 1)
+
+    def test_uniform_batch_decomposes_everything(self):
+        blocks = _near_identity(32, 9, scale=0.05)
+        out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
+        ref = bc.bond_conditioning_score(blocks.reshape(32, 1, 1, ND, ND))
+        self.assertEqual(out[:6], ref)
+        self.assertEqual(out[6], 32)                   # the documented worst case
+
+    def test_property_based_against_the_full_scorer(self):
+        for seed in range(20):
+            rng = np.random.default_rng(seed)
+            scores = 10.0 ** rng.uniform(-5, 0, size=64)
+            blocks = self._stack(scores, seed=1000 * seed)
+            ref = bc.bond_conditioning_score(blocks.reshape(64, 1, 1, ND, ND))
+            out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
+            self.assertEqual(out[:6], ref, seed)

@@ -915,6 +915,38 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
                          valid=np.asarray(to(valid), dtype=bool))
 
 
+def select_exact_blocks(interval, margin=_GUARD_PRUNE_MARGIN):
+    """Sorted flattened indices of the blocks that must be decomposed
+    exactly (spec 2.2): every invalid block, and every valid block whose
+    lower end is at most ``margin`` times the smallest valid upper end
+    ``U`` (no valid block: every index)."""
+    valid = interval.valid
+    n = valid.shape[0]
+    if not np.any(valid):
+        return np.arange(n, dtype=np.int64)
+    U = float(np.min(interval.score_up[valid]))
+    keep = ~valid | (interval.score_low <= margin * U)
+    return np.nonzero(keep)[0].astype(np.int64)
+
+
+def resolve_conditioning_guard(mat_flat, xp, cond_tol, *, k=_GUARD_POWER_ITERATIONS,
+                               margin=_GUARD_PRUNE_MARGIN):
+    """The tuple :func:`bond_conditioning_score` returns for the stack
+    ``mat_flat`` `(n, ND, ND)` on ``xp`` -- ``(worst, i, ratio_i, pole_i,
+    smin_i, smax_i)`` with ``i`` the FLATTENED index of the first minimum --
+    plus ``(n_exact, n_blocks)``, obtained by decomposing on the host only
+    the blocks of :func:`select_exact_blocks` (spec 2.2). ``cond_tol`` is
+    accepted for symmetry with the callers and not used: the decision is
+    the caller's, from ``worst``."""
+    interval = bond_conditioning_interval(mat_flat, xp, k=k)
+    idx = select_exact_blocks(interval, margin=margin)
+    gathered = _bk.to_host(mat_flat[idx])
+    n_e = int(idx.shape[0])
+    worst, local, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(
+        np.asarray(gathered).reshape(n_e, 1, 1, mat_flat.shape[-1], mat_flat.shape[-1]))
+    return (worst, int(idx[local]), ratio_i, pole_i, smin_i, smax_i, n_e, int(mat_flat.shape[0]))
+
+
 class BondConditioningError(ValueError):
     """A refusal of the conditioning guard, with its location and criteria
     as attributes (issue #198) rather than only in the message: ``channel``
