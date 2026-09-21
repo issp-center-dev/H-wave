@@ -387,22 +387,39 @@ class TestDressAndBuildWEquivalence(_GpuCase):
     def test_interval_guard_whole_map(self):
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=13)
+        # Push ONE block toward the instability so its score is far below
+        # every other block's (factor tuned by a host dry run, recorded in
+        # the task report): at factor 100 the spin-channel score of block
+        # (l=0, q=0) is ~0.0153 against a minimum of ~0.4532 over the other
+        # 31 blocks (ratio ~0.034, well under the 1/20 the exact set is
+        # pruned against), and the whole map still passes the guard on both
+        # channels (min score over the map stays above cond_tol = 1e-3) --
+        # the uniform seed=13 fixture alone gives every block nearly the
+        # same score, which makes the pruning count assertions below
+        # vacuous (interval decomposes the same 64 of 64 blocks as svd).
+        chi_bar[0, 0] *= 100.0
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
         S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
-        def run(method):
+        def run(xp, method):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(self.cupy, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
                                            second_order="takimoto", guard_method=method)
                 return store.get_freq_batch("W", 0, nmat).copy(), res
-        W_ref, r_ref = run("svd")
-        W, r = run("interval")
+        W_ref, r_ref = run(self.cupy, "svd")
+        W, r = run(self.cupy, "interval")
+        _W_host, r_host = run(np, "interval")
         np.testing.assert_array_equal(W, W_ref)               # same solves, same guard
         self.assertEqual((r.cond_min_s, r.cond_min_c), (r_ref.cond_min_s, r_ref.cond_min_c))
-        self.assertLessEqual(r.guard_exact_blocks, r.guard_blocks)
+        # the svd path decomposes every guarded block, on both channels
+        self.assertEqual(r_ref.guard_exact_blocks, r_ref.guard_blocks)
+        # device and host intervals select the same exact set
+        self.assertEqual(r.guard_exact_blocks, r_host.guard_exact_blocks)
+        # the spread above gives the interval guard something to prune
+        self.assertLess(r.guard_exact_blocks, r.guard_blocks)
 
 
 class TestTransportEquivalence(_GpuCase):
