@@ -405,7 +405,7 @@ class TestOutputs(unittest.TestCase):
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
     def test_guard_method_provenance(self):
-        s, r = _flex({"IterationMax": 1})
+        s, r = _flex({"IterationMax": 2})
         gi = r.get_param("green")
         with tempfile.TemporaryDirectory() as out:
             s.solve(gi, out)
@@ -414,6 +414,14 @@ class TestOutputs(unittest.TestCase):
                          int(gi["longitudinal_bond_guard_exact_blocks_max"]))
         self.assertGreaterEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),
                                 int(gi["longitudinal_bond_guard_exact_blocks_max"]))
+        # two maps run at IterationMax = 2, and under "svd" every guarded
+        # block is decomposed exactly in every iteration (issue #197): the
+        # solve-wide total is exactly twice one iteration's count, pinning
+        # a running accumulation rather than a per-iteration reset
+        self.assertEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),
+                         2 * int(gi["longitudinal_bond_guard_blocks_per_iteration"]))
+        self.assertEqual(int(gi["longitudinal_bond_guard_exact_blocks_max"]),
+                         int(gi["longitudinal_bond_guard_blocks_per_iteration"]))
 
     def test_static_guard_mode_is_logged(self):
         """``longitudinal_bond_guard_freqs = "static"`` narrows the
