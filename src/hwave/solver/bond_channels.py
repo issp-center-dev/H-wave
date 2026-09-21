@@ -13,6 +13,7 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 (later tasks / ``sc.py`` top level) -- this module stays general.
 """
 
+import contextlib
 from dataclasses import dataclass, field
 from dataclasses import dataclass as _dataclass
 import logging
@@ -760,6 +761,16 @@ class GuardInterval:
         return self.sigma_min_up / np.maximum(1.0, self.sigma_max_low)
 
 
+def _errstate(xp):
+    """numpy's floating-point warning suppression for the norm / product /
+    quotient arithmetic of the interval guard; cupy has no errstate and its
+    device arithmetic raises no such warnings, so the context is a no-op
+    there."""
+    if xp is np:
+        return np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore")
+    return contextlib.nullcontext()
+
+
 def _norm_upper(X, xp):
     """min(||X||_F, sqrt(||X||_1 ||X||_inf)) per block: an upper bound of
     the spectral norm. ``X`` can be a raw block or its inverse, either of
@@ -767,7 +778,7 @@ def _norm_upper(X, xp):
     runs with floating-point warnings suppressed -- an out-of-range block
     is caught by the (already non-finite or out-of-range) result, exactly
     as an in-range one is."""
-    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+    with _errstate(xp):
         ax = xp.abs(X)
         fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
         one = ax.sum(axis=1).max(axis=1)
@@ -799,7 +810,7 @@ def _rayleigh_lower(M, xp, k):
     point warnings are suppressed throughout; the non-finite or zero values
     they would have flagged are still caught by the validity checks below."""
     n, ND, _ = M.shape
-    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+    with _errstate(xp):
         absM = xp.abs(M)
         m = absM.max(axis=(1, 2))
         m_ok = xp.isfinite(m) & (m > 0)
@@ -881,7 +892,7 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
     # the residual and the two norms below can involve either extreme of the
     # scale guard's range (A or its inverse); warnings are suppressed, the
     # resulting non-finite / out-of-range values are caught by validity checks
-    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+    with _errstate(xp):
         R = eye - A @ B
         rho = xp.sqrt((xp.abs(R) ** 2).sum(axis=(1, 2)))
         del R

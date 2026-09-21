@@ -400,3 +400,21 @@ class TestDressAndBuildWGuardMethod(unittest.TestCase):
         self.assertIn("guard", rows)
         U_b = int(est["nb"]) * 4 * (3 * 4) ** 2 * 16
         self.assertEqual(rows["guard"], 3 * U_b)
+
+
+class TestErrstateHelper(unittest.TestCase):
+    """``bond_channels._errstate`` (issue #197 fix round 1): numpy's warning
+    suppression for the norm / product / quotient arithmetic of the interval
+    guard, a no-op off numpy -- cupy has no ``errstate`` and its device
+    arithmetic raises no such warnings."""
+
+    def test_errstate_helper_is_a_no_op_off_numpy(self):
+        import contextlib
+        import types
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with bc._errstate(np):
+                1.0 / np.zeros(1)
+        self.assertEqual(caught, [])
+        obj = types.SimpleNamespace()
+        self.assertIsInstance(bc._errstate(obj), contextlib.nullcontext)
