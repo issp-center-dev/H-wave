@@ -14,6 +14,7 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 """
 
 from dataclasses import dataclass, field
+from dataclasses import dataclass as _dataclass
 import logging
 
 import numbers
@@ -683,6 +684,26 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
 # sigma_min above this floor.
 _BOND_COND_FLOOR = 1.0e-3
 
+#: power iterations of the interval guard (issue #197): each step tightens
+#: the Rayleigh ends; any count gives valid one-sided bounds
+_GUARD_POWER_ITERATIONS = 4
+#: pruning margin of the exact set (spec 2.2): a block is decomposed exactly
+#: unless its lower end exceeds this multiple of the smallest upper end
+_GUARD_PRUNE_MARGIN = 2.0
+#: scale guard: blocks whose Frobenius norm (or their inverse's) leaves this
+#: range get no interval (products and norms would approach overflow /
+#: underflow, where the exact-arithmetic bounds do not describe the floats)
+_GUARD_SCALE_MIN = 1.0e-100
+_GUARD_SCALE_MAX = 1.0e+100
+#: outward-rounding term of the interval ends (spec 2.1): eps = _GUARD_ROUNDING
+#: * ND**2 * u (u = 2.0**-53) is a bound on the relative round-off of the
+#: norms, products and quotients of an ND x ND block; every lower end is
+#: multiplied by (1 - eps) and every upper end by (1 + eps) so the interval
+#: contains the reference singular values in floating point as well as in
+#: exact arithmetic (the design's factor-2 pruning margin is twelve orders
+#: of magnitude wider)
+_GUARD_ROUNDING = 16.0
+
 
 def bond_conditioning_score(mat):
     """Score the conditioning of the enlarged RPA denominator blocks of
@@ -713,6 +734,152 @@ def bond_conditioning_score(mat):
     iq = int(np.argmin(score))
     return (float(score[iq]), iq, float(ratio[iq]), float(pole[iq]),
             float(sv[iq, -1]), float(sv[iq, 0]))
+
+
+@_dataclass(frozen=True)
+class GuardInterval:
+    """Per-block two-sided bounds of the conditioning quantities of one
+    stack (issue #197, spec 2.1), as HOST float64 / bool arrays of length
+    ``n``. ``valid`` is False where no bounds could be established (out-of-
+    scale block, inverse failed, residual ``rho >= 1`` or non-finite); such
+    a block carries ``sigma_min_low = 0``, ``sigma_min_up = inf`` and
+    ``rho = nan`` (inverse raised) or its computed value."""
+    sigma_max_low: np.ndarray
+    sigma_max_up: np.ndarray
+    sigma_min_low: np.ndarray
+    sigma_min_up: np.ndarray
+    rho: np.ndarray
+    valid: np.ndarray
+
+    @property
+    def score_low(self):
+        return self.sigma_min_low / np.maximum(1.0, self.sigma_max_up)
+
+    @property
+    def score_up(self):
+        return self.sigma_min_up / np.maximum(1.0, self.sigma_max_low)
+
+
+def _norm_upper(X, xp):
+    """min(||X||_F, sqrt(||X||_1 ||X||_inf)) per block: an upper bound of
+    the spectral norm."""
+    ax = xp.abs(X)
+    fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
+    one = ax.sum(axis=1).max(axis=1)
+    inf = ax.sum(axis=2).max(axis=1)
+    return xp.minimum(fro, xp.sqrt(one * inf)), fro
+
+
+def _rayleigh_lower(M, xp, k):
+    """sqrt of the Rayleigh quotient of the Hermitian PSD stack ``M`` after
+    ``k`` power steps from the all-ones vector: a lower bound of the largest
+    singular value of the matrix whose Gram matrix ``M`` is. 0 where the
+    iteration is exceptional (zero / non-finite norm or quotient).
+
+    The Rayleigh-quotient inequality ``Re(x^H M x) / (x^H x) <= lambda_max``
+    is exact in real arithmetic for any ``x``, regardless of how many power
+    steps produced it; the caller applies the outward-rounding term of the
+    interval ends (:data:`_GUARD_ROUNDING`) to every end together, this
+    value included, so the floating-point evaluation of the quotient here
+    is left untouched."""
+    n, ND, _ = M.shape
+    x = xp.ones((n, ND, 1), dtype=M.dtype)
+    ok = xp.ones(n, dtype=bool)
+    for _ in range(k):
+        y = M @ x
+        nrm = xp.sqrt(xp.real((xp.conj(y) * y).sum(axis=(1, 2))))
+        ok &= xp.isfinite(nrm) & (nrm > 0)
+        x = xp.where(ok[:, None, None], y / xp.where(ok, nrm, 1.0)[:, None, None], x)
+    num = xp.real((xp.conj(x) * (M @ x)).sum(axis=(1, 2)))
+    den = xp.real((xp.conj(x) * x).sum(axis=(1, 2)))
+    q = xp.where(ok & xp.isfinite(num) & (den > 0), num / xp.where(den > 0, den, 1.0), 0.0)
+    return xp.sqrt(xp.maximum(q, 0.0))
+
+
+def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
+    """Two-sided bounds of ``sigma_max`` and ``sigma_min`` of every block of
+    ``mat_flat`` `(n, ND, ND)` complex128 on the array module ``xp`` (numpy
+    or cupy), from batched operations only (spec 2.1, issue #197):
+
+    * ``sigma_max`` in ``[sqrt(rayleigh(A^H A)), min(||A||_F, sqrt(||A||_1 ||A||_inf))]``,
+    * with the computed inverse ``B`` and ``rho = ||I - A B||_F < 1``
+      (Neumann series): ``sigma_min`` in
+      ``[(1 - rho) / N(B), (1 + rho) / sqrt(rayleigh(B B^H))]``.
+
+    The inequalities hold in exact arithmetic for the computed ``B`` and
+    vectors; the floating-point error of the norms, products and inner
+    products of a well-scaled block is of order ``ND^2 u`` relative, so
+    every end is rounded outward by that documented margin
+    (:data:`_GUARD_ROUNDING`) before it is returned, keeping the interval
+    rigorous in floating point too, not only in exact arithmetic -- twelve
+    orders of magnitude inside the caller's pruning margin
+    (:data:`_GUARD_PRUNE_MARGIN`). Never raises on singular or out-of-scale
+    input (those blocks are ``valid = False``); device out-of-memory errors
+    propagate. Every returned array is a HOST array."""
+    if xp is not np and not (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp):
+        raise TypeError("bond_conditioning_interval: xp must be numpy or cupy")
+    if getattr(mat_flat, "dtype", None) != np.complex128 or mat_flat.ndim != 3 \
+            or mat_flat.shape[-1] != mat_flat.shape[-2]:
+        raise TypeError("bond_conditioning_interval: mat_flat must be a (n, ND, ND) complex128 "
+                        "stack, got {} {}".format(getattr(mat_flat, "dtype", None),
+                                                  getattr(mat_flat, "shape", None)))
+    A = mat_flat
+    n, ND, _ = A.shape
+    eye = xp.eye(ND, dtype=A.dtype)
+    N_A, fro_A = _norm_upper(A, xp)
+    valid = xp.isfinite(fro_A) & (fro_A >= _GUARD_SCALE_MIN) & (fro_A <= _GUARD_SCALE_MAX)
+    smax_low = _rayleigh_lower(xp.conj(A).swapaxes(1, 2) @ A, xp, k)
+    # the inverse: a raised stack inverse marks the whole stack (cupy) or the
+    # failing members (numpy, block by block) invalid; OOM propagates
+    oom = _bk.oom_error_types()
+    LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
+    B = None
+    inv_failed = xp.zeros(n, dtype=bool)
+    try:
+        B = xp.linalg.inv(A)
+    except oom:
+        raise
+    except Exception:            # noqa: BLE001 - LinAlgError / cuBLAS / cuSOLVER errors
+        if xp is np:
+            B = np.zeros_like(A)
+            for j in range(n):
+                try:
+                    B[j] = np.linalg.inv(A[j])
+                except LinAlgError:
+                    inv_failed[j] = True
+        else:
+            inv_failed[:] = True
+            B = xp.zeros_like(A)
+    R = eye - A @ B
+    rho = xp.sqrt((xp.abs(R) ** 2).sum(axis=(1, 2)))
+    del R
+    N_B, fro_B = _norm_upper(B, xp)
+    valid &= ~inv_failed & xp.isfinite(rho) & (rho < 1.0) & xp.isfinite(fro_B) \
+        & (fro_B >= _GUARD_SCALE_MIN) & (fro_B <= _GUARD_SCALE_MAX)
+    b_low = _rayleigh_lower(B @ xp.conj(B).swapaxes(1, 2), xp, k)      # lower bound of ||B||_2
+    del B
+    smin_low = xp.where(valid, (1.0 - rho) / xp.where(valid, N_B, 1.0), 0.0)
+    smin_up = xp.where(valid & (b_low > 0), (1.0 + rho) / xp.where(b_low > 0, b_low, 1.0), xp.inf)
+    rho_out = xp.where(inv_failed, xp.nan, rho)
+    to = _bk.to_host
+    sigma_max_low = np.asarray(to(smax_low), dtype=np.float64)
+    sigma_max_up = np.asarray(to(N_A), dtype=np.float64)
+    sigma_min_low = np.asarray(to(smin_low), dtype=np.float64)
+    sigma_min_up = np.asarray(to(smin_up), dtype=np.float64)
+    # outward rounding of every end (spec 2.1, see _GUARD_ROUNDING): keeps
+    # the interval rigorous against floating-point reference computations,
+    # not only against the exact-arithmetic theorems it is derived from
+    eps = _GUARD_ROUNDING * ND * ND * (2.0 ** -53)
+    sigma_max_low *= (1.0 - eps)
+    sigma_min_low *= (1.0 - eps)
+    sigma_max_up *= (1.0 + eps)
+    sigma_min_up *= (1.0 + eps)          # inf * (1 + eps) stays inf
+    return GuardInterval(sigma_max_low=sigma_max_low,
+                         sigma_max_up=sigma_max_up,
+                         sigma_min_low=sigma_min_low,
+                         sigma_min_up=sigma_min_up,
+                         rho=np.asarray(to(rho_out), dtype=np.float64),
+                         valid=np.asarray(to(valid), dtype=bool))
 
 
 class BondConditioningError(ValueError):
