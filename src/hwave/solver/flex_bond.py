@@ -625,7 +625,8 @@ def transport_ops(B, nmat, nvol, norb):
 
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
-                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None):
+                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
+                         guard_freqs="all", guard_enabled=True):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -674,13 +675,18 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     with, so the real device allocation is smaller --
     ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
     dressing solve and ``transport = 6 * C`` during the bond
-    self-energy transport. ``guard(nb) = 3 * nb * nvol * ND^2 * 16`` is the
-    conditioning guard's own device temporaries (issue #197):
-    INCREMENTAL to the dressing row rather than a phase of its own (the
-    guard runs inside the dressing phase, never simultaneously with the
-    bubble or the transport), so it is added to ``dressing`` in the need
-    below but never competes for the name a refusal gives the largest
-    phase. The device need at a batch size is therefore
+    self-energy transport. ``guard(nb) = 4 * nb * nvol * ND^2 * 16`` under
+    ``guard_freqs = "all"`` (``4 * nvol * ND^2 * 16``, independent of
+    ``nb``, under ``"static"``, where only one frequency slice of ``nvol``
+    blocks is ever guarded; ``0`` when the guard is disabled,
+    ``guard_enabled=False``) is the conditioning guard's own device
+    temporaries (issue #197), incremental to the dressing row rather than
+    a phase of its own (the guard runs inside the dressing phase, never
+    simultaneously with the bubble or the transport), so it is added to
+    ``dressing`` in the need below but never competes for the name a
+    refusal gives the largest phase. The factor is 4, not the 3 device
+    temporaries active at any one instant, to keep headroom over the
+    measured ~3x peak. The device need at a batch size is therefore
     ``1.25 * (vertices_static + flex_arrays + green0_tail +
     second_order_factors + max(bubble, dressing(nb) + guard(nb), transport))``
     against ``device_cap = 0.9 *
@@ -809,8 +815,13 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             rows["dressing"] = 7 * n * nvol * ND * ND * it
             # the conditioning guard's device temporaries (issue #197):
             # incremental to the dressing row, not a phase of its own --
-            # see _largest_dev_phase, which never names it
-            rows["guard"] = 3 * n * nvol * ND * ND * it
+            # see _largest_dev_phase, which never names it. Under
+            # guard_freqs = "static" only one frequency slice of nvol
+            # blocks is ever guarded per batch, so the row does not scale
+            # with n there; a disabled guard (cond_tol = None) allocates
+            # nothing.
+            rows["guard"] = (4 * (n if guard_freqs == "all" else 1) * nvol * ND * ND * it
+                             if guard_enabled else 0)
             rows["transport"] = transport
             return rows
         def _dev_need(n):
@@ -825,8 +836,9 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             phase = _largest_dev_phase(_dev_rows(1))
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
-                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
-                "row) exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce "
+                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max(bubble, "
+                "dressing + guard, transport)) exceeds 0.9 * the available device memory {:.4f} "
+                "GiB; the rows are\n{}\nReduce "
                 "the k mesh or Nmat, drop declared-zero outer shells with "
                 "longitudinal_bond_max_shells, or run with gpu=false.".format(
                     _dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))

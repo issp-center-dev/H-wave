@@ -426,7 +426,7 @@ class TestDressAndBuildWGuardMethod(unittest.TestCase):
         rows = est["device_rows"]
         self.assertIn("guard", rows)
         U_b = int(est["nb"]) * 4 * (3 * 4) ** 2 * 16
-        self.assertEqual(rows["guard"], 3 * U_b)
+        self.assertEqual(rows["guard"], 4 * U_b)
 
 
 class TestErrstateHelper(unittest.TestCase):

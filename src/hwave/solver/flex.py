@@ -1782,7 +1782,9 @@ class FLEX(RPA):
             freq_batch=self.longitudinal_bond_freq_batch,
             cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
             factor_bytes=(0 if self._second_order_factors is None
-                          else int(self._second_order_factors.nbytes)))
+                          else int(self._second_order_factors.nbytes)),
+            guard_freqs=self.longitudinal_bond_guard_freqs,
+            guard_enabled=self.longitudinal_bond_cond_tol is not None)
         est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
         gib = flex_bond._GIB
         logger.info(

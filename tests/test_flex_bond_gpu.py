@@ -184,7 +184,11 @@ class TestDressBatchEquivalence(_GpuCase):
         # on A, once on B after the inverse exists), so the spy below only
         # samples the pool at those two points -- the assertion is an upper
         # bound on the increment AT THOSE POINTS, not a measured peak; the
-        # controller records the actual peak from the GPU run.
+        # controller records the actual peak from the GPU run. The sampled
+        # increment is NOT the true peak either way: the true peak, ~3 U_b
+        # after the early `del`s release the temporaries, is what the
+        # "guard" row of flex_bond.estimate_bond_memory covers (its factor
+        # of 4 is deliberate headroom above that measured ~3 U_b).
         from hwave.solver import bond_channels as bc
         chi_bar, S, _C = _problem(nmat=16, nvol=32, nd=4, B=3, seed=12)
         n, ND = 16 * 32, S.shape[-1]
@@ -507,6 +511,7 @@ class TestEndToEndEquivalence(_GpuCase):
         the backends' round-off."""
         from tests.test_flex_bond_gate import _flex
         outs = {}
+        guard_methods = {}
         for gpu in (False, True):
             s, r = _flex({"gpu": gpu, "IterationMax": 200, "EPS": 12, "Mix": 0.5})
             gi = r.get_param("green")
@@ -514,10 +519,15 @@ class TestEndToEndEquivalence(_GpuCase):
                 s.solve(gi, out)
                 outs[gpu] = (bool(s.scf_converged), int(s.scf_iterations), float(s.mu),
                              np.array(gi["sigma"]), np.array(gi["longitudinal_bond_chi_s"]))
+                guard_methods[gpu] = str(gi["longitudinal_bond_guard_method"])
             if gpu:
                 # the run really took the device path, so a silent numpy
                 # fallback cannot pass this test by comparing CPU with CPU
                 self.assertEqual(str(s._bond_xp_name), "cupy")
+        # the guard method "auto" resolves differently per array module
+        # (issue #197): "interval" on the device path, "svd" on the host
+        self.assertEqual(guard_methods[True], "interval")
+        self.assertEqual(guard_methods[False], "svd")
         (ca, ia, ma, sa, xa), (cb, ib, mb, sb, xb) = outs[False], outs[True]
         _deviation("end-to-end sigma", sb, sa)
         _deviation("end-to-end bond chi_s", xb, xa)

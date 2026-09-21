@@ -1444,8 +1444,9 @@ _PROVENANCE_DELTA = frozenset(("flex_guard_policy", "flex_guard_violations"))
 #: (:data:`_bond_static` in ``flex.py``), so -- like
 #: ``longitudinal_bond_cond_tol`` -- they land in the bond archive and in
 #: whichever chiq_s/c/combined archive carries the static bond keys, not
-#: in every non-bond file. The guard method resolves to "svd" on every
-#: module today, so its value carries no numerical content either.
+#: in every non-bond file. On the CPU path of the reference comparison it
+#: resolves to "svd"; on the GPU path it is "interval". Either way the
+#: recorded string carries no numerical content.
 _BOND_GUARD_DELTA = frozenset(("longitudinal_bond_guard_method",
                                "longitudinal_bond_guard_exact_blocks_total",
                                "longitudinal_bond_guard_exact_blocks_max",
