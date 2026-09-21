@@ -147,14 +147,18 @@ class BondDeviceContext:
         mask from :func:`mixed_block_mask`, both from ``view.n_channels``
         and ``nd = norb * norb``. ``perm`` overrides the permutation (the
         identity-permutation control of the second-order tests). Refuses a
-        vertex whose pair dimension is not ``n_channels * nd``."""
+        vertex whose trailing two dimensions are not ``(n_channels * nd,
+        n_channels * nd)``; the shapes are read off the arrays as given
+        (host or device -- nothing is converted here)."""
         nd = norb * norb
         B = int(view.n_channels)
-        ND = np.asarray(S).shape[-1]
-        if ND != B * nd:
-            raise ValueError("BondDeviceContext.for_view: the vertex pair dimension ND = {} "
-                             "is not view.n_channels * norb**2 = {} * {}"
-                             .format(ND, B, nd))
+        ND = B * nd
+        for label, V in (("S", S), ("C", C)):
+            shape = tuple(np.shape(V))
+            if shape[-2:] != (ND, ND):
+                raise ValueError("BondDeviceContext.for_view: the vertex {} has trailing "
+                                 "shape {}, not the (ND, ND) = ({}, {}) of view.n_channels "
+                                 "* norb**2 = {} * {}".format(label, shape[-2:], ND, ND, B, nd))
         if perm is None:
             perm = _mixed_pair_permutation(B, nd, norb)
         return cls(xp, S, C, S_on, C_on, perm, mixed_block_mask(B, nd),

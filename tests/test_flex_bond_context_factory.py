@@ -113,6 +113,35 @@ class TestForView(unittest.TestCase):
             BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb)
         self.assertIn("n_channels", str(cm.exception))
 
+    def test_refuses_a_non_square_or_mismatched_vertex(self):
+        B, norb = 2, 2
+        nd = norb * norb
+        S, C, S_on, C_on = _vertices(B, norb)
+        view = types.SimpleNamespace(n_channels=B)
+        with self.assertRaises(ValueError) as cm:      # S not square
+            BondDeviceContext.for_view(np, S[:, :-1], C, S_on, C_on, view, norb)
+        self.assertIn("vertex S", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:      # C of another pair dimension
+            BondDeviceContext.for_view(np, S, np.eye(B * nd + nd), S_on, C_on, view, norb)
+        self.assertIn("vertex C", str(cm.exception))
+
+    def test_reads_shapes_without_converting_the_arrays(self):
+        # a device array cannot be np.asarray'd; the factory must only look
+        # at .shape (BondDeviceContext itself moves the arrays with
+        # _bk.to_device). Stand-in: an object exposing shape and refusing
+        # conversion, with to_device patched to accept it.
+        B, norb = 1, 1
+        view = types.SimpleNamespace(n_channels=B)
+
+        class _Opaque:
+            shape = (2, 1, 1)
+            def __array__(self, *a, **k):
+                raise TypeError("implicit conversion is refused")
+        with mock.patch.object(flex_bond._bk, "to_device", lambda a, xp: a):
+            with BondDeviceContext.for_view(np, _Opaque(), _Opaque(), None, None,
+                                            view, norb) as dev:
+                self.assertIsInstance(dev.S, _Opaque)
+
 
 if __name__ == "__main__":
     unittest.main()

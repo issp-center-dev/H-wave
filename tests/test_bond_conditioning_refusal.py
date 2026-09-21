@@ -3,10 +3,9 @@ ATTRIBUTES (issue #198): ``bond_channels.BondConditioningError`` (a
 ``ValueError``, so every existing ``except ValueError`` still catches it)
 names the channel, the q-point and the two criteria structurally, and
 ``dress_batch`` builds its refusal from the score it has already computed
-instead of scoring the batch a second time. The message texts are pinned
-unchanged."""
+instead of scoring the batch a second time. Both message texts are pinned
+in full, unchanged from before."""
 
-import re
 import unittest
 from unittest import mock
 
@@ -23,6 +22,29 @@ def _refusing_static(sigma_min=1.0e-9, iq=1, Nx=3):
     mat = np.broadcast_to(np.eye(2, dtype=complex), (Nx, 1, 1, 2, 2)).copy()
     mat[iq, 0, 0] = sigma_min * np.eye(2)
     return mat
+
+
+def _dress_bond_message(name, q, ratio, pole, cond_tol, smin, smax):
+    """The pre-#198 text of the guard's refusal, verbatim."""
+    return ("dress_bond: the {} RPA denominator is singular or nearly singular at "
+            "the q-point index ({}, {}, {}): sigma_min/sigma_max = {:.3e}, "
+            "sigma_min/max(1, sigma_max) = {:.3e}; the smaller of the two is "
+            "<= cond_tol = {:.3e} (sigma_min = {:.3e}, sigma_max = {:.3e}). The "
+            "bond path has entered the {} instability region, where the dressed "
+            "vertices are enormous and numerically meaningless. Reduce the "
+            "interaction strength, raise the temperature, refine/reduce the "
+            "q-grid, or -- if you deliberately want to study the stiff regime -- "
+            "lower cond_tol.".format(name, q[0], q[1], q[2], ratio, pole, cond_tol,
+                                     smin, smax, name))
+
+
+def _dress_batch_message(channel, nu, l, q):
+    """The pre-#198 text of dress_batch's refusal, verbatim."""
+    return ("dress_batch: the {} RPA denominator is singular or nearly singular at "
+            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+            "the bond path has entered the instability region. Reduce the interaction "
+            "strength, raise the temperature, refine or reduce the q grid, or lower "
+            "cond_tol deliberately.".format(channel, nu, l, q[0], q[1], q[2]))
 
 
 class TestCheckBondConditioning(unittest.TestCase):
@@ -45,17 +67,8 @@ class TestCheckBondConditioning(unittest.TestCase):
         self.assertEqual(exc.smin, smin)
         self.assertEqual(exc.smax, smax)
         self.assertEqual(exc.cond_tol, 1.0e-3)
-        msg = str(exc)
-        # the pre-#198 text, verbatim in its fixed parts and its numbers
-        self.assertTrue(msg.startswith(
-            "dress_bond: the spin RPA denominator is singular or nearly singular at "
-            "the q-point index (1, 0, 0): "))
-        self.assertIn("sigma_min/sigma_max = {:.3e}".format(ratio), msg)
-        self.assertIn("sigma_min/max(1, sigma_max) = {:.3e}".format(pole), msg)
-        self.assertIn("<= cond_tol = {:.3e}".format(1.0e-3), msg)
-        self.assertIn("(sigma_min = {:.3e}, sigma_max = {:.3e})".format(smin, smax), msg)
-        self.assertIn("entered the spin instability region", msg)
-        self.assertTrue(msg.endswith("lower cond_tol."))
+        self.assertEqual(str(exc), _dress_bond_message(
+            "spin", (1, 0, 0), ratio, pole, 1.0e-3, smin, smax))
 
     def test_passing_the_score_skips_the_second_decomposition(self):
         mat = _refusing_static()
@@ -98,7 +111,7 @@ class TestDressBatchRefusal(unittest.TestCase):
         return cb, W
 
     def test_refusal_names_the_location_structurally_from_one_score(self):
-        cb, W = self._batch()
+        cb, W = self._batch()                     # bad block at batch row 1, q = 1
         with mock.patch.object(bc, "bond_conditioning_score",
                                wraps=bc.bond_conditioning_score) as score:
             with self.assertRaises(ValueError) as cm:
@@ -113,27 +126,40 @@ class TestDressBatchRefusal(unittest.TestCase):
         self.assertEqual(exc.cond_tol, bc._BOND_COND_FLOOR)
         self.assertAlmostEqual(exc.pole, 1.0e-9, delta=1.0e-12)
         self.assertEqual(exc.worst, min(exc.ratio, exc.pole))
-        # the chained cause is the guard's own refusal, from the same score
-        self.assertIsInstance(exc.__cause__, bc.BondConditioningError)
-        self.assertEqual(exc.__cause__.worst, exc.worst)
-        self.assertEqual(exc.__cause__.smin, exc.smin)
-        # the outer text is unchanged
-        msg = str(exc)
-        self.assertTrue(msg.startswith(
-            "dress_batch: the spin RPA denominator is singular or nearly singular at "
-            "bosonic Matsubara index {} (grid index l=5) and q-point index (1, 0, 0); "
-            "the bond path has entered the instability region.".format(2 * 5 - 16)))
-        self.assertTrue(msg.endswith("or lower cond_tol deliberately."))
+        self.assertEqual(str(exc), _dress_batch_message("spin", 2 * 5 - 16, 5, (1, 0, 0)))
+        # the chained cause is the guard's own refusal from the same score,
+        # located on the (n, 1, 1, ND, ND) blocks of THIS call: its q index
+        # is the flattened batch position (row 1, q 1 of nvol 2 -> 3), not
+        # a grid index, and it carries no l
+        cause = exc.__cause__
+        self.assertIsInstance(cause, bc.BondConditioningError)
+        self.assertEqual(cause.channel, "spin")
+        self.assertEqual(cause.iq, 3)
+        self.assertEqual(cause.q, (3, 0, 0))
+        self.assertIsNone(cause.l)
+        self.assertEqual(cause.worst, exc.worst)
+        self.assertEqual(cause.smin, exc.smin)
+        self.assertEqual(str(cause), _dress_bond_message(
+            "spin", (3, 0, 0), exc.ratio, exc.pole, exc.cond_tol, exc.smin, exc.smax))
 
     def test_static_guard_locates_the_slice_in_batch_coordinates(self):
         # guard_freqs = "static": only the l = nmat // 2 slice is scored;
-        # with l0 = 6, nb = 3 and nmat = 16 that is batch row 2
-        cb, W = self._batch(l_bad=2, q_bad=0)
+        # with l0 = 6, nb = 3 and nmat = 16 that is batch row 2, scored on
+        # its own (nvol, ND, ND) blocks with the row offset 2 * nvol = 4.
+        # The outer refusal reports the grid location; the cause the LOCAL
+        # index within the scored slice (q = 1, not 4 + 1).
+        cb, W = self._batch(l_bad=2, q_bad=1)
         with self.assertRaises(bc.BondConditioningError) as cm:
             bc.dress_batch(cb, W, "spin", l0=6, nmat=16, spatial_shape=(2, 1, 1),
                            guard_freqs="static")
-        self.assertEqual(cm.exception.l, 8)
-        self.assertEqual(cm.exception.q, (0, 0, 0))
+        exc = cm.exception
+        self.assertEqual(exc.l, 8)
+        self.assertEqual(exc.iq, 1)
+        self.assertEqual(exc.q, (1, 0, 0))
+        self.assertEqual(str(exc), _dress_batch_message("spin", 2 * 8 - 16, 8, (1, 0, 0)))
+        self.assertEqual(exc.__cause__.iq, 1)
+        self.assertEqual(exc.__cause__.q, (1, 0, 0))
+        self.assertIsNone(exc.__cause__.l)
 
     def test_passing_batches_are_unaffected(self):
         cb, W = self._batch(sigma_min=0.5)
