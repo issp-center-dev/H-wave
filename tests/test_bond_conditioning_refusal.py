@@ -167,6 +167,23 @@ class TestDressBatchRefusal(unittest.TestCase):
         self.assertEqual(chi.shape, cb.shape)
         self.assertGreater(cond, bc._BOND_COND_FLOOR)
 
+    def test_production_wrapper_keeps_the_structured_refusal(self):
+        # flex_bond._dress appends the SCF iteration to a refusal on the
+        # production path; the exception it raises must still be the
+        # structured one, with the inner refusal chained
+        from hwave.solver import flex_bond as fb
+        cb, W = self._batch()
+        with self.assertRaises(bc.BondConditioningError) as cm:
+            fb._dress(cb, W, "spin", 4, 16, (2, 1, 1), bc._BOND_COND_FLOOR, 3)
+        exc = cm.exception
+        inner = exc.__cause__
+        self.assertIsInstance(inner, bc.BondConditioningError)
+        self.assertEqual(str(exc), str(inner) + fb._at(3))
+        self.assertIn("SCF iteration 3", str(exc))
+        for name in ("channel", "iq", "q", "l", "worst", "ratio", "pole", "smin", "smax", "cond_tol"):
+            self.assertEqual(getattr(exc, name), getattr(inner, name), name)
+        self.assertEqual((exc.l, exc.q), (5, (1, 0, 0)))
+
 
 if __name__ == "__main__":
     unittest.main()

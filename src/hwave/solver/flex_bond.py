@@ -252,7 +252,15 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
     except ValueError as exc:
         if iteration is None:
             raise
-        raise ValueError("{}{}".format(exc, _at(iteration))) from exc
+        message = "{}{}".format(exc, _at(iteration))
+        if isinstance(exc, _bc.BondConditioningError):
+            # keep the structured refusal (issue #198) on the exception the
+            # production path exposes, with the iteration appended
+            raise _bc.BondConditioningError(
+                message, channel=exc.channel, iq=exc.iq, q=exc.q, l=exc.l, worst=exc.worst,
+                ratio=exc.ratio, pole=exc.pole, smin=exc.smin, smax=exc.smax,
+                cond_tol=exc.cond_tol) from exc
+        raise ValueError(message) from exc
     xp = _bk.array_module_of(chi_b)
     if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
