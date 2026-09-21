@@ -3,6 +3,7 @@ two-sided bounds of every block's conditioning score from batched device
 operations, the exact set of blocks that could be the batch minimum, and
 the resolver that reproduces the SVD guard's outputs from them."""
 import unittest
+import warnings
 from unittest import mock
 
 import numpy as np
@@ -108,11 +109,26 @@ class TestIntervalContainment(unittest.TestCase):
 
     def test_scales_inside_and_outside_the_scale_guard(self):
         base = _near_identity(4, 3)
-        inside = np.concatenate([base * 1e-8, base * 1e8])
-        iv = bc.bond_conditioning_interval(inside, np)
+        small, large = base * 1e-8, base * 1e8
+        small90, large90 = base * 1e-90, base * 1e90
+        inside = np.concatenate([small, large, small90, large90])
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            iv = bc.bond_conditioning_interval(inside, np)
+        self.assertEqual(caught, [])
         _assert_enclosed(self, iv, inside)
+        # 1e+-90 stays deep inside the scale guard (+-1e100): the Rayleigh
+        # ends must stay finite and strictly positive there too, not just
+        # near identity scale
+        near_ends = slice(len(small) + len(large), len(inside))
+        self.assertTrue(np.all(iv.sigma_max_low[near_ends] > 0))
+        self.assertTrue(np.all(np.isfinite(iv.sigma_min_up[near_ends])))
+
         outside = np.concatenate([base * 1e-150, base * 1e150])
-        iv = bc.bond_conditioning_interval(outside, np)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            iv = bc.bond_conditioning_interval(outside, np)
+        self.assertEqual(caught, [])
         self.assertFalse(np.any(iv.valid))
         self.assertTrue(np.all(iv.sigma_min_low == 0.0))
         self.assertTrue(np.all(np.isinf(iv.sigma_min_up)))

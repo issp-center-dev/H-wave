@@ -762,38 +762,66 @@ class GuardInterval:
 
 def _norm_upper(X, xp):
     """min(||X||_F, sqrt(||X||_1 ||X||_inf)) per block: an upper bound of
-    the spectral norm."""
-    ax = xp.abs(X)
-    fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
-    one = ax.sum(axis=1).max(axis=1)
-    inf = ax.sum(axis=2).max(axis=1)
-    return xp.minimum(fro, xp.sqrt(one * inf)), fro
+    the spectral norm. ``X`` can be a raw block or its inverse, either of
+    which may sit anywhere in the scale guard's range, so the arithmetic
+    runs with floating-point warnings suppressed -- an out-of-range block
+    is caught by the (already non-finite or out-of-range) result, exactly
+    as an in-range one is."""
+    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+        ax = xp.abs(X)
+        fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
+        one = ax.sum(axis=1).max(axis=1)
+        inf = ax.sum(axis=2).max(axis=1)
+        return xp.minimum(fro, xp.sqrt(one * inf)), fro
 
 
 def _rayleigh_lower(M, xp, k):
     """sqrt of the Rayleigh quotient of the Hermitian PSD stack ``M`` after
     ``k`` power steps from the all-ones vector: a lower bound of the largest
     singular value of the matrix whose Gram matrix ``M`` is. 0 where the
-    iteration is exceptional (zero / non-finite norm or quotient).
+    iteration is exceptional (zero / non-finite norm or quotient, or ``M``
+    itself is not finite or is exactly zero).
 
-    The Rayleigh-quotient inequality ``Re(x^H M x) / (x^H x) <= lambda_max``
-    is exact in real arithmetic for any ``x``, regardless of how many power
-    steps produced it; the caller applies the outward-rounding term of the
-    interval ends (:data:`_GUARD_ROUNDING`) to every end together, this
-    value included, so the floating-point evaluation of the quotient here
-    is left untouched."""
+    ``M`` is already the square of a spectral-norm-scale quantity (``A^H A``
+    or ``B B^H``), so running the power iteration on it directly squares
+    that scale again in every reduction (``||M x||``, then the Rayleigh
+    quotient itself) -- overflowing long before the outer scale guard
+    (:data:`_GUARD_SCALE_MIN` / :data:`_GUARD_SCALE_MAX`) would reject the
+    block. Instead the iteration runs on ``M`` divided by its own per-block
+    Frobenius norm ``s`` -- computed by factoring out each block's largest-
+    magnitude entry before squaring, so forming ``s`` itself cannot overflow
+    -- keeping every intermediate quantity ``O(1)``. The Rayleigh quotient
+    is homogeneous of degree 1 in ``M``, so multiplying the quotient formed
+    from the normalised iteration back by ``s`` before the final square
+    root is an exact identity, not an approximation; the caller's outward-
+    rounding term (:data:`_GUARD_ROUNDING`) already covers the extra
+    rounding this normalisation introduces, so none is added here. Floating-
+    point warnings are suppressed throughout; the non-finite or zero values
+    they would have flagged are still caught by the validity checks below."""
     n, ND, _ = M.shape
-    x = xp.ones((n, ND, 1), dtype=M.dtype)
-    ok = xp.ones(n, dtype=bool)
-    for _ in range(k):
-        y = M @ x
-        nrm = xp.sqrt(xp.real((xp.conj(y) * y).sum(axis=(1, 2))))
-        ok &= xp.isfinite(nrm) & (nrm > 0)
-        x = xp.where(ok[:, None, None], y / xp.where(ok, nrm, 1.0)[:, None, None], x)
-    num = xp.real((xp.conj(x) * (M @ x)).sum(axis=(1, 2)))
-    den = xp.real((xp.conj(x) * x).sum(axis=(1, 2)))
-    q = xp.where(ok & xp.isfinite(num) & (den > 0), num / xp.where(den > 0, den, 1.0), 0.0)
-    return xp.sqrt(xp.maximum(q, 0.0))
+    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+        absM = xp.abs(M)
+        m = absM.max(axis=(1, 2))
+        m_ok = xp.isfinite(m) & (m > 0)
+        m_safe = xp.where(m_ok, m, 1.0)
+        scaled = absM / m_safe[:, None, None]
+        s = m_safe * xp.sqrt((scaled * scaled).sum(axis=(1, 2)))
+        s_ok = m_ok & xp.isfinite(s) & (s > 0)
+        s_safe = xp.where(s_ok, s, 1.0)
+        Mn = M / s_safe[:, None, None]
+
+        x = xp.ones((n, ND, 1), dtype=M.dtype)
+        ok = s_ok.copy()
+        for _ in range(k):
+            y = Mn @ x
+            nrm = xp.sqrt(xp.real((xp.conj(y) * y).sum(axis=(1, 2))))
+            ok &= xp.isfinite(nrm) & (nrm > 0)
+            x = xp.where(ok[:, None, None], y / xp.where(ok, nrm, 1.0)[:, None, None], x)
+        num = xp.real((xp.conj(x) * (Mn @ x)).sum(axis=(1, 2)))
+        den = xp.real((xp.conj(x) * x).sum(axis=(1, 2)))
+        qn = xp.where(ok & xp.isfinite(num) & (den > 0), num / xp.where(den > 0, den, 1.0), 0.0)
+        q = xp.where(s_ok, qn * s_safe, 0.0)          # undo the normalisation: exact identity
+        return xp.sqrt(xp.maximum(q, 0.0))
 
 
 def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
@@ -850,17 +878,22 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
         else:
             inv_failed[:] = True
             B = xp.zeros_like(A)
-    R = eye - A @ B
-    rho = xp.sqrt((xp.abs(R) ** 2).sum(axis=(1, 2)))
-    del R
-    N_B, fro_B = _norm_upper(B, xp)
-    valid &= ~inv_failed & xp.isfinite(rho) & (rho < 1.0) & xp.isfinite(fro_B) \
-        & (fro_B >= _GUARD_SCALE_MIN) & (fro_B <= _GUARD_SCALE_MAX)
-    b_low = _rayleigh_lower(B @ xp.conj(B).swapaxes(1, 2), xp, k)      # lower bound of ||B||_2
-    del B
-    smin_low = xp.where(valid, (1.0 - rho) / xp.where(valid, N_B, 1.0), 0.0)
-    smin_up = xp.where(valid & (b_low > 0), (1.0 + rho) / xp.where(b_low > 0, b_low, 1.0), xp.inf)
-    rho_out = xp.where(inv_failed, xp.nan, rho)
+    # the residual and the two norms below can involve either extreme of the
+    # scale guard's range (A or its inverse); warnings are suppressed, the
+    # resulting non-finite / out-of-range values are caught by validity checks
+    with xp.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore"):
+        R = eye - A @ B
+        rho = xp.sqrt((xp.abs(R) ** 2).sum(axis=(1, 2)))
+        del R
+        N_B, fro_B = _norm_upper(B, xp)
+        valid &= ~inv_failed & xp.isfinite(rho) & (rho < 1.0) & xp.isfinite(fro_B) \
+            & (fro_B >= _GUARD_SCALE_MIN) & (fro_B <= _GUARD_SCALE_MAX)
+        b_low = _rayleigh_lower(B @ xp.conj(B).swapaxes(1, 2), xp, k)  # lower bound of ||B||_2
+        del B
+        smin_low = xp.where(valid, (1.0 - rho) / xp.where(valid, N_B, 1.0), 0.0)
+        smin_up = xp.where(valid & (b_low > 0), (1.0 + rho) / xp.where(b_low > 0, b_low, 1.0),
+                            xp.inf)
+        rho_out = xp.where(inv_failed, xp.nan, rho)
     to = _bk.to_host
     sigma_max_low = np.asarray(to(smax_low), dtype=np.float64)
     sigma_max_up = np.asarray(to(N_A), dtype=np.float64)
