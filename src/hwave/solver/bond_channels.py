@@ -15,7 +15,6 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 
 import contextlib
 from dataclasses import dataclass, field
-from dataclasses import dataclass as _dataclass
 import logging
 
 import numbers
@@ -737,7 +736,7 @@ def bond_conditioning_score(mat):
             float(sv[iq, -1]), float(sv[iq, 0]))
 
 
-@_dataclass(frozen=True)
+@dataclass(frozen=True)
 class GuardInterval:
     """Per-block two-sided bounds of the conditioning quantities of one
     stack (issue #197, spec 2.1), as HOST float64 / bool arrays of length
@@ -783,6 +782,7 @@ def _norm_upper(X, xp):
         fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
         one = ax.sum(axis=1).max(axis=1)
         inf = ax.sum(axis=2).max(axis=1)
+        del ax
         return xp.minimum(fro, xp.sqrt(one * inf)), fro
 
 
@@ -817,11 +817,14 @@ def _rayleigh_lower(M, xp, k):
         m_safe = xp.where(m_ok, m, 1.0)
         scaled = absM / m_safe[:, None, None]
         s = m_safe * xp.sqrt((scaled * scaled).sum(axis=(1, 2)))
+        del absM, scaled
         s_ok = m_ok & xp.isfinite(s) & (s > 0)
         s_safe = xp.where(s_ok, s, 1.0)
         Mn = M / s_safe[:, None, None]
+        dtype = M.dtype
+        del M
 
-        x = xp.ones((n, ND, 1), dtype=M.dtype)
+        x = xp.ones((n, ND, 1), dtype=dtype)
         ok = s_ok.copy()
         for _ in range(k):
             y = Mn @ x
@@ -853,8 +856,11 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
     rigorous in floating point too, not only in exact arithmetic -- twelve
     orders of magnitude inside the caller's pruning margin
     (:data:`_GUARD_PRUNE_MARGIN`). Never raises on singular or out-of-scale
-    input (those blocks are ``valid = False``); device out-of-memory errors
-    propagate. Every returned array is a HOST array."""
+    input (those blocks are ``valid = False``); the numpy per-block inverse
+    retry catches any exception a single-block decomposition can raise, not
+    only ``LinAlgError``, so this contract holds for every host block;
+    device out-of-memory errors propagate. Every returned array is a HOST
+    array."""
     if xp is not np and not (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp):
         raise TypeError("bond_conditioning_interval: xp must be numpy or cupy")
     if getattr(mat_flat, "dtype", None) != np.complex128 or mat_flat.ndim != 3 \
@@ -871,8 +877,6 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
     # the inverse: a raised stack inverse marks the whole stack (cupy) or the
     # failing members (numpy, block by block) invalid; OOM propagates
     oom = _bk.oom_error_types()
-    LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
-    B = None
     inv_failed = xp.zeros(n, dtype=bool)
     try:
         B = xp.linalg.inv(A)
@@ -884,7 +888,7 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
             for j in range(n):
                 try:
                     B[j] = np.linalg.inv(A[j])
-                except LinAlgError:
+                except Exception:  # noqa: BLE001 - never raises on singular input
                     inv_failed[j] = True
         else:
             inv_failed[:] = True
@@ -894,7 +898,7 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
     # resulting non-finite / out-of-range values are caught by validity checks
     with _errstate(xp):
         R = eye - A @ B
-        rho = xp.sqrt((xp.abs(R) ** 2).sum(axis=(1, 2)))
+        rho = xp.sqrt(xp.real((xp.conj(R) * R).sum(axis=(1, 2))))
         del R
         N_B, fro_B = _norm_upper(B, xp)
         valid &= ~inv_failed & xp.isfinite(rho) & (rho < 1.0) & xp.isfinite(fro_B) \
@@ -930,7 +934,11 @@ def select_exact_blocks(interval, margin=_GUARD_PRUNE_MARGIN):
     """Sorted flattened indices of the blocks that must be decomposed
     exactly (spec 2.2): every invalid block, and every valid block whose
     lower end is at most ``margin`` times the smallest valid upper end
-    ``U`` (no valid block: every index)."""
+    ``U`` (no valid block: every index). ``margin`` must be ``>= 1``: a
+    margin below 1 would prune blocks the interval itself cannot rule
+    out."""
+    if margin < 1.0:
+        raise ValueError("select_exact_blocks: margin must be >= 1 (got {})".format(margin))
     valid = interval.valid
     n = valid.shape[0]
     if not np.any(valid):
@@ -3803,9 +3811,9 @@ _STATIC_RESIDUAL_TOL = 1e-6
 
 _GUARD_METHODS = ("auto", "svd", "interval")
 #: what guard_method = "auto" means per array module, for a complex128
-#: guarded stack (issue #197). The measurement (spec 6.7) found the device
-#: guard's outputs identical to the host decomposition's and always faster,
-#: so it is the GPU default; the CPU path is unchanged.
+#: guarded stack (issue #197). The measurement (spec 6.8) found the device
+#: guard faster than the host decomposition at both measured points
+#: (identical outputs), so it is the GPU default; the CPU path is unchanged.
 _GUARD_AUTO = {"numpy": "svd", "cupy": "interval"}
 
 
@@ -3977,8 +3985,8 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                  "value": float(worst), "iteration": iteration}))
             return worst
         # the guard's own refusal is built from the score computed above
-        # (no second decomposition, issue #198); `blocks` is (n, 1, 1, ND,
-        # ND), so its q index is the flattened position inside this call
+        # (no second decomposition, issue #198); i - i_offset is the
+        # position inside the guarded stack of this call
         cause = _conditioning_refusal(
             channel, (worst, i - i_offset, ratio_i, pole_i, smin_i, smax_i), cond_tol, 1, 1)
         raise BondConditioningError(

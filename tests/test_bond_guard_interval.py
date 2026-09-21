@@ -223,6 +223,11 @@ class TestExactSet(unittest.TestCase):
         iv = self._interval(low=[0, 0], up=[np.inf, np.inf], valid=[False, False])
         np.testing.assert_array_equal(bc.select_exact_blocks(iv), [0, 1])
 
+    def test_margin_below_one_is_rejected(self):
+        iv = self._interval(low=[0.05, 0.30], up=[0.2, 0.6])
+        with self.assertRaises(ValueError):
+            bc.select_exact_blocks(iv, margin=0.99)
+
 
 class TestResolver(unittest.TestCase):
 
@@ -273,6 +278,11 @@ class TestResolver(unittest.TestCase):
             ref = bc.bond_conditioning_score(blocks.reshape(64, 1, 1, ND, ND))
             out = bc.resolve_conditioning_guard(blocks, np, 1.0e-3)
             self.assertEqual(out[:6], ref, seed)
+            # the default margin is a factor-2 safety pad over the minimum
+            # margin (1.0) that still bounds every valid block against the
+            # exact scorer: both must agree with the full-stack scorer.
+            out_min_margin = bc.resolve_conditioning_guard(blocks, np, 1.0e-3, margin=1.0)
+            self.assertEqual(out_min_margin[:6], ref, seed)
 
 
 class TestDressBatchGuardMethod(unittest.TestCase):
