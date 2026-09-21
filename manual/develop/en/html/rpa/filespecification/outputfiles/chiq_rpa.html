@@ -258,7 +258,19 @@ bond-resolved dynamic Eliashberg pairing solver needs in addition to
 version (<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">1</span></code>, without <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> /
 <code class="docutils literal notranslate"><span class="pre">norb</span></code>) is refused by that solver with a message asking for a re-run
 under this version. Every schema-1 key keeps its value and meaning
-unchanged under schema 2.
+unchanged under schema 2.</p>
+<p>The archive also records <code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code> (string), the on-disk
+layout selected by <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_output_layout</span></code>. With
+the default <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> layout <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> and <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> live inside this
+single file. With the <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> layout the two channel members are
+written instead as raw <code class="docutils literal notranslate"><span class="pre">.npy</span></code> files next to the index
+(<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_s_w.npy</span></code> and <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_c_w.npy</span></code>), and this file omits
+them, carrying instead <code class="docutils literal notranslate"><span class="pre">chi_s_w_file</span></code> and <code class="docutils literal notranslate"><span class="pre">chi_c_w_file</span></code> (strings, the
+sidecar basenames, resolved relative to the index’s directory).
+Post-processing memory-maps the <code class="docutils literal notranslate"><span class="pre">.npy</span></code> files, reading one frequency
+batch at a time, so a large channel member is never fully resident. An
+archive with no <code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code> member (written before this field
+existed) is read as <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>.
 With <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> no map is executed and every last-map archive is
 omitted (an INFO line lists them); only <code class="docutils literal notranslate"><span class="pre">sigma</span></code>, <code class="docutils literal notranslate"><span class="pre">green</span></code> and <code class="docutils literal notranslate"><span class="pre">energy</span></code>
 of the seed state are written.</p>

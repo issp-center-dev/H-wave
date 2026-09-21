@@ -250,7 +250,19 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 （<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">S_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">norb</span></code>を
 含まない）は、そのソルバーによって、このバージョンでの再計算を求める
 メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
-スキーマ2でも変わりません。
+スキーマ2でも変わりません。</p>
+<p>アーカイブには<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_output_layout</span></code>で選択した
+ディスク上のレイアウトを表す<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>（文字列）も記録されます。
+デフォルトの<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>レイアウトでは<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>はこの単一
+ファイル内に格納されます。<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>レイアウトでは、2つのチャネルメンバーは
+代わりにインデックスの隣に素の<code class="docutils literal notranslate"><span class="pre">.npy</span></code>ファイル（<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_s_w.npy</span></code>および
+<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_c_w.npy</span></code>）として書き出され、このファイルからは省かれます。
+その代わりに<code class="docutils literal notranslate"><span class="pre">chi_s_w_file</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w_file</span></code>（文字列。sidecar の
+ベース名で、インデックスのあるディレクトリからの相対で解決されます）が
+格納されます。後処理はこれらの<code class="docutils literal notranslate"><span class="pre">.npy</span></code>ファイルをメモリマップし、振動数
+バッチを1つずつ読み込むため、大きなチャネルメンバー全体がメモリに常駐する
+ことはありません。<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>メンバーを持たないアーカイブ
+（このフィールドが存在する前に書き出されたもの）は<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>として読み込まれます。
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>では写像は実行されず、最後の写像に属するアーカイブは全て省略され
 （INFO ログに一覧が出ます）、初期状態の<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>・<code class="docutils literal notranslate"><span class="pre">energy</span></code>のみが
 書き出されます。</p>

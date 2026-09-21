@@ -470,6 +470,23 @@ Doubles the persistent memory of the bond-resolved solve; the archive
 size is logged before writing. Ignored with a warning unless
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p>
+<p><strong>Type :</strong>
+String (<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> (default) or <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>; case-insensitive; FLEX
+mode only)</p>
+<p><strong>Description :</strong>
+On-disk layout of the dynamic bond archive. <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> writes a single
+file with <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> inside it. <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> writes the
+index file (everything except the two channels, plus the fields
+<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_s_w_file</span></code> and <code class="docutils literal notranslate"><span class="pre">chi_c_w_file</span></code>) at the
+same path, and each channel as a raw <code class="docutils literal notranslate"><span class="pre">.npy</span></code> file next to it
+(<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_s_w.npy</span></code> / <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_c_w.npy</span></code>). Post-processing
+memory-maps those <code class="docutils literal notranslate"><span class="pre">.npy</span></code> files, reading one frequency batch at a
+time, so a large channel member is never fully resident. Meaningful
+only with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (no archive is
+written otherwise); a <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> request without it is ignored with
+a warning.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
 <p><strong>Type :</strong>
 Integer (default: chosen automatically; FLEX mode only)</p>

@@ -413,6 +413,22 @@ GPU 経路が使われます。
 ログに出力されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない
 場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p>
+<p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>（デフォルト）または<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>。
+大文字小文字を区別しません。FLEXモードのみ)</p>
+<p><strong>説明 :</strong>
+動的ボンドアーカイブのディスク上のレイアウトです。<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>は
+<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>を内部に含む単一ファイルを書き出します。
+<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>は、同じパスにインデックスファイル（2つのチャネル以外
+すべてに加え、<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>・<code class="docutils literal notranslate"><span class="pre">chi_s_w_file</span></code>・
+<code class="docutils literal notranslate"><span class="pre">chi_c_w_file</span></code>の各フィールド）を書き出し、各チャネルをその隣に
+素の<code class="docutils literal notranslate"><span class="pre">.npy</span></code>ファイル（<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_s_w.npy</span></code> /
+<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;_chi_c_w.npy</span></code>）として書き出します。後処理はこれらの
+<code class="docutils literal notranslate"><span class="pre">.npy</span></code>ファイルをメモリマップし、振動数バッチを1つずつ読み込む
+ため、大きなチャネルメンバー全体がメモリに常駐することはありません。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>のときにのみ意味を持ちます
+（それ以外ではアーカイブは書き出されません）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>が false のまま<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>を指定した場合は警告付きで無視されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
 <p><strong>形式 :</strong> int型 (デフォルトは自動選択。FLEXモードのみ)</p>
 <p><strong>説明 :</strong>

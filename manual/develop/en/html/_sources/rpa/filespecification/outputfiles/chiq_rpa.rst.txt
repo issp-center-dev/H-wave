@@ -250,6 +250,19 @@ version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
 ``norb``) is refused by that solver with a message asking for a re-run
 under this version. Every schema-1 key keeps its value and meaning
 unchanged under schema 2.
+
+The archive also records ``bond_archive_layout`` (string), the on-disk
+layout selected by ``[mode.param] longitudinal_bond_output_layout``. With
+the default ``"npz"`` layout ``chi_s_w`` and ``chi_c_w`` live inside this
+single file. With the ``"sidecar"`` layout the two channel members are
+written instead as raw ``.npy`` files next to the index
+(``<name>_chi_s_w.npy`` and ``<name>_chi_c_w.npy``), and this file omits
+them, carrying instead ``chi_s_w_file`` and ``chi_c_w_file`` (strings, the
+sidecar basenames, resolved relative to the index's directory).
+Post-processing memory-maps the ``.npy`` files, reading one frequency
+batch at a time, so a large channel member is never fully resident. An
+archive with no ``bond_archive_layout`` member (written before this field
+existed) is read as ``"npz"``.
 With ``IterationMax = 0`` no map is executed and every last-map archive is
 omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
 of the seed state are written.
