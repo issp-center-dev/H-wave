@@ -404,6 +404,17 @@ class TestOutputs(unittest.TestCase):
             self.assertTrue(np.isfinite(v) and v > 0.0)
             self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
 
+    def test_guard_method_provenance(self):
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        self.assertEqual(str(gi["longitudinal_bond_guard_method"]), "svd")
+        self.assertEqual(int(gi["longitudinal_bond_guard_blocks_per_iteration"]),
+                         int(gi["longitudinal_bond_guard_exact_blocks_max"]))
+        self.assertGreaterEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),
+                                int(gi["longitudinal_bond_guard_exact_blocks_max"]))
+
     def test_static_guard_mode_is_logged(self):
         """``longitudinal_bond_guard_freqs = "static"`` narrows the
         conditioning guard to the zero bosonic frequency; the solve must
@@ -520,9 +531,12 @@ class TestDeviceAdmission(unittest.TestCase):
         at1 = flex_bond.estimate_bond_memory(
             device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
         rows = at1["device_rows"]
+        # "guard" (issue #197) is incremental to "dressing", not a phase row
+        # of its own: added into the dressing side of the max, not summed
+        # in with the persistent rows
         phases = ("bubble", "dressing", "transport")
-        need1 = 1.25 * (sum(v for k, v in rows.items() if k not in phases)
-                        + max(rows[k] for k in phases))
+        need1 = 1.25 * (sum(v for k, v in rows.items() if k not in phases and k != "guard")
+                        + max(rows["bubble"], rows["dressing"] + rows["guard"], rows["transport"]))
         avail = int(need1 * 1.001 / 0.9)
         fake_xp = types.SimpleNamespace(__name__="cupy")
         with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):

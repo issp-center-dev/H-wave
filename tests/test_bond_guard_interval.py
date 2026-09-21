@@ -339,3 +339,64 @@ class TestDressBatchGuardMethod(unittest.TestCase):
                                guard_policy="warn", violations=v, guard_method=method)
             recs.append((v, cm.output))
         self.assertEqual(recs[0], recs[1])
+
+    def test_static_refusal_with_offset_is_identical(self):
+        cb, W = self._batch(l_bad=2, q_bad=1)
+        outs = []
+        for method in ("svd", "interval"):
+            with self.assertRaises(bc.BondConditioningError) as cm:
+                bc.dress_batch(cb, W, "spin", l0=6, nmat=16, spatial_shape=(2, 1, 1),
+                               guard_freqs="static", guard_method=method)
+            e = cm.exception
+            cause = e.__cause__
+            outs.append((str(e), e.channel, e.l, e.iq, e.q, e.worst, e.ratio, e.pole,
+                        e.smin, e.smax, cause.iq, cause.q))
+        self.assertEqual(outs[0], outs[1])
+
+
+class TestDressAndBuildWGuardMethod(unittest.TestCase):
+
+    def test_map_is_identical_and_counts_are_reported(self):
+        import types
+        from hwave.solver import flex_bond as fb
+        from tests.test_flex_bond_dressing import _problem
+        chi_bar, S, C = _problem()
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
+        view = types.SimpleNamespace(n_channels=ND // nd)
+
+        def run(method):
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext.for_view(np, S, C, S_on, C_on, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                           second_order="takimoto", guard_method=method)
+                return store.get_freq_batch("W", 0, nmat).copy(), res
+
+        W_ref, r_ref = run("svd")
+        W, r = run("interval")
+        np.testing.assert_array_equal(W, W_ref)
+        for f in ("collapse0", "collapse_s", "collapse_c", "static_s", "static_c"):
+            np.testing.assert_array_equal(getattr(r, f), getattr(r_ref, f))
+        self.assertEqual((r.cond_min_s, r.cond_min_c), (r_ref.cond_min_s, r_ref.cond_min_c))
+        self.assertEqual(r_ref.guard_blocks, 2 * nmat * nvol)          # both channels, all blocks
+        self.assertEqual(r_ref.guard_exact_blocks, r_ref.guard_blocks)  # the svd path decomposes all
+        self.assertEqual(r.guard_blocks, 2 * nmat * nvol)
+        self.assertLessEqual(r.guard_exact_blocks, r.guard_blocks)
+
+    def test_dress_result_keeps_positional_construction(self):
+        from hwave.solver.flex_bond import DressResult
+        z = np.zeros((1, 1, 1, 1))
+        r = DressResult(z, z, z, z, z, 1.0, 1.0)
+        self.assertEqual((r.guard_violations, r.guard_exact_blocks, r.guard_blocks), (0, 0, 0))
+
+    def test_memory_table_has_an_incremental_guard_row(self):
+        from hwave.solver import flex_bond as fb
+        est = fb.estimate_bond_memory(nmat=8, nvol=4, norb=2, B=3, depth=2, output_full=False,
+                                      split_seed=False, n_types=1, freq_batch=None, cap_gb=200.0,
+                                      mixing="anderson", device_available=8 * 1024 ** 3)
+        rows = est["device_rows"]
+        self.assertIn("guard", rows)
+        U_b = int(est["nb"]) * 4 * (3 * 4) ** 2 * 16
+        self.assertEqual(rows["guard"], 3 * U_b)
