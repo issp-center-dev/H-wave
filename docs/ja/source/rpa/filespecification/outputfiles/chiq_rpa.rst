@@ -202,7 +202,18 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``[mode.param] longitudinal_bond_cond_tol``\ ）、
 ``longitudinal_bond_device``\ （文字列。\ ``"cupy"``\ または\ ``"numpy"``\ 。
 ボンド分解した解法を実行したバックエンド）、\ ``longitudinal_bond_nb``\ （整数。
-実際に使用された振動数バッチ幅）が格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+実際に使用された振動数バッチ幅）、\ ``longitudinal_bond_guard_method``\
+（文字列。\ ``"svd"``\ または\ ``"interval"``\ 。条件数ガードが各ブロックを
+どう判定したか -- \ ``"svd"``\ は全ての判定対象ブロックをホストで分解し、
+``"interval"``\ はデバイス上で全ブロックの条件数を範囲で評価し、最小値に
+なり得るブロックのみを厳密に分解します。出力は\ ``"svd"``\ と完全に一致
+します。GPU の既定は\ ``"interval"``\ 、CPU の既定は\ ``"svd"``\ ）、
+``longitudinal_bond_guard_exact_blocks_total``\ （整数。ソルブ全体を通じて
+厳密に分解されたブロック数の累計）、\ ``longitudinal_bond_guard_exact_blocks_max``\
+（整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
+``longitudinal_bond_guard_blocks_per_iteration``\ （整数。1回の反復で
+ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
+格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
@@ -234,7 +245,10 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 ``index_order``\ ・\ ``delta_r``\ ・\ ``reverse``\ ・\ ``types``\ 、16個の静的キー、
 ``longitudinal_bond_guard_freqs``\ ・\ ``longitudinal_bond_cond_tol``\ ・
 ``longitudinal_bond_device``\ ・
-``longitudinal_bond_nb``\ 、来歴ブロックが格納されます。これらの配列を重複して
+``longitudinal_bond_nb``\ ・\ ``longitudinal_bond_guard_method``\ ・
+``longitudinal_bond_guard_exact_blocks_total``\ ・
+``longitudinal_bond_guard_exact_blocks_max``\ ・
+``longitudinal_bond_guard_blocks_per_iteration``\ 、来歴ブロックが格納されます。これらの配列を重複して
 持つファイルは他にありません。\ ``S_bond``\ と\ ``C_bond``\ は、下記の
 ボンド分解した動的 Eliashberg 対形成ソルバーが\ ``chi_s_w`` / ``chi_c_w``
 に加えて必要とする入力です。旧バージョンで書き出されたアーカイブ

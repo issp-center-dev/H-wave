@@ -3802,10 +3802,26 @@ _GUARD_POLICIES = ("refuse", "warn")
 _STATIC_RESIDUAL_TOL = 1e-6
 
 _GUARD_METHODS = ("auto", "svd", "interval")
-#: what guard_method = "auto" means per array module (issue #197). The
-#: interval guard ships DISABLED by default; the cupy entry flips to
-#: "interval" in the measurement-gated commit of the same change.
-_GUARD_AUTO = {"numpy": "svd", "cupy": "svd"}
+#: what guard_method = "auto" means per array module, for a complex128
+#: guarded stack (issue #197). The measurement (spec 6.7) found the device
+#: guard's outputs identical to the host decomposition's and always faster,
+#: so it is the GPU default; the CPU path is unchanged.
+_GUARD_AUTO = {"numpy": "svd", "cupy": "interval"}
+
+
+def _resolve_guard_method(guard_method, xp, dtype):
+    """Resolves ``guard_method`` for one guarded stack (issue #197).
+    ``"svd"`` and ``"interval"`` resolve to themselves. ``"auto"`` resolves
+    through :data:`_GUARD_AUTO` by the array module ``xp`` (``"numpy"`` for
+    ``np`` itself, ``"cupy"`` for anything else) -- but ONLY when ``dtype``
+    is ``complex128``: the interval guard (:func:`bond_conditioning_interval`)
+    refuses any other dtype with ``TypeError``, while the ``"svd"`` path
+    accepts it, so ``"auto"`` falls back to ``"svd"`` outside complex128."""
+    if guard_method != "auto":
+        return guard_method
+    if dtype != np.complex128:
+        return "svd"
+    return _GUARD_AUTO["numpy" if xp is np else "cupy"]
 
 
 def _at(iteration):
@@ -3876,12 +3892,14 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     :func:`resolve_conditioning_guard` (device bounds plus an exact host
     decomposition of only the blocks that could be the minimum) and
     reproduces the ``"svd"`` path's outputs exactly; ``"auto"`` (the
-    default) resolves through :data:`_GUARD_AUTO` by the array module of
-    ``chi_bar_b`` -- today it selects ``"svd"`` on every module, so this
-    keyword ships with no behaviour change. When ``stats`` is a dict,
-    ``stats["guard_exact_blocks"]`` and ``stats["guard_blocks"]`` are
-    incremented by the number of blocks decomposed exactly and the number
-    of blocks guarded, for every guarded slice."""
+    default) resolves through :func:`_resolve_guard_method` and
+    :data:`_GUARD_AUTO` by the array module of the guarded stack -- on
+    cupy, for a complex128 stack, it selects ``"interval"``; on numpy, or
+    for any other dtype (the interval guard accepts only complex128), it
+    selects ``"svd"``. When ``stats`` is a dict, ``stats["guard_exact_blocks"]``
+    and ``stats["guard_blocks"]`` are incremented by the number of blocks
+    decomposed exactly and the number of blocks guarded, for every guarded
+    slice."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3895,8 +3913,6 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                          .format(list(_GUARD_METHODS), guard_method))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
-    if guard_method == "auto":
-        guard_method = _GUARD_AUTO["numpy" if xp is np else "cupy"]
     # array-like inputs are coerced once the module is known (the identity for
     # an array of that module, so the device path never takes a copy)
     cb = xp.asarray(chi_bar_b)
@@ -3913,6 +3929,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         xp.negative(mat, out=mat)
     idx = xp.arange(ND)
     mat[:, :, idx, idx] += 1.0
+    # resolved from the guarded stack's own dtype (issue #197): the interval
+    # guard only ever runs on complex128, so "auto" falls back to "svd"
+    # outside it, whatever the array module
+    guard_method = _resolve_guard_method(guard_method, xp, mat.dtype)
 
     # warnings held back until there is a result to continue with:
     # (format, args, violation record)

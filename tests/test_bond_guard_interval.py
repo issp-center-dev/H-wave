@@ -299,6 +299,23 @@ class TestDressBatchGuardMethod(unittest.TestCase):
                                side_effect=AssertionError("interval path must not run")):
             bc.dress_batch(cb, W, "spin", l0=0, nmat=16, spatial_shape=(2, 1, 1))
 
+    def test_auto_is_interval_on_cupy_for_complex128(self):
+        self.assertEqual(bc._GUARD_AUTO, {"numpy": "svd", "cupy": "interval"})
+
+    def test_resolve_guard_method_dtype_rule(self):
+        # a host test of the dtype rule that does not need a device (issue
+        # #197): "auto" only ever selects "interval" for a complex128
+        # stack, whatever the array module; any other dtype falls back to
+        # "svd" because the interval guard refuses it with TypeError while
+        # the svd path accepts it. "svd"/"interval" always pass through.
+        fake_cupy = object()
+        self.assertEqual(bc._resolve_guard_method("auto", np, np.complex128), "svd")
+        self.assertEqual(bc._resolve_guard_method("auto", fake_cupy, np.complex128), "interval")
+        self.assertEqual(bc._resolve_guard_method("auto", fake_cupy, np.float64), "svd")
+        for method in ("svd", "interval"):
+            for xp, dtype in ((np, np.complex128), (fake_cupy, np.complex128), (fake_cupy, np.float64)):
+                self.assertEqual(bc._resolve_guard_method(method, xp, dtype), method)
+
     def test_interval_reproduces_the_refusal(self):
         cb, W = self._batch()
         outs = []

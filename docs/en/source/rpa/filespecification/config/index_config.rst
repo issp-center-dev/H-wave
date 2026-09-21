@@ -316,7 +316,20 @@ Parameters
   bond-resolved dressing inspects. ``"all"`` (default) checks every
   ``(nu, q)`` denominator with a singular-value decomposition and
   refuses the run when one is singular or nearly singular (the
-  behaviour of previous versions). ``"static"`` checks only the zero
+  behaviour of previous versions). On the GPU path (``gpu = true``),
+  ``"all"`` no longer decomposes every block on the host: rigorous
+  two-sided bounds of every block's conditioning are computed on the
+  device (matrix norms, an approximate inverse with its residual, a few
+  power iterations), and only the blocks that can attain the batch
+  minimum are decomposed exactly, so the guard's outputs (the minimum,
+  its location, the refusal) are identical to the full decomposition
+  while the cost of ``"all"`` roughly halves (measured on an A100 for
+  the three-band CuO2 model, 8x8, Nmat 2048: about 55 s per iteration
+  before, 23-31 s now, with 30-50 % of the blocks still decomposed
+  exactly; ``"static"`` is about 9 s). The outputs record
+  ``longitudinal_bond_guard_method`` (``"svd"`` / ``"interval"``) and
+  the exact-decomposition counts. The CPU path is unchanged (``"svd"``).
+  ``"static"`` checks only the zero
   frequency and validates the other slices by the solve residual
   ``||(1 -/+ chibar V) chi - chibar|| / max(1, ||chibar||) <= 1e-6``; it
   is a reduced diagnostic that removes the dominant CPU cost of the
