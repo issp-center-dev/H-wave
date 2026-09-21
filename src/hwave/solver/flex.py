@@ -265,12 +265,19 @@ class FLEX(RPA):
     _accepts_flex_keys = True
     _PHASE_B_SWITCHES = ("flex_hartree_fock", "longitudinal_bond_channels")
     _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
+                          "longitudinal_bond_output_layout",
                           "longitudinal_bond_freq_batch",
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb",
                           "longitudinal_bond_guard_freqs",
                           "longitudinal_bond_pairing",
                           "longitudinal_bond_cond_tol")
+
+    #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
+    #: ``"npz"`` (the default single-file schema-2 archive) and ``"sidecar"``
+    #: (an index npz plus the two big channel members as memory-mappable
+    #: ``.npy`` files next to it).
+    _BOND_OUTPUT_LAYOUTS = ("npz", "sidecar")
 
     #: defaults of the guard keys of GitHub issue #199 -- the tolerance of the
     #: Hermitian symmetry of the equal-time density, the conditioning floor of
@@ -404,7 +411,9 @@ class FLEX(RPA):
                     "[mode.param] %s set but longitudinal_bond_channels is not "
                     "true; these bond-only options are ignored (not parsed).",
                     ", ".join(stale))
-            out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
+            out.update(longitudinal_bond_output_full=False,
+                       longitudinal_bond_output_layout="npz",
+                       longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all")
             return out
@@ -457,7 +466,9 @@ class FLEX(RPA):
             logger.warning(
                 "[mode.param] %s set but longitudinal_bond_channels is not true; these "
                 "bond-only options are ignored (not parsed).", ", ".join(stale))
-            out.update(longitudinal_bond_output_full=False, longitudinal_bond_freq_batch=None,
+            out.update(longitudinal_bond_output_full=False,
+                       longitudinal_bond_output_layout="npz",
+                       longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all")
             return out
@@ -465,6 +476,22 @@ class FLEX(RPA):
         if not isinstance(v, (bool, np.bool_)):
             raise ValueError("[mode.param] longitudinal_bond_output_full must be a boolean, got {!r}".format(v))
         out["longitudinal_bond_output_full"] = bool(v)
+        # the on-disk layout of the bond archive (issue #205)
+        layout = param.get("longitudinal_bond_output_layout", "npz")
+        if not isinstance(layout, str) or layout.strip().lower() not in FLEX._BOND_OUTPUT_LAYOUTS:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_output_layout must be \"npz\" or \"sidecar\" "
+                "(\"npz\" writes the single-file schema-2 archive, the default; \"sidecar\" writes "
+                "an index npz plus the two big channel members as memory-mappable .npy files next "
+                "to it), got {!r}".format(layout))
+        out["longitudinal_bond_output_layout"] = layout.strip().lower()
+        # the archive is only written with longitudinal_bond_output_full = true;
+        # a sidecar request without it changes nothing, so warn once
+        if out["longitudinal_bond_output_layout"] == "sidecar" and not out["longitudinal_bond_output_full"]:
+            logger.warning(
+                "[mode.param] longitudinal_bond_output_layout = \"sidecar\" needs "
+                "longitudinal_bond_output_full = true (no bond archive is written otherwise); "
+                "the layout is ignored.")
         fb = param.get("longitudinal_bond_freq_batch", None)
         if fb is not None:
             if isinstance(fb, bool) or not isinstance(fb, numbers.Integral) or not (1 <= int(fb) <= int(nmat)):
@@ -512,6 +539,7 @@ class FLEX(RPA):
         # replaced: it is calc_type-scoped and RPA-owned)
         self.longitudinal_bond_channels = raw["longitudinal_bond_channels"]
         self.longitudinal_bond_output_full = raw["longitudinal_bond_output_full"]
+        self.longitudinal_bond_output_layout = raw["longitudinal_bond_output_layout"]
         self.longitudinal_bond_freq_batch = raw["longitudinal_bond_freq_batch"]
         self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
@@ -4558,30 +4586,62 @@ class FLEX(RPA):
                                                          "longitudinal_bond.npz"))
             chi_s_w = green_info["longitudinal_bond_chi_s_w"]
             chi_c_w = green_info["longitudinal_bond_chi_c_w"]
+            layout = getattr(self, "longitudinal_bond_output_layout", "npz")
             logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
-                        "channel data)".format(file_name), 2 * chi_s_w.nbytes / 1024 ** 3)
-            np.savez(file_name,
-                     bond_archive_schema=np.int64(2),
-                     chi_s_w=chi_s_w,
-                     chi_c_w=chi_c_w,
-                     S_bond=green_info["longitudinal_bond_S"],
-                     C_bond=green_info["longitudinal_bond_C"],
-                     norb=np.int64(self.norb),
-                     freq_axis=np.str_("bosonic l -> 2l - nmat"),
-                     beta=1.0 / self.T,
-                     T=self.T,
-                     nmat=self.nmat,
-                     cell_shape=np.array(self.lattice.shape),
-                     momentum_convention=MOMENTUM_CONVENTION,
-                     wavevector_unit=self.kvec,
-                     wavevector_index=self.wavenum_table,
-                     index_order=green_info["longitudinal_bond_index_order"],
-                     delta_r=green_info["longitudinal_bond_delta_r"],
-                     reverse=green_info["longitudinal_bond_reverse"],
-                     types=green_info["longitudinal_bond_types"],
-                     **_bond_static,
-                     **self._provenance_block("last_map"),
-                     **self._second_order_members())
+                        "channel data, layout {})".format(file_name, layout),
+                        2 * chi_s_w.nbytes / 1024 ** 3)
+            # every archive member EXCEPT the schema stamp and the two big
+            # channel susceptibilities: the two are written inside the index
+            # npz (default) or, under the sidecar layout, as separate
+            # memory-mappable .npy files next to it (issue #205)
+            tail_members = dict(
+                S_bond=green_info["longitudinal_bond_S"],
+                C_bond=green_info["longitudinal_bond_C"],
+                norb=np.int64(self.norb),
+                freq_axis=np.str_("bosonic l -> 2l - nmat"),
+                beta=1.0 / self.T,
+                T=self.T,
+                nmat=self.nmat,
+                cell_shape=np.array(self.lattice.shape),
+                momentum_convention=MOMENTUM_CONVENTION,
+                wavevector_unit=self.kvec,
+                wavevector_index=self.wavenum_table,
+                index_order=green_info["longitudinal_bond_index_order"],
+                delta_r=green_info["longitudinal_bond_delta_r"],
+                reverse=green_info["longitudinal_bond_reverse"],
+                types=green_info["longitudinal_bond_types"],
+                **_bond_static,
+                **self._provenance_block("last_map"),
+                **self._second_order_members())
+            if layout == "sidecar":
+                # the sidecar basenames next to the index: the index basename
+                # with .npz replaced by _<member>.npy (post-processing resolves
+                # them relative to the index's directory)
+                base = os.path.basename(file_name)
+                stem = base[:-4] if base.endswith(".npz") else base
+                s_base = "{}_chi_s_w.npy".format(stem)
+                c_base = "{}_chi_c_w.npy".format(stem)
+                out_dir = os.path.dirname(file_name)
+                # np.save writes a plain, memory-mappable .npy array
+                np.save(os.path.join(out_dir, s_base), chi_s_w)
+                np.save(os.path.join(out_dir, c_base), chi_c_w)
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         bond_archive_layout=np.str_("sidecar"),
+                         chi_s_w_file=np.str_(s_base),
+                         chi_c_w_file=np.str_(c_base),
+                         **tail_members)
+            else:
+                # the default single-file archive: every pre-existing member
+                # keeps its exact positional order and bond_archive_layout is
+                # APPENDED last, so the ordered prefix is byte-for-byte what the
+                # schema-2 reference archive writes (issue #205)
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         chi_s_w=chi_s_w,
+                         chi_c_w=chi_c_w,
+                         **tail_members,
+                         bond_archive_layout=np.str_("npz"))
             logger.info("save_results: save the bond archive in file {}".format(file_name))
 
         # In-process pairing (spec 7): AFTER every FLEX artifact, in its own

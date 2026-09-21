@@ -210,6 +210,16 @@ class PairVertexAccumulator:
             for l0 in range(0, self.nmat, self.nb):
                 l1 = min(self.nmat, l0 + self.nb)
                 chi_b = _bk.to_device(source.get_freq_batch(name, l0, l1), self.xp)
+                # finiteness of the RAW member batch, before the V @ chi_b @ V
+                # contraction (issue #205): the sidecar member() returns a
+                # memmap and skips the whole-array scan, so the per-batch scan
+                # here is what enforces finiteness on the member itself. The
+                # matmul runs only on validated input; _absorb's post-contraction
+                # check below still catches values the contraction generates.
+                if not bool(self.xp.all(self.xp.isfinite(chi_b))):
+                    raise ValueError(
+                        "PairVertexAccumulator: non-finite values in the {} channel member {!r}, "
+                        "frequency batch [{}, {})".format(channel, name, l0, l1))
                 self._absorb(channel, V[None] @ chi_b @ V[None], l0, l1)
                 del chi_b
         except Exception:

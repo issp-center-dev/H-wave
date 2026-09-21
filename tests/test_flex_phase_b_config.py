@@ -43,6 +43,7 @@ class TestPhaseBConfig(unittest.TestCase):
         self.assertIsNone(s.longitudinal_bond_freq_batch)
         self.assertIsNone(s.longitudinal_bond_max_shells)
         self.assertEqual(s.longitudinal_bond_memory_cap_gb, 8.0)
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
         self.assertFalse(s._phase_b_active)
 
     def test_keys_case_insensitive_and_active(self):
@@ -102,6 +103,61 @@ class TestPhaseBConfig(unittest.TestCase):
         self.assertEqual(s.longitudinal_bond_guard_freqs, "static")
         s, _ = _build()
         self.assertEqual(s.longitudinal_bond_guard_freqs, "all")
+
+    def test_output_layout_key(self):
+        import hwave.solver.flex as flex_mod
+        base = {"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                "longitudinal_bond_output_full": True}
+        # default
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base)})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # case-insensitive, stored lower-cased
+        out = flex_mod.FLEX._parse_phase_b_keys(
+            {"param": dict(base, Longitudinal_Bond_Output_Layout="SIDECAR")})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "sidecar")
+        out = flex_mod.FLEX._parse_phase_b_keys(
+            {"param": dict(base, longitudinal_bond_output_layout="NPZ")})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # any other value refused
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX._parse_phase_b_keys(
+                {"param": dict(base, longitudinal_bond_output_layout="mmap")})
+        self.assertIn('longitudinal_bond_output_layout must be "npz" or "sidecar"',
+                      str(cm.exception))
+        with self.assertRaises(ValueError):
+            flex_mod.FLEX._parse_phase_b_keys(
+                {"param": dict(base, longitudinal_bond_output_layout=1)})
+        # the inactive branches still carry the default
+        for param in ({}, {"flex_hartree_fock": True},
+                      {"flex_hartree_fock": True, "longitudinal_bond_channels": True}):
+            with self.subTest(param=sorted(param)):
+                out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(param)})
+                self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # installed on the solver
+        s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                       "longitudinal_bond_output_full": True,
+                       "Longitudinal_Bond_Output_Layout": "Sidecar"})
+        self.assertEqual(s.longitudinal_bond_output_layout, "sidecar")
+        s, _ = _build()
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
+
+    def test_output_layout_sidecar_without_output_full_warns_once(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                           "longitudinal_bond_output_full": False,
+                           "longitudinal_bond_output_layout": "sidecar"})
+        msgs = [m for m in cm.output if "longitudinal_bond_output_layout" in m]
+        self.assertEqual(len(msgs), 1, cm.output)
+        self.assertIn("ignored", msgs[0])
+        self.assertEqual(s.longitudinal_bond_output_layout, "sidecar")
+
+    def test_output_layout_is_a_bond_only_stale_key(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True,
+                           "longitudinal_bond_output_layout": "sidecar"})
+        msgs = [m for m in cm.output if "longitudinal_bond_output_layout" in m]
+        self.assertGreaterEqual(len(msgs), 1)
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
 
     def test_guard_tolerance_and_policy_defaults(self):
         """The three guard keys of GitHub issue #199 always exist, on every
