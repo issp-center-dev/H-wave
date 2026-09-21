@@ -152,6 +152,57 @@ class TestDressBatchEquivalence(_GpuCase):
         chi_bar = chi_bar * 1e-14
         self._check(chi_bar, S, "spin", "all", "near-zero bubble")
 
+    def test_interval_guard_matches_the_host_svd_guard(self):
+        """Guard OUTPUTS of the device interval path equal the production host
+        SVD path on the same device stack (issue #197): the minimum, its
+        location and the refusal text; the dressed batch keeps the solve
+        tolerance of the other cases."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem(nmat=6, nvol=8, nd=4, B=3, seed=11)
+        nmat, nvol = chi_bar.shape[:2]
+        for scale in (1.0, 6.0, 16.0):              # passing, near, refusing
+            for channel, W in (("spin", S), ("charge", C)):
+                with self.subTest(scale=scale, channel=channel):
+                    cb_d = self.cupy.asarray(chi_bar); W_d = self.cupy.asarray(scale * W)
+                    outs = []
+                    for method in ("svd", "interval"):
+                        try:
+                            chi, cond = bc.dress_batch(cb_d, W_d, channel, l0=0, nmat=nmat,
+                                                       spatial_shape=(nvol, 1, 1), guard_method=method)
+                            outs.append(("ok", cond, self.cupy.asnumpy(chi)))
+                        except bc.BondConditioningError as e:
+                            outs.append(("refused", str(e), e.l, e.iq, e.q, e.worst, e.smin, e.smax))
+                    self.assertEqual(outs[0][0], outs[1][0])
+                    if outs[0][0] == "ok":
+                        self.assertEqual(outs[0][1], outs[1][1])
+                        np.testing.assert_array_equal(outs[0][2], outs[1][2])
+                    else:
+                        self.assertEqual(outs[0][1:], outs[1][1:])
+
+    def test_interval_guard_device_memory_increment(self):
+        # bond_conditioning_interval calls _norm_upper twice per call (once
+        # on A, once on B after the inverse exists), so the spy below only
+        # samples the pool at those two points -- the assertion is an upper
+        # bound on the increment AT THOSE POINTS, not a measured peak; the
+        # controller records the actual peak from the GPU run.
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, _C = _problem(nmat=16, nvol=32, nd=4, B=3, seed=12)
+        n, ND = 16 * 32, S.shape[-1]
+        mat = self.cupy.asarray(np.eye(ND) - chi_bar.reshape(n, ND, ND) @ S[0])
+        pool = self.cupy.get_default_memory_pool()
+        self.cupy.cuda.Device().synchronize()
+        before = pool.used_bytes()
+        peak = [before]
+        real = bc._norm_upper
+        def spy(X, xp):
+            peak.append(pool.used_bytes()); return real(X, xp)
+        with mock.patch.object(bc, "_norm_upper", spy):
+            bc.bond_conditioning_interval(mat, self.cupy)
+        self.cupy.cuda.Device().synchronize()
+        U_b = n * ND * ND * 16
+        self.assertLessEqual(max(peak) - before, 3 * U_b)
+        _deviation("guard memory (U_b units)", np.array([(max(peak) - before) / U_b]), np.array([0.0]))
+
 
 def _bubble_fixture(norb=2, shape=(4, 4, 1), nmat=8, beta=2.0, seed=11):
     """A physical bond fixture (Hermitian k-even hopping, bare Green
@@ -332,6 +383,26 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                                            rtol=1e-10 * cm, atol=1e-13)
                 self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
+
+    def test_interval_guard_whole_map(self):
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=13)
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
+        view = types.SimpleNamespace(n_channels=ND // nd)
+        def run(method):
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext.for_view(self.cupy, S, C, S_on, C_on, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                           second_order="takimoto", guard_method=method)
+                return store.get_freq_batch("W", 0, nmat).copy(), res
+        W_ref, r_ref = run("svd")
+        W, r = run("interval")
+        np.testing.assert_array_equal(W, W_ref)               # same solves, same guard
+        self.assertEqual((r.cond_min_s, r.cond_min_c), (r_ref.cond_min_s, r_ref.cond_min_c))
+        self.assertLessEqual(r.guard_exact_blocks, r.guard_blocks)
 
 
 class TestTransportEquivalence(_GpuCase):
