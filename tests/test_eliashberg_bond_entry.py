@@ -1439,6 +1439,19 @@ _ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema",
 #: addition and is listed in :data:`_ARCHIVE_DELTA` with the bond members.
 _PROVENANCE_DELTA = frozenset(("flex_guard_policy", "flex_guard_violations"))
 
+#: The conditioning guard's method and exact-decomposition counts (issue
+#: #197): written next to the other static ``longitudinal_bond_*`` keys
+#: (:data:`_bond_static` in ``flex.py``), so -- like
+#: ``longitudinal_bond_cond_tol`` -- they land in the bond archive and in
+#: whichever chiq_s/c/combined archive carries the static bond keys, not
+#: in every non-bond file. On the CPU path of the reference comparison it
+#: resolves to "svd"; on the GPU path it is "interval". Either way the
+#: recorded string carries no numerical content.
+_BOND_GUARD_DELTA = frozenset(("longitudinal_bond_guard_method",
+                               "longitudinal_bond_guard_exact_blocks_total",
+                               "longitudinal_bond_guard_exact_blocks_max",
+                               "longitudinal_bond_guard_blocks_per_iteration"))
+
 #: The driver both revisions run: one ``qlms.run`` on an input dict read from
 #: a file. A file rather than an argument because the reference tree is
 #: driven through a subprocess and the dict carries paths.
@@ -1548,10 +1561,11 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                     added = set(db.files) - set(da.files)
                     # ... plus, where the bond members are written (the
                     # chiq_s / chiq_c archives carry them too), the recorded
-                    # conditioning floor
+                    # conditioning floor and the guard method / counts
                     self.assertTrue(_PROVENANCE_DELTA <= added, (fn, added))
-                    self.assertTrue(added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"},
-                                    (fn, added))
+                    self.assertTrue(
+                        added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"}
+                        | _BOND_GUARD_DELTA, (fn, added))
                     for k in da.files:
                         np.testing.assert_array_equal(da[k], db[k],
                                                       err_msg="{} {}".format(fn, k))
@@ -1565,7 +1579,8 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                                  "the archive dropped members the reference wrote")
                 added = set(db.files) - set(da.files)
                 changed = {k for k in da.files if not self._identical(da[k], db[k])}
-                self.assertEqual(added | changed, set(_ARCHIVE_DELTA | _PROVENANCE_DELTA))
+                self.assertEqual(added | changed,
+                                 set(_ARCHIVE_DELTA | _PROVENANCE_DELTA | _BOND_GUARD_DELTA))
                 for k in set(da.files) - _ARCHIVE_DELTA:
                     np.testing.assert_array_equal(da[k], db[k],
                                                   err_msg="{} {}".format(fn, k))

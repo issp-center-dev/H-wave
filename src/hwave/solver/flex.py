@@ -1584,6 +1584,7 @@ class FLEX(RPA):
                      "_bond_types",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
                      "_bond_xp_name",
+                     "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
                      "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -1781,7 +1782,9 @@ class FLEX(RPA):
             freq_batch=self.longitudinal_bond_freq_batch,
             cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
             factor_bytes=(0 if self._second_order_factors is None
-                          else int(self._second_order_factors.nbytes)))
+                          else int(self._second_order_factors.nbytes)),
+            guard_freqs=self.longitudinal_bond_guard_freqs,
+            guard_enabled=self.longitudinal_bond_cond_tol is not None)
         est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
         gib = flex_bond._GIB
         logger.info(
@@ -1998,6 +2001,11 @@ class FLEX(RPA):
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
+        # the conditioning guard's exact-decomposition counts (issue #197):
+        # summed and maxed over every map of the whole run
+        self._bond_guard_exact_total = 0
+        self._bond_guard_exact_max = 0
+        self._bond_guard_blocks = 0
         if gate:
             # Device admission at its true baseline (spec 4.6): the backend is
             # resolved and the general path's device arrays are resident, while
@@ -2203,7 +2211,7 @@ class FLEX(RPA):
                     green_info["chiq_s"] = self.chi_s
                     green_info["chiq_c"] = self.chi_c
                     if gate:
-                        self._phase_b_publish_bond(green_info, store)
+                        self._phase_b_publish_bond(green_info, store, dev.xp)
                         if getattr(self, "_pairing_controls", None) is not None:
                             # spec 7: NON-THROWING. The store (chibar of the
                             # last map), the bond device context and the
@@ -2296,7 +2304,8 @@ class FLEX(RPA):
                     second_order=self.flex_second_order,
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
-                    guard_policy=self.flex_guard_policy)
+                    guard_policy=self.flex_guard_policy,
+                    guard_method="auto")
             phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
@@ -2314,19 +2323,40 @@ class FLEX(RPA):
         self._bond_last = res
         # the transient violations this map was allowed to pass (issue #199)
         self.flex_guard_violations += int(res.guard_violations)
+        # the conditioning guard's exact-decomposition counts (issue #197):
+        # a running total and maximum over the whole run, plus THIS map's
+        # guarded-block count (constant over the run at fixed guard_freqs)
+        self._bond_guard_exact_total += int(res.guard_exact_blocks)
+        self._bond_guard_exact_max = max(self._bond_guard_exact_max, int(res.guard_exact_blocks))
+        self._bond_guard_blocks = int(res.guard_blocks)
+        logger.debug("  guards: exact decomposition of %d of %d guarded blocks (%.1f %%)",
+                     res.guard_exact_blocks, res.guard_blocks,
+                     100.0 * res.guard_exact_blocks / max(1, res.guard_blocks))
         r6 = (nmat, nvol, norb, norb, norb, norb)
         return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
                 res.collapse_c.reshape(r6), sigma_fluct)
 
-    def _phase_b_publish_bond(self, green_info, store):
+    def _phase_b_publish_bond(self, green_info, store, xp):
         """The sixteen static ``longitudinal_bond_*`` keys of the LAST map
         (Phase A schema), ``longitudinal_bond_source`` and, with
-        ``longitudinal_bond_output_full``, the detached dynamic channels."""
+        ``longitudinal_bond_output_full``, the detached dynamic channels.
+        ``xp`` is the array module the bond map dressed on (``dev.xp`` of
+        the caller, the same module :func:`bond_channels.dress_batch`
+        resolved ``"auto"`` against for this map, issue #197)."""
+        from hwave.solver import bond_channels as _bc
         res = self._bond_last
         topo = self._bond_topo
         nvol, norb = self.lattice.nvol, self.norb
         nd = norb * norb
         delta_r = np.asarray(topo.delta_r, dtype=np.int64)
+        xp_name = getattr(self, "_bond_xp_name", "numpy")
+        # the recorded guard method must come from the same resolver
+        # dress_batch used, dtype and all (issue #197 review): the store's
+        # chibar slot is always allocated complex128 (BondBlockStore.__init__),
+        # so a zero-copy one-row peek is enough to name that dtype without a
+        # device transfer
+        guard_method = _bc._resolve_guard_method(
+            "auto", xp, store.get_freq_batch("chibar", 0, 1).dtype)
         out = {
             "longitudinal_bond_chi_s": res.static_s,
             "longitudinal_bond_chi_c": res.static_c,
@@ -2352,8 +2382,12 @@ class FLEX(RPA):
             "longitudinal_bond_source": np.str_("last_map"),
             "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
             "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
-            "longitudinal_bond_device": np.str_(getattr(self, "_bond_xp_name", "numpy")),
+            "longitudinal_bond_device": np.str_(xp_name),
             "longitudinal_bond_nb": np.int64(self._bond_nb),
+            "longitudinal_bond_guard_method": np.str_(guard_method),
+            "longitudinal_bond_guard_exact_blocks_total": np.int64(self._bond_guard_exact_total),
+            "longitudinal_bond_guard_exact_blocks_max": np.int64(self._bond_guard_exact_max),
+            "longitudinal_bond_guard_blocks_per_iteration": np.int64(self._bond_guard_blocks),
         }
         if self.longitudinal_bond_output_full:
             out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")

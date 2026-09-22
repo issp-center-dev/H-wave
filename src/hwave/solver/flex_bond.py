@@ -240,7 +240,7 @@ def _at(iteration):
 
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
-           guard_policy="refuse", violations=None):
+           guard_policy="refuse", violations=None, guard_method="auto", stats=None):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
@@ -248,7 +248,7 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
                                       # the warnings of a tolerated violation do not
                                       # pass through the refusal wrapper below, so the
                                       # iteration reaches them at the source
-                                      iteration=iteration)
+                                      iteration=iteration, guard_method=guard_method, stats=stats)
     except ValueError as exc:
         if iteration is None:
             raise
@@ -328,11 +328,16 @@ class DressResult:
     #: RESIDUAL rather than of the conditioning guard (the conditioning count
     #: is the difference), so a diagnostic can name the guard that spoke
     guard_residual_violations: int = 0
+    #: blocks the conditioning guard decomposed exactly in this map, and the
+    #: number it guarded (issue #197; equal under guard_method = "svd")
+    guard_exact_blocks: int = 0
+    guard_blocks: int = 0
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
-                      second_order="takimoto", guard_freqs="all", guard_policy="refuse"):
+                      second_order="takimoto", guard_freqs="all", guard_policy="refuse",
+                      guard_method="auto"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -393,7 +398,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     map continues, and the number of such violations over BOTH channels
     and the whole frequency grid is returned as
     ``DressResult.guard_violations``, of which
-    ``DressResult.guard_residual_violations`` were residual findings."""
+    ``DressResult.guard_residual_violations`` were residual findings.
+
+    ``guard_method`` (GitHub issue #197) is threaded to every
+    :func:`~hwave.solver.bond_channels.dress_batch` call unchanged
+    (``"auto"``, ``"svd"`` or ``"interval"``); the number of blocks the
+    guard decomposed exactly and the number it guarded, summed over both
+    channels and every frequency batch, are returned as
+    ``DressResult.guard_exact_blocks`` and ``DressResult.guard_blocks``."""
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
@@ -428,12 +440,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
+    # accumulated over both channels and every frequency batch (issue #197)
+    stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
     for l0 in range(0, nmat, nb):
         l1 = min(nmat, l0 + nb)
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
         collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
         chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations)
+                             guard_freqs, guard_policy, violations, guard_method, stats)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
         collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -444,7 +458,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
         del chi_s_b
         chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations)
+                             guard_freqs, guard_policy, violations, guard_method, stats)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
         collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -486,7 +500,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                        cond_min_s=float(cond_s), cond_min_c=float(cond_c),
                        guard_violations=len(violations),
                        guard_residual_violations=sum(1 for v in violations
-                                                     if v["kind"] == "residual"))
+                                                     if v["kind"] == "residual"),
+                       guard_exact_blocks=int(stats["guard_exact_blocks"]),
+                       guard_blocks=int(stats["guard_blocks"]))
 
 
 # =============================================================================
@@ -609,7 +625,8 @@ def transport_ops(B, nmat, nvol, norb):
 
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
-                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None):
+                         freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
+                         guard_freqs="all", guard_enabled=True):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -658,13 +675,26 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     with, so the real device allocation is smaller --
     ``dressing(nb) = 7 * nb * nvol * ND^2 * 16`` during the per-batch
     dressing solve and ``transport = 6 * C`` during the bond
-    self-energy transport. The device need at a batch size is therefore
+    self-energy transport. ``guard(nb) = 4 * nb * nvol * ND^2 * 16`` under
+    ``guard_freqs = "all"`` (``4 * nvol * ND^2 * 16``, independent of
+    ``nb``, under ``"static"``, where only one frequency slice of ``nvol``
+    blocks is ever guarded; ``0`` when the guard is disabled,
+    ``guard_enabled=False``) is the conditioning guard's own device
+    temporaries (issue #197), incremental to the dressing row rather than
+    a phase of its own (the guard runs inside the dressing phase, never
+    simultaneously with the bubble or the transport), so it is added to
+    ``dressing`` in the need below but never competes for the name a
+    refusal gives the largest phase. The factor is 4, not the 3 device
+    temporaries active at any one instant, to keep headroom over the
+    measured ~3x peak. The device need at a batch size is therefore
     ``1.25 * (vertices_static + flex_arrays + green0_tail +
-    second_order_factors + max(bubble, dressing(nb), transport))``
+    second_order_factors + max(bubble, dressing(nb) + guard(nb), transport))``
     against ``device_cap = 0.9 *
     device_available``. Refusal at ``nb = 1``
-    names whichever of the three phase rows is the largest (an exact tie
-    goes to the earlier of ``bubble``, ``dressing``, ``transport``); an explicit
+    names whichever of the three phase rows (``bubble``, ``dressing``,
+    ``transport`` -- the RAW rows, not ``dressing + guard``) is the
+    largest (an exact tie goes to the earlier of ``bubble``, ``dressing``,
+    ``transport``); an explicit
     ``freq_batch`` is checked against both the host and the device
     table; otherwise the selected ``nb`` is ``min`` of the largest
     batch each table admits, and the dict gains ``device_rows``,
@@ -783,12 +813,21 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             rows = dict(dev_persistent)
             rows["bubble"] = dev_bubble
             rows["dressing"] = 7 * n * nvol * ND * ND * it
+            # the conditioning guard's device temporaries (issue #197):
+            # incremental to the dressing row, not a phase of its own --
+            # see _largest_dev_phase, which never names it. Under
+            # guard_freqs = "static" only one frequency slice of nvol
+            # blocks is ever guarded per batch, so the row does not scale
+            # with n there; a disabled guard (cond_tol = None) allocates
+            # nothing.
+            rows["guard"] = (4 * (n if guard_freqs == "all" else 1) * nvol * ND * ND * it
+                             if guard_enabled else 0)
             rows["transport"] = transport
             return rows
         def _dev_need(n):
             r = _dev_rows(n)
             return 1.25 * (dev_persistent_sum
-                           + max(r["bubble"], r["dressing"], r["transport"]))
+                           + max(r["bubble"], r["dressing"] + r["guard"], r["transport"]))
         dev_cap = 0.9 * float(device_available)
         def _dev_table(n):
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
@@ -797,8 +836,9 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             phase = _largest_dev_phase(_dev_rows(1))
             raise ValueError(
                 "[mode.param] gpu=true with longitudinal_bond_channels: the estimated device need "
-                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max phase "
-                "row) exceeds 0.9 * the available device memory {:.4f} GiB; the rows are\n{}\nReduce "
+                "{:.4f} GiB (frequency batch 1, phase '{}') = 1.25 * (persistent rows + max(bubble, "
+                "dressing + guard, transport)) exceeds 0.9 * the available device memory {:.4f} "
+                "GiB; the rows are\n{}\nReduce "
                 "the k mesh or Nmat, drop declared-zero outer shells with "
                 "longitudinal_bond_max_shells, or run with gpu=false.".format(
                     _dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))

@@ -307,11 +307,19 @@ class TestDeviceMemoryTable(unittest.TestCase):
         return max(prep, pair)
 
     @classmethod
+    def _guard(cls, nb):
+        """The conditioning guard's device row (issue #197), incremental
+        to the dressing row at the same batch (under
+        ``guard_freqs = "all"``, the default; factor 4, raised from 3 to
+        keep headroom over the measured ~3x peak)."""
+        return 4 * nb * cls._NVOL * cls._ND * cls._ND * cls._IT
+
+    @classmethod
     def _need(cls, nb, factor_bytes=0):
         S, G, C, per = cls._sym()
         # 5 G the SCF loop's arrays, one more G the bubble's tail (issue #196)
         return 1.25 * (5 * S + 5 * G + G + factor_bytes
-                       + max(per * nb, 6 * C, cls._bubble()))
+                       + max(per * nb + cls._guard(nb), 6 * C, cls._bubble()))
 
     def test_device_rows_and_selection(self):
         from hwave.solver.flex_bond import estimate_bond_memory
@@ -330,10 +338,27 @@ class TestDeviceMemoryTable(unittest.TestCase):
         self.assertEqual(est["device_rows"]["green0_tail"], G)
         nb = est["device_nb"]
         self.assertEqual(est["device_rows"]["dressing"], per * nb)
+        self.assertEqual(est["device_rows"]["guard"], self._guard(nb))
         self.assertLessEqual(self._need(nb), 0.9 * 2.0e8)
         self.assertTrue(nb == self._NMAT or self._need(nb + 1) > 0.9 * 2.0e8)
         nb_host = estimate_bond_memory(device_available=None, **self._KW)["nb"]
         self.assertEqual(est["nb"], min(nb_host, est["device_nb"]))
+
+    def test_guard_freqs_static_caps_the_row_at_one_slice(self):
+        """Under ``guard_freqs = "static"`` only the zero-frequency slice
+        (``nvol`` blocks) is ever guarded per batch, so the row does not
+        scale with the selected ``nb``."""
+        from hwave.solver.flex_bond import estimate_bond_memory
+        S, G, C, per = self._sym()
+        est = estimate_bond_memory(device_available=int(2.0e8), guard_freqs="static", **self._KW)
+        self.assertEqual(est["device_rows"]["guard"], 4 * self._NVOL * self._ND * self._ND * self._IT)
+
+    def test_guard_disabled_allocates_nothing(self):
+        """``guard_enabled=False`` (the conditioning floor is off,
+        ``cond_tol is None``) allocates no device guard row at all."""
+        from hwave.solver.flex_bond import estimate_bond_memory
+        est = estimate_bond_memory(device_available=int(2.0e8), guard_enabled=False, **self._KW)
+        self.assertEqual(est["device_rows"]["guard"], 0)
 
     def test_second_order_mirror_tightens_the_device_batch(self):
         """``flex_second_order = "local"`` compiles a factor pack that is
@@ -369,7 +394,7 @@ class TestDeviceMemoryTable(unittest.TestCase):
         not with it has to be refused rather than fail mid-solve."""
         from hwave.solver.flex_bond import estimate_bond_memory
         S, G, C, per = self._sym()
-        phase = max(per * 1, 6 * C, self._bubble())
+        phase = max(per * 1 + self._guard(1), 6 * C, self._bubble())
         without = 1.25 * (5 * S + 5 * G + phase)
         with_tail = 1.25 * (5 * S + 5 * G + G + phase)
         self.assertGreater(with_tail, without)
@@ -473,15 +498,19 @@ class TestDevicePhasePrecedence(unittest.TestCase):
 
 class TestDeviceBubbleRow(unittest.TestCase):
     """A shape whose BUBBLE is the largest of the three device phase rows
-    (issue #196). ``B = 5``, ``norb = 1``, ``Nmat = 32``, ``nvol = 8``:
+    (issue #196). ``B = 5``, ``norb = 1``, ``Nmat = 44``, ``nvol = 8``:
     the bubble's per-pair buffers grow with ``Nmat`` while the dressing
-    batch does not, and the transport's ``6 C`` stays below them at
-    ``norb = 1``."""
+    batch (plus its incremental guard row, issue #197) does not, and the
+    transport's ``6 C`` stays below them at ``norb = 1``. ``Nmat`` is 44,
+    not 42: the guard row's factor was raised from 3 to 4 (issue #197
+    review), which would otherwise put the guarded dressing row above the
+    bubble at ``Nmat = 42``; 44 is the minimal integer that keeps the
+    bubble dominant."""
 
-    _KW = dict(nmat=32, nvol=8, norb=1, B=5, depth=0, output_full=False, split_seed=False,
+    _KW = dict(nmat=44, nvol=8, norb=1, B=5, depth=0, output_full=False, split_seed=False,
                n_types=1, freq_batch=None, cap_gb=200.0, mixing="linear")
 
-    _IT, _NVOL, _P, _ND, _NMAT, _B = 16, 8, 1, 5, 32, 5
+    _IT, _NVOL, _P, _ND, _NMAT, _B = 16, 8, 1, 5, 44, 5
 
     @classmethod
     def _rows(cls):
@@ -491,19 +520,20 @@ class TestDeviceBubbleRow(unittest.TestCase):
         return dict(bubble=max(prep, pair),
                     transport=6 * nmat * nvol * P * P * it,
                     dressing1=7 * 1 * nvol * ND * ND * it,
+                    guard1=4 * 1 * nvol * ND * ND * it,
                     # 5 S vertices, 5 G the SCF arrays, one more G the tail
                     persistent=5 * nvol * ND * ND * it + 6 * nmat * nvol * P * it)
 
     def test_the_fixture_really_is_bubble_dominated(self):
         r = self._rows()
         self.assertGreater(r["bubble"], r["transport"])
-        self.assertGreater(r["bubble"], r["dressing1"])
+        self.assertGreater(r["bubble"], r["dressing1"] + r["guard1"])
 
     def test_device_need_takes_the_bubble_row(self):
         from hwave.solver.flex_bond import estimate_bond_memory
         r = self._rows()
         need1 = 1.25 * (r["persistent"] + r["bubble"])
-        need2 = 1.25 * (r["persistent"] + 2 * r["dressing1"])
+        need2 = 1.25 * (r["persistent"] + 2 * (r["dressing1"] + r["guard1"]))
         self.assertGreater(need2, need1)          # nb = 2 is dressing-dominated
         # admit nb = 1 and refuse nb = 2, so the selected batch is 1 and the
         # bubble is the phase row the need is built on

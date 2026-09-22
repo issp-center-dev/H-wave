@@ -13,6 +13,7 @@ Vertex/bubble construction and any complex-input rejection live elsewhere
 (later tasks / ``sc.py`` top level) -- this module stays general.
 """
 
+import contextlib
 from dataclasses import dataclass, field
 import logging
 
@@ -683,6 +684,26 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
 # sigma_min above this floor.
 _BOND_COND_FLOOR = 1.0e-3
 
+#: power iterations of the interval guard (issue #197): each step tightens
+#: the Rayleigh ends; any count gives valid one-sided bounds
+_GUARD_POWER_ITERATIONS = 4
+#: pruning margin of the exact set (spec 2.2): a block is decomposed exactly
+#: unless its lower end exceeds this multiple of the smallest upper end
+_GUARD_PRUNE_MARGIN = 2.0
+#: scale guard: blocks whose Frobenius norm (or their inverse's) leaves this
+#: range get no interval (products and norms would approach overflow /
+#: underflow, where the exact-arithmetic bounds do not describe the floats)
+_GUARD_SCALE_MIN = 1.0e-100
+_GUARD_SCALE_MAX = 1.0e+100
+#: outward-rounding term of the interval ends (spec 2.1): eps = _GUARD_ROUNDING
+#: * ND**2 * u (u = 2.0**-53) is a bound on the relative round-off of the
+#: norms, products and quotients of an ND x ND block; every lower end is
+#: multiplied by (1 - eps) and every upper end by (1 + eps) so the interval
+#: contains the reference singular values in floating point as well as in
+#: exact arithmetic (the design's factor-2 pruning margin is twelve orders
+#: of magnitude wider)
+_GUARD_ROUNDING = 16.0
+
 
 def bond_conditioning_score(mat):
     """Score the conditioning of the enlarged RPA denominator blocks of
@@ -713,6 +734,236 @@ def bond_conditioning_score(mat):
     iq = int(np.argmin(score))
     return (float(score[iq]), iq, float(ratio[iq]), float(pole[iq]),
             float(sv[iq, -1]), float(sv[iq, 0]))
+
+
+@dataclass(frozen=True)
+class GuardInterval:
+    """Per-block two-sided bounds of the conditioning quantities of one
+    stack (issue #197, spec 2.1), as HOST float64 / bool arrays of length
+    ``n``. ``valid`` is False where no bounds could be established (out-of-
+    scale block, inverse failed, residual ``rho >= 1`` or non-finite); such
+    a block carries ``sigma_min_low = 0``, ``sigma_min_up = inf`` and
+    ``rho = nan`` (inverse raised) or its computed value."""
+    sigma_max_low: np.ndarray
+    sigma_max_up: np.ndarray
+    sigma_min_low: np.ndarray
+    sigma_min_up: np.ndarray
+    rho: np.ndarray
+    valid: np.ndarray
+
+    @property
+    def score_low(self):
+        return self.sigma_min_low / np.maximum(1.0, self.sigma_max_up)
+
+    @property
+    def score_up(self):
+        return self.sigma_min_up / np.maximum(1.0, self.sigma_max_low)
+
+
+def _errstate(xp):
+    """numpy's floating-point warning suppression for the norm / product /
+    quotient arithmetic of the interval guard; cupy has no errstate and its
+    device arithmetic raises no such warnings, so the context is a no-op
+    there."""
+    if xp is np:
+        return np.errstate(over="ignore", invalid="ignore", divide="ignore", under="ignore")
+    return contextlib.nullcontext()
+
+
+def _norm_upper(X, xp):
+    """min(||X||_F, sqrt(||X||_1 ||X||_inf)) per block: an upper bound of
+    the spectral norm. ``X`` can be a raw block or its inverse, either of
+    which may sit anywhere in the scale guard's range, so the arithmetic
+    runs with floating-point warnings suppressed -- an out-of-range block
+    is caught by the (already non-finite or out-of-range) result, exactly
+    as an in-range one is."""
+    with _errstate(xp):
+        ax = xp.abs(X)
+        fro = xp.sqrt((ax * ax).sum(axis=(1, 2)))
+        one = ax.sum(axis=1).max(axis=1)
+        inf = ax.sum(axis=2).max(axis=1)
+        del ax
+        return xp.minimum(fro, xp.sqrt(one * inf)), fro
+
+
+def _rayleigh_lower(M, xp, k):
+    """sqrt of the Rayleigh quotient of the Hermitian PSD stack ``M`` after
+    ``k`` power steps from the all-ones vector: a lower bound of the largest
+    singular value of the matrix whose Gram matrix ``M`` is. 0 where the
+    iteration is exceptional (zero / non-finite norm or quotient, or ``M``
+    itself is not finite or is exactly zero).
+
+    ``M`` is already the square of a spectral-norm-scale quantity (``A^H A``
+    or ``B B^H``), so running the power iteration on it directly squares
+    that scale again in every reduction (``||M x||``, then the Rayleigh
+    quotient itself) -- overflowing long before the outer scale guard
+    (:data:`_GUARD_SCALE_MIN` / :data:`_GUARD_SCALE_MAX`) would reject the
+    block. Instead the iteration runs on ``M`` divided by its own per-block
+    Frobenius norm ``s`` -- computed by factoring out each block's largest-
+    magnitude entry before squaring, so forming ``s`` itself cannot overflow
+    -- keeping every intermediate quantity ``O(1)``. The Rayleigh quotient
+    is homogeneous of degree 1 in ``M``, so multiplying the quotient formed
+    from the normalised iteration back by ``s`` before the final square
+    root is an exact identity, not an approximation; the caller's outward-
+    rounding term (:data:`_GUARD_ROUNDING`) already covers the extra
+    rounding this normalisation introduces, so none is added here. Floating-
+    point warnings are suppressed throughout; the non-finite or zero values
+    they would have flagged are still caught by the validity checks below."""
+    n, ND, _ = M.shape
+    with _errstate(xp):
+        absM = xp.abs(M)
+        m = absM.max(axis=(1, 2))
+        m_ok = xp.isfinite(m) & (m > 0)
+        m_safe = xp.where(m_ok, m, 1.0)
+        scaled = absM / m_safe[:, None, None]
+        s = m_safe * xp.sqrt((scaled * scaled).sum(axis=(1, 2)))
+        del absM, scaled
+        s_ok = m_ok & xp.isfinite(s) & (s > 0)
+        s_safe = xp.where(s_ok, s, 1.0)
+        Mn = M / s_safe[:, None, None]
+        dtype = M.dtype
+        del M
+
+        x = xp.ones((n, ND, 1), dtype=dtype)
+        ok = s_ok.copy()
+        for _ in range(k):
+            y = Mn @ x
+            nrm = xp.sqrt(xp.real((xp.conj(y) * y).sum(axis=(1, 2))))
+            ok &= xp.isfinite(nrm) & (nrm > 0)
+            x = xp.where(ok[:, None, None], y / xp.where(ok, nrm, 1.0)[:, None, None], x)
+        num = xp.real((xp.conj(x) * (Mn @ x)).sum(axis=(1, 2)))
+        den = xp.real((xp.conj(x) * x).sum(axis=(1, 2)))
+        qn = xp.where(ok & xp.isfinite(num) & (den > 0), num / xp.where(den > 0, den, 1.0), 0.0)
+        q = xp.where(s_ok, qn * s_safe, 0.0)          # undo the normalisation: exact identity
+        return xp.sqrt(xp.maximum(q, 0.0))
+
+
+def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
+    """Two-sided bounds of ``sigma_max`` and ``sigma_min`` of every block of
+    ``mat_flat`` `(n, ND, ND)` complex128 on the array module ``xp`` (numpy
+    or cupy), from batched operations only (spec 2.1, issue #197):
+
+    * ``sigma_max`` in ``[sqrt(rayleigh(A^H A)), min(||A||_F, sqrt(||A||_1 ||A||_inf))]``,
+    * with the computed inverse ``B`` and ``rho = ||I - A B||_F < 1``
+      (Neumann series): ``sigma_min`` in
+      ``[(1 - rho) / N(B), (1 + rho) / sqrt(rayleigh(B B^H))]``.
+
+    The inequalities hold in exact arithmetic for the computed ``B`` and
+    vectors; the floating-point error of the norms, products and inner
+    products of a well-scaled block is of order ``ND^2 u`` relative, so
+    every end is rounded outward by that documented margin
+    (:data:`_GUARD_ROUNDING`) before it is returned, keeping the interval
+    rigorous in floating point too, not only in exact arithmetic -- twelve
+    orders of magnitude inside the caller's pruning margin
+    (:data:`_GUARD_PRUNE_MARGIN`). Never raises on singular or out-of-scale
+    input (those blocks are ``valid = False``); the numpy per-block inverse
+    retry catches any exception a single-block decomposition can raise, not
+    only ``LinAlgError``, so this contract holds for every host block;
+    device out-of-memory errors propagate. Every returned array is a HOST
+    array."""
+    if xp is not np and not (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp):
+        raise TypeError("bond_conditioning_interval: xp must be numpy or cupy")
+    if getattr(mat_flat, "dtype", None) != np.complex128 or mat_flat.ndim != 3 \
+            or mat_flat.shape[-1] != mat_flat.shape[-2]:
+        raise TypeError("bond_conditioning_interval: mat_flat must be a (n, ND, ND) complex128 "
+                        "stack, got {} {}".format(getattr(mat_flat, "dtype", None),
+                                                  getattr(mat_flat, "shape", None)))
+    A = mat_flat
+    n, ND, _ = A.shape
+    eye = xp.eye(ND, dtype=A.dtype)
+    N_A, fro_A = _norm_upper(A, xp)
+    valid = xp.isfinite(fro_A) & (fro_A >= _GUARD_SCALE_MIN) & (fro_A <= _GUARD_SCALE_MAX)
+    smax_low = _rayleigh_lower(xp.conj(A).swapaxes(1, 2) @ A, xp, k)
+    # the inverse: a raised stack inverse marks the whole stack (cupy) or the
+    # failing members (numpy, block by block) invalid; OOM propagates
+    oom = _bk.oom_error_types()
+    inv_failed = xp.zeros(n, dtype=bool)
+    try:
+        B = xp.linalg.inv(A)
+    except oom:
+        raise
+    except Exception:            # noqa: BLE001 - LinAlgError / cuBLAS / cuSOLVER errors
+        if xp is np:
+            B = np.zeros_like(A)
+            for j in range(n):
+                try:
+                    B[j] = np.linalg.inv(A[j])
+                except Exception:  # noqa: BLE001 - never raises on singular input
+                    inv_failed[j] = True
+        else:
+            inv_failed[:] = True
+            B = xp.zeros_like(A)
+    # the residual and the two norms below can involve either extreme of the
+    # scale guard's range (A or its inverse); warnings are suppressed, the
+    # resulting non-finite / out-of-range values are caught by validity checks
+    with _errstate(xp):
+        R = eye - A @ B
+        rho = xp.sqrt(xp.real((xp.conj(R) * R).sum(axis=(1, 2))))
+        del R
+        N_B, fro_B = _norm_upper(B, xp)
+        valid &= ~inv_failed & xp.isfinite(rho) & (rho < 1.0) & xp.isfinite(fro_B) \
+            & (fro_B >= _GUARD_SCALE_MIN) & (fro_B <= _GUARD_SCALE_MAX)
+        b_low = _rayleigh_lower(B @ xp.conj(B).swapaxes(1, 2), xp, k)  # lower bound of ||B||_2
+        del B
+        smin_low = xp.where(valid, (1.0 - rho) / xp.where(valid, N_B, 1.0), 0.0)
+        smin_up = xp.where(valid & (b_low > 0), (1.0 + rho) / xp.where(b_low > 0, b_low, 1.0),
+                            xp.inf)
+        rho_out = xp.where(inv_failed, xp.nan, rho)
+    to = _bk.to_host
+    sigma_max_low = np.asarray(to(smax_low), dtype=np.float64)
+    sigma_max_up = np.asarray(to(N_A), dtype=np.float64)
+    sigma_min_low = np.asarray(to(smin_low), dtype=np.float64)
+    sigma_min_up = np.asarray(to(smin_up), dtype=np.float64)
+    # outward rounding of every end (spec 2.1, see _GUARD_ROUNDING): keeps
+    # the interval rigorous against floating-point reference computations,
+    # not only against the exact-arithmetic theorems it is derived from
+    eps = _GUARD_ROUNDING * ND * ND * (2.0 ** -53)
+    sigma_max_low *= (1.0 - eps)
+    sigma_min_low *= (1.0 - eps)
+    sigma_max_up *= (1.0 + eps)
+    sigma_min_up *= (1.0 + eps)          # inf * (1 + eps) stays inf
+    return GuardInterval(sigma_max_low=sigma_max_low,
+                         sigma_max_up=sigma_max_up,
+                         sigma_min_low=sigma_min_low,
+                         sigma_min_up=sigma_min_up,
+                         rho=np.asarray(to(rho_out), dtype=np.float64),
+                         valid=np.asarray(to(valid), dtype=bool))
+
+
+def select_exact_blocks(interval, margin=_GUARD_PRUNE_MARGIN):
+    """Sorted flattened indices of the blocks that must be decomposed
+    exactly (spec 2.2): every invalid block, and every valid block whose
+    lower end is at most ``margin`` times the smallest valid upper end
+    ``U`` (no valid block: every index). ``margin`` must be ``>= 1``: a
+    margin below 1 would prune blocks the interval itself cannot rule
+    out."""
+    if margin < 1.0:
+        raise ValueError("select_exact_blocks: margin must be >= 1 (got {})".format(margin))
+    valid = interval.valid
+    n = valid.shape[0]
+    if not np.any(valid):
+        return np.arange(n, dtype=np.int64)
+    U = float(np.min(interval.score_up[valid]))
+    keep = ~valid | (interval.score_low <= margin * U)
+    return np.nonzero(keep)[0].astype(np.int64)
+
+
+def resolve_conditioning_guard(mat_flat, xp, cond_tol, *, k=_GUARD_POWER_ITERATIONS,
+                               margin=_GUARD_PRUNE_MARGIN):
+    """The tuple :func:`bond_conditioning_score` returns for the stack
+    ``mat_flat`` `(n, ND, ND)` on ``xp`` -- ``(worst, i, ratio_i, pole_i,
+    smin_i, smax_i)`` with ``i`` the FLATTENED index of the first minimum --
+    plus ``(n_exact, n_blocks)``, obtained by decomposing on the host only
+    the blocks of :func:`select_exact_blocks` (spec 2.2). ``cond_tol`` is
+    accepted for symmetry with the callers and not used: the decision is
+    the caller's, from ``worst``."""
+    interval = bond_conditioning_interval(mat_flat, xp, k=k)
+    idx = select_exact_blocks(interval, margin=margin)
+    gathered = _bk.to_host(mat_flat[idx])
+    n_e = int(idx.shape[0])
+    worst, local, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(
+        np.asarray(gathered).reshape(n_e, 1, 1, mat_flat.shape[-1], mat_flat.shape[-1]))
+    return (worst, int(idx[local]), ratio_i, pole_i, smin_i, smax_i, n_e, int(mat_flat.shape[0]))
 
 
 class BondConditioningError(ValueError):
@@ -3558,6 +3809,28 @@ _GUARD_FREQS = ("all", "static")
 _GUARD_POLICIES = ("refuse", "warn")
 _STATIC_RESIDUAL_TOL = 1e-6
 
+_GUARD_METHODS = ("auto", "svd", "interval")
+#: what guard_method = "auto" means per array module, for a complex128
+#: guarded stack (issue #197). The measurement (spec 6.8) found the device
+#: guard faster than the host decomposition at both measured points
+#: (identical outputs), so it is the GPU default; the CPU path is unchanged.
+_GUARD_AUTO = {"numpy": "svd", "cupy": "interval"}
+
+
+def _resolve_guard_method(guard_method, xp, dtype):
+    """Resolves ``guard_method`` for one guarded stack (issue #197).
+    ``"svd"`` and ``"interval"`` resolve to themselves. ``"auto"`` resolves
+    through :data:`_GUARD_AUTO` by the array module ``xp`` (``"numpy"`` for
+    ``np`` itself, ``"cupy"`` for anything else) -- but ONLY when ``dtype``
+    is ``complex128``: the interval guard (:func:`bond_conditioning_interval`)
+    refuses any other dtype with ``TypeError``, while the ``"svd"`` path
+    accepts it, so ``"auto"`` falls back to ``"svd"`` outside complex128."""
+    if guard_method != "auto":
+        return guard_method
+    if dtype != np.complex128:
+        return "svd"
+    return _GUARD_AUTO["numpy" if xp is np else "cupy"]
+
 
 def _at(iteration):
     """`` (SCF iteration N)`` for a warning raised inside a self-consistency,
@@ -3580,7 +3853,8 @@ def solve_residual(mat, chi, cb):
 
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
-                guard_policy="refuse", violations=None, iteration=None):
+                guard_policy="refuse", violations=None, iteration=None,
+                guard_method="auto", stats=None):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3619,7 +3893,21 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     Nothing is logged or recorded before the solve has succeeded: a warning
     states that the dressing continues, and a batch that ends in a refusal
     did not continue. ``iteration``, when given, names the self-consistency
-    iteration in the warnings and in the records."""
+    iteration in the warnings and in the records.
+
+    ``guard_method`` (issue #197): ``"svd"`` decomposes every guarded block
+    on the host, as before; ``"interval"`` scores the same blocks through
+    :func:`resolve_conditioning_guard` (device bounds plus an exact host
+    decomposition of only the blocks that could be the minimum) and
+    reproduces the ``"svd"`` path's outputs exactly; ``"auto"`` (the
+    default) resolves through :func:`_resolve_guard_method` and
+    :data:`_GUARD_AUTO` by the array module of the guarded stack -- on
+    cupy, for a complex128 stack, it selects ``"interval"``; on numpy, or
+    for any other dtype (the interval guard accepts only complex128), it
+    selects ``"svd"``. When ``stats`` is a dict, ``stats["guard_exact_blocks"]``
+    and ``stats["guard_blocks"]`` are incremented by the number of blocks
+    decomposed exactly and the number of blocks guarded, for every guarded
+    slice."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3628,6 +3916,9 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     if guard_policy not in _GUARD_POLICIES:
         raise ValueError("dress_batch: guard_policy must be one of {}, got {!r}"
                          .format(list(_GUARD_POLICIES), guard_policy))
+    if guard_method not in _GUARD_METHODS:
+        raise ValueError("dress_batch: guard_method must be one of {}, got {!r}"
+                         .format(list(_GUARD_METHODS), guard_method))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
     # array-like inputs are coerced once the module is known (the identity for
@@ -3646,17 +3937,31 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         xp.negative(mat, out=mat)
     idx = xp.arange(ND)
     mat[:, :, idx, idx] += 1.0
+    # resolved from the guarded stack's own dtype (issue #197): the interval
+    # guard only ever runs on complex128, so "auto" falls back to "svd"
+    # outside it, whatever the array module
+    guard_method = _resolve_guard_method(guard_method, xp, mat.dtype)
 
     # warnings held back until there is a result to continue with:
     # (format, args, violation record)
     pending = []
 
-    def _guard(mat_h, i_offset):
-        # mat_h: HOST (n, ND, ND); i_offset: flattened index of its first row
+    def _guard(mat_d, i_offset):
+        # mat_d: (n, ND, ND) on xp (host under "svd", as before); i_offset:
+        # flattened index of its first row
         if cond_tol is None:
             return None
-        blocks = mat_h.reshape(-1, 1, 1, ND, ND)
-        worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+        n = int(mat_d.shape[0])
+        if guard_method == "interval":
+            worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = \
+                resolve_conditioning_guard(mat_d, xp, cond_tol)
+        else:
+            blocks = _bk.to_host(mat_d).reshape(-1, 1, 1, ND, ND)
+            worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+            n_exact = n
+        if stats is not None:
+            stats["guard_exact_blocks"] = stats.get("guard_exact_blocks", 0) + n_exact
+            stats["guard_blocks"] = stats.get("guard_blocks", 0) + n
         if worst > cond_tol:
             return worst
         i += i_offset
@@ -3680,8 +3985,8 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                  "value": float(worst), "iteration": iteration}))
             return worst
         # the guard's own refusal is built from the score computed above
-        # (no second decomposition, issue #198); `blocks` is (n, 1, 1, ND,
-        # ND), so its q index is the flattened position inside this call
+        # (no second decomposition, issue #198); i - i_offset is the
+        # position inside the guarded stack of this call
         cause = _conditioning_refusal(
             channel, (worst, i - i_offset, ratio_i, pole_i, smin_i, smax_i), cond_tol, 1, 1)
         raise BondConditioningError(
@@ -3696,10 +4001,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     l_static = nmat // 2
     cond_min = None
     if guard_freqs == "all":
-        cond_min = _guard(_bk.to_host(mat).reshape(nb * nvol, ND, ND), 0)
+        cond_min = _guard(mat.reshape(nb * nvol, ND, ND), 0)
     elif l0 <= l_static < l0 + nb:
         i = l_static - l0
-        cond_min = _guard(_bk.to_host(mat[i]).reshape(nvol, ND, ND), i * nvol)
+        cond_min = _guard(mat[i].reshape(nvol, ND, ND), i * nvol)
     flat = mat.reshape(nb * nvol, ND, ND)
     if guard_freqs == "static":
         LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)

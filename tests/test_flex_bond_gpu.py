@@ -152,6 +152,61 @@ class TestDressBatchEquivalence(_GpuCase):
         chi_bar = chi_bar * 1e-14
         self._check(chi_bar, S, "spin", "all", "near-zero bubble")
 
+    def test_interval_guard_matches_the_host_svd_guard(self):
+        """Guard OUTPUTS of the device interval path equal the production host
+        SVD path on the same device stack (issue #197): the minimum, its
+        location and the refusal text; the dressed batch keeps the solve
+        tolerance of the other cases."""
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, C = _problem(nmat=6, nvol=8, nd=4, B=3, seed=11)
+        nmat, nvol = chi_bar.shape[:2]
+        for scale in (1.0, 6.0, 16.0):              # passing, near, refusing
+            for channel, W in (("spin", S), ("charge", C)):
+                with self.subTest(scale=scale, channel=channel):
+                    cb_d = self.cupy.asarray(chi_bar); W_d = self.cupy.asarray(scale * W)
+                    outs = []
+                    for method in ("svd", "interval"):
+                        try:
+                            chi, cond = bc.dress_batch(cb_d, W_d, channel, l0=0, nmat=nmat,
+                                                       spatial_shape=(nvol, 1, 1), guard_method=method)
+                            outs.append(("ok", cond, self.cupy.asnumpy(chi)))
+                        except bc.BondConditioningError as e:
+                            outs.append(("refused", str(e), e.l, e.iq, e.q, e.worst, e.smin, e.smax))
+                    self.assertEqual(outs[0][0], outs[1][0])
+                    if outs[0][0] == "ok":
+                        self.assertEqual(outs[0][1], outs[1][1])
+                        np.testing.assert_array_equal(outs[0][2], outs[1][2])
+                    else:
+                        self.assertEqual(outs[0][1:], outs[1][1:])
+
+    def test_interval_guard_device_memory_increment(self):
+        # bond_conditioning_interval calls _norm_upper twice per call (once
+        # on A, once on B after the inverse exists), so the spy below only
+        # samples the pool at those two points -- the assertion is an upper
+        # bound on the increment AT THOSE POINTS, not a measured peak; the
+        # controller records the actual peak from the GPU run. The sampled
+        # increment is NOT the true peak either way: the true peak, ~3 U_b
+        # after the early `del`s release the temporaries, is what the
+        # "guard" row of flex_bond.estimate_bond_memory covers (its factor
+        # of 4 is deliberate headroom above that measured ~3 U_b).
+        from hwave.solver import bond_channels as bc
+        chi_bar, S, _C = _problem(nmat=16, nvol=32, nd=4, B=3, seed=12)
+        n, ND = 16 * 32, S.shape[-1]
+        mat = self.cupy.asarray(np.eye(ND) - chi_bar.reshape(n, ND, ND) @ S[0])
+        pool = self.cupy.get_default_memory_pool()
+        self.cupy.cuda.Device().synchronize()
+        before = pool.used_bytes()
+        peak = [before]
+        real = bc._norm_upper
+        def spy(X, xp):
+            peak.append(pool.used_bytes()); return real(X, xp)
+        with mock.patch.object(bc, "_norm_upper", spy):
+            bc.bond_conditioning_interval(mat, self.cupy)
+        self.cupy.cuda.Device().synchronize()
+        U_b = n * ND * ND * 16
+        self.assertLessEqual(max(peak) - before, 3 * U_b)
+        _deviation("guard memory (U_b units)", np.array([(max(peak) - before) / U_b]), np.array([0.0]))
+
 
 def _bubble_fixture(norb=2, shape=(4, 4, 1), nmat=8, beta=2.0, seed=11):
     """A physical bond fixture (Hermitian k-even hopping, bare Green
@@ -333,6 +388,43 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                 self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
 
+    def test_interval_guard_whole_map(self):
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=13)
+        # Push ONE block toward the instability so its score is far below
+        # every other block's (factor tuned by a host dry run, recorded in
+        # the task report): at factor 100 the spin-channel score of block
+        # (l=0, q=0) is ~0.0153 against a minimum of ~0.4532 over the other
+        # 31 blocks (ratio ~0.034, well under the 1/20 the exact set is
+        # pruned against), and the whole map still passes the guard on both
+        # channels (min score over the map stays above cond_tol = 1e-3) --
+        # the uniform seed=13 fixture alone gives every block nearly the
+        # same score, which makes the pruning count assertions below
+        # vacuous (interval decomposes the same 64 of 64 blocks as svd).
+        chi_bar[0, 0] *= 100.0
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
+        view = types.SimpleNamespace(n_channels=ND // nd)
+        def run(xp, method):
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
+                                           nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                           second_order="takimoto", guard_method=method)
+                return store.get_freq_batch("W", 0, nmat).copy(), res
+        W_ref, r_ref = run(self.cupy, "svd")
+        W, r = run(self.cupy, "interval")
+        _W_host, r_host = run(np, "interval")
+        np.testing.assert_array_equal(W, W_ref)               # same solves, same guard
+        self.assertEqual((r.cond_min_s, r.cond_min_c), (r_ref.cond_min_s, r_ref.cond_min_c))
+        # the svd path decomposes every guarded block, on both channels
+        self.assertEqual(r_ref.guard_exact_blocks, r_ref.guard_blocks)
+        # device and host intervals select the same exact set
+        self.assertEqual(r.guard_exact_blocks, r_host.guard_exact_blocks)
+        # the spread above gives the interval guard something to prune
+        self.assertLess(r.guard_exact_blocks, r.guard_blocks)
+
 
 class TestTransportEquivalence(_GpuCase):
     """``flex_bond.calc_self_energy_bond`` (spec 4.3) in both array modules."""
@@ -419,6 +511,7 @@ class TestEndToEndEquivalence(_GpuCase):
         the backends' round-off."""
         from tests.test_flex_bond_gate import _flex
         outs = {}
+        guard_methods = {}
         for gpu in (False, True):
             s, r = _flex({"gpu": gpu, "IterationMax": 200, "EPS": 12, "Mix": 0.5})
             gi = r.get_param("green")
@@ -426,10 +519,15 @@ class TestEndToEndEquivalence(_GpuCase):
                 s.solve(gi, out)
                 outs[gpu] = (bool(s.scf_converged), int(s.scf_iterations), float(s.mu),
                              np.array(gi["sigma"]), np.array(gi["longitudinal_bond_chi_s"]))
+                guard_methods[gpu] = str(gi["longitudinal_bond_guard_method"])
             if gpu:
                 # the run really took the device path, so a silent numpy
                 # fallback cannot pass this test by comparing CPU with CPU
                 self.assertEqual(str(s._bond_xp_name), "cupy")
+        # the guard method "auto" resolves differently per array module
+        # (issue #197): "interval" on the device path, "svd" on the host
+        self.assertEqual(guard_methods[True], "interval")
+        self.assertEqual(guard_methods[False], "svd")
         (ca, ia, ma, sa, xa), (cb, ib, mb, sb, xb) = outs[False], outs[True]
         _deviation("end-to-end sigma", sb, sa)
         _deviation("end-to-end bond chi_s", xb, xa)
