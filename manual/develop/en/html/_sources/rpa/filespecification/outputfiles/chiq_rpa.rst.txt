@@ -208,8 +208,21 @@ conditioning guard), ``longitudinal_bond_cond_tol`` (float: the
 conditioning floor that guard compared ``longitudinal_bond_cond_min_s`` /
 ``_c`` against, ``[mode.param] longitudinal_bond_cond_tol``),
 ``longitudinal_bond_device`` (string: ``"cupy"`` or
-``"numpy"``, the backend that ran the bond solve) and
-``longitudinal_bond_nb`` (integer, the frequency batch actually used). The
+``"numpy"``, the backend that ran the bond solve),
+``longitudinal_bond_nb`` (integer, the frequency batch actually used),
+``longitudinal_bond_guard_method`` (string: ``"svd"`` or ``"interval"``,
+how the conditioning guard scored its blocks -- ``"svd"`` decomposes every
+guarded block on the host, ``"interval"`` bounds every block's
+conditioning on the device and decomposes exactly only the blocks that
+can attain the minimum, with outputs identical to ``"svd"``; the GPU
+default is ``"interval"``, the CPU one ``"svd"``),
+``longitudinal_bond_guard_exact_blocks_total`` (integer, the running total
+of blocks decomposed exactly over the whole solve),
+``longitudinal_bond_guard_exact_blocks_max`` (integer, the largest such
+count reached in any one iteration) and
+``longitudinal_bond_guard_blocks_per_iteration`` (integer, the number of
+blocks the guard covers in one iteration -- the denominator the previous
+two counts are measured against). The
 ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
@@ -242,7 +255,11 @@ same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
 ``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen static
 keys, the ``longitudinal_bond_guard_freqs`` /
 ``longitudinal_bond_cond_tol`` / ``longitudinal_bond_device``
-/ ``longitudinal_bond_nb`` members and the provenance block; nothing else
+/ ``longitudinal_bond_nb`` / ``longitudinal_bond_guard_method`` /
+``longitudinal_bond_guard_exact_blocks_total`` /
+``longitudinal_bond_guard_exact_blocks_max`` /
+``longitudinal_bond_guard_blocks_per_iteration`` members and the
+provenance block; nothing else
 duplicates these arrays. ``S_bond`` and ``C_bond`` are the input the
 bond-resolved dynamic Eliashberg pairing solver needs in addition to
 ``chi_s_w`` / ``chi_c_w`` (see below); an archive written by an earlier

@@ -537,9 +537,14 @@ GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <s
 <code class="docutils literal notranslate"><span class="pre">dressing</span></code>・<code class="docutils literal notranslate"><span class="pre">transport</span></code>と並んで<code class="docutils literal notranslate"><span class="pre">bubble</span></code>の行が現れます
 （<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
 範囲で CPU 実行と一致します。出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>と
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>が記録されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
-<span class="pre">&quot;all&quot;</span></code>で一度検査した後は、本番の GPU 実行を<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>に切り替えられます。
-GPU では完全なガードは静的ガードの約2.5倍、CPU では約20%のコストです。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>が記録されます。GPU 上の<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>はもはや
+従来ほどのコストがかかりません（ガードの条件数バウンドをデバイス上で
+計算し、バッチ最小値になり得るブロックのみをホストで厳密に分解する
+ため、出力は全ブロック分解の場合と完全に一致したまま、コストはおよそ
+半減します）。そのため本番運用でも<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>を既定のまま使うのが
+妥当です。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>は縮約された診断のままであり、1 反復あたり
+依然として約3倍高速なので、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>で一度検査した後に<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>に切り替えるという従来の助言は、
+スループットを重視する場合には引き続き有効です。
 オンサイト<code class="docutils literal notranslate"><span class="pre">U</span></code>と最近接<code class="docutils literal notranslate"><span class="pre">V</span></code>を
 持つ単一バンド正方格子の完全な入力例を示します（相互作用ファイルは
 <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">相互作用入力</span></a>の Wannier90 形式で、<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>には

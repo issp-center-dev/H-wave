@@ -211,7 +211,16 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_cond_tol</span></code>）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>（文字列。<code class="docutils literal notranslate"><span class="pre">&quot;cupy&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;numpy&quot;</span></code>。
 ボンド分解した解法を実行したバックエンド）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>（整数。
-実際に使用された振動数バッチ幅）が格納されます。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
+実際に使用された振動数バッチ幅）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_method</span></code>（文字列。<code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code>。条件数ガードが各ブロックを
+どう判定したか -- <code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>は全ての判定対象ブロックをホストで分解し、
+<code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code>はデバイス上で全ブロックの条件数を範囲で評価し、最小値に
+なり得るブロックのみを厳密に分解します。出力は<code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>と完全に一致
+します。GPU の既定は<code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code>、CPU の既定は<code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_total</span></code>（整数。ソルブ全体を通じて
+厳密に分解されたブロック数の累計）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_max</span></code>（整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code>（整数。1回の反復で
+ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
+格納されます。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
 <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>配列は、ボンド分解した量の全ボソン振動数における
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の全ての
 アーカイブ（<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・
@@ -243,7 +252,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">index_order</span></code>・<code class="docutils literal notranslate"><span class="pre">delta_r</span></code>・<code class="docutils literal notranslate"><span class="pre">reverse</span></code>・<code class="docutils literal notranslate"><span class="pre">types</span></code>、16個の静的キー、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>・<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>・
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>・
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>、来歴ブロックが格納されます。これらの配列を重複して
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>・<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_method</span></code>・
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_total</span></code>・
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_max</span></code>・
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code>、来歴ブロックが格納されます。これらの配列を重複して
 持つファイルは他にありません。<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>と<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>は、下記の
 ボンド分解した動的 Eliashberg 対形成ソルバーが<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>
 に加えて必要とする入力です。旧バージョンで書き出されたアーカイブ

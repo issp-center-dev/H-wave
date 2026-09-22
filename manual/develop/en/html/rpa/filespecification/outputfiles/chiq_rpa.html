@@ -217,8 +217,21 @@ conditioning guard), <code class="docutils literal notranslate"><span class="pre
 conditioning floor that guard compared <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> /
 <code class="docutils literal notranslate"><span class="pre">_c</span></code> against, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_cond_tol</span></code>),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> (string: <code class="docutils literal notranslate"><span class="pre">&quot;cupy&quot;</span></code> or
-<code class="docutils literal notranslate"><span class="pre">&quot;numpy&quot;</span></code>, the backend that ran the bond solve) and
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> (integer, the frequency batch actually used). The
+<code class="docutils literal notranslate"><span class="pre">&quot;numpy&quot;</span></code>, the backend that ran the bond solve),
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> (integer, the frequency batch actually used),
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_method</span></code> (string: <code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code>,
+how the conditioning guard scored its blocks – <code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code> decomposes every
+guarded block on the host, <code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code> bounds every block’s
+conditioning on the device and decomposes exactly only the blocks that
+can attain the minimum, with outputs identical to <code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>; the GPU
+default is <code class="docutils literal notranslate"><span class="pre">&quot;interval&quot;</span></code>, the CPU one <code class="docutils literal notranslate"><span class="pre">&quot;svd&quot;</span></code>),
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_total</span></code> (integer, the running total
+of blocks decomposed exactly over the whole solve),
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_max</span></code> (integer, the largest such
+count reached in any one iteration) and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code> (integer, the number of
+blocks the guard covers in one iteration – the denominator the previous
+two counts are measured against). The
 ordinary <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> arrays of such a run are the
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>,
@@ -251,7 +264,11 @@ same bond-major layout as <code class="docutils literal notranslate"><span class
 <code class="docutils literal notranslate"><span class="pre">index_order</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>, <code class="docutils literal notranslate"><span class="pre">types</span></code>, the sixteen static
 keys, the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code> /
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>
-/ <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> members and the provenance block; nothing else
+/ <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_method</span></code> /
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_total</span></code> /
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_max</span></code> /
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code> members and the
+provenance block; nothing else
 duplicates these arrays. <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> and <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> are the input the
 bond-resolved dynamic Eliashberg pairing solver needs in addition to
 <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code> (see below); an archive written by an earlier

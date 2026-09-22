@@ -573,9 +573,14 @@ table carries a <code class="docutils literal notranslate"><span class="pre">bub
 (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> overrides both and is refused when it
 exceeds either). Results agree with the CPU path to round-off; the
 outputs record <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code> and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_nb</span></code>.
-Once a run has been checked with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>,
-production GPU runs can switch to <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>: on a GPU the full guard costs
-about 2.5 times the static one, versus about 20% on the CPU.
+<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> on the GPU now costs roughly half of what it did (the guard’s
+conditioning bounds are computed on the device and only the blocks that
+can attain the batch minimum are decomposed on the host, with outputs
+identical to the full decomposition), so it is a reasonable default for
+production too. <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> remains the reduced diagnostic and is still
+about three times faster per iteration, so the previous advice – check
+once with <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>, then switch to <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> – still applies when
+throughput matters.
 A complete input for a single-band square lattice with an on-site <code class="docutils literal notranslate"><span class="pre">U</span></code> and a
 nearest-neighbour <code class="docutils literal notranslate"><span class="pre">V</span></code> (the interaction files follow the Wannier90-style
 format of the <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">interaction input</span></a>; <code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code>

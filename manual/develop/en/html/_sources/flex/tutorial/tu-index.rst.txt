@@ -549,9 +549,14 @@ table carries a ``bubble`` row beside ``dressing`` and ``transport``
 (``longitudinal_bond_freq_batch`` overrides both and is refused when it
 exceeds either). Results agree with the CPU path to round-off; the
 outputs record ``longitudinal_bond_device`` and ``longitudinal_bond_nb``.
-Once a run has been checked with ``longitudinal_bond_guard_freqs = "all"``,
-production GPU runs can switch to ``"static"``: on a GPU the full guard costs
-about 2.5 times the static one, versus about 20% on the CPU.
+``"all"`` on the GPU now costs roughly half of what it did (the guard's
+conditioning bounds are computed on the device and only the blocks that
+can attain the batch minimum are decomposed on the host, with outputs
+identical to the full decomposition), so it is a reasonable default for
+production too. ``"static"`` remains the reduced diagnostic and is still
+about three times faster per iteration, so the previous advice -- check
+once with ``"all"``, then switch to ``"static"`` -- still applies when
+throughput matters.
 A complete input for a single-band square lattice with an on-site ``U`` and a
 nearest-neighbour ``V`` (the interaction files follow the Wannier90-style
 format of the :ref:`interaction input <Ch:Config_rpa>`; ``coulombinter.dat``
