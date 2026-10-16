@@ -663,8 +663,8 @@ Parameters
   With ``longitudinal_bond_channels`` the same number also threads the
   host-side batched dressing (solve, conditioning guard, products) of the
   bond channels, including the host part of the GPU guard; this needs
-  ``threadpoolctl`` (otherwise it stays serial, with a warning) and does
-  not change the results.
+  ``threadpoolctl`` (otherwise it stays serial, with a warning). The results
+  agree with the serial ones to rounding error.
 
 - ``mixing_scheme``
 

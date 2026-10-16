@@ -1,6 +1,8 @@
 """Thread-parallel batched linear algebra of the bond dressing: every helper
-must reproduce the serial numpy result bit for bit, and dress_batch /
-dress_and_build_w must not move under ``workers``."""
+must reproduce the serial numpy result to rounding, and dress_batch /
+dress_and_build_w must not move under ``workers``. Not bit for bit: the
+serial reference may run on multithreaded BLAS while the workers pin BLAS to
+one thread, so the summation order (last digit) can differ."""
 import unittest
 
 import numpy as np
@@ -10,6 +12,20 @@ from hwave.solver import threaded as tl
 from tests.test_flex_bond_dressing import _problem
 
 needs_pool = unittest.skipUnless(tl.available(), "threadpoolctl is not installed")
+
+
+RTOL, ATOL = 1e-10, 1e-13
+
+
+def _approx_equal(tc, a, b):
+    if isinstance(a, (tuple, list)):
+        tc.assertEqual(len(a), len(b))
+        for x, y in zip(a, b):
+            _approx_equal(tc, x, y)
+    elif isinstance(a, (float, np.floating, np.ndarray, complex)):
+        np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
+    else:
+        tc.assertEqual(a, b)
 
 
 def _stack(n, nd, seed=0):
@@ -25,14 +41,14 @@ class TestHelpersEqualSerial(unittest.TestCase):
         ref = np.linalg.solve(a, b)
         for w in (None, 1, 2, 3, 8):
             with self.subTest(workers=w):
-                np.testing.assert_array_equal(tl.solve(a, b, workers=w, min_rows=16), ref)
+                np.testing.assert_allclose(tl.solve(a, b, workers=w, min_rows=16), ref, rtol=RTOL, atol=ATOL)
 
     def test_svdvals_is_exact(self):
         a = _stack(333, 5, 3)
         ref = np.linalg.svd(a, compute_uv=False)
         for w in (1, 4, 7):
             with self.subTest(workers=w):
-                np.testing.assert_array_equal(tl.svdvals(a, workers=w, min_rows=8), ref)
+                np.testing.assert_allclose(tl.svdvals(a, workers=w, min_rows=8), ref, rtol=RTOL, atol=ATOL)
 
     def test_matmul_broadcast_on_either_batch_axis(self):
         rng = np.random.default_rng(4)
@@ -41,9 +57,9 @@ class TestHelpersEqualSerial(unittest.TestCase):
         ref = x @ w
         for workers in (1, 2, 4, 16):
             with self.subTest(workers=workers):
-                np.testing.assert_array_equal(tl.matmul(x, w, workers=workers, min_rows=1), ref)
+                np.testing.assert_allclose(tl.matmul(x, w, workers=workers, min_rows=1), ref, rtol=RTOL, atol=ATOL)
         # a batch axis of 1 on the left operand and a full one on the right
-        np.testing.assert_array_equal(tl.matmul(w, x, workers=3, min_rows=1), w @ x)
+        np.testing.assert_allclose(tl.matmul(w, x, workers=3, min_rows=1), w @ x, rtol=RTOL, atol=ATOL)
 
     def test_sandwich_equals_the_left_associated_triple_product(self):
         rng = np.random.default_rng(5)
@@ -52,8 +68,8 @@ class TestHelpersEqualSerial(unittest.TestCase):
         ref = s[None] @ x @ s[None]
         for workers in (1, 2, 5):
             with self.subTest(workers=workers):
-                np.testing.assert_array_equal(
-                    tl.sandwich(s, x, s, workers=workers, min_rows=1), ref)
+                np.testing.assert_allclose(
+                    tl.sandwich(s, x, s, workers=workers, min_rows=1), ref, rtol=RTOL, atol=ATOL)
 
     def test_a_singular_block_raises_linalgerror_from_a_worker(self):
         a = _stack(200, 4, 6)
@@ -98,10 +114,9 @@ class TestDressBatchWorkers(unittest.TestCase):
         b = self._run(cb, W, channel, 4, **kw)
         self.assertEqual(a[0], b[0])
         if a[0] == "ok":
-            np.testing.assert_array_equal(a[1], b[1])
-            self.assertEqual(a[2:], b[2:])
+            _approx_equal(self, a[1:], b[1:])
         else:
-            self.assertEqual(a[1:], b[1:])
+            _approx_equal(self, a[2:], b[2:])      # the message text embeds rounded numbers
 
     def test_dress_batch_is_independent_of_workers(self):
         chi_bar, S, C = _problem(nmat=6, nvol=8)
@@ -155,7 +170,7 @@ class TestDressAndBuildWWorkers(unittest.TestCase):
                 out[workers] = (store.get_freq_batch("W", 0, nmat).copy(), res.collapse_s,
                                 res.collapse_c, res.static_s, res.static_c, res.cond_min_s)
         for a, b in zip(out[1], out[3]):
-            np.testing.assert_array_equal(a, b)
+            np.testing.assert_allclose(a, b, rtol=RTOL, atol=ATOL)
 
 
 if __name__ == "__main__":

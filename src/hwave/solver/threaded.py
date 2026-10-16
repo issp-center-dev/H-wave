@@ -4,7 +4,8 @@ numpy's batched ``solve`` / ``svd`` / ``matmul`` loop over the stack in one
 thread, and a multithreaded BLAS makes tiny matrices slower, not faster. Here
 the stack is cut into contiguous chunks that worker threads process with the
 BLAS pinned to one thread. Every matrix is independent, so the result equals
-the serial numpy result bit for bit. ``workers`` of ``None`` or 1 is the plain
+the serial numpy result up to rounding (the last digit can differ when the
+serial reference runs on a multithreaded BLAS). ``workers`` of ``None`` or 1 is the plain
 numpy call; without ``threadpoolctl`` a request for more falls back to it
 (with one warning), since threads over a multithreaded BLAS are unsafe.
 """
