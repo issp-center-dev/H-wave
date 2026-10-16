@@ -38,7 +38,8 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install setuptools wheel
         python -m pip install pytest
-        python -m pip install sparse-ir
+        # pylibsparseir >= 0.10 changes the IR regime boundary (test_ir_axis_guard ladder)
+        python -m pip install sparse-ir "pylibsparseir<0.10"
     - name: Install h-wave
       run: |
         cd ${GITHUB_WORKSPACE}/h-wave

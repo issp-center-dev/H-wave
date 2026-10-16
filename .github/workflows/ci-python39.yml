@@ -140,7 +140,8 @@ jobs:
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND=1" >> "$GITHUB_ENV"
 
     - name: Install optional dependencies (IR basis)
-      run: poetry run pip install sparse-ir
+      # pylibsparseir >= 0.10 changes the IR regime boundary (test_ir_axis_guard ladder)
+      run: poetry run pip install sparse-ir "pylibsparseir<0.10"
 
     - name: Verify installation
       run: |
@@ -315,7 +316,8 @@ jobs:
         echo "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND=1" >> "$GITHUB_ENV"
 
     - name: Install optional dependencies (IR basis)
-      run: poetry run pip install sparse-ir
+      # pylibsparseir >= 0.10 changes the IR regime boundary (test_ir_axis_guard ladder)
+      run: poetry run pip install sparse-ir "pylibsparseir<0.10"
 
     - name: Verify installation
       run: |
