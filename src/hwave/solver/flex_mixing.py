@@ -15,6 +15,22 @@ from dataclasses import dataclass
 
 import numpy as np
 
+_GEMV_CHUNK = 1 << 20
+
+
+def _affine_combination(dX, dR, mix, gamma):
+    """``(dX + mix * dR).T @ gamma`` in column chunks: numpy's bundled OpenBLAS
+    segfaults in the complex-by-real gemv once a (m, N) operand has more than
+    a few million columns per thread (reproduced without H-wave at
+    OPENBLAS_NUM_THREADS=1, N=4e6, m=2); the chunks also avoid the full-size
+    ``dX + mix * dR`` temporary."""
+    n = dX.shape[1]
+    out = np.empty(n, dtype=np.complex128)
+    for s in range(0, n, _GEMV_CHUNK):
+        sl = slice(s, s + _GEMV_CHUNK)
+        out[sl] = (dX[:, sl] + mix * dR[:, sl]).T @ gamma
+    return out
+
 
 @dataclass(frozen=True)
 class SplitState:
@@ -98,7 +114,7 @@ class StackedAndersonMixer:
         except np.linalg.LinAlgError:
             gamma = None
         if gamma is not None:
-            x_next = x + self.mix * r - (dX + self.mix * dR).T @ gamma
+            x_next = x + self.mix * r - _affine_combination(dX, dR, self.mix, gamma)
             if np.all(np.isfinite(x_next)):
                 self.last_gamma = gamma
                 return self._unstack(x_next, state)

@@ -660,6 +660,11 @@ Parameters
   from previous releases (opt-in); -1 uses all cores. Ignored on the
   GPU. Set a smaller number when running several calculations
   concurrently.
+  With ``longitudinal_bond_channels`` the same number also threads the
+  host-side batched dressing (solve, conditioning guard, products) of the
+  bond channels, including the host part of the GPU guard; this needs
+  ``threadpoolctl`` (otherwise it stays serial, with a warning) and does
+  not change the results.
 
 - ``mixing_scheme``
 

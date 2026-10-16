@@ -2305,7 +2305,7 @@ class FLEX(RPA):
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy,
-                    guard_method="auto")
+                    guard_method="auto", workers=workers)
             phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(

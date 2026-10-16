@@ -23,6 +23,7 @@ from scipy.sparse.linalg import LinearOperator
 
 from . import backend as _bk
 from . import bubble as _bubble
+from . import threaded as _threaded
 
 logger = logging.getLogger("qlms.solver.bond_channels")
 
@@ -705,7 +706,7 @@ _GUARD_SCALE_MAX = 1.0e+100
 _GUARD_ROUNDING = 16.0
 
 
-def bond_conditioning_score(mat):
+def bond_conditioning_score(mat, workers=None):
     """Score the conditioning of the enlarged RPA denominator blocks of
     ``mat`` `(Nx, Ny, Nz, ND, ND)`; pure, never raises.
 
@@ -721,7 +722,7 @@ def bond_conditioning_score(mat):
     same score without one -- so the two can never quote different numbers.
     """
     Nx, Ny, Nz, ND, _ = mat.shape
-    sv = np.linalg.svd(mat.reshape(-1, ND, ND), compute_uv=False)
+    sv = _threaded.svdvals(mat.reshape(-1, ND, ND), workers=workers)
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = sv[:, -1] / sv[:, 0]
     # A zero (or non-finite) largest singular value means the block is the zero
@@ -949,7 +950,7 @@ def select_exact_blocks(interval, margin=_GUARD_PRUNE_MARGIN):
 
 
 def resolve_conditioning_guard(mat_flat, xp, cond_tol, *, k=_GUARD_POWER_ITERATIONS,
-                               margin=_GUARD_PRUNE_MARGIN):
+                               margin=_GUARD_PRUNE_MARGIN, workers=None):
     """The tuple :func:`bond_conditioning_score` returns for the stack
     ``mat_flat`` `(n, ND, ND)` on ``xp`` -- ``(worst, i, ratio_i, pole_i,
     smin_i, smax_i)`` with ``i`` the FLATTENED index of the first minimum --
@@ -962,7 +963,8 @@ def resolve_conditioning_guard(mat_flat, xp, cond_tol, *, k=_GUARD_POWER_ITERATI
     gathered = _bk.to_host(mat_flat[idx])
     n_e = int(idx.shape[0])
     worst, local, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(
-        np.asarray(gathered).reshape(n_e, 1, 1, mat_flat.shape[-1], mat_flat.shape[-1]))
+        np.asarray(gathered).reshape(n_e, 1, 1, mat_flat.shape[-1], mat_flat.shape[-1]),
+        workers=workers)
     return (worst, int(idx[local]), ratio_i, pole_i, smin_i, smax_i, n_e, int(mat_flat.shape[0]))
 
 
@@ -3854,7 +3856,7 @@ def solve_residual(mat, chi, cb):
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
-                guard_method="auto", stats=None):
+                guard_method="auto", stats=None, workers=1):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3932,7 +3934,8 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     Nx, Ny, Nz = (int(x) for x in spatial_shape)
     if Nx * Ny * Nz != nvol:
         raise ValueError("dress_batch: prod(spatial_shape) != nvol")
-    mat = cb @ W[None]
+    host = xp is np
+    mat = _threaded.matmul(cb, W[None], workers=workers) if host else cb @ W[None]
     if sign < 0:
         xp.negative(mat, out=mat)
     idx = xp.arange(ND)
@@ -3954,10 +3957,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         n = int(mat_d.shape[0])
         if guard_method == "interval":
             worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = \
-                resolve_conditioning_guard(mat_d, xp, cond_tol)
+                resolve_conditioning_guard(mat_d, xp, cond_tol, workers=workers)
         else:
             blocks = _bk.to_host(mat_d).reshape(-1, 1, 1, ND, ND)
-            worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks)
+            worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks, workers=workers)
             n_exact = n
         if stats is not None:
             stats["guard_exact_blocks"] = stats.get("guard_exact_blocks", 0) + n_exact
@@ -3998,6 +4001,9 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
             channel=channel, iq=q, q=(qx, qy, qz), l=l, worst=worst, ratio=ratio_i,
             pole=pole_i, smin=smin_i, smax=smax_i, cond_tol=cond_tol) from cause
 
+    def _solve(a, b):
+        return _threaded.solve(a, b, workers=workers) if host else xp.linalg.solve(a, b)
+
     l_static = nmat // 2
     cond_min = None
     if guard_freqs == "all":
@@ -4009,7 +4015,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     if guard_freqs == "static":
         LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
         try:
-            chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+            chi = _solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
         except LinAlgError as exc:
             raise ValueError(
                 "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
@@ -4021,7 +4027,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         # exactly singular case reaches xp.linalg.solve here; name it
         LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
         try:
-            chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+            chi = _solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
         except LinAlgError as exc:
             raise ValueError(
                 "dress_batch: the {} solve failed ({}): a slice of the frequency batch "
@@ -4030,7 +4036,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 "not a singular one). Reduce the interaction strength or raise the "
                 "temperature.".format(channel, exc, l0)) from exc
     else:
-        chi = xp.linalg.solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
+        chi = _solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
     # the solve returned: the conditioning findings held back above describe a
     # dressing that really did continue, so they are reported now
     for fmt, args, record in pending:
