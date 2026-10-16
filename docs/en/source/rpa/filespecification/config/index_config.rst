@@ -657,12 +657,14 @@ Parameters
   **Description :**
   Number of worker threads for the spatial FFTs (parallelized via
   ``scipy.fft``). The default 1 keeps the serial numpy path, unchanged
-  from previous releases (opt-in); -1 uses all cores. Ignored on the
-  GPU. Set a smaller number when running several calculations
+  from previous releases (opt-in); -1 uses all cores. The GPU path
+  ignores it for the FFTs and the on-device work (the one exception is
+  described below). Set a smaller number when running several calculations
   concurrently.
   With ``longitudinal_bond_channels`` the same number also threads the
   host-side batched dressing (solve, conditioning guard, products) of the
-  bond channels, including the host part of the GPU guard; this needs
+  bond channels, including the host-side exact decomposition of the GPU
+  conditioning guard; this needs
   ``threadpoolctl`` (otherwise it stays serial, with a warning). The results
   agree with the serial ones to rounding error.
 

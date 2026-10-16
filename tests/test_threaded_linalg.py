@@ -77,6 +77,62 @@ class TestHelpersEqualSerial(unittest.TestCase):
         with self.assertRaises(np.linalg.LinAlgError):
             tl.solve(a, a, workers=4, min_rows=8)
 
+    def test_matmul_with_a_vector_operand_matches_numpy(self):
+        rng = np.random.default_rng(8)
+        m = rng.standard_normal((6, 4, 4)) + 0j
+        v = rng.standard_normal(4) + 0j
+        for workers in (1, 3):
+            with self.subTest(workers=workers):
+                np.testing.assert_allclose(tl.matmul(m, v, workers=workers, min_rows=1), m @ v,
+                                           rtol=RTOL, atol=ATOL)
+                np.testing.assert_allclose(tl.matmul(v, m, workers=workers, min_rows=1), v @ m,
+                                           rtol=RTOL, atol=ATOL)
+
+    @needs_pool
+    def test_worker_failure_joins_every_task_and_restores_the_blas_limit(self):
+        import threading
+        import time
+        from threadpoolctl import threadpool_info
+        before = [(d["internal_api"], d["num_threads"]) for d in threadpool_info()]
+        running = []
+
+        def slow():
+            running.append(1)
+            time.sleep(0.3)
+            running.pop()
+            return 0
+
+        def boom():
+            raise RuntimeError("boom")
+
+        with self.assertRaises(RuntimeError):
+            tl._run([boom, slow, slow], 3)
+        self.assertEqual(running, [])             # nothing still running after _run raised
+        self.assertEqual(before, [(d["internal_api"], d["num_threads"]) for d in threadpool_info()])
+
+    @needs_pool
+    def test_concurrent_callers_are_serialized_and_restore_the_limit(self):
+        import threading
+        from threadpoolctl import threadpool_info
+        before = [(d["internal_api"], d["num_threads"]) for d in threadpool_info()]
+        a = _stack(64, 4, 9)
+        ref = np.linalg.solve(a, a)
+        out, errs = [], []
+
+        def call():
+            try:
+                out.append(tl.solve(a, a, workers=2, min_rows=8))
+            except Exception as e:                # pragma: no cover
+                errs.append(e)
+
+        ts = [threading.Thread(target=call) for _ in range(4)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        self.assertEqual(errs, [])
+        for r in out:
+            np.testing.assert_allclose(r, ref, rtol=RTOL, atol=ATOL)
+        self.assertEqual(before, [(d["internal_api"], d["num_threads"]) for d in threadpool_info()])
+
     def test_invalid_worker_count_is_refused(self):
         a = _stack(8, 3)
         with self.assertRaises(ValueError):

@@ -12,7 +12,7 @@ numpy call; without ``threadpoolctl`` a request for more falls back to it
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import numpy as np
 
@@ -28,6 +28,8 @@ _MIN_ROWS = 256
 
 _pools = {}
 _pools_lock = threading.Lock()
+# threadpool_limits is process-global: one caller at a time owns the pinned region
+_run_lock = threading.Lock()
 _warned = False
 
 
@@ -82,8 +84,10 @@ def _row_slices(n, workers, min_rows):
 
 
 def _run(tasks, w):
-    with threadpool_limits(limits=1, user_api="blas"):
+    with _run_lock, threadpool_limits(limits=1, user_api="blas"):
         futures = [_pool(w).submit(t) for t in tasks]
+        # join every future before the BLAS limit is restored, then re-raise the first error
+        wait(futures)
         return [f.result() for f in futures]
 
 
@@ -140,7 +144,7 @@ def matmul(a, b, *, workers=None, min_rows=None):
     w = _effective_workers(workers)
     a = np.asarray(a)
     b = np.asarray(b)
-    if w == 1 or a.ndim < 3 and b.ndim < 3:
+    if w == 1 or a.ndim < 2 or b.ndim < 2 or (a.ndim < 3 and b.ndim < 3):
         return a @ b
     a, b = _align(a, b)
     lead = np.broadcast_shapes(a.shape[:-2], b.shape[:-2])
