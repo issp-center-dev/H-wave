@@ -95,12 +95,13 @@ def _reversed_interaction_dir(src_dir, files, copy=("geom.dat", "transfer.dat"))
     no row whose displacement could be negated -- passing it in ``files``
     would (rightly) be refused as vacuous below, so it travels in ``copy``.
 
-    ``F^rev`` is what a user of the reference revision has to write to
-    express the same Hamiltonian this branch reads from ``F``: a row
-    ``(r, a, b, v)`` now means ``v n_{j,a} n_{j+r,b}`` rather than
-    ``v n_{j,b} n_{j+r,a}``, and the two readings differ exactly by
-    ``r -> -r`` (spec 2026-09-16 section 2.4). Orbital indices are NOT
-    touched; ``r = 0`` rows are copied as they are.
+    ``F^rev`` is what a user of the reference revision's VERTEX paths
+    (RPA, the FLEX vertex) has to write to get the Hamiltonian this branch
+    reads from ``F``: a row ``(r, a, b, v)`` means ``v n_{j,a} n_{j+r,b}``,
+    the bond of a Transfer row ``(r, a, b)`` (issue #232), while those paths
+    used to put it on ``v n_{j,b} n_{j+r,a}``; the two readings differ
+    exactly by ``r -> -r``. Orbital indices are NOT touched; ``r = 0`` rows
+    are copied as they are.
 
     The wannier90-like header is four lines (title, norb, n_rvec,
     degeneracies) and the rows follow; only the OFF-SITE rows are rewritten,
@@ -159,21 +160,14 @@ class TestG0Off(unittest.TestCase):
     tests/test_flex_second_order_compat.py.
 
     The declaration it runs is ON-SITE only (onsite_inter.dat +
-    coulombintra.dat). Not because an off-site one would fail: this guard
-    runs with the Hartree-Fock gate OFF, and the orientation step (issue
-    #193, spec 2026-09-16 section 2.4) is reached only through
-    flex_hf.build_flex_hf_tables, i.e. only under flex_hartree_fock = true
-    -- measured, the previous off-site fixture (coulombinter.dat) is still
-    byte-identical to the reference revision here, archives and log alike.
-    The on-site fixture is what keeps that TRUE BY CONSTRUCTION rather than
-    by where the orientation step happens to sit today: an on-site
-    declaration has no row whose orientation could be read at all, so this
-    guard stays a statement about the Phase B gates even if the step ever
-    moves earlier into construction.
+    coulombintra.dat): an on-site declaration has no row whose placement
+    could be read at all, so this guard stays a statement about the Phase B
+    gates and not about the placement of off-site rows, which issue #232
+    corrected in the vertex builders (the reference revision still puts an
+    off-site row on the opposite bond there).
 
-    The gate-ON half of the off-site story is the EQUIVALENCE below, where
-    the two revisions cannot agree on the same declaration and agree exactly
-    on the reversed one, F^rev.
+    The gate-ON half of the off-site story is the IDENTITY below: the
+    Hartree-Fock map of the same declaration F on both revisions.
 
     The npz comparison allows this side's archives to carry additional
     members beyond the reference revision's -- every member the reference
@@ -182,7 +176,7 @@ class TestG0Off(unittest.TestCase):
 
     def test_byte_identity_against_develop(self):
         from tests.test_flex_second_order_compat import (develop_checkout,
-                                                           reference_subprocess_env)
+                                                           reference_subprocess_env, moved_stamp)
         here = os.getcwd()
         # one shared rule with the other develop-comparison harnesses: the
         # reference tree must be at the NAMED revision and clean, or the
@@ -212,6 +206,8 @@ class TestG0Off(unittest.TestCase):
                 self.assertEqual(set(db.files) - set(da.files), set(), name)
                 self.assertIn("flex_second_order", db.files, name)
                 for k in db.files:
+                    if moved_stamp(k, db[k], da[k]):        # b = reference, a = here
+                        continue
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             with open(os.path.join(a, "log.txt")) as fh:
@@ -226,26 +222,25 @@ class TestG0Off(unittest.TestCase):
             self.assertIn("flex_second_order = takimoto", la)
             self.assertEqual(la, lb)
 
-    def test_first_map_static_equals_develop_on_the_reversed_declaration(self):
-        """Spec 2.4 end to end: with an OFF-SITE declaration F, this branch's
-        first Hartree-Fock map equals the reference revision's first map on
-        the reversed declaration F^rev.
+    def test_first_map_static_equals_develop_on_the_same_declaration(self):
+        """Spec 2.4 end to end, as corrected by issue #232: with an OFF-SITE
+        declaration F, this branch's first Hartree-Fock map equals the
+        reference revision's first map on the SAME declaration F, and differs
+        from the reference revision's map on the reversed declaration F^rev.
 
-        The compatibility promise of the orientation change, through the
-        real solver and the real reference tree: a user who wants the old
-        numbers reverses the displacement of every off-site row and gets
-        them back. Iteration 1 with Mix = 1.0 and no seed is compared
-        because both sides then map the SAME (bare, Sigma = 0) density, so
-        any difference is the interaction reading and nothing else; the
-        in-process component version, on the map alone, is
+        An off-site row (r, a, b, v) is read as v n_{j,a} n_{j+r,b}, the bond
+        of a Transfer row (r, a, b) (Wannier90 / RESPACK); the reference
+        revision predates the reversal step issue #193 added and issue #232
+        removed, so it reads the row the same way. Iteration 1 with Mix = 1.0
+        and no seed is compared because both sides then map the SAME (bare,
+        Sigma = 0) density, so any difference is the interaction reading and
+        nothing else; the in-process component version, on the map alone, is
         tests/test_flex_second_order_compat.py::TestCompatibility::
-        test_hf_map_equals_develop_on_the_reversed_declaration.
+        test_hf_map_reads_the_declaration_as_develop_did.
 
         np.array_equal, not a tolerance: the two tables are built from the
-        same values by the same code, and the branch's orientation step
-        (conj-transpose at fixed r) only commutes the two terms of the
-        reference builder's Hermitian average, which is exact in floating
-        point. A tolerance here would hide a real difference in the map.
+        same values by the same code. A tolerance here would hide a real
+        difference in the map.
         """
         from tests.test_flex_second_order_compat import (develop_checkout,
                                                            reference_subprocess_env)
@@ -264,8 +259,8 @@ class TestG0Off(unittest.TestCase):
             with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
                     tempfile.TemporaryDirectory() as c:
                 for root, inp, out in ((here, os.path.abspath(_IN2), a),
-                                       (develop, rev, b),
-                                       (develop, os.path.abspath(_IN2), c)):
+                                       (develop, os.path.abspath(_IN2), b),
+                                       (develop, rev, c)):
                     # same rule as above: only the reference invocations lose
                     # pytest-cov's subprocess hooks
                     env = None if root == here else reference_subprocess_env(root)
@@ -273,20 +268,20 @@ class TestG0Off(unittest.TestCase):
                                     root, inp, out], check=True, cwd=here, env=env)
                 mine = np.load(os.path.join(a, "static.npz"))["sigma_static"]
                 theirs = np.load(os.path.join(b, "static.npz"))["sigma_static"]
-                unreversed = np.load(os.path.join(c, "static.npz"))["sigma_static"]
+                on_rev = np.load(os.path.join(c, "static.npz"))["sigma_static"]
             scale = np.abs(mine).max()
             self.assertGreater(scale, 1e-6)                          # anti-vacuity
             self.assertEqual(mine.shape, theirs.shape)
             self.assertTrue(np.array_equal(mine, theirs),
                             "first Hartree-Fock map differs from the reference "
-                            "revision's on F^rev by {:.3e} of its own size"
+                            "revision's on F by {:.3e} of its own size"
                             .format(np.abs(mine - theirs).max() / scale))
-            # and the reversal is what makes it equal: the reference revision
-            # on the UNREVERSED declaration lands somewhere else
-            gap = np.abs(mine - unreversed).max() / scale
+            # anti-vacuity: the fixture sees the placement -- the reference
+            # revision on the REVERSED declaration lands somewhere else
+            gap = np.abs(mine - on_rev).max() / scale
             self.assertGreater(gap, 1e-3,
-                               "the orientation change does not move this fixture's "
-                               "first map ({:.3e} relative); the equivalence above "
+                               "reversing the declaration does not move this fixture's "
+                               "first map ({:.3e} relative); the identity above "
                                "would be vacuous".format(gap))
         finally:
             shutil.rmtree(rev, ignore_errors=True)

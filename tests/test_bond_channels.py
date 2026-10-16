@@ -517,10 +517,14 @@ class TestBareBondVertices(ApproxTestCase):
         S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0, C0, norb)
         q0 = (0, 0, 0)
 
-        # (1) Fock placement: the m != 0 bond-diagonal element (ab,ab) must carry
-        # +/-Re(V_ab(R_m)), NOT +/-Re(V_ba(R_m)) -- Re(VAB) != Re(VBA) makes a
-        # transposition visible directly (no cancellation needed).
-        m_plus = bond_set.delta_r.index((1, 0, 0))
+        # (1) Fock placement: the bond-diagonal element (ab,ab) of the channel
+        # that files a declared row (R, a, b) must carry +/-Re(V_ab(R)), NOT
+        # +/-Re(V_ba(R)) -- Re(VAB) != Re(VBA) makes a transposition visible
+        # directly (no cancellation needed). The resolvers file the rows
+        # declared at R on the channel at -R (a row (R, a, b) is the bond of a
+        # Transfer row (R, a, b), issue #232), so the rows declared at +R sit
+        # on the -R channel.
+        m_plus = bond_set.delta_r.index((-1, 0, 0))
         self.assertApprox(
             S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
             VAB.real)

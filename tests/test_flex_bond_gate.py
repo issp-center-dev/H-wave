@@ -258,7 +258,7 @@ class TestOutputs(unittest.TestCase):
                       "green.npz", "chi0q.npz"):
                 self.assertTrue(os.path.exists(os.path.join(out, f)), f)
             b = np.load(os.path.join(out, "longitudinal_bond.npz"))
-            self.assertEqual(int(b["bond_archive_schema"]), 2)
+            self.assertEqual(int(b["bond_archive_schema"]), 3)
             self.assertEqual(str(b["freq_axis"]), "bosonic l -> 2l - nmat")
             nvol, nd = s.lattice.nvol, s.norb ** 2
             B = b["delta_r"].shape[0]

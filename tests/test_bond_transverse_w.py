@@ -392,7 +392,9 @@ class TestResolveTransverseTopology(ApproxTestCase):
         topo = resolve_transverse_topology(interactions, np.eye(3), norb=1)
         m1 = [i for i, r in enumerate(topo.delta_r)
               if tuple(int(x) for x in r) == (1, 0, 0)][0]
-        self.assertApprox(topo.coeffs["CoulombInter"][m1, 0, 0], c1,
+        # channel m carries the rows declared at -delta_r[m] (a row (R, a, b)
+        # is the bond of a Transfer row (R, a, b), issue #232)
+        self.assertApprox(topo.coeffs["CoulombInter"][m1, 0, 0], c2,
                            rel=0, abs=1e-13)
 
     def test_mirrored_declaration_inconsistent_raises(self):
@@ -410,10 +412,12 @@ class TestResolveTransverseTopology(ApproxTestCase):
         m_pos = [i for i, r in enumerate(topo.delta_r)
                   if tuple(int(x) for x in r) == (1, 0, 0)][0]
         m_neg = int(topo.reverse[m_pos])
-        self.assertApprox(topo.coeffs["CoulombInter"][m_pos, 0, 0], c,
-                           rel=0, abs=1e-13)
-        self.assertApprox(topo.coeffs["CoulombInter"][m_neg, 0, 0],
+        # channel m carries the rows declared at -delta_r[m] (issue #232):
+        # the synthesized partner (-R, conj c) sits on the +R channel
+        self.assertApprox(topo.coeffs["CoulombInter"][m_pos, 0, 0],
                            np.conj(c), rel=0, abs=1e-13)
+        self.assertApprox(topo.coeffs["CoulombInter"][m_neg, 0, 0], c,
+                           rel=0, abs=1e-13)
 
     def test_coeffs_additive_under_pre_summed_declaration(self):
         # "duplicate accumulation": a caller that pre-sums two logical
@@ -1208,10 +1212,10 @@ class TestWPmBondQPhaseCrossPin(ApproxTestCase):
         _S0, C0 = _sc._build_bond_m0_blocks(
             bond_set, {}, {}, norb, kx_array, ky_array, kz_array)
         # Hartree (aa,bb) = (00,11) slot: C0[..., 0, 3] == 2*V_q[0, 1], and
-        # V_q[0, 1] is driven ONLY by the declared channel m=R=(1,0,0)'s
-        # own [0, 1] matrix entry -- the synthesized reverse partner only
-        # populates [1, 0], never [0, 1] -- so C0[q_idx,0,0,0,3] ==
-        # 2*C*exp(-i q.R) exactly (C real).
+        # V_q[0, 1] is driven ONLY by the [0, 1] entry of the declared row
+        # (1,0,0), which the resolver files on the channel at -R (channel m
+        # carries the rows declared at -delta_r[m], issue #232) -- the
+        # synthesized reverse partner only populates [1, 0], never [0, 1].
         q_idx = 1
         phase_from_builder = C0[q_idx, 0, 0, 0, 3] / (2.0 * C)
 
@@ -1222,7 +1226,9 @@ class TestWPmBondQPhaseCrossPin(ApproxTestCase):
         topo = TransverseTopology(
             delta_r=np.array([[0, 0, 0], [1, 0, 0], [-1, 0, 0]]),
             reverse=reverse,
-            coeffs={"Exchange": _closed_coeffs(3, norb, reverse, {1: block})})
+            # the same declared row (1, 0, 0), filed as the resolvers file
+            # it: on the channel at -R (index 2)
+            coeffs={"Exchange": _closed_coeffs(3, norb, reverse, {2: block})})
         onsite = np.zeros((Nx * Ny * Nz, norb, norb, norb, norb),
                            dtype=complex)
         W = W_pm_bond(topo, onsite, spatial_shape=(Nx, Ny, Nz))
@@ -2686,7 +2692,7 @@ class TestTransverseBondGateOutput(ApproxTestCase):
                     "transverse_spin_mode", "transverse_normalization"):
             self.assertIn(key, data.files)
 
-        self.assertEqual(int(data["transverse_bond_schema_version"]), 1)
+        self.assertEqual(int(data["transverse_bond_schema_version"]), 2)
         self.assertEqual(str(data["transverse_output_kind"]), "bond_static")
         self.assertEqual(str(data["transverse_bond_index_order"]),
                           "m*norb**2 + a*norb + b")

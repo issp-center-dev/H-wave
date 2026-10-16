@@ -2378,7 +2378,9 @@ class FLEX(RPA):
                 else int(self.longitudinal_bond_max_shells)),
             "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
             "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
-            "longitudinal_bond_schema": np.int64(1),
+            # 2: channel m carries the rows declared at -delta_r[m], the bond
+            # of their Transfer rows (issue #232)
+            "longitudinal_bond_schema": np.int64(2),
             "longitudinal_bond_source": np.str_("last_map"),
             "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
             "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
@@ -4490,13 +4492,15 @@ class FLEX(RPA):
         # a downstream Eliashberg run cannot silently pair these
         # susceptibilities with vertices from a different adjudication.
         # Version 2 = the #113 exact-diagonalization values (Hund / Exchange /
-        # Ising corrected); files without the field predate #113.
+        # Ising corrected); files without the field predate #113. Version 3 =
+        # version 2 with every off-site row on the bond of its Transfer row
+        # (#232; version 2 put it on the opposite bond).
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           sc_vertex_version=2,
+                           sc_vertex_version=3,
                            # Fourier-sign provenance (issue #133): q labels
                            # follow the documented e^{+iqR} convention
                            momentum_convention=MOMENTUM_CONVENTION,
@@ -4658,7 +4662,8 @@ class FLEX(RPA):
                 np.save(os.path.join(out_dir, s_base), chi_s_w)
                 np.save(os.path.join(out_dir, c_base), chi_c_w)
                 np.savez(file_name,
-                         bond_archive_schema=np.int64(2),
+                         # 3: rows filed on the bond of their Transfer rows (#232)
+                         bond_archive_schema=np.int64(3),
                          bond_archive_layout=np.str_("sidecar"),
                          chi_s_w_file=np.str_(s_base),
                          chi_c_w_file=np.str_(c_base),
@@ -4669,7 +4674,8 @@ class FLEX(RPA):
                 # APPENDED last, so the ordered prefix is byte-for-byte what the
                 # schema-2 reference archive writes (issue #205)
                 np.savez(file_name,
-                         bond_archive_schema=np.int64(2),
+                         # 3: rows filed on the bond of their Transfer rows (#232)
+                         bond_archive_schema=np.int64(3),
                          chi_s_w=chi_s_w,
                          chi_c_w=chi_c_w,
                          **tail_members,

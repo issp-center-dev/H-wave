@@ -53,42 +53,40 @@ in the random phase approximation,
    :math:`\vec{r} = (r_x, r_y, r_z)`, for the one-body and the two-body files
    alike.
 
-   **Compatibility with version 2.0.0.** Up to H-wave 2.0.0 the mean-field
-   solvers (``UHFk``; the Hartree-Fock term of ``FLEX``) read an off-site
-   two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
-   vertices used the rule above; the mean field now follows it too. Results of
-   ``UHFk`` (and of ``FLEX`` with ``flex_hartree_fock = true`` or
-   ``flex_second_order = "local"``) change only for off-site rows with two
-   different orbitals or a complex coefficient; every on-site interaction,
-   every real orbital-diagonal off-site row, every real single-orbital input,
-   and every RPA or Eliashberg result without the bond-resolved channels
-   (``longitudinal_bond_channels = false``, the default) and computed from an
-   unaffected susceptibility are unchanged (an Eliashberg run with
-   ``chi0q_mode = "flex"`` moves together with the FLEX run that produced its
-   susceptibility). An RPA/FLEX calculation with
-   ``calc_type = "ring"`` and ``longitudinal_bond_channels = true`` on real
-   inter-orbital off-site bonds changes as well: its mixed second-order blocks
-   are now exact (issue #192). Runs under ``flex_second_order = "takimoto"``
-   without the Hartree-Fock term and without the bond-resolved channels are
-   unchanged.
+   **Correction of the bond placement (issue #232).** A two-body row and a
+   one-body row with the same ``(R, a, b)`` act on the same bond, as the
+   Wannier90 ``hr.dat`` and RESPACK ``zvo_*r.dat`` formats define them.
+   Earlier versions did not do this everywhere: the RPA solver (released
+   versions up to and including v1.0.1 among them), the FLEX vertex
+   (including ``flex_second_order = "local"`` and the bond-resolved
+   channels) and the Eliashberg vertices put an off-site two-body row on
+   the bond OPPOSITE its one-body row. The released ``UHFk`` placed it
+   correctly (development versions between issues #193 and #232 had moved
+   it, and the Hartree-Fock term of ``FLEX``, to the opposite bond as
+   well). All solvers now follow the convention above. Results change only
+   for off-site rows that are not symmetric under :math:`R \to -R`
+   (:math:`X_{ab}(R) \neq X_{ab}(-R)`), the generic case of multi-orbital
+   RESPACK input; every on-site interaction, every real single-orbital
+   input and every table with :math:`X_{ab}(R) = X_{ab}(-R)` is unaffected
+   (a complex off-site ``PairHop`` is affected even with a single orbital,
+   because its coefficient at :math:`-R` is the complex conjugate).
    **No input file needs to be changed.**
 
-   **Reproduction recipe and composite pipelines.** To reproduce a 2.0.0
-   ``UHFk`` number, negate the displacement of every off-site two-body row
-   (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the one-body rows such as
-   ``Transfer`` and ``Extern``, not the on-site
-   rows; do not swap the orbital indices, which is wrong for complex
-   couplings) -- and note that this negated file changes what the RPA and
-   Eliashberg solvers compute, whose 2.0.0 results on the original file were
-   already correct. A 2.0.0 ``FLEX`` run with ``flex_hartree_fock = true``
-   cannot be reproduced with a single modified file, because that release
-   evaluated the mean-field term and the vertices in different orientations
-   within one run. A 2.0.0 pipeline that fed ``UHFk`` output into the RPA or
-   Eliashberg solvers is reproduced only by running ``UHFk`` on the negated
-   file and the later stages on the original one, because 2.0.0 solved a
-   different Hamiltonian in the two stages. Remove any workaround you added
-   for the old discrepancy, and restart affected self-consistent runs from
-   scratch rather than from 2.0.0 seeds.
+   **Reproducing earlier results.** An earlier RPA, FLEX-vertex or
+   Eliashberg result is reproduced by negating the displacement of every
+   off-site two-body row (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not
+   the one-body rows such as ``Transfer``, not the on-site rows, and
+   without swapping the orbital indices, which is wrong for complex
+   couplings) -- that negated file describes the Hamiltonian those versions
+   actually solved. Released ``UHFk`` results are unchanged. An earlier
+   ``FLEX`` run with ``flex_hartree_fock = true`` evaluated the mean-field
+   term and the vertices on different bonds and cannot be reproduced with
+   a single file. FLEX susceptibility files now carry
+   ``sc_vertex_version = 3``; the Eliashberg solver refuses an older file
+   when the interaction declares an off-site row that is not symmetric
+   under :math:`R \to -R`, so regenerate those susceptibilities. Remove any
+   workaround added for the old placement, and restart affected
+   self-consistent runs from scratch rather than from earlier seeds.
 
 
 An example of the file is shown below.

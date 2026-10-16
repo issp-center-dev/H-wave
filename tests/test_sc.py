@@ -103,14 +103,15 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         self.ky = np.linspace(0, 2 * np.pi, self.Ny, endpoint=False)
         self.kz = np.linspace(0, 2 * np.pi, self.Nz, endpoint=False)
 
-    def _expected(self, value_r):
-        """Direct evaluation of the solver convention sum_R M_R[a,b] e^{+ikR}."""
+    def _expected(self, value_r, sign=+1):
+        """Direct evaluation of sum_R M_R[a,b] e^{sign ikR} (the solver
+        convention of the one-body Hamiltonian is ``sign = +1``)."""
         out = np.zeros((self.norb, self.norb, self.Nx, self.Ny, self.Nz),
                        dtype=complex)
         kxm, kym, kzm = np.meshgrid(self.kx, self.ky, self.kz, indexing='ij')
         for (irvec, (o1, o2)), v in value_r.items():
             out[o1, o2] += v * np.exp(
-                +1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
+                sign * 1j * (kxm * irvec[0] + kym * irvec[1] + kzm * irvec[2]))
         return out
 
     def test_hamiltonian_k_matches_solver_convention(self):
@@ -119,18 +120,16 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         npt.assert_allclose(eps, self._expected(self.hr), atol=1e-12)
 
     def test_interaction_k_is_the_pair_transpose(self):
-        """The INTERACTION keeps the solver's e^{+iqR} phase but stores the
-        orbital pair TRANSPOSED, unlike the one-body Hamiltonian above.
+        """The INTERACTION is stored with the orbital pair TRANSPOSED and the
+        phase e^{-iqR}, unlike the one-body Hamiltonian above.
 
-        It is a four-index object, and its matrix form carries a pair-index
-        transpose: H-wave's own paper (arXiv:2308.00324) Eq.(21) defines the
-        matrix entering the RPA equation as ``[W(q)]^{ab} = W_q^{ba}``, so a
-        density-density term ``W^{aabb} = V_ab(R)`` gives
-        ``[W(q)]^{(aa),(bb)} = V_ba(q)``.  ``rpa.py::_make_ham_inter`` builds
-        that; this builder must agree (issue #96).
-
-        An earlier revision aligned this builder to the one-body convention,
-        which is why the assertion below is the transpose of ``_expected``.
+        That is the layout which puts a row ``(R, a, b)`` on the bond of a
+        Transfer row ``(R, a, b)``, as Wannier90 / RESPACK define both files
+        -- verified against independent real-space references in
+        tests/test_two_body_placement.py (issue #232; an earlier revision
+        used e^{+iqR} here, which put it on the opposite bond).
+        ``rpa.py::_make_ham_inter`` builds the same object (issue #96,
+        tests/test_vertex_orientation.py).
         """
         # complex Hermitian off-site "CoulombInter" exercises both the
         # orbital-index order and the Fourier phase sign
@@ -142,9 +141,12 @@ class TestKSpaceBuilderConvention(unittest.TestCase):
         }
         inter_k = _build_interaction_k(self.kx, self.ky, self.kz,
                                        {"CoulombInter": vr}, self.norb)
-        expected = self._expected(vr)
+        expected = self._expected(vr, sign=-1)
         npt.assert_allclose(inter_k["CoulombInter"],
                             expected.transpose(1, 0, 2, 3, 4), atol=1e-12)
+        # ...and the phase is not the one-body one
+        self.assertGreater(np.max(np.abs(
+            inter_k["CoulombInter"] - self._expected(vr).transpose(1, 0, 2, 3, 4))), 1e-6)
         # ...and not vacuously: the fixture is orbital-asymmetric, so the
         # transpose really is a different matrix
         self.assertGreater(

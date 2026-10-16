@@ -388,8 +388,9 @@ class TestG2(unittest.TestCase):
 
     def test_c_gate_on_interorbital_reproduces_the_real_space_oracle(self):
         """G-2c: the bond gate's O(V^2) coefficient on an orbital-asymmetric
-        INTER-ORBITAL off-site bond equals the exact real-space oracle (the
-        documented reading of a row) at 1e-8; with the mixed blocks' pair
+        INTER-ORBITAL off-site bond equals the exact real-space oracle (each
+        row on the bond of the Transfer row with the same ``(R, a, b)``,
+        issue #232) at 1e-8; with the mixed blocks' pair
         permutation replaced by the identity -- what the gate did before
         spec 2026-09-16 R3 -- it misses by more than 1e-3.
 

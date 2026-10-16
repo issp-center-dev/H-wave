@@ -150,7 +150,7 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
     X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{-{\bf q}}
     X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
@@ -186,12 +186,25 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
    c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
    感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
    バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
-   もの（式中の\ :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`\ ）
+   もの（式中の\ :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}`\ ）
    であり、行列としては次のように書けます。
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}
+      = W^{\beta'\beta,\,\alpha'\alpha}_{-{\bf q}}
+
+   **相互作用は**\ :math:`-{\bf q}`\ **で入ります。**
+   :math:`X^{(0)}(q)`\ の応答側のペアは\ :math:`-{\bf q}`\ の双一次形式なので、
+   それにフィードバックする相互作用項は、上のハミルトニアンのうち
+   :math:`-{\bf q}`\ を持つ項です。代わりに\ :math:`W_{\bf q}`\ を用いると、
+   相互作用ファイルのオフサイト行\ :math:`(R, a, b)`\ は、トランスファーの行
+   :math:`(R, a, b)`\ が作用するボンドとは逆向きのボンドに作用してしまいます。
+   issue #232 で修正される前のリリースは\ :math:`W_{\bf q}`\ で ring を解いて
+   いたため、\ :math:`R \to -R`\ について対称でないオフサイト相互作用を全て
+   誤ったボンドに置いていました（\ :ref:`相互作用指定ファイルの注意書き
+   <rpa_interaction_orientation>`\ を参照）。
+   :math:`X_{ab}(R) = X_{ab}(-R)`\ を満たすテーブル（オンサイト相互作用、
+   実数の1軌道のボンド、鏡映対称な多軌道のボンド）では両者は一致します。
 
    この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
    実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
@@ -667,11 +680,12 @@ V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
 となります。ここで\ :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
 V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 ファイル自身の向き（:math:`\alpha`\ が元のセル）でのフーリエ変換です。密度
-スロット上には、ring の頂点と同じく軌道添字を転置して
-（:math:`\alpha \leftrightarrow \beta`\ ）
+スロット上には、ring の頂点と同じく軌道添字を転置し
+（:math:`\alpha \leftrightarrow \beta`\ ）、\ :math:`-\mathbf{q}`\ で
+（上の添字対の規約についての注意書きを参照）
 :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`\ として入ります。これは ring の
+-\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})`\ として入ります。これは ring の
 頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
 スロットではゼロ）であり、以下で\ :math:`\bar\chi`\ と取る積は
 :math:`A^{\sigma}_{\rm on}`\ ・
@@ -794,9 +808,13 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 置いたものです。ここで\ :math:`w_t`\ はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて\ ``CoulombInter``
 :math:`(+1, -1)`\ 、\ ``Hund`` :math:`(-1, +1)`\ 、\ ``Ising``
-:math:`(+1, -1)`\ ）です。相互作用ファイルの向きでは、宣言された行
-:math:`V_{ab}(R_m)`\ はスロット\ :math:`(m, a, b)`\ に、その逆向きの行
-:math:`V_{ba}(-R_m)`\ はスロット\ :math:`(-m, b, a)`\ に入ります。
+:math:`(+1, -1)`\ ）です。相互作用ファイルで宣言された行
+:math:`V_{ab}(R)`\ は、\ :math:`R_m = -R`\ のチャネルのスロット
+:math:`(m, a, b)`\ に、その逆向きの行\ :math:`V_{ba}(-R)`\ はスロット
+:math:`(-m, b, a)`\ に入ります。これは、その交換交差がトランスファーの行
+:math:`(R, a, b)`\ のボンドに作用するチャネルです（issue #232。以前の
+リリースはこの行を\ :math:`R_m = R`\ のチャネル、すなわち逆向きのボンドに
+置いていました）。
 ドレスされた
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi`\ と
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi`\ 、およびその

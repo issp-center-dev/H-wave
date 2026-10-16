@@ -159,7 +159,7 @@ class TestOffsiteVqPreservation(unittest.TestCase):
 
     def _interactions(self):
         # one-dimensional bond declared from both ends, as an interaction
-        # file does; V(q) = 0.7 e^{-iq} must survive verbatim
+        # file does; its complex phase must survive verbatim
         return {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7,
                                  ((-1, 0, 0), (1, 0)): 0.7}}
 
@@ -170,11 +170,12 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         ik = sc._build_interaction_k(kx, kx, kz, self._interactions(), 2)
         S, C = sc._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
         q1 = kx[1]                          # pi/2: sin(q) = 1, maximal test
-        # builder stores entry (R, (a, b)) at [b, a] with e^{+iqR} (#133):
-        # the cross slots carry 0.7 e^{-iq} (from [0,1]) and 0.7 e^{+iq}
-        # ([1,0])
-        want = {(1, 1): 0.7 * np.exp(-1j * q1),
-                (2, 2): 0.7 * np.exp(+1j * q1)}
+        # builder stores entry (R, (a, b)) at [b, a] with e^{-iqR}, which
+        # puts the row on the bond of a Transfer row (R, a, b) (issue #232,
+        # tests/test_two_body_placement.py): the cross slots carry
+        # 0.7 e^{+iq} (from [0,1]) and 0.7 e^{-iq} ([1,0])
+        want = {(1, 1): 0.7 * np.exp(+1j * q1),
+                (2, 2): 0.7 * np.exp(-1j * q1)}
         for (i, j), w in want.items():
             for name, M in (("S", S), ("C", C)):
                 got = M[1, 0, 0, i, j]
@@ -216,10 +217,11 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         sym = sc._symmetrise_interactions_k(ik)["PairHop"]
         np.testing.assert_allclose(sym, raw, atol=1e-13)
         # PairHop is stored UNtransposed (measured in #100): the entry
-        # (R, (a, b)) lands at [a, b], so [0, 1] carries p e^{+iqR} (#133)
+        # (R, (a, b)) lands at [a, b], so [0, 1] carries p e^{-iqR} (the
+        # same e^{-iqR} as every type, issue #232)
         q1 = kx[1]
         self.assertAlmostEqual(
-            abs(sym[0, 1, 1, 0, 0] - p * np.exp(+1j * q1)), 0.0, places=12)
+            abs(sym[0, 1, 1, 0, 0] - p * np.exp(-1j * q1)), 0.0, places=12)
 
     def test_reversal_on_mixed_odd_even_grid(self):
         # (Nx, Ny, Nz) = (5, 4, 3): odd sizes pair i <-> n-i, even sizes make
@@ -245,8 +247,8 @@ class TestOffsiteVqPreservation(unittest.TestCase):
 
     def test_one_sided_offsite_declaration_gets_the_mean(self):
         # a single-direction declaration means (jab + jba)/2 in this codebase:
-        # half the weight at e^{+iq}, half at e^{-iq} on the transposed slot
-        # (phases follow the documented e^{+iqR} since #133)
+        # half the weight at e^{-iq}, half at e^{+iq} on the transposed slot
+        # (the vertex carries e^{-iqR}, issue #232)
         sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
@@ -255,9 +257,9 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         sym = sc._symmetrise_interactions_k(ik)["CoulombInter"]
         q1 = kx[1]
         self.assertAlmostEqual(
-            abs(sym[1, 0, 1, 0, 0] - 0.35 * np.exp(+1j * q1)), 0.0, places=12)
+            abs(sym[1, 0, 1, 0, 0] - 0.35 * np.exp(-1j * q1)), 0.0, places=12)
         self.assertAlmostEqual(
-            abs(sym[0, 1, 1, 0, 0] - 0.35 * np.exp(-1j * q1)), 0.0, places=12)
+            abs(sym[0, 1, 1, 0, 0] - 0.35 * np.exp(+1j * q1)), 0.0, places=12)
 
 
 class TestLegacyFlexFileGuard(unittest.TestCase):
@@ -735,6 +737,113 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         v = {"sc_vertex_version": 2}
         inp = self._write(d, extra_s=v, extra_c=v)
         self._load(inp, {"Exchange": self.HUND})
+
+    # ---- #232: off-site rows on the bond of their Transfer rows ---------
+    ASYM_OFFSITE = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}
+    SYM_OFFSITE = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4,
+                   ((-1, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4}
+
+    def test_version_2_with_mirror_asymmetric_offsite_rows_is_rejected(self):
+        """A version-2 run placed an off-site row on the bond opposite its
+        Transfer row; with a table that is not symmetric under R -> -R its
+        susceptibilities belong to a different Hamiltonian (#232)."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"CoulombInter": self.ASYM_OFFSITE})
+        self.assertIn("#232", str(cm.exception))
+        self.assertIn("CoulombInter", str(cm.exception))
+
+    def test_unversioned_file_with_mirror_asymmetric_offsite_rows_is_rejected(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        inp = self._write(d)               # no sc_vertex_version
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"CoulombInter": self.ASYM_OFFSITE})
+        self.assertIn("#232", str(cm.exception))
+
+    def test_version_2_with_mirror_symmetric_offsite_rows_stays_accepted(self):
+        """A table symmetric under R -> -R cannot see the placement, so a
+        version-2 file stays usable for it."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        self._load(inp, {"CoulombInter": self.SYM_OFFSITE})
+
+    def _with_cell(self, inp, cell):
+        inp = dict(inp)
+        inp["mode"] = {"param": {"CellShape": list(cell)}}
+        return inp
+
+    def test_version_2_on_a_two_site_axis_is_accepted(self):
+        """On a 2-site axis +x and -x are the same displacement, so the
+        asymmetric-looking table is placement-blind there."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._with_cell(self._write(d, extra_s=v, extra_c=v), (2, 1, 1))
+        self._load(inp, {"CoulombInter": self.ASYM_OFFSITE})
+
+    def test_version_2_with_a_wrapped_symmetric_key_is_accepted(self):
+        """A symmetric table written with a wrapped key (-1 as 3 on a 4-site
+        axis) is compared on the grid, not by its literal keys."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._with_cell(self._write(d, extra_s=v, extra_c=v), (4, 1, 1))
+        wrapped = {((1, 0, 0), (0, 1)): 0.4, ((3, 0, 0), (1, 0)): 0.4,
+                   ((3, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4}
+        self._load(inp, {"CoulombInter": wrapped})
+
+    def test_version_2_on_the_grid_still_rejects_an_asymmetric_table(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._with_cell(self._write(d, extra_s=v, extra_c=v), (4, 1, 1))
+        with self.assertRaises(ValueError) as cm:
+            self._load(inp, {"CoulombInter": self.ASYM_OFFSITE})
+        self.assertIn("#232", str(cm.exception))
+
+    def test_version_2_with_mirror_asymmetric_pairlift_is_accepted(self):
+        """PairLift has no particle-hole content, so its placement cannot
+        reach the susceptibility files."""
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 2}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        self._load(inp, {"PairLift": self.ASYM_OFFSITE})
+
+    def test_version_3_with_mirror_asymmetric_offsite_rows_is_accepted(self):
+        import tempfile
+
+        d = tempfile.mkdtemp()
+        v = {"sc_vertex_version": 3}
+        inp = self._write(d, extra_s=v, extra_c=v)
+        self._load(inp, {"CoulombInter": self.ASYM_OFFSITE})
+
+    def test_flex_writes_version_3(self):
+        """A real FLEX run stamps its susceptibility files with version 3."""
+        import os
+        import tempfile
+        from tests.test_flex_second_order_compat import _IN2, _run
+
+        with tempfile.TemporaryDirectory() as out:
+            _run(os.getcwd(), os.path.abspath(_IN2),
+                 {"CoulombInter": "onsite_inter.dat",
+                  "CoulombIntra": "coulombintra.dat"}, out, "takimoto")
+            for name in ("chiq_s.npz", "chiq_c.npz"):
+                with np.load(os.path.join(out, name)) as data:
+                    self.assertEqual(int(data["sc_vertex_version"]), 3, name)
 
     def test_version_1_is_rejected(self):
         import tempfile

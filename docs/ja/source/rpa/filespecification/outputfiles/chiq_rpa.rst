@@ -187,7 +187,9 @@ chiq のデータ形式
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
   下限に達すると実行は拒否されます。\ ``longitudinal_bond_guard_freqs = "static"``\ の
   場合はゼロ振動数スライスのみにわたる最小値を報告します）、
-  ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
+  ``longitudinal_bond_schema``\ （整数、\ ``2``\ 。issue #232 のボンド配置の
+  修正より前は\ ``1``\ で、そのときチャネル\ ``m``\ には\ ``-delta_r[m]``\ では
+  なく\ ``+delta_r[m]``\ で宣言された行が入っていました）。
 
 ``mode = "FLEX"``\ で\ ``longitudinal_bond_channels = true``\ の場合（:ref:`flex_bond_hf`\ の
 Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写像を記述し
@@ -235,8 +237,9 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``"refuse"``\ では常に\ ``0``\ ）が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
-``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
-対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+``bond_archive_schema``\ （``3``\ 。issue #232 のボンド配置の修正より前は
+``2``\ 、以下のボンド分解した動的 Eliashberg 対形成ソルバーが追加される前は
+``1``\ です。この段落末尾の注を参照）、
 動的な\ ``chi_s_w``\ と\ ``chi_c_w``
 （``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
 瞬時のボンドバーテックス\ ``S_bond``\ と\ ``C_bond``\ （複素\ ``ndarray(nvol,
@@ -255,7 +258,10 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （``bond_archive_schema = 1``\ 、``S_bond`` / ``C_bond`` / ``norb``\ を
 含まない）は、そのソルバーによって、このバージョンでの再計算を求める
 メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
-スキーマ2でも変わりません。
+スキーマ2でも変わりません。スキーマ2のアーカイブは、各オフサイト行を
+トランスファーの行とは逆向きのボンドのチャネルに置いていました。対形成
+ソルバーは、相互作用が実行時の格子上で\ :math:`R \to -R`\ について対称で
+ないオフサイト行を宣言している場合にはこれを拒否し、それ以外では受け付けます。
 
 アーカイブには\ ``[mode.param] longitudinal_bond_output_layout``\ で選択した
 ディスク上のレイアウトを表す\ ``bond_archive_layout``\ （文字列）も記録されます。

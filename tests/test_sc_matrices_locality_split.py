@@ -109,13 +109,14 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         kx = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
         # The declaration (+x, (0, 1)) is the operator n_0(i) n_1(i+x); its
         # reversal partner (-x, (1, 0)) is the same operator. The k-space
-        # matrix stores the orbital pair TRANSPOSED (hwave.sc's
-        # _build_interaction_k, issue #96), so the (00,11) density slot
-        # reads mat[0, 1] = v e^{-iqx} and (11,00) reads mat[1, 0] =
-        # v e^{+iqx} -- the same orientation the shared builder's Case 3
+        # matrix stores the orbital pair TRANSPOSED with the phase e^{-iqR}
+        # (hwave.sc's _build_interaction_k, issues #96 and #232), so the
+        # (00,11) density slot reads mat[0, 1] = v e^{+iqx} and (11,00)
+        # reads mat[1, 0] = v e^{-iqx} -- the row on the bond of its
+        # Transfer row, the same orientation the shared builder's Case 3
         # uses for on-site input, and the ring's, measured element-complete
         # equal end to end (tests/test_flex_offsite_general.py).
-        vq = {(0, 3): v * np.exp(-1j * kx), (3, 0): v * np.exp(+1j * kx)}
+        vq = {(0, 3): v * np.exp(+1j * kx), (3, 0): v * np.exp(-1j * kx)}
         for itype in ("CoulombInter", "Hund", "Ising"):
             with self.subTest(itype=itype):
                 S, C = self._build({}, {itype: _bond(0, 1, v)}, 2, n=n)

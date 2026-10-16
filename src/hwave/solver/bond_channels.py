@@ -36,8 +36,10 @@ class ResolvedInteractionSet:
     delta_r : tuple[tuple[int, int, int], ...]
         Bravais-cell displacement per channel. ``delta_r[0] == (0, 0, 0)``.
     v_bond : tuple[np.ndarray, ...]
-        ``v_bond[m]`` is a ``(norb, norb)`` complex array holding
-        ``V_ab(delta_r[m])``. ``v_bond[0]`` is all-zeros (the on-site Fock
+        ``v_bond[m]`` is a ``(norb, norb)`` complex array holding the block
+        DECLARED at ``-delta_r[m]``, ``V_ab(-delta_r[m])``: channel ``m`` is
+        the one whose kernels act on the bond of a Transfer row
+        ``(-delta_r[m], a, b)`` (issue #232). ``v_bond[0]`` is all-zeros (the on-site Fock
         value is not carried as a bond channel; see spec S3.2 "Delta r=0
         handling"). Every array is marked read-only.
     v_onsite : np.ndarray, shape (norb, norb), complex
@@ -403,6 +405,12 @@ def resolve_interactions(
 
     v_onsite = _complete_onsite_hermitian(onsite, norb, reverse_atol, reverse_rtol)
     v_onsite.flags.writeable = False
+
+    # A declared row (R, a, b) is the bond of a Transfer row (R, a, b): a in
+    # the original cell, b at R (Wannier90 / RESPACK, issue #232). Channel m
+    # of the bond kernels carries that operator when it holds the block
+    # declared at -delta_r[m]; the closed set makes this a permutation.
+    v_bond_list = [v_bond_list[m] for m in reverse]
 
     return ResolvedInteractionSet(
         delta_r=tuple(delta_r),
@@ -2589,7 +2597,10 @@ class BondTopology(_TransverseTopologyBase):
         (on-site content is represented exclusively by the caller's
         ``ham_pm_onsite``, never here), and the closure invariant
         ``coeffs[t][reverse[m]] == conj(coeffs[t][m]).T`` holds EXACTLY
-        (to the last bit) for every ``m``.
+        (to the last bit) for every ``m``. The resolvers file the rows
+        DECLARED at ``-delta_r[m]`` on channel ``m`` -- the channel whose
+        kernels act on the bond of a Transfer row ``(-delta_r[m], a, b)``
+        (issue #232).
 
     ``B = len(delta_r)`` (channel count, including channel 0); the enlarged
     dimension a consumer builds from this topology is ``ND = B * norb**2``.
@@ -3310,7 +3321,9 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
         for m, irvec in enumerate(delta_r):
             if m == 0:
                 continue
-            block = completed.get(irvec)
+            # channel m carries the rows declared at -delta_r[m]: a row
+            # (R, a, b) is the bond of a Transfer row (R, a, b) (issue #232)
+            block = completed.get(tuple(-x for x in irvec))
             if block is not None:
                 arr[m] = block
         coeffs[type_name] = arr
@@ -3616,8 +3629,9 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
     # Step 2: cross family (CoulombInter, Ising) -- bond-diagonal,
     # q-independent, both mirrored diagonal target cells per representative.
     # AMENDED (2026-08-16, Task-6 granule adjudication): DIRECT placement
-    # -- content lands at I=(m,a,b), the channel m carrying the declared
-    # coefficient (delta_r[m] = +R_declared), matching the longitudinal
+    # -- content lands at I=(m,a,b), the channel m carrying the coefficient
+    # (since issue #232 the resolvers file the row declared at -delta_r[m]
+    # on channel m), matching the longitudinal
     # bare_bond_vertices Fock-diagonal rule exactly (#151-validated
     # precedent). The mirrored partner emits the same Re value at
     # (reverse[m], b, a). The PREVIOUS m<->reverse[m] swap (target at

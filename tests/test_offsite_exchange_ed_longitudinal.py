@@ -28,7 +28,9 @@ Findings (2026-09-03, recorded in the assertions below):
 * CONTROLS reproduce the adjudicated table: an off-site density bond gives
   CoulombInter ``(S, C) = (0, +2) V(q)`` and Hund ``(+1, -1) V(q)`` on the
   density slots, with ``V(q) = 2 v cos q`` for the two-sided one-orbital
-  bond and ``v e^{+iq}`` for the one-sided two-orbital bond. Measured
+  bond and ``v e^{-iq}`` for the one-sided two-orbital bond (the row
+  ``(+1, 0, 1)``, on the bond of the Transfer row ``(+1, 0, 1)``, issue
+  #232). Measured
   discrepancy: 0.2% on the two-orbital density slots (1.9964 vs 2), 1-3%
   on the one-orbital ring (3.949 vs 4; 1.949 vs 2), where the bond's own
   exchange (Fock) crossing -- a NON-local pair that a q-only vertex cannot
@@ -254,14 +256,16 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
         fx = _fixture_2orb()
         eq = np.exp(1j * 2.0 * np.pi * np.arange(fx.L) / fx.L)
         # slots at norb=2: 0=(00), 1=(01), 2=(10), 3=(11); density (00,11)=(0,3).
-        # The one-sided bond (orbital 0 at j, orbital 1 at j+1) is V_01(q)
-        # = v e^{+iq}; the (00,11) slot reads the pair-transposed entry
-        # (hwave.sc's _build_interaction_k convention, issue #96), i.e.
-        # e^{-iq}, and (11,00) reads e^{+iq}.
+        # The one-sided bond of the row (R=+1, a=0, b=1) -- the bond of the
+        # Transfer row (+1, 0, 1), i.e. orbital 0 at j+1 and orbital 1 at j
+        # in the ED fixture's frame (issue #232) -- is V_01(q) = v e^{-iq};
+        # the (00,11) slot reads the pair-transposed entry (hwave.sc's
+        # _build_interaction_k convention, issue #96), i.e. e^{+iq}, and
+        # (11,00) reads e^{-iq}.
         D_ci = _first_order(fx, lambda v: U.canonical_density_terms(fx, [(0, 1, 1, v)]))
         S_ci, C_ci = _longitudinal_sc(fx, D_ci)
-        np.testing.assert_allclose(C_ci[:, 0, 3], 2.0 * eq.conj(), atol=0.05)
-        np.testing.assert_allclose(C_ci[:, 3, 0], 2.0 * eq, atol=0.05)
+        np.testing.assert_allclose(C_ci[:, 0, 3], 2.0 * eq, atol=0.05)
+        np.testing.assert_allclose(C_ci[:, 3, 0], 2.0 * eq.conj(), atol=0.05)
         self.assertLess(np.max(np.abs(S_ci[:, 0, 3])), 0.02)
         # the same placement as the solver's k-space builder: the (00,11)
         # slot reads mat[0, 1] of hwave.sc._build_interaction_k, i.e. the
@@ -276,8 +280,8 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
         np.testing.assert_allclose(C_ci[:, 3, 0], 2.0 * ik[1, 0, :, 0, 0], atol=0.05)
         D_h = _first_order(fx, lambda v: _terms_hund(fx, 0, 1, 1, v))
         S_h, C_h = _longitudinal_sc(fx, D_h)
-        np.testing.assert_allclose(S_h[:, 0, 3], eq.conj(), atol=0.05)
-        np.testing.assert_allclose(C_h[:, 0, 3], -eq.conj(), atol=0.05)
+        np.testing.assert_allclose(S_h[:, 0, 3], eq, atol=0.05)
+        np.testing.assert_allclose(C_h[:, 0, 3], -eq, atol=0.05)
         for label, phase in (("real", 1.0), ("imag", 1j)):
             with self.subTest(J=label):
                 D_x = _first_order(fx, lambda v, p=phase: _terms_exchange(fx, 0, 1, 1, p * v))
