@@ -196,7 +196,8 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   the zero-frequency slice only) and ``longitudinal_bond_schema`` (integer,
   ``2``; ``1`` before the bond-placement correction of issue #232, under
   which channel ``m`` carried the rows declared at ``+delta_r[m]`` instead
-  of ``-delta_r[m]``).
+  of ``-delta_r[m]``; the keys and array shapes are the same, and no H-wave
+  reader checks this stamp -- it is there for external post-processing).
 
 In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
 Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the
@@ -269,10 +270,12 @@ bond-resolved dynamic Eliashberg pairing solver needs in addition to
 version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
 ``norb``) is refused by that solver with a message asking for a re-run
 under this version. Every schema-1 key keeps its value and meaning
-unchanged under schema 2. A schema-2 archive filed each off-site row on the
-channel of the bond opposite its transfer row; the pairing solver refuses
-it when the interaction declares an off-site row that is not symmetric under
-:math:`R \to -R` on the run's grid, and accepts it otherwise.
+unchanged under schema 2, and schema 3 has the same keys and array shapes
+as schema 2. A schema-2 archive filed each off-site row on the channel of
+the bond opposite its transfer row; the pairing solver refuses it, with a
+message asking for a re-run of FLEX, when the interaction declares an
+off-site row that is not symmetric under :math:`R \to -R` on the run's
+grid, and accepts it otherwise.
 
 The archive also records ``bond_archive_layout`` (string), the on-disk
 layout selected by ``[mode.param] longitudinal_bond_output_layout``. With

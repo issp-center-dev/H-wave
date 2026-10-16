@@ -3335,8 +3335,13 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                 # strict decode: the tag must be a single integral scalar.
                 # A plain int() would silently truncate (2.9 -> 2, accepted)
                 # and non-finite values would escape as OverflowError.
+                shown = "<unreadable>"
                 try:
-                    arr = np.asarray(data["sc_vertex_version"])
+                    raw = data["sc_vertex_version"]
+                    shown = repr(raw)
+                    arr = np.asarray(raw)
+                    if arr.dtype.kind not in "iufc":    # no bool, str or object stamps
+                        raise ValueError("not numeric")
                     if arr.size != 1:
                         raise ValueError("not a scalar")
                     val = complex(arr.reshape(())[()])
@@ -3348,8 +3353,7 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                 except (TypeError, ValueError, OverflowError):
                     raise ValueError(
                         "FLEX susceptibility file '{}' carries a malformed "
-                        "sc_vertex_version field ({!r}).".format(
-                            path, data["sc_vertex_version"]))
+                        "sc_vertex_version field ({}).".format(path, shown))
             if len(set(versions.values())) != 1:
                 raise ValueError(
                     "FLEX chi_s and chi_c carry different sc_vertex_version "

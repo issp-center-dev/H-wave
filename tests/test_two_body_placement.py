@@ -424,11 +424,17 @@ class TestDocumentedRPAEquation(unittest.TestCase):
     * ``rho(q) = sum_k c+_{k+q} c_k = sum_R e^{+iqR} n_R`` and the
       documented ``X^{aa,bb}(q) ~ <rho_a(-q); rho_b(q)>``;
     * the documented ``W^{bb,aa}_q = sum_r X_ab(r) e^{+iqr}`` for a
-      density-density row ``(r, a, b)``.
+      density-density row ``(r, a, b)`` (first pair at ``-q``, second at
+      ``+q``).
 
-    With these, ``X = [I + X0 W]^{-1} X0`` holds with the interaction at
-    ``-q``, exactly (and the analytic scale ``1 / N_site`` of the
-    unnormalized ``rho``), while ``W_q`` misses by order one."""
+    The documented vertex matches the field pair of ``X0`` with the
+    ``+q`` pair of ``W`` and the response pair with the ``-q`` pair:
+    ``W_hat(q)[row b, col a] = W^{aa,bb}_q``, the two pairs exchanged --
+    the same numbers as ``W^{bb,aa}_{-q}``. ``X = [I + X0 W_hat]^{-1} X0``
+    then holds exactly (with the analytic scale ``1 / N_site`` of the
+    unnormalized ``rho``), while the positional assignment of earlier
+    editions, ``W_hat(q)[row b, col a] = W^{bb,aa}_q``, misses by order
+    one (issue #232)."""
 
     @classmethod
     def setUpClass(cls):
@@ -445,20 +451,22 @@ class TestDocumentedRPAEquation(unittest.TestCase):
         cls.qs = 2.0 * np.pi * np.arange(_RL) / _RL
 
     def _deviation(self, sign):
-        def w_hat(q):                           # matrix [row b, col a] = W^{bb,aa}_q
+        def w_hat(q):                           # W^{bb,aa}_q at [row b, col a]
             w = np.zeros((2, 2), complex)
             w[1, 0] = _RV * np.exp(+1j * q)     # X_01(+1)
             w[0, 1] = _RV * np.exp(-1j * q)     # the partner X_10(-1)
             return w
+        # sign = -1: W^{bb,aa}_{-q}, i.e. W^{aa,bb}_q (the documented,
+        # pair-exchanged vertex); sign = +1: the positional assignment
         lam = 1.0 / _RL
         dev = max(np.abs(np.linalg.solve(np.eye(2) + lam * self.x0[q] @ w_hat(sign * self.qs[q]),
                                          self.x0[q]) - self.x[q]).max() for q in range(_RL))
         return dev / np.abs(self.x - self.x0).max()
 
-    def test_the_equation_holds_with_the_interaction_at_minus_q(self):
+    def test_the_documented_equation_holds(self):
         self.assertLess(self._deviation(-1), 1e-5)
 
-    def test_the_interaction_at_plus_q_is_rejected(self):
+    def test_the_positional_pair_assignment_is_rejected(self):
         self.assertGreater(self._deviation(+1), 0.1)
 
 

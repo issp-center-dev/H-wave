@@ -61,13 +61,18 @@ in the random phase approximation,
    (including ``flex_second_order = "local"`` and the bond-resolved
    channels) and the Eliashberg vertices put an off-site two-body row on
    the bond OPPOSITE its one-body row. The released ``UHFk`` placed it
-   correctly (development versions between issues #193 and #232 had moved
-   it, and the Hartree-Fock term of ``FLEX``, to the opposite bond as
-   well). All solvers now follow the convention above. Results change only
-   for off-site rows that are not symmetric under :math:`R \to -R`
-   (:math:`X_{ab}(R) \neq X_{ab}(-R)`), the generic case of multi-orbital
-   RESPACK input; every on-site interaction, every real single-orbital
-   input and every table with :math:`X_{ab}(R) = X_{ab}(-R)` is unaffected
+   correctly (development versions between issues #193 and #232, which
+   were never part of a release, had moved it, and the Hartree-Fock term
+   of ``FLEX``, to the opposite bond as well). From the first release that
+   includes issue #232, all solvers follow the convention above. Results
+   change only for off-site rows that are not symmetric under
+   :math:`R \to -R` (:math:`X_{ab}(R) \neq X_{ab}(-R)`), the generic case
+   of multi-orbital RESPACK input: a bond between two different orbitals
+   :math:`a \neq b` is declared as :math:`X_{ab}(R)` together with its
+   partner :math:`X_{ba}(-R)`, and :math:`X_{ab}(-R)` -- the same pair of
+   orbitals on the mirrored bond -- is in general a different number;
+   every on-site interaction, every real single-orbital input and every
+   table with :math:`X_{ab}(R) = X_{ab}(-R)` is unaffected
    (a complex off-site ``PairHop`` is affected even with a single orbital,
    because its coefficient at :math:`-R` is the complex conjugate).
    **No input file needs to be changed.**
@@ -81,12 +86,16 @@ in the random phase approximation,
    actually solved. Released ``UHFk`` results are unchanged. An earlier
    ``FLEX`` run with ``flex_hartree_fock = true`` evaluated the mean-field
    term and the vertices on different bonds and cannot be reproduced with
-   a single file. FLEX susceptibility files now carry
-   ``sc_vertex_version = 3``; the Eliashberg solver refuses an older file
-   when the interaction declares an off-site row that is not symmetric
-   under :math:`R \to -R`, so regenerate those susceptibilities. Remove any
-   workaround added for the old placement, and restart affected
-   self-consistent runs from scratch rather than from earlier seeds.
+   a single file. Keep such reproduction runs in a separate directory:
+   their outputs carry the current version stamps although they describe
+   the old Hamiltonian. FLEX susceptibility files now carry
+   ``sc_vertex_version = 3`` and the dynamic bond archive
+   ``bond_archive_schema = 3``; the Eliashberg solvers refuse an older
+   file when the interaction declares an off-site row that is not
+   symmetric under :math:`R \to -R`, so regenerate those files by
+   re-running FLEX. Remove any workaround added for the old placement, and
+   restart affected self-consistent runs from scratch rather than from
+   earlier seeds.
 
 
 An example of the file is shown below.

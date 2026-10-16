@@ -876,6 +876,19 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
             self._load(inp, {"Hund": self.HUND})
         self.assertIn("malformed", str(cm.exception))
 
+    def test_non_numeric_version_is_rejected(self):
+        # complex("3") would accept a string stamp
+        import tempfile
+
+        for bad in (np.str_("3"), np.bool_(True), np.array(3, dtype=object)):
+            with self.subTest(stamp=bad):
+                d = tempfile.mkdtemp()
+                v = {"sc_vertex_version": bad}
+                inp = self._write(d, extra_s=v, extra_c=v)
+                with self.assertRaises(ValueError) as cm:
+                    self._load(inp, {"Hund": self.HUND})
+                self.assertIn("malformed", str(cm.exception))
+
     def test_nonfinite_version_is_rejected_as_valueerror(self):
         # int(inf) raises OverflowError, which must not escape undocumented
         import tempfile

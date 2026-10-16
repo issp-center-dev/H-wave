@@ -145,7 +145,7 @@ is obtained as follows:
     X^{(0)\alpha\alpha', \beta\beta'}(q)
     - \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
     X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{-{\bf q}}
+    W^{\alpha_1\alpha_1', \beta_1\beta_1'}_{\bf q}
     X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
@@ -160,14 +160,10 @@ in the matrix form. Then finally it leads to the expression:
 
 .. note::
 
-   **Index-pair convention between the interaction and the susceptibility.**
-   The two objects above label their index pairs with opposite orderings
-   inside each pair, and converting between them is part of the RPA
-   equation, not an afterthought.
+   **How the interaction enters the RPA equation.** The vertex follows
+   from matching momenta, not from the positions of the index pairs.
 
    The two pair slots of the bare susceptibility carry the bilinears
-   below -- the left pair with its creation index *second*, the right
-   pair with its creation index *first* --
 
    .. math::
       X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
@@ -175,47 +171,68 @@ in the matrix form. Then finally it leads to the expression:
       \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,
 
    which is what the Green-function product :math:`G^{\alpha\beta}(k+q)
-   G^{\beta'\alpha'}(k)` above encodes. The interaction
-   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
-   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}`, i.e. in *each* pair its
-   ordering is the reverse of the susceptibility's.  The vertex entering
-   the RPA equation above is therefore the interaction tensor with the
-   two indices of *each pair* transposed -- written there as
-   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}` -- i.e. as a
-   matrix,
+   G^{\beta'\alpha'}(k)` above encodes: the left pair is the response at
+   :math:`-{\bf q}`, the right pair the field at :math:`+{\bf q}`. In the
+   Hamiltonian, :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}` multiplies
+   :math:`(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'})(+{\bf q})\,
+   (c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta})(-{\bf q})`: its SECOND pair
+   carries :math:`+{\bf q}` and its FIRST pair :math:`-{\bf q}`. In the
+   chain :math:`X^{(0)\,\cdot,\beta_1\beta_1'}\,W\,X^{\alpha_1\alpha_1',\cdot}`
+   the field bilinear :math:`c^{\dagger}_{\beta_1}c^{\mathstrut}_{\beta_1'}`
+   of :math:`X^{(0)}` is therefore matched by the second pair of
+   :math:`W` (:math:`\alpha\alpha' = \beta_1\beta_1'`) and the response
+   bilinear :math:`c^{\dagger}_{\alpha_1'}c^{\mathstrut}_{\alpha_1}` of
+   :math:`X` by the first pair (:math:`\beta\beta' = \alpha_1\alpha_1'`),
+   which gives the vertex :math:`W^{\alpha_1\alpha_1',\beta_1\beta_1'}_{\bf q}`
+   above. As a matrix,
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-      = W^{\beta'\beta,\,\alpha'\alpha}_{-{\bf q}},
+      = W^{\alpha\alpha',\,\beta\beta'}_{\bf q},
 
-   with both index pairs reordered.
+   the interaction tensor with its two pairs exchanged and nothing
+   reordered inside a pair. Exchanging the two bilinears of the
+   Hamiltonian (and relabeling :math:`{\bf q} \to -{\bf q}`) gives the
+   identity :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q} =
+   W^{\alpha'\alpha,\beta'\beta}_{-{\bf q}}`, so the same vertex can be
+   written :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}` -- the
+   pairs in place, each pair reordered, at :math:`-{\bf q}` -- which is the
+   form the solver assembles. The equation above uses the first form
+   because there the momentum matching is explicit; the solver uses the
+   second because it is read off the Fourier-transformed interaction table
+   pair by pair.
 
-   **The interaction enters at** :math:`-{\bf q}`. The response pair of
-   :math:`X^{(0)}(q)` is the bilinear at :math:`-{\bf q}`, so the
-   interaction term that feeds it back is the one carrying
-   :math:`-{\bf q}` in the Hamiltonian above. With :math:`W_{\bf q}` in
-   its place, an off-site row :math:`(R, a, b)` of an interaction file
-   acts on the bond opposite the one a transfer row :math:`(R, a, b)`
-   acts on. Releases before the correction of issue #232 solved the ring
-   with :math:`W_{\bf q}` and therefore put every off-site interaction
-   that is not symmetric under :math:`R \to -R` on the wrong bond (see
-   :ref:`the note on the interaction definition file page
-   <rpa_interaction_orientation>`). For a table with
-   :math:`X_{ab}(R) = X_{ab}(-R)` -- on-site interactions, real
-   single-orbital bonds, mirror-symmetric multi-orbital bonds -- the two
-   coincide.
+   **Correction (issue #232).** Earlier editions of this page, and Eq. (20)
+   of the method paper (arXiv:2308.00324), assigned the pairs by position
+   instead: this page wrote the vertex as
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}` (the reordered
+   form above, but at :math:`+{\bf q}`), and the paper, whose Eq. (16)
+   puts the :math:`+{\bf q}` pair first, as
+   :math:`W^{\alpha_1\alpha_1',\beta_1'\beta_1}_{\bf q}` where its
+   Eqs. (16) and (19) give :math:`W^{\beta_1\beta_1',\alpha_1'\alpha_1}_{\bf q}`
+   (the printed entry is the Hermitian conjugate of the correct one; the
+   matrix notation below its Eq. (21), :math:`[\boldsymbol{W}(q)]^{ab} =
+   W^{ba}_{\bf q}`, is consistent with its Eq. (20)). For real couplings
+   both amount to the interaction at :math:`-{\bf q}` in place of
+   :math:`+{\bf q}`, which puts an off-site row :math:`(R, a, b)` of an
+   interaction file on the bond opposite the one a transfer row
+   :math:`(R, a, b)` acts on. Releases before the correction implemented
+   that form, so every off-site interaction that is not symmetric under
+   :math:`R \to -R` was placed on the wrong bond (see :ref:`the note on
+   the interaction definition file page <rpa_interaction_orientation>`).
+   For a table with :math:`X_{ab}(R) = X_{ab}(-R)` -- on-site
+   interactions, real single-orbital bonds, mirror-symmetric
+   multi-orbital bonds -- the two forms coincide.
 
-   The conversion is the identity on density (pair-diagonal) components
-   and, more generally, on any real Hermitian-closed declaration, since
-   the transposed slot then carries the same value.  It is observable
-   only for a *complex* pair-crossing interaction -- a complex
-   Hermitian-closed ``PairHop`` -- where omitting it returns the
-   susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
-   the conversion when it assembles the vertex for the ring solve.  The
-   transverse (ladder) assembly is *not* routed through it: that
-   assembly re-pairs the interaction tensor itself and therefore
-   consumes the Hamiltonian convention directly.  The stored
+   In the reordered form, reordering inside a pair is the identity on
+   density (pair-diagonal) components and, more generally, on any real
+   Hermitian-closed declaration, since the transposed slot then carries
+   the same value. It is observable only for a *complex* pair-crossing
+   interaction -- a complex Hermitian-closed ``PairHop`` -- where omitting
+   it returns the susceptibility of the complex-conjugate Hamiltonian.
+   The transverse (ladder) assembly is *not* routed through this
+   conversion: that assembly re-pairs the interaction tensor itself and
+   therefore consumes the Hamiltonian convention directly. The stored
    ``chiq``/``chi0q`` and the interaction files keep the conventions
    documented in their own sections.
 
@@ -254,10 +271,18 @@ Then susceptibility matrix by RPA is obtained as follows:
     - \sum_{\alpha_2,\alpha_3}
       \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
     X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
-    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    W^{\alpha_3\sigma_3\sigma_3', \alpha_2\sigma_2'\sigma_2}_{\bf q}
     X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
     \end{aligned}
 
+As in the generalised-orbital case, the vertex matches the field
+bilinear :math:`c^{\dagger}_{\alpha_2\sigma_2'}c^{\mathstrut}_{\alpha_2\sigma_2}`
+of :math:`X^{(0)}` (at :math:`+{\bf q}`) with the second pair of the
+interaction and the response bilinear
+:math:`c^{\dagger}_{\alpha_3\sigma_3'}c^{\mathstrut}_{\alpha_3\sigma_3}` of
+:math:`X` (at :math:`-{\bf q}`) with its first pair (issue #232; earlier
+editions wrote :math:`W^{\alpha_2,\alpha_3}_{\sigma_2'\sigma_2,\sigma_3'\sigma_3}({\bf q})`,
+the two pairs in the opposite roles).
 If :math:`\alpha\sigma\sigma'` is regarded as a single index,
 it can be put into matrix form and, as in the case of generalised orbitals, can be used as a
 
@@ -721,7 +746,8 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}` is the Fourier
 transform of the interaction file in its own orientation (:math:`\alpha` in
 the original cell). On the density slots it enters with transposed orbital
 indices (:math:`\alpha \leftrightarrow \beta`) and at :math:`-\mathbf{q}`,
-as the ring vertex does (see the note on the index-pair convention above):
+as the ring vertex does (see the note "How the interaction enters the
+RPA equation" above):
 :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 -\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})`. It is the same matrix the
