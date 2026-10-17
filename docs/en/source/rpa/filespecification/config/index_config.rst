@@ -665,7 +665,8 @@ Parameters
   host-side batched dressing (solve, conditioning guard, products) of the
   bond channels, including the host-side exact decomposition of the GPU
   conditioning guard; this needs
-  ``threadpoolctl`` (otherwise it stays serial, with a warning). The results
+  ``threadpoolctl`` (``pip install "hwave[threads]"``; otherwise it stays
+  serial, with a warning). The results
   agree with the serial ones to rounding error.
 
 - ``mixing_scheme``

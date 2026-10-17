@@ -54,7 +54,8 @@ def _effective_workers(workers):
     if w > 1 and not available():
         if not _warned:
             logger.warning("threaded linear algebra requested (workers=%d) but threadpoolctl "
-                           "is not installed; running serially", w)
+                           "is not installed; running serially (install it with "
+                           "pip install \"hwave[threads]\")", w)
             _warned = True
         return 1
     return w

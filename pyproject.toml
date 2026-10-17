@@ -26,8 +26,14 @@ tomli = "^2.0.1"
 # boundary. Install with: pip install "hwave[ir]"
 sparse-ir = {version = ">=2.0", optional = true}
 
+# Optional: threads the host-side batched linear algebra of
+# longitudinal_bond_channels when fft_workers > 1 (without it that work runs
+# serially, with a warning). Install with: pip install "hwave[threads]"
+threadpoolctl = {version = "^3.0.0", optional = true}
+
 [tool.poetry.extras]
 ir = ["sparse-ir"]
+threads = ["threadpoolctl"]
 
 [tool.poetry.group.dev.dependencies]
 flake8 = "^6.0.0"

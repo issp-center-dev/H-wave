@@ -24,6 +24,11 @@
       sparse-ir 2.0 以降が必要です。\ ``pip install "hwave[ir]"``\ （または\
       ``pip install "sparse-ir>=2"``\ ）でインストールできます。未導入で\ ``"ir"``
       を指定した場合はインストール手順つきの明示エラーになります。）
+    - threadpoolctl モジュール（任意。\ ``longitudinal_bond_channels``\ で
+      ``fft_workers``\ を 2 以上にしたとき、ボンドチャネルのホスト側バッチ計算を
+      スレッド並列化します。\ ``pip install "hwave[threads]"``\ （または\
+      ``pip install threadpoolctl``\ ）でインストールできます。未導入の場合は
+      警告を出して直列実行します。）
 
     なお、H-waveのUHFk、RPA、FLEXモードでは\ `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_\ をFFT計算に利用しています。
     RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの\ ``fft_workers``

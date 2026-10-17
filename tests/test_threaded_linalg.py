@@ -71,6 +71,30 @@ class TestHelpersEqualSerial(unittest.TestCase):
                 np.testing.assert_allclose(
                     tl.sandwich(s, x, s, workers=workers, min_rows=1), ref, rtol=RTOL, atol=ATOL)
 
+    def test_sandwich_cuts_the_second_batch_axis(self):
+        # one frequency and many sites: the chunks run along axis 1
+        rng = np.random.default_rng(10)
+        x = rng.standard_normal((1, 40, 3, 3)) + 1j * rng.standard_normal((1, 40, 3, 3))
+        s = rng.standard_normal((40, 3, 3)) + 0j
+        c = rng.standard_normal((40, 3, 3)) + 0j
+        np.testing.assert_allclose(tl.sandwich(s, x, c, workers=4, min_rows=1),
+                                   s[None] @ x @ c[None], rtol=RTOL, atol=ATOL)
+
+    def test_stacks_shorter_than_the_worker_count(self):
+        for n in (0, 1, 3):
+            with self.subTest(n=n):
+                a, b = _stack(n, 4, 11), _stack(n, 4, 12)
+                np.testing.assert_allclose(tl.solve(a, b, workers=8, min_rows=1),
+                                           np.linalg.solve(a, b), rtol=RTOL, atol=ATOL)
+                np.testing.assert_allclose(tl.svdvals(a, workers=8, min_rows=1),
+                                           np.linalg.svd(a, compute_uv=False),
+                                           rtol=RTOL, atol=ATOL)
+
+    def test_all_cores(self):
+        a, b = _stack(300, 5, 13), _stack(300, 5, 14)
+        np.testing.assert_allclose(tl.solve(a, b, workers=-1, min_rows=1),
+                                   np.linalg.solve(a, b), rtol=RTOL, atol=ATOL)
+
     def test_a_singular_block_raises_linalgerror_from_a_worker(self):
         a = _stack(200, 4, 6)
         a[137] = 0.0
@@ -132,6 +156,20 @@ class TestHelpersEqualSerial(unittest.TestCase):
         for r in out:
             np.testing.assert_allclose(r, ref, rtol=RTOL, atol=ATOL)
         self.assertEqual(before, [(d["internal_api"], d["num_threads"]) for d in threadpool_info()])
+
+    def test_missing_threadpoolctl_warns_once_with_the_install_hint(self):
+        saved = (tl.threadpool_limits, tl._warned)
+        tl.threadpool_limits, tl._warned = None, False
+        try:
+            a = _stack(8, 3)
+            with self.assertLogs("qlms.solver.threaded", level="WARNING") as logs:
+                np.testing.assert_allclose(tl.solve(a, a, workers=4), np.linalg.solve(a, a),
+                                           rtol=RTOL, atol=ATOL)
+                tl.solve(a, a, workers=4)
+            self.assertEqual(len(logs.records), 1)
+            self.assertIn('pip install "hwave[threads]"', logs.output[0])
+        finally:
+            tl.threadpool_limits, tl._warned = saved
 
     def test_invalid_worker_count_is_refused(self):
         a = _stack(8, 3)
