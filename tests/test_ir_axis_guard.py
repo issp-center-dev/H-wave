@@ -324,6 +324,15 @@ class TestGuardFailureRoutes(unittest.TestCase):
         bad = np.array([[np.nan, 0.0], [0.0, 1.0]])
         self.assertEqual(_cond_str(bad), "unavailable")
 
+    def test_cond_str_helper_degrades_on_nonfinite_return(self):
+        """Depending on the numpy version an SVD of non-finite entries raises
+        or returns nan; the returned-non-finite branch is pinned directly."""
+        from hwave.solver.ir_axis import _cond_str
+        for value in (np.nan, np.inf):
+            with self.subTest(value=value):
+                with mock.patch("numpy.linalg.cond", return_value=value):
+                    self.assertEqual(_cond_str(np.eye(2)), "unavailable")
+
 
 @unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
 class TestHealthyPathUnchanged(unittest.TestCase):
