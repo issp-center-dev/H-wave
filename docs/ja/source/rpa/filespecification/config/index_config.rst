@@ -604,9 +604,11 @@ TOML形式
   ``chi_c_w``\ ）から構築され、\ ``chiq_s.npz`` / ``chiq_c.npz``\ は
   使われません。生成元の FLEX 計算は\ ``longitudinal_bond_channels =
   true``\ **かつ**\ ``longitudinal_bond_output_full = true``\ を、
-  アーカイブスキーマ2を書き出すバージョンで実行している必要があります
+  アーカイブスキーマ3を書き出すバージョンで実行している必要があります
   （``file.output``\ の\ ``longitudinal_bond``\ の説明と
   :ref:`アーカイブの出力リファレンス <subsec:chiq_rpa>`\ を参照）。
+  スキーマ2のアーカイブは、宣言されたオフサイト相互作用が実行時の格子上で
+  :math:`R \to -R`\ について対称な場合にのみ受け付けられます。
   古いスキーマ1のアーカイブは再計算を求めるメッセージとともに拒否
   されます。\ ``bond_green`` / ``bond_max_shells``\ （Green 関数と
   ボンドトポロジーはこれらの静的ボンド経路のキーではなく

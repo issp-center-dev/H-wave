@@ -289,7 +289,7 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 ボンド分解した動的 Eliashberg 対形成の出力
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``longitudinal_bond.npz``\ （スキーマ2、前述）のボンド分解した動的
+``longitudinal_bond.npz``\ （スキーマ3、前述）のボンド分解した動的
 対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
 あります。後処理の\ ``hwave_sc``\ （``[eliashberg] bond_channels =
 true``\ と\ ``frequency = "dynamic"``\ ）と、FLEX の計算の最後に

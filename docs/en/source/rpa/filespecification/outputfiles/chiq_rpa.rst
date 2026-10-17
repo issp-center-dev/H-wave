@@ -300,7 +300,7 @@ Bond-resolved dynamic Eliashberg pairing outputs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Two entries solve the linearized Eliashberg equation with the bond-resolved,
-dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
+dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 3,
 above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
 with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
 solve (``[mode.param] longitudinal_bond_pairing``, see the configuration

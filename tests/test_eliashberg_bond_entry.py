@@ -336,6 +336,18 @@ class TestLoadBondArchive(unittest.TestCase):
         np.savez(no_chi, **members)
         with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
             call(no_chi)
+        # a schema stamp whose .npy member is cut short (header intact, data
+        # body missing) is the same contract refusal, not a bare numpy error
+        import zipfile
+        bad_stamp = os.path.join(self.tmp, "bad_stamp.npz")
+        with zipfile.ZipFile(self.path) as src, zipfile.ZipFile(bad_stamp, "w") as dst:
+            for info in src.infolist():
+                data = src.read(info.filename)
+                if info.filename == "bond_archive_schema.npy":
+                    data = data[:-4]
+                dst.writestr(info, data)
+        with self.assertRaisesRegex(ValueError, r"bad_stamp\.npz.*(not a valid bond archive|malformed)"):
+            call(bad_stamp)
         # the valid archive still loads
         self._load()
 

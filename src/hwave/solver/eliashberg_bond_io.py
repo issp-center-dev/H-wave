@@ -239,10 +239,11 @@ def _archive_contract_error(path, exc):
 def _require(d, key, path):
     """One member of an open archive, or the contract ValueError if it is
     missing (bare ``KeyError``) or unreadable (a truncated member surfaces as a
-    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access)."""
+    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access, or as numpy's
+    ``ValueError`` when an ``.npy`` member's data body is cut short)."""
     try:
         return d[key]
-    except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+    except (KeyError, zipfile.BadZipFile, EOFError, OSError, ValueError) as exc:
         raise _archive_contract_error(path, exc)
 
 
@@ -295,7 +296,7 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         raise _archive_contract_error(path, exc)
     with d:
         files = set(d.files)
-        schema = (_archive_schema(d["bond_archive_schema"], path)
+        schema = (_archive_schema(_require(d, "bond_archive_schema", path), path)
                   if "bond_archive_schema" in files else 0)
         if schema == 1 or "S_bond" not in files:
             raise ValueError(

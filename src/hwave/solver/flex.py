@@ -274,7 +274,7 @@ class FLEX(RPA):
                           "longitudinal_bond_cond_tol")
 
     #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
-    #: ``"npz"`` (the default single-file schema-2 archive) and ``"sidecar"``
+    #: ``"npz"`` (the default single-file archive) and ``"sidecar"``
     #: (an index npz plus the two big channel members as memory-mappable
     #: ``.npy`` files next to it).
     _BOND_OUTPUT_LAYOUTS = ("npz", "sidecar")
@@ -481,7 +481,7 @@ class FLEX(RPA):
         if not isinstance(layout, str) or layout.strip().lower() not in FLEX._BOND_OUTPUT_LAYOUTS:
             raise ValueError(
                 "[mode.param] longitudinal_bond_output_layout must be \"npz\" or \"sidecar\" "
-                "(\"npz\" writes the single-file schema-2 archive, the default; \"sidecar\" writes "
+                "(\"npz\" writes the single-file archive, the default; \"sidecar\" writes "
                 "an index npz plus the two big channel members as memory-mappable .npy files next "
                 "to it), got {!r}".format(layout))
         out["longitudinal_bond_output_layout"] = layout.strip().lower()
@@ -4690,8 +4690,8 @@ class FLEX(RPA):
             else:
                 # the default single-file archive: every pre-existing member
                 # keeps its exact positional order and bond_archive_layout is
-                # APPENDED last, so the ordered prefix is byte-for-byte what the
-                # schema-2 reference archive writes (issue #205)
+                # APPENDED last, so the ordered prefix has the member order of
+                # the archive written before the layout field existed (issue #205)
                 np.savez(file_name,
                          # 3: rows filed on the bond of their Transfer rows (#232)
                          bond_archive_schema=np.int64(3),
