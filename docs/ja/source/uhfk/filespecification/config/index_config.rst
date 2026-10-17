@@ -227,14 +227,21 @@ TOML形式
   各行は 1 要素\ ``i s j t Re Im``\ (:math:`\langle c^\dagger_{is} c_{jt}\rangle`\ のサイトとスピン) で、ヘッダはありません。
   これは\ ``file.output``\ の\ ``onebodyg``\ が書き出す形式で、その出力をそのまま読み戻せます。
   UHFr の一体グリーン関数出力の 5 行ヘッダ付きファイルも、先頭行が\ ``=``\ で始まる場合は受け付けます。
-  ``initial``\ と同時には指定できません。\ ``SubShape``\ が\ ``[1, 1, 1]``\ より大きい場合の副格子秩序をもつ状態は、
-  代わりに\ ``initial``\ で与えてください。\ ``initial``\ も\ ``initial_uhf``\ も指定しない場合、初期値は\ ``initial_mode``\ に従います。
+  ``initial``\ と同時には指定できません。この入力には\ ``SubShape = [1, 1, 1]``\ が必要です。
+  副格子秩序をもつ状態は、代わりに\ ``initial``\ (``green.npz``) で与えてください。
+  ``initial``\ も\ ``initial_uhf``\ も指定しない場合、初期値は\ ``initial_mode``\ に従います。
+
+  本リリースでは、非正方形セルと複素数の状態に対する\ ``greenone.dat``\ の配置が変更されました。
+  変位の符号は\ ``j - i``\ から\ ``i - j``\ に、セルの格納順序は x 方向優先から z 方向優先に変更されています。
+  ファイルにはバージョンを識別する情報がありません。古い\ ``greenone.dat``\ を\ ``initial_uhf``\ で再利用する前に、再生成してください。
+
+.. _uhfk-input-onebodyg-uhf:
 
 - ``onebodyg_uhf``
 
   **形式 :** str型
 
-  **説明 :** ``file.output``\ の\ ``onebodyg``\ で書き出す一体グリーン関数の要素の一覧 (mVMC / UHFr の\ ``greenone.def``\ 形式: ヘッダ 5 行のあとに 1 要素 1 行の\ ``i s j t``\ )
+  **説明 :** ``file.output``\ の\ :ref:`onebodyg <uhfk-output-onebodyg>`\ で書き出す一体グリーン関数の要素の一覧 (mVMC / UHFr の\ ``greenone.def``\ 形式: ヘッダ 5 行のあとに 1 要素 1 行の\ ``i s j t``\ )
   を格納したファイルの名前を指定します。\ ``onebodyg``\ を使わない場合は省略できます。
 
 
@@ -289,11 +296,13 @@ TOML形式
 
   **説明 :** 一体グリーン関数を出力するファイル名を指定します。空文字列\ ``""``\ を指定した場合には情報は出力されません。
 
+.. _uhfk-output-onebodyg:
+
 - ``onebodyg``
 
   **形式 :** str型
 
-  **説明 :** ``onebodyg_uhf``\ に列挙した一体グリーン関数の要素を実空間のサイト表示 (1 行に\ ``i s j t Re Im``\ 、ヘッダなし) で出力する
+  **説明 :** ``file.input``\ の\ :ref:`onebodyg_uhf <uhfk-input-onebodyg-uhf>`\ に列挙した一体グリーン関数の要素を実空間のサイト表示 (1 行に\ ``i s j t Re Im``\ 、ヘッダなし) で出力する
   ファイル名を指定します。\ ``file.input``\ の\ ``geometry_uhf``\ と\ ``onebodyg_uhf``\ が必要です。
   ``SubShape``\ が\ ``[1, 1, 1]``\ より大きい場合も、収束した状態の副格子分解を保って出力します。
   このキーワードがない場合には情報は出力されません。

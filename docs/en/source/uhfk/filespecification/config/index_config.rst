@@ -301,9 +301,16 @@ and the latter on the output files (such as locations to store).
   this is the layout that ``onebodyg`` in ``file.output`` writes, so that output can be fed back here.
   A file with the five-line header of the UHFr one-body Green's function output is also accepted
   when its first line starts with ``=``. It cannot be specified together with ``initial``.
-  A state with sublattice order under ``SubShape`` larger than ``[1, 1, 1]`` should be given through
-  ``initial`` instead. When neither ``initial`` nor ``initial_uhf`` is set, the initial configuration
-  follows ``initial_mode``.
+  This input requires ``SubShape = [1, 1, 1]``. Give sublattice-ordered states through
+  ``initial`` (``green.npz``) instead. When neither ``initial`` nor ``initial_uhf`` is set,
+  the initial configuration follows ``initial_mode``.
+
+  In this release, the layout of ``greenone.dat`` changed for non-square cells and complex states:
+  the displacement sign changed from ``j - i`` to ``i - j``, and cell packing changed from
+  x-fast to z-fast. The file has no version marker. Regenerate old ``greenone.dat`` files
+  before reusing them with ``initial_uhf``.
+
+.. _uhfk-input-onebodyg-uhf:
 
 - ``onebodyg_uhf``
 
@@ -313,7 +320,7 @@ and the latter on the output files (such as locations to store).
   **Description :**
   This parameter specifies the filename of the list of the one-body Green's function elements
   (the ``greenone.def`` format of mVMC and UHFr: five header lines, then one ``i s j t`` row per
-  element) to be written by ``onebodyg``
+  element) to be written by :ref:`onebodyg <uhfk-output-onebodyg>`
   in ``file.output``. It is optional otherwise.
 
 ``file.input.interaction`` section
@@ -387,6 +394,8 @@ to the definition files.
   This parameter specifies the name of the file to store the one-body Green's functions.
   If it is set to an empty string, no output will be generated.
 
+.. _uhfk-output-onebodyg:
+
 - ``onebodyg``
 
   **Type :**
@@ -394,7 +403,8 @@ to the definition files.
 
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's function elements
-  listed in ``onebodyg_uhf`` in the real-space site representation (``i s j t Re Im`` per line,
+  listed in :ref:`onebodyg_uhf <uhfk-input-onebodyg-uhf>` in ``file.input``
+  in the real-space site representation (``i s j t Re Im`` per line,
   no header). ``geometry_uhf`` and ``onebodyg_uhf`` in ``file.input`` are required.
   Under ``SubShape`` larger than ``[1, 1, 1]`` the elements keep the sublattice resolution of the
   converged state. If it is not set, no output will be generated.
