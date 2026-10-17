@@ -501,7 +501,11 @@ def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
         (``R!=0``) Hartree excluded so ``V^pp`` carries only local
         interactions. The ``m!=0`` block is ``Q_eta (D_off + D_off^dag) Q_eta``
         (``= D_off (1 +- P)`` for real inversion-symmetric bonds), with
-        ``D_off`` diagonal ``V_ab(Delta r_m)`` (``m!=0`` only) and
+        ``D_off`` diagonal ``V_ab(Delta r_m)`` (``m!=0`` only; the stored
+        ``v_bond[m][a, b]``, i.e. the rows declared at ``-Delta r_m``, which
+        act on the bond with ``a`` in the origin cell and ``b`` at
+        ``-Delta r_m`` -- the pair :func:`make_bond_kernel` contracts slot
+        ``(m, ab)`` with, issue #232) and
         ``P:(m,ab)->(m_bar,ba)`` the reversal+orbital-swap involution. Since
         ``D_off`` is diagonal, ``D_off + D_off^dag`` already reduces
         elementwise to ``2*Re(D_off)`` before the ``Q_eta`` projection below
@@ -1313,11 +1317,23 @@ def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
     **different** phase structure (spec S4.5, "Eliashberg operator -- two
     separable-phase parts"):
 
-    Fluctuation part ``K^fl`` (particle-hole ladder, both legs carry ``+``
-    phases ``e^{i(k.dr_m + k'.dr_m')}``, convolution in ``q = k - k'``)::
+    Pair-leg geometry (issue #232): channel ``m``'s slot ``(a, b)`` is the
+    bond with orbital ``a`` in the origin cell and ``b`` in the cell at
+    ``-dr_m`` -- the bond of the rows ``resolve_interactions`` stores there
+    (declared at ``-dr_m``), i.e. a declared two-body row acts on the bond of
+    the Transfer row with the same ``(R, a, b)``. Every pair leg therefore
+    carries ``e^{-ik.dr_m}``. Both parts below equal an independent
+    spin-orbital first- and second-order calculation of an inter-orbital,
+    mirror-asymmetric CoulombInter model to round-off, while the opposite
+    placement misses by O(1) (``tests/test_bond_pairing_placement.py``).
 
-        Y^fl_{l1l2}(k) = -(1/N) sum_{m,m'} e^{i k.dr_m}
-            [ F_eta[m,m'] *_q ( e^{i k'.dr_m'} X_{l3l4}(k') ) ](k)
+    Fluctuation part ``K^fl`` (particle-hole ladder, convolution in
+    ``q = k - k'``; the ROW channel ``m`` of a ph block carries the input
+    leg, the COLUMN channel ``m'`` the output leg, and the orbitals are
+    crossed as in the on-site kernel)::
+
+        Y^fl_{ad}(k) = -(1/N) sum_{m,m'} e^{-i k.dr_m'}
+            [ F_eta[(m,ab),(m',cd)] *_q ( e^{-i k'.dr_m} X_{bc}(k') ) ](k)
 
     with the fluctuation vertex (matrix products in the enlarged ``ND`` space at
     each ``q``)::
@@ -1326,16 +1342,20 @@ def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
         F_t(q) = -0.5 S_bond chi_s S_bond - 0.5 C_bond chi_c C_bond
 
     Realized by the **O(B) FFT factorization** (spec S4.5): form ``B`` input
-    fields ``e^{i k'.dr_m'} X`` -> IFFT -> real-space MAC with ``F_hat`` -> FFT
-    -> ``x e^{i k.dr_m}``; ``2B`` spatial transforms, ``B^2`` real-space
+    fields ``e^{-i k'.dr_m} X`` -> IFFT -> real-space MAC with ``F_hat`` -> FFT
+    -> ``x e^{-i k.dr_m'}``; ``2B`` spatial transforms, ``B^2`` real-space
     multiply-accumulates, preserving ``O(N_k log N_k)``.
 
     Instantaneous / bare particle-particle part ``K^pp`` (Cooper, low-rank, NO
-    convolution; cross phase ``e^{i(k.dr_m' - k'.dr_m)}``)::
+    convolution; a plain matrix-vector product with ``V^pp``)::
 
-        A_{m; l3l4}    = (1/N) sum_{k'} e^{-i k'.dr_m} X_{l3l4}(k')
-        Y^pp_{l1l2}(k) = -1/2 sum_{m,m'} [V^pp_eta]_{(m,l1l2),(m',l3l4)}
-                              e^{i k.dr_m'} A_{m; l3l4}
+        A_{m; l3l4}    = (1/N) sum_{k'} e^{+i k'.dr_m} X_{l3l4}(k')
+        Y^pp_{l1l2}(k) = -1/2 sum_{m,m'} e^{-i k.dr_m}
+                              [V^pp_eta]_{(m,l1l2),(m',l3l4)} A_{m'; l3l4}
+
+    ``A_{m; l3l4}`` is the real-space pair amplitude of the bond (``l3`` at
+    the origin, ``l4`` at ``-dr_m``) that slot ``(m, l3l4)`` of ``V^pp``
+    names.
 
     In both parts the ``GG phi`` pair bubble is
     ``X_{l3l4}(k') = sum_{l5,l6} G2_{l3,l5,l4,l6}(k') phi_{l5l6}(k')`` with
@@ -1478,24 +1498,33 @@ def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
     PH_k = np.moveaxis(PH, 0, 3)                          # (Nx,Ny,Nz,B)
     PHc = np.conj(PH)                                     # e^{-i k.dr_m}
 
-    Vpp6 = Vpp.reshape(B, nd, B, nd)                      # [m,ab,m',cd]
+    # Pair legs (issue #232): channel m's slot (a, b) is the bond with orbital
+    # a in the origin cell and b at -dr_m (where resolve_interactions stores
+    # the rows declared at -dr_m), so every pair leg carries e^{-ik.dr_m}.
+    F_r7 = F_r6.reshape(Nx, Ny, Nz, B, norb, norb, B, norb, norb)
 
     def _fluctuation(X_grid):
-        """Y^fl: FFT convolution, O(B) factorized (spec S4.5)."""
-        Z = PH[:, None, :, :, :] * X_grid[None, :, :, :, :]   # (B,nd,Nx,Ny,Nz)
+        """Y^fl: FFT convolution, O(B) factorized (spec S4.5). The ROW channel
+        of a ph block carries the input leg, the COLUMN channel the output leg,
+        and the orbitals are crossed as in the on-site kernel
+        (``Y_{ad} <- F_{(ab),(cd)} X_{bc}``)."""
+        Z = PHc[:, None, :, :, :] * X_grid[None, :, :, :, :]  # (B,nd,Nx,Ny,Nz)
         Z_r = _bk.spatial_ifftn(Z, axes=(2, 3, 4))
-        Z_r_m = np.moveaxis(Z_r, (0, 1), (3, 4))              # (Nx,Ny,Nz,B,nd)
-        # W_r[x,y,z,m,ab] = sum_{m',cd} F_hat[...,m,ab,m',cd] Z_r[...,m',cd]
-        W_r = np.einsum('xyzaAbB,xyzbB->xyzaA', F_r6, Z_r_m)  # (Nx,Ny,Nz,B,nd)
-        W_k = _bk.spatial_fftn(W_r, axes=(0, 1, 2))
-        return -np.einsum('xyzm,xyzma->xyza', PH_k, W_k)      # (Nx,Ny,Nz,nd)
+        Z_r_m = np.moveaxis(Z_r, (0, 1), (3, 4)).reshape(
+            Nx, Ny, Nz, B, norb, norb)                          # [x,alpha,b,c]
+        # W_r[x, beta, a, d] = sum_{alpha,b,c} F[x, alpha,a,b, beta,c,d] Z_r[x, alpha,b,c]
+        W_r = np.einsum('xyzAabBcd,xyzAbc->xyzBad', F_r7, Z_r_m)
+        W_k = _bk.spatial_fftn(W_r.reshape(Nx, Ny, Nz, B, nd), axes=(0, 1, 2))
+        return -np.einsum('xyzm,xyzma->xyza', np.conj(PH_k), W_k)  # (Nx,Ny,Nz,nd)
 
     def _instantaneous(X_grid):
         """Y^pp: low-rank bare particle-particle part, no convolution."""
-        A_coef = (1.0 / N) * np.einsum('mxyz,cxyz->mc', PHc, X_grid)  # (B,nd)
-        # Bcoef[m',ab] = sum_{m,cd} Vpp[(m,ab),(m',cd)] A_coef[m,cd]
-        Bcoef = np.einsum('aAbB,aB->bA', Vpp6, A_coef)                # (B,nd)
-        return -0.5 * np.einsum('mxyz,ma->xyza', PH, Bcoef)    # (Nx,Ny,Nz,nd)
+        # A[m, cd] = (1/N) sum_k' e^{+ik'.dr_m} X_cd(k') is the pair amplitude
+        # of the bond (c at the origin, d at -dr_m) that slot (m, cd) of Vpp
+        # names; the output is resummed with e^{-ik.dr_m}.
+        A_coef = (1.0 / N) * np.einsum('mxyz,cxyz->mc', PH, X_grid)  # (B,nd)
+        Bcoef = (Vpp @ A_coef.reshape(ND)).reshape(B, nd)             # (B,nd)
+        return -0.5 * np.einsum('mxyz,ma->xyza', PHc, Bcoef)   # (Nx,Ny,Nz,nd)
 
     def _make_matvec(part):
         def matvec(v):

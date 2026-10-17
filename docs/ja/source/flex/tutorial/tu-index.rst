@@ -1174,6 +1174,12 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   読み込み側がこれらを
   必須とすることはなく、異なるカーネルで作られた\ ``sigma_init``\ も警告付きで
   受理されます。:ref:`rpa_chiq_provenance`\ を参照してください。
+- ``sc_vertex_version``: ``3``\ 。issue #232 のボンド配置（オフサイト二体行を、
+  その Transfer 行のボンド上に置く）を表します。相互作用が\ ``CellShape``\ の
+  格子上で\ :math:`R \to -R`\ について対称でないオフサイト行を宣言している場合
+  （\ :ref:`相互作用定義ファイルのページの注意 <rpa_interaction_orientation>`\ を参照）、
+  このキーを持たない、またはより古い値を持つ\ ``sigma_init``\ の種は拒否され、
+  それ以外の場合は受理されます。
 
 .. note::
 
@@ -1191,6 +1197,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   ``sigma``\ と同じ形状
 - ``flex_second_order`` / ``flex_second_order_schema``: 上の\ ``sigma.npz``
   と同じです。
+- ``sc_vertex_version``: 上の\ ``sigma.npz``\ と同じです。同じ条件のもとで、
+  ``hwave_sc``\ はより古い\ ``green.npz``\ を拒否します。
 
 これらの出力ファイルはEliashberg方程式ソルバー (``hwave_sc``) の
 入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。

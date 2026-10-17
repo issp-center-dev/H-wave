@@ -338,7 +338,12 @@ above), ``bond_archive`` (the resolved archive path), ``bond_residency``
 chose), ``bond_parity_leakage`` (the measured parity-commutation leakage;
 see ``[eliashberg] parity_leakage_tol``) and ``gap_bond_projection`` -- the
 gap projected onto each bond form factor, complex ``ndarray(B, norb, norb,
-Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
+Nmat)``: ``gap_bond_projection[m, a, b]`` is the real-space gap amplitude
+:math:`\Delta_{ab}(+R_m)` of the pair with orbital ``a`` in the origin cell
+and orbital ``b`` in the cell at :math:`+R_m` (``R_m = delta_r[m]``), i.e.
+on the bond of the transfer row :math:`(+R_m, a, b)`, with
+:math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`. With ``matsubara_basis = "ir"`` it additionally carries
 ``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_L`` and
 ``bond_ir_fit_residual_rel`` (the componentwise IR fit residual of the bond
 vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).

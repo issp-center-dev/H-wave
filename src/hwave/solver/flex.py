@@ -987,6 +987,7 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
             env = self._read_sigma(file_name)
+            self._check_seed_placement(file_name)
             if env.marker not in (None, "split", "total"):
                 raise ValueError(
                     "sigma_init file '{}' carries an unknown sigma_convention {!r} "
@@ -1046,6 +1047,19 @@ class FLEX(RPA):
             if ir_meta is not None:
                 info["sigma_init_ir"] = ir_meta
         return info
+
+    def _check_seed_placement(self, file_name):
+        """Refuse a ``sigma_init`` written before the bond-placement
+        correction of issue #232 when this run's declaration is
+        placement-sensitive (judged on the PRE-fold declaration and the
+        CellShape grid): such a seed belongs to a different Hamiltonian."""
+        from hwave.sc import check_placement_stamp
+        hi = getattr(self, "ham_info", None)
+        decl = (getattr(hi, "param_ham_orig", None) or getattr(hi, "param_ham", None)
+                if hi is not None else None)
+        grid = getattr(getattr(self, "lattice", None), "cellshape", None)
+        with np.load(file_name) as data:
+            check_placement_stamp(data, file_name, decl, grid=grid, what="sigma_init")
 
     def _read_sigma(self, file_name):
         """Load a saved self-energy array from a FLEX ``sigma.npz``.
@@ -4580,6 +4594,8 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
                      momentum_convention=MOMENTUM_CONVENTION,
+                     # bond placement of issue #232 (see read_init)
+                     sc_vertex_version=np.int64(3),
                      **_freq_meta("F"),
                      **self._second_order_members())
             logger.info("save_results: save sigma in file {}".format(file_name))
@@ -4610,6 +4626,9 @@ class FLEX(RPA):
                      # silently corrupting the pair bubble
                      beta=1.0 / self.T,
                      momentum_convention=MOMENTUM_CONVENTION,
+                     # bond placement of issue #232 (checked by the
+                     # Eliashberg consumers, hwave.sc.check_placement_stamp)
+                     sc_vertex_version=np.int64(3),
                      **green_extra,
                      **_freq_meta("F"),
                      **self._second_order_members())

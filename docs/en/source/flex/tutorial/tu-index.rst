@@ -1204,6 +1204,12 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   them, and a ``sigma_init`` seed
   recording a different kernel is accepted with a warning. See
   :ref:`rpa_chiq_provenance`.
+- ``sc_vertex_version``: ``3``, the bond placement of issue #232 (an
+  off-site two-body row on the bond of its transfer row). A ``sigma_init``
+  seed without it, or with an older value, is refused when the interaction
+  declares an off-site row that is not symmetric under :math:`R \to -R` on
+  the ``CellShape`` grid (see :ref:`the note on the interaction definition
+  file page <rpa_interaction_orientation>`), and accepted otherwise.
 
 .. note::
 
@@ -1221,6 +1227,8 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   same shape as ``sigma``.
 - ``flex_second_order`` / ``flex_second_order_schema``: as for
   ``sigma.npz`` above.
+- ``sc_vertex_version``: as for ``sigma.npz`` above; ``hwave_sc`` refuses an
+  older ``green.npz`` under the same condition.
 
 These output files can also be used as input for the
 Eliashberg equation solver (``hwave_sc``) to analyze

@@ -1598,17 +1598,20 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
             with np.load(a) as da, np.load(b) as db:
                 if fn != "longitudinal_bond.npz":
                     # every member the reference wrote, bit for bit; the only
-                    # members this side may add are the provenance pair
+                    # members this side may add are the provenance pair ...
                     self.assertEqual(set(da.files) - set(db.files), set(),
                                      "{}: members the reference wrote are missing".format(fn))
                     added = set(db.files) - set(da.files)
                     # ... plus, where the bond members are written (the
                     # chiq_s / chiq_c archives carry them too), the recorded
-                    # conditioning floor and the guard method / counts
+                    # conditioning floor and the guard method / counts, and on
+                    # sigma.npz / green.npz the placement stamp of issue #232
                     self.assertTrue(_PROVENANCE_DELTA <= added, (fn, added))
                     self.assertTrue(
                         added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"}
-                        | _BOND_GUARD_DELTA, (fn, added))
+                        | _BOND_GUARD_DELTA | {"sc_vertex_version"}, (fn, added))
+                    if "sc_vertex_version" in added:
+                        self.assertEqual(int(db["sc_vertex_version"]), 3, fn)
                     for k in da.files:
                         if k in _STAMP_DELTA:
                             # the version stamps this branch moves (issue #232)

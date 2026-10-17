@@ -2996,13 +2996,15 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
          legacy_tags) = _read_flex_chi_raw(
             input_dict, interactions=interactions)
         ir_meta = None
-        green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+        green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                   interactions=interactions)
     else:
         (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
          legacy_tags) = _read_flex_chi_raw(
             input_dict, allow_ir=True, interactions=interactions)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
-                                               allow_ir=True)
+                                               allow_ir=True,
+                                               interactions=interactions)
         if green_w is not None and (green_meta is None) != (ir_meta is None):
             raise ValueError(
                 "all dynamic-Eliashberg inputs must share one encoding; "
@@ -3106,6 +3108,68 @@ def _offsite_mirror_asymmetry(table, grid=None):
             return float("inf")
         worst = max(worst, diff)
     return worst
+
+
+#: The two-body types whose off-site placement reaches a FLEX artifact
+#: (PairLift has no particle-hole content, see _read_flex_chi_raw).
+_PLACEMENT_TYPES = ("Coulomb", "CoulombInter", "Hund", "Ising", "Exchange",
+                    "PairHop")
+
+#: ``sc_vertex_version`` from which a FLEX artifact puts every off-site row
+#: on the bond of its Transfer row (issue #232).
+PLACEMENT_VERSION = 3
+
+
+def _decode_version_stamp(data, key, path):
+    """``int`` value of the scalar stamp ``key`` in an npz, ``None`` when
+    absent; anything but one finite, exactly integral number is refused.
+    The field is read once, so a malformed stamp reports as such."""
+    if key not in getattr(data, "files", data):
+        return None
+    shown = "<unreadable>"
+    try:
+        raw = data[key]
+        shown = repr(raw)
+        arr = np.asarray(raw)
+        if arr.dtype.kind not in "iufc" or arr.size != 1:
+            raise ValueError("not a numeric scalar")
+        val = complex(arr.reshape(())[()])
+        if val.imag != 0.0 or not (np.isfinite(val.real)
+                                   and float(val.real).is_integer()):
+            raise ValueError("not an integer")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("'{}' carries a malformed {} field ({}).".format(path, key, shown))
+    return int(val.real)
+
+
+def placement_sensitive_types(interactions, grid=None):
+    """The declared two-body types whose off-site table is not symmetric
+    under R -> -R (on ``grid`` when given) -- the declarations for which an
+    artifact written before issue #232 describes a different Hamiltonian."""
+    if not interactions:
+        return []
+    return [t for t in _PLACEMENT_TYPES
+            if interactions.get(t)
+            and _offsite_mirror_asymmetry(interactions[t], grid=grid) > 0.0]
+
+
+def check_placement_stamp(data, path, interactions, grid=None, what="FLEX file"):
+    """Refuse a FLEX artifact written before the bond-placement correction
+    of issue #232 (``sc_vertex_version`` absent or below
+    :data:`PLACEMENT_VERSION`) when the declaration is placement-sensitive;
+    accept it otherwise."""
+    ver = _decode_version_stamp(data, "sc_vertex_version", path)
+    if ver is not None and ver >= PLACEMENT_VERSION:
+        return
+    sensitive = placement_sensitive_types(interactions, grid)
+    if sensitive:
+        raise ValueError(
+            "{} '{}' was written before the bond-placement correction of issue #232 "
+            "(sc_vertex_version {}), which put an off-site row on the bond opposite its "
+            "Transfer row, and {} declare(s) off-site rows that are not symmetric under "
+            "R -> -R, so the file describes a different Hamiltonian; regenerate it with "
+            "the current code.".format(what, path, "absent" if ver is None else ver,
+                                       ", ".join(sensitive)))
 
 
 def _onsite_transpose_asymmetry(table):
@@ -3281,13 +3345,10 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
         # symmetric under R -> -R.
         # PairLift is exempt for the same reason as in the orientation rule
         # above: its particle-hole content is exactly zero on both sides.
-        placement = [
-            t for t in ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop")
-            if interactions.get(t)
-            and _offsite_mirror_asymmetry(
-                interactions[t],
-                grid=(_grid if "CellShape" in input_dict.get("mode", {}).get(
-                    "param", {}) else None)) > 0.0]
+        placement = placement_sensitive_types(
+            interactions,
+            grid=(_grid if "CellShape" in input_dict.get("mode", {}).get(
+                "param", {}) else None))
         if affected or orientation or resym or placement:
             versions = {}
             for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
@@ -3968,7 +4029,8 @@ def _validate_bond_green_nmat(nfreq, green_path, label="bond_green"):
     return nfreq
 
 
-def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
+def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
+                     interactions=None):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
 
     Returns shape ``(norb, norb, Nx, Ny, Nz, nfreq)`` (full fermionic axis;
@@ -3981,6 +4043,13 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         return (None, None) if allow_ir else None
     logger.info("Loading FLEX dressed Green from: {}".format(green_path))
     data_g = np.load(green_path)
+    if interactions is not None:
+        _grid_cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
+        check_placement_stamp(
+            data_g, green_path, interactions,
+            grid=(tuple(int(x) for x in list(_grid_cs) + [1] * (3 - len(_grid_cs)))
+                  if _grid_cs is not None else None),
+            what="FLEX Green file")
     if not allow_ir:
         _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
@@ -4231,7 +4300,8 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
 
-    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                     interactions=interactions)
     return chis, chic, green_dressed, chi_convention
 
 

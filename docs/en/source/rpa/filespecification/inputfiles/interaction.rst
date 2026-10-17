@@ -83,19 +83,26 @@ in the random phase approximation,
    the one-body rows such as ``Transfer``, not the on-site rows, and
    without swapping the orbital indices, which is wrong for complex
    couplings) -- that negated file describes the Hamiltonian those versions
-   actually solved. Released ``UHFk`` results are unchanged. An earlier
+   actually solved. The exception is the bond-resolved pairing kernel
+   (``longitudinal_bond_pairing`` and the dynamic bond path of
+   ``hwave_sc``): with more than one orbital it also coupled the gap to the
+   bond channels with a wrong pair geometry, corrected at the same time, so
+   multi-orbital results of that kernel can change even for an off-site
+   table that is symmetric under :math:`R \to -R`, and cannot be
+   reproduced from a modified file. Released ``UHFk`` results are
+   unchanged. An earlier
    ``FLEX`` run with ``flex_hartree_fock = true`` evaluated the mean-field
    term and the vertices on different bonds and cannot be reproduced with
    a single file. Keep such reproduction runs in a separate directory:
    their outputs carry the current version stamps although they describe
-   the old Hamiltonian. FLEX susceptibility files now carry
-   ``sc_vertex_version = 3`` and the dynamic bond archive
-   ``bond_archive_schema = 3``; the Eliashberg solvers refuse an older
-   file when the interaction declares an off-site row that is not
-   symmetric under :math:`R \to -R`, so regenerate those files by
-   re-running FLEX. Remove any workaround added for the old placement, and
-   restart affected self-consistent runs from scratch rather than from
-   earlier seeds.
+   the old Hamiltonian. FLEX susceptibility, self-energy and Green-function
+   files now carry ``sc_vertex_version = 3`` and the dynamic bond archive
+   ``bond_archive_schema = 3``; the Eliashberg solvers and a FLEX
+   ``sigma_init`` seed refuse an older file when the interaction declares
+   an off-site row that is not symmetric under :math:`R \to -R`, so
+   regenerate those files by re-running FLEX. Remove any workaround added
+   for the old placement, and restart affected self-consistent runs from
+   scratch rather than from earlier seeds.
 
 
 An example of the file is shown below.

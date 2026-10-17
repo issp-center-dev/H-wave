@@ -329,8 +329,12 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 いずれか。カーネルが選んだメモリ配置）、\ ``bond_parity_leakage``
 （実測されたパリティ交換の漏れ。\ ``[eliashberg]
 parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
-形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ ）
-を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
+形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ 。
+``gap_bond_projection[m, a, b]``\ は、軌道\ ``a``\ が原点のセルに、軌道\ ``b``\ が
+:math:`+R_m`\ のセル（``R_m = delta_r[m]``\ ）にある対の実空間ギャップ振幅
+:math:`\Delta_{ab}(+R_m)`\ 、すなわち Transfer 行\ :math:`(+R_m, a, b)`\ のボンド上の
+振幅で、\ :math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`\ とします）を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ ・\ ``ir_L``\ ・
 ``bond_ir_fit_residual_rel``\ （ボンドバーテックスの成分ごとの IR
 フィット残差。実数\ ``ndarray(B, B)``\ 。\ ``[eliashberg]

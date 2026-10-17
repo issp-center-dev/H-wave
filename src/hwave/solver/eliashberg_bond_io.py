@@ -259,8 +259,9 @@ def _placement_sensitive_types(interactions, cell_shape):
     if not interactions:
         return []
     from hwave.sc import _offsite_mirror_asymmetry
-    # the types the archive's bond channels are built from
-    return [t for t in ("CoulombInter", "Hund", "Ising")
+    # the types the archive's bond channels are built from (an aggregate
+    # Coulomb table carries CoulombInter rows)
+    return [t for t in ("Coulomb", "CoulombInter", "Hund", "Ising")
             if interactions.get(t)
             and _offsite_mirror_asymmetry(interactions[t], grid=cell_shape) > 0.0]
 
@@ -523,7 +524,8 @@ def solve_dynamic_bond(input_dict):
     logger.info("bond pairing: archive %s (B = %d, ND = %d, nmat = %d)",
                 arch_path, arch.B, arch.ND, arch.nmat)
 
-    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                interactions=interactions)
     if green is None:
         raise ValueError(
             "dynamic bond Eliashberg requires the dressed green.npz of the same "

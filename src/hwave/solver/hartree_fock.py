@@ -193,7 +193,9 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
     IN PLACE (UHFk's ``_make_ham`` interaction loop, normal mode, verbatim
     expressions and order). ``rho_so_r`` is the real-space equal-time
     density ``(nvol, 2, norb, 2, norb)``, ``rho[r, s, a, t, b] =
-    <c^dag_{s a}(0) c_{t b}(r)>`` (UHFk's ``Green``); ``out`` is
+    <c^dag_{s a}(r) c_{t b}(0)>`` (UHFk's ``Green``: the creation operator
+    in the cell displaced by ``r``, so ``<c^dag_a(0) c_b(R)>`` is
+    ``rho[-R]``); ``out`` is
     ``(nvol, 2*norb, 2*norb)`` complex128. Returns ``out``."""
     nx, ny, nz = shape
     nvol = int(nx * ny * nz)
@@ -255,7 +257,8 @@ def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
 @dataclass(frozen=True)
 class DensityResult:
     """The projected (exactly Hermitian) real-space equal-time density
-    ``rho_r[r, a, b] = <c^dag_a(0) c_b(r)>`` (per spin, per cell), its
+    ``rho_r[r, a, b] = <c^dag_a(r) c_b(0)>`` (per spin, per cell; the same
+    orientation as UHFk's ``Green``), its
     reciprocal-space form reconstructed from the projected ``rho_r``, and
     the per-spin particle number ``n_per_spin = Nvol * Re Tr rho_r(0)``.
     Arrays are private, non-aliased and read-only.
