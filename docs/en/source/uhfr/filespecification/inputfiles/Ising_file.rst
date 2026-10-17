@@ -5,7 +5,11 @@ Ising file
 
 This file determines the coefficients of the Ising interactions given by
 
-.. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{z} (n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow} )
+.. math:: \mathcal{H}+=\sum_{i,j}J_{ij}^{z} S^{z}_{i} S^{z}_{j}, \quad S^{z}_{i}=\tfrac{1}{2}(n_{i\uparrow}-n_{i\downarrow})
+
+(Note: this real-space UHFr convention differs from the Wannier90-like
+k-space solvers, which read the Ising file as
+:math:`J (n_\uparrow-n_\downarrow)(n_\uparrow-n_\downarrow)`.)
 
 An example of the file format is presented below.
 

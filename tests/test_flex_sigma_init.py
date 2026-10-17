@@ -47,7 +47,7 @@ def _converged_sigma():
 
 def test_read_init_loads_sigma_init(tmp_path):
     sigma = _converged_sigma()
-    np.savez(tmp_path / "sigma.npz", sigma=sigma)
+    np.savez(tmp_path / "sigma.npz", sigma=sigma, momentum_convention="e_plus_ikR")
     solver, _ = _make_solver({'mu': 0.0}, iteration_max=1)
     info = solver.read_init({'path_to_input': str(tmp_path),
                              'sigma_init': 'sigma.npz'})
@@ -132,7 +132,7 @@ def test_sigma_init_without_cellshape_warns(tmp_path, caplog):
     verified."""
     import logging
     sigma = _converged_sigma()
-    np.savez(tmp_path / "sigma.npz", sigma=sigma)  # no cell_shape key
+    np.savez(tmp_path / "sigma.npz", sigma=sigma, momentum_convention="e_plus_ikR")  # no cell_shape key
     solver, _ = _make_solver({'mu': 0.0}, iteration_max=1)
     with caplog.at_level(logging.WARNING, logger="qlms"):
         info = solver.read_init({'path_to_input': str(tmp_path),

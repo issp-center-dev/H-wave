@@ -17,7 +17,7 @@ UHFk用入力ファイル
     UHFのハミルトニアンを電子系の表式により指定します。
     具体的には、キーワードで指定する各相互作用のタイプについて、ハミルトニアンの係数をデータとして与えます。
 
-    :math:`{\mathcal H}\Phi` や mVMC のExpert Mode入力に相当する以下のキーワードを指定できます。
+    :math:`{\mathcal H}\Phi`\ や mVMC のExpert Mode入力に相当する以下のキーワードを指定できます。
 
     **Transfer**:
       :math:`c_{i\sigma_1}^{\dagger}c_{j\sigma_2}`\ で表される一体項を指定します。
@@ -28,7 +28,7 @@ UHFk用入力ファイル
     **Hund**:
       :math:`n_{i\uparrow}n_{j\uparrow}+n_{i\downarrow}n_{j\downarrow}`\ で表される相互作用を指定します。
     **Ising**:
-      :math:`S_i^z S_j^z`\ で表される相互作用を指定します。  
+      :math:`(n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`\ で表される相互作用を指定します。  
     **Exchange**:
       :math:`S_i^+ S_j^-`\ で表される相互作用を指定します。  
     **PairLift**:

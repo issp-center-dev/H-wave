@@ -17,6 +17,14 @@ The file contains several arrays bound to the following keys:
 
   The susceptibility matrix or the irreducible susceptibility matrix. Their data layout is described in the following sections.
 
+- ``momentum_convention``:
+
+  The Fourier-sign provenance marker, ``"e_plus_ikR"`` (as of version 2.0): the
+  momentum labels follow :math:`M(k) = \sum_R M(R) e^{+ikR}`. Loaders
+  reject files recording a different value; files written before this
+  field existed are accepted only when their content is elementwise even
+  under :math:`q \to -q` (for which the two conventions coincide).
+
 - ``freq_index``:
 
   The value or the range of Matsubara frequency is specified by ``matsubara_frequency`` parameter. The array bound to ``freq_index`` relates the index of the output data and the label of the actual Matsubara frequency.
@@ -29,11 +37,53 @@ The file contains several arrays bound to the following keys:
 
   A string marker (always ``"spin_block"``) recording that the spin-orbital axes are ordered as spin*norb+orb (spin-block), distinct from UHFk's interleaved 2*orb+spin output. A ``chi0q`` file lacking this marker (produced before the convention fix) is rejected when reloaded in spin-orbital mode.
 
+- ``coeff_tail``:
+
+  The value of the ``coeff_tail`` parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)` for moderate ``Nmat``, so runs that consume this file (e.g. ``hwave_sc``) warn when their own ``coeff_tail`` setting differs from the recorded value. When a pre-computed ``chi0q_init`` file is passed through, the input file's value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (``matsubara_basis = "ir"``, including densified output), where the uniform-grid tail correction does not apply.
+
 When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.
 
 The output file of ``chi0q`` can be used as a pre-calculated input of the irreducible
 susceptibility by specifying the file to ``chi0q_init`` in ``file.input`` section.
+
+
+.. _rpa_chiq_provenance:
+
+Scheme provenance
+^^^^^^^^^^^^^^^^^
+
+Every ``chiq``/``chi0q`` file written by RPA and FLEX (2.0 and later) carries three plain-string fields, loaded as 0-d arrays (use ``.item()``):
+
+- ``calc_scheme``: the scheme the file was computed with (``reduced`` | ``general``).
+- ``calc_scheme_requested``: the value in the input (``auto`` | ``reduced`` | ``general``).
+- ``scheme_resolution``: how it was decided. Closed vocabulary (changing it is an output-format change): ``explicit``, ``auto:ring_ladder``, ``auto:general_only``, ``auto:no_discarded_content``, ``auto:exact:diagonal_transfer``, ``auto:exact:folded_diagonal``, ``auto:mixed:transfer``, ``auto:mixed:extern``, ``auto:mixed:trans_mod``, ``auto:mixed:green_init``, ``auto:flex_forcing``.
+
+Files written by 1.0.x lack these fields; readers do not require them.
+
+A FLEX run with ``calc_scheme = "general"`` writes two further fields into
+every archive it produces (``chi0q.npz``, ``chiq.npz``, ``chiq_s.npz``,
+``chiq_c.npz``, ``sigma.npz``, ``green.npz`` and the dedicated bond
+archive; IR-native and densified variants alike):
+
+- ``flex_second_order``: the second-order kernel of the effective
+  interaction the run used (``local`` | ``takimoto``), stored as a 0-d
+  ``<U8`` string array (use ``str(...)`` or ``.item()``). See
+  ``flex_second_order`` in the ``[mode.param]`` section of the
+  configuration reference and :ref:`flex_second_order_kernel`.
+- ``flex_second_order_schema``: the schema version of that record,
+  currently ``1`` (0-d ``int64``).
+
+Both fields are ABSENT from ``calc_scheme = "reduced"`` archives, from RPA
+archives, and from any archive written before this key was introduced
+(H-wave 2.0.0 and earlier). A missing field is
+never an error: every H-wave reader accepts such a file. When the initial
+self-energy given by ``sigma_init`` (the seed) records a different kernel
+from the current run, the solver logs one warning at WARNING level (and
+one message at INFO level when the seed carries no record at all); scripts
+that compare the member list of an archive strictly (the ``files``
+attribute of the object returned by ``numpy.load``) must allow the two
+additional names.
 
 
 Data format of chi0q
@@ -53,7 +103,7 @@ Data format of ``chi0q`` relies on the presence of spin-orbital interaction and 
 
     - ``a``, ``ap``, ``b``, ``bp``: indices of the orbitals not including spin degree of freedom. They correspond to :math:`\alpha`, :math:`\alpha^\prime`, :math:`\beta`, :math:`\beta^\prime`. 
 
-  - When ``calc_scheme = reduced`` or ``squashed``, the array format takes the form of ``ndarray(l,q,a,b)`` whose indices are same as the above.
+  - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(l,q,a,b)`` whose indices are same as the above.
 
 - "spin-diagonal" case:
 
@@ -61,7 +111,7 @@ Data format of ``chi0q`` relies on the presence of spin-orbital interaction and 
 
   - When ``calc_scheme = general``, the array format takes the form of ``ndarray(s,l,q,a,ap,b,bp)``, where ``s = 0`` denotes spin-up component and ``s = 1`` does spin-down component. The other indices are same as the above.
 
-  - When ``calc_scheme = reduced`` or ``squashed``, the array format takes the form of ``ndarray(s,l,q,a,b)``. The indices are same as above.
+  - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(s,l,q,a,b)``. The indices are same as above.
 
 - "spinful" case:
 
@@ -81,9 +131,258 @@ Data format of ``chiq`` takes the following form depending on the value of ``cal
 
 - When ``calc_scheme = reduced``, the array format takes the form of ``ndarray(l,q,a,b)``, where ``a`` and ``b`` correspond to the generalized orbital indices :math:`\tilde\alpha` and :math:`\tilde\beta`, respectively.
 
-- When ``calc_scheme = squashed``, the array format takes the form of ``ndarray(l,q,s1,s2,a,s3,s4,b)``, where ``a`` and ``b`` correspond to the orbital indices :math:`\alpha` and :math:`\beta`, respectively, and ``s1``, ``s2``, ``s3``, ``s4`` denote spin indices :math:`\sigma`, :math:`\sigma^\prime`, :math:`\sigma_1`, :math:`\sigma_1^\prime`, respectively. See :ref:`Algorithm<Algorithm_sec>` section for the notation.
+``chiq`` holds the longitudinal (ring) susceptibility. Under ``calc_scheme = general`` it has slots in which a pair of indices is spin-off-diagonal; ``reduced`` stores density-pair components only and has no such slots. Those slots are **not** the transverse susceptibility, and whenever the bubble is obtained by inflating a spin-free or spin-diagonal one they are **not computed** -- the inflation builds only the same-spin slots, leaving the rest identically zero. That covers every calculation without ``enable_spin_orbital``, and also an ``enable_spin_orbital`` calculation whose one-body Hamiltonian is detected as spin-free or spin-diagonal. Do not read those zeros as a computed transverse response. (In a genuinely spinful ``general`` calculation the bubble is built directly on the generalized orbital index, so these slots are computed and are generally nonzero; the transverse susceptibility is still ``chiq_pm``.) See :ref:`Algorithm<rpa_which_array>` for how to obtain the transverse channel.
 
-When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)` and has the same array layout as ``chiq``.
+.. admonition:: Migrating from ``calc_scheme = "squashed"`` (removed in 2.0)
+   :class: note
+
+   ``squashed`` computed the same susceptibility as ``reduced`` at several
+   times the cost; the slots of its 8-axis output in which a pair of spin
+   indices differed were structurally zero. Configurations now fail with an
+   error at start-up; use ``calc_scheme = "reduced"``.
+
+   Analysis scripts reading a legacy 8-axis file can convert it::
+
+       chiq8 = data["chiq"]           # (l, q, s1, s2, a, s3, s4, b)
+       l, q, _, _, norb, _, _, _ = chiq8.shape
+       nd = 2 * norb
+       chiq4 = np.zeros(chiq8.shape[:2] + (nd, nd), dtype=chiq8.dtype)
+       for s1 in (0, 1):
+           for s3 in (0, 1):
+               chiq4[:, :, s1*norb:(s1+1)*norb, s3*norb:(s3+1)*norb] = \
+                   chiq8[:, :, s1, s1, :, s3, s3, :]
+
+   Only the pair-diagonal slots (``s1 == s2``, ``s3 == s4``) carry data;
+   every other slot of the 8-axis array is exactly zero. Susceptibility
+   files produced by older ``squashed`` runs remain loadable as
+   ``chi0q_init`` under ``reduced``, subject to the same provenance
+   validation as any legacy file (e.g. the momentum-convention marker):
+   the two schemes always shared one bubble representation.
+
+When ``calc_type = ring+ladder``, the ``chiq`` file additionally contains the array ``chiq_pm``, which holds the transverse susceptibility :math:`\chi_{+-}(q)`. Its layout is ``ndarray(l,q,a,ap,b,bp)`` where ``a``, ``ap``, ``b``, ``bp`` are **orbital** indices :math:`\alpha`, :math:`\gamma`, :math:`\beta`, :math:`\delta` that do *not* include the spin degree of freedom -- the spin structure is fixed by the :math:`+-` labels. It is therefore smaller than ``chiq``, whose corresponding axes run over the generalized (spin-orbital) indices. The longitudinal ``chiq`` is unaffected by the presence of the ladder: on identical input it is bit-identical to the ``calc_type = ring`` result.
+
+When ``longitudinal_bond_channels = true`` (experimental, ``calc_type = "ring"``,
+see :ref:`rpa_longitudinal_bond`), the ``chiq`` file additionally contains the
+bond-resolved longitudinal objects, all under the ``longitudinal_bond_`` prefix.
+The ``chiq`` array inside the file is NOT overwritten: it keeps the standard
+(Hartree-only) ring result; the exchange-corrected static susceptibilities live
+exclusively under the new keys. With :math:`B` bond channels (channel 0 is the
+on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
+
+- ``longitudinal_bond_chi_s``, ``longitudinal_bond_chi_c``: the dressed static
+  spin and charge susceptibilities, complex ``ndarray(q, I, J)`` with the
+  bond-major indices :math:`I = m\, n_d + l_1 n_{\rm orb} + l_2` and
+  :math:`J = m'\, n_d + l_3 n_{\rm orb} + l_4` (``longitudinal_bond_index_order``
+  records this rule as a string).
+- ``longitudinal_bond_chiq_s_static``, ``longitudinal_bond_chiq_c_static``: their
+  :math:`(m = 0, m' = 0)` blocks, complex ``ndarray(q, a, b, c, d)`` over orbital
+  indices -- the static spin/charge channels of the standard ring with the
+  off-site exchange crossing included.
+- ``longitudinal_bond_delta_r`` (integer ``(B, 3)`` displacements, channel 0
+  first), ``longitudinal_bond_reverse`` (integer ``(B,)``, the channel of
+  :math:`-R`), ``longitudinal_bond_spatial_shape`` (integer ``(3,)``, the
+  ``CellShape``), ``longitudinal_bond_q_convention`` (string:
+  ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened``),
+  ``longitudinal_bond_spin_mode`` (string, ``spin-free``),
+  ``longitudinal_bond_normalization`` (string: ``chi_bar = -(T/N) sum_k G G,
+  per site``), ``longitudinal_bond_types`` (string array, always
+  ``CoulombInter, Hund, Ising`` -- the types whose bond blocks the channel
+  builds, declared or not; an undeclared type contributes zero blocks),
+  ``longitudinal_bond_max_shells`` (integer, ``-1`` when unset),
+  ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c`` (float:
+  the smallest conditioning score of the spin / charge RPA denominator over
+  :math:`q`; the run is refused when it reaches the instability floor; with
+  ``longitudinal_bond_guard_freqs = "static"`` these report the minimum over
+  the zero-frequency slice only) and ``longitudinal_bond_schema`` (integer,
+  ``1``).
+
+In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
+Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the
+LAST self-consistent map (``longitudinal_bond_source = "last_map"``) and are
+written into the combined ``chiq`` file when ``[file.output] chiq`` is set,
+otherwise into the ``chiq_s`` file (which always exists; the charge-channel
+static keys are then found in ``chiq_s.npz`` -- an INFO line says so). The
+archive additionally carries ``longitudinal_bond_guard_freqs`` (string:
+``"all"`` or ``"static"``, the frequency coverage of the bond dressing's
+conditioning guard), ``longitudinal_bond_cond_tol`` (float: the
+conditioning floor that guard compared ``longitudinal_bond_cond_min_s`` /
+``_c`` against, ``[mode.param] longitudinal_bond_cond_tol``),
+``longitudinal_bond_device`` (string: ``"cupy"`` or
+``"numpy"``, the backend that ran the bond solve),
+``longitudinal_bond_nb`` (integer, the frequency batch actually used),
+``longitudinal_bond_guard_method`` (string: ``"svd"`` or ``"interval"``,
+how the conditioning guard scored its blocks -- ``"svd"`` decomposes every
+guarded block on the host, ``"interval"`` bounds every block's
+conditioning on the device and decomposes exactly only the blocks that
+can attain the minimum, with outputs identical to ``"svd"``; the GPU
+default is ``"interval"``, the CPU one ``"svd"``),
+``longitudinal_bond_guard_exact_blocks_total`` (integer, the running total
+of blocks decomposed exactly over the whole solve),
+``longitudinal_bond_guard_exact_blocks_max`` (integer, the largest such
+count reached in any one iteration) and
+``longitudinal_bond_guard_blocks_per_iteration`` (integer, the number of
+blocks the guard covers in one iteration -- the denominator the previous
+two counts are measured against). The
+ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
+:math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
+frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
+``chiq_s``, ``chiq_c``, ``chiq``, ``sigma`` and ``green``) -- which includes
+every run with ``longitudinal_bond_channels = true``, since the bond gate
+requires the Hartree-Fock term -- also carries the
+provenance block ``scf_converged``, ``scf_iterations``, ``map_iteration``,
+``state_iteration``, ``scf_sigma_residual``, ``scf_green_residual``,
+``scf_component_residual``, ``payload_kind`` (``"last_map"`` for the
+susceptibilities, ``"final_state"`` for ``sigma`` / ``green``),
+``hf_density_error`` (the density-closure error of the state the payload
+describes, with ``hf_density_source``), ``density_target_enforced``,
+``flex_guard_policy`` (string: ``"refuse"`` or ``"warn"``, the policy
+``[mode.param] flex_guard_policy`` requested) and
+``flex_guard_violations`` (integer: how many guard-violation EVENTS the run
+was allowed to pass under ``"warn"`` -- one per iteration for the
+equal-time density check and one per offending (channel, bosonic frequency,
+q-point) finding of the bond guard, so a single iteration can contribute
+several; ``0`` when no violation occurred, and always ``0`` under
+``"refuse"``, which ends the run at the first one).
+With ``longitudinal_bond_output_full = true`` the dedicated archive
+(``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
+holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic
+Eliashberg pairing solver below was added; see the note at the end of this
+paragraph), the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
+J)``, ``freq_axis = "bosonic l -> 2l - nmat"``), the instantaneous bond
+vertices ``S_bond`` and ``C_bond`` (complex ``ndarray(nvol, ND, ND)``, the
+same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
+``T``, ``nmat``, ``cell_shape``, the momentum-convention markers,
+``index_order``, ``delta_r``, ``reverse``, ``types``, the sixteen static
+keys, the ``longitudinal_bond_guard_freqs`` /
+``longitudinal_bond_cond_tol`` / ``longitudinal_bond_device``
+/ ``longitudinal_bond_nb`` / ``longitudinal_bond_guard_method`` /
+``longitudinal_bond_guard_exact_blocks_total`` /
+``longitudinal_bond_guard_exact_blocks_max`` /
+``longitudinal_bond_guard_blocks_per_iteration`` members and the
+provenance block; nothing else
+duplicates these arrays. ``S_bond`` and ``C_bond`` are the input the
+bond-resolved dynamic Eliashberg pairing solver needs in addition to
+``chi_s_w`` / ``chi_c_w`` (see below); an archive written by an earlier
+version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
+``norb``) is refused by that solver with a message asking for a re-run
+under this version. Every schema-1 key keeps its value and meaning
+unchanged under schema 2.
+
+The archive also records ``bond_archive_layout`` (string), the on-disk
+layout selected by ``[mode.param] longitudinal_bond_output_layout``. With
+the default ``"npz"`` layout ``chi_s_w`` and ``chi_c_w`` live inside this
+single file. With the ``"sidecar"`` layout the two channel members are
+written instead as raw ``.npy`` files next to the index
+(``<name>_chi_s_w.npy`` and ``<name>_chi_c_w.npy``), and this file omits
+them, carrying instead ``chi_s_w_file`` and ``chi_c_w_file`` (strings, the
+sidecar basenames, resolved relative to the index's directory).
+Post-processing memory-maps the ``.npy`` files, reading one frequency
+batch at a time, so a large channel member is never fully resident. An
+archive with no ``bond_archive_layout`` member (written before this field
+existed) is read as ``"npz"``.
+With ``IterationMax = 0`` no map is executed and every last-map archive is
+omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
+of the seed state are written.
+
+
+.. _subsec:eliashberg_bond_outputs:
+
+Bond-resolved dynamic Eliashberg pairing outputs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two entries solve the linearized Eliashberg equation with the bond-resolved,
+dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
+above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
+with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
+solve (``[mode.param] longitudinal_bond_pairing``, see the configuration
+reference). See :ref:`the FLEX tutorial section on pairing with the
+bond-resolved vertex <flex_bond_pairing_tutorial>` for the workflow and
+worked examples.
+
+**Post-processing entry** (``hwave_sc``). Writes the same three files
+as the on-site dynamic solver -- ``gap_dynamic.npz``, ``gap.dat`` and
+``eigenvalue.dat`` (``[eliashberg] output_gap`` / ``output_eigenvalue``
+override the names of ``gap.dat`` and ``eigenvalue.dat``) -- for the single
+``pairing_type`` the run solves. ``gap_dynamic.npz`` gains, in addition to its base key set (``gap``,
+``iomega``, ``T``, ``pairing_type``, ``frequency``, ``eigenvalue``,
+``axis_order``, ``normalization``, ``momentum_convention``,
+``gap_sector_weights``, ``gap_sector_labels``, ``sector_selection`` and
+``eigenvalue_selection`` --
+the returned gap's four momentum/frequency parity-sector weights, their names,
+the sector the run selected in (``"channel"``, ``"combined_parity"`` or
+``"none"``: the sector the power iteration projected onto, or on the
+eigenvalue solver modes the stage the eigenpair reordering matched with), and
+the selection criterion that produced the reported leading eigenvalue
+(``"LR_projected"`` = a symmetry-valid solve restricted to a conserved channel
+sector, the num_eigenvalues-independent criterion; ``"LM"`` = plain ``arnoldi``
+largest magnitude; ``"LR"`` = user ``spectral_shift`` largest real part;
+``"LR_retry"`` = the automatic largest-real re-solve when an unprojected
+``"LM"`` set held no positive channel eigenvalue; ``"dense-LR"`` = the
+tiny-operator dense largest-real path; ``"shift-invert"``; or
+``"iteration"``); see
+:ref:`Pairing channels of the dynamic solver <sc_dynamic_channels>`):
+``bond_channels``
+(``true``), ``bond_delta_r`` / ``bond_reverse`` (the archive's bond
+topology, matching ``longitudinal_bond_delta_r`` / ``longitudinal_bond_reverse``
+above), ``bond_archive`` (the resolved archive path), ``bond_residency``
+(``"device"``, ``"host"`` or ``"stream"``, the memory residency the kernel
+chose), ``bond_parity_leakage`` (the measured parity-commutation leakage;
+see ``[eliashberg] parity_leakage_tol``) and ``gap_bond_projection`` -- the
+gap projected onto each bond form factor, complex ``ndarray(B, norb, norb,
+Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
+``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_L`` and
+``bond_ir_fit_residual_rel`` (the componentwise IR fit residual of the bond
+vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
+``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
+``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+
+Every dynamic-solver ``eigenvalue.dat`` -- the on-site one included -- also
+carries one ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
+even_k_odd_w=... odd_k_odd_w=...`` header line (six decimals), the same four
+numbers as the ``gap_sector_weights`` npz key, followed by
+``# sector_selection=<channel|combined_parity|none>`` and
+``# eigenvalue_selection: <LR_projected|LM|LR|LR_retry|dense-LR|shift-invert|iteration>``.
+The
+``match`` column of
+the per-eigenvalue table is named after that same sector:
+``match(1=channel even-frequency sector)`` or
+``match(1=combined-parity sector; no even-frequency eigenpair)``. When
+``sector_selection`` is ``none`` (no eigenpair lay in either sector) the
+column keeps the historical label ``match(1=channel-parity)`` and every entry
+is ``0``.
+
+**In-process entry** (``[mode.param] longitudinal_bond_pairing``). For
+each requested channel (``singlet`` and/or ``triplet``) writes three files
+under the ``[file.output]`` names of the configuration reference (default
+``eliashberg_bond_<type>.npz``, ``gap_bond_<type>.dat``,
+``eigenvalue_bond_<type>.dat``), AFTER every FLEX output file so a failure
+of the pairing step never costs the FLEX results:
+
+- ``eliashberg_bond_<type>.npz`` carries the same key set as
+  ``gap_dynamic.npz`` above (including ``gap_bond_projection`` and, on IR,
+  ``bond_ir_fit_residual_rel``) except ``bond_archive`` (the vertex is built
+  from the FLEX solve's own arrays, not a file), plus ``eigenvalues_all``
+  (the full spectrum returned by the eigensolver, when available),
+  ``scf_converged`` and ``scf_iterations`` (the FLEX solve's own
+  convergence state) and ``state`` -- ``"last_map_chi / final_green"`` when
+  the FLEX solve converged, or ``"mixed: last-map chi, final green"`` when
+  it did not: the pairing step still runs on a non-converged FLEX solve
+  (the cost is sunk), and this label, together with
+  ``scf_converged = false``, marks the result as a diagnostic of the SCF
+  trajectory rather than a self-consistent pairing eigenvalue.
+- ``gap_bond_<type>.dat`` is the same single-frequency text slice as
+  ``gap.dat``.
+- ``eigenvalue_bond_<type>.dat`` is the same format as ``eigenvalue.dat``,
+  with header lines ``# bond_channels=true``,
+  ``# scf_converged=<true|false>``, ``# state=<...>``,
+  ``# residency=<...>``, when computed ``# parity_leakage=<...>``, and the
+  ``# gap_sector_weights ...`` / ``# sector_selection=...`` lines
+  described above.
+
+A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
+an eigensolver failure, a write failure) writes none of its three files;
+the failure is logged, and the next requested channel (if any) is still
+attempted.
 
 
 Example for reading data

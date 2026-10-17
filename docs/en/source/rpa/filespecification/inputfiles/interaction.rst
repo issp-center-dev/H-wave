@@ -19,15 +19,76 @@ in the random phase approximation,
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}, \quad S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+
+.. note::
+
+   Two of the expressions above were corrected to match what the solvers
+   have always implemented; **no input file needs to be changed**, and no
+   numerical result changes.
+
+   - **Hund**: the implemented convention carries a MINUS sign, as written
+     above. A ferromagnetic (same-spin attractive) Hund coupling is
+     therefore declared with a POSITIVE coefficient
+     :math:`J^{\rm Hund}_{\alpha\beta}(r_{ij})`.
+   - **PairLift**: each declared row enters together with its Hermitian
+     conjugate, exactly as ``PairHop`` does; the ``+ h.c.`` above was
+     missing from earlier editions of this page.
+
+.. _rpa_interaction_orientation:
+
+.. note::
+
+   **Convention.** In every expression above :math:`r_{ij} = R_j - R_i`: a row
+   ``[rx] [ry] [rz] [alpha] [beta] ...`` places the orbital ``[alpha]`` in the
+   original cell and ``[beta]`` in the cell displaced by
+   :math:`\vec{r} = (r_x, r_y, r_z)`, for the one-body and the two-body files
+   alike.
+
+   **Compatibility with version 2.0.0.** Up to H-wave 2.0.0 the mean-field
+   solvers (``UHFk``; the Hartree-Fock term of ``FLEX``) read an off-site
+   two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
+   vertices used the rule above; the mean field now follows it too. Results of
+   ``UHFk`` (and of ``FLEX`` with ``flex_hartree_fock = true`` or
+   ``flex_second_order = "local"``) change only for off-site rows with two
+   different orbitals or a complex coefficient; every on-site interaction,
+   every real orbital-diagonal off-site row, every real single-orbital input,
+   and every RPA or Eliashberg result without the bond-resolved channels
+   (``longitudinal_bond_channels = false``, the default) and computed from an
+   unaffected susceptibility are unchanged (an Eliashberg run with
+   ``chi0q_mode = "flex"`` moves together with the FLEX run that produced its
+   susceptibility). An RPA/FLEX calculation with
+   ``calc_type = "ring"`` and ``longitudinal_bond_channels = true`` on real
+   inter-orbital off-site bonds changes as well: its mixed second-order blocks
+   are now exact (issue #192). Runs under ``flex_second_order = "takimoto"``
+   without the Hartree-Fock term and without the bond-resolved channels are
+   unchanged.
+   **No input file needs to be changed.**
+
+   **Reproduction recipe and composite pipelines.** To reproduce a 2.0.0
+   ``UHFk`` number, negate the displacement of every off-site two-body row
+   (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the one-body rows such as
+   ``Transfer`` and ``Extern``, not the on-site
+   rows; do not swap the orbital indices, which is wrong for complex
+   couplings) -- and note that this negated file changes what the RPA and
+   Eliashberg solvers compute, whose 2.0.0 results on the original file were
+   already correct. A 2.0.0 ``FLEX`` run with ``flex_hartree_fock = true``
+   cannot be reproduced with a single modified file, because that release
+   evaluated the mean-field term and the vertices in different orientations
+   within one run. A 2.0.0 pipeline that fed ``UHFk`` output into the RPA or
+   Eliashberg solvers is reproduced only by running ``UHFk`` on the negated
+   file and the later stages on the original one, because 2.0.0 solved a
+   different Hamiltonian in the two stages. Remove any workaround you added
+   for the old discrepancy, and restart affected self-consistent runs from
+   scratch rather than from 2.0.0 seeds.
 
 
 An example of the file is shown below.
@@ -136,7 +197,7 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 

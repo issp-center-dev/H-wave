@@ -245,7 +245,7 @@ def _install_fake_solvers(monkeypatch, tmp_path, fail_at=None):
         calls["flex"].append(copy.deepcopy(input_dict))
         out = input_dict["file"]["output"]["path_to_output"]
         os.makedirs(out, exist_ok=True)
-        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)))
+        np.savez(os.path.join(out, "sigma.npz"), sigma=np.ones((1,)), momentum_convention="e_plus_ikR")
         return {"scf_converged": True, "scf_iterations": 10}
 
     def fake_eli(input_dict):
@@ -651,3 +651,175 @@ def test_read_summary_rows_truncates_on_malformed(tmp_path):
         fw.write("0 0.01 ok none 0.5 0.0 1 1 10\n")
         fw.write("1 notanumber ok none 0.5 0.0 1 1 10\n")   # malformed T
     assert [r["idx"] for r in ts.read_summary_rows(p)] == [0]
+
+
+import tempfile
+import unittest
+
+
+class TestFingerprintCaseInsensitivity(unittest.TestCase):
+    """Third surfacing of the case-sensitivity defect class (PR #128
+    round 6): a lowercase interaction key EXECUTED correctly but was
+    omitted from the resume fingerprint, so a resume could silently
+    reuse results computed with a different interaction file. unittest
+    TestCase on purpose -- the module's pytest-style functions do not
+    gate in CI."""
+
+    def _base(self, d, key, fname):
+        return {
+            "mode": {"mode": "RPA", "param": {"T": 1.0,
+                                              "CellShape": [2, 2, 1]}},
+            "file": {"input": {"interaction": {"path_to_input": d,
+                                               key: fname}}},
+        }
+
+    def test_every_interaction_key_participates_lowercase(self):
+        import hwave.tsweep as ts
+
+        for key in ts._INTERACTION_KEYS:
+            with self.subTest(key=key):
+                d = tempfile.mkdtemp()
+                fn = os.path.join(d, "x.dat")
+                with open(fn, "w") as f:
+                    f.write("one\n")
+                fp_lower = ts.config_fingerprint(
+                    self._base(d, key.lower(), "x.dat"), False, d)
+                fp_canon = ts.config_fingerprint(
+                    self._base(d, key, "x.dat"), False, d)
+                # canonical and lowercase configurations are the same run
+                self.assertEqual(fp_lower, fp_canon)
+                # an in-place content edit must invalidate the resume,
+                # regardless of the key's case
+                with open(fn, "w") as f:
+                    f.write("two\n")
+                fp_edited = ts.config_fingerprint(
+                    self._base(d, key.lower(), "x.dat"), False, d)
+                self.assertNotEqual(fp_lower, fp_edited)
+
+
+class TestReaderKeyCaseParity(unittest.TestCase):
+    """QLMSkInput accepted 'geometry' in validation but dispatched on the
+    exact-case key, feeding the geometry file to the wannier90
+    interaction parser (loud ValueError). Dispatch is normalized now."""
+
+    def test_lowercase_geometry_and_transfer_load(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n1\n 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n")
+        canon = read_input_k.QLMSkInput(
+            {"path_to_input": d,
+             "interaction": {"path_to_input": d, "Geometry": "geom.dat",
+                             "Transfer": "transfer.dat"}}).get_param("ham")
+        lower = read_input_k.QLMSkInput(
+            {"path_to_input": d,
+             "interaction": {"path_to_input": d, "geometry": "geom.dat",
+                             "transfer": "transfer.dat"}}).get_param("ham")
+        self.assertEqual(lower["Geometry"]["norb"],
+                         canon["Geometry"]["norb"])
+        self.assertEqual(sorted(lower["Transfer"].keys()),
+                         sorted(canon["Transfer"].keys()))
+
+    def test_mixed_case_path_to_input_resolves(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        ham = read_input_k.QLMSkInput(
+            {"interaction": {"Path_To_Input": d,
+                             "Geometry": "geom.dat"}}).get_param("ham")
+        self.assertEqual(ham["Geometry"]["norb"], 1)
+
+    def test_lowercase_keys_survive_sublattice_reshape(self):
+        """Fifth surfacing (PR #128 round 7): the sublattice reshape
+        dispatched on exact-case names, so a lowercase 'geometry' table
+        fell into the interaction reshaper and crashed. Both cases must
+        fold identically now."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.rpa as rpa_mod
+
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
+                    "1\n 0.0 0.0 0.0\n")
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer\n1\n2\n 1 1\n"
+                    "   1    0    0    1    1   1.000000   0.0\n"
+                    "  -1    0    0    1    1   1.000000   0.0\n")
+
+        def build(keys):
+            info_mode = {
+                'mode': 'RPA',
+                'param': {'T': 1.0, 'filling': 0.5,
+                          'CellShape': [4, 1, 1], 'SubShape': [2, 1, 1],
+                          'Nmat': 4},
+                'calc_scheme': 'general',
+            }
+            read_io = read_input_k.QLMSkInput({"interaction": keys})
+            return rpa_mod.RPA(read_io.get_param("ham"), {}, info_mode)
+
+        canon = build({"path_to_input": d, "Geometry": "geom.dat",
+                       "Transfer": "transfer.dat"})
+        lower = build({"path_to_input": d, "geometry": "geom.dat",
+                       "transfer": "transfer.dat"})
+        self.assertEqual(lower.ham_info.param_ham["Geometry"]["norb"],
+                         canon.ham_info.param_ham["Geometry"]["norb"])
+
+
+class TestRunTimePathResolutionCase(unittest.TestCase):
+    """Sixth surfacing (PR #128 round 8): run() absolutized only an
+    exact-case 'path_to_input', so a 'Path_To_Input' configuration was
+    fingerprinted against the right file but EXECUTED against the
+    unresolved relative path. Pinned by capturing the configuration
+    delivered to the per-rung solver (a resolver spy was a false
+    positive -- the fingerprint makes the same resolver call)."""
+
+    def test_mixed_case_path_reaches_the_solver_absolutized(self):
+        """Asserts the EXECUTION-BOUND configuration (round 9: an earlier
+        version of this test spied on the resolver helper, which the
+        fingerprint also calls, so it passed against the broken code):
+        the dict handed to the per-rung solver must carry the mixed-case
+        nested path already absolutized against base_dir."""
+        from unittest import mock
+        import hwave.qlms as qlms_mod
+        import hwave.tsweep as ts
+
+        d = tempfile.mkdtemp()
+        cfg = {
+            "mode": {"mode": "RPA", "param": {"T": 1.0, "Nmat": 16,
+                                              "CellShape": [2, 2, 1],
+                                              "filling": 0.5}},
+            "continuation": {"temperatures": [1.0],
+                             "run_eliashberg": False,
+                             "output_dir": os.path.join(d, "tsweep")},
+            "file": {"input": {"interaction": {
+                        "Path_To_Input": "relative_inputs"}},
+                     "output": {"path_to_output": "out"}},
+        }
+        cfg_backup = copy.deepcopy(cfg)
+
+        captured = []
+
+        def capture(input_dict=None, **kw):
+            captured.append(copy.deepcopy(input_dict))
+            raise RuntimeError("stop after capture")
+
+        with mock.patch.object(qlms_mod, "run", side_effect=capture):
+            try:
+                ts.run(cfg, base_dir=d)
+            except Exception:
+                pass
+        self.assertTrue(captured, "the per-rung solver must be reached")
+        inter = captured[0]["file"]["input"]["interaction"]
+        self.assertEqual(inter["Path_To_Input"],
+                         os.path.join(os.path.abspath(d),
+                                      "relative_inputs"))
+        # run() must not mutate the caller's dict
+        self.assertEqual(cfg, cfg_backup)

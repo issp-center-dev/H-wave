@@ -1,0 +1,427 @@
+"""Phase B configuration surface of the FLEX solver (spec 2026-09-06
+sections 4.1 and D6/D9): the keys, their defaults, the refusal precedence
+steps 1-3 (raw key types, domain keys, gate-HF coupling), the stale-key
+warning, and the mode/key matrix (FLEX-only keys are warned-and-ignored
+outside FLEX)."""
+import logging
+import os
+import unittest
+
+import numpy as np
+
+import hwave.qlmsio.read_input_k as read_input_k
+
+_IN = "tests/rpa/input_2orb"
+
+
+def _build(param_extra=None, mode="FLEX", calc_scheme="general", interactions=None,
+           info_extra=None):
+    idict = {"path_to_input": _IN, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+    idict.update({"CoulombInter": "coulombinter.dat"} if interactions is None else interactions)
+    r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+    par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+           "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
+    par.update(param_extra or {})
+    par = {k: v for k, v in par.items() if v is not None}
+    info = {"mode": mode, "param": par, "enable_spin_orbital": False, "calc_scheme": calc_scheme}
+    info.update(info_extra or {})
+    if mode == "FLEX":
+        import hwave.solver.flex as flex_mod
+        return flex_mod.FLEX(r.get_param("ham"), {}, info), r
+    import hwave.solver.rpa as rpa_mod
+    info["calc_type"] = "ring"
+    return rpa_mod.RPA(r.get_param("ham"), {}, info), r
+
+
+class TestPhaseBConfig(unittest.TestCase):
+
+    def test_defaults(self):
+        s, _ = _build()
+        self.assertFalse(s.flex_hartree_fock)
+        self.assertFalse(s.longitudinal_bond_channels)
+        self.assertFalse(s.longitudinal_bond_output_full)
+        self.assertIsNone(s.longitudinal_bond_freq_batch)
+        self.assertIsNone(s.longitudinal_bond_max_shells)
+        self.assertEqual(s.longitudinal_bond_memory_cap_gb, 8.0)
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
+        self.assertFalse(s._phase_b_active)
+
+    def test_keys_case_insensitive_and_active(self):
+        s, _ = _build({"Flex_Hartree_Fock": True, "LONGITUDINAL_bond_channels": True,
+                       "longitudinal_bond_output_full": True, "longitudinal_bond_freq_batch": 4,
+                       "longitudinal_bond_max_shells": 2, "longitudinal_bond_memory_cap_gb": 3.5})
+        self.assertTrue(s.flex_hartree_fock and s.longitudinal_bond_channels)
+        self.assertTrue(s.longitudinal_bond_output_full)
+        self.assertEqual(s.longitudinal_bond_freq_batch, 4)
+        self.assertEqual(s.longitudinal_bond_max_shells, 2)
+        self.assertEqual(s.longitudinal_bond_memory_cap_gb, 3.5)
+        self.assertTrue(s._phase_b_active)
+        s, _ = _build({"flex_hartree_fock": True})
+        self.assertTrue(s._phase_b_active)
+
+    def test_refusals(self):
+        hf = {"flex_hartree_fock": True}
+        gate = {"flex_hartree_fock": True, "longitudinal_bond_channels": True}
+        cases = [
+            ({"flex_hartree_fock": "yes"}, {}, "boolean"),
+            ({"longitudinal_bond_channels": 1}, {}, "boolean"),
+            (dict(hf, Nmat=31), {}, "even"),
+            (dict(hf, matsubara_basis="ir"), {}, "matsubara_basis"),
+            (dict(hf, SubShape=[2, 1, 1]), {}, "sublattice"),
+            ({"longitudinal_bond_channels": True}, {}, "flex_hartree_fock"),
+            (dict(gate, longitudinal_bond_freq_batch=0), {}, "longitudinal_bond_freq_batch"),
+            (dict(gate, longitudinal_bond_freq_batch=33), {}, "longitudinal_bond_freq_batch"),
+            (dict(gate, longitudinal_bond_max_shells=0), {}, "longitudinal_bond_max_shells"),
+            (dict(gate, longitudinal_bond_memory_cap_gb=0.0), {}, "longitudinal_bond_memory_cap_gb"),
+        ]
+        for extra, info_extra, fragment in cases:
+            with self.subTest(extra=extra):
+                with self.assertRaises(ValueError) as cm:
+                    _build(extra, info_extra=info_extra)
+                self.assertIn(fragment, str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            _build(hf, calc_scheme="reduced")
+        self.assertIn("general", str(cm.exception))
+
+    def test_guard_freqs_key(self):
+        import hwave.solver.flex as flex_mod
+        base = {"flex_hartree_fock": True, "longitudinal_bond_channels": True}
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base)})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "all")
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, Longitudinal_Bond_Guard_Freqs="Static")})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "static")
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, longitudinal_bond_guard_freqs="none")})
+        self.assertIn("all", str(cm.exception)); self.assertIn("static", str(cm.exception))
+        with self.assertRaises(ValueError):
+            flex_mod.FLEX._parse_phase_b_keys({"param": dict(base, longitudinal_bond_guard_freqs=1)})
+        # the inactive branches still carry the default
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {}})
+        self.assertEqual(out["longitudinal_bond_guard_freqs"], "all")
+        s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                       "Longitudinal_Bond_Guard_Freqs": "STATIC"})
+        self.assertEqual(s.longitudinal_bond_guard_freqs, "static")
+        s, _ = _build()
+        self.assertEqual(s.longitudinal_bond_guard_freqs, "all")
+
+    def test_output_layout_key(self):
+        import hwave.solver.flex as flex_mod
+        base = {"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                "longitudinal_bond_output_full": True}
+        # default
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(base)})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # case-insensitive, stored lower-cased
+        out = flex_mod.FLEX._parse_phase_b_keys(
+            {"param": dict(base, Longitudinal_Bond_Output_Layout="SIDECAR")})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "sidecar")
+        out = flex_mod.FLEX._parse_phase_b_keys(
+            {"param": dict(base, longitudinal_bond_output_layout="NPZ")})
+        self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # any other value refused
+        with self.assertRaises(ValueError) as cm:
+            flex_mod.FLEX._parse_phase_b_keys(
+                {"param": dict(base, longitudinal_bond_output_layout="mmap")})
+        self.assertIn('longitudinal_bond_output_layout must be "npz" or "sidecar"',
+                      str(cm.exception))
+        with self.assertRaises(ValueError):
+            flex_mod.FLEX._parse_phase_b_keys(
+                {"param": dict(base, longitudinal_bond_output_layout=1)})
+        # the inactive branches still carry the default
+        for param in ({}, {"flex_hartree_fock": True},
+                      {"flex_hartree_fock": True, "longitudinal_bond_channels": True}):
+            with self.subTest(param=sorted(param)):
+                out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(param)})
+                self.assertEqual(out["longitudinal_bond_output_layout"], "npz")
+        # installed on the solver
+        s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                       "longitudinal_bond_output_full": True,
+                       "Longitudinal_Bond_Output_Layout": "Sidecar"})
+        self.assertEqual(s.longitudinal_bond_output_layout, "sidecar")
+        s, _ = _build()
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
+
+    def test_output_layout_sidecar_without_output_full_warns_once(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                           "longitudinal_bond_output_full": False,
+                           "longitudinal_bond_output_layout": "sidecar"})
+        msgs = [m for m in cm.output if "longitudinal_bond_output_layout" in m]
+        self.assertEqual(len(msgs), 1, cm.output)
+        self.assertIn("ignored", msgs[0])
+        self.assertEqual(s.longitudinal_bond_output_layout, "sidecar")
+
+    def test_output_layout_is_a_bond_only_stale_key(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True,
+                           "longitudinal_bond_output_layout": "sidecar"})
+        msgs = [m for m in cm.output if "longitudinal_bond_output_layout" in m]
+        self.assertGreaterEqual(len(msgs), 1)
+        self.assertEqual(s.longitudinal_bond_output_layout, "npz")
+
+    def test_guard_tolerance_and_policy_defaults(self):
+        """The three guard keys of GitHub issue #199 always exist, on every
+        branch of the parser (the inactive one included)."""
+        import hwave.solver.flex as flex_mod
+        s, _ = _build()
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-3)
+        self.assertEqual(s.flex_guard_policy, "refuse")
+        for param in ({}, {"flex_hartree_fock": True},
+                      {"flex_hartree_fock": True, "longitudinal_bond_channels": True}):
+            with self.subTest(param=sorted(param)):
+                out = flex_mod.FLEX._parse_phase_b_keys({"param": dict(param)})
+                self.assertEqual(out["flex_hf_density_tol"], 1e-8)
+                self.assertEqual(out["longitudinal_bond_cond_tol"], 1e-3)
+                self.assertEqual(out["flex_guard_policy"], "refuse")
+
+    def test_guard_keys_are_case_insensitive(self):
+        s, _ = _build({"Flex_Hartree_Fock": True, "LONGITUDINAL_Bond_Channels": True,
+                       "FLEX_HF_Density_Tol": 1e-6,
+                       "Longitudinal_Bond_Cond_Tol": 1e-5,
+                       "Flex_Guard_Policy": "WARN"})
+        self.assertEqual(s.flex_hf_density_tol, 1e-6)
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-5)
+        self.assertEqual(s.flex_guard_policy, "warn")
+
+    def test_guard_key_refusals(self):
+        hf = {"flex_hartree_fock": True}
+        gate = {"flex_hartree_fock": True, "longitudinal_bond_channels": True}
+        cases = [
+            (dict(hf, flex_hf_density_tol=0.0), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=-1e-8), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=True), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol="x"), "flex_hf_density_tol must be a finite number > 0"),
+            (dict(hf, flex_hf_density_tol=float("inf")),
+             "flex_hf_density_tol must be a finite number > 0"),
+            (dict(gate, longitudinal_bond_cond_tol=0.0),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=1.0),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=True),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol="x"),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(gate, longitudinal_bond_cond_tol=float("nan")),
+             "longitudinal_bond_cond_tol must be a finite number in (0, 1)"),
+            (dict(hf, flex_guard_policy="stop"), "flex_guard_policy must be"),
+            (dict(hf, flex_guard_policy=1), "flex_guard_policy must be"),
+        ]
+        for extra, fragment in cases:
+            with self.subTest(extra=sorted(extra.items(), key=lambda kv: str(kv))):
+                with self.assertRaises(ValueError) as cm:
+                    _build(extra)
+                self.assertIn(fragment, str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            _build(dict(hf, flex_guard_policy="stop"))
+        msg = str(cm.exception)
+        self.assertIn("\"refuse\"", msg)
+        self.assertIn("\"warn\"", msg)
+
+    def test_guard_keys_ignored_when_phase_b_is_inactive(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hf_density_tol": 1e-4})
+        self.assertTrue(any("flex_hf_density_tol" in m for m in cm.output))
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_guard_policy": "warn"})
+        self.assertTrue(any("flex_guard_policy" in m for m in cm.output))
+        self.assertEqual(s.flex_guard_policy, "refuse")
+        # and flex_hf_density_tol is warned-and-ignored with the Hartree-Fock
+        # term off even when the bond gate key is absent
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hf_density_tol": 1e-4, "flex_guard_policy": "warn"})
+        self.assertEqual(s.flex_hf_density_tol, 1e-8)
+        self.assertEqual(s.flex_guard_policy, "refuse")
+
+    def test_bond_cond_tol_is_listed_in_the_stale_bond_warning(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_cond_tol": 1e-6})
+        msgs = [m for m in cm.output if "longitudinal_bond_cond_tol" in m]
+        self.assertEqual(len(msgs), 1)
+        self.assertIn("longitudinal_bond_channels is not", msgs[0])
+        self.assertEqual(s.longitudinal_bond_cond_tol, 1e-3)
+
+    def test_gpu_true_is_accepted_with_the_gate(self):
+        """No refusal at config time; without cupy the backend falls back to numpy
+        with the usual warning (the general path's behaviour)."""
+        import hwave.solver.flex as flex_mod
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {"flex_hartree_fock": True,
+                                                            "longitudinal_bond_channels": True,
+                                                            "gpu": True}})
+        self.assertTrue(out["active"])
+        # and with the Hartree-Fock term alone
+        out = flex_mod.FLEX._parse_phase_b_keys({"param": {"flex_hartree_fock": True,
+                                                            "gpu": True}})
+        self.assertTrue(out["active"])
+
+    def test_refusals_precede_the_base_constructor(self):
+        """Odd Nmat is a ValueError from the FLEX parser (before the base
+        constructor's legacy exit) whenever HF or the gate is on; a legacy
+        input keeps the legacy exit."""
+        with self.assertRaises(ValueError):
+            _build({"flex_hartree_fock": True, "Nmat": 31})
+        with self.assertRaises(SystemExit):
+            _build({"Nmat": 31})
+
+    def test_stale_bond_keys_warn_once_and_are_not_parsed(self):
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s, _ = _build({"longitudinal_bond_output_full": "junk", "longitudinal_bond_freq_batch": -7,
+                           "longitudinal_bond_max_shells": "x", "longitudinal_bond_memory_cap_gb": "y"})
+        msgs = [m for m in cm.output if "longitudinal_bond_output_full" in m]
+        self.assertEqual(len(msgs), 1)
+        for k in ("longitudinal_bond_freq_batch", "longitudinal_bond_max_shells", "longitudinal_bond_memory_cap_gb"):
+            self.assertIn(k, msgs[0])
+        self.assertFalse(s.longitudinal_bond_output_full)
+        self.assertIsNone(s.longitudinal_bond_freq_batch)
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            _build({"flex_hartree_fock": True, "longitudinal_bond_freq_batch": 3})
+        self.assertTrue(any("longitudinal_bond_freq_batch" in m for m in cm.output))
+
+    def test_flex_only_keys_are_ignored_with_a_warning_in_rpa(self):
+        with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
+            s, _ = _build({"flex_hartree_fock": True, "longitudinal_bond_output_full": True,
+                           "longitudinal_bond_freq_batch": 2}, mode="RPA")
+        msgs = [m for m in cm.output if "FLEX-only" in m]
+        self.assertEqual(len(msgs), 1)
+        for k in ("flex_hartree_fock", "longitudinal_bond_output_full", "longitudinal_bond_freq_batch"):
+            self.assertIn(k, msgs[0])
+        self.assertFalse(hasattr(s, "flex_hartree_fock"))
+
+    def test_no_new_warning_for_legacy_inputs(self):
+        logger = logging.getLogger("hwave.solver.flex")
+        records = []
+        h = logging.Handler(); h.emit = lambda rec: records.append(rec.getMessage())
+        logger.addHandler(h)
+        try:
+            _build({})
+        finally:
+            logger.removeHandler(h)
+        self.assertFalse([m for m in records if "longitudinal_bond" in m or "flex_hartree_fock" in m])
+
+    def test_longitudinal_bond_pairing_key(self):
+        s, _ = _build({"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                       "longitudinal_bond_pairing": "Both"})
+        self.assertEqual(s.longitudinal_bond_pairing, ("singlet", "triplet"))
+        s, _ = _build({"longitudinal_bond_channels": True, "flex_hartree_fock": True})
+        self.assertEqual(s.longitudinal_bond_pairing, "none")
+        self.assertIsNone(s._pairing_controls)
+        for bad in ({"longitudinal_bond_pairing": "singlet"},                       # no gate
+                    {"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                     "longitudinal_bond_pairing": "x"},
+                    {"longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                     "longitudinal_bond_pairing": "singlet", "IterationMax": 0}):
+            with self.subTest(param=bad):
+                with self.assertRaises(ValueError):
+                    _build(bad)
+        import hwave.solver.flex as flex_mod
+        idict = {"path_to_input": _IN, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat"}
+        r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+        info = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                "param": {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+                          "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+                          "longitudinal_bond_channels": True, "flex_hartree_fock": True,
+                          "longitudinal_bond_pairing": "singlet"}}
+        with self.assertRaisesRegex(ValueError, "longitudinal_bond_pairing"):
+            flex_mod.FLEX(r.get_param("ham"), {}, info, eliashberg_param={"pairing_type": "triplet"})
+
+    def test_pairing_controls_from_eliashberg_table(self):
+        import hwave.solver.flex as flex_mod
+        idict = {"path_to_input": _IN, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                 "CoulombInter": "coulombinter.dat"}
+        r = read_input_k.QLMSkInput({"path_to_input": _IN, "interaction": idict})
+        par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+               "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "longitudinal_bond_channels": True, "flex_hartree_fock": True}
+        info = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                "param": dict(par, longitudinal_bond_pairing="singlet")}
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s = flex_mod.FLEX(r.get_param("ham"), {}, info,
+                              eliashberg_param={"solver_mode": "eigenvalue",
+                                                "num_eigenvalues": 3, "gpu": True,
+                                                "chi0q_mode": "flex"})
+        self.assertEqual(s._pairing_controls.pairing_types, ("singlet",))
+        self.assertEqual(s._pairing_controls.solver_mode, "eigenvalue")
+        self.assertEqual(s._pairing_controls.num_eigenvalues, 3)
+        self.assertTrue(any("ignored in-process" in m for m in cm.output))
+        # a table with pairing "none" is INFO-only, and no controls are built
+        info_none = {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                     "param": dict(par)}
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s = flex_mod.FLEX(r.get_param("ham"), {}, info_none,
+                              eliashberg_param={"pairing_type": "singlet"})
+        self.assertIsNone(s._pairing_controls)
+        self.assertTrue(any("ignored" in m for m in cm.output))
+
+
+class TestPhaseBDomainRefusals(unittest.TestCase):
+
+    def test_auto_scheme_resolving_to_reduced_is_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_hartree_fock": True}, calc_scheme="auto",
+                   interactions={"CoulombIntra": "coulombintra.dat"})
+        self.assertIn("general", str(cm.exception))
+        s, _ = _build({"flex_hartree_fock": True}, calc_scheme="auto",
+                      interactions={"CoulombInter": "coulombinter.dat"})   # off-site -> general
+        self.assertEqual(s.calc_scheme, "general")
+
+    def test_mixed_case_schemes_reach_the_gate(self):
+        """The Phase B pre-parser runs BEFORE any solver exists, so it cannot
+        read the resolved ``calc_scheme`` and has to canonicalise the request
+        itself. It must do so exactly as the solver does
+        (``hwave.solver.rpa.canonical_scheme_name``): case only.
+
+        Without one shared rule the two disagree, and the disagreement is
+        silent in the direction that matters -- a mis-cased scheme refused
+        here but accepted there (or the reverse) leaves the gate's domain
+        check keyed off a spelling the solver never sees."""
+        from hwave.solver.rpa import canonical_scheme_name
+        gates = ({"flex_hartree_fock": True},
+                 {"flex_hartree_fock": True, "longitudinal_bond_channels": True})
+        for gate in gates:
+            for spelling in ("general", "General", "GENERAL", "gEnErAl"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    s, _ = _build(dict(gate), calc_scheme=spelling)
+                    self.assertEqual(s.calc_scheme, "general")
+                    self.assertEqual(s.calc_scheme_requested, "general")
+                    for k in gate:
+                        self.assertTrue(getattr(s, k))
+            for spelling in ("Auto", "AUTO"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    s, _ = _build(dict(gate), calc_scheme=spelling)
+                    self.assertEqual(s.calc_scheme_requested, "auto")
+            # and a mis-cased scheme the gate does NOT accept is still refused
+            for spelling in ("Reduced", "REDUCED"):
+                with self.subTest(gate=sorted(gate), scheme=spelling):
+                    with self.assertRaises(ValueError) as cm:
+                        _build(dict(gate), calc_scheme=spelling)
+                    self.assertIn("calc_scheme='general'", str(cm.exception))
+        # the canonicalisation is case ONLY: surrounding whitespace is a typo,
+        # refused rather than repaired, and refused the SAME way by the
+        # pre-parser and by the solver
+        self.assertEqual(canonical_scheme_name(" General "), " general ")
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_hartree_fock": True}, calc_scheme=" general ")
+        self.assertIn("calc_scheme='general'", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            _build({}, calc_scheme=" general ")
+        self.assertIn("' general '", str(cm.exception))
+
+    def test_nmat_default_and_bounds(self):
+        s, _ = _build({"flex_hartree_fock": True, "Nmat": None})
+        self.assertEqual(s.nmat, 1024)
+        for bad in (0, -2, 7, True, 3.0):
+            with self.subTest(nmat=bad):
+                with self.assertRaises(ValueError):
+                    _build({"flex_hartree_fock": True, "Nmat": bad})
+
+    def test_iteration_max_must_be_non_negative(self):
+        with self.assertRaises(ValueError):
+            _build({"flex_hartree_fock": True, "IterationMax": -1})
+        s, _ = _build({"flex_hartree_fock": True, "IterationMax": 0})
+        self.assertEqual(s.max_iter, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

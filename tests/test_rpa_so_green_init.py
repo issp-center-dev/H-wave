@@ -130,8 +130,8 @@ class TestRPASOGreenInitMultiOrbital(unittest.TestCase):
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)
         sb_path = os.path.join(self._tmpdir, self.SB_NAME)
         il_path = os.path.join(self._tmpdir, self.IL_NAME)
-        np.savez(sb_path, green=tab_sb)
-        np.savez(il_path, green=tab_il)
+        np.savez(sb_path, green=tab_sb, momentum_convention="e_plus_ikR")
+        np.savez(il_path, green=tab_il, momentum_convention="e_plus_ikR")
         return sb_path, il_path
 
     def test_so_green_init_matches_nonso(self):
@@ -191,14 +191,14 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
         tab_sb = _spin_block_green(CELLVOL, NORB_PHYS)            # (Lvol, 4, 4)
         tab_sb_5d = tab_sb.reshape(CELLVOL, 2, NORB_PHYS, 2, NORB_PHYS)
         sb5d_path = os.path.join(self._tmpdir, self.SB5D_NAME)
-        np.savez(sb5d_path, green=tab_sb_5d)
+        np.savez(sb5d_path, green=tab_sb_5d, momentum_convention="e_plus_ikR")
         # SO 5D: (Lvol, ns=1, SO, ns=1, SO) with SO=2*norb_phys, orbital axis
         # in INTERLEAVED order -> reshape of the interleaved 3D green.
         tab_il = _spin_block_to_interleaved(tab_sb, NORB_PHYS)    # (Lvol, 4, 4)
         SO = 2 * NORB_PHYS
         tab_il_5d = tab_il.reshape(CELLVOL, 1, SO, 1, SO)
         il5d_path = os.path.join(self._tmpdir, self.IL5D_NAME)
-        np.savez(il5d_path, green=tab_il_5d)
+        np.savez(il5d_path, green=tab_il_5d, momentum_convention="e_plus_ikR")
         return sb5d_path, il5d_path
 
     def test_5d_nonso_accepted_and_shape(self):
@@ -306,7 +306,7 @@ class TestRPASOGreenInitSublatticeFold(unittest.TestCase):
         # path is not rejected as ambiguous (issue #36).
         path = os.path.join(self._tmpdir, self.IL_NAME)
         np.savez(path, green=tab_il,
-                 green_convention=np.array("green_slot_first"))
+                 green_convention=np.array("green_slot_first"), momentum_convention="e_plus_ikR")
         return path
 
     @staticmethod
@@ -386,7 +386,7 @@ class TestRPAGreenInit5DSublattice(unittest.TestCase):
         # path is not rejected as ambiguous (issue #36).
         path = os.path.join(self._tmpdir, self.NONSO5D_FOLD_NAME)
         np.savez(path, green=green5d,
-                 green_convention=np.array("green_slot_first"))
+                 green_convention=np.array("green_slot_first"), momentum_convention="e_plus_ikR")
         return path
 
     @staticmethod

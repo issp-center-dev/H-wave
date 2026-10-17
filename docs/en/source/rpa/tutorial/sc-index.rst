@@ -153,6 +153,29 @@ This section controls the Eliashberg solver. Key parameters:
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
   susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+
+  .. note::
+
+     ``"calc"`` recomputes :math:`\chi_0(\mathbf{q})` with the parameters in
+     ``mode.param`` of **this** input file. For the result to be comparable
+     with a ``"load"`` run, these must match the run that produced the chi0q
+     file — in particular ``coeff_tail`` (Matsubara high-frequency tail
+     correction), which changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)`
+     for moderate ``Nmat``. Its default ``coeff_tail = 0.0`` (no correction)
+     can be poorly converged; production RPA/FLEX runs typically use
+     ``coeff_tail = 1.0``. The chi0q file records the value it was produced
+     with, and ``hwave_sc`` warns on a mismatch when loading.
+
+  .. warning::
+
+     **Inputs from a pre-fix** ``calc_scheme = "general"`` **FLEX run.** That
+     path built its self-energy from an orbital-pair-transposed bubble, so its
+     ``sigma.npz`` and ``green.npz`` are wrong off the orbital diagonal for a
+     multi-orbital model. ``chi0q_mode = "flex"`` is not affected — it consumes
+     the susceptibilities, which are not — but ``bond_green`` is: it takes the
+     FLEX ``green.npz``, so regenerate that from a fixed build. Single-orbital
+     runs and the ``"reduced"`` scheme are unaffected. See
+     :ref:`the migration warning <flex_general_transpose_fix>`.
 - ``frequency``: pairing-vertex frequency treatment. ``"static"`` (default)
   evaluates the pairing vertex at zero bosonic frequency (the Nakano--Kuroki
   Eq. 9 static approximation) and gives a frequency-independent gap.
@@ -180,8 +203,28 @@ This section controls the Eliashberg solver. Key parameters:
 - ``alpha``: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).
 - ``convergence_tol``: Convergence criterion on the gap function.
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
+  On the dynamic path this now controls only how many eigenvalues are listed,
+  not which one is reported as leading: when the kernel conserves the channel's
+  even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
+  solve restricted to that sector (see ``spectral_shift`` below), whose
+  largest-real eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
+  bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
+  frequency sum misses the leading identity tail (an
+  :math:`O(1/N_{\rm mat})` error) and can be slightly indefinite, which
+  injects spurious imaginary parts into the reported eigenvalues at small
+  ``Nmat``. The correction is asymptotic: it helps when the largest
+  retained frequency exceeds the relevant energy scales (the solver warns
+  when the Green function still deviates strongly from its tail at the
+  window edge -- in that regime the correction can overshoot and passing
+  the positivity check does not certify accuracy). Because the added term
+  is the identity only at the pair-bubble stage -- not a scalar shift of
+  the assembled kernel -- enabling it can legitimately change which
+  eigenvalue leads or its distance from a shift-invert target; that is
+  corrected physics, not a solver defect. ``false`` reproduces
+  results computed before the correction existed.
 - ``sigma_shift`` (shift-invert ``eigenvalue_method`` only): the real target
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain
@@ -201,10 +244,29 @@ This section controls the Eliashberg solver. Key parameters:
   eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
   Recommended whenever the leading eigenvalue comes out negative or you scan
   weakly-pairing systems (low pressure, quasi-1D). Note this differs from
-  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift).
-- ``gpu``: Set ``true`` to run the dynamic-mode (``frequency = "dynamic"``)
-  kernel applications on a GPU via CuPy (default ``false``; see the
-  :ref:`GPU section <sc_dynamic_gpu_en>` below).
+  ``sigma_shift`` above (a shift-invert *target*, not a spectral shift). On the
+  dynamic path (``frequency = "dynamic"``) the largest-real selection is applied
+  automatically for the channel (issue #202): when the kernel conserves the
+  channel's even-frequency sector, the leading eigenvalue comes from a
+  symmetry-valid solve restricted to that sector (``eigenvalue_selection =
+  "LR_projected"``), whose largest-real eigenvalue is num_eigenvalues-
+  independent; when it does not conserve the sector and a plain ``arnoldi`` set
+  holds no positive channel eigenvalue, the solver instead re-solves once with
+  ``spectral_shift = "auto"`` (``"LR_retry"``). Both are recorded in
+  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift`` still
+  applies to the unprojected path; a seeded (eigenvector-continuation) run is
+  never re-solved, so a repulsive-dominant temperature scan should set
+  ``spectral_shift = "auto"`` for every point to keep the seeded continuation
+  consistent with the leading value.
+- ``gpu``: ``true`` runs the kernel-apply (matvec/matmat, the FFT convolution)
+  on the GPU (CuPy) for **both** ``frequency = "dynamic"`` and
+  ``frequency = "static"`` (default ``false``). The eigensolver itself (ARPACK
+  Arnoldi, power iteration, subspace iteration, shift-invert) always runs on the
+  host, because CuPy has no general non-Hermitian eigensolver; only the gap
+  vector crosses to the device per iteration. Without a usable CuPy/CUDA device
+  the run falls back to CPU with a warning (see the
+  :ref:`GPU-execution section <sc_dynamic_gpu_en>` below). ``fft_workers`` is
+  ignored on the GPU path.
 - ``gpu_required``: Set ``true`` to make ``gpu = true`` strict -- the solver
   raises instead of silently falling back to CPU when CuPy/CUDA is unavailable
   (default ``false``). Honored by the dynamic Eliashberg solver (set it in
@@ -221,6 +283,10 @@ This section controls the Eliashberg solver. Key parameters:
   units as the Hamiltonian (auto-estimated from the dispersion spectral range
   ``max|eps_k - mu|`` and the interaction scale when omitted; if the estimate
   cannot be formed, the solver fails fast and asks for an explicit value).
+  The auto estimate is ``3*(max|eps_k - mu| + interaction)`` -- the spectral
+  half-range measured about the chemical potential plus the largest interaction
+  scale. The FLEX solver now uses the identical estimator, so a FLEX ->
+  Eliashberg pair with an auto ``ir_wmax`` lands on the same IR basis.
 - ``ir_keep_static_chi``: ``true`` / ``false`` (default ``false``). When the
   spin/charge susceptibility is static-dominated (large and nearly frequency-
   independent within the sampled window, i.e. the near-critical regime), the
@@ -230,6 +296,21 @@ This section controls the Eliashberg solver. Key parameters:
   component exceeds the data scale the solver aborts with guidance. Set this to
   ``true`` to retain the static component instead of aborting (alternatively
   lower ``ir_wmax`` or increase the FLEX ``Nmat``).
+
+.. note::
+
+   **Keep** :math:`\beta\,\omega_\mathrm{max}` **above the truncation floor.**
+   The ill-conditioning guard on the IR fit only catches a bandwidth that is
+   too *large* for the sampling grid; it cannot see the opposite failure. At
+   *small* :math:`\Lambda = \beta\,\omega_\mathrm{max}` the fit stays perfectly
+   well-conditioned yet the basis is simply too narrow to represent the
+   Green function's band edges, so it carries a silent basis-truncation error
+   -- of order 1% once :math:`\omega_\mathrm{max}` no longer reaches a
+   band-edge single-pole Green function to the requested ``ir_tol``. Keep
+   :math:`\beta\,\omega_\mathrm{max}` above that floor: use the automatic
+   ``ir_wmax`` estimate (which targets it by construction) or set an explicit
+   ``ir_wmax`` :math:`\ge 3\,(\text{bandwidth} + \text{interaction})` as the
+   safe lower bound.
 
 Interaction definition files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -431,6 +512,8 @@ Each line contains:
 
 where :math:`\alpha, \beta` are orbital indices.
 
+.. _sc_eigenvalue_dat:
+
 ``eigenvalue.dat``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -561,7 +644,7 @@ into the directory read by the Eliashberg step:
 .. note::
 
    The FLEX susceptibility files carry a ``chi_convention`` tag (``"kuroki"``
-   for the reduced/squashed schemes, ``"myo"`` for the general full-vertex
+   for the reduced scheme, ``"myo"`` for the general full-vertex
    scheme) that the Eliashberg loader uses to interpret their orbital layout.
    For **two-orbital** systems (``norb = 2``) the reduced spin-orbital
    dimension and the orbital-pair dimension coincide (both ``4``), so this tag
@@ -570,6 +653,35 @@ into the directory read by the Eliashberg step:
    as orbital-pair, corrupting the pairing vertex; Eliashberg eigenvalues and
    gap functions for such runs are **corrected (and therefore change)** in this
    version. Single-orbital and general (myo) results are unaffected.
+
+.. warning::
+
+   **Results may change for multi-orbital reduced-scheme FLEX runs.**
+   The matrix index of a reduced (kuroki) susceptibility is a *density pair*:
+   the stored :math:`X[a,b]` is :math:`\chi_{(a,a),(b,b)}`. Earlier versions
+   embedded it into the :math:`n_\text{orb}^2` orbital-pair space as
+   :math:`\text{out}[(l_1,l_2),(l_3,l_2)] = X[l_1,l_3]`, which dropped the
+   inter-orbital density coupling :math:`\chi_{(0,0),(1,1)}` -- a component the
+   pairing vertex :math:`S \chi S` genuinely references -- and scattered
+   :math:`X` onto pair indices the reduced scheme never computed. This version
+   embeds it correctly, as
+   :math:`\text{out}[(a,a),(b,b)] = X[a,b]` with every other component zero.
+
+   Consequently, **static and dynamic** ``chi0q_mode = "flex"`` results change
+   for runs with ``norb >= 2`` whose FLEX used ``calc_scheme = "reduced"``.
+   Two independent effects contribute, so a vanishing
+   inter-orbital density component is not enough to be safe: the old placement
+   both dropped :math:`\chi_{(a,a),(b,b)}` with :math:`a \neq b`, and -- when
+   the interaction reaches the off-density blocks -- fabricated dressing there
+   out of the diagonal :math:`\chi_{(a,a),(a,a)}`. Treat every such stored
+   eigenvalue and gap function as needing recomputation. Single-orbital (``norb = 1``) results are bit-identical
+   (both placements coincide), as are all general (myo) results. With the fix,
+   a ``CoulombIntra``-only reduced run reproduces the equivalent
+   ``chi0q_mode = "load"`` and general-scheme results exactly **for identical**
+   :math:`\Sigma = 0` **physics** (FLEX with ``Mix = 0``, ``IterationMax = 1``);
+   before the fix it did not. This is a statement about the pairing vertex
+   only. It does not imply the two schemes are interchangeable at full
+   self-consistency, where they also differ in how the self-energy is built.
 
    As of this version, IR-native susceptibility files (``write_densified =
    false``) must carry this ``chi_convention`` tag, and the loader also
@@ -610,6 +722,29 @@ mode writes:
      all components and its largest-magnitude component is rotated
      real-positive, so the stored gap is reproducible across runs and
      linear-algebra backends.
+   - ``gap_sector_weights``: four real numbers summing to 1 -- the fraction of
+     :math:`\|\phi\|^2` in each momentum/frequency parity sector of the
+     returned gap (see
+     :ref:`Pairing channels of the dynamic solver <sc_dynamic_channels>`).
+   - ``gap_sector_labels``: the names of those four sectors, in the same
+     order: ``"even_k_even_w"``, ``"odd_k_even_w"``, ``"even_k_odd_w"``,
+     ``"odd_k_odd_w"``.
+   - ``sector_selection``: the sector this run selected in -- ``"channel"``,
+     ``"combined_parity"`` or ``"none"``. On the power-iteration path it is
+     the sector the iterates were projected onto; on the eigenvalue solver
+     modes, which never project, it is the stage the eigenpair reordering
+     matched with, and therefore what the ``match`` column of
+     ``eigenvalue.dat`` means. See the same subsection.
+   - ``eigenvalue_selection``: which selection criterion produced the reported
+     leading eigenvalue -- ``"LR_projected"`` (a symmetry-valid solve restricted
+     to a conserved channel sector, the num_eigenvalues-independent criterion),
+     ``"LM"`` (plain ``arnoldi``, largest magnitude), ``"LR"`` (``spectral_shift``
+     set by the user, largest real part), ``"LR_retry"`` (the automatic
+     largest-real re-solve when an unprojected ``"LM"`` set held no positive
+     channel eigenvalue), ``"dense-LR"`` (the tiny-operator dense largest-real
+     path), ``"shift-invert"``, or ``"iteration"`` (the power iteration). Also
+     written as the ``# eigenvalue_selection: ...`` header line of
+     ``eigenvalue.dat``.
 
 ``gap.dat``
    A single-frequency slice of the gap at the lowest positive Matsubara
@@ -625,18 +760,123 @@ Like the static solver, the dynamic mode reports the leading eigenpair **of the
 requested pairing channel**, not merely the algebraically largest eigenvalue.
 Fermion antisymmetry fixes the combined parity of the gap under
 :math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
-\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)`: even for ``singlet`` (this admits
-both a conventional even-frequency and an odd-frequency singlet) and odd for
-``triplet``. The Arnoldi eigenpairs are reordered so that the channel-parity
-mode leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries the same
-trailing ``match(1=channel-parity)`` column as the static output (``1`` in the
-requested sector, ``0`` in the opposite one). If none of the ``num_eigenvalues``
-computed eigenpairs lies in the requested sector, the solver warns and falls
-back to the raw leading pair; increase ``num_eigenvalues`` or check
-``pairing_type`` in that case. The power-iteration path (``solver_mode =
+\phi_{\beta\alpha}(-\mathbf{k}, -i\omega_n)`: even for ``singlet`` and odd for
+``triplet``. Within that constraint the solver selects the conventional
+**even-frequency** sector of the requested channel, as described in the next
+subsection. The Arnoldi eigenpairs are reordered so that the channel mode
+leads, and the per-eigenvalue table in ``eigenvalue.dat`` carries a trailing
+``match`` column like the static output (``1`` in the matched sector, ``0``
+outside it). That column is **named after the sector that matched** --
+``match(1=channel even-frequency sector)``, or
+``match(1=combined-parity sector; no even-frequency eigenpair)`` when the
+fallback stage was used -- so a ``1`` never has to be guessed at. If none of
+the ``num_eigenvalues`` computed eigenpairs lies in either sector, the solver
+warns and falls back to the raw leading pair; increase ``num_eigenvalues`` or
+check ``pairing_type`` in that case. The power-iteration path (``solver_mode =
 "iteration"``) likewise projects every iterate onto the channel sector when the
-kernel commutes with parity (a centrosymmetric model); if it does not, the
-projection is disabled with a warning and the un-projected iteration is used.
+kernel preserves it, onto the wider combined-parity sector when it preserves
+only that, and not at all when it preserves neither (each fallback is warned
+about). Both paths record what they used as ``sector_selection``.
+
+.. _sc_dynamic_channels:
+
+Pairing channels of the dynamic solver
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The combined parity above is only the antisymmetry *constraint*; each of its
+two eigenspaces still contains two frequency parities. The channels the solver
+reports are the conventional **even-frequency** ones:
+
+- ``singlet``: even in :math:`\mathbf{k}`, even in frequency;
+- ``triplet``: odd in :math:`\mathbf{k}`, even in frequency.
+
+Even frequency means invariance under
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\alpha\beta}(\mathbf{k}, -i\omega_n)` (the frequency alone, orbitals
+untouched); the momentum parity carries the orbital transpose,
+:math:`\phi_{\alpha\beta}(\mathbf{k}, i\omega_n) \to
+\phi_{\beta\alpha}(-\mathbf{k}, i\omega_n)`, exactly as on the static path.
+Their product is the combined parity above.
+
+**Odd-frequency pairing is not solved for.** The remaining two sectors --
+odd :math:`\mathbf{k}` with odd frequency (combined parity :math:`+1`) and
+even :math:`\mathbf{k}` with odd frequency (combined parity :math:`-1`) --
+are annihilated by both channel projectors.
+
+Each run records what it actually returned: the four sector weights
+(squared-norm fractions, summing to 1) are written to ``gap_dynamic.npz`` /
+``eliashberg_bond_<type>.npz`` as ``gap_sector_weights`` with their names in
+``gap_sector_labels``, and as a header line
+
+.. code-block::
+
+   # gap_sector_weights even_k_even_w=1.000000 odd_k_even_w=0.000000 even_k_odd_w=0.000000 odd_k_odd_w=0.000000
+
+in ``eigenvalue.dat`` (and in the bond entries' ``eigenvalue_bond_<type>.dat``).
+The solver logs the channel's own weight at ``INFO`` and warns when it falls
+below ``0.999`` -- the returned gap is then not a pure even-frequency state of
+the requested channel, and the weights say what it is instead.
+
+.. note::
+
+   **The channel projection is applied only where the kernel conserves the
+   frequency parity** -- any single-orbital model, and multi-orbital models
+   with the corresponding lattice and orbital symmetry. A general multi-orbital
+   kernel conserves only the product of the two parities (the antisymmetry
+   constraint), and projecting the power iteration onto the narrower
+   even-frequency sector would then turn the eigenproblem into a restriction of
+   itself, whose leading value is not an eigenvalue of the kernel. In that case
+   the iteration projects onto the combined-parity sector instead, with a
+   warning, so the reported :math:`\lambda` is always a genuine eigenvalue and
+   the sector weights show the composition of the gap that produced it. Which
+   case applied is recorded per run as ``sector_selection``
+   (``"channel"``, ``"combined_parity"`` or ``"none"``) -- an npz key and the
+   ``# sector_selection=...`` header line of the eigenvalue file. On the
+   eigenvalue solver family, when the kernel conserves the channel's
+   even-frequency sector the leading eigenpair comes from a solve restricted to
+   that sector (``sector_selection = "channel"``, issue #202); otherwise the
+   computed eigenpairs are ordered, preferring the channel's even-frequency
+   sector and falling back to its combined-parity sector only if no eigenpair
+   lies in it. There ``sector_selection`` names the stage that matched, which is
+   also what the ``match`` column of ``eigenvalue.dat`` is labelled with.
+
+.. note::
+
+   **Leading eigenvalue independent of** ``num_eigenvalues``. The plain
+   ``arnoldi`` method asks ARPACK for the eigenvalues of largest *magnitude*
+   (``which='LM'``), so a small positive (attractive) channel eigenvalue can be
+   absent from a short list dominated by larger-real opposite-sector or repulsive
+   modes -- and the reported leading value would then depend on
+   ``num_eigenvalues``. When the kernel conserves the channel's even-frequency
+   sector, the dynamic solver instead solves the kernel *restricted to that
+   sector* (the same projector the power iteration uses), whose largest-real
+   eigenvalue is the channel's Tc eigenvalue independent of ``num_eigenvalues``;
+   if that sector is repulsive the answer is its least-repulsive (largest-real)
+   eigenvalue. When the kernel does not conserve the sector, an unprojected
+   ``"LM"`` set holding no positive channel eigenvalue is re-solved **once** with
+   ``spectral_shift = "auto"`` (largest real part) as a best effort. Which
+   criterion was used is recorded as ``eigenvalue_selection`` --
+   ``"LR_projected"``, ``"LM"``, ``"LR"`` (user ``spectral_shift``),
+   ``"LR_retry"`` (the automatic re-solve), ``"dense-LR"``, ``"shift-invert"``
+   or ``"iteration"`` -- both as an npz key and as the
+   ``# eigenvalue_selection: ...`` header line of ``eigenvalue.dat``. Setting
+   ``spectral_shift = "auto"`` up front avoids the extra solve on the
+   unprojected path. The reference
+   for the leading positive eigenvalue is ``solver_mode = "iteration"`` (the
+   self-consistent power iteration, with ``spectral_shift = "auto"`` when the
+   kernel is repulsive-dominant): it converges to the mode of largest real part
+   directly and does not depend on ``num_eigenvalues`` at all.
+
+.. warning::
+
+   **Changed in this version.** Earlier versions selected the eigenpair by the
+   combined parity alone. A reported ``triplet`` could therefore be an
+   odd-frequency (even :math:`\mathbf{k}`, odd frequency) state, and -- more
+   rarely -- a reported ``singlet`` an odd :math:`\mathbf{k}`/odd-frequency
+   one, since both carry the right combined parity. Triplet results of the
+   dynamic solver obtained before this version should be recomputed; singlet
+   runs whose gap already sits in the (even :math:`\mathbf{k}`, even frequency)
+   sector are numerically unchanged.
 
 .. _sc_channel_decomposition:
 
@@ -667,6 +907,14 @@ fluctuations:
 - ``zero_chi_s`` (default ``false``): zero :math:`\chi_{\mathrm s}`; the vertex
   keeps the charge-fluctuation term plus the bare term (charge channel).
 
+.. note::
+
+   These flags apply only to the dynamic vertex (``frequency = "dynamic"``).
+   The static solver (``frequency = "static"``, the default) builds its kernel
+   from the RPA/FLEX static susceptibility and does not use them when
+   constructing the kernel; setting one with ``frequency = "static"`` has no
+   effect and logs a warning.
+
 For example, a spin-channel diagnostic uses:
 
 .. code-block:: toml
@@ -686,6 +934,8 @@ in general).
 Enabled flags are recorded in ``gap_dynamic.npz``, ``gap.dat``, and
 ``eigenvalue.dat``. Keep both flags off for production runs.
 
+.. _sc_seed_eigenvector:
+
 Eigenvector continuation (``seed_eigenvector``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -694,18 +944,26 @@ frequency-dependent (non-Hermitian) kernel this can be fragile near an
 *exceptional point* — where two real eigenvalues collide and split into a
 complex-conjugate pair — so the "leading" branch may jump discontinuously
 between neighbouring temperatures even when the FLEX self-energy varies
-smoothly. To follow one physical branch, set ``[eliashberg] seed_eigenvector``
-to a ``gap_dynamic.npz`` written by a neighbouring run (e.g. the next-higher
-temperature): its gap is used as the ARPACK start vector **and** to select the
-eigenpair whose eigenvector maximally overlaps it, rather than the largest one.
-Stepping temperature down and feeding each run the previous ``gap_dynamic.npz``
-tracks the same gap symmetry (e.g. the d-wave mode) continuously. The seed must
+smoothly. To help follow one physical branch, set ``[eliashberg]
+seed_eigenvector`` to a ``gap_dynamic.npz`` written by a neighbouring run
+(e.g. the next-higher temperature): its gap is used as the ARPACK start
+vector **and**, among the eigenpairs actually *returned* by the eigensolver
+(governed by ``num_eigenvalues`` and, on the shift-invert path,
+``sigma_shift``), to select the one whose eigenvector maximally overlaps it,
+rather than the algebraically largest one. If the physical branch is not
+among the returned eigenpairs at all, increase ``num_eigenvalues`` or move
+``sigma_shift`` near it. Stepping temperature down and feeding each run the
+previous ``gap_dynamic.npz`` helps track the same gap symmetry (e.g. the
+d-wave mode) across the sweep, though it is not a guarantee: too large a
+step between temperatures can still lose the physical branch. The seed must
 share the run's ``CellShape`` and ``Nmat`` (a mismatch is a fail-fast error), so
 keep ``Nmat`` fixed across a continuation sweep; on the IR path the seed gap is
 refit onto the IR nodes automatically. ``[eliashberg] sigma_shift`` sets an
 explicit shift-invert target (otherwise estimated from a preliminary Arnoldi);
-combining ``sigma_shift`` near the branch with ``seed_eigenvector`` is the most
-robust way to resolve a masked or complexifying eigenvalue.
+combining ``sigma_shift`` near the branch with ``seed_eigenvector`` helps
+resolve a masked or complexifying eigenvalue.
+
+.. _sc_tsweep:
 
 Temperature continuation (``hwave_tsweep``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -718,13 +976,17 @@ automates this: given one base TOML -- the same
 ``[mode]``/``[mode.param]``/``[file]``/``[eliashberg]`` configuration used
 for a single FLEX+Eliashberg run -- plus a ``[continuation]`` section, it
 runs FLEX (and, unless disabled, the Eliashberg solver) across a descending
-ladder of temperatures. At each rung it feeds the previous rung's converged
-self-energy into this rung's FLEX via ``sigma_init`` (warm start) and the
-previous rung's dynamic gap into this rung's Eliashberg solve via
+ladder of temperatures. At each rung it feeds the previous rung's final
+saved self-energy into this rung's FLEX via ``sigma_init`` (warm start) and
+the previous rung's dynamic gap into this rung's Eliashberg solve via
 ``seed_eigenvector`` (eigenvector continuation) -- automating the whole
-warm-start chain so a single physical branch is tracked smoothly down to low
-temperature instead of being cold-started, and potentially landing on a
-different metastable solution, at every point.
+warm-start chain instead of cold-starting (and potentially landing on a
+different metastable solution) at every rung. This chaining does not
+require the previous rung to have converged: any non-error rung whose seed
+files are present is used as the next rung's seed regardless of its FLEX
+convergence status, so inspect the summary's ``flex_converged`` column
+(below) rather than assuming every warm start came from a converged
+self-energy.
 
 Only ``mode.param.T`` is varied between rungs; ``CellShape``, ``Nmat``, and
 every other shape-determining field are held fixed across the ladder, which
@@ -766,8 +1028,8 @@ The ``[continuation]`` section
   section -- pre-flight raises an error otherwise, naming the missing
   section. Set to ``false`` to run a FLEX-only sweep that chains only
   ``sigma_init``.
-- ``warm_start`` (default ``true``): chain each rung's converged self-energy
-  into the next rung's ``sigma_init``.
+- ``warm_start`` (default ``true``): chain each rung's final self-energy
+  (converged or not) into the next rung's ``sigma_init``.
 - ``seed_gap`` (default ``true``): chain each rung's gap into the next
   rung's ``seed_eigenvector``. This is only active for the dynamic
   Eliashberg solver (``[eliashberg] frequency = "dynamic"``); for a static
@@ -810,7 +1072,10 @@ Three flags control the run:
   (``CellShape``/``SubShape``/``Nmat``/``filling``/``Ncond``/interaction
   files/``[eliashberg]`` frequency/pairing). Resuming against a different
   ladder or configuration **fails fast** rather than mixing incompatible
-  results. The summary and manifest are written atomically after every rung,
+  results; a manifest whose schema version predates the current one (bumped
+  by the #86 tail-correction and #133 Fourier-sign changes) is likewise
+  refused. The summary is written atomically after every rung and the
+  manifest when the sweep is established,
   so an interruption can never leave a truncated checkpoint. Without
   ``--resume`` a rerun starts fresh and overwrites the existing sweep
   rung-by-rung (a warning is logged when it detects an existing sweep).
@@ -857,7 +1122,8 @@ Example
 .. code-block:: toml
 
     [mode]
-      mode = "FLEX"
+      mode        = "FLEX"
+      calc_scheme = "reduced"   # required here: see the note below
 
     [mode.param]
       T         = 0.02
@@ -893,6 +1159,34 @@ Example
       run_eliashberg = true
       warm_start     = true
       seed_gap       = true
+
+.. note::
+
+   **Why this example pins** ``calc_scheme = "reduced"``. Since version 2.0
+   the default is ``calc_scheme = "auto"``, which promotes ``CoulombInter``
+   (and ``Hund``, ``Ising``, the aggregate ``Coulomb``) to ``general``. The
+   ``general`` FLEX path accepts the off-site ``CoulombInter`` this
+   workflow uses (as its Hartree vertex only, with a warning; it is
+   spin-free only), so under the default the sweep would run on the
+   ``general`` path and produce different susceptibilities from the ones
+   this tutorial's reference results were made with. Requesting
+   ``reduced`` explicitly reproduces those results, and is what H-wave
+   1.0.x did for this input:
+
+   .. code-block:: toml
+
+      [mode]
+        mode        = "FLEX"
+        calc_scheme = "reduced"
+
+   ``reduced`` is a documented approximation, so it is warned about once at
+   construction, and the Eliashberg step **will** print the approximation
+   warning described in
+   :ref:`Supported interactions <sc_supported_inter>`. Both are expected here
+   and not a misconfiguration. Drop the ``calc_scheme`` line (or set
+   ``general``) when you need the inter-orbital channels dressed as well;
+   off-site ``Exchange`` / ``PairHop`` are the only two-body terms the
+   ``general`` path still rejects.
 
 This descends from :math:`T = 0.02` to :math:`T = 0.005` over 6
 log-spaced rungs, running FLEX + dynamic Eliashberg at each, chaining both
@@ -995,15 +1289,71 @@ re-run FLEX with ``write_densified = true``.
 
 .. warning::
 
-   Dynamic IR results computed with H-wave versions BEFORE the issue-#57
-   fix are incorrect for any model whose pairing vertex has a nonzero
-   frequency-independent part — in particular anything with off-site
-   ``CoulombInter`` (pure on-site-``CoulombIntra`` models were
-   unaffected: their bare vertex term cancels exactly). Recompute such
-   runs; large changes in lambda are expected (they were the bug, not a
-   physics change). The automatic ``ir_wmax`` estimate also changed to a
+   Dynamic IR results computed with H-wave 1.0.x can carry a
+   frequency-independent (instantaneous) part of the pairing vertex
+   incorrectly: 1.0.x fitted that constant into the bosonic IR basis,
+   where a :math:`\delta(\tau)` component is aliased, instead of keeping
+   it as a flat operator. How much the reported leading eigenvalue moves
+   depends on how large that constant is *relative to the dynamic
+   vertex*. It is large — and ``lambda`` shifts substantially — for a
+   model with a large static susceptibility, i.e. off-site
+   ``CoulombInter`` near a charge instability. For a **pure on-site
+   Hubbard model** the constant is present (the bare singlet term is
+   :math:`+U`, not zero — see the change note below) but small next to the
+   dynamic part, and the singlet **leading eigenvalue is reproduced** on
+   the IR basis to basis-truncation accuracy: a check on the shipped
+   single-band fixture (:math:`U = 2.5`, :math:`4\times4`, :math:`T = 0.5`,
+   ``Nmat = 64``) gives a uniform-vs-IR relative difference of
+   :math:`1.8\times10^{-4}` at a pinned ``ir_wmax``. So recompute a 1.0.x IR
+   run when it declared an off-site ``CoulombInter`` (large ``lambda``
+   changes are expected there — they were the bug, not a physics change);
+   a pure on-site run's leading eigenvalue was already right, though its
+   gap eigenvector and any unprojected iteration were affected by the
+   separate instantaneous-prescription defect described in the change note
+   below. The automatic ``ir_wmax`` estimate also changed to a
    dispersion-based bound and is now much smaller (and correct) on
    realistic multi-hopping models.
+
+.. _sc_dynamic_ir_instantaneous_en:
+
+.. warning::
+
+   **Changed in this version.** With ``matsubara_basis = "ir"``, the
+   frequency-independent (instantaneous) part of the pairing vertex now
+   multiplies the exact Matsubara sum of the pair bubble, i.e. the midpoint
+   :math:`\tfrac12\bigl(F(0^+)-F(\beta^-)\bigr)` of its jump at
+   :math:`\tau = 0`, instead of the one-sided value :math:`F(0^+)` used
+   before. This applies to the ordinary (on-site) dynamic solver as much as
+   to the bond-resolved one; the uniform-grid path is unaffected.
+
+   What it changes. On a frequency-even pair amplitude the two
+   prescriptions coincide (its even-:math:`l` IR coefficients vanish). The
+   old prescription additionally mapped odd-frequency components into the
+   even sector; since it never acted the other way, the old operator was
+   block-triangular with respect to frequency parity and had the SAME
+   spectrum as the new one -- so the leading eigenvalue of a
+   parity-projected solve and the eigenvalues returned by the eigenvalue
+   solver are unchanged, while eigenvectors and the behaviour of an
+   unprojected iteration were affected. Two practical consequences of that
+   are now gone: the parity guard of the power iteration reported a leakage
+   of order :math:`10^{-1}` and switched to the unprojected iteration,
+   which in a triplet run can converge to the even-parity (singlet-sector)
+   eigenvalue; and the gap function of the odd-parity channel returned by
+   the eigenvalue solver carried an even-parity admixture.
+
+   Who is affected. Any ``matsubara_basis = "ir"`` run whose instantaneous
+   vertex is nonzero. In the singlet channel the bare term is
+   :math:`\tfrac12(S+C)` of the Kuroki spin and charge matrices, nonzero
+   for essentially every density-type model (a pure Hubbard model gives
+   :math:`+U`). In the triplet channel the bare term is
+   :math:`\tfrac12(C-S)`, zero for a pure Hubbard model and nonzero
+   wherever the assembled matrices differ -- the generic outcome of an
+   inter-orbital :math:`U'`, a Hund or Ising term (on-site or off-site) or
+   an off-site density interaction (particular combinations can cancel).
+   Re-run an earlier IR run if its log carried the "does not
+   commute with parity" warning (its projection was off) or if its gap
+   function is used, in particular triplet runs; eigenvalues of
+   parity-projected singlet runs are unchanged.
 
 .. _sc_dynamic_gpu_en:
 
@@ -1042,6 +1392,8 @@ transfers the gap vector. The result is numerically identical to the CPU run
   and :math:`N_{\mathrm{mat}}=2048` give roughly a 16x per-matvec speedup over
   the CPU path (NVIDIA RTX 6000 Ada, about 5 GB of GPU memory).
 
+.. _sc_supported_inter:
+
 Supported interactions
 ----------------------------
 
@@ -1058,6 +1410,200 @@ For systems with ``Hund``, ``Exchange``, ``Ising``, or ``PairHop``
 interactions, the solver automatically uses the generalized
 :math:`S`/:math:`C` matrix formulation (Kuroki et al., PRB 79, 224511)
 with four-index vertex structure.
+
+.. note::
+
+   **Caveat for** ``chi0q_mode = "flex"`` **with a reduced-scheme FLEX run.**
+   A reduced (``calc_scheme = "reduced"``) FLEX run stores
+   only the density-density components :math:`\chi_{(a,a),(b,b)}`. For
+   ``CoulombIntra`` alone the :math:`S`/:math:`C` matrices live entirely on
+   that density-pair block, so the reduced route is exact.
+   ``CoulombInter``, ``Hund`` and ``Ising`` also put weight on the
+   off-density blocks :math:`S/C[(a,b),(a,b)]` with :math:`a \neq b`,
+   where the reduced run computed no susceptibility at all: those channels
+   then enter the pairing vertex **undressed** (the bare
+   :math:`\tfrac{1}{2}(S+C)` term only), so :math:`\lambda` is an
+   approximation, and the solver emits a warning naming the offending
+   terms. ``Exchange`` and ``PairHop`` have **no** density-diagonal vertex
+   content at all -- nothing of them would be dressed -- and are
+   **rejected** with a reduced susceptibility (consistently with the
+   FLEX/RPA scheme policy, which refuses to produce such runs).
+
+   This is a limitation of the stored data, not of the loader, and cannot be
+   repaired on the Eliashberg side. Re-run FLEX with
+   ``calc_scheme = "general"`` (which stores the full orbital-pair
+   susceptibility) for the complete vertex. Note that ``chi0q_mode =
+   "load"`` is **not** an escape unless the chi0q it reads is itself a
+   general (four-index) one: a reduced two-index chi0q is missing exactly
+   the same off-density components.
+   Single-orbital models are unaffected -- there is no off-density pair index.
+
+.. note::
+
+   **The Eliashberg step assumes a paramagnetic background.** The Kuroki
+   :math:`S`/:math:`C` matrices carry no spin index, so a reduced FLEX
+   susceptibility is consumed by keeping only its spin-up block. That is
+   exact for a paramagnetic run, where the discarded blocks are redundant
+   (the down block equals the up block and the cross-spin blocks vanish).
+   A spin-polarized run -- ``spin_mode`` is auto-detected, so an ``Extern``
+   field with ``coeff_extern`` is enough -- generally does not satisfy it.
+   The solver inspects the STORED DATA rather than classifying the run
+   (the file records no ``spin_mode``). Any non-redundancy is reported; if it
+   exceeds a few hundred ulp of double precision relative to the kept block,
+   the run is **refused** rather than returning an eigenvalue that would not
+   approximate the spin-resolved problem. A file whose
+   down-spin and cross-spin blocks are identically zero is ambiguous -- it may be
+   a legacy layout in which only the consumed block was ever populated, or a
+   fully polarized sector -- so it is refused unless it is
+   declared to be the former -- either by the file itself
+   (``chi_spin_blocks = "up_only"``) or, for files written before this check
+   existed and which therefore cannot carry a tag, by setting
+   ``[eliashberg] accept_up_block_only = true``.
+
+   The same setting also authorizes the **dressed Green's function** loader:
+   a ``green.npz`` whose spin blocks genuinely differ is otherwise refused
+   (the pair bubble is built from the up block only, so the discarded block
+   is real physics), and with ``accept_up_block_only = true`` it proceeds
+   with a warning. Unlike the legacy-layout case above, this is an
+   **uncontrolled approximation** -- the option authorizes discarding real
+   spin-resolved content, and the responsibility is the user's.
+
+
+What each mode accepts
+----------------------------
+
+Consolidated from the constraints the solvers actually enforce. Every cell below
+was checked by running the combination.
+
+``calc_scheme`` (FLEX)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 24 26
+
+   * -
+     - ``reduced``
+     - ``general``
+     - note
+   * - two-body range
+     - on-site and **off-site**
+     - on-site; off-site ``CoulombInter``, ``Hund``, ``Ising``
+       (Hartree vertex only, with or without sublattice folding)
+     - off-site ``Exchange`` / ``PairHop`` raise ``ValueError`` on the
+       general path; the exchange crossing of an off-site term is
+       omitted there (a warning says so)
+   * - spin structure
+     - spin-free, spin-diag, spinful
+     - **spin-free only**
+     - general raises for a polarized one-body Hamiltonian
+   * - ``enable_spin_orbital``
+     - accepted by FLEX
+     - rejected
+     - ``hwave_sc`` refuses the configuration outright (as of version 2.0); see
+       *Spin structure* below
+   * - susceptibility stored
+     - density-density only, ``chi_{(a,a),(b,b)}``
+     - full orbital-pair
+     - --
+
+``calc_type``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 24 50
+
+   * -
+     - ``ring`` (default)
+     - ``ring+ladder``
+   * - RPA
+     - every ``calc_scheme``
+     - ``calc_scheme = "general"`` only; adds ``chiq_pm``, leaves ``chiq`` untouched
+   * - FLEX
+     - every ``calc_scheme``
+     - **not supported on any scheme**
+
+For a paramagnetic system no susceptibility content is lost by omitting the
+separate transverse channel: SU(2) symmetry makes the transverse and
+longitudinal spin susceptibilities equal, and the ``3/2 * chi_s`` factor in the
+FLEX effective interaction is exactly the count of one longitudinal and two
+transverse components. (Running ``ring+ladder`` in RPA is not free -- it solves
+and stores an additional ``chiq_pm`` -- but it adds no information in the
+paramagnetic case.) The ladder channel becomes distinct only once the spins are
+split.
+
+Interactions reaching the Eliashberg vertex
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 34 36
+
+   * - susceptibility supplied
+     - ``CoulombIntra`` only
+     - with ``CoulombInter`` / ``Hund`` / ``Ising``
+   * - reduced
+     - exact
+     - approximate, and warned about: the off-density S/C blocks have no
+       susceptibility to dress them. ``Exchange``/``PairHop`` are
+       **rejected** instead (no density-diagonal vertex content at all)
+   * - general (four-index)
+     - exact
+     - exact
+
+``PairLift`` contributes ``S = C = 0`` to the particle-hole vertex and is inert
+on every route (ignored with a warning).
+
+
+Spin structure
+----------------------------
+
+The Eliashberg pairing vertex is **paramagnetic**: the Kuroki :math:`S`/:math:`C`
+matrices are :math:`n_\text{orb}^2`-sized and carry no spin index, and the
+singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
+a spin-polarized or spin-mixing model is therefore not a matter of
+configuration.
+
+``spin_mode`` below is **not an input parameter** -- there is no such key in the
+TOML file. It is determined internally from the Hamiltonian: from whether the
+transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
+from whether an external field is present. It is also **independent of**
+``calc_scheme``, which selects the orbital tensor rank rather than the spin
+structure; the one link between them is that ``calc_scheme = "general"`` FLEX
+accepts ``spin-free`` only and rejects the other two outright.
+
+
+- **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
+  FLEX susceptibility stores its two spin blocks bit-identically with zero
+  cross-spin blocks, so keeping only the spin-up block is exact.
+
+- **Spin-polarized without spin mixing** (``spin_mode = "spin-diag"``; e.g. an
+  ``Extern`` field with ``coeff_extern``) -- **refused.** Only the spin-up block
+  would survive the embedding, so the eigenvalue would not approximate the
+  spin-resolved problem at all; the loader raises rather than returning a
+  number. (Content at the floating-point round-off scale -- at or below
+  ``256 * eps`` relative to the kept block, about ``6e-14`` -- is reported as
+  round-off and
+  allowed through, so a backend rounding asymmetry cannot abort a genuinely
+  paramagnetic run.)
+
+- **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
+  whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
+  or even spin-free model can be written in this representation) --
+  **not supported.** ``hwave_sc`` rejects the configuration up front with
+  an explicit error, on both the static and the dynamic entry, and
+  ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
+  (as of version 2.0): before this guard, the internally computed :math:`\chi_0`
+  path ran to completion and printed eigenvalues built on inconsistent
+  index/orbital-count conventions -- a silently wrong result, not an
+  approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
+  files remains in the low-level loader for direct helper calls and
+  malformed input; it is no longer reachable through the guarded public
+  entries.)
+
+Supporting either spin-polarized case would require an
+:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
+gap function), together with the transverse susceptibility
+:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
+addition rather than a configuration change.
 
 
 Tips

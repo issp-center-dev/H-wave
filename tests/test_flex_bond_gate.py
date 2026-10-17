@@ -1,0 +1,795 @@
+"""The bond-resolved longitudinal channel inside the FLEX loop (spec
+2026-09-06, gates G0, G3, G4): the declared-zero reduction to standalone
+HF FLEX, the first-map static slice against the Phase A RPA gate, the
+refusal precedence tripwires, the output-path validation, the dedicated
+archive, IterationMax = 0, reuse/failure atomicity and the cond_min
+provenance."""
+import os
+import shutil
+import tempfile
+import unittest
+from unittest import mock
+
+import numpy as np
+
+import hwave.qlmsio.read_input_k as read_input_k
+
+_IN2 = "tests/rpa/input_2orb"
+_NMAT = 8
+_PAR = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+        "Nmat": _NMAT, "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12}
+
+
+def _reader(path, inter):
+    idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+    idict.update(inter)
+    return read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
+
+
+def _flex(param_extra=None, path=_IN2, inter=None, gate=True, hf=True, mixing="linear"):
+    import hwave.solver.flex as flex_mod
+    r = _reader(path, {"CoulombInter": "coulombinter.dat"} if inter is None else inter)
+    par = dict(_PAR, flex_hartree_fock=hf, longitudinal_bond_channels=gate, mixing_scheme=mixing)
+    par.update(param_extra or {})
+    par = {k: v for k, v in par.items() if v is not None}
+    info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"}
+    return flex_mod.FLEX(r.get_param("ham"), {}, info), r
+
+
+def _rpa(param_extra=None, path=_IN2, inter=None):
+    import hwave.solver.rpa as rpa_mod
+    r = _reader(path, {"CoulombInter": "coulombinter.dat"} if inter is None else inter)
+    par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+           "Nmat": _NMAT, "longitudinal_bond_channels": True}
+    par.update(param_extra or {})
+    par = {k: v for k, v in par.items() if v is not None}
+    info = {"mode": "RPA", "param": par, "enable_spin_orbital": False,
+            "calc_scheme": "general", "calc_type": "ring"}
+    return rpa_mod.RPA(r.get_param("ham"), {}, info), r
+
+
+def _zeroed_offsite_copy(dst):
+    """input_2orb with every off-site CoulombInter coefficient set to zero
+    (the shells stay declared)."""
+    for f in ("geom.dat", "transfer.dat"):
+        shutil.copy(os.path.join(_IN2, f), dst)
+    lines = open(os.path.join(_IN2, "coulombinter.dat")).read().splitlines()
+    out = lines[:4]
+    for ln in lines[4:]:
+        parts = ln.split()
+        if len(parts) >= 7 and any(int(x) != 0 for x in parts[:3]):
+            parts[5], parts[6] = "0.0", "0.0"
+        out.append("  ".join(parts))
+    with open(os.path.join(dst, "coulombinter.dat"), "w") as fw:
+        fw.write("\n".join(out) + "\n")
+
+
+def _collect(s, gi, out):
+    rec = []
+    s._iteration_hook = lambda d: rec.append(d)
+    s.solve(gi, out)
+    return rec
+
+
+class TestG0DeclaredZero(unittest.TestCase):
+
+    def test_g0_declared_zero_equals_standalone_hf(self):
+        """Gate on == gate off with every off-site coefficient zero.
+
+        Measured at the production default flex_second_order = "local" (both
+        sides build the exact local second order; the bond gate routes its
+        channel-0 block through the same kernel since spec 2026-09-08 D5).
+        tests/test_flex_second_order_bond.py pins the same property under
+        BOTH kernel values explicitly.
+        """
+        with tempfile.TemporaryDirectory() as inp, tempfile.TemporaryDirectory() as out:
+            _zeroed_offsite_copy(inp)
+            recs = {}
+            gis = {}
+            for gate in (True, False):
+                s, r = _flex(path=inp, gate=gate)
+                gi = r.get_param("green")
+                recs[gate] = _collect(s, gi, out)
+                gis[gate] = (s, gi)
+            self.assertEqual(len(recs[True]), len(recs[False]))
+            self.assertGreaterEqual(len(recs[True]), 2)
+            for a, b in zip(recs[True], recs[False]):
+                self.assertEqual(a["iteration"], b["iteration"])
+                self.assertAlmostEqual(a["mu"], b["mu"], delta=1e-12)
+                for k in ("static_new", "fluct_new", "chi0q", "chiq_s", "chiq_c"):
+                    np.testing.assert_allclose(a[k], b[k], rtol=0, atol=1e-12, err_msg=k)
+            sg, gg = gis[True]
+            sh, gh = gis[False]
+            for k in ("sigma", "sigma_static", "sigma_fluct", "green"):
+                np.testing.assert_allclose(gg[k], gh[k], rtol=0, atol=1e-12, err_msg=k)
+            self.assertAlmostEqual(gg["physics"]["mu"], gh["physics"]["mu"], delta=1e-12)
+            # gate-owned additions present only with the gate
+            self.assertIn("longitudinal_bond_chi_s", gg)
+            self.assertEqual(str(gg["longitudinal_bond_source"]), "last_map")
+            self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gh))
+
+
+class TestG3StaticSlice(unittest.TestCase):
+
+    def test_g3_static_slice_equals_phase_a(self):
+        with tempfile.TemporaryDirectory() as out:
+            rs, rr = _rpa({"mu": 0.3, "filling": None})
+            rgi = rr.get_param("green")
+            rs.solve(rgi, out)
+            fs, fr = _flex({"mu": 0.3, "filling": None, "IterationMax": 1})
+            fgi = fr.get_param("green")
+            rec = _collect(fs, fgi, out)
+        self.assertEqual(len(rec), 1)
+        d = rec[0]
+        np.testing.assert_allclose(d["bond_static_s"], rgi["longitudinal_bond_chi_s"], rtol=0, atol=1e-12)
+        np.testing.assert_allclose(d["bond_static_c"], rgi["longitudinal_bond_chi_c"], rtol=0, atol=1e-12)
+        np.testing.assert_allclose(d["chiq_s"][_NMAT // 2], rgi["longitudinal_bond_chiq_s_static"],
+                                   rtol=0, atol=1e-12)
+        np.testing.assert_allclose(d["chiq_c"][_NMAT // 2], rgi["longitudinal_bond_chiq_c_static"],
+                                   rtol=0, atol=1e-12)
+
+
+class TestRefusals(unittest.TestCase):
+
+    def _tripwired(self, s):
+        import hwave.solver.backend as bk
+        boom = mock.Mock(side_effect=RuntimeError("expensive step reached"))
+        patches = [mock.patch.object(type(s), n, boom) for n in
+                   ("_calc_epsilon_k", "_find_mu_dressed", "_calc_green", "_calc_chi0q")]
+        patches.append(mock.patch.object(bk, "get_backend", boom))
+        return patches
+
+    def _assert_refused(self, s, gi, needle):
+        patches = self._tripwired(s)
+        for p in patches:
+            p.start()
+        try:
+            with tempfile.TemporaryDirectory() as out:
+                with self.assertRaises(ValueError) as cm:
+                    s.solve(gi, out)
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertIn(needle, str(cm.exception))
+        self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
+
+    def test_refusal_precedence_tripwires(self):
+        # (6) off-site Exchange
+        s, r = _flex(inter={"CoulombInter": "coulombinter.dat", "Exchange": "coulombinter.dat"})
+        self._assert_refused(s, r.get_param("green"), "Exchange")
+        # (6) no declared off-site shell
+        s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
+        self._assert_refused(s, r.get_param("green"), "shell")
+        # (7) memory cap
+        s, r = _flex({"longitudinal_bond_memory_cap_gb": 1e-9})
+        self._assert_refused(s, r.get_param("green"), "GiB")
+        # (4) spin-mixing mean field
+        s, r = _flex()
+        gi = r.get_param("green")
+        nvol, norb = s.lattice.nvol, s.norb
+        tm = np.zeros((nvol, 2, norb, 2, norb), complex)
+        tm[:, 0, :, 1, :] = 0.1
+        gi["trans_mod"] = tm
+        self._assert_refused(s, gi, "spin")
+        # (5) split seed with a mean field (D15)
+        with tempfile.TemporaryDirectory() as out:
+            s0, r0 = _flex({"IterationMax": 1})
+            gi0 = r0.get_param("green")
+            s0.solve(gi0, out)
+            s0.save_results({"path_to_output": out, "sigma": "sigma.npz"}, gi0)
+            s, r = _flex()
+            gi = r.get_param("green")
+            gi.update(s.read_init({"path_to_input": out, "sigma_init": "sigma.npz"}))
+            gi["trans_mod"] = np.zeros((nvol, 2, norb, 2, norb), complex)
+            self._assert_refused(s, gi, "split")
+
+    def test_complex_offsite_coefficient_refused(self):
+        with tempfile.TemporaryDirectory() as inp:
+            for f in ("geom.dat", "transfer.dat"):
+                shutil.copy(os.path.join(_IN2, f), inp)
+            lines = open(os.path.join(_IN2, "coulombinter.dat")).read().splitlines()
+            out = lines[:4]
+            for ln in lines[4:]:
+                p = ln.split()
+                if p[:3] == ["0", "1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "0.2"
+                if p[:3] == ["0", "-1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "-0.2"
+                out.append("  ".join(p))
+            open(os.path.join(inp, "coulombinter.dat"), "w").write("\n".join(out) + "\n")
+            s, r = _flex(path=inp)
+            self._assert_refused(s, r.get_param("green"), "real")
+
+
+class TestOutputs(unittest.TestCase):
+
+    def test_output_paths_collision_refused_at_solve_entry_and_qlms(self):
+        from hwave.solver import flex_bond
+        with tempfile.TemporaryDirectory() as out:
+            paths = flex_bond.resolve_output_paths(
+                {"path_to_output": out, "chiq_s": "a", "sigma": "b.npz"}, out,
+                ("chiq_s", "chiq_c", "sigma"))
+            self.assertEqual(paths["chiq_s"], os.path.abspath(os.path.join(out, "a.npz")))
+            self.assertEqual(paths["chiq_c"], os.path.abspath(os.path.join(out, "chiq_c.npz")))
+            with self.assertRaises(ValueError) as cm:
+                flex_bond.resolve_output_paths({"chiq_s": "x", "sigma": "x.npz"}, out,
+                                               ("chiq_s", "sigma"))
+            self.assertIn("chiq_s", str(cm.exception))
+            self.assertIn("sigma", str(cm.exception))
+            s, r = _flex()
+            with self.assertRaises(ValueError):
+                s.validate_output_paths()          # no mapping stored, no argument
+            s.validate_output_paths({"path_to_output": out, "chiq_s": "x", "sigma": "y"})
+            with self.assertRaises(ValueError):
+                s.validate_output_paths({"path_to_output": out, "chiq_s": "x", "sigma": "x"})
+            # stored mapping -> solve entry refuses before any work
+            with mock.patch.object(type(s), "_calc_epsilon_k",
+                                   mock.Mock(side_effect=RuntimeError("reached"))):
+                with self.assertRaises(ValueError):
+                    s.solve(r.get_param("green"), out)
+            # the dedicated archive counts only when it will be written
+            s2, _ = _flex({"longitudinal_bond_output_full": True})
+            with self.assertRaises(ValueError):
+                s2.validate_output_paths({"path_to_output": out, "chiq_s": "longitudinal_bond"})
+            s3, _ = _flex()
+            s3.validate_output_paths({"path_to_output": out, "chiq_s": "longitudinal_bond"})
+            # qlms.run
+            import hwave.qlms as qlms
+            d = {"log": {"print_level": 1},
+                 "mode": {"mode": "FLEX", "calc_scheme": "general", "enable_spin_orbital": False,
+                          "param": dict(_PAR, flex_hartree_fock=True, longitudinal_bond_channels=True)},
+                 "file": {"input": {"path_to_input": _IN2,
+                                    "interaction": {"path_to_input": _IN2, "Geometry": "geom.dat",
+                                                    "Transfer": "transfer.dat",
+                                                    "CoulombInter": "coulombinter.dat"}},
+                          "output": {"path_to_output": out, "green": "same.npz", "sigma": "same"}}}
+            with mock.patch("hwave.solver.flex.FLEX.solve", side_effect=RuntimeError("reached")):
+                with self.assertRaises(ValueError):
+                    qlms.run(input_dict=d)
+
+    def test_dedicated_archive_schema_and_cross_output_consistency(self):
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _flex({"longitudinal_bond_output_full": True, "IterationMax": 2})
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "sigma": "sigma.npz", "green": "green.npz",
+                            "chi0q": "chi0q.npz"}, gi)
+            for f in ("longitudinal_bond.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz",
+                      "green.npz", "chi0q.npz"):
+                self.assertTrue(os.path.exists(os.path.join(out, f)), f)
+            b = np.load(os.path.join(out, "longitudinal_bond.npz"))
+            self.assertEqual(int(b["bond_archive_schema"]), 2)
+            self.assertEqual(str(b["freq_axis"]), "bosonic l -> 2l - nmat")
+            nvol, nd = s.lattice.nvol, s.norb ** 2
+            B = b["delta_r"].shape[0]
+            self.assertEqual(b["chi_s_w"].shape, (_NMAT, nvol, B * nd, B * nd))
+            self.assertEqual(b["chi_c_w"].shape, (_NMAT, nvol, B * nd, B * nd))
+            for k in ("beta", "T", "nmat", "cell_shape", "momentum_convention", "index_order",
+                      "reverse", "types", "longitudinal_bond_schema", "scf_converged",
+                      "payload_kind", "hf_density_error", "density_target_enforced",
+                      "longitudinal_bond_cond_min_s", "S_bond", "C_bond", "norb"):
+                self.assertIn(k, b.files, k)
+            self.assertEqual(int(b["norb"]), s.norb)
+            self.assertEqual(b["S_bond"].shape, (nvol, B * nd, B * nd))
+            self.assertEqual(b["C_bond"].shape, (nvol, B * nd, B * nd))
+            np.testing.assert_array_equal(b["S_bond"], s._bond_S)
+            np.testing.assert_array_equal(b["C_bond"], s._bond_C)
+            self.assertEqual(str(b["payload_kind"]), "last_map")
+            np.testing.assert_array_equal(b["chi_s_w"][_NMAT // 2], b["longitudinal_bond_chi_s"])
+            np.testing.assert_array_equal(b["chi_c_w"][_NMAT // 2], b["longitudinal_bond_chi_c"])
+            cs = np.load(os.path.join(out, "chiq_s.npz"))
+            self.assertIn("longitudinal_bond_chi_s", cs.files)
+            self.assertIn("longitudinal_bond_chi_c", cs.files)
+            self.assertEqual(str(cs["longitudinal_bond_source"]), "last_map")
+            self.assertNotIn("chi_s_w", cs.files)
+            np.testing.assert_array_equal(cs["longitudinal_bond_chi_s"], b["longitudinal_bond_chi_s"])
+            np.testing.assert_array_equal(cs["chiq_s"][_NMAT // 2].reshape(nvol, nd, nd),
+                                          b["longitudinal_bond_chi_s"][:, :nd, :nd])
+            sg = np.load(os.path.join(out, "sigma.npz"))
+            self.assertEqual(str(sg["sigma_convention"]), "split")
+            np.testing.assert_array_equal(sg["sigma"], sg["sigma_static"] + sg["sigma_fluct"])
+            self.assertEqual(str(sg["payload_kind"]), "final_state")
+            c0 = np.load(os.path.join(out, "chi0q.npz"))
+            self.assertEqual(str(c0["payload_kind"]), "last_map")
+            # combined chiq routing: static keys go to chiq, not chiq_s
+            s.save_results({"path_to_output": out, "chiq": "chiq.npz"}, gi)
+            cq = np.load(os.path.join(out, "chiq.npz"))
+            self.assertIn("longitudinal_bond_chi_s", cq.files)
+            cs2 = np.load(os.path.join(out, "chiq_s.npz"))
+            self.assertNotIn("longitudinal_bond_chi_s", cs2.files)
+
+    def test_provenance_members_stamped(self):
+        s, r = _flex()
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+            s.save_results({"path_to_output": out, "chiq": "chiq.npz", "sigma": "sigma.npz"}, gi)
+            z = np.load(os.path.join(out, "chiq.npz"))
+            self.assertEqual(str(z["longitudinal_bond_guard_freqs"]), "all")
+            self.assertEqual(str(z["longitudinal_bond_device"]), "numpy")
+            self.assertEqual(int(z["longitudinal_bond_nb"]), s._bond_nb)
+
+    def test_guard_mode_and_array_module_reach_the_kernels(self):
+        """The configured guard mode is WIRED, not just recorded.
+
+        The end-to-end equality above and the provenance member would both
+        survive a solver that hard-coded ``guard_freqs="all"`` (the two modes
+        agree whenever the guard passes, and the member is read off the
+        config). This wraps the two kernels the solver calls and reads the
+        arguments they actually received -- including the array module of the
+        transport, which is numpy on the CPU path.
+        """
+        import hwave.solver.flex_bond as flex_bond
+        for mode, expected in ((None, "all"), ("static", "static")):
+            with self.subTest(mode=mode):
+                s, r = _flex({} if mode is None else {"longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with mock.patch.object(flex_bond, "dress_and_build_w",
+                                       wraps=flex_bond.dress_and_build_w) as dress, \
+                        mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                          wraps=flex_bond.calc_self_energy_bond) as transport:
+                    with tempfile.TemporaryDirectory() as out:
+                        s.solve(gi, out)
+                self.assertEqual(dress.call_count, _PAR["IterationMax"])
+                self.assertEqual(transport.call_count, _PAR["IterationMax"])
+                for call in dress.call_args_list:
+                    self.assertEqual(call.kwargs["guard_freqs"], expected)
+                    # the device context, not the loose vertex arrays
+                    self.assertIs(call.args[1].xp, np)
+                for call in transport.call_args_list:
+                    self.assertIs(call.kwargs["xp"], np)
+
+    def test_static_guard_end_to_end_equals_all_when_the_guard_passes(self):
+        outs = {}
+        for mode in ("all", "static"):
+            s, r = _flex({"longitudinal_bond_guard_freqs": mode})
+            gi = r.get_param("green")
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+                outs[mode] = (np.array(gi["sigma"]), np.array(gi["longitudinal_bond_chi_s"]))
+        np.testing.assert_allclose(outs["static"][0], outs["all"][0], rtol=1e-12, atol=1e-14)
+        np.testing.assert_allclose(outs["static"][1], outs["all"][1], rtol=1e-12, atol=1e-14)
+
+    def test_iteration_max_zero_omits_last_map_archives(self):
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _flex({"IterationMax": 0, "longitudinal_bond_output_full": True})
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
+            s.validate_output_paths({"path_to_output": out, "chiq_s": "longitudinal_bond"})
+            s.save_results({"path_to_output": out, "sigma": "sigma.npz", "green": "green.npz",
+                            "chi0q": "chi0q.npz", "chiq": "chiq.npz"}, gi)
+            for f in ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "longitudinal_bond.npz"):
+                self.assertFalse(os.path.exists(os.path.join(out, f)), f)
+            sg = np.load(os.path.join(out, "sigma.npz"))
+            self.assertEqual(int(sg["scf_iterations"]), 0)
+            self.assertTrue(np.isnan(float(sg["scf_sigma_residual"])))
+
+    def test_reused_green_info_and_failure_atomicity(self):
+        from hwave.solver import flex_bond
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _flex({"IterationMax": 1})
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            self.assertIn("longitudinal_bond_chi_s", gi)
+            stores = []
+            real = flex_bond.BondBlockStore
+
+            def _spy(*a, **k):
+                st = real(*a, **k)
+                stores.append(st)
+                return st
+            with mock.patch.object(flex_bond, "BondBlockStore", _spy), \
+                    mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                      side_effect=RuntimeError("injected")):
+                with self.assertRaises(RuntimeError):
+                    s.solve(gi, out)
+            self.assertEqual(len(stores), 1)
+            self.assertTrue(stores[0].released)
+            self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
+            for k in ("sigma", "green", "chiq_s", "physics"):
+                self.assertNotIn(k, gi)
+            self.assertFalse(hasattr(s, "_bond_last"))
+            s.solve(gi, out)
+            self.assertIn("longitudinal_bond_chi_s", gi)
+            self.assertIn("sigma", gi)
+
+    def test_cond_min_provenance(self):
+        with tempfile.TemporaryDirectory() as out:
+            s, r = _flex({"IterationMax": 2})
+            gi = r.get_param("green")
+            s.solve(gi, out)
+        for ch in ("s", "c"):
+            v = float(gi["longitudinal_bond_cond_min_" + ch])
+            self.assertTrue(np.isfinite(v) and v > 0.0)
+            self.assertEqual(v, getattr(s._bond_last, "cond_min_" + ch))
+
+    def test_guard_method_provenance(self):
+        from hwave.solver import bond_channels as _bc
+        s, r = _flex({"IterationMax": 2})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        self.assertEqual(str(gi["longitudinal_bond_guard_method"]), "svd")
+        # the recorded value must come from the same resolver dress_batch
+        # used (issue #197 review), not a literal -- on this numpy solve
+        # that resolver still names "svd"
+        self.assertEqual(str(gi["longitudinal_bond_guard_method"]),
+                         _bc._resolve_guard_method("auto", np, np.complex128))
+        self.assertEqual(int(gi["longitudinal_bond_guard_blocks_per_iteration"]),
+                         int(gi["longitudinal_bond_guard_exact_blocks_max"]))
+        self.assertGreaterEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),
+                                int(gi["longitudinal_bond_guard_exact_blocks_max"]))
+        # two maps run at IterationMax = 2, and under "svd" every guarded
+        # block is decomposed exactly in every iteration (issue #197): the
+        # solve-wide total is exactly twice one iteration's count, pinning
+        # a running accumulation rather than a per-iteration reset
+        self.assertEqual(int(gi["longitudinal_bond_guard_exact_blocks_total"]),
+                         2 * int(gi["longitudinal_bond_guard_blocks_per_iteration"]))
+        self.assertEqual(int(gi["longitudinal_bond_guard_exact_blocks_max"]),
+                         int(gi["longitudinal_bond_guard_blocks_per_iteration"]))
+
+    def test_static_guard_mode_is_logged(self):
+        """``longitudinal_bond_guard_freqs = "static"`` narrows the
+        conditioning guard to the zero bosonic frequency; the solve must
+        say so once, and the default ("all") mode must say nothing about
+        it."""
+        s, r = _flex({"longitudinal_bond_guard_freqs": "static"})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                s.solve(gi, out)
+        static_records = [rec for rec in cm.output if "static" in rec and "cond_min" in rec]
+        self.assertEqual(len(static_records), 1, cm.output)
+
+        s2, r2 = _flex()
+        gi2 = r2.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm2:
+                s2.solve(gi2, out)
+        self.assertFalse(any("guard_freqs" in rec and "cond_min" in rec for rec in cm2.output))
+
+
+class TestFailureClearing(unittest.TestCase):
+
+    def test_caches_and_seed_are_dropped_on_every_failure(self):
+        from hwave.solver import flex_bond
+        attrs = ("_phase_b_seed", "_hf_tables", "_bond_topo", "_bond_split", "_bond_view",
+                 "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on", "_bond_est", "_bond_last")
+        with tempfile.TemporaryDirectory() as out:
+            # preflight failure (no declared shell)
+            s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
+            with self.assertRaises(ValueError):
+                s.solve(r.get_param("green"), out)
+            for a in attrs:
+                self.assertFalse(hasattr(s, a), a)
+            # mid-loop failure in the transport
+            s, r = _flex({"IterationMax": 2})
+            gi = r.get_param("green")
+            with mock.patch.object(flex_bond, "calc_self_energy_bond",
+                                   side_effect=RuntimeError("injected")):
+                with self.assertRaises(RuntimeError):
+                    s.solve(gi, out)
+            for a in attrs:
+                self.assertFalse(hasattr(s, a), a)
+            self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
+            # the seed is gone once the loop runs (a successful run)
+            s, r = _flex({"IterationMax": 1})
+            gi = r.get_param("green")
+            s.solve(gi, out)
+            self.assertFalse(hasattr(s, "_phase_b_seed"))
+            # a reused solver whose stored output mapping now collides: the
+            # solve-entry refusal clears the previous results too
+            s.validate_output_paths({"path_to_output": out, "sigma": "s"})
+            s._info_outputfile = {"path_to_output": out, "chiq_s": "same", "sigma": "same"}
+            with self.assertRaises(ValueError):
+                s.solve(gi, out)
+            for k in ("sigma", "sigma_static", "sigma_fluct", "green", "physics", "chi0q",
+                      "chiq_s", "chiq_c"):
+                self.assertNotIn(k, gi)
+            self.assertFalse(any(str(k).startswith(("longitudinal_bond_", "scf_")) for k in gi))
+            for a in attrs + ("sigma", "sigma_static", "sigma_fluct", "green_kw", "chi_s",
+                              "chi_c", "physics"):
+                self.assertFalse(hasattr(s, a), a)
+
+
+class TestDeviceAdmission(unittest.TestCase):
+    """The device half of the bond-gate admission (spec 4.6): it runs at the
+    entry of the Phase B solve, not in the host preflight, and it owns the
+    device table and the transfer-volume line."""
+
+    def test_host_preflight_stays_host_only(self):
+        """A CPU run logs the host table and nothing about a device."""
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        joined = "\n".join(cm.output)
+        self.assertIn("Bond-resolved FLEX preflight", joined)
+        self.assertNotIn("device table", joined)
+        self.assertNotIn("transfer volume", joined)
+
+    def test_admission_runs_before_the_device_context(self):
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        order = []
+        real_adm = s._bond_device_admission
+        real_init = flex_bond.BondDeviceContext.__init__
+        s._bond_device_admission = lambda xp: (order.append("admission"), real_adm(xp))[1]
+
+        def init(ctx_self, *a, **kw):
+            order.append("context")
+            real_init(ctx_self, *a, **kw)
+
+        with mock.patch.object(flex_bond.BondDeviceContext, "__init__", init):
+            with tempfile.TemporaryDirectory() as out:
+                s.solve(gi, out)
+        self.assertEqual(order, ["admission", "context"])
+
+    def test_admission_recomputes_the_estimate_and_logs(self):
+        """With a device backend the measured free memory is what selects the
+        batch: a reading that only admits nb = 1 must override the host
+        table's choice, and the device table and transfer volume are logged
+        there (where the backend is known), not in the preflight."""
+        import types
+        import hwave.solver.flex as flex_mod
+        import hwave.solver.flex_bond as flex_bond
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        nb_host = int(s._bond_nb)
+        self.assertGreater(nb_host, 1)
+        at1 = flex_bond.estimate_bond_memory(
+            device_available=2 ** 62, **dict(s._bond_est_kwargs, freq_batch=1))
+        rows = at1["device_rows"]
+        # "guard" (issue #197) is incremental to "dressing", not a phase row
+        # of its own: added into the dressing side of the max, not summed
+        # in with the persistent rows
+        phases = ("bubble", "dressing", "transport")
+        need1 = 1.25 * (sum(v for k, v in rows.items() if k not in phases and k != "guard")
+                        + max(rows["bubble"], rows["dressing"] + rows["guard"], rows["transport"]))
+        avail = int(need1 * 1.001 / 0.9)
+        fake_xp = types.SimpleNamespace(__name__="cupy")
+        with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: avail):
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s._bond_device_admission(fake_xp)
+        self.assertEqual(s._bond_nb, 1)
+        self.assertIn("device_rows", s._bond_est)
+        joined = "\n".join(cm.output)
+        self.assertIn("device table", joined)
+        self.assertIn("transfer volume", joined)
+
+    def test_admission_is_a_noop_on_the_numpy_backend(self):
+        import hwave.solver.flex as flex_mod
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        calls = []
+        with mock.patch.object(flex_mod._bk, "device_available_bytes",
+                               lambda: calls.append(1)):
+            s._bond_device_admission(np)
+        self.assertEqual(calls, [])
+
+    def test_transfer_volume_counts_the_static_slices_and_sigma(self):
+        """Every device -> host copy of one iteration is accounted for: the
+        bubble blocks, the W batches, the guard copies, the collapses, the
+        two static ND x ND slices and the returned self-energy."""
+        import hwave.solver.flex as flex_mod
+        for mode in ("all", "static"):
+            with self.subTest(guard=mode):
+                s, r = _flex({"IterationMax": 0, "longitudinal_bond_guard_freqs": mode})
+                gi = r.get_param("green")
+                with tempfile.TemporaryDirectory() as out:
+                    s.solve(gi, out)
+                est = s._bond_est
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    s._log_bond_transfer_volume(est)
+                line = [m for m in cm.output if "transfer volume" in m][0]
+                u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+                S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+                guard_all = mode == "all"
+                # the leading u is the bubble: B^2 blocks of Nmat nvol P^2 16,
+                # brought back one channel pair at a time (issue #196)
+                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                       + (0 if guard_all else 2 * S_b) + G_b)
+                gib = 1024.0 ** 3
+                self.assertIn("{:.4f}".format(d2h / gib), line)
+
+    def test_transfer_volume_does_not_count_a_green_function_copy(self):
+        """The bubble runs on the device, so the Green function no longer
+        crosses to the host once per map (issue #196): the reported D2H
+        must be the bubble-block figure, not that plus a G."""
+        s, r = _flex({"IterationMax": 0})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            s.solve(gi, out)
+        est = s._bond_est
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s._log_bond_transfer_volume(est)
+        line = [m for m in cm.output if "transfer volume" in m][0]
+        u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
+        S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
+        d2h = u + 3 * u + 3 * C_b + 2 * S_b + G_b
+        gib = 1024.0 ** 3
+        self.assertIn("{:.4f}".format(d2h / gib), line)
+        self.assertNotIn("{:.4f}".format((d2h + 2 * G_b) / gib), line)
+
+
+class TestDeviceContextFailure(unittest.TestCase):
+
+    def test_device_context_allocation_failure_is_diagnosed(self):
+        """An out-of-memory error while the vertex context is being built gets
+        the same named diagnostic as one inside the SCF loop, then propagates."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        def boom(*a, **kw):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 1})
+        gi = r.get_param("green")
+        # the solve builds its context through the factory (issue #198)
+        with mock.patch.object(backend, "oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond.BondDeviceContext, "for_view", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        self.assertTrue(any("device context" in m for m in cm.output), cm.output)
+
+    def test_bubble_allocation_failure_names_the_phase_and_releases(self):
+        """The bubble allocates on the device now (issue #196), so an
+        out-of-memory error there must reach the same per-iteration
+        diagnostic as the dressing and the transport -- naming the bubble
+        and the iteration -- and everything the map holds must be released
+        on the way out."""
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+
+        class _Oom(Exception):
+            pass
+
+        stores, contexts = [], []
+        real_store = flex_bond.BondBlockStore
+        real_ctx = flex_bond.BondDeviceContext
+
+        class _Store(real_store):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                stores.append(self)
+
+        class _Ctx(real_ctx):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self)
+
+        def boom(*a, **k):
+            raise _Oom("out of memory")
+
+        s, r = _flex({"IterationMax": 2})
+        gi = r.get_param("green")
+        with mock.patch.object(backend, "oom_error_types", lambda: (_Oom,)), \
+                mock.patch.object(flex_bond, "BondBlockStore", _Store), \
+                mock.patch.object(flex_bond, "BondDeviceContext", _Ctx), \
+                mock.patch.object(flex_bond, "assemble_bubble", boom):
+            with self.assertLogs("hwave.solver.flex", level="ERROR") as cm:
+                with tempfile.TemporaryDirectory() as out:
+                    with self.assertRaises(_Oom):
+                        s.solve(gi, out)
+        line = [m for m in cm.output if "bond-gate device allocation failed" in m]
+        self.assertEqual(len(line), 1, cm.output)
+        self.assertIn("bubble", line[0])
+        self.assertIn("iteration 1", line[0])
+        self.assertEqual(len(stores), 1)
+        self.assertTrue(stores[0].released)
+        self.assertEqual(len(contexts), 1)
+        self.assertTrue(contexts[0].released)
+
+
+class TestBubbleRunsOnTheSolverBackend(unittest.TestCase):
+    """Issue #196: the bond bubble is assembled on whatever array module
+    the SCF loop is already on. On the numpy backend every transfer is
+    the identity, so what is observable here is the ABSENCE of the
+    per-iteration host copy of the Green function, the tail coming from
+    the solve-scoped device context, and the one provenance log line."""
+
+    def _run(self, iterations=2):
+        import hwave.solver.backend as backend
+        import hwave.solver.flex_bond as flex_bond
+        # the arrays themselves, not their ids: a freed array's id can be
+        # handed straight to the next allocation, which would make an
+        # identity test by id silently wrong
+        seen_green, seen_tail, copied, contexts = [], [], [], []
+        real_assemble = flex_bond.assemble_bubble
+        real_to_host = backend.to_host
+        real_ctx = flex_bond.BondDeviceContext
+
+        def _assemble(store, green_scf, green0_tail, *a, **k):
+            seen_green.append(green_scf)
+            seen_tail.append(green0_tail)
+            return real_assemble(store, green_scf, green0_tail, *a, **k)
+
+        def _to_host(arr):
+            copied.append(arr)
+            return real_to_host(arr)
+
+        class _ctx(real_ctx):
+            # a subclass rather than a wrapper function: the context looks
+            # its own _NAMES up by module-global name
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                contexts.append(self.green0_tail)
+
+        # coeff_tail != 0 so that green_scf is a distinct object from
+        # green_kw (which the convergence check does copy to the host)
+        s, r = _flex({"coeff_tail": 1.0, "IterationMax": iterations})
+        gi = r.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            with mock.patch.object(flex_bond, "assemble_bubble", _assemble), \
+                    mock.patch.object(flex_bond, "BondDeviceContext", _ctx), \
+                    mock.patch.object(backend, "to_host", _to_host), \
+                    self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s.solve(gi, out)
+        return s, seen_green, seen_tail, copied, contexts, cm.output
+
+    def test_green_function_is_not_copied_to_the_host_for_the_bubble(self):
+        s, seen_green, _, copied, _, _ = self._run()
+        self.assertEqual(len(seen_green), 2)
+        for green in seen_green:
+            self.assertFalse(any(c is green for c in copied))
+
+    def test_tail_comes_from_the_device_context(self):
+        s, _, seen_tail, _, contexts, _ = self._run()
+        self.assertIsNotNone(s.green0_tail)
+        self.assertEqual(len(contexts), 1)
+        # numpy: BondDeviceContext hands the host array straight back
+        self.assertIs(contexts[0], s.green0_tail)
+        for tail in seen_tail:
+            self.assertIs(tail, contexts[0])
+
+    def test_the_bubble_module_is_logged_once_per_solve(self):
+        _, _, _, _, _, records = self._run()
+        hits = [m for m in records if "bond bubble on" in m]
+        self.assertEqual(len(hits), 1, records)
+        self.assertIn("numpy", hits[0])
+
+
+class TestStandaloneHFAdmissibility(unittest.TestCase):
+
+    def test_complex_offsite_coefficient_and_offsite_exchange_refused_at_preflight(self):
+        with tempfile.TemporaryDirectory() as inp:
+            for f in ("geom.dat", "transfer.dat"):
+                shutil.copy(os.path.join(_IN2, f), inp)
+            lines = open(os.path.join(_IN2, "coulombinter.dat")).read().splitlines()
+            out = lines[:4]
+            for ln in lines[4:]:
+                p = ln.split()
+                if p[:3] == ["0", "1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "0.2"
+                if p[:3] == ["0", "-1", "0"] and p[3:5] == ["1", "1"]:
+                    p[6] = "-0.2"
+                out.append("  ".join(p))
+            open(os.path.join(inp, "pairlift.dat"), "w").write("\n".join(out).replace("CoulombInter", "PairLift") + "\n")
+            open(os.path.join(inp, "coulombinter.dat"), "w").write("\n".join(out) + "\n")
+            shutil.copy(os.path.join(_IN2, "coulombinter.dat"), os.path.join(inp, "coulombinter_real.dat"))
+            boom = mock.Mock(side_effect=RuntimeError("expensive step reached"))
+            for inter in ({"CoulombInter": "coulombinter.dat"},
+                          {"CoulombInter": "coulombinter_real.dat", "PairLift": "pairlift.dat"},
+                          {"Exchange": "coulombinter_real.dat"}):
+                s, r = _flex(path=inp, inter=inter, gate=False)
+                with mock.patch.object(type(s), "_calc_epsilon_k", boom), \
+                        tempfile.TemporaryDirectory() as o:
+                    with self.assertRaises(ValueError) as cm:
+                        s.solve(r.get_param("green"), o)
+                self.assertIn("flex_hartree_fock", str(cm.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()

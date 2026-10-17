@@ -654,24 +654,20 @@ class TestFLEXEliashberg(unittest.TestCase):
         return inter_k
 
     def _flex_chi_to_eliashberg(self, chi_s, chi_c, norb, nd, Nmat, Nx, Ny, Nz):
-        """Convert FLEX susceptibilities to Eliashberg format."""
+        """Convert FLEX susceptibilities to Eliashberg format.
+
+        Delegates to the production expansion rather than mirroring it. The
+        mirror previously used the delta_{l2,l4} scatter kron(X, I_norb); its
+        callers are single-orbital, where that coincides with the correct
+        density-pair placement, so it silently survived the fix and would have
+        validated the wrong layout the moment a multi-orbital caller appeared.
+        """
+        import hwave.sc as sc
         center = Nmat // 2
-        nd_eli = norb * norb
-
-        chi_s_static = chi_s[center].reshape(Nx, Ny, Nz, nd, nd)
-        chi_c_static = chi_c[center].reshape(Nx, Ny, Nz, nd, nd)
-
-        # Extract orbital block (spin-up diagonal)
-        chis_orb = chi_s_static[:, :, :, :norb, :norb]
-        chic_orb = chi_c_static[:, :, :, :norb, :norb]
-
-        # Expand to norb^2 x norb^2 Eliashberg format
-        chis_eli = np.zeros((Nx, Ny, Nz, nd_eli, nd_eli), dtype=complex)
-        chic_eli = np.zeros((Nx, Ny, Nz, nd_eli, nd_eli), dtype=complex)
-        for l2 in range(norb):
-            chis_eli[:, :, :, l2::norb, l2::norb] = chis_orb
-            chic_eli[:, :, :, l2::norb, l2::norb] = chic_orb
-
+        chis_eli = sc._expand_flex_chi(chi_s[center:center + 1], norb,
+                                       Nx, Ny, Nz, "kuroki")[0]
+        chic_eli = sc._expand_flex_chi(chi_c[center:center + 1], norb,
+                                       Nx, Ny, Nz, "kuroki")[0]
         return chis_eli, chic_eli
 
     def test_flex_eliashberg_vertex_construction(self):

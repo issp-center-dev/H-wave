@@ -44,7 +44,7 @@ They are classified into two categories, and written in Wannier90 format.
     
     **Ising**
       corresponds to the interaction denoted by
-      :math:`S_i^z S_j^z`.
+      :math:`(n_{i\uparrow}-n_{i\downarrow})(n_{j\uparrow}-n_{j\downarrow})`.
 
     **Exchange**
       corresponds to the interaction denoted by

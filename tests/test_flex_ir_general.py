@@ -4,8 +4,17 @@ Mirrors tests/test_flex_ir.py but for calc_scheme='general' on a norb=2
 ON-SITE fixture. Equivalence is convergence of the uniform result toward the
 IR result as Nmat grows (the uniform path carries the O(beta/Nmat) artifact).
 Run from the repository root.
+
+One test here compares against a SECOND source tree at
+tests/test_flex_second_order_compat.DEVELOP_COMMIT. CI provisions that
+reference revision (a detached worktree under RUNNER_TEMP; see
+.github/workflows/ci-python39.yml) and sets
+HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so the comparison RUNS there and a
+missing or unusable reference fails rather than skips. Locally it skips
+with a reason when no such checkout is at hand.
 """
 import os
+import unittest
 
 import numpy as np
 import pytest
@@ -84,35 +93,53 @@ def test_grev_index_map_tau_flip_only_spatial_roll_flip():
     np.testing.assert_allclose(ref, out, atol=1e-12)
 
 
-def test_chi0_general_gate_ir_matches_uniform_large_nmat():
+class TestChi0GeneralGateIrMatchesUniformLargeNmat(unittest.TestCase):
     """GATE: the general IR-native chi0 (rank-6) must agree with the uniform
-    general chi0 at large Nmat, compressed onto the same bosonic nodes."""
-    from hwave.solver import eliashberg_dynamic as ed
-    T = 2.0
-    beta = 1.0 / T
-    diffs = []
-    for nmat in (256, 1024):
-        s, gi = _make_general_solver(nmat, "ir", T=T)
-        s._calc_epsilon_k(gi)
-        s._ir_setup(beta)
-        axB = s._ir_axB
-        g_nodes, _ = s._calc_green_ir(beta, 0.0)
-        chi0_ir = s._calc_chi0q_general_ir(g_nodes, beta)[0]      # strip block
+    general chi0 at large Nmat, compressed onto the same bosonic nodes.
 
-        su, giu = _make_general_solver(nmat, "uniform", T=T)
-        su._calc_epsilon_k(giu)
-        gu, gtail = su._calc_green(beta, 0.0)
-        chi0_u = su._calc_chi0q(gu, gtail, beta)[0]               # rank-6 (l,r,a,c,b,d)
-        chi0_u_nodes = ed._ir_compress(
-            np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u_gen",
-            drop_constant=True)
-        chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+    Collection-mechanics conversion only (unified-bubble-kernel spec,
+    Task 11 -- the general counterpart of
+    ``tests/test_flex_ir.py``'s ``TestChi0GateIrMatchesUniformLargeNmat``):
+    this was a module-level pytest function
+    (``test_chi0_general_gate_ir_matches_uniform_large_nmat``), invisible
+    to the gating runner (``python -m unittest discover -s tests`` only
+    collects ``unittest.TestCase`` methods). Wrapped in a ``TestCase`` here
+    with its body, tolerances, and fixtures UNCHANGED -- this module stays
+    pytest-style everywhere else."""
 
-        scale = np.abs(chi0_u_nodes).max()
-        diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
-    assert diffs[-1] < 1e-2, "general chi0 gate failed: {}".format(diffs)
-    assert diffs[-1] < 0.6 * diffs[0], \
-        "no Nmat convergence toward IR chi0: {}".format(diffs)
+    @classmethod
+    def setUpClass(cls):
+        if not _HAVE_SPARSE_IR:
+            raise unittest.SkipTest("sparse-ir not installed")
+
+    def test_chi0_general_gate_ir_matches_uniform_large_nmat(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        T = 2.0
+        beta = 1.0 / T
+        diffs = []
+        for nmat in (256, 1024):
+            s, gi = _make_general_solver(nmat, "ir", T=T)
+            s._calc_epsilon_k(gi)
+            s._ir_setup(beta)
+            axB = s._ir_axB
+            g_nodes, _ = s._calc_green_ir(beta, 0.0)
+            chi0_ir = s._calc_chi0q_general_ir(g_nodes, beta)[0]      # strip block
+
+            su, giu = _make_general_solver(nmat, "uniform", T=T)
+            su._calc_epsilon_k(giu)
+            gu, gtail = su._calc_green(beta, 0.0)
+            chi0_u = su._calc_chi0q(gu, gtail, beta)[0]               # rank-6 (l,r,a,c,b,d)
+            chi0_u_nodes = ed._ir_compress(
+                np.moveaxis(chi0_u, 0, -1), axB, nmat, "chi0_u_gen",
+                drop_constant=True)
+            chi0_u_nodes = np.moveaxis(chi0_u_nodes, -1, 0)
+
+            scale = np.abs(chi0_u_nodes).max()
+            diffs.append(np.abs(chi0_ir - chi0_u_nodes).max() / scale)
+        self.assertTrue(diffs[-1] < 1e-2,
+                        "general chi0 gate failed: {}".format(diffs))
+        self.assertTrue(diffs[-1] < 0.6 * diffs[0],
+                        "no Nmat convergence toward IR chi0: {}".format(diffs))
 
 
 def test_chi0_general_ir_orbital_covariance():
@@ -361,11 +388,16 @@ def test_coeff_tail_uniform_converges_toward_ir_as_nmat_grows():
         a = np.moveaxis(ed._ir_compress(
             np.moveaxis(su.sigma, 1, -1), axF, nmat, "u"), -1, 1)
         diffs.append(np.abs(a - sig_ir_nodes).max() / scale)
-    # Measured (2026-07-21): diffs ~= [8.1e-3, 4.1e-3, 2.4e-3] -- monotone,
-    # roughly halving as Nmat doubles (O(1/Nmat) truncation error).
-    assert diffs[0] > diffs[1] > diffs[2], \
-        "no monotone Nmat convergence with coeff_tail on: {}".format(diffs)
-    assert diffs[-1] < 1e-2, diffs
+    # Measured (2026-07-21, pre-#134): diffs ~= [8.1e-3, 4.1e-3, 2.4e-3]
+    # -- monotone O(1/Nmat). Since the #134 endpoint fix the uniform path
+    # converges at O(1/Nmat^2) and drops BELOW the IR reference's own
+    # accuracy (measured post-fix: ~[4.5e-4, 2.3e-4, 7.0e-4]); strict
+    # monotonicity is then no longer meaningful -- the difference floors
+    # at the reference bias -- so pin the agreement scale instead, an
+    # order tighter than the pre-fix worst point.
+    assert max(diffs) < 1.5e-3, \
+        "uniform-vs-IR disagreement too large with coeff_tail on: " \
+        "{}".format(diffs)
 
 
 def test_dispatch_routes_general_uniform_and_ir(monkeypatch):
@@ -542,6 +574,105 @@ def test_general_ir_gpu_matches_cpu():
         np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-8)
 
 
+def _make_offsite_general_solver(nmat, matsubara_basis, iteration_max=3, T=1.0):
+    """A general-scheme FLEX solver on the 2-orbital ON-SITE (U, U', Hund)
+    plus OFF-SITE (V) fixture under ``flex_second_order = "local"``.
+
+    ``_make_general_solver``'s fixture is on-site only, so its factor pack
+    carries no ``vpair`` and the off-site half of the kernel never runs.
+    This one does -- it is the fixture ``tests/test_flex_gpu.py`` uses for
+    the same reason -- which is what makes the operand checks below cover
+    the off-site vertex."""
+    import shutil
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    from tests.test_flex_second_order_scf import _write_inputs
+    d = tempfile.mkdtemp(prefix="hwave_ir_so_offsite_")
+    try:
+        idict = _write_inputs(d)
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        param = {'T': T, 'filling': 0.5, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                 'Nmat': nmat, 'IterationMax': iteration_max, 'Mix': 0.5, 'EPS': 8,
+                 'flex_second_order': 'local', 'matsubara_basis': matsubara_basis}
+        info_mode = {'mode': 'FLEX', 'param': param, 'enable_spin_orbital': False,
+                     'calc_scheme': 'general'}
+        return solver_flex.FLEX(r.get_param("ham"), {}, info_mode), r.get_param("green")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _run_ir_local_with_operand_check(expect_module, gpu, monkeypatch, nmat=64):
+    """Solve the IR-node off-site ``"local"`` case with the operand-checking
+    wrapper of ``tests/test_flex_gpu.py`` in place; returns the solver.
+
+    The wrapper is shared rather than reimplemented: it already asserts the
+    backend of every operand -- the output view, the bubble batch, both
+    factor matrices of every spin triple, the off-site ``vpair`` and both
+    lent scratch buffers -- and its host spelling is what lets the same
+    logic be exercised on a machine with no CUDA device."""
+    import hwave.solver.second_order as so_mod
+    from tests.test_flex_gpu import _operand_checking_accumulate_batch
+    seen = {"calls": 0}
+    s, gi = _make_offsite_general_solver(nmat, "ir")
+    assert s.use_ir
+    assert s._second_order_factors is not None
+    assert s._second_order_factors.vpair is not None     # the off-site half runs
+    s.use_gpu = gpu
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch(expect_module, seen))
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s.solve(gi, 'tests/flex/output')
+    assert seen["calls"] > 0, "accumulate_batch was never called on the IR path"
+    return s
+
+
+def test_second_order_local_ir_operands_follow_the_backend_cpu(monkeypatch):
+    """Host twin of the GPU case below, and the only one that can run on a
+    machine without CUDA: on the IR path with an OFF-SITE factor pack, every
+    operand of every ``accumulate_batch`` call is a host array, and the
+    wrapper really does reach the call site (a device expectation on the
+    same host run fails on the first operand)."""
+    import hwave.solver.second_order as so_mod
+    from tests.test_flex_gpu import _operand_checking_accumulate_batch
+    s = _run_ir_local_with_operand_check("numpy", False, monkeypatch)
+    assert s.flex_second_order == "local"
+    assert np.abs(s.sigma).max() > 1e-6                  # anti-vacuity
+    seen = {"calls": 0}
+    monkeypatch.setattr(so_mod, "accumulate_batch",
+                        _operand_checking_accumulate_batch("cupy", seen))
+    s2, gi2 = _make_offsite_general_solver(64, "ir")
+    with pytest.raises(AssertionError, match="expected cupy"):
+        s2.solve(gi2, 'tests/flex/output')
+    assert seen["calls"] == 0
+
+
+def test_second_order_local_ir_gpu_matches_cpu(monkeypatch):
+    """``flex_second_order = "local"`` on the IR nodes WITH off-site factors,
+    on a real CUDA device: the self-energy reproduces the CPU run to fp64
+    round-off, and every kernel operand -- the off-site ``vpair`` included --
+    is a device array.
+
+    ``tests/test_flex_gpu.py`` covers the same contract on the uniform grid;
+    the IR path builds and consumes its effective interaction through a
+    different transport, so the device residency of the factor pack is not
+    implied by that case."""
+    cupy = pytest.importorskip("cupy")
+    try:
+        cupy.zeros(1)
+    except Exception:
+        pytest.skip("cupy installed but no usable CUDA device")
+    s_c, gi_c = _make_offsite_general_solver(64, "ir")
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_c.solve(gi_c, 'tests/flex/output')
+    s_g = _run_ir_local_with_operand_check("cupy", True, monkeypatch)
+    assert isinstance(s_g.sigma, np.ndarray), "solver.sigma must be a host array"
+    scale = np.abs(s_c.sigma).max()
+    assert scale > 1e-6                                  # anti-vacuity
+    np.testing.assert_allclose(s_g.sigma, s_c.sigma, rtol=0, atol=1e-10 * scale,
+                               err_msg="gpu/cpu sigma mismatch on the IR local kernel")
+
+
 def test_general_ir_chi0_dtype_is_complex128():
     T = 2.0
     beta = 1.0 / T
@@ -573,3 +704,270 @@ def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
                   "mode": {}}
     with pytest.raises(ValueError, match="write_densified"):
         sc._load_chi0q(input_dict)
+
+
+# --- #181 follow-up: the second-order kernel on the IR path ---------------
+# tests/test_flex_second_order_compat.py pins the two kernels against each
+# other (and "takimoto" against develop) on the UNIFORM grid. The two cases
+# below carry that contract onto the IR path: the exact local kernel must be
+# a property of the interaction, not of the Matsubara representation, and
+# "takimoto" must still be develop's code path there.
+
+_IR_ARCHIVE_RUN = r'''
+import json, os, sys
+import hwave.qlmsio.read_input_k as read_input_k
+import hwave.solver.flex as flex_mod
+path, out, so = sys.argv[1:4]
+idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+         "CoulombIntra": "coulombintra.dat", "CoulombInter": "coulombinter.dat"}
+r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
+par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 256,
+       "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir",
+       # Pin ir_wmax on BOTH revisions so the IR basis is identical: issue #184
+       # changed the FLEX auto ir_wmax default (mu-aware), so leaving it out
+       # would compare two different bases rather than the takimoto kernel this
+       # test is about (the reference revision's auto value is the old one).
+       "ir_wmax": 20.0}
+if so != "absent":
+    par["flex_second_order"] = so
+s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
+                                            "enable_spin_orbital": False, "calc_scheme": "general"})
+gi = r.get_param("green")
+s.solve(gi, out)
+s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq", "sigma": "sigma",
+                "green": "green", "energy": "energy.dat"}, gi)
+'''
+
+
+def _develop_checkout():
+    """``(path, None)`` when the reference checkout is usable, ``(None,
+    reason)`` otherwise -- one shared rule with the uniform-grid harness
+    (:func:`tests.test_flex_second_order_compat.develop_checkout`), which
+    also pins the REVISION it compares against, refuses a dirty tree, and
+    RAISES instead of returning a reason when the comparison is declared
+    mandatory (``HWAVE_REQUIRE_DEVELOP_COMPARISON``, which CI sets)."""
+    from tests.test_flex_second_order_compat import develop_checkout
+    return develop_checkout()
+
+
+def test_second_order_local_ir_matches_uniform_onsite_uprime():
+    """``flex_second_order = "local"`` on the on-site U + U' fixture: the IR
+    run and the uniform run must agree at this module's e2e tolerance.
+
+    The recipe is ``test_e2e_general_flex_ir_vs_uniform`` above with the
+    kernel requested explicitly. The fixture's on-site inter-orbital
+    CoulombInter (U' = 1, written by ``_write_2d_2orb_onsite_fixture``) is
+    what makes the case non-trivial: with CoulombIntra alone the local
+    kernel reduces to the legacy assembly identically (spec section 3), so
+    the anti-vacuity leg below -- the same uniform run under ``"takimoto"``
+    landing on a visibly different sigma -- would be empty.
+
+    Cost: three converged ``Nmat = 1024`` solves, 5.1 s measured on its own.
+    That is at the opt-in threshold of ``tests/heavy_tests.py`` rather than
+    over it, and the registry is keyed by ``(module, class, method)`` -- it
+    cannot name a module-level pytest function -- so this case stays in the
+    fast gate, with the measurement recorded here.
+    """
+    T = 2.0
+    local = {'flex_second_order': 'local'}
+    s_ir, gi_ir = _make_general_solver(1024, "ir", T=T, iteration_max=60,
+                                       extra_param=local)
+    os.makedirs('tests/flex/output', exist_ok=True)
+    s_ir.solve(gi_ir, 'tests/flex/output')
+    s_u, gi_u = _make_general_solver(1024, "uniform", T=T, iteration_max=60,
+                                     extra_param=local)
+    s_u.solve(gi_u, 'tests/flex/output')
+    for s in (s_ir, s_u):
+        # the requested kernel is the one that ran
+        assert s.flex_second_order == "local"
+        assert s._second_order_factors is not None
+    _assert_converged(s_ir)
+    _assert_converged(s_u)
+    for key in ("sigma", "chi_s", "chi_c"):
+        a = getattr(s_ir, key)
+        b = getattr(s_u, key)
+        scale = np.abs(b).max()
+        assert np.abs(a - b).max() / scale < 3e-2, key
+    # anti-vacuity: the local kernel is not the legacy one on this fixture
+    s_t, gi_t = _make_general_solver(1024, "uniform", T=T, iteration_max=60,
+                                     extra_param={'flex_second_order': 'takimoto'})
+    s_t.solve(gi_t, 'tests/flex/output')
+    _assert_converged(s_t)
+    gap = np.abs(s_u.sigma - s_t.sigma).max() / np.abs(s_t.sigma).max()
+    assert gap > 1e-3, "local and takimoto agree on this fixture ({}); the " \
+                       "IR parity case would be vacuous".format(gap)
+
+
+def test_second_order_takimoto_ir_numerically_identical_to_develop():
+    """``"takimoto"`` on the IR path is still the reference revision's code
+    path: every numerical archive member of a general+IR run with the key
+    set to ``"takimoto"`` is ``np.array_equal`` to the same run, same key,
+    on the reference source tree.
+
+    The fixture is ON-SITE only (``_write_2d_2orb_onsite_fixture``), so the
+    interaction-row orientation change (issue #193) does not reach it: the
+    identity is expected to hold unchanged. The uniform-grid half of this
+    contract, including the off-site fixture and the paths that DID move,
+    lives in ``tests/test_flex_second_order_compat.py``; this is its IR
+    twin, run through the same subprocess harness (the reference revision
+    is a second source tree, so it can only be exercised out of
+    process)."""
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    from tests.test_flex_general import _write_2d_2orb_onsite_fixture
+    from tests.test_flex_second_order_compat import _members, reference_subprocess_env
+    dev, why = _develop_checkout()
+    if dev is None:
+        pytest.skip(why)
+    here = os.getcwd()
+    fixture = tempfile.mkdtemp(prefix="hwave_ir_so_fixture_")
+    a = tempfile.mkdtemp(prefix="hwave_ir_so_dev_")
+    b = tempfile.mkdtemp(prefix="hwave_ir_so_here_")
+    try:
+        _write_2d_2orb_onsite_fixture(fixture)
+        # "takimoto" on BOTH sides: the reference revision is the merge that
+        # added flex_second_order and defaults it to "local", so leaving the
+        # key out there would compare two different kernels rather than two
+        # revisions (see tests/test_flex_second_order_compat.DEVELOP_COMMIT)
+        for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
+            if checkout == here:
+                # this tree's own run: keep it measured
+                env = dict(os.environ,
+                           PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            else:
+                env = reference_subprocess_env(checkout)
+            subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
+                           env=env, check=True, capture_output=True, cwd=checkout)
+        ma, mb = _members(a), _members(b)
+        compared = 0
+        for f in ma:
+            for k, v in ma[f].items():
+                assert k in mb[f], (f, k)
+                # "b" too: boolean members such as density_target_enforced
+                # are part of the archive and must not drift either
+                if np.asarray(v).dtype.kind in "fciub":
+                    np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
+                                                  err_msg=str((f, k)))
+                    compared += 1
+        assert compared > 10, compared            # anti-vacuity: members really compared
+        assert np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max() > 1e-6
+    finally:
+        for d in (fixture, a, b):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+# --- issue #184: one mu-aware ir_wmax estimator for FLEX and Eliashberg ------
+
+def _write_1orb_offset_fixture(dirpath, e0=5.0, t=1.0, U=4.0):
+    """A 1-orbital 1D-dispersion fixture with an ON-SITE energy offset e0.
+
+    eps(k) = e0 - 2 t cos(kx): band [e0-2t, e0+2t], centred at e0. The offset
+    shifts the band far from zero WITHOUT widening it -- exactly the case the
+    pre-#184 FLEX estimator (2*max|eps|) double-counted.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "1\n"
+            "    0.000000000000000e+00     0.000000000000000e+00"
+            "     0.000000000000000e+00\n")
+    transfer = ("Transfer in wannier90-like format for uhfk\n"
+                "1\n3\n 1 1 1\n"
+                "   0    0    0    1    1   {:.12f}   0.000000000000\n"
+                "   1    0    0    1    1   {:.12f}   0.000000000000\n"
+                "  -1    0    0    1    1   {:.12f}   0.000000000000\n"
+                ).format(e0, -t, -t)
+    coulombintra = ("CoulombIntra in wannier90-like format for uhfk\n"
+                    "1\n1\n 1\n"
+                    "   0    0    0    1    1   {:.12f}   0.000000000000\n"
+                    ).format(U)
+    with open(os.path.join(dirpath, "geom.dat"), "w") as f:
+        f.write(geom)
+    with open(os.path.join(dirpath, "transfer.dat"), "w") as f:
+        f.write(transfer)
+    with open(os.path.join(dirpath, "coulombintra.dat"), "w") as f:
+        f.write(coulombintra)
+
+
+def _make_1orb_offset_solver(e0=5.0, t=1.0, U=4.0, T=2.0, mu=5.0, filling=None):
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    dirpath = os.path.join(tempfile.gettempdir(), "hwave_flex_1orb_offset")
+    _write_1orb_offset_fixture(dirpath, e0=e0, t=t, U=U)
+    info_input = {'path_to_input': dirpath, 'interaction': {
+        'path_to_input': dirpath, 'Geometry': 'geom.dat',
+        'Transfer': 'transfer.dat', 'CoulombIntra': 'coulombintra.dat'}}
+    ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+    param = {'T': T, 'CellShape': [8, 1, 1], 'SubShape': [1, 1, 1],
+             'Nmat': 64, 'IterationMax': 2, 'Mix': 0.3, 'EPS': 8,
+             'matsubara_basis': 'ir'}
+    if filling is None:
+        param['mu'] = mu
+    else:
+        param['filling'] = filling
+    info_mode = {'mode': 'FLEX', 'param': param, 'calc_scheme': 'general'}
+    gi = read_input_k.QLMSkInput(info_input).get_param("green")
+    solver = solver_flex.FLEX(ham, {}, info_mode)
+    return solver, gi
+
+
+def _flex_auto_wmax(solver, gi):
+    solver._calc_epsilon_k(gi)
+    beta = 1.0 / solver.T
+    solver._ir_setup(beta)
+    return solver._ir_axF.wmax
+
+
+def test_flex_and_eliashberg_ir_wmax_agree_with_onsite_offset():
+    """Anti-regression for #184: the FLEX and dynamic-Eliashberg auto ir_wmax
+    are the SAME number for a model with a nonzero on-site offset -- neither
+    lets the offset leak in, and both are mu-aware."""
+    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    e0, t, U = 5.0, 1.0, 4.0
+    beta = 1.0 / 2.0
+
+    solver, gi = _make_1orb_offset_solver(e0=e0, t=t, U=U, T=2.0, mu=e0)
+    wmax_flex = _flex_auto_wmax(solver, gi)
+    u_flex = float(np.abs(np.asarray(solver.ham_info.ham_inter_q)).max())
+
+    # Eliashberg on the SAME physical model. Feed it the SAME interaction
+    # scale so the comparison isolates the (now unified) mu-aware band half-
+    # range: eps(k) = e0 - 2 t cos(kx), mu at the band centre e0.
+    hr = {((0, 0, 0), (0, 0)): e0,
+          ((1, 0, 0), (0, 0)): -t,
+          ((-1, 0, 0), (0, 0)): -t}
+    wmax_eli = _ir_auto_wmax(hr, {"u": np.array([[u_flex]])},
+                             norb=1, beta=beta, mu=e0)
+
+    assert wmax_flex == pytest.approx(wmax_eli, rel=1e-9)
+    # Both remove the offset: band half-range is 2 t, NOT e0 + 2 t (=7) and
+    # certainly not the old 2*max|eps| (=14).
+    assert wmax_flex / 3.0 - u_flex == pytest.approx(2.0 * t, abs=1e-9)
+    assert wmax_flex < 3.0 * (2.0 * (e0 + 2.0 * t) + u_flex)
+
+
+def test_flex_auto_wmax_matches_shared_estimator_calc_mu_path():
+    """The FLEX calc_mu (filling) path resolves mu the same way its own mu
+    search does and feeds the shared estimator: half filling puts mu at the
+    band centre, so the offset is removed there too."""
+    from hwave.solver.ir_axis import auto_wmax
+    e0, t, U = 5.0, 1.0, 4.0
+    solver, gi = _make_1orb_offset_solver(e0=e0, t=t, U=U, T=2.0, filling=0.5)
+    wmax_flex = _flex_auto_wmax(solver, gi)
+    ew = np.asarray(solver.H0_eigenvalue)
+    u_flex = float(np.abs(np.asarray(solver.ham_info.ham_inter_q)).max())
+    # mu at half filling is the band centre e0 -> shared estimator with mu=e0.
+    assert wmax_flex == pytest.approx(auto_wmax(ew, e0, u_flex), rel=1e-9)
+
+
+def test_flex_explicit_ir_wmax_is_unchanged():
+    """A run that sets ir_wmax explicitly must be untouched by #184."""
+    solver, gi = _make_1orb_offset_solver()
+    solver.ir_wmax = 12.5
+    solver._calc_epsilon_k(gi)
+    solver._ir_setup(1.0 / solver.T)
+    assert solver._ir_axF.wmax == pytest.approx(12.5)

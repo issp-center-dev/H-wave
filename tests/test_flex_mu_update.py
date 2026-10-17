@@ -227,6 +227,30 @@ class TestFlexMuUpdate(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             solver._find_mu_dressed(sigma, beta, float(nstate) * 10.0)
 
+    def test_scf_trajectory_unchanged_by_initial_mu_polish(self):
+        """#160 regression pin: the _find_mu polish moves the initial
+        mu by ~1e-12; the SCF iteration count and convergence branch on
+        this pinned fixture must not change. Recorded at the #160
+        implementation: 26 iterations, converged=True, mu=-1.7441849201508444
+        (measured on the dev machine by running the same doped fixture as
+        test_particle_number_conserved_after_scf_doped twice and confirming
+        solver.scf_converged / solver.scf_iterations / solver.mu were
+        bitwise identical across those two same-platform runs). mu is
+        compared with assertAlmostEqual (not exact equality) so a different
+        BLAS/LAPACK backend's last-ULP variance in the 26-iteration
+        SCF-derived value doesn't fail this test on another platform; the
+        iteration-count and convergence-flag assertions are what actually
+        pin the trajectory."""
+        Ncond = 40.0
+        solver, green_info = _make_solver({'Ncond': Ncond}, U=3.0,
+                                          iteration_max=60, mix=0.4)
+        os.makedirs('tests/flex/output', exist_ok=True)
+        solver.solve(green_info, 'tests/flex/output')
+
+        self.assertTrue(solver.scf_converged)
+        self.assertEqual(solver.scf_iterations, 26)
+        self.assertAlmostEqual(solver.mu, -1.7441849201508444, places=8)
+
     def test_fixed_mu_is_not_resolved(self):
         """calc_mu=False: mu stays at the user value through the whole run."""
         mu_in = 0.5

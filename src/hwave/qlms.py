@@ -138,7 +138,12 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         read_io = qlmsio.read_input_k.QLMSkInput(info_inputfile)
         ham_info = read_io.get_param("ham")
 
-        solver = sol_flex.FLEX(ham_info, info_log, info_mode)
+        # the OPTIONAL [eliashberg] table of the same input file configures the
+        # in-process pairing step ([mode.param] longitudinal_bond_pairing);
+        # without that key a present table is ignored with an INFO line, so a
+        # single input file can serve both hwave and hwave_sc.
+        solver = sol_flex.FLEX(ham_info, info_log, info_mode,
+                               eliashberg_param=input_dict.get("eliashberg"))
 
         green_info = read_io.get_param("green")
         green_info.update(solver.read_init(info_inputfile))
@@ -148,6 +153,10 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         exit(0)
 
     # Execute calculation
+    if mode == "FLEX":
+        # output-path validation before any work (a collision between two
+        # artifacts is refused here, at solve entry and again before writing)
+        solver.validate_output_paths(info_outputfile, path_to_output)
     logger.info("Start UHF calculation")
     solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")

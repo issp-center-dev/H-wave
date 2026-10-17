@@ -211,3 +211,45 @@ def test_fit_from_freq_points_matrix_cached():
     n_keys = len(ax._device_m)
     ax.fit_from_freq_points(vals.astype(complex), n)
     assert len(ax._device_m) == n_keys
+
+
+# --- issue #184: one mu-aware ir_wmax estimator shared by both solvers ------
+
+def test_auto_wmax_formula_is_factor_times_bandhalf_plus_interaction():
+    from hwave.solver.ir_axis import auto_wmax
+    evals = np.array([3.0, 5.0, 7.0])   # band [3, 7]
+    # mu at the band centre removes the on-site offset: max|eps - mu| = 2.
+    assert auto_wmax(evals, 5.0, 0.0) == pytest.approx(3.0 * (2.0 + 0.0))
+    # interaction scale adds on top of the spectral half-range.
+    assert auto_wmax(evals, 5.0, 4.0) == pytest.approx(3.0 * (2.0 + 4.0))
+    # a non-default factor is honoured.
+    assert auto_wmax(evals, 5.0, 1.0, factor=2.0) == pytest.approx(2.0 * (2.0 + 1.0))
+
+
+def test_auto_wmax_is_mu_aware_not_max_abs_eps():
+    """An on-site offset that shifts the band WITHOUT widening it must not
+    leak in (the pre-#57 max|eps| form double-counts it)."""
+    from hwave.solver.ir_axis import auto_wmax
+    evals = np.array([3.0, 5.0, 7.0])
+    mu_aware = auto_wmax(evals, 5.0, 0.0)          # 3*(2+0) = 6
+    naive = 3.0 * (2.0 * float(np.abs(evals).max()))  # 3*(2*7) = 42
+    assert mu_aware == pytest.approx(6.0)
+    assert mu_aware < naive
+
+
+def test_auto_wmax_rejects_nonpositive_or_nonfinite():
+    from hwave.solver.ir_axis import auto_wmax
+    # zero band and zero interaction -> wmax = 0, not usable
+    with pytest.raises(ValueError, match="ir_wmax"):
+        auto_wmax(np.array([5.0, 5.0]), 5.0, 0.0)
+    # non-finite input propagates as an actionable error, not a bare nan
+    with pytest.raises(ValueError, match="ir_wmax"):
+        auto_wmax(np.array([np.inf, 0.0]), 0.0, 1.0)
+
+
+def test_auto_wmax_param_hint_appears_in_message():
+    from hwave.solver.ir_axis import auto_wmax
+    with pytest.raises(ValueError, match=r"\[eliashberg\]"):
+        auto_wmax(np.array([0.0, 0.0]), 0.0, 0.0, param_hint="[eliashberg] ir_wmax")
+    with pytest.raises(ValueError, match=r"\[mode\.param\]"):
+        auto_wmax(np.array([0.0, 0.0]), 0.0, 0.0, param_hint="[mode.param] ir_wmax")

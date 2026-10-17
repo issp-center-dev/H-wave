@@ -1017,16 +1017,28 @@ def _make_flex_solver_with(calc_scheme='reduced', interactions=None,
 class TestFLEXSchemeGuards(unittest.TestCase):
     """FLEX-specific compatibility guards.
 
-    The default reduced/squashed FLEX path consumes the reduced-shape (4-dim)
-    chi0q and reduces the interaction via the density-density diagonal
-    'kaabb->kab' (off-diagonal vertices dropped with a warning). The
-    calc_scheme='general' path keeps the full Kanamori vertices (paramagnetic
-    full-vertex MYO formulation, spin-free only).
+    The default reduced FLEX path consumes the reduced-shape (4-dim) chi0q
+    and solves with the density-density diagonal 'kaabb->kab' of the
+    interaction; Exchange and PairHop carry no density-diagonal vertex and
+    are REJECTED there (one policy since #107). The calc_scheme='general'
+    path keeps the full Kanamori vertices (paramagnetic full-vertex MYO
+    formulation, spin-free only).
     """
 
     # transfer-format body that registers as an Exchange interaction
     _EXCHANGE_BODY = ("Exchange\n1\n1\n 1\n"
                       "   0    0    0    1    1   0.500000000000   0.0\n")
+    #: An OFF-SITE Exchange bond. The auto rule reads only the declared TYPES,
+    #: so this selects 'general' exactly like the on-site body above; it is
+    #: used where the solver is actually CONSTRUCTED, because the on-site
+    #: same-orbital row above is the degenerate D7 case
+    #: (v c+_up c_up c+_dn c_dn = v n_up n_dn, a CoulombIntra in disguise) and
+    #: the default second-order kernel refuses it at construction with an
+    #: actionable remedy (spec 2026-09-08 D7). The on-site body stays where the
+    #: construction is EXPECTED to be refused before the kernel is reached.
+    _EXCHANGE_OFFSITE_BODY = ("Exchange\n1\n2\n 1 1\n"
+                              "   1    0    0    1    1   0.500000000000   0.0\n"
+                              "  -1    0    0    1    1   0.500000000000   0.0\n")
     _PAIRHOP_BODY = ("PairHop\n1\n1\n 1\n"
                      "   0    0    0    1    1   0.500000000000   0.0\n")
 
@@ -1038,50 +1050,99 @@ class TestFLEXSchemeGuards(unittest.TestCase):
         self.assertTrue(solver._flex_general)
         self.assertEqual(solver.calc_scheme, 'general')
 
-    def test_exchange_interaction_warns(self):
-        """Exchange under 'squashed' is approximated by its density-density
-        part; FLEX must warn (not silently drop) and still construct."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
-                calc_scheme='squashed',
+    def test_exchange_interaction_is_rejected(self):
+        """Exchange under 'reduced' is REJECTED (one policy since #107):
+        its vertex has no density-diagonal content, so the scheme would
+        drop it entirely -- zero effect, not an approximation. The old
+        behavior accepted it with a warning that called it approximated."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
+                calc_scheme='reduced',
                 interactions={'Exchange': self._EXCHANGE_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a warning about the density-density approximation")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
-    def test_pairhop_interaction_warns(self):
-        """PairHop sets a separate flag from Exchange/PairLift, but its
-        off-diagonal vertices are also dropped by the density-density reduction,
-        so FLEX must warn for it too."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
-                calc_scheme='squashed',
+    def test_pairhop_interaction_is_rejected(self):
+        """PairHop likewise: its antidiagonal-slot vertex has no
+        density-diagonal content."""
+        with self.assertRaises(ValueError) as cm:
+            _make_flex_solver_with(
+                calc_scheme='reduced',
                 interactions={'PairHop': self._PAIRHOP_BODY})
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output),
-            "expected a density-density approximation warning for PairHop")
-        self.assertEqual(solver.calc_scheme, 'squashed')
+        self.assertIn('general', str(cm.exception))
 
     def test_reduced_density_density_ok(self):
         """The standard reduced + density-density path must still construct."""
         solver = _make_flex_solver_with(calc_scheme='reduced')
         self.assertEqual(solver.calc_scheme, 'reduced')
 
-    def test_auto_scheme_exchange_warns(self):
-        """auto + exchange resolves to squashed (inherited RPA logic) and FLEX
-        must warn about the density-density approximation, not error."""
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
-            solver = _make_flex_solver_with(
-                calc_scheme='auto',
-                interactions={
-                    'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
-                                    "   0    0    0    1    1   1.0   0.0\n",
-                    'Exchange': self._EXCHANGE_BODY,
-                })
-        self.assertEqual(solver.calc_scheme, 'squashed')
-        self.assertTrue(
-            any('density-density' in msg for msg in cm.output))
+    def test_auto_scheme_exchange_selects_general(self):
+        """auto + exchange resolves to GENERAL (the only scheme carrying
+        the Exchange vertex; the historical auto choice was squashed
+        (removed in 2.0, #144), which silently dropped it -- #107)."""
+        solver = _make_flex_solver_with(
+            calc_scheme='auto',
+            interactions={
+                'CoulombIntra': "CoulombIntra\n1\n1\n 1\n"
+                                "   0    0    0    1    1   1.0   0.0\n",
+                'Exchange': self._EXCHANGE_OFFSITE_BODY,
+            })
+        self.assertEqual(solver.calc_scheme, 'general')
+
+    def test_direct_rpa_rejects_exchange_and_pairhop(self):
+        """The policy lives in the shared consistency check; pin it on RPA
+        directly, not only through the inherited FLEX construction."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        for itype in ("Exchange", "PairHop"):
+            for scheme in ("reduced",):
+                with self.subTest(interaction=itype, scheme=scheme):
+                    param_ham = {
+                        'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                                     'center': [[0, 0, 0]] * 2},
+                        'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                        itype: {((0, 0, 0), (0, 1)): 0.3,
+                                ((0, 0, 0), (1, 0)): 0.3}}
+                    info = {'mode': 'RPA',
+                            'param': {'T': 2.0, 'filling': 0.5,
+                                      'CellShape': [2, 2, 1],
+                                      'SubShape': [1, 1, 1], 'Nmat': 4},
+                            'enable_spin_orbital': False,
+                            'calc_scheme': scheme, 'calc_type': 'ring'}
+                    with self.assertRaises(ValueError) as cm:
+                        rpa_mod.RPA(param_ham, {}, info)
+                    self.assertIn('general', str(cm.exception))
+
+    def test_auto_selection_matrix(self):
+        """auto: PairHop-only -> general; PairLift-only -> reduced (its
+        vertex is exactly zero, dropping is exact); empty Exchange table
+        -> reduced (content-based detection, not key presence)."""
+        import numpy as np
+
+        import hwave.solver.rpa as rpa_mod
+
+        def make(extra):
+            param_ham = {
+                'Geometry': {'norb': 2, 'rvec': np.eye(3),
+                             'center': [[0, 0, 0]] * 2},
+                'Transfer': {((0, 0, 0), (0, 0)): 1.0},
+                'CoulombIntra': {((0, 0, 0), (0, 0)): 1.0,
+                                 ((0, 0, 0), (1, 1)): 1.0}}
+            param_ham.update(extra)
+            info = {'mode': 'RPA',
+                    'param': {'T': 2.0, 'filling': 0.5,
+                              'CellShape': [2, 2, 1],
+                              'SubShape': [1, 1, 1], 'Nmat': 4},
+                    'enable_spin_orbital': False,
+                    'calc_scheme': 'auto', 'calc_type': 'ring'}
+            return rpa_mod.RPA(param_ham, {}, info).preview_scheme()[0]
+
+        entries = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
+        self.assertEqual(make({'PairHop': entries}), 'general')
+        self.assertEqual(make({'PairLift': entries}), 'reduced')
+        self.assertEqual(make({'Exchange': {}}), 'reduced')
+        self.assertEqual(make({}), 'reduced')
 
     def test_auto_ring_ladder_rejected_with_clear_message(self):
         """auto + calc_type='ring+ladder' resolves to general (inherited), which
@@ -1296,6 +1357,140 @@ class TestFLEXSpinSymmetry(unittest.TestCase):
                 sigma_so_kw[:, :, :, 1, :, 1, :],
                 atol=1e-12,
                 err_msg="Sigma_↑↑ != Sigma_↓↓ in full spin-orbital space")
+
+
+class TestSolveHostRestoreIsSingleSourced(unittest.TestCase):
+    """RPA and FLEX must restore the SAME public array attributes after a
+    solve, and must keep SEPARATE profiling identities while doing so.
+
+    Both solvers wrap ``_solve_impl`` in the same host-restore discipline
+    (issue #63: a mid-solve GPU error must not leave device arrays on a
+    reused solver object). That discipline used to be written out twice,
+    once per solver, with the attribute list repeated -- so an attribute
+    added to one restore set and not the other would have reintroduced
+    the leak on the solver that was missed, with nothing to catch it.
+
+    The two ``solve`` methods nevertheless stay separate: each carries
+    its own docstring, and ``@do_profile`` keys the performance report on
+    ``func.__module__ + '.' + func.__name__``, so collapsing them into
+    one inherited method would pool FLEX's timings into
+    ``hwave.solver.rpa.solve``. These assertions pin both halves.
+    """
+
+    def test_both_solvers_share_one_restore_list(self):
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        self.assertIs(rpa_mod.RPA._solve_restoring_host_attrs,
+                      flex_mod.FLEX._solve_restoring_host_attrs)
+        self.assertIs(rpa_mod.RPA._HOST_RESTORED_ATTRS,
+                      flex_mod.FLEX._HOST_RESTORED_ATTRS)
+        self.assertEqual(
+            rpa_mod.RPA._HOST_RESTORED_ATTRS,
+            ("H0_eigenvalue", "H0_eigenvector", "green0", "green0_tail"))
+
+    def test_both_solve_methods_route_through_the_shared_helper(self):
+        """The sharing above is only worth anything if ``solve`` actually
+        CALLS the helper. Asserting that the helper is shared does not
+        establish that: a solver that inlines its own try/finally with
+        its own attribute list still inherits the shared helper, so the
+        identity checks above pass while the leak they exist to prevent
+        is back. Drive each ``solve`` unbound over a recording stand-in
+        -- its whole body is the delegation, so no real solver is
+        needed -- and require the delegation to happen.
+        """
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+        from unittest import mock
+
+        for solver_cls in (rpa_mod.RPA, flex_mod.FLEX):
+            with self.subTest(solver=solver_cls.__name__):
+                calls = []
+                sentinel = object()
+
+                class _Recorder:
+                    def _solve_restoring_host_attrs(self, green_info, path):
+                        calls.append((green_info, path))
+                        return sentinel
+
+                    def _solve_impl(self, green_info, path):
+                        raise AssertionError(
+                            "solve bypassed the shared restore helper and "
+                            "called _solve_impl directly")
+
+                obj = _Recorder()
+                # The stand-in replaces the real helper, so ANY call to
+                # backend.restore_host_attrs during solve can only come
+                # from a restore inlined in solve itself -- delegation
+                # must be the ONLY restoration path, not merely one of
+                # them.
+                with mock.patch.object(
+                        rpa_mod._bk, "restore_host_attrs") as restore:
+                    got = solver_cls.solve(obj, "green", "out")
+                self.assertIs(got, sentinel)
+                self.assertEqual(calls, [("green", "out")])
+                restore.assert_not_called()
+
+    def test_each_solver_keeps_its_own_profiling_identity(self):
+        import hwave.solver.rpa as rpa_mod
+        import hwave.solver.flex as flex_mod
+
+        # do_profile records under module + qualified name, so the two
+        # solve methods must remain distinct function objects living in
+        # their own modules.
+        self.assertIsNot(rpa_mod.RPA.solve, flex_mod.FLEX.solve)
+        self.assertEqual(
+            rpa_mod.RPA.solve.__module__ + "." + rpa_mod.RPA.solve.__name__,
+            "hwave.solver.rpa.solve")
+        self.assertEqual(
+            flex_mod.FLEX.solve.__module__ + "." + flex_mod.FLEX.solve.__name__,
+            "hwave.solver.flex.solve")
+
+    def test_the_shared_helper_restores_on_return_and_on_exception(self):
+        """Execute the REAL helper. The routing test above drives a
+        stand-in, so nothing in the gating runner would otherwise notice
+        the helper losing its ``finally`` -- the very discipline issue
+        #63 exists for: a mid-solve failure must still leave the public
+        attributes host-backed before the exception propagates.
+        """
+        import hwave.solver.rpa as rpa_mod
+        from unittest import mock
+
+        helper = rpa_mod.RPA._solve_restoring_host_attrs
+        attrs = rpa_mod.RPA._HOST_RESTORED_ATTRS
+
+        class _Impl:
+            _HOST_RESTORED_ATTRS = attrs
+
+            def __init__(self, boom):
+                self.boom = boom
+
+            def _solve_impl(self, green_info, path):
+                if self.boom:
+                    raise RuntimeError("mid-solve failure")
+                return "result"
+
+        obj = _Impl(boom=False)
+        with mock.patch.object(rpa_mod._bk, "restore_host_attrs") as restore:
+            got = helper(obj, "green", "out")
+        self.assertEqual(got, "result")
+        restore.assert_called_once_with(obj, attrs)
+
+        obj = _Impl(boom=True)
+        with mock.patch.object(rpa_mod._bk, "restore_host_attrs") as restore:
+            with self.assertRaises(RuntimeError):
+                helper(obj, "green", "out")
+        restore.assert_called_once_with(obj, attrs)
+
+    def test_the_shared_helper_is_not_itself_profiled(self):
+        # A profiled helper would add a second measurement per solve and
+        # double-count the wrapped time in the report.
+        import hwave.solver.rpa as rpa_mod
+
+        helper = rpa_mod.RPA._solve_restoring_host_attrs
+        self.assertFalse(
+            hasattr(helper, "__wrapped__"),
+            "the shared restore helper must not carry @do_profile")
 
 
 if __name__ == '__main__':

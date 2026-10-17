@@ -15,6 +15,7 @@ The solver inherits from the RPA class to reuse infrastructure for:
 from __future__ import annotations
 from typing import Optional
 
+import contextlib
 import os
 import numpy as np
 from requests.structures import CaseInsensitiveDict
@@ -32,8 +33,11 @@ except ImportError:
 import logging
 logger = logging.getLogger(__name__)
 
-from .rpa import RPA, Lattice, Interaction
+from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
+                  PAIRLIFT_INERT_WARNING, canonical_scheme_name)
+from .density_projection import project_density_pairs
 from . import backend as _bk
+from . import bubble
 from . import matsubara as _ms
 
 
@@ -154,6 +158,60 @@ class _AndersonMixer:
         return (x + self.mix * r).reshape(shape)
 
 
+def _auto_general_remediation(solver):
+    """#167: the 2.0 default calc_scheme='auto' promotes every declared
+    cross-carrying interaction to 'general', so a general-ONLY rejection can
+    now stop a configuration that H-wave 1.0.x (== explicit 'reduced') ran
+    without complaint. When that is how the run got here, name the
+    resolution that chose 'general' and the one-line way back; an explicit
+    'general' request was the user's own choice, so it gets no such hint.
+    Mirrors the 4-axis chi0q remediation hint in rpa.py.
+    """
+    token = getattr(solver, "_scheme_resolution", None)
+    if not str(token).startswith("auto:"):
+        return ""
+    return (" calc_scheme='auto' resolved to 'general' ({}) because a "
+            "cross-carrying interaction is declared; to run this "
+            "configuration as in H-wave 1.0.x request calc_scheme = "
+            "'reduced' explicitly (a documented approximation)."
+            .format(token))
+
+
+def _scheme_stamp(solver):
+    # #167: describes THIS run (never inside _freq_meta, which passes
+    # through the INPUT file's provenance). Plain str -> <U. FLEX's
+    # save_results is a distinct function from RPA's; this module-level
+    # helper mirrors RPA's closure semantics without importing it.
+    # getattr: tests drive save_results on __new__-built stubs (mirrors
+    # rpa.py's fallback -- a stub without calc_scheme stamps "unknown"
+    # rather than raising AttributeError).
+    scheme = getattr(solver, "calc_scheme", "unknown")
+    # _scheme_resolution is None exactly in the AUTO-UNRESOLVED state, which
+    # is NOT an explicit request: a completed pipeline run never persists
+    # "unresolved" (resolution precedes solve); it appears only for
+    # direct-API saves before resolution -- deliberately NOT in
+    # RESOLUTION_TOKENS. A stub missing the attribute entirely keeps the
+    # "explicit" default. (FLEX resolves auto in its constructor, so the None
+    # branch is unreachable through the FLEX pipeline; the two stamps are kept
+    # identical so neither can drift into the mislabel.)
+    res = getattr(solver, "_scheme_resolution", "explicit")
+    res = "unresolved" if res is None else res
+    stamp = {
+        "calc_scheme": str(scheme),
+        "calc_scheme_requested": str(getattr(solver, "calc_scheme_requested",
+                                             scheme)),
+        "scheme_resolution": str(res),
+    }
+    # #181 follow-up: which second-order kernel this general-scheme run
+    # used ("local" | "takimoto"). Reduced-scheme and RPA/UHF archives never
+    # carry this -- the kernel choice is meaningless outside FLEX general.
+    so = getattr(solver, "flex_second_order", None)
+    if str(scheme).lower() == "general" and so is not None:
+        stamp["flex_second_order"] = np.array(str(so), dtype="<U8")
+        stamp["flex_second_order_schema"] = np.int64(1)
+    return stamp
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -184,71 +242,551 @@ class FLEX(RPA):
     """
 
     @do_profile
-    def __init__(self, param_ham, info_log, info_mode):
+    def __init__(self, param_ham, info_log, info_mode, eliashberg_param=None):
         logger.debug(">>> FLEX.__init__")
+
+        # Phase B (#181): the raw Phase B keys are parsed BEFORE the RPA
+        # base runs (refusal precedence steps 1-3 of the spec), because the
+        # base parser would turn a true gate flag into False under
+        # calc_type='ring+ladder' and exits on an odd Nmat.
+        self._phase_b_raw = self._parse_flex_keys(info_mode)
 
         # Initialize RPA infrastructure (lattice, interaction, params)
         super().__init__(param_ham, info_log, info_mode)
 
         # FLEX-specific parameters
         self._init_flex_param()
+        self._install_phase_b_keys()
+        self._install_pairing_controls(eliashberg_param)
+
+    # ------------------------------------------------------------------
+    # Phase B (#181): configuration surface -- spec 2026-09-06 section 4.1
+    # ------------------------------------------------------------------
+    _accepts_flex_keys = True
+    _PHASE_B_SWITCHES = ("flex_hartree_fock", "longitudinal_bond_channels")
+    _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
+                          "longitudinal_bond_output_layout",
+                          "longitudinal_bond_freq_batch",
+                          "longitudinal_bond_max_shells",
+                          "longitudinal_bond_memory_cap_gb",
+                          "longitudinal_bond_guard_freqs",
+                          "longitudinal_bond_pairing",
+                          "longitudinal_bond_cond_tol")
+
+    #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
+    #: ``"npz"`` (the default single-file schema-2 archive) and ``"sidecar"``
+    #: (an index npz plus the two big channel members as memory-mappable
+    #: ``.npy`` files next to it).
+    _BOND_OUTPUT_LAYOUTS = ("npz", "sidecar")
+
+    #: defaults of the guard keys of GitHub issue #199 -- the tolerance of the
+    #: Hermitian symmetry of the equal-time density, the conditioning floor of
+    #: the bond RPA denominator (the historical ``bond_channels._BOND_COND_FLOOR``)
+    #: and the policy a violation DURING the self-consistency is treated with.
+    _GUARD_DENSITY_TOL = 1.0e-8
+    _GUARD_BOND_COND_TOL = 1.0e-3
+    _GUARD_POLICIES = ("refuse", "warn")
+
+    _SECOND_ORDER_VALUES = ("local", "takimoto")
+    #: the accepted ``longitudinal_bond_pairing`` values and the channel tuple
+    #: each of them selects ("none" stays the string, so the absence of the
+    #: step is not an empty tuple that reads as "every channel")
+    _PAIRING_VALUES = {"none": "none", "singlet": ("singlet",), "triplet": ("triplet",),
+                       "both": ("singlet", "triplet")}
+    #: the ``[eliashberg]`` keys that describe WHERE the data comes from or
+    #: WHICH backend runs the kernel: in-process both are the FLEX solve's own,
+    #: so these are ignored (with one INFO line) rather than refused -- the same
+    #: file is a normal hwave_sc input.
+    _PAIRING_IGNORED_KEYS = ("gpu", "gpu_required", "bond_channels", "chi0q_mode", "frequency",
+                             "flex_bond_archive", "bond_green", "bond_max_shells")
+
+    @staticmethod
+    def _parse_flex_keys(info_mode):
+        """Every FLEX-only raw key, parsed BEFORE the base constructor
+        (spec 2026-09-08 section 3): flex_second_order first (type/value,
+        step 1), then the Phase B keys."""
+        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        out = {"flex_second_order": "local", "flex_second_order_explicit": False}
+        if "flex_second_order" in param:
+            v = param["flex_second_order"]
+            if not isinstance(v, str) or v.strip().lower() not in FLEX._SECOND_ORDER_VALUES:
+                raise ValueError(
+                    "[mode.param] flex_second_order must be one of {} (case-insensitive), "
+                    "got {!r}".format(list(FLEX._SECOND_ORDER_VALUES), v))
+            out["flex_second_order"] = v.strip().lower()
+            out["flex_second_order_explicit"] = True
+        out.update(FLEX._parse_phase_b_keys(info_mode))
+        return out
+
+    @staticmethod
+    def _parse_guard_density_tol(param, hf_on):
+        """``flex_hf_density_tol`` (issue #199): the relative Frobenius
+        tolerance of the Hermitian symmetry ``rho_ab(r) = conj(rho_ba(-r))``
+        of the equal-time density. Meaningful only with the Hartree-Fock
+        term, so with ``flex_hartree_fock`` off a set key is warned about
+        once and ignored (the stale-key pattern)."""
+        import numbers
+        default = FLEX._GUARD_DENSITY_TOL
+        if "flex_hf_density_tol" not in param:
+            return default
+        if not hf_on:
+            logger.warning(
+                "[mode.param] flex_hf_density_tol set but flex_hartree_fock is not true; "
+                "the equal-time density is not evaluated, so the key is ignored (the "
+                "default %.1e is kept).", default)
+            return default
+        v = param["flex_hf_density_tol"]
+        if (isinstance(v, bool) or not isinstance(v, numbers.Real)
+                or not np.isfinite(v) or float(v) <= 0.0):
+            raise ValueError(
+                "[mode.param] flex_hf_density_tol must be a finite number > 0 (the relative "
+                "Frobenius tolerance of the Hermitian symmetry rho_ab(r) = conj(rho_ba(-r)) "
+                "of the equal-time density), got {!r}".format(v))
+        return float(v)
+
+    @staticmethod
+    def _parse_guard_policy(param, active):
+        """``flex_guard_policy`` (issue #199): ``"refuse"`` (the default) or
+        ``"warn"``. Meaningful only while Phase B is active; otherwise a set
+        key is warned about once and ignored."""
+        if "flex_guard_policy" not in param:
+            return "refuse"
+        if not active:
+            logger.warning(
+                "[mode.param] flex_guard_policy set but neither flex_hartree_fock nor "
+                "longitudinal_bond_channels is true; no Phase B guard runs, so the key is "
+                "ignored (the default \"refuse\" is kept).")
+            return "refuse"
+        v = param["flex_guard_policy"]
+        if not isinstance(v, str) or v.strip().lower() not in FLEX._GUARD_POLICIES:
+            raise ValueError(
+                "[mode.param] flex_guard_policy must be \"refuse\" (a guard violation ends "
+                "the run; the default) or \"warn\" (a violation DURING the self-consistency "
+                "is logged with the iteration and the location and the iteration continues; "
+                "the checks of the final state still refuse), got {!r}".format(v))
+        return v.strip().lower()
+
+    @staticmethod
+    def _parse_phase_b_keys(info_mode):
+        """Refusal precedence steps 1-3 on the RAW ``[mode.param]`` (before
+        any numerical state exists). Returns the parsed values as a dict;
+        stale bond-only keys (gate off) are NOT parsed and are listed in
+        one warning."""
+        import numbers
+        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        out = {}
+        # step 1: types of the switches
+        for key in FLEX._PHASE_B_SWITCHES:
+            v = param.get(key, False)
+            if not isinstance(v, (bool, np.bool_)):
+                raise ValueError("[mode.param] {} must be a boolean, got {!r}".format(key, v))
+            out[key] = bool(v)
+        hf_on, gate_on = out["flex_hartree_fock"], out["longitudinal_bond_channels"]
+        active = hf_on or gate_on
+        out["active"] = active
+        stale = [k for k in FLEX._PHASE_B_BOND_KEYS if k in param]
+        # the guard keys of issue #199: the two that are not bond-only are
+        # parsed (or warned about and ignored) on EVERY path, so that the
+        # three attributes always exist with the documented defaults
+        out["flex_hf_density_tol"] = FLEX._parse_guard_density_tol(param, hf_on)
+        out["flex_guard_policy"] = FLEX._parse_guard_policy(param, active)
+        out["longitudinal_bond_cond_tol"] = FLEX._GUARD_BOND_COND_TOL
+        # the in-process pairing selector is validated on EVERY path (the value
+        # domain first, then the gate coupling), so that a stale or misspelled
+        # key is never silently ignored -- the gate-off branches below return
+        # before the other bond keys are parsed (spec 7).
+        pv = param.get("longitudinal_bond_pairing", "none")
+        if not isinstance(pv, str) or pv.strip().lower() not in FLEX._PAIRING_VALUES:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing must be one of 'none', 'singlet', "
+                "'triplet', 'both' (case-insensitive), got {!r}".format(pv))
+        out["longitudinal_bond_pairing"] = FLEX._PAIRING_VALUES[pv.strip().lower()]
+        if out["longitudinal_bond_pairing"] != "none" and not gate_on:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing needs the bond gate "
+                "(longitudinal_bond_channels = true)")
+        if not active:
+            if stale:
+                logger.warning(
+                    "[mode.param] %s set but longitudinal_bond_channels is not "
+                    "true; these bond-only options are ignored (not parsed).",
+                    ", ".join(stale))
+            out.update(longitudinal_bond_output_full=False,
+                       longitudinal_bond_output_layout="npz",
+                       longitudinal_bond_freq_batch=None,
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
+                       longitudinal_bond_guard_freqs="all")
+            return out
+        # step 2: domain keys that need no assembly
+        nmat = param.get("Nmat", 1024)          # the solver's default grid
+        if (isinstance(nmat, bool) or not isinstance(nmat, numbers.Integral) or int(nmat) <= 0
+                or int(nmat) % 2 != 0):
+            raise ValueError(
+                "[mode.param] Nmat must be a positive even integer when flex_hartree_fock or "
+                "longitudinal_bond_channels is true (the static Matsubara slice is read at "
+                "Nmat//2), got {!r}".format(nmat))
+        itmax = param.get("IterationMax", 100)
+        if isinstance(itmax, bool) or not isinstance(itmax, numbers.Integral) or int(itmax) < 0:
+            raise ValueError(
+                "[mode.param] IterationMax must be an integer >= 0 when flex_hartree_fock or "
+                "longitudinal_bond_channels is true, got {!r}".format(itmax))
+        if out["longitudinal_bond_pairing"] != "none" and int(itmax) < 1:
+            # the pairing kernel is built from the LAST map's chibar; with no
+            # map there is none (spec 7)
+            raise ValueError(
+                "[mode.param] longitudinal_bond_pairing needs at least one FLEX map "
+                "(IterationMax >= 1), got IterationMax = {}".format(int(itmax)))
+        # the SAME canonicalisation the solver itself applies later
+        # (hwave.solver.rpa.canonical_scheme_name): this pre-parser runs
+        # before any solver exists, so it cannot read the resolved state,
+        # and a second spelling rule here is a second accepted input domain
+        scheme = canonical_scheme_name(info_mode.get("calc_scheme", "auto"))
+        if scheme not in ("general", "auto"):
+            raise ValueError(
+                "flex_hartree_fock / longitudinal_bond_channels require calc_scheme='general' "
+                "(or 'auto' resolving to it), got {!r}".format(scheme))
+        basis = str(param.get("matsubara_basis", "uniform")).lower()
+        if basis != "uniform":
+            raise ValueError(
+                "[mode.param] matsubara_basis='{}' is not supported with flex_hartree_fock / "
+                "longitudinal_bond_channels (uniform Matsubara grid only; the IR fit of bond "
+                "susceptibilities is ill-conditioned)".format(basis))
+        sub = param.get("SubShape", None)
+        if sub is not None and tuple(int(x) for x in sub) != (1, 1, 1):
+            raise ValueError(
+                "[mode.param] a sublattice (SubShape={}) is not supported with flex_hartree_fock / "
+                "longitudinal_bond_channels; run with SubShape=[1,1,1]".format(list(sub)))
+        # step 3: gate-HF coupling
+        if gate_on and not hf_on:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_channels=true in FLEX requires "
+                "flex_hartree_fock=true (the bond-resolved channel renormalises the band with "
+                "the self-consistent Hartree-Fock term; set both keys)")
+        if not gate_on and stale:
+            logger.warning(
+                "[mode.param] %s set but longitudinal_bond_channels is not true; these "
+                "bond-only options are ignored (not parsed).", ", ".join(stale))
+            out.update(longitudinal_bond_output_full=False,
+                       longitudinal_bond_output_layout="npz",
+                       longitudinal_bond_freq_batch=None,
+                       longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
+                       longitudinal_bond_guard_freqs="all")
+            return out
+        v = param.get("longitudinal_bond_output_full", False)
+        if not isinstance(v, (bool, np.bool_)):
+            raise ValueError("[mode.param] longitudinal_bond_output_full must be a boolean, got {!r}".format(v))
+        out["longitudinal_bond_output_full"] = bool(v)
+        # the on-disk layout of the bond archive (issue #205)
+        layout = param.get("longitudinal_bond_output_layout", "npz")
+        if not isinstance(layout, str) or layout.strip().lower() not in FLEX._BOND_OUTPUT_LAYOUTS:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_output_layout must be \"npz\" or \"sidecar\" "
+                "(\"npz\" writes the single-file schema-2 archive, the default; \"sidecar\" writes "
+                "an index npz plus the two big channel members as memory-mappable .npy files next "
+                "to it), got {!r}".format(layout))
+        out["longitudinal_bond_output_layout"] = layout.strip().lower()
+        # the archive is only written with longitudinal_bond_output_full = true;
+        # a sidecar request without it changes nothing, so warn once
+        if out["longitudinal_bond_output_layout"] == "sidecar" and not out["longitudinal_bond_output_full"]:
+            logger.warning(
+                "[mode.param] longitudinal_bond_output_layout = \"sidecar\" needs "
+                "longitudinal_bond_output_full = true (no bond archive is written otherwise); "
+                "the layout is ignored.")
+        fb = param.get("longitudinal_bond_freq_batch", None)
+        if fb is not None:
+            if isinstance(fb, bool) or not isinstance(fb, numbers.Integral) or not (1 <= int(fb) <= int(nmat)):
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_freq_batch must be an integer in [1, Nmat={}], "
+                    "got {!r}".format(int(nmat), fb))
+            fb = int(fb)
+        out["longitudinal_bond_freq_batch"] = fb
+        ms = param.get("longitudinal_bond_max_shells", None)
+        if ms is not None:
+            if isinstance(ms, bool) or not isinstance(ms, numbers.Integral) or int(ms) < 1:
+                raise ValueError("[mode.param] longitudinal_bond_max_shells must be an integer >= 1, got {!r}".format(ms))
+            ms = int(ms)
+        out["longitudinal_bond_max_shells"] = ms
+        cap = param.get("longitudinal_bond_memory_cap_gb", 8.0)
+        if isinstance(cap, bool) or not isinstance(cap, numbers.Real) or not np.isfinite(cap) or cap <= 0:
+            raise ValueError("[mode.param] longitudinal_bond_memory_cap_gb must be a finite number > 0 (binary GiB), got {!r}".format(cap))
+        out["longitudinal_bond_memory_cap_gb"] = float(cap)
+        gf = param.get("longitudinal_bond_guard_freqs", "all")
+        if not isinstance(gf, str) or gf.strip().lower() not in ("all", "static"):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_guard_freqs must be \"all\" (every bosonic frequency "
+                "is conditioning-checked; the default) or \"static\" (a REDUCED diagnostic: only the "
+                "zero frequency is conditioning-checked, and every other slice is checked only for "
+                "finiteness and for the consistency of its own solve -- a backward-stable solver "
+                "can return a tiny residual for a nearly singular denominator, so \"static\" does "
+                "NOT detect every near singularity), got {!r}".format(gf))
+        out["longitudinal_bond_guard_freqs"] = gf.strip().lower()
+        ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
+        if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
+                or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_cond_tol must be a finite number in (0, 1) "
+                "(the conditioning floor of the enlarged bond RPA denominator, applied to "
+                "both the relative sigma_min/sigma_max and the absolute "
+                "sigma_min/max(1, sigma_max); default {:.1e}), got {!r}".format(
+                    FLEX._GUARD_BOND_COND_TOL, ct))
+        out["longitudinal_bond_cond_tol"] = float(ct)
+        return out
+
+    def _install_phase_b_keys(self):
+        raw = self._phase_b_raw
+        self.flex_hartree_fock = raw["flex_hartree_fock"]
+        # the FLEX meaning of the gate key (the RPA base parser's value is
+        # replaced: it is calc_type-scoped and RPA-owned)
+        self.longitudinal_bond_channels = raw["longitudinal_bond_channels"]
+        self.longitudinal_bond_output_full = raw["longitudinal_bond_output_full"]
+        self.longitudinal_bond_output_layout = raw["longitudinal_bond_output_layout"]
+        self.longitudinal_bond_freq_batch = raw["longitudinal_bond_freq_batch"]
+        self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
+        self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
+        self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
+        self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
+        # the guard surface of issue #199
+        self.flex_hf_density_tol = raw["flex_hf_density_tol"]
+        self.longitudinal_bond_cond_tol = raw["longitudinal_bond_cond_tol"]
+        self.flex_guard_policy = raw["flex_guard_policy"]
+        #: transient guard violations tolerated under flex_guard_policy =
+        #: "warn" in THIS run (reset at solve entry)
+        self.flex_guard_violations = 0
+        self._phase_b_active = raw["active"]
+        if self._phase_b_active and str(self.calc_scheme).lower() != "general":
+            raise ValueError(
+                "[mode.param] flex_hartree_fock / longitudinal_bond_channels require "
+                "calc_scheme='general'; calc_scheme='auto' resolved to {!r} for this "
+                "interaction set -- set calc_scheme = \"general\" explicitly".format(
+                    self.calc_scheme))
+        if self._phase_b_active:
+            logger.info("    flex_hartree_fock = {}".format(self.flex_hartree_fock))
+            logger.info("    longitudinal_bond_channels (FLEX) = {}".format(
+                self.longitudinal_bond_channels))
+            logger.info("    longitudinal_bond_pairing = {}".format(
+                self.longitudinal_bond_pairing))
+
+    def _install_pairing_controls(self, eliashberg_param):
+        """The ``[eliashberg]`` table of the FLEX input, evaluated once at
+        construction (spec 7). ``self._pairing_controls`` is a
+        :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
+        in-process pairing step is requested and ``None`` otherwise."""
+        from hwave.solver.eliashberg_bond_io import PairingControls
+        self._pairing_controls = None
+        types = self.longitudinal_bond_pairing
+        if types == "none":
+            if eliashberg_param:
+                # one input file serving hwave and then hwave_sc is a normal
+                # workflow, not a mistake
+                logger.info("[eliashberg] table present but longitudinal_bond_pairing is "
+                            "'none': ignored (it configures hwave_sc, not this run)")
+            return
+        table = dict(eliashberg_param or {})
+        if "pairing_type" in table:
+            raise ValueError(
+                "in-process pairing selects its channels with [mode.param] "
+                "longitudinal_bond_pairing; remove [eliashberg] pairing_type")
+        ignored = [k for k in FLEX._PAIRING_IGNORED_KEYS if k in table]
+        if ignored:
+            logger.info("[eliashberg] keys ignored in-process (the FLEX solve's backend and "
+                        "data are used): %s", ", ".join(ignored))
+            for k in ignored:
+                table.pop(k)
+        self._pairing_controls = PairingControls.from_param(table, pairing_types=types)
+
+    def _assemble_static_seed(self, green_info, expected_shape):
+        """Refusal precedence steps 4-5 and the seed matrix (spec 2.3, D7,
+        D10, D15) under flex_hartree_fock=true. Returns
+        ``(sigma_static (nb, 1, nvol, norb, norb), sigma_fluct
+        (expected_shape))`` as fresh arrays; ``green_info`` is not
+        modified (inputs are preserved)."""
+        from hwave.solver import flex_hf, hartree_fock as _hf
+        nb, nmat, nvol, norb, _ = (int(x) for x in expected_shape)
+        env = green_info.get("sigma_init_envelope")
+        has_tm = "trans_mod" in green_info
+        has_gi = "green_init" in green_info
+        # step 4: copied mean-field assembly and spin classification
+        delta_h = None
+        if has_tm or has_gi:
+            if has_tm and has_gi:
+                logger.info("flex_hartree_fock: both trans_mod and green_init "
+                            "are given; trans_mod takes precedence (as in the "
+                            "legacy H0 path) and green_init is ignored")
+            if has_tm:
+                h_mod = np.array(green_info["trans_mod"], dtype=np.complex128, copy=True)
+            else:
+                h_mod = self._calc_trans_mod_copy(green_info["green_init"])
+            h_mod = h_mod.reshape(nvol, 2, norb, 2, norb)
+            off = max(float(np.max(np.abs(h_mod[:, 0, :, 1, :]))),
+                      float(np.max(np.abs(h_mod[:, 1, :, 0, :]))))
+            diff = float(np.max(np.abs(h_mod[:, 0, :, 0, :] - h_mod[:, 1, :, 1, :])))
+            scale = max(1.0, float(np.max(np.abs(h_mod))))
+            if off > 1e-12 * scale or diff > 1e-12 * scale:
+                raise ValueError(
+                    "flex_hartree_fock=true requires a spin-free mean field: the supplied "
+                    "trans_mod/green_init is spin-mixing ({:.3e}) or spin-diagonal with unequal "
+                    "blocks ({:.3e}); Phase B is spin-free only".format(off, diff))
+            if self.ham_info.ham_extern_q is not None:
+                raise ValueError("flex_hartree_fock=true does not support an external field "
+                                 "(spin-diagonal H0)")
+            h0_bare = np.array(self.ham_info.ham_trans_q, dtype=np.complex128,
+                               copy=True).reshape(nvol, norb, norb)
+            delta_h = h_mod[:, 0, :, 0, :] - h0_bare
+        # step 5: seed file semantics
+        static = np.zeros((nb, 1, nvol, norb, norb), dtype=np.complex128)
+        fluct = np.zeros(tuple(expected_shape), dtype=np.complex128)
+        if env is not None:
+            if env.marker == "split":
+                if delta_h is not None:
+                    raise ValueError(
+                        "sigma_init '{}' is a split self-energy archive and a mean field "
+                        "(trans_mod/green_init) is also given; remove trans_mod/green_init "
+                        "when resuming from a Phase B sigma archive, or fold the mean field "
+                        "into the archive's sigma_static with hwave_sigma_split".format(env.file_name))
+                static, fluct = flex_hf.validate_split_seed(env, expected_shape)
+                diag = flex_hf.split_tail_diagnostic(fluct, nmat)
+                if diag is not None and diag[0] > 0.1 and diag[1] > 1e-8:
+                    logger.warning(
+                        "sigma_init '{}': sigma_fluct carries a frequency-independent "
+                        "remainder on the outer Matsubara window (pair-even/pair-odd ratio "
+                        "{:.3e}, max |even| {:.3e}); a constant part in sigma_fluct degrades "
+                        "the density truncation from O(Nmat^-3) towards O(Nmat^-1). Move the "
+                        "static part into sigma_static (e.g. with hwave_sigma_split "
+                        "--static).".format(env.file_name, diag[0], diag[1]))
+            else:
+                raise ValueError(
+                    "sigma_init '{}' carries sigma_convention={!r}; a run with "
+                    "flex_hartree_fock=true accepts only a \"split\" archive. Convert it "
+                    "with: hwave_sigma_split {} out.npz --static static.npz (or --zero-static, "
+                    "or --uhfk-trans-mod ...)".format(env.file_name, env.marker, env.file_name))
+        elif delta_h is not None:
+            static[:, 0] = delta_h[None]
+        # checkpoint 4b: the assembled static seed
+        if not np.all(np.isfinite(static)):
+            raise _hf.NonFiniteError("the assembled static self-energy seed is not finite")
+        ok, err = _hf.is_hermitian_batch(static[:, 0], 1e-10)
+        if not ok:
+            raise ValueError("the assembled static self-energy seed is not Hermitian "
+                             "(relative deviation {:.3e})".format(err))
+        return static, fluct
 
     def _init_flex_param(self):
         """Initialize FLEX-specific parameters."""
         logger.debug(">>> FLEX._init_flex_param")
 
+        # #167: FLEX has no transverse channel, so ring+ladder is invalid
+        # for every scheme that reaches FLEX's own logic -- rejected here as
+        # step 0, before any scheme logic runs.
+        #
+        # Note this guard is not the only stop, and deliberately not the
+        # first one: an EXPLICIT non-general scheme with
+        # calc_type='ring+ladder' is already rejected upstream by the
+        # inherited RPA _set_scheme ("calc_type='ring+ladder' requires
+        # calc_scheme='general' or 'auto'", logger.error + sys.exit(1)), so
+        # explicit reduced never gets here. That precedence is 1.0.x
+        # behaviour and is preserved on purpose (pinned by
+        # tests/test_auto_scheme_exactness.py::TestFLEXAutoResolution::
+        # test_explicit_reduced_ring_ladder_is_stopped_by_the_inherited_gate).
+        # What this step-0 guard covers is the rest: 'auto' (which 1.0.x
+        # resolved to general and which would otherwise reach the ring-only
+        # general path) and an explicit 'general'.
+        if getattr(self, "calc_type", "ring") == "ring+ladder":
+            msg = ("FLEX does not support calc_type='ring+ladder' (the "
+                   "transverse ladder channel); FLEX general is ring-only. "
+                   "Use the default calc_type='ring' with "
+                   "calc_scheme='general'.")
+            logger.error(msg)
+            raise ValueError(msg)
+
+        # #167: 'auto' is resolved HERE, at construction -- FLEX's rule reads
+        # only the declared interaction types, never H0(k), so there are no
+        # late-arriving inputs to wait for (contrast RPA, whose predicate
+        # depends on trans_mod / green_init and so resolves at
+        # read_init/solve).
+        if self.calc_scheme_requested == "auto":
+            self._resolve_flex_auto_scheme()
+        else:
+            self._emit_flex_reduced_diagnostic()
+
+        # flex_second_order applicability (spec 2026-09-08 D2): after the
+        # scheme is known, still at construction. RPA canonicalises the scheme
+        # name to lower case once at construction; the local below re-applies
+        # the same normalisation defensively so every site that keys off the
+        # general scheme reads one canonical name.
+        scheme = str(self.calc_scheme).lower()
+        self.flex_second_order = self._phase_b_raw["flex_second_order"]
+        if self._phase_b_raw["flex_second_order_explicit"] and scheme != "general":
+            if self.calc_scheme_requested == "auto":
+                raise ValueError(
+                    '[mode.param] flex_second_order: calc_scheme = "auto" resolved to '
+                    '"reduced" for this interaction set; flex_second_order applies to the '
+                    'general scheme -- set calc_scheme = "general" explicitly or drop the key')
+            raise ValueError(
+                '[mode.param] flex_second_order applies to calc_scheme = "general" only '
+                '(got calc_scheme = {!r})'.format(self.calc_scheme))
+        if scheme == "general":
+            logger.info("    flex_second_order = {}".format(self.flex_second_order))
+
         # FLEX consumes the reduced-shape (4-dim) chi0q and reduces the
         # interaction via the density-density diagonal ('kaabb->kab') on the
-        # reduced/squashed path.  The 'general' scheme selects the paramagnetic
+        # reduced path.  The 'general' scheme selects the paramagnetic
         # full-vertex multi-orbital path (v1: spin-free only; the spin_mode
         # guard is enforced in solve(), where spin_mode is determined).
-        scheme = self.calc_scheme.lower()
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
-            # RPA *ring* (bubble) series with the full rank-4 vertex. The
-            # transverse *ladder* channel (calc_type='ring+ladder') is not part
-            # of this path, so reject it even though it forces scheme='general'.
-            if getattr(self, "calc_type", "ring") == "ring+ladder":
-                msg = ("FLEX does not support calc_type='ring+ladder' (the "
-                       "transverse ladder channel); FLEX general is ring-only. "
-                       "Use the default calc_type='ring' with "
-                       "calc_scheme='general'.")
-                logger.error(msg)
-                raise ValueError(msg)
+            # RPA *ring* (bubble) series with the full rank-4 vertex.
             if getattr(self.ham_info, "enable_spin_orbital", False):
                 raise ValueError(
                     "calc_scheme='general' FLEX (v1) does not support "
                     "enable_spin_orbital; deferred to the generalized FLEX "
                     "solver.")
             self._flex_general = True
-        elif scheme in ("reduced", "squashed"):
+        elif scheme == "reduced":
+            if getattr(self.ham_info, "enable_spin_orbital", False):
+                raise ValueError(
+                    "calc_scheme='reduced' FLEX does not support "
+                    "enable_spin_orbital; deferred to the generalized FLEX "
+                    "solver.")
             self._flex_general = False
         else:
-            if getattr(self, "calc_type", "ring") == "ring+ladder":
-                msg = ("FLEX does not support calc_type='ring+ladder' (the "
-                       "transverse ladder channel); use the default 'ring' "
-                       "with calc_scheme='reduced'/'squashed'/'general'.")
-            else:
-                msg = ("FLEX requires calc_scheme='reduced', 'squashed', or "
-                       "'general', got '{}'.".format(self.calc_scheme))
+            # ring+ladder was already rejected as step 0 above, and 'auto'
+            # was resolved there too: only a genuinely unsupported scheme
+            # name can reach here. The assertion is on the REQUESTED string
+            # (the one FLEX's resolver keys off), which the inherited
+            # _set_scheme canonicalises, so a mis-cased 'AUTO' has taken the
+            # auto path above and an unsupported name reaches the actionable
+            # ValueError below instead of an AssertionError.
+            assert self.calc_scheme_requested != "auto", \
+                "auto must be resolved above"
+            msg = ("FLEX requires calc_scheme='reduced' or 'general', "
+                   "got '{}'.".format(self.calc_scheme))
             logger.error(msg)
             raise ValueError(msg)
-        if not self._flex_general and (
-                self.ham_info.has_interaction_exchange()
-                or self.ham_info.has_interaction_pairhop()):
-            # FLEX reduces the vertex via the density-density diagonal
-            # ('kaabb->kab'), so exchange/spin-flip/pair off-diagonal vertices
-            # are dropped.  This is a deliberate (common) approximation, but
-            # warn so it is not silent (cf. the inherited reduced+exchange
-            # guard, which does not cover the squashed scheme).  Exchange and
-            # PairLift set the exchange flag; PairHop sets a separate flag, so
-            # both are checked here to cover all off-diagonal interaction types.
-            logger.warning(
-                "FLEX uses the density-density reduction; exchange- and "
-                "pair-hopping-type interactions (Exchange, PairLift, PairHop) "
-                "are approximated by their density-density part "
-                "(off-diagonal vertices are dropped). "
-                "Use calc_scheme='general' to keep them.")
+        # Exchange/PairHop under reduced are rejected by the
+        # consistency check inherited from RPA (one policy for both
+        # solvers, #107): their vertex has no density-diagonal content, so
+        # the schemes would drop them entirely -- the former warning here
+        # called that an 'approximation', which for those types it is not.
+
+        # Second-order kernel factors (spec 2026-09-08 section 2.5). Built
+        # once, at CONSTRUCTION, and only for the general scheme under
+        # flex_second_order = "local": the compiler's refusals (the D7
+        # degenerate-row ValueError and the Hermiticity ValueError) must
+        # reach the user before any solve work is done. Deliberately placed
+        # AFTER the scheme block above so the enable_spin_orbital refusal --
+        # which the compiler does not implement and would otherwise hit as
+        # an obscure shape error -- keeps its precedence (#83).
+        self._second_order_factors = None
+        self._second_order_device = None
+        if scheme == "general" and self.flex_second_order == "local":
+            from hwave.solver.offsite import split_locality
+            from hwave.solver.second_order import build_factors
+            split = split_locality(self.ham_info, self.lattice)
+            self._second_order_factors = build_factors(split, self.lattice, self.norb)
+            logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
+                len(self._second_order_factors.triples),
+                "yes" if self._second_order_factors.vpair is not None else "no",
+                self._second_order_factors.nbytes / 2 ** 20))
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
         self.mix = float(self.param_mod.get("Mix", 0.2))
@@ -308,6 +846,129 @@ class FLEX(RPA):
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
+        # The inherited _show_params ran before FLEX resolved 'auto', so it
+        # printed the deferred marker; restate the settled value and the
+        # token that produced it (#167).
+        logger.info("    calc_scheme     = {} ({})".format(
+            self.calc_scheme, self._scheme_resolution))
+
+    def _resolve_flex_auto_scheme(self):
+        """Constructor-time FLEX auto resolution (#167): general iff any
+        declared type has flex_forcing.
+
+        FLEX's rule is H0-INDEPENDENT -- the dressed Green function can
+        hybridise during the SCF iteration however diagonal H0(k) starts
+        out -- so the decision reads only the declared interaction types and
+        can be taken here, at construction. Atomic; no fingerprint is
+        recorded (there are no late-arriving inputs to re-check), which also
+        makes the inherited RPA resolver a no-op at read_init/solve.
+        """
+        from hwave.solver import scheme as _scheme
+        types = _scheme.declared_types(self._scheme_source_tables())
+        chosen, token = _scheme.resolve_flex(types)
+        assert token in _scheme.RESOLUTION_TOKENS
+        # commit
+        self.calc_scheme = chosen
+        self.enable_reduced = (chosen == "reduced")
+        self._scheme_resolution = token
+        self._scheme_fingerprint = None
+        # side effects (best-effort: a logging failure must never sink a
+        # committed, valid resolution)
+        try:
+            if chosen == "reduced" and "PairLift" in types:
+                logger.warning(PAIRLIFT_INERT_WARNING)
+            legacy = _scheme.legacy_1_0_resolution(types, self.calc_type)
+            est = self._log_scheme_memory_estimate(
+                "auto-resolved calc_scheme (FLEX)")
+            if chosen != legacy:
+                logger.warning(
+                    "FLEX calc_scheme='auto' resolved to '{}' ({}); H-wave 1.0.x "
+                    "resolved this input to '{}'. Reason: {} carry cross-family "
+                    "vertex content and the dressed Green function can hybridise "
+                    "during iteration. chiq output becomes rank-6; memory/solve "
+                    "cost grow from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per "
+                    "(q, freq) (estimated principal array {:.3f} GB). To keep the "
+                    "1.0.x behaviour request calc_scheme = 'reduced' explicitly "
+                    "(a documented approximation).".format(
+                        chosen, token, legacy,
+                        ", ".join(sorted(t for t in types
+                                         if _scheme.CAPABILITIES[t].flex_forcing)),
+                        est / 1e9))
+            else:
+                logger.info("auto mode for calc_scheme: set to {} ({})".format(
+                    chosen, token))
+        except Exception as exc:
+            logger.error("scheme resolution logging failed: {!r}".format(exc))
+
+    def _emit_flex_reduced_diagnostic(self):
+        """Explicit reduced + a flex_forcing type: an approximation
+        UNCONDITIONAL of H0 (#167 §5). Emitted once, at construction.
+
+        ADVISORY ONLY (as RPA's counterpart): fail-closed discovery belongs
+        to the AUTO path, which decides on its verdict. Here the user named
+        the scheme, so an input the registry cannot judge skips the
+        diagnostic at debug level rather than failing a construction that
+        1.0.x completed.
+        """
+        from hwave.solver import scheme as _scheme
+        if self.calc_scheme_requested != "reduced":
+            return
+        try:
+            types = _scheme.declared_types(self._scheme_source_tables())
+        except ValueError as exc:
+            logger.debug("reduced-exactness diagnostic skipped: %s", exc)
+            return
+        forcing = sorted(t for t in types
+                         if _scheme.CAPABILITIES[t].flex_forcing)
+        if forcing:
+            logger.warning(
+                "calc_scheme='reduced' with {} is an approximation in FLEX "
+                "regardless of the transfer structure (the dressed Green "
+                "function can hybridise during iteration). calc_scheme="
+                "'general' or 'auto' carries the full vertex.".format(
+                    ", ".join(forcing)))
+
+    def _emit_reduced_exactness_diagnostic(self, *, trans_mod_present,
+                                           green_init_present):
+        # RPA's explicit-reduced diagnostic is H0-CONDITIONAL and its text
+        # cites RPA instabilities and RPA fixture figures; neither applies
+        # to FLEX, which warns at construction, unconditionally of H0
+        # (_emit_flex_reduced_diagnostic).
+        return
+
+    def _check_reduced_rejects_spinful(self):
+        """Reject ``self.spin_mode == 'spinful'`` under
+        ``calc_scheme='reduced'`` (``self._flex_general`` False) at SOLVE
+        time.
+
+        Split out as its own method (rather than inlined in
+        ``_solve_impl``) so a unit test can pin this exact check by
+        constructing the semantic state directly (setting
+        ``_flex_general``/``spin_mode`` on a bare instance) instead of
+        driving a full solve.
+
+        This complements the CONSTRUCTOR-time
+        ``enable_spin_orbital=True`` guard in ``_init_flex_param``, but is
+        NOT merely defense-in-depth for an otherwise-unreachable state:
+        ``self.spin_mode`` is determined here from H0(k)'s block
+        structure by ``_calc_epsilon_k``, which is driven not only by
+        ``enable_spin_orbital`` but also by the PUBLIC ``trans_mod`` /
+        ``green_init`` inputs (``RPA.read_init``) -- a spin-mixing
+        ``trans_mod`` reaches ``spin_mode == 'spinful'`` here even with
+        ``enable_spin_orbital=False`` (see
+        ``tests/test_rpa_flex_equivalence_table.py``'s
+        ``TestReducedSpinfulGuard.test_public_trans_mod_route_reaches_spinful_and_is_rejected``).
+        The reduced scheme projects the interaction onto its
+        density-diagonal part (``_inflate_chi0q_and_ham``); that
+        projection has never been validated against a genuinely
+        spin-mixing H0, so this rejects rather than silently computing
+        unvalidated physics. spin-free and spin-diag are unaffected.
+        """
+        if (not self._flex_general) and self.spin_mode == "spinful":
+            raise ValueError(
+                "calc_scheme='reduced' FLEX does not support "
+                "spin_mode='spinful'; spin-free and spin-diag are "
+                "supported. Deferred to the generalized FLEX solver.")
 
     def read_init(self, info_inputfile):
         """Read initial configs, plus the FLEX-specific ``sigma_init``.
@@ -325,7 +986,54 @@ class FLEX(RPA):
             path_to_input = info_inputfile.get("path_to_input", "")
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
-            sigma, ir_meta = self._read_sigma(file_name)
+            env = self._read_sigma(file_name)
+            if env.marker not in (None, "split", "total"):
+                raise ValueError(
+                    "sigma_init file '{}' carries an unknown sigma_convention {!r} "
+                    "(accepted: \"split\", \"total\", or no marker)".format(file_name, env.marker))
+            if env.marker == "split" and not getattr(self, "_phase_b_active", False):
+                logger.info("sigma_init '{}' is a split archive; without flex_hartree_fock "
+                            "its total sigma is used as the one seed".format(file_name))
+            if str(getattr(self, "calc_scheme", "")).lower() == "general":
+                # The provenance pair is refused when this version cannot
+                # interpret it: a member that is not ONE canonical value (the
+                # kernel name exactly as written by the stamp, the schema an
+                # integer this version reads), or a schema from a later
+                # version whose members may mean something else. Nothing is
+                # coerced -- 1.5, True, "1" and a two-element member are all
+                # unreadable, not "schema 1". Only a MISMATCH between two
+                # kernel names this version knows is a warning (below): that
+                # seed is still usable.
+                seed_so = None
+                raw = env.second_order
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    unreadable = raw.size != 1 or raw.dtype.kind != "U"
+                    if not unreadable:
+                        seed_so = str(value)
+                        unreadable = seed_so not in ("local", "takimoto")
+                    if unreadable:
+                        raise ValueError(
+                            "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
+                            "\"local\", \"takimoto\")".format(file_name, value))
+                raw = env.second_order_schema
+                if raw is not None:
+                    value = raw.item() if raw.size == 1 else raw
+                    if (raw.size != 1 or raw.dtype == np.bool_
+                            or not np.issubdtype(raw.dtype, np.integer)
+                            or int(value) != 1):
+                        raise ValueError(
+                            "sigma_init '{}': unsupported flex_second_order_schema {!r} (this "
+                            "version reads schema 1)".format(file_name, value))
+                if seed_so is None:
+                    logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
+                                "(a reduced-scheme archive, or one written before this key "
+                                "was introduced -- H-wave 2.0.0 and earlier)".format(file_name))
+                elif seed_so != self.flex_second_order:
+                    logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
+                                   "uses {} -- if the SCF stalls, restart from Sigma = 0".format(
+                                       file_name, seed_so, self.flex_second_order))
+            sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
                 raise ValueError(
                     "sigma_init file '{}' holds sparse-IR node data "
@@ -334,6 +1042,7 @@ class FLEX(RPA):
                     "run, or re-run the seeding FLEX with [mode.param] "
                     "write_densified = true.".format(file_name))
             info["sigma_init"] = sigma
+            info["sigma_init_envelope"] = env
             if ir_meta is not None:
                 info["sigma_init_ir"] = ir_meta
         return info
@@ -341,9 +1050,10 @@ class FLEX(RPA):
     def _read_sigma(self, file_name):
         """Load a saved self-energy array from a FLEX ``sigma.npz``.
 
-        Returns ``(sigma, ir_meta)``: ``ir_meta`` is ``None`` for uniform
-        (densified) files, or the node metadata of an IR-native file
-        (Stage 3; ``read_init`` decides whether this run can consume it).
+        Returns a :class:`hwave.solver.flex_hf.SigmaSeedEnvelope` (the
+        arrays, the ``sigma_convention`` marker, and ``ir_meta``: ``None``
+        for uniform (densified) files, or the node metadata of an IR-native
+        file -- Stage 3; ``read_init`` decides whether this run can consume it).
 
         Validates the recorded ``cell_shape`` against this run's lattice:
         ``Nvol = Lx*Ly*Lz`` is a single dimension of the sigma array, so an
@@ -371,13 +1081,24 @@ class FLEX(RPA):
                 "from the array shape alone.".format(
                     file_name, list(self.lattice.shape)))
         meta = ir_native_meta(data) if is_ir_native(data) else None
-        return data["sigma"], meta
+        # Fourier-sign provenance gate (issue #133): sigma is a k-labeled
+        # quantity; a pre-#133 file carries flipped labels. Legacy files
+        # are accepted only when the payload is q-even (see the validator).
+        from hwave.solver.rpa import validate_momentum_convention
+        sig = data["sigma"]
+        # layout (nblock, nmat_or_nodes, nvol, nd, nd): nvol is axis 2 --
+        # do NOT search by size, nmat == nvol collisions are realistic
+        validate_momentum_convention(data, file_name, sig, 2,
+                                     self.lattice.shape)
+        from hwave.solver.flex_hf import make_seed_envelope
+        return make_seed_envelope(data, file_name, sig, meta)
 
     @do_profile
     def solve(self, green_info, path_to_output):
         """Solve the FLEX equations, restoring host-backed public state.
 
-        Thin wrapper around :meth:`_solve_impl` that guarantees the solver's
+        Thin wrapper around :meth:`_solve_restoring_host_attrs` that
+        guarantees the solver's
         public array attributes (``H0_eigenvalue``/``H0_eigenvector``, and the
         stored ``green0``/``green0_tail``) are NumPy-backed after the call --
         on normal completion AND after a GPU-path exception. Under GPU
@@ -385,12 +1106,37 @@ class FLEX(RPA):
         ``finally`` a mid-solve error would leave a reused or inspected solver
         object holding device arrays (issue #63).
         """
+        # The S/C matrices are cached across the SCF iterations of ONE
+        # solve; a reused solver rebuilds them (cheap: a few small
+        # matrices per q) so the off-site Hartree-only notice in
+        # _inflate_chi0q_and_ham_general is emitted once per solve, not
+        # once per object.
+        self._myo_sc_cache = None
+        # The device mirror of the second-order factors is solve-scoped too:
+        # _solve_impl builds it on the GPU path only, and it is dropped here
+        # on normal completion AND after an exception, so a reused or
+        # inspected solver never holds another solve's device arrays (the
+        # same discipline as the public array attributes of issue #63). The
+        # reset lives HERE rather than in _solve_restoring_host_attrs because
+        # that helper is single-sourced with RPA on purpose
+        # (tests/test_flex_analytical.py::TestSolveHostRestoreIsSingleSourced)
+        # and _second_order_device is FLEX-only state. The host pack
+        # (_second_order_factors) is untouched and stays authoritative.
         try:
-            return self._solve_impl(green_info, path_to_output)
+            if getattr(self, "_phase_b_active", False):
+                self._path_to_output = path_to_output
+                try:
+                    if getattr(self, "_info_outputfile", None) is not None:
+                        self.validate_output_paths(path_to_output=path_to_output)
+                    return self._solve_restoring_host_attrs(green_info, path_to_output)
+                except BaseException:
+                    # spec 3.5: after a failed solve nothing is produced -- every
+                    # solve-produced member and solver-owned cache is dropped
+                    self._phase_b_reset(green_info)
+                    raise
+            return self._solve_restoring_host_attrs(green_info, path_to_output)
         finally:
-            _bk.restore_host_attrs(
-                self, ("H0_eigenvalue", "H0_eigenvector",
-                       "green0", "green0_tail"))
+            self._second_order_device = None
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -424,13 +1170,33 @@ class FLEX(RPA):
         # _calc_epsilon_k determines self.spin_mode from H0(k); the general
         # full-vertex path (v1) is paramagnetic only, so guard here once
         # spin_mode is known.
-        self._calc_epsilon_k(green_info)
+        if self._phase_b_active:
+            # Phase B (#181): the band stays BARE -- a user mean field is an
+            # initial self-energy (spec 2.3, D7), so trans_mod/green_init are
+            # withheld from the H0 path (the inputs themselves are preserved).
+            self._phase_b_reset(green_info)
+            self._phase_b_preflight(green_info)
+            _gi_h0 = {k: v for k, v in green_info.items()
+                      if k not in ("trans_mod", "green_init")}
+            self._calc_epsilon_k(_gi_h0)
+            if getattr(self, "_pairing_controls", None) is not None:
+                # spec 7: a long FLEX run must not be lost to a post-hoc
+                # allocation, so the pairing step is admitted here -- after
+                # H0 is diagonalised (the IR auto-wmax reads its bands) and
+                # before the first map.
+                from hwave.solver import eliashberg_bond_io
+                eliashberg_bond_io.pairing_preflight(self)
+        else:
+            self._calc_epsilon_k(green_info)
 
         if self._flex_general and self.spin_mode != "spin-free":
             raise ValueError(
                 "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
                 "only, got '{}'. spin-diag/spinful are deferred to the "
-                "generalized FLEX solver.".format(self.spin_mode))
+                "generalized FLEX solver.{}".format(
+                    self.spin_mode, _auto_general_remediation(self)))
+
+        self._check_reduced_rejects_spinful()
 
         if self.use_ir:
             self._ir_setup(beta)
@@ -461,6 +1227,9 @@ class FLEX(RPA):
         # brings its operator to the host internally.
         xp, gpu_active = _bk.get_backend(self.use_gpu, logger=logger,
                                          required=self.gpu_required)
+        # the backend this solve actually runs on, for the bond provenance
+        # members (the output block has no gpu_active of its own)
+        self._bond_xp_name = "cupy" if gpu_active else "numpy"
         if gpu_active:
             logger.info("FLEX: GPU backend active (CuPy); moving H0 "
                         "eigenpairs and interaction to the device.")
@@ -486,6 +1255,20 @@ class FLEX(RPA):
                 5 * resident_bytes, logger, label="the FLEX SCF loop")
             self.H0_eigenvalue = xp.asarray(self.H0_eigenvalue)
             self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
+            # Per-solve device mirror of the second-order factors (spec
+            # 2.5): the host pack stays intact and authoritative, so a
+            # reused solver never depends on a previous solve's backend.
+            # Dropped in the finally of FLEX.solve (see the comment there
+            # for why it is not in the shared _solve_restoring_host_attrs).
+            if self._second_order_factors is not None:
+                from hwave.solver.second_order import SecondOrderFactors
+                f = self._second_order_factors
+                self._second_order_device = SecondOrderFactors(
+                    norb=f.norb, nd=f.nd, nvol=f.nvol, triples=f.triples,
+                    A_on=tuple(xp.asarray(a) for a in f.A_on),
+                    B_on=tuple(xp.asarray(b) for b in f.B_on),
+                    vpair=None if f.vpair is None else xp.asarray(f.vpair),
+                    nbytes=f.nbytes)
 
         # Step 2: Compute bare Green's function G0(k, iwn)
         if self.use_ir:
@@ -534,6 +1317,10 @@ class FLEX(RPA):
         nfreq_axis = self._ir_axF.n_freq if self.use_ir else nmat
         expected_uniform = (nblock, nmat, nvol, nd_block, nd_block)
         expected = (nblock, nfreq_axis, nvol, nd_block, nd_block)
+        if self._phase_b_active:
+            return self._solve_phase_b(green_info, beta, mu, Ncond_target, xp,
+                                       green0_tail, green_tail_w,
+                                       self.ham_info.ham_inter_q)
         sigma_init = green_info.get("sigma_init")
         seed_ir_meta = green_info.get("sigma_init_ir")
         if sigma_init is not None:
@@ -630,7 +1417,7 @@ class FLEX(RPA):
 
             # Step 5: Inflate chi0q and ham, then compute spin/charge
             # susceptibilities and V_eff.  The general (paramagnetic full-vertex)
-            # path keeps the full rank-4 orbital vertex; the reduced/squashed
+            # path keeps the full rank-4 orbital vertex; the reduced
             # path uses the density-density reduction.
             # Step 6: Compute self-energy Sigma(k, iwn).
             if self._flex_general:
@@ -756,25 +1543,895 @@ class FLEX(RPA):
     # IR-basis Matsubara axis (Stage 2, docs/design/ir-matsubara.md 3.3/3.4)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Phase B (#181): the self-consistent loop with the Hartree-Fock term
+    # (spec 2026-09-06 sections 1, 2, 5.6). Entered only when
+    # flex_hartree_fock or longitudinal_bond_channels is true; the legacy
+    # loop in _solve_impl is untouched.
+    # ------------------------------------------------------------------
+    _iteration_hook = None      # test-only callback (spec G0)
+    _phase_tracer = None        # test-only per-phase context factory (spec 3.6)
+    _info_outputfile = None     # [file.output] mapping stored by validate_output_paths
+    _path_to_output = None
+
+    def _traced(self, name):
+        tracer = getattr(self, "_phase_tracer", None)
+        return contextlib.nullcontext() if tracer is None else tracer(name)
+
+    def _phase_b_reset(self, green_info):
+        """Solve-entry reset by ownership (spec 3.5): every solve-produced
+        member and solver result attribute is dropped; the inputs
+        (sigma_init, trans_mod, green_init, chi0q_init, reader entries)
+        are preserved.
+
+        The ``pairing_`` prefix is a RESERVED namespace of ``green_info``,
+        like ``longitudinal_bond_`` and ``scf_``: it belongs entirely to the
+        in-process pairing results, so dropping the whole prefix here cannot
+        discard anything a reader owns."""
+        produced = ("sigma", "sigma_static", "sigma_fluct", "green", "physics",
+                    "chi0q", "chiq_s", "chiq_c")
+        prov = ("map_iteration", "state_iteration", "payload_kind", "hf_density_error",
+                "hf_density_source", "density_target_enforced")
+        for k in list(green_info):
+            ks = str(k)
+            if (k in produced or ks.startswith("longitudinal_bond_")
+                    or ks.startswith("scf_") or ks.startswith("pairing_")
+                    or ks in prov):
+                green_info.pop(k, None)
+        for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
+                     "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
+                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on",
+                     "_bond_types",
+                     "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
+                     "_bond_xp_name",
+                     "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
+                     "_phase_b_seed", "_hf_tables"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+        self.scf_converged = False
+        self.scf_iterations = 0
+        self.scf_sigma_residual = float("nan")
+        self.scf_green_residual = float("nan")
+        self.scf_component_residual = float("nan")
+        self.map_iteration = 0
+        self.state_iteration = 0
+        self.hf_density_error_map = float("nan")
+        self.hf_density_error_state = float("nan")
+        # the guard violations counted under flex_guard_policy = "warn" are
+        # per RUN, like every other provenance member reset here
+        self.flex_guard_violations = 0
+
+    def _provenance_block(self, payload_kind):
+        """The provenance block of every archive of an active Phase B run
+        (spec 4.3)."""
+        return {
+            "scf_converged": bool(self.scf_converged),
+            "scf_iterations": int(self.scf_iterations),
+            "map_iteration": int(self.map_iteration),
+            "state_iteration": int(self.state_iteration),
+            "scf_sigma_residual": float(self.scf_sigma_residual),
+            "scf_green_residual": float(self.scf_green_residual),
+            "scf_component_residual": float(self.scf_component_residual),
+            "payload_kind": payload_kind,
+            "hf_density_error": float(self.hf_density_error_map if payload_kind == "last_map"
+                                      else self.hf_density_error_state),
+            "hf_density_source": payload_kind,
+            "density_target_enforced": bool(self.calc_mu),
+            "flex_guard_policy": self.flex_guard_policy,
+            "flex_guard_violations": int(self.flex_guard_violations),
+        }
+
+    def _second_order_members(self):
+        """The flex_second_order / flex_second_order_schema provenance pair
+        (#181 follow-up), for the archive blocks that do NOT already go
+        through :func:`_scheme_stamp` (sigma, green, and the dedicated bond
+        archive). General scheme only; empty on reduced (and for any
+        __new__-built stub missing the attributes)."""
+        if (str(getattr(self, "calc_scheme", "")).lower() != "general"
+                or getattr(self, "flex_second_order", None) is None):
+            return {}
+        return {"flex_second_order": np.array(self.flex_second_order, dtype="<U8"),
+                "flex_second_order_schema": np.int64(1)}
+
+    def _phase_b_density_and_hf(self, green_kw, static, mu, beta, Ncond_target, iteration=None):
+        """rho, the density-closure check and Sigma_HF for one map.
+
+        The Hermitian symmetry of the equal-time density is refused at
+        ``flex_hf_density_tol`` under ``flex_guard_policy = "refuse"``; under
+        ``"warn"`` the deviation is only measured, and one warning naming
+        ``iteration`` (the SCF iteration this map belongs to) is logged
+        before the projected density is used anyway (GitHub issue #199).
+        The density-closure check against the target is NOT part of the
+        policy: an unclosed chemical-potential search still ends the run."""
+        from hwave.solver import flex_hf, hartree_fock as _hf
+        shape = tuple(int(x) for x in self.lattice.shape)
+        heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], np.asarray(static)[0, 0])
+        warn = self.flex_guard_policy == "warn"
+        dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape,
+                                      sym_tol=None if warn else self.flex_hf_density_tol)
+        if warn and dens.hermitian_deviation > self.flex_hf_density_tol:
+            logger.warning(
+                "FLEX iteration %s: the equal-time density violates rho_ab(r) = "
+                "conj(rho_ba(-r)) (relative deviation %.3e > flex_hf_density_tol %.1e); "
+                "flex_guard_policy = \"warn\": the density is projected and the iteration "
+                "continues", iteration, dens.hermitian_deviation, self.flex_hf_density_tol)
+            self.flex_guard_violations += 1
+        if self.calc_mu:
+            dev = abs(dens.n_per_spin - Ncond_target)
+            if dev > 1e-10 * max(1.0, abs(Ncond_target)):
+                raise ValueError(
+                    "flex_hartree_fock: the chemical potential search closed on "
+                    "N/2 = {:.12g} but the equal-time density gives {:.12g} "
+                    "(residual {:.3e} > tolerance {:.3e})".format(
+                        Ncond_target, dens.n_per_spin, dev,
+                        1e-10 * max(1.0, abs(Ncond_target))))
+        sigma_hf = flex_hf.hf_map(dens.rho_r, self._hf_tables, shape, self.norb)
+        return dens, sigma_hf[None, None], heff
+
+    def _phase_b_preflight(self, green_info):
+        """Refusal precedence steps 4-7 (spec 4.1): the copied mean-field
+        assembly and the seed (4-5), the HF tables and the interaction
+        admissibility (6), the topology and the memory preflight (7) --
+        all BEFORE H0 is diagonalised, before the backend is resolved and
+        before any expensive work."""
+        from hwave.solver import flex_hf, bond_channels
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        expected = (1, nmat, nvol, norb, norb)
+        if self.ham_info.ham_extern_q is not None:
+            raise ValueError("flex_hartree_fock=true does not support an external field "
+                             "(spin-diagonal H0)")
+        self._phase_b_seed = self._assemble_static_seed(green_info, expected)
+        split = self._validate_phase_b_interactions()
+        self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
+        if self.longitudinal_bond_channels:
+            self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs(split)
+            self._bond_view = bond_channels.BondSetView(self._bond_topo)
+            env = green_info.get("sigma_init_envelope")
+            split_seed = env is not None and getattr(env, "marker", None) == "split"
+            self._bond_est = self._bond_memory_preflight(self._bond_topo, split_seed)
+            self._bond_nb = int(self._bond_est["nb"])
+
+    def _validate_phase_b_interactions(self):
+        """Interaction admissibility shared by flex_hartree_fock and the
+        bond gate (spec 2.2 / 4.1 step 6): off-site Exchange and PairHop are
+        refused, and every off-site coefficient of every type (PairLift
+        included) must be real. Returns the pre-fold locality split."""
+        from hwave.solver import bond_channels
+        from hwave.solver.offsite import split_locality
+        g = ("[mode.param] longitudinal_bond_channels=true (FLEX)"
+             if self.longitudinal_bond_channels else "[mode.param] flex_hartree_fock=true")
+        if getattr(self.ham_info, "enable_spin_orbital", False):
+            raise ValueError(g + " does not support enable_spin_orbital.")
+        split = split_locality(self.ham_info, self.lattice)
+        for itype in ("PairHop", "Exchange"):
+            if itype in split.offsite_types:
+                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+                if itype == "PairHop":
+                    reason = ("no local-pair particle-hole form exists for an inter-site "
+                              "pair hopping (Phase C of GitHub issue #181)")
+                else:
+                    reason = ("exact diagonalization finds no q-representable longitudinal "
+                              "content (#181 Tier 2); its bond-resolved promotion is a "
+                              "recorded follow-up, so the gate refuses it rather than "
+                              "silently dropping it")
+                raise ValueError(
+                    g + " does not support an off-site '{}' declaration (irvec={}, "
+                    "orbvec={} -- the declared displacement and the zero-based orbital "
+                    "pair): {}. Remove those entries from the interaction input."
+                    .format(itype, tuple(irvec), tuple(orbvec), reason))
+        if "PairLift" in split.offsite_types and self.longitudinal_bond_channels:
+            logger.info(g + ": off-site PairLift declarations carry no longitudinal "
+                        "(spin/charge) content and are ignored by the bond channels "
+                        "(they reach the Hartree-Fock kernel, where they vanish on the "
+                        "paramagnetic density).")
+        for itype, tbl in split.offsite_prefold_tbl.items():
+            for (irvec, orbvec), v in tbl.items():
+                if not bond_channels.is_real_coefficient(v):
+                    raise ValueError(
+                        g + ": off-site {} coefficients must be real in this version "
+                        "(irvec={}, orbvec={} carries {}); the imaginary direction is not "
+                        "represented by the Hartree-Fock term or the bond-diagonal Fock rule."
+                        .format(itype, tuple(irvec), tuple(orbvec), complex(v)))
+        return split
+
+    def _validate_bond_gate_prereqs(self, split):
+        """Topology of the FLEX bond gate (spec 4.1 step 7) on the validated
+        split. Returns ``(topo, split)``."""
+        from hwave.solver import bond_channels
+        g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
+        interactions = CaseInsensitiveDict(split.whole_tbl)
+        topo = bond_channels.resolve_bond_topology(
+            interactions, np.eye(3), self.norb,
+            max_shells=self.longitudinal_bond_max_shells,
+            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+        if int(np.asarray(topo.delta_r).shape[0]) <= 1:
+            raise ValueError(
+                g + " requires at least one declared off-site CoulombInter, Hund or Ising "
+                "shell (a declared-but-zero coefficient counts; the aggregate Coulomb "
+                "table's off-site part counts); none is present after "
+                "longitudinal_bond_max_shells truncation, so the bond channels have "
+                "nothing to represent.")
+        for t, arr in topo.coeffs.items():
+            if np.any(np.abs(np.asarray(arr).imag) > 1e-12):
+                raise ValueError(
+                    g + ": off-site {} coefficients must be real in this version (a "
+                    "complex coefficient was declared).".format(t))
+        return topo, split
+
+    def _bond_memory_preflight(self, topo, split_seed):
+        """The spec 3.6 admission estimate (absolute, ordinary FLEX arrays
+        included), the batch selection and the operation warnings.
+
+        HOST ONLY. The device half of the admission runs at the entry of
+        :meth:`_solve_phase_b` (:meth:`_bond_device_admission`, spec 4.6):
+        this preflight is deliberately placed before the backend is
+        resolved, so a free-memory reading taken here would be measured
+        against a device the solve has not yet filled with the H0
+        eigenpairs, the interaction and the second-order mirror. The
+        arguments are kept so the device half can recompute the same table
+        with the reading it takes at the right moment."""
+        from hwave.solver import flex_bond
+        B = int(np.asarray(topo.delta_r).shape[0])
+        n_types = sum(1 for t in (getattr(self._hf_tables, "inter_table", {}) or {}).values()
+                      if t is not None)
+        self._bond_est_kwargs = dict(
+            nmat=self.nmat, nvol=self.lattice.nvol, norb=self.norb, B=B,
+            depth=self.anderson_depth, output_full=self.longitudinal_bond_output_full,
+            split_seed=split_seed, n_types=n_types,
+            freq_batch=self.longitudinal_bond_freq_batch,
+            cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
+            factor_bytes=(0 if self._second_order_factors is None
+                          else int(self._second_order_factors.nbytes)),
+            guard_freqs=self.longitudinal_bond_guard_freqs,
+            guard_enabled=self.longitudinal_bond_cond_tol is not None)
+        est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
+        gib = flex_bond._GIB
+        logger.info(
+            "Bond-resolved FLEX preflight (ESTIMATE): B = %d channels %s, ND = %d, nvol = %d, "
+            "Nmat = %d, frequency batch %d; persistent %.4f GiB, peak %.4f GiB = 1.25 * "
+            "(persistent + max phase row) against the cap %.4f GiB\n%s",
+            B, [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)], est["ND"],
+            est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
+            est["cap_bytes"] / gib, est["table"])
+        if self.longitudinal_bond_guard_freqs == "static":
+            logger.warning(
+                "longitudinal_bond_guard_freqs = \"static\": the conditioning guard inspects "
+                "only the zero bosonic frequency; the other slices are validated for finiteness "
+                "and for the consistency of their own solve (residual <= 1e-6) only, so a "
+                "nearly singular denominator at nu != 0 is not refused; "
+                "longitudinal_bond_cond_min_s/c report the zero-frequency minimum.")
+        if est["dressing_ops"] > flex_bond._DRESSING_OPS_WARN:
+            logger.warning(
+                "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "
+                "for the two dense ND x ND solves over (Nmat, nvol) (ND = %d, nvol = %d, "
+                "Nmat = %d); this run fits the memory cap but may take very long.",
+                est["dressing_ops"], est["ND"], est["nvol"], est["nmat"])
+        if est["transport_ops"] > flex_bond._TRANSPORT_OPS_WARN:
+            logger.warning(
+                "longitudinal_bond_channels (FLEX): about %.2e operations per SCF iteration "
+                "for the bond self-energy transport (B = %d, Nmat = %d, nvol = %d, norb = %d); "
+                "expect long iterations.", est["transport_ops"], B, est["nmat"], est["nvol"],
+                self.norb)
+        return est
+
+    def _bond_device_admission(self, xp):
+        """Device half of the bond-gate admission (spec 4.6), run at the entry
+        of :meth:`_solve_phase_b`.
+
+        This is the only point where the device table is meaningful. The host
+        preflight runs before :func:`backend.get_backend`, so at that moment
+        the device holds none of the solve's own arrays; here the H0
+        eigenpairs, the interaction and the second-order mirror are already
+        resident and the bond block store and the vertex context are not yet
+        allocated -- exactly the baseline the incremental device table is
+        written against. The estimate is recomputed with the reading taken
+        here, the frequency batch is re-published (the device may admit less
+        than the host cap did) and the device table and the host <-> device
+        transfer volume are logged. A no-op on the numpy backend."""
+        if xp is np:
+            return
+        from hwave.solver import flex_bond
+        available = _bk.device_available_bytes()
+        if available is None:
+            logger.warning(
+                "the GPU backend is active but the device memory could not be queried; "
+                "the bond gate keeps the frequency batch %d chosen by the host table "
+                "alone and may run out of device memory.", self._bond_nb)
+            return
+        est = flex_bond.estimate_bond_memory(device_available=int(available),
+                                             **self._bond_est_kwargs)
+        nb_host = int(self._bond_nb)
+        self._bond_est = est
+        self._bond_nb = int(est["nb"])
+        gib = flex_bond._GIB
+        # every figure below is at the SELECTED batch est["nb"] (the minimum
+        # of what the host cap and the device admit); the two per-table
+        # maxima are named separately so they are not read as one number
+        logger.info(
+            "Bond-resolved FLEX device table (ESTIMATE): need %.4f GiB against 0.9 * "
+            "available %.4f GiB at frequency batch %d (the host table alone admitted %d, "
+            "the device alone %d)\n%s",
+            est["device_need"] / gib, est["device_cap"] / gib, est["nb"], nb_host,
+            est["device_nb"], est["device_table"])
+        self._log_bond_transfer_volume(est)
+
+    def _log_bond_transfer_volume(self, est):
+        """Host <-> device traffic of one SCF iteration at the selected
+        frequency batch (spec 4.6), logged once per solve.
+
+        The bubble is assembled on the device from the Green function the
+        SCF loop already holds there (issue #196), so no Green function
+        and no tail cross per iteration -- the tail is a one-off transfer
+        of the solve's device context. What the bubble does move is its
+        RESULT: the B^2 channel-pair blocks, one at a time, into the
+        host block store, i.e. one full (Nmat, nvol, ND, ND) buffer per
+        map. Per batch the dressing then moves one chibar batch back in
+        and one W batch out -- again one full buffer each way over a
+        whole iteration, since the batches tile the frequency axis --
+        plus two batch-sized reads for the conditioning guard under
+        ``guard_freqs = "all"`` and two more for the full dynamic
+        susceptibilities under ``longitudinal_bond_output_full``; the
+        transport moves the B^2 blocks of W in and the collapses out.
+
+        With ``U = Nmat nvol ND^2 16``, ``S = nvol ND^2 16``,
+        ``C = Nmat nvol norb^4 16`` and ``G = Nmat nvol norb^2 16`` the
+        two directions of one iteration are
+
+            H2D = U + B^2 C
+            D2H = U + U (1 + 2 [guard = all] + 2 [output_full])
+                  + 2 S + 2 S [guard = static] + 3 C + G
+
+        where the leading ``U`` is the bubble's ``B^2`` blocks (``B^2 C``
+        written in the ND symbols); the ``2 S`` terms are the two static
+        ND x ND slices the dressing always brings back and, under
+        ``"static"``, the two guard copies of that same slice (the
+        ``"all"`` guard instead copies the whole batch, which is the
+        ``2 U`` term); ``3 C`` are the three channel-0 collapses and
+        ``G`` the self-energy the transport returns."""
+        from hwave.solver import flex_bond
+        gib = flex_bond._GIB
+        nb, nmat = int(est["nb"]), int(est["nmat"])
+        n_batches = -(-nmat // nb)             # ceil; the last one may be short
+        # the batches tile the frequency axis exactly, so one pass over them
+        # moves the whole (nmat, nvol, ND, ND) buffer once, whatever nb is
+        u_total = nmat * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
+        guard_all = self.longitudinal_bond_guard_freqs == "all"
+        h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
+        d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
+               u_total
+               + u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
+               # the two static slices, plus the "static" guard's two copies of
+               # that slice ("all" copies the whole batch, counted above)
+               + 2 * int(est["S_bytes"]) * (1 if guard_all else 2)
+               + 3 * int(est["C_bytes"])
+               # the self-energy the transport returns
+               + int(est["G_bytes"]))
+        logger.info(
+            "longitudinal_bond_channels (FLEX): bond-gate transfer volume per iteration "
+            "(ESTIMATE) at frequency batch %d (%d batches): host to device %.4f GiB, "
+            "device to host %.4f GiB (guard_freqs = %r, longitudinal_bond_output_full = %s)",
+            nb, n_batches, h2d / gib, d2h / gib, self.longitudinal_bond_guard_freqs,
+            self.longitudinal_bond_output_full)
+
+    def _phase_b_active_outputs(self, info_outputfile):
+        active = [k for k in ("energy", "sigma", "green") if k in info_outputfile]
+        if self.max_iter > 0:
+            active += ["chiq_s", "chiq_c"]
+            active += [k for k in ("chi0q", "chiq") if k in info_outputfile]
+            if self.longitudinal_bond_channels and self.longitudinal_bond_output_full:
+                active.append("longitudinal_bond")
+            ctl = getattr(self, "_pairing_controls", None)
+            if ctl is not None:
+                # the three files of every requested pairing channel (spec 7);
+                # they are written after every FLEX artifact, but a collision
+                # with one of them is refused before the solve like any other
+                for eta in ctl.pairing_types:
+                    active += ["eliashberg_bond_{}".format(eta),
+                               "eigenvalue_bond_{}".format(eta),
+                               "gap_bond_{}".format(eta)]
+        return tuple(active)
+
+    def validate_output_paths(self, info_outputfile=None, path_to_output=None):
+        """Refuse two output artifacts resolving to one file (spec 4.2).
+        Stores the ``[file.output]`` mapping for the solve-entry re-check;
+        a no-op for runs without flex_hartree_fock / the bond gate."""
+        from hwave.solver import flex_bond
+        if not getattr(self, "_phase_b_active", False):
+            return {}
+        if info_outputfile is None:
+            info_outputfile = getattr(self, "_info_outputfile", None)
+        if info_outputfile is None:
+            raise ValueError("validate_output_paths: no [file.output] mapping is stored on the "
+                             "solver; pass info_outputfile explicitly")
+        if path_to_output is None:
+            path_to_output = info_outputfile.get("path_to_output",
+                                                 getattr(self, "_path_to_output", None))
+        if path_to_output is None:
+            raise ValueError("validate_output_paths: path_to_output is not known; pass it "
+                             "explicitly (or a mapping carrying 'path_to_output')")
+        self._info_outputfile = info_outputfile
+        self._path_to_output = path_to_output
+        return flex_bond.resolve_output_paths(info_outputfile, path_to_output,
+                                              self._phase_b_active_outputs(info_outputfile))
+
+    def _phase_b_prepare_vertices(self):
+        """S, C on the bond basis, cached once per solve (spec 3.5)."""
+        from hwave.solver import bond_channels, hartree_fock as _hf
+        from hwave.solver.offsite import sc_matrices_from_split, sc_matrices_onsite_from_split
+        nx, ny, nz = (int(x) for x in self.lattice.shape)
+        nvol, nd = self.lattice.nvol, self.norb ** 2
+        S0, C0 = sc_matrices_from_split(self._bond_split, bond_channels._LONGITUDINAL_ACTIVE_TYPES,
+                                        self.norb, nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        S_on, C_on = sc_matrices_onsite_from_split(self._bond_split, self.norb, nx, ny, nz)
+        self._bond_S_on = np.ascontiguousarray(S_on.reshape(nvol, nd, nd))
+        self._bond_C_on = np.ascontiguousarray(C_on.reshape(nvol, nd, nd))
+        types = tuple(self._bond_topo.coeffs)
+        self._bond_types = types
+        self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types)
+        self._bond_C = bond_channels.build_sc_bond_channel(self._bond_topo, C0, "C", types=types)
+        del S0, C0
+        if not (np.all(np.isfinite(self._bond_S)) and np.all(np.isfinite(self._bond_C))):
+            raise _hf.NonFiniteError("non-finite bond vertices S/C")
+
+    def _solve_phase_b(self, green_info, beta, mu, Ncond_target, xp,
+                       green0_tail, green_tail_w, ham_orig):
+        from hwave.solver import flex_bond, hartree_fock as _hf
+        from hwave.solver.flex_mixing import (SplitState, StackedAndersonMixer,
+                                              linear_mix_pair, residuals, PassCounter)
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        nd = norb * norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        static0, fluct0 = self._phase_b_seed
+        state = SplitState(static=np.array(static0, copy=True), fluct=np.array(fluct0, copy=True))
+        del static0, fluct0
+        del self._phase_b_seed            # the working state owns the seed from here on (spec 3.6)
+        if np.any(state.static != 0) or np.any(state.fluct != 0):
+            logger.info("FLEX: warm-starting the Phase B loop from the seed")
+        mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
+                 if self.mixing_scheme == "anderson" else None)
+        gate = bool(self.longitudinal_bond_channels)
+        if self.mixing_scheme == "linear" and gate:
+            logger.warning("longitudinal_bond_channels with mixing_scheme='linear': "
+                           "linear mixing is known to mis-converge near the charge "
+                           "instability; consider mixing_scheme='anderson'.")
+        counter = PassCounter(self.eps, needed=3)
+        converged = False
+        n_iter_done = 0
+        chi0q_out = chi_s = chi_c = None
+        # the conditioning guard's exact-decomposition counts (issue #197):
+        # summed and maxed over every map of the whole run
+        self._bond_guard_exact_total = 0
+        self._bond_guard_exact_max = 0
+        self._bond_guard_blocks = 0
+        if gate:
+            # Device admission at its true baseline (spec 4.6): the backend is
+            # resolved and the general path's device arrays are resident, while
+            # the block store and the vertex context below are not yet
+            # allocated. A no-op on the numpy backend.
+            self._bond_device_admission(xp)
+        with contextlib.ExitStack() as stack:
+            store = dev = None
+            if gate:
+                names = ["chibar", "W"]
+                if self.longitudinal_bond_output_full:
+                    names += ["chi_s_w", "chi_c_w"]
+                store = stack.enter_context(flex_bond.BondBlockStore(
+                    nmat, nvol, self._bond_view.n_channels * nd, nd, tuple(names)))
+                self._phase_b_prepare_vertices()
+                # The immutable bond inputs are transferred once per solve,
+                # after the memory preflight measured the device (spec 4.2);
+                # every iteration's dressing reuses them. On numpy the
+                # context holds the host arrays themselves.
+                # The pair permutation and the block-weight mask of the
+                # second-order term are derived from the bond view inside
+                # the factory (issue #198).
+                try:
+                    dev = stack.enter_context(flex_bond.BondDeviceContext.for_view(
+                        xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
+                        self._bond_view, norb,
+                        # the bubble's tail joins the solve-scoped device set
+                        # (issue #196): the bubble computes on the module of the
+                        # Green function, which the loop already keeps on the
+                        # device, so the tail is transferred once instead of
+                        # every map. self.green0_tail is the host copy.
+                        green0_tail=self.green0_tail))
+                except _bk.oom_error_types() as exc:
+                    # the vertex transfer is the first bond allocation on the
+                    # device; the same diagnostic as the per-iteration handler
+                    # in _phase_b_bond_map, naming the phase that failed
+                    logger.error("bond-gate device allocation failed in the \"device "
+                                 "context\" phase (the one-off vertex transfer; device pool "
+                                 "used %.3f GiB): %s",
+                                 _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
+                    raise
+            heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
+            for iteration in range(self.max_iter):
+                logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
+                # the previous map's collapses and static slices are released
+                # before the next map allocates theirs (spec 3.6: one set)
+                chi0q_out = chi_s = chi_c = None
+                self._bond_last = None
+                with self._traced("green_mu"):
+                    sigma = xp.asarray(state.total())
+                    if self.calc_mu:
+                        mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+                        self.mu = mu
+                    if not np.isfinite(mu):
+                        raise _hf.NonFiniteError("non-finite chemical potential at iteration {}"
+                                                 .format(iteration + 1))
+                    green_kw = self._calc_dressed_green(beta, mu, sigma)
+                    del sigma
+                    if not np.all(np.isfinite(green_kw)):
+                        raise _hf.NonFiniteError("non-finite Green function at iteration {}"
+                                                 .format(iteration + 1))
+                with self._traced("density_hf"):
+                    dens, sigma_hf, _ = self._phase_b_density_and_hf(
+                        green_kw, state.static, mu, beta, Ncond_target, iteration=iteration + 1)
+                    self.hf_density_error_map = abs(
+                        2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                    # kept for the per-iteration guard line below (the arrays
+                    # of the density result are released with it)
+                    dens_hermitian = float(dens.hermitian_deviation)
+                    del dens
+                green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
+                if gate:
+                    chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
+                        store, dev, green_kw, green_scf, beta, iteration + 1)
+                else:
+                    chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
+                    assert chi0q_raw.shape[0] == 1
+                    chi0q_raw = chi0q_raw[0]
+                    chi0q_out, v_eff, chi_s, chi_c = \
+                        self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                    sigma_fluct = self._calc_self_energy_general(green_kw, v_eff, beta)
+                    del v_eff
+                del green_scf
+                new_state = SplitState(static=_bk.to_host(sigma_hf),
+                                       fluct=_bk.to_host(sigma_fluct))
+                del sigma_hf, sigma_fluct
+                for name, arr in (("Sigma_HF", new_state.static), ("Sigma_fluct", new_state.fluct)):
+                    if not np.all(np.isfinite(arr)):
+                        raise _hf.NonFiniteError("non-finite {} at iteration {}".format(
+                            name, iteration + 1))
+                with self._traced("convergence"):
+                    g_new = self._calc_dressed_green(beta, mu, xp.asarray(new_state.total()))
+                    if not np.all(np.isfinite(g_new)):
+                        raise _hf.NonFiniteError("non-finite Green function of the new "
+                                                 "self-energy at iteration {}".format(iteration + 1))
+                    res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
+                                                           _bk.to_host(g_new))
+                    del g_new
+                del green_kw
+                self.map_iteration = iteration + 1
+                n_iter_done = iteration + 1
+                self.scf_sigma_residual, self.scf_green_residual, self.scf_component_residual = \
+                    res_sigma, res_g, res_comp
+                done, count = counter.update(res_sigma, res_g, res_comp)
+                logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
+                            .format(res_sigma, res_g, res_comp, count))
+                # the guard diagnostics of this map (issue #199): the values the
+                # tolerances are compared against, iteration by iteration, so that
+                # an approach to an instability is visible before it refuses
+                guards = "  guards: density hermitian {:.3e} (tol {:.1e})".format(
+                    dens_hermitian, self.flex_hf_density_tol)
+                if gate:
+                    guards += "  bond cond_min spin {:.3e} charge {:.3e} (tol {:.1e})".format(
+                        self._bond_last.cond_min_s, self._bond_last.cond_min_c,
+                        self.longitudinal_bond_cond_tol)
+                logger.info(guards)
+                if self._iteration_hook is not None:
+                    payload = dict(
+                        iteration=iteration + 1, mu=float(mu),
+                        static_new=np.array(new_state.static, copy=True),
+                        fluct_new=np.array(new_state.fluct, copy=True),
+                        chi0q=np.array(_bk.to_host(chi0q_out), copy=True),
+                        chiq_s=np.array(_bk.to_host(chi_s), copy=True),
+                        chiq_c=np.array(_bk.to_host(chi_c), copy=True))
+                    if gate:
+                        payload["bond_static_s"] = np.array(self._bond_last.static_s, copy=True)
+                        payload["bond_static_c"] = np.array(self._bond_last.static_c, copy=True)
+                    self._iteration_hook(payload)
+                with self._traced("mixing"):
+                    if mixer is not None:
+                        state = mixer.step(state, new_state)
+                    else:
+                        state = linear_mix_pair(state, new_state, self.mix)
+                    del new_state
+                self.state_iteration = iteration + 1
+                if not (np.all(np.isfinite(state.static)) and np.all(np.isfinite(state.fluct))):
+                    raise _hf.NonFiniteError("non-finite mixed self-energy at iteration {}"
+                                             .format(iteration + 1))
+                ok, err = _hf.is_hermitian_batch(state.static[:, 0], 1e-10)
+                if not ok:
+                    raise ValueError("the mixed static self-energy is not Hermitian "
+                                     "(relative deviation {:.3e})".format(err))
+                heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
+                if done:
+                    logger.info("FLEX converged after {} iterations".format(iteration + 1))
+                    converged = True
+                    break
+            if not converged:
+                logger.warning("FLEX did not converge after {} iterations (residuals sigma={:.3e}, "
+                               "green={:.3e}, component={:.3e}, eps={:.3e})".format(
+                                   self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
+                                   self.scf_component_residual, self.eps))
+            self.scf_converged = converged
+            self.scf_iterations = n_iter_done
+            with self._traced("post_scf"):
+                # final state: mu, G, density, physics from the (post-mix) state
+                sigma = xp.asarray(state.total())
+                if self.calc_mu:
+                    mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
+                    self.mu = mu
+                if not np.isfinite(mu):
+                    raise _hf.NonFiniteError("non-finite final-state chemical potential")
+                green_kw = self._calc_dressed_green(beta, mu, sigma)
+                if not np.all(np.isfinite(green_kw)):
+                    raise _hf.NonFiniteError("non-finite final-state Green function")
+                # the FINAL state is refused at flex_hf_density_tol whatever the
+                # policy is: flex_guard_policy tolerates a transient excursion of
+                # the self-consistency, not a result that violates the symmetry
+                dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape,
+                                              sym_tol=self.flex_hf_density_tol)
+                if gate:
+                    self._refuse_final_bond_guard()
+                if self.calc_mu:
+                    # NOT named `dev`: that name holds the solve-scoped bond
+                    # device context here, which the pairing hook below needs
+                    dens_dev = abs(dens.n_per_spin - Ncond_target)
+                    if dens_dev > 1e-10 * max(1.0, abs(Ncond_target)):
+                        raise ValueError(
+                            "flex_hartree_fock: the final-state chemical potential search closed "
+                            "on N/2 = {:.12g} but the equal-time density gives {:.12g} (residual "
+                            "{:.3e} > tolerance {:.3e})".format(
+                                Ncond_target, dens.n_per_spin, dens_dev,
+                                1e-10 * max(1.0, abs(Ncond_target))))
+                self.hf_density_error_state = abs(
+                    2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
+                self.physics = physics
+                logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
+                    physics["NCond"], physics["Sz"], physics["mu"]))
+                self.sigma = _bk.to_host(sigma)
+                self.sigma_static = np.array(state.static, copy=True)
+                self.sigma_fluct = np.array(state.fluct, copy=True)
+                self.green_kw = _bk.to_host(green_kw)
+                green_info["sigma"] = self.sigma
+                green_info["sigma_static"] = self.sigma_static
+                green_info["sigma_fluct"] = self.sigma_fluct
+                green_info["green"] = self.green_kw
+                green_info["physics"] = physics
+                if self.max_iter > 0:
+                    self.chi_s = _bk.to_host(chi_s)
+                    self.chi_c = _bk.to_host(chi_c)
+                    green_info["chi0q"] = _bk.to_host(chi0q_out)
+                    green_info["chiq_s"] = self.chi_s
+                    green_info["chiq_c"] = self.chi_c
+                    if gate:
+                        self._phase_b_publish_bond(green_info, store, dev.xp)
+                        if getattr(self, "_pairing_controls", None) is not None:
+                            # spec 7: NON-THROWING. The store (chibar of the
+                            # last map), the bond device context and the
+                            # final-state green_kw on xp are all alive here.
+                            from hwave.solver import eliashberg_bond_io
+                            eliashberg_bond_io.run_inprocess_pairing(
+                                self, store, dev, green_kw, beta, green_info)
+                else:
+                    logger.info("FLEX IterationMax=0: no map executed; only the final-state "
+                                "outputs (sigma, green, physics) of the seed state are stored.")
+        logger.info("End FLEX calculations")
+
+    def _refuse_final_bond_guard(self):
+        """Refuse a FINAL state that sits inside the instability region of
+        the bond gate (GitHub issue #199).
+
+        ``flex_guard_policy = "warn"`` tolerates a violation DURING the
+        self-consistency; here the last map is the answer, so a violation of
+        ITS dressing ends the run. The message separates the two guards that
+        can speak -- the conditioning guard and, under
+        ``longitudinal_bond_guard_freqs = "static"``, the solve residual of an
+        unchecked slice. ``cond_min_s``/``cond_min_c`` are the conditioning
+        scores of that map; under ``"static"`` they are the minima over the
+        zero-frequency slice alone, not over the whole grid.
+
+        A no-op when no map ran (IterationMax = 0) or when nothing was
+        warned about, which is always the case under ``"refuse"``: that
+        policy has already raised."""
+        res = getattr(self, "_bond_last", None)
+        if res is None or int(res.guard_violations) <= 0:
+            return
+        n = int(res.guard_violations)
+        m = int(res.guard_residual_violations)
+        raise ValueError(
+            "longitudinal_bond_channels: the LAST FLEX map violated the bond guard "
+            "{} time(s) ({} conditioning, {} residual; longitudinal_bond_cond_tol = {:.1e}, "
+            "cond_min spin {:.3e} / charge {:.3e}); flex_guard_policy = \"warn\" tolerates "
+            "transient violations only. The final state is inside the instability region: "
+            "reduce the interaction, raise the temperature, or lower "
+            "longitudinal_bond_cond_tol deliberately.".format(
+                n, n - m, m, self.longitudinal_bond_cond_tol,
+                res.cond_min_s, res.cond_min_c))
+
+    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration):
+        """One bond-resolved map (spec 1, gate on): bubble -> batched
+        dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
+        collapses (``acbd`` layout) and Sigma_fluct.
+
+        ``dev`` is the solve-scoped :class:`~hwave.solver.flex_bond.BondDeviceContext`
+        owning the vertices and the bubble's tail; its array module drives
+        every phase of the map. ``green_scf`` is used where it already
+        lives -- on the GPU backend the bubble too runs on the device
+        (issue #196), so nothing of the Green function crosses to the host
+        here. The block store stays host-resident either way: the bubble
+        brings back one channel-pair block at a time and the kernels move
+        one frequency batch (and one W block pair) at a time."""
+        from hwave.solver import flex_bond
+        nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
+        nd = norb * norb
+        shape = tuple(int(x) for x in self.lattice.shape)
+        workers = getattr(self, "fft_workers", 1)
+        xp = dev.xp
+        # the phase the one out-of-memory handler below names; every block
+        # that allocates on the device sets it before entering
+        phase = "bubble"
+        try:
+            with self._traced("bubble"):
+                if iteration == 1:
+                    # provenance next to the other per-solve backend lines: the
+                    # bubble follows the Green function's module (issue #196)
+                    logger.info("longitudinal_bond_channels (FLEX): bond bubble on %s",
+                                _bk.array_module_of(green_scf).__name__)
+                # green_scf arrives in the module the SCF loop runs on and stays
+                # there; dev.green0_tail was transferred to that same module once
+                # per solve. Both are the identity on the numpy backend.
+                flex_bond.assemble_bubble(
+                    store, green_scf, dev.green0_tail,
+                    beta, self._bond_view, shape, workers)
+            phase = "dressing"
+            with self._traced("dressing"):
+                res = flex_bond.dress_and_build_w(
+                    store, dev, nb=self._bond_nb,
+                    output_full=self.longitudinal_bond_output_full, nmat=nmat, nvol=nvol, nd=nd,
+                    spatial_shape=shape, iteration=iteration,
+                    # the second-order kernel computes in the module of its
+                    # input, so on the device it needs the device mirror of
+                    # the factor pack; the host pack stays authoritative.
+                    factors=((self._second_order_device or self._second_order_factors)
+                             if xp is not np else self._second_order_factors),
+                    second_order=self.flex_second_order,
+                    guard_freqs=self.longitudinal_bond_guard_freqs,
+                    cond_tol=self.longitudinal_bond_cond_tol,
+                    guard_policy=self.flex_guard_policy,
+                    guard_method="auto")
+            phase = "transport"
+            with self._traced("transport"):
+                sigma_fluct = flex_bond.calc_self_energy_bond(
+                    store, green_kw, beta, self._bond_view, shape, norb, workers, xp=xp)
+        except _bk.oom_error_types() as exc:
+            # no retry: a smaller batch mid-SCF would change the arithmetic
+            # of this solve. The phase, the iteration, the batch size and the
+            # pool occupancy are logged, then the error propagates -- solve()
+            # drops every partial result on the way out (spec 3.5).
+            logger.error("bond-gate device allocation failed during the %s at iteration %d "
+                         "with frequency batch %d (device pool used %.3f GiB): %s",
+                         phase, iteration, self._bond_nb,
+                         _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
+            raise
+        self._bond_last = res
+        # the transient violations this map was allowed to pass (issue #199)
+        self.flex_guard_violations += int(res.guard_violations)
+        # the conditioning guard's exact-decomposition counts (issue #197):
+        # a running total and maximum over the whole run, plus THIS map's
+        # guarded-block count (constant over the run at fixed guard_freqs)
+        self._bond_guard_exact_total += int(res.guard_exact_blocks)
+        self._bond_guard_exact_max = max(self._bond_guard_exact_max, int(res.guard_exact_blocks))
+        self._bond_guard_blocks = int(res.guard_blocks)
+        logger.debug("  guards: exact decomposition of %d of %d guarded blocks (%.1f %%)",
+                     res.guard_exact_blocks, res.guard_blocks,
+                     100.0 * res.guard_exact_blocks / max(1, res.guard_blocks))
+        r6 = (nmat, nvol, norb, norb, norb, norb)
+        return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
+                res.collapse_c.reshape(r6), sigma_fluct)
+
+    def _phase_b_publish_bond(self, green_info, store, xp):
+        """The sixteen static ``longitudinal_bond_*`` keys of the LAST map
+        (Phase A schema), ``longitudinal_bond_source`` and, with
+        ``longitudinal_bond_output_full``, the detached dynamic channels.
+        ``xp`` is the array module the bond map dressed on (``dev.xp`` of
+        the caller, the same module :func:`bond_channels.dress_batch`
+        resolved ``"auto"`` against for this map, issue #197)."""
+        from hwave.solver import bond_channels as _bc
+        res = self._bond_last
+        topo = self._bond_topo
+        nvol, norb = self.lattice.nvol, self.norb
+        nd = norb * norb
+        delta_r = np.asarray(topo.delta_r, dtype=np.int64)
+        xp_name = getattr(self, "_bond_xp_name", "numpy")
+        # the recorded guard method must come from the same resolver
+        # dress_batch used, dtype and all (issue #197 review): the store's
+        # chibar slot is always allocated complex128 (BondBlockStore.__init__),
+        # so a zero-copy one-row peek is enough to name that dtype without a
+        # device transfer
+        guard_method = _bc._resolve_guard_method(
+            "auto", xp, store.get_freq_batch("chibar", 0, 1).dtype)
+        out = {
+            "longitudinal_bond_chi_s": res.static_s,
+            "longitudinal_bond_chi_c": res.static_c,
+            "longitudinal_bond_chiq_s_static": np.ascontiguousarray(
+                res.static_s[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            "longitudinal_bond_chiq_c_static": np.ascontiguousarray(
+                res.static_c[:, :nd, :nd]).reshape(nvol, norb, norb, norb, norb),
+            "longitudinal_bond_delta_r": delta_r,
+            "longitudinal_bond_reverse": np.asarray(topo.reverse, dtype=np.int64),
+            "longitudinal_bond_index_order": np.str_("I = m*norb**2 + l1*norb + l2"),
+            "longitudinal_bond_spatial_shape": np.array(self.lattice.shape, dtype=np.int64),
+            "longitudinal_bond_q_convention":
+                np.str_("q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened"),
+            "longitudinal_bond_spin_mode": np.str_(self.spin_mode),
+            "longitudinal_bond_normalization": np.str_("chi_bar = -(T/N) sum_k G G, per site"),
+            "longitudinal_bond_types": np.asarray(self._bond_types),
+            "longitudinal_bond_max_shells": np.int64(
+                -1 if self.longitudinal_bond_max_shells is None
+                else int(self.longitudinal_bond_max_shells)),
+            "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
+            "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
+            "longitudinal_bond_schema": np.int64(1),
+            "longitudinal_bond_source": np.str_("last_map"),
+            "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
+            "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
+            "longitudinal_bond_device": np.str_(xp_name),
+            "longitudinal_bond_nb": np.int64(self._bond_nb),
+            "longitudinal_bond_guard_method": np.str_(guard_method),
+            "longitudinal_bond_guard_exact_blocks_total": np.int64(self._bond_guard_exact_total),
+            "longitudinal_bond_guard_exact_blocks_max": np.int64(self._bond_guard_exact_max),
+            "longitudinal_bond_guard_blocks_per_iteration": np.int64(self._bond_guard_blocks),
+        }
+        if self.longitudinal_bond_output_full:
+            out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
+            out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+            out["longitudinal_bond_S"] = np.array(self._bond_S, copy=True)
+            out["longitudinal_bond_C"] = np.array(self._bond_C, copy=True)
+        green_info.update(out)
+        logger.info(
+            "longitudinal_bond_channels (FLEX): chi0q/chiq_s/chiq_c are the channel-0 "
+            "collapses of the last map; the bond-resolved static objects are the "
+            "longitudinal_bond_* keys (B = %d channels %s, ND = %d; cond_min spin %.3e, "
+            "charge %.3e).", int(delta_r.shape[0]),
+            [tuple(int(x) for x in r) for r in delta_r], int(res.static_s.shape[1]),
+            res.cond_min_s, res.cond_min_c)
+
     def _ir_setup(self, beta):
         """Build the fermionic/bosonic IR axes once per solve."""
         if self._ir_axF is not None:
             return
-        from hwave.solver.ir_axis import IRAxis
+        from hwave.solver.ir_axis import IRAxis, auto_wmax
+        import hwave.sc as sc
         wmax = self.ir_wmax
         if wmax is None:
             ew = _bk.to_host(self.H0_eigenvalue)
-            band = 2.0 * float(np.abs(ew).max())
             u = float(np.abs(_bk.to_host(
                 self.ham_info.ham_inter_q)).max())
-            wmax = 3.0 * (band + u)
-            if not np.isfinite(wmax) or wmax <= 0.0:
-                raise ValueError(
-                    "ir_wmax auto-estimate is not a positive finite number "
-                    "(band bound {} + interaction scale {}); set "
-                    "[mode.param] ir_wmax explicitly (a real-frequency "
-                    "bandwidth in the same energy units as the "
-                    "Hamiltonian).".format(band, u))
+            # mu-aware spectral half-range (issue #184): the SAME estimator the
+            # dynamic Eliashberg solver uses, so a FLEX -> Eliashberg pair lands
+            # on a matching basis. mu is not yet resolved at _ir_setup (solve()
+            # sets self.mu later), so resolve it here exactly as FLEX's own mu
+            # search does: a fixed configured mu when calc_mu is off, else the
+            # mu that reproduces FLEX's target electron count on H0. The counter
+            # is the plain sum over ALL H0 eigenvalues equal to Ncond_target
+            # (Ncond halved for spin-free, as _find_mu does) -- reproduced by
+            # _determine_mu on the flattened spectrum with a per-entry target.
+            if self.calc_mu:
+                Ncond_target = (self.Ncond / 2 if self.spin_mode == "spin-free"
+                                else self.Ncond)
+                filling = float(Ncond_target) / float(ew.size)
+                mu = sc._determine_mu(
+                    np.asarray(ew).reshape(-1, 1, 1, 1), beta, filling, 1)
+            else:
+                mu = float(self.mu_value)
+            wmax = auto_wmax(ew, mu, u, param_hint="[mode.param] ir_wmax")
             logger.info("IR: auto ir_wmax = %.6g (override with "
                         "[mode.param] ir_wmax)", wmax)
         wmax = float(wmax)
@@ -819,53 +2476,18 @@ class FLEX(RPA):
         r"""chi0 on the bosonic IR nodes, computed natively from G on the
         fermionic nodes (reduced scheme).
 
-        chi0_{ab}(r,tau) = -G_{ab}(r,tau) * G_{ba}(-r,-tau) with the
-        fermionic anti-periodicity G(-tau) = -G(beta - tau) realized as a
-        pure tau-node index reversal (symmetric node sets); the spatial
-        r -> -r is the same reverse+roll map as the uniform path. The
-        product lives on the BOSONIC tau nodes (chi0 is periodic), where G
-        is evaluated exactly from its fermionic coefficients. All IR
-        transforms are physical (the tau -> i nu step is the integral over
-        tau), so no 1/beta factors appear -- pinned against the uniform
-        chi0 by test_chi0_gate_ir_matches_uniform_large_nmat.
+        Validates the ``enable_reduced`` requirement (the user-facing
+        diagnostic below is kept even though the kernel has no reduced-only
+        restriction of its own), then delegates to ``bubble.ir_bubble``.
         """
-        axF, axB = self._ir_axF, self._ir_axB
-        nx, ny, nz = self.lattice.shape
-        nblock, nw, nvol, nd, _ = green_kw.shape
         if not self.enable_reduced:
             raise ValueError(
                 "matsubara_basis='ir' chi0 supports the reduced scheme only")
-        xp = _bk.array_module_of(green_kw)
+        nx, ny, nz = self.lattice.shape
         workers = getattr(self, "fft_workers", 1)
-
-        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
-        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
-        g_tau = axF.freq_to_tau_points(g, axB.tau)      # (nblock, ., n_tauB)
-        ntB = axB.n_tau
-        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
-            nblock, ntB, nx, ny, nz, nd * nd)
-
-        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
-
-        # G(-r, -tau) = -G(-r, beta - tau): interior symmetric tau nodes ->
-        # plain tau reversal (with the global fermionic -1); r -> -r is
-        # reverse+roll on the k grid (identical to the uniform path).
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
-        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
-        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
-
-        # chi0[a,b] = -G[a,b](r,tau) * G[b,a](-r,-tau)
-        chi0_rt = -g_rt * g_rev.swapaxes(-2, -1)
-
-        chi0_qt = _bk.spatial_fftn(
-            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd * nd),
-            axes=(2, 3, 4), workers=workers)
-        chi0_q = axB.tau_to_freq(
-            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd * nd), 1, -1))
-        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
-            nblock, axB.n_freq, nvol, nd, nd)
-        return chi0_q
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="reduced", workers=workers)
 
     @do_profile
     def _calc_chi0q_general_ir(self, green_kw, beta):
@@ -873,47 +2495,17 @@ class FLEX(RPA):
         # only on the general path (mirrors that method's `enable_reduced`
         # guard, which is why this one has no analogous check).
         r"""chi0 (full rank-6 orbital bubble) on the bosonic IR nodes, general
-        (MYO) scheme. Transport identical to `_calc_chi0q_ir` (fermionic-node
-        coefficients on the bosonic tau nodes; tau flip-only reversal, spatial
-        roll(-1)+flip; physical transforms, no 1/beta); the orbital product is
-        the full (a,c,b,d) form of the uniform general `_calc_chi0q`
-        (rpa.py): chi0[a,c,b,d] = -G[a,b](r,tau) * G[d,c](-r,-tau).
+        (MYO) scheme.
+
+        Delegates to ``bubble.ir_bubble`` (no ``enable_reduced`` guard, as
+        with the legacy body -- this method is only called on the general
+        path).
         """
-        axF, axB = self._ir_axF, self._ir_axB
         nx, ny, nz = self.lattice.shape
-        nblock, nw, nvol, nd, _ = green_kw.shape
-        xp = _bk.array_module_of(green_kw)
         workers = getattr(self, "fft_workers", 1)
-
-        # G(k, tau_B): fermionic coefficients evaluated at the bosonic nodes
-        g = xp.moveaxis(green_kw.reshape(nblock, nw, nvol * nd * nd), 1, -1)
-        g_tau = axF.freq_to_tau_points(g, axB.tau)
-        ntB = axB.n_tau
-        g_tau = xp.moveaxis(g_tau, -1, 1).reshape(
-            nblock, ntB, nx, ny, nz, nd * nd)
-        g_rt = _bk.spatial_ifftn(g_tau, axes=(2, 3, 4), workers=workers)
-
-        # G(-r,-tau): tau flip-only (j -> nt-1-j), spatial roll(-1)+flip, and
-        # the leading -1 folds in the fermionic antiperiodicity.
-        g_rev = -xp.flip(
-            xp.roll(g_rt, -1, axis=(2, 3, 4)), axis=(1, 2, 3, 4))
-        g_rt = g_rt.reshape(nblock, ntB, nvol, nd, nd)
-        g_rev = g_rev.reshape(nblock, ntB, nvol, nd, nd)
-
-        # chi0[g,tau,r, a,c,b,d] = -G[a,b] * G_rev[d,c]  (mirror rpa.py general:
-        # (G)[...,a,_,b,_] * (G_rev)[...,_,d,_,c] -> (a,d,b,c) -> transpose (a,c,b,d))
-        chi0_rt = -(g_rt[:, :, :, :, np.newaxis, :, np.newaxis]
-                    * g_rev[:, :, :, np.newaxis, :, np.newaxis, :])
-        chi0_rt = chi0_rt.transpose(0, 1, 2, 3, 6, 5, 4)
-
-        chi0_qt = _bk.spatial_fftn(
-            chi0_rt.reshape(nblock, ntB, nx, ny, nz, nd ** 4),
-            axes=(2, 3, 4), workers=workers)
-        chi0_q = axB.tau_to_freq(
-            xp.moveaxis(chi0_qt.reshape(nblock, ntB, nvol * nd ** 4), 1, -1))
-        chi0_q = xp.moveaxis(chi0_q, -1, 1).reshape(
-            nblock, axB.n_freq, nvol, nd, nd, nd, nd)
-        return chi0_q
+        return bubble.ir_bubble(
+            green_kw, self._ir_axF, self._ir_axB,
+            spatial_shape=(nx, ny, nz), scheme="general", workers=workers)
 
     @do_profile
     def _calc_self_energy_ir(self, green_kw, v_eff, beta):
@@ -1265,7 +2857,11 @@ class FLEX(RPA):
 
     @staticmethod
     def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
-        """Fermi function with the same overflow guard as RPA._find_mu."""
+        """Fermi function with the same overflow guard as RPA._find_mu.
+        Must stay arithmetically identical to rpa.py's module-level
+        _masked_fermi_delta_n and to _find_mu's internal _fermi closure
+        (both in src/hwave/solver/rpa.py) -- three copies of the same
+        masked Fermi factor."""
         xp = _bk.array_module_of(ev)
         w = (ev - mu) / t
         mask = w < ene_cutoff
@@ -1510,7 +3106,7 @@ class FLEX(RPA):
         return n, dn
 
     @do_profile
-    def _find_mu_dressed(self, sigma, beta, Ncond):
+    def _find_mu_dressed(self, sigma, beta, Ncond, ew_ref=None):
         """Re-solve mu so the dressed Green's function carries ``Ncond``.
 
         Holds ``sigma`` fixed and solves ``N(mu) = Ncond``.  The ``M``
@@ -1551,6 +3147,16 @@ class FLEX(RPA):
         # and returns plain floats, so the Newton/bisection logic below is
         # backend-independent.
         lam, ew = self._matsubara_number_operator(sigma, beta)
+        if ew_ref is not None:
+            # Phase B (#181): the analytic reference is Heff = H0 + sigma_static
+            # (exact Fermi count when the fluctuation part vanishes). It is
+            # built on the host from H0_k and the static self-energy, so it
+            # has to be put on LAM's backend here: _number_from_eigs adds
+            # the two together (1j omega + (mu - ew), with omega taken from
+            # lam's module), and mixing a host array into a device
+            # expression raises rather than transferring. Identity on the
+            # numpy path.
+            ew = _bk.to_device(np.asarray(ew_ref), _bk.array_module_of(lam))
         w = ew
 
         def _delta_n(mu, with_deriv=False):
@@ -1716,27 +3322,67 @@ class FLEX(RPA):
         -------
         chi0q_out : ndarray
             chi0q for public output, in the RPA ``[a,c,b,d]`` orbital convention
-            (rank-6), consistent with the reduced path -- NOT the internal MYO
-            layout used for the S/C math.
+            (rank-6), consistent with the reduced path; this is also the layout
+            used internally for the S/C math.
         v_eff : ndarray
             Effective FLEX interaction ``(nmat, nvol, norb^2, norb^2)``.
         chi_s : ndarray
-            Spin susceptibility in the general-path **MYO** orbital convention
-            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+            Spin susceptibility for public output, in the RPA ``[a,c,b,d]``
+            orbital convention (rank-6), consistent with chi0q_out and the
+            reduced path; this is also the layout used internally for the S/C
+            math.
         chi_c : ndarray
-            Charge susceptibility in the general-path **MYO** orbital convention
-            (rank-6 ``(nmat,nvol,m,n,mu,nu)``).
+            Charge susceptibility for public output, in the RPA ``[a,c,b,d]``
+            orbital convention (rank-6), consistent with chi0q_out and the
+            reduced path; this is also the layout used internally for the S/C
+            math.
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
-        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
-        # Expose chi0q in the RPA [a,c,b,d] convention (consistent with the
-        # reduced path) for the public output. The MYO transpose is an internal
-        # detail of the S/C math; transposing back (the transpose is an
-        # involution) recovers the input convention. chi_s/chi_c remain in the
-        # general-path MYO convention (see _solve_channels_general).
-        chi0q_out = chi0q.transpose(0, 1, 4, 5, 2, 3)
-        return chi0q_out, v_eff, chi_s, chi_c
+        factors = self._second_order_device or self._second_order_factors
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors,
+                                        second_order=self.flex_second_order)
+        # chi0q / chi_s / chi_c are already in the native RPA [a,c,b,d]
+        # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
+        # what the public output and the Eliashberg loader expect: the loader
+        # (_compute_vertices_flex) builds S @ chi @ S with S/C matrices in that
+        # native layout (the two builders are one implementation since the #113
+        # adjudication), so a transposed chi here would build a transposed
+        # pairing vertex and a wrong static lambda (issue #78).  The "myo"
+        # chi_convention tag marks these as general-path (orbital-pair shape).
+        #
+        # This used to transpose the pair axes on the way IN, which is what
+        # issue #91 was: the transpose reached V_eff, so Sigma was built from
+        # the transposed bubble -- Sigma_mn came out as chi0_nm G_mn instead of
+        # chi0_mn G_mn, i.e. right on the orbital diagonal and wrong off it.
+        # (Sigma itself is NOT simply transposed: G stays in its own slots.)  It is gone, so there is nothing left
+        # to undo here either.
+        #
+        # Effect on the SAVED output, relative to the previous behaviour:
+        #   chi0q  unchanged -- it was already transposed back at this boundary.
+        #   chi_s / chi_c  unchanged.  Issue #78 had been fixed at this same
+        #     boundary, by solving from the transposed chi0 and transposing the
+        #     channels back: transpose(solve(transpose(chi0), U)).  Removing the
+        #     transpose at its source gives solve(chi0, U) with no compensation,
+        #     and the push-through identity makes the two equal -- so this
+        #     retires the compensation rather than changing its result.  The
+        #     identity needs S/C symmetric under the orbital-pair transpose,
+        #     which holds whenever the on-site interaction parameters are
+        #     symmetric in their orbital indices (U'_ab = U'_ba, J_ab = J_ba,
+        #     ...): the physical case, and the only one the S/C construction is
+        #     meant for.
+        #   Sigma  changed off the orbital diagonal.  This is issue #91, and the
+        #     part the output-boundary fix could not reach: V_eff is built from
+        #     chi0 INSIDE this function, so a transposed chi0 reaches Sigma no
+        #     matter what the boundary does.
+        #
+        # Note that since issue #93 the READERS reject non-Hermitian-closed
+        # files; an asymmetric TABLE reaches here only via internal
+        # construction. For such a table the
+        # two forms differ, and solve(chi0, U) is the consistent value because
+        # it applies the S/C matrices in the same index order that RPA and the
+        # Eliashberg loader's S @ chi @ S use.
+        return chi0q, v_eff, chi_s, chi_c
 
     @do_profile
     def _inflate_chi0q_and_ham(self, chi0q_raw, ham_orig):
@@ -1781,9 +3427,11 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_src
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spin-diag":
             # chi0q_raw shape: (nblock=2, nmat, nvol, norb, norb) for reduced
@@ -1798,26 +3446,26 @@ class FLEX(RPA):
                 sl = slice(s * norb, (s + 1) * norb)
                 chi0q[..., sl, sl] = chi0q_raw[s]
 
-            ham = xp.einsum('ksasatbtb->ksatb',
-                            ham_orig.reshape(nvol, *(ns, norb) * 4)
-                            ).reshape(nvol, nd, nd)
+            # 'ksasatbtb->ksatb' through the (ns, norb) factorized view
+            # picks the same entries as the combined-index pair diagonal
+            # and lands them in the same spin-major (nd, nd) layout, so it
+            # routes through the shared projection
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         elif self.spin_mode == "spinful":
             # chi0q_raw shape: (nmat, nvol, nd, nd) for reduced
             chi0q = chi0q_raw
 
-            ham = xp.einsum('kaabb->kab',
-                            ham_orig.reshape(nvol, *(nd,) * 4)
-                            ).reshape(nvol, nd, nd)
+            ham = project_density_pairs(ham_orig, nvol, nd, xp)
 
         return chi0q, ham
 
     @do_profile
     def _inflate_chi0q_and_ham_general(self, chi0q_raw, ham_orig):
-        """Convert chi0q to MYO convention; build full MYO S/C interaction matrices.
+        """Pass chi0q through; build the full MYO S/C interaction matrices.
 
         This is the paramagnetic (spin-free) full-vertex general-path analogue
-        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced/squashed path,
+        of :meth:`_inflate_chi0q_and_ham`.  Unlike the reduced path,
         which collapses the vertex onto the density-density diagonal and works
         in the spin-orbital ``nd = norb * ns`` space, the MYO paramagnetic
         formalism (cond-mat/0407094 Eqs. 5/6) is purely in ORBITAL space and
@@ -1825,19 +3473,24 @@ class FLEX(RPA):
         ``no = self.norb`` (NOT ``self.nd``): chi0q stays orbital-only and the
         S/C matrices are ``norb^2 x norb^2`` MYO Kanamori blocks.
 
-        This method ALSO converts chi0q from the RPA orbital-pair convention to
-        the MYO convention via an orbital-pair transpose.  ``RPA._calc_chi0q``
-        labels the rank-6 bare bubble as ``chi0[..., a, c, b, d]`` (rpa.py:
-        ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``); viewed as a
-        ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column ``(b,d)`` this
-        is the MYO susceptibility ``chi0_{mn,mu nu}`` TRANSPOSED (RPA's row pair
-        ``(a,c)`` is MYO's COLUMN ``(mu,nu)``; RPA's column pair ``(b,d)`` is
-        MYO's ROW ``(m,n)``).  The whole downstream general-path machinery -- the
-        MYO S/C matrices, :meth:`_solve_channels_general`,
-        :meth:`_calc_veff_general`, and :meth:`_sigma_orbital_contract` -- is
-        written in the MYO convention, so we transpose the orbital-pair axes here
-        to convert RPA -> MYO.  Verified against the physical brute-force
-        pipeline (``tests/flex_bruteforce_ref``) to ~1e-13.
+        chi0q is passed through UNCHANGED in its orbital-pair index order.
+        ``RPA._calc_chi0q`` labels the rank-6 bare bubble as
+        ``chi0[..., a, c, b, d]`` (rpa.py: ``chi0[a,c,b,d] = G[a,b] . G_rev[d,c]``);
+        viewed as a ``(norb^2, norb^2)`` matrix with row ``(a,c)`` and column
+        ``(b,d)`` that is ``chi0_{(mn),(mu nu)}(q) = -(T/N) sum_k G_{m mu}(k+q)
+        G_{nu n}(k)``, which is exactly the order consumed by the downstream
+        general-path machinery -- the S/C matrices,
+        :meth:`_solve_channels_general`, :meth:`_calc_veff_general` and
+        :meth:`_sigma_orbital_contract`.
+
+        Earlier revisions applied an "RPA -> MYO" orbital-pair transpose here
+        (and undid it on the way out).  That was wrong (issue #91): the
+        round-trip left the public susceptibilities untouched but transposed
+        ``V_eff``, so Sigma was built from the transposed bubble and came out
+        wrong off the orbital diagonal.  The
+        index order is now pinned by a ground truth independent of this codebase
+        -- the O(U^2) self-energy of an exactly-diagonalized 3-orbital model, see
+        ``tests/test_flex_sopt_index_order.py``.
 
         Parameters
         ----------
@@ -1856,8 +3509,8 @@ class FLEX(RPA):
         Returns
         -------
         chi0q : ndarray
-            ``chi0q_raw`` with its orbital-pair axes transposed into MYO
-            convention (shape unchanged: 6-dim ``(nmat,nvol,m,n,mu,nu)``).
+            ``chi0q_raw`` unchanged (6-dim ``(nmat,nvol,m,n,mu,nu)``, i.e. the
+            native RPA ``[a,c,b,d]`` orbital-pair order).
         Us : ndarray
             MYO spin (S) interaction matrices, shape ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
@@ -1865,38 +3518,57 @@ class FLEX(RPA):
 
         Notes
         -----
-        The S/C matrices are built via ``build_sc_matrices_myo`` from an
-        ``inter_k`` dict assembled with ``hwave.sc._build_interaction_k``.  For
-        on-site Kanamori interactions the S/C matrices are CONSTANT over q, so
-        the k-array ordering used to build ``inter_k`` (a plain linspace grid)
-        need not match the FFT q-grid for this v1 path; this is reshaped to
-        ``(nvol, norb^2, norb^2)`` purely as ``Nx*Ny*Nz`` independent copies.
-        The reshape yields the matrix-per-q form that the downstream
-        channel-solver (``_solve_rpa``) consumes as ``ham``.  Because the S/C
-        matrices are q-independent constants for on-site Kanamori, they are
-        cached across SCF iterations; only the (per-iteration) chi0 transpose is
-        recomputed each call.
+        The S/C matrices are built via
+        ``hwave.solver._sc_matrices_myo.build_sc_matrices_locality_split``
+        from three ``inter_k`` dicts assembled with
+        ``hwave.sc._build_interaction_k``: the whole (reader's folded,
+        normalised) table, and its on-site and off-site parts split on the
+        PRE-fold declarations (#181, Tier 1). On-site Kanamori entries give
+        q-independent matrices; off-site entries give a q-DEPENDENT Hartree
+        vertex V(q), so the k-array used to build ``inter_k`` must be the
+        same C-ordered ``linspace(0, 2pi, n, endpoint=False)`` grid as
+        chi0's FFT axis (verified element-complete against the RPA ring).
+        The reshape to ``(nvol, norb^2, norb^2)`` yields the matrix-per-q
+        form that the downstream channel-solver (``_solve_rpa``) consumes
+        as ``ham``. Because the interaction is SCF-invariant, the matrices
+        are cached across the iterations of one solve (``solve`` resets
+        the cache); chi0q itself is passed straight through and so needs
+        no per-iteration work here.
         """
         logger.debug(">>> FLEX._inflate_chi0q_and_ham_general")
 
         # RPA's _calc_chi0q labels the rank-6 bare bubble as chi0[..., a, c, b, d]
-        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]); as a (norb^2, norb^2) matrix
-        # (row=(a,c), col=(b,d)) this is the MYO susceptibility χ⁰_{mn,μν} TRANSPOSED
-        # (RPA's (a,c) pair is MYO's column (μ,ν); (b,d) is MYO's row (m,n)). The whole
-        # downstream general-path machinery (MYO S/C matrices, _solve_channels_general,
-        # _calc_veff_general, _sigma_orbital_contract) is written in the MYO convention,
-        # so transpose the orbital-pair axes here to convert RPA→MYO. Verified against
-        # the physical brute-force pipeline (tests/flex_bruteforce_ref) to ~1e-13.
-        chi0q = chi0q_raw.transpose(0, 1, 4, 5, 2, 3)   # (nmat,nvol,a,c,b,d) -> (nmat,nvol,m,n,μ,ν)
+        # (rpa.py: chi0[a,c,b,d] = G[a,b]·G_rev[d,c]), i.e. as a (norb^2, norb^2)
+        # matrix with row=(a,c) and col=(b,d) it is
+        #     chi0_{(mn),(μν)}(q) = -(T/N) Σ_k G_{mμ}(k+q) G_{νn}(k),
+        # which is ALREADY the orbital-pair order that the downstream general-path
+        # machinery (MYO S/C matrices, _solve_channels_general, _calc_veff_general,
+        # _sigma_orbital_contract) consumes.  No orbital-pair transpose here.
+        #
+        # This used to apply a `.transpose(0, 1, 4, 5, 2, 3)` "RPA→MYO" conversion.
+        # That transpose was wrong (issue #91): it is invisible on the orbital
+        # DIAGONAL and it cancelled out of the public chi_s/chi_c (which were
+        # transposed back on the way out -- exactly so for symmetric S/C, see
+        # _flex_compute_veff_general), but it transposed V_eff and hence the
+        # orbital off-diagonal of Sigma.  For a density-only interaction
+        # (CoulombIntra) it made the general path disagree with the reduced path
+        # by ~20% of the diagonal scale while both susceptibilities still matched
+        # to machine precision.  The correct index order is pinned by an exact
+        # ground truth independent of this codebase: the O(U^2) self-energy of a
+        # 3-orbital exactly-diagonalized model (tests/test_flex_sopt_index_order.py).
+        chi0q = chi0q_raw
         assert chi0q.ndim == 6
 
-        # MYO S/C matrices are q-independent constants for on-site Kanamori, so
-        # build them once and cache across SCF iterations. The chi0 transpose
-        # above stays OUTSIDE the cache (chi0 changes every iteration).
+        # The MYO S/C matrices depend only on the interaction (q-resolved for
+        # off-site entries, constant over q for on-site Kanamori), never on the
+        # SCF state, so build them once and cache across iterations. The chi0
+        # transpose above stays OUTSIDE the cache (chi0 changes every
+        # iteration).
         cache = getattr(self, "_myo_sc_cache", None)
         if cache is None:
-            from hwave.sc import _build_interaction_k
-            from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+            from hwave.solver.offsite import (
+                _OFFSITE_DENSITY_TYPES, sc_matrices_from_split,
+                split_locality)
 
             # PairLift does not contribute to the particle-hole spin/charge
             # (S/C) vertex: its contribution is S=C=0 (verified against the full
@@ -1905,45 +3577,177 @@ class FLEX(RPA):
             # but warn so a configured PairLift term is not silently ignored --
             # matching the Eliashberg-path wording.
             if "PairLift" in self.ham_info.param_ham:
-                logger.warning(
-                    "PairLift is configured but does not contribute to the S/C "
-                    "pairing vertex (S=C=0); it is ignored in the general FLEX "
-                    "calculation.")
+                if getattr(self, "flex_hartree_fock", False):
+                    logger.warning(
+                        "PairLift is configured but does not contribute to the S/C "
+                        "pairing vertex (S=C=0); it enters only the Hartree-Fock term, "
+                        "where it vanishes on the paramagnetic density.")
+                else:
+                    logger.warning(
+                        "PairLift is configured but does not contribute to the S/C "
+                        "pairing vertex (S=C=0); it is ignored in the general FLEX "
+                        "calculation.")
 
-            # Fail-fast: the general (full-vertex) path builds the MYO S/C
-            # matrices on a uniform k-grid that is NOT the FFT q-grid used by
-            # _calc_chi0q.  For ON-SITE Kanamori interactions the S/C matrices
-            # are q-independent constants so this is exact; but an OFF-SITE
-            # interaction entry (irvec != (0,0,0)) makes them genuinely
-            # q-dependent on the wrong grid -> silently wrong physics.  v1 of
-            # the general path is on-site-only, so reject off-site entries.
-            for itype in ("CoulombIntra", "CoulombInter", "Hund",
-                          "Exchange", "PairHop", "Ising"):
-                if itype in self.ham_info.param_ham:
-                    for (irvec, orbvec) in self.ham_info.param_ham[itype]:
-                        if tuple(irvec) != (0, 0, 0):
-                            raise ValueError(
-                                "FLEX calc_scheme='general' (v1) supports "
-                                "on-site interactions only; interaction '{}' "
-                                "has an off-site entry irvec={}. Off-site "
-                                "two-body interactions are not yet supported "
-                                "by the general full-vertex path.".format(
-                                    itype, tuple(irvec)))
+            # OFF-SITE entries (#181, Tier 1). The interaction is split by
+            # PRE-fold locality and the two parts reach the S/C matrices
+            # differently (hwave.solver._sc_matrices_myo
+            # .build_sc_matrices_locality_split):
+            #
+            #   * on-site (R == 0) entries go through the full adjudicated
+            #     Kanamori slot map, as always;
+            #   * off-site CoulombInter / Hund / Ising enter the density
+            #     (aa,bb) slots ONLY, a == b included, as the Hartree vertex
+            #     V_ab(q). That is exactly q-representable and it is what the
+            #     RPA ring carries for them: FLEX at one iteration is MEASURED
+            #     element-complete equal to the ring for every such class
+            #     (max|diff| ~1e-15 .. 1e-13 on the test fixtures, chiq of
+            #     order 1e-1 .. 1; the tests enforce atol 1e-12, the four
+            #     registry cells 1e-14; tests/test_flex_offsite_general.py),
+            #     including under sublattice folding, where locality judged
+            #     on the folded table would have put a folded bond's Fock
+            #     crossing into the intra-supercell cross slot (1.3e-1
+            #     against the ring, and an answer that depended on SubShape).
+            #     Before the split the shared builder wrote off-site content
+            #     into the cross (ab,ab) slots -- whose particle-hole pair is
+            #     NON-local for R != 0 -- and its on-site `l1 != l3` gate
+            #     deleted the same-orbital off-site Hund/Ising outright
+            #     (2.4e-2 .. 4.6e-1 against the ring).
+            #     The exchange (Fock) crossing of an off-site term is NOT
+            #     representable by a q-only matrix and is absent here, as it
+            #     is in the ring; the solver warns once per solve (bond-
+            #     resolved treatment: #181 Tier 3).
+            #
+            # Still rejected, each for its own reason:
+            #
+            #   * off-site Exchange -- ADJUDICATED by exact diagonalization
+            #     (#181 Tier 2, tests/test_offsite_exchange_ed_longitudinal
+            #     .py): no q-representable longitudinal S/C content at all
+            #     (density slots 1e-3 against the controls' 2.0 / 1.0; a
+            #     purely imaginary J gives a numerically vanishing (< 1e-6)
+            #     longitudinal response), its longitudinal remainder is the
+            #     same non-local pair a density bond's Fock crossing is
+            #     (Tier 3), and its physics is transverse (spin-flip
+            #     response 40x larger). Accepting it would run a term with
+            #     no effect; the user decided (2026-09-03) to keep the
+            #     rejection rather than the PairLift-style inert-and-warn.
+            #   * off-site PairHop -- no local-bilinear particle-hole
+            #     regrouping exists at all (the ring drops it, #157).
+            #   * any other off-site type -- fail closed. (CoulombIntra is
+            #     on-site same-orbital by definition; the reader refuses an
+            #     off-site row under that key, #93, so it is unreachable
+            #     from file input.)
+            #   * off-site PairLift -- accepted and inert: it has no
+            #     particle-hole S/C content (vertex_table), so it is left out
+            #     of the off-site part rather than rejected.
+            # The pre-fold locality split lives in hwave.solver.offsite
+            # (one owner, shared with the RPA bond-resolved gate; #181
+            # Tier 3). It is declaration-based -- every declared off-site
+            # entry of every type comes back -- and THIS path applies the
+            # FLEX policy: off-site PairLift is inert (skipped, not
+            # listed), Exchange/PairHop are rejected, and only the density
+            # types reach the S/C builder (as their Hartree vertex).
+            split = split_locality(self.ham_info, self.lattice)
+            has_fold = split.has_fold
+            rejected_reason = {
+                "Exchange": (
+                    "exact diagonalization finds NO q-representable "
+                    "longitudinal spin/charge content for an off-site "
+                    "Exchange term (GitHub issue #181, Tier 2; "
+                    "tests/test_offsite_exchange_ed_longitudinal.py) -- "
+                    "its physics is transverse (the local regrouping "
+                    "-J S+_i S-_j is a spin-flip object, outside this "
+                    "spin-free longitudinal solve; the RPA solver can "
+                    "represent it only through its experimental "
+                    "bond-resolved transverse channel, "
+                    "calc_type='ring+ladder' with "
+                    "transverse_bond_channels=true -- the plain "
+                    "transverse channel rejects it too), and what "
+                    "remains in the longitudinal channel is a non-local "
+                    "pair (bond-resolved, Tier 3); accepting it would "
+                    "give a term with no effect"),
+                "PairHop": (
+                    "no local-bilinear particle-hole regrouping exists "
+                    "for an inter-site pair hopping (the RPA solver drops "
+                    "it, GitHub issue #157); it needs a bond-resolved "
+                    "vertex (GitHub issue #181, Tier 3)"),
+            }
+            for itype in split.offsite_types:
+                if itype == "PairLift":
+                    continue
+                if itype not in _OFFSITE_DENSITY_TYPES:
+                    # name the DECLARED (pre-fold) displacement
+                    (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+                    reason = rejected_reason.get(
+                        itype,
+                        "no q-representable off-site vertex exists "
+                        "for this type in the pair-space spin/charge "
+                        "matrices")
+                    # No auto->reduced remediation hint here: the
+                    # reduced scheme rejects Exchange and PairHop as
+                    # well (no density-density content), so the hint
+                    # would send the user to a second error.
+                    raise ValueError(
+                        "FLEX calc_scheme='general' does not support "
+                        "an off-site '{}' entry (irvec={}, orbvec={} "
+                        "-- the declared displacement and the "
+                        "zero-based orbital pair, i.e. the file's "
+                        "orbital indices minus one{}): {}. Remove the "
+                        "off-site '{}' entries from the input to run "
+                        "FLEX; off-site CoulombInter, Hund and Ising "
+                        "are supported (as their Hartree "
+                        "vertex).".format(
+                            itype, tuple(irvec), tuple(orbvec),
+                            ", before sublattice folding"
+                            if has_fold else "", reason, itype))
+            # (Reader-bypassing internal tables only: file input
+            # rejects one-sided declarations since #93.)
+            # One-sided TABLES are fine: BOTH solvers reduce a
+            # declaration to its reversal-symmetric part (the physical
+            # coefficient of n_a(i) n_a(i+R), even in R by the site
+            # sum) -- the S/C builders since #114, and the ring's
+            # _make_ham_inter since the same reading was given to
+            # rpa.py. Measured: one-sided v and v/2 at both ends give
+            # bit-identical chiq in both solvers.
+            offsite_used = [t for t in split.offsite_types
+                            if t in _OFFSITE_DENSITY_TYPES]
+
+            if offsite_used:
+                if getattr(self, "flex_second_order", "takimoto") == "local":
+                    _msg = ("FLEX calc_scheme='general' (flex_second_order = local): the direct "
+                            "skeleton and every local mixed term of the off-site entries of {} are "
+                            "exact at second order; their exchange skeleton is included only with "
+                            "longitudinal_bond_channels = true.")
+                    if getattr(self, "flex_hartree_fock", False):
+                        _msg += (" Their first-order exchange is carried by the "
+                                 "Hartree-Fock self-energy.")
+                elif getattr(self, "flex_hartree_fock", False):
+                    _msg = ("FLEX calc_scheme='general' with flex_hartree_fock=true: the "
+                            "off-site entries of {} enter the fluctuation vertex through "
+                            "their Hartree (density-slot) part V(q); their first-order "
+                            "exchange is carried by the Hartree-Fock self-energy, and "
+                            "their exchange crossing beyond first order is resummed only "
+                            "with longitudinal_bond_channels=true.")
+                else:
+                    _msg = ("FLEX calc_scheme='general': proceeding with the "
+                            "Hartree (density-slot) vertex V(q) only for the "
+                            "off-site entries of {}; the exchange crossing of an "
+                            "off-site term is not representable by a q-only "
+                            "vertex and is omitted (the same approximation the "
+                            "RPA ring makes; a bond-resolved treatment is tracked "
+                            "in GitHub issue #181).")
+                logger.warning(_msg.format(", ".join(sorted(offsite_used))))
 
             no = self.norb
             nx, ny, nz = self.lattice.shape
 
-            # Build k-space interactions from the raw real-space param_ham. The
-            # k-array ordering is irrelevant for on-site Kanamori terms (constant
-            # over q), so a simple uniform grid suffices for v1.
-            kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
-            ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
-            kz = np.linspace(0, 2.0 * np.pi, nz, endpoint=False)
-            inter_k = _build_interaction_k(kx, ky, kz,
-                                           self.ham_info.param_ham, no)
-
-            # MYO S/C matrices: (nx, ny, nz, norb^2, norb^2).
-            Us, Uc = build_sc_matrices_myo(inter_k, no, nx, ny, nz)
+            # S/C matrices, (nx, ny, nz, norb^2, norb^2): whole table =
+            # the reader's folded table normalised (bit-identical
+            # summation order for the old class), the two folded parts
+            # feed only their own slot roles, and the off-site part is
+            # filtered to the density types. Grid contract: see
+            # offsite.sc_matrices_from_split.
+            Us, Uc = sc_matrices_from_split(
+                split, _OFFSITE_DENSITY_TYPES, no, nx, ny, nz)
 
             # Reshape to (nvol, norb^2, norb^2) for the downstream channel solver.
             nvol = self.lattice.nvol
@@ -2144,7 +3948,8 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
-    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc):
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc, factors=None,
+                           second_order="takimoto"):
         r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
 
         Implements the fluctuation part of the paramagnetic full-vertex
@@ -2182,14 +3987,98 @@ class FLEX(RPA):
             MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
             MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
+        factors : SecondOrderFactors, optional
+            The compiled second-order factor pack
+            (:func:`hwave.solver.second_order.build_factors`), host- or
+            device-backed. Required by ``second_order = "local"`` and ignored
+            by ``"takimoto"``.
+        second_order : str
+            ``"takimoto"`` (the legacy kernel above, unchanged) or ``"local"``
+            (spec 2026-09-08): the ring is taken from THIRD order on and the
+            exact local second order is added instead, see below.
 
         Returns
         -------
         ndarray
             Effective interaction V_eff, shape
             ``(nmat, nvol, norb^2, norb^2)``.
+
+        Notes
+        -----
+        With ``second_order = "local"`` the assembly is
+
+            V(q) = 3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                   + W2(chibar)
+
+        (spec 2026-09-08 section 2.3): subtracting the bare bubble removes the
+        whole second order from the two RPA channels -- what is left of them
+        starts at third order -- and ``W2``, the exact local second-order
+        kernel of :func:`hwave.solver.second_order.accumulate_batch`, replaces
+        it. For a one-band Hubbard interaction the two agree identically; they
+        differ wherever the MYO S/C reduction is not exact at second order
+        (Hund/Exchange/PairHop/PairLift and every off-site type).
+
+        The local assembly runs in frequency batches of ``nb = max(1, nmat //
+        8)``, so besides ``v_eff`` itself no full-size ``(nmat, nvol, ndx,
+        ndx)`` array is ever materialised -- neither ``W2`` nor any product.
+        Exactly TWO ``(nb, nvol, ndx, ndx)`` temporaries are live at the peak
+        (``T1``/``T2``): they are allocated once, reused across batches and
+        across both channels -- every product goes through
+        ``matmul(..., out=)`` rather than an expression temporary -- and then
+        LENT to :func:`~hwave.solver.second_order.accumulate_batch` through
+        its ``work`` argument, so the kernel allocates nothing of the batch
+        shape either (its own contract: the density-slot gathers and scatters
+        are strided views, and the only per-call allocation left is the
+        boolean mask of its finiteness checkpoint, a sixteenth of one batch
+        array, plus constant array-module buffering). That is the
+        ``T_bytes = 2 nb nvol ndx^2 * 16`` budget of spec 2.5.
         """
         logger.debug(">>> FLEX._calc_veff_general")
+
+        if second_order == "local":
+            from hwave.solver.second_order import accumulate_batch
+            if factors is None:
+                raise ValueError('flex_second_order = "local" needs the compiled factors')
+            xp = _bk.array_module_of(chi0q)
+            nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+            ndx = chi0q.shape[2] * chi0q.shape[3]
+            # Same flatten as the takimoto body below: row (l1 * norb + l2),
+            # column (l3 * norb + l4) -- the pair convention accumulate_batch
+            # reads its chibar in (pinned by tests/test_second_order_oracle.py,
+            # which feeds it this very array).
+            chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+            chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+            chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+            UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
+            UcB = Uc[np.newaxis]
+            v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
+            # batch length: the peak above v_eff is T_bytes = 2 * nb * nvol *
+            # ndx^2 * 16 bytes (T1, T2), plus accumulate_batch's finiteness
+            # mask (T_bytes / 32) and constant buffering -- see its docstring.
+            nb = max(1, nmat // 8)
+            T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+            for l0 in range(0, nmat, nb):
+                l1 = min(nmat, l0 + nb)
+                n = l1 - l0
+                out = v_eff[l0:l1]
+                # the ring from third order on:
+                #   3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                for chi_2d, UB, w in ((chis_2d, UsB, 1.5), (chic_2d, UcB, 0.5)):
+                    xp.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+                    xp.matmul(UB, T1[:n], out=T2[:n])
+                    xp.matmul(T2[:n], UB, out=T1[:n])
+                    T1[:n] *= w
+                    out += T1[:n]
+                # the exact local second order, added in place into the view.
+                # The kernel borrows the SAME two buffers (sliced to this
+                # batch's length, exactly like the ring products above), so
+                # the whole assembly peaks at two temporaries, not four.
+                accumulate_batch(out, chi0_2d[l0:l1], l0, factors,
+                                 work=(T1[:n], T2[:n]))
+            return v_eff
+        if second_order != "takimoto":
+            raise ValueError("unknown second_order {!r}".format(second_order))
 
         nmat, nvol = chi0q.shape[0], chi0q.shape[1]
         no = chi0q.shape[2]
@@ -2483,6 +4372,21 @@ class FLEX(RPA):
         """
         logger.info("Save FLEX results")
         path_to_output = info_outputfile["path_to_output"]
+        _pb = getattr(self, "_phase_b_active", False)
+        _bond_static = {}
+        _last_map_omitted = False
+        if _pb:
+            # backstop of the output-path validation (spec 4.2)
+            self.validate_output_paths(info_outputfile, path_to_output)
+            _bond_static = {k: v for k, v in green_info.items()
+                            if str(k).startswith("longitudinal_bond_")
+                            and not str(k).endswith("_w")
+                            and k not in ("longitudinal_bond_S", "longitudinal_bond_C")}
+            if "chiq_s" not in green_info:
+                _last_map_omitted = True
+                logger.info("save_results: no map was executed (IterationMax=0); the last-map "
+                            "archives chi0q, chiq_s, chiq_c, chiq and the bond archive are "
+                            "omitted.")
 
         self._init_wavevec()
 
@@ -2537,39 +4441,101 @@ class FLEX(RPA):
                     file_name))
 
         # Save chi0q
-        if "chi0q" in info_outputfile:
+        if "chi0q" in info_outputfile and not _last_map_omitted:
             file_name = os.path.join(path_to_output, info_outputfile["chi0q"])
+            # coeff_tail provenance (issue #80): the tail correction changes
+            # chi0q at O(1); record the producing value. On the IR path the
+            # uniform-grid tail machinery is BYPASSED (aa = 0.0 if self.use_ir
+            # in solve(); the fermionic basis carries the 1/(i w) tail
+            # exactly), so the configured value was never applied -- omit the
+            # key rather than claim a correction that did not happen. This
+            # covers IR-native AND densified-IR output. (getattr: tests drive
+            # save_results on __new__-built stubs without __init__.)
+            from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
+            tail_meta = ({} if getattr(self, "use_ir", False)
+                         else {"coeff_tail": getattr(self, "coeff_tail", 0.0),
+                               # endpoint convention marker (issue #134)
+                               "tail_endpoint": TAIL_ENDPOINT_CONVENTION})
+            chi0_extra = (self._provenance_block("last_map")
+                          if getattr(self, "_phase_b_active", False) else {})
             np.savez(file_name,
                      chi0q=green_info["chi0q"],
+                     **chi0_extra,
                      # full grid size: lets consumers locate the zero bosonic
                      # frequency (index nmat//2) unambiguously (run
                      # provenance only on IR-native files)
                      nmat=self.nmat,
+                     momentum_convention=MOMENTUM_CONVENTION,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      # FLEX chi0q comes from the same spin-block-ordered RPA
                      # internals; tag it so the chi0q consumers (RPA read_chi0q,
                      # hwave_sc _load_chi0q) accept the file in SO mode.
                      index_convention="spin_block",
-                     **_freq_meta("B"))
+                     **tail_meta,
+                     **_freq_meta("B"),
+                     **_scheme_stamp(self))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
-        # Eliashberg). Tag the orbital convention so the downstream Eliashberg
-        # consumer (_load_flex_susceptibilities / _compute_vertices_flex) pairs
-        # them with the matching S/C matrices: the general (full-vertex) path
-        # produces MYO-convention susceptibilities, the reduced path Kuroki.
+        # Eliashberg). The chi_convention tag tells the downstream consumer
+        # (_load_flex_susceptibilities / _compute_vertices_flex) how to
+        # interpret the array layout: "myo" marks the general full-vertex
+        # path's orbital-pair shape (nd = norb^2), "kuroki" the reduced path's
+        # spin-orbital shape (nd = norb*ns). (The two builders' S/C VALUES
+        # were unified by the #113 adjudication; the tag remains a layout /
+        # provenance discriminator.)
+        #
+        # sc_vertex_version records which S/C vertex content the run used, so
+        # a downstream Eliashberg run cannot silently pair these
+        # susceptibilities with vertices from a different adjudication.
+        # Version 2 = the #113 exact-diagonalization values (Hund / Exchange /
+        # Ising corrected); files without the field predate #113.
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           **_freq_meta("B"))
+                           sc_vertex_version=2,
+                           # Fourier-sign provenance (issue #133): q labels
+                           # follow the documented e^{+iqR} convention
+                           momentum_convention=MOMENTUM_CONVENTION,
+                           **_freq_meta("B"),
+                           **_scheme_stamp(self))
+        if self._flex_general:
+            # Self-describing index-order marker for the ORBITAL-PAIR files
+            # only: their axes are the pairs (a,c) and (b,d), stored in that
+            # order. It lets the reader tell these files from pre-fix general
+            # outputs, which stored the same arrays orbital-pair TRANSPOSED
+            # under the same "myo" tag and are otherwise indistinguishable, and
+            # makes any future layout change fail fast instead of being
+            # silently misread.
+            #
+            # Deliberately NOT stamped on reduced files: those axes are
+            # spin-orbital (s*norb + a), not four orbital legs -- the loader has
+            # to extract a spin block before the array becomes an orbital-pair
+            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # be false machine-readable metadata. The reader accepts
+            # marker-less "kuroki" files; only "myo" requires the marker.
+            common_meta["chi_orbital_layout"] = "acbd"
+        if getattr(self, "_phase_b_active", False):
+            common_meta.update(self._provenance_block("last_map"))
 
+        _bond_into_chiq_s = {}
+        if _bond_static:
+            if "chiq" in info_outputfile:
+                logger.info("save_results: the static longitudinal_bond_* keys are written "
+                            "into the combined chiq archive")
+            else:
+                _bond_into_chiq_s = _bond_static
+                logger.info("save_results: no combined chiq archive is configured; the "
+                            "static longitudinal_bond_* keys (charge channel included) are "
+                            "written into the chiq_s archive")
         if "chiq_s" in green_info:
             file_name = os.path.join(path_to_output,
                                      info_outputfile.get("chiq_s", "chiq_s"))
-            np.savez(file_name, chiq_s=green_info["chiq_s"], **common_meta)
+            np.savez(file_name, chiq_s=green_info["chiq_s"], **common_meta,
+                     **_bond_into_chiq_s)
             logger.info("save_results: save chiq_s in file {}".format(file_name))
 
         if "chiq_c" in green_info:
@@ -2578,9 +4544,10 @@ class FLEX(RPA):
             np.savez(file_name, chiq_c=green_info["chiq_c"], **common_meta)
             logger.info("save_results: save chiq_c in file {}".format(file_name))
 
-        if "chiq" in info_outputfile:
+        if "chiq" in info_outputfile and not _last_map_omitted:
             file_name = os.path.join(path_to_output, info_outputfile["chiq"])
             save_dict = dict(**common_meta)
+            save_dict.update(_bond_static)
             if "chiq_s" in green_info:
                 save_dict["chiq_s"] = green_info["chiq_s"]
             if "chiq_c" in green_info:
@@ -2591,26 +4558,127 @@ class FLEX(RPA):
         # Save self-energy
         if "sigma" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["sigma"])
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
+            sigma_extra = {}
+            if getattr(self, "_phase_b_active", False):
+                sigma_extra = dict(sigma_convention="split",
+                                   sigma_static=green_info.get("sigma_static"),
+                                   sigma_fluct=green_info.get("sigma_fluct"),
+                                   **self._provenance_block("final_state"))
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
+                     **sigma_extra,
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
-                     **_freq_meta("F"))
+                     momentum_convention=MOMENTUM_CONVENTION,
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save sigma in file {}".format(file_name))
 
         # Save Green's function
         if "green" in info_outputfile:
             file_name = os.path.join(path_to_output, info_outputfile["green"])
+            # #167: no _scheme_stamp() here -- sigma/green are outside the
+            # spec's listed npz-stamp scope (deliberate, not an omission).
+            # #181 follow-up: the flex_second_order kernel provenance pair
+            # is added separately below via _second_order_members(), since
+            # a warm-started seed needs it (see read_init).
             green_extra = {}
             if ir_native:
                 # native-only provenance key (the densified green.npz key
                 # set stays unchanged -- design R-S3-2)
                 green_extra["cell_shape"] = np.array(self.lattice.shape)
+            if getattr(self, "_phase_b_active", False):
+                green_extra.update(self._provenance_block("final_state"))
             np.savez(file_name,
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,
                      wavevector_index=self.wavenum_table,
+                     # temperature provenance (issue #86): the Eliashberg
+                     # consumer rebuilds the Matsubara grid from its own
+                     # beta and validates it against this field, so a file
+                     # from a different temperature fails fast instead of
+                     # silently corrupting the pair bubble
+                     beta=1.0 / self.T,
+                     momentum_convention=MOMENTUM_CONVENTION,
                      **green_extra,
-                     **_freq_meta("F"))
+                     **_freq_meta("F"),
+                     **self._second_order_members())
             logger.info("save_results: save green in file {}".format(file_name))
+
+        # Dedicated bond archive (spec 4.2, longitudinal_bond_output_full)
+        if _pb and "longitudinal_bond_chi_s_w" in green_info:
+            file_name = os.path.join(path_to_output,
+                                     info_outputfile.get("longitudinal_bond",
+                                                         "longitudinal_bond.npz"))
+            chi_s_w = green_info["longitudinal_bond_chi_s_w"]
+            chi_c_w = green_info["longitudinal_bond_chi_c_w"]
+            layout = getattr(self, "longitudinal_bond_output_layout", "npz")
+            logger.info("save_results: writing the dynamic bond archive {} (%.3f GiB of "
+                        "channel data, layout {})".format(file_name, layout),
+                        2 * chi_s_w.nbytes / 1024 ** 3)
+            # every archive member EXCEPT the schema stamp and the two big
+            # channel susceptibilities: the two are written inside the index
+            # npz (default) or, under the sidecar layout, as separate
+            # memory-mappable .npy files next to it (issue #205)
+            tail_members = dict(
+                S_bond=green_info["longitudinal_bond_S"],
+                C_bond=green_info["longitudinal_bond_C"],
+                norb=np.int64(self.norb),
+                freq_axis=np.str_("bosonic l -> 2l - nmat"),
+                beta=1.0 / self.T,
+                T=self.T,
+                nmat=self.nmat,
+                cell_shape=np.array(self.lattice.shape),
+                momentum_convention=MOMENTUM_CONVENTION,
+                wavevector_unit=self.kvec,
+                wavevector_index=self.wavenum_table,
+                index_order=green_info["longitudinal_bond_index_order"],
+                delta_r=green_info["longitudinal_bond_delta_r"],
+                reverse=green_info["longitudinal_bond_reverse"],
+                types=green_info["longitudinal_bond_types"],
+                **_bond_static,
+                **self._provenance_block("last_map"),
+                **self._second_order_members())
+            if layout == "sidecar":
+                # the sidecar basenames next to the index: the index basename
+                # with .npz replaced by _<member>.npy (post-processing resolves
+                # them relative to the index's directory)
+                base = os.path.basename(file_name)
+                stem = base[:-4] if base.endswith(".npz") else base
+                s_base = "{}_chi_s_w.npy".format(stem)
+                c_base = "{}_chi_c_w.npy".format(stem)
+                out_dir = os.path.dirname(file_name)
+                # np.save writes a plain, memory-mappable .npy array
+                np.save(os.path.join(out_dir, s_base), chi_s_w)
+                np.save(os.path.join(out_dir, c_base), chi_c_w)
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         bond_archive_layout=np.str_("sidecar"),
+                         chi_s_w_file=np.str_(s_base),
+                         chi_c_w_file=np.str_(c_base),
+                         **tail_members)
+            else:
+                # the default single-file archive: every pre-existing member
+                # keeps its exact positional order and bond_archive_layout is
+                # APPENDED last, so the ordered prefix is byte-for-byte what the
+                # schema-2 reference archive writes (issue #205)
+                np.savez(file_name,
+                         bond_archive_schema=np.int64(2),
+                         chi_s_w=chi_s_w,
+                         chi_c_w=chi_c_w,
+                         **tail_members,
+                         bond_archive_layout=np.str_("npz"))
+            logger.info("save_results: save the bond archive in file {}".format(file_name))
+
+        # In-process pairing (spec 7): AFTER every FLEX artifact, in its own
+        # guarded block -- a failure here never costs the FLEX outputs.
+        if getattr(self, "_pairing_controls", None) is not None:
+            from hwave.solver import eliashberg_bond_io
+            eliashberg_bond_io.write_pairing_outputs(self, info_outputfile, green_info,
+                                                     path_to_output)

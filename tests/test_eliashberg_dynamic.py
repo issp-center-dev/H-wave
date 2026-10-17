@@ -50,15 +50,6 @@ def test_gpu_requested_parses_bool_and_string():
     assert ed._gpu_requested({"gpu": "0"}) is False
 
 
-def test_gpu_true_with_static_frequency_raises():
-    """gpu=true is only wired into the dynamic solver; on the static (CPU-only)
-    path it must fail loudly rather than silently ignore the flag."""
-    import hwave.sc as sc
-    inp = _min_input(gpu=True)          # frequency omitted -> static
-    with pytest.raises(ValueError, match="gpu"):
-        sc.calc_eliashberg(inp)
-
-
 def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     nvol = Nx*Ny*Nz; nd = norb*norb
     rng = np.random.default_rng(3)
@@ -67,10 +58,10 @@ def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     # "myo" convention; tag it so the loader treats it as orbital-pair (no
     # spin-orbital block extraction).
     np.savez(tmp_path/"chiq_s.npz", chiq_s=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo")
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
     np.savez(tmp_path/"chiq_c.npz", chiq_c=rc((nmat, nvol, nd, nd)),
-             chi_convention="myo")
-    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)))
+             chi_convention="myo", chi_orbital_layout="acbd", momentum_convention="e_plus_ikR")
+    np.savez(tmp_path/"green.npz",  green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -90,7 +81,7 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
     from hwave.solver import eliashberg_dynamic as ed
     m = _write_flex_fixture(tmp_path, nmat=8)
     # overwrite green with a different nmat
-    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)))
+    np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": 8}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
@@ -174,9 +165,19 @@ def _write_flex_so_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)))
+    def paramagnetic():
+        """Spin-redundant, the way a paramagnetic reduced run really stores it:
+        identical spin blocks, zero cross blocks. The loader refuses anything
+        else, since only the up-spin block survives the embedding."""
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "green.npz", green=rc((1, nmat, nvol, norb, norb)), momentum_convention="e_plus_ikR")
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
@@ -184,8 +185,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
     """A norb=2 reduced (kuroki) FLEX chi has nd_chi = norb*ns = 4 = norb^2, so
     the spin-orbital layout is INDISTINGUISHABLE from an orbital-pair layout by
     shape alone. _expand_flex_chi must use the 'kuroki' convention to extract
-    the spin-up orbital block and diagonally expand it -- not treat the raw 4x4
-    spin-orbital matrix as an orbital-pair susceptibility."""
+    the spin-up block and embed it at the DENSITY-PAIR positions -- not treat
+    the raw 4x4 spin-orbital matrix as an orbital-pair susceptibility.
+
+    The reduced index is a density pair, so the extracted X[a,b] is
+    chi_{(a,a),(b,b)} and belongs at flat position [a*norb+a, b*norb+b]. See
+    tests/test_flex_reduced_eliashberg.py for the placement rationale and the
+    physical regression that pins it."""
     import hwave.sc as sc
     norb, ns, Nx, Ny, Nz, nfreq = 2, 2, 2, 2, 1, 3
     nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
@@ -195,12 +201,13 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
 
     out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
-    # expected: extract up-spin orbital block [:norb, :norb], scatter diagonally
+    # expected: extract up-spin block [:norb, :norb], embed at density pairs
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(out, expected)
     # and it must NOT equal the raw 4x4 (the buggy orbital-pair interpretation)
     assert not np.allclose(out, chi6)
@@ -293,8 +300,9 @@ def test_expand_flex_chi_unambiguous_spin_orbital_tagged_kuroki_still_works(
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
     expected = np.zeros((nfreq, Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
     np.testing.assert_allclose(out, expected)
 
@@ -328,9 +336,18 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     def rc(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
+    def paramagnetic():
+        # Spin-redundant, as a real paramagnetic reduced run stores it; the
+        # loader refuses anything else.
+        block = rc((nmat, nvol, norb, norb))
+        chi = np.zeros((nmat, nvol, nd_so, nd_so), dtype=complex)
+        chi[..., :norb, :norb] = block
+        chi[..., norb:, norb:] = block
+        return chi
+
     # no chi_convention tag -> _read_flex_chi_raw defaults to "kuroki"
-    np.savez(tmp_path / "chiq_s.npz", chiq_s=rc((nmat, nvol, nd_so, nd_so)))
-    np.savez(tmp_path / "chiq_c.npz", chiq_c=rc((nmat, nvol, nd_so, nd_so)))
+    np.savez(tmp_path / "chiq_s.npz", chiq_s=paramagnetic(), momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "chiq_c.npz", chiq_c=paramagnetic(), momentum_convention="e_plus_ikR")
     inp = {"mode": {"param": {"Nmat": nmat}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
@@ -343,8 +360,9 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     chi6 = raw_s.reshape(nmat, Nx, Ny, Nz, nd_so, nd_so)[nmat // 2]
     orb = chi6[:, :, :, :norb, :norb]
     expected = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-    for l2 in range(norb):
-        expected[:, :, :, l2::norb, l2::norb] = orb
+    for a in range(norb):
+        for b in range(norb):
+            expected[:, :, :, a * norb + a, b * norb + b] = orb[..., a, b]
     np.testing.assert_allclose(chis, expected)
 
 
@@ -390,6 +408,60 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
 
     assert seen and max(seen) == 1, \
         "static loader expanded {} frequencies (want 1)".format(max(seen))
+
+
+def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
+    """The DYNAMIC loader must apply the same density-pair embedding as the
+    static one, on EVERY frequency.
+
+    The dynamic Eliashberg kernel reads chi through
+    _load_flex_susceptibilities_full, so a reduced (kuroki) chi mis-embedded
+    here corrupts the pairing vertex at all frequencies -- and unlike the static
+    case there is no 'load' route to cross-check it against. See
+    tests/test_flex_reduced_eliashberg.py for why the density-pair placement is
+    the only faithful one."""
+    import hwave.sc as sc
+    # norb=2: with the default norb=1 the old and new embeddings coincide and
+    # the off-density assertion below iterates over an EMPTY index list, so this
+    # regression asserted nothing about the placement it advertises.
+    m = _write_flex_so_fixture(tmp_path, nmat=6, norb=2)
+    inp = _flex_input(tmp_path, m["nmat"])
+    norb, Nx, Ny, Nz = m["norb"], m["Nx"], m["Ny"], m["Nz"]
+    nd, nd_so = norb * norb, norb * 2
+
+    chis_w, chic_w, _, conv = sc._load_flex_susceptibilities_full(
+        inp, norb, Nx, Ny, Nz)
+    assert conv == "kuroki"
+
+    raw = np.load(tmp_path / "chiq_s.npz")["chiq_s"]
+    chi6 = raw.reshape(m["nmat"], Nx, Ny, Nz, nd_so, nd_so)
+    for w in range(m["nmat"]):
+        X = chi6[w, :, :, :, :norb, :norb]
+        for a in range(norb):
+            for b in range(norb):
+                np.testing.assert_allclose(
+                    chis_w[..., a * norb + a, b * norb + b, w], X[..., a, b],
+                    err_msg="frequency {} density pair ({},{})".format(w, a, b))
+    # off-density components must be exactly zero at every frequency
+    density = [a * norb + a for a in range(norb)]
+    off = [i for i in range(nd) if i not in density]
+    if off:
+        assert np.max(np.abs(chis_w[..., off, :, :])) == 0.0
+        assert np.max(np.abs(chic_w[..., :, off, :])) == 0.0
+
+
+def test_expand_flex_chi_returns_host_numpy(tmp_path):
+    """GPU safety: the expansion is the SINGLE shared implementation and runs on
+    host numpy before anything is moved to the device (the static path builds
+    Vs_q first and transfers afterwards). Returning a host ndarray is what makes
+    the GPU and CPU runs bit-identical here, so pin it."""
+    import hwave.sc as sc
+    norb, Nx, Ny, Nz, nfreq = 2, 2, 1, 1, 2
+    nd_so = norb * 2
+    chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_so, nd_so), dtype=complex)
+    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    assert isinstance(out, np.ndarray)
+    assert type(out).__module__ == "numpy"
 
 
 def test_check_memory_aborts_over_limit():
@@ -540,7 +612,10 @@ def test_g2_dynamic_sums_to_static(norb):
     beta = 10.0
     g2w = ed.calc_g2_dynamic(green, beta)
     assert g2w.shape == (norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-    g2_static = sc._calc_g2(green, beta)
+    # tail=False: the summand pin is about the shared construction, and the
+    # static tail correction (issue #86) is a property of the frequency SUM,
+    # which the dynamic path never takes.
+    g2_static = sc._calc_g2(green, beta, tail=False)
     assert np.allclose(g2w.sum(axis=-1), g2_static, atol=1e-12)
     # component check (independent of the sum): reproduce a single element
     green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
@@ -638,6 +713,62 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     }
     ed.solve_dynamic(inp)
     assert captured.get("spectral_shift") == "auto"
+
+
+def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
+    """Review fix I-2: on the dynamic solver_mode='iteration' path,
+    spectral_shift changes what the eigenvalue.dat number MEANS, and that
+    change must be labelled in the output file itself (mirroring
+    sc.calc_eliashberg's static eigenvalue_note), not left silent.
+
+    ``||(K + sigma I) v|| - sigma`` is the SIGNED eigenvalue of K only once
+    the iterate is an eigenvector of K; this fixture stops at max_iter=50
+    without converging, so the honest label is the shifted iterate-norm
+    ESTIMATE -- claiming "the SIGNED eigenvalue" there is exactly the
+    mislabelling ``_validate_shifted_eigenvalue`` exists to prevent."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+
+    base_config = {
+        "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
+                           "SubShape": [1, 1, 1], "Nmat": m["nmat"],
+                           "filling": 0.5}},
+        "file": {"input": {"interaction": {
+                    "path_to_input": input_dir,
+                    "Geometry": "geom.dat", "Transfer": "transfer.dat",
+                    "CoulombIntra": "coulombintra.dat"}},
+                 "output": {"path_to_output": output_dir}},
+        "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
+                       "solver_mode": "iteration", "max_iter": 50},
+    }
+
+    # Without spectral_shift, no signed-eigenvalue note is written (the
+    # unshifted path is the historical unsigned-iterate-norm behavior).
+    ed.solve_dynamic(base_config)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+        content_unshifted = f.read()
+    assert "SIGNED eigenvalue" not in content_unshifted
+
+    # With spectral_shift active, the reported number's meaning changes and
+    # that change must be labelled in the file itself (same output directory,
+    # so the run overwrites eigenvalue.dat; the FLEX fixture files it reads
+    # are untouched by the previous run). This run does NOT converge, so the
+    # Rayleigh check cannot validate an eigenvalue and the label must say so.
+    shifted_config = dict(base_config)
+    shifted_config["eliashberg"] = dict(base_config["eliashberg"])
+    shifted_config["eliashberg"]["spectral_shift"] = "auto"
+    ed.solve_dynamic(shifted_config)
+    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+        content_shifted = f.read()
+    assert "spectral_shift" in content_shifted
+    assert "NOT an eigenvalue" in content_shifted
+    assert "SHIFTED ITERATE-NORM ESTIMATE" in content_shifted
+    assert "VALIDATED" not in content_shifted
 
 
 def test_kernel_cupy_matches_numpy():
@@ -1023,8 +1154,29 @@ def test_outputs_written(tmp_path):
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
     assert set(npz.files) == {
         "gap", "iomega", "T", "pairing_type", "frequency",
-        "eigenvalue", "axis_order", "normalization"}, \
+        "eigenvalue", "axis_order", "normalization",
+        "momentum_convention", "gap_sector_weights",
+        "gap_sector_labels", "sector_selection",
+        "eigenvalue_selection"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
+    # the iteration path records its selection criterion (issue #202)
+    assert str(npz["eigenvalue_selection"]) == "iteration"
+    # this synthetic archive does not conserve either parity, so the iteration
+    # runs unprojected -- and says so
+    assert str(npz["sector_selection"]) == "none"
+    # the returned gap's composition over the four (k, frequency) sectors
+    labels = [str(x) for x in npz["gap_sector_labels"]]
+    assert labels == ["even_k_even_w", "odd_k_even_w", "even_k_odd_w",
+                      "odd_k_odd_w"]
+    weights = np.asarray(npz["gap_sector_weights"], dtype=float)
+    assert np.isclose(weights.sum(), 1.0, atol=1e-10)
+    # a 2x2x1 grid carries no odd-k function, so both odd-k sectors are empty
+    # (this synthetic random archive does not commute with the frequency
+    # reversal, so the iteration runs unprojected and the gap keeps an
+    # odd-frequency admixture -- which is what the weights now record)
+    assert weights[1] == 0.0 and weights[3] == 0.0
+    recomputed = ed.gap_sector_weights(npz["gap"])
+    assert np.allclose(weights, [recomputed[lab] for lab in labels], atol=1e-12)
     assert str(npz["frequency"]) == "dynamic"
     assert npz["iomega"].shape == (m["nmat"],)
     assert npz["gap"].shape == (1, 1, 2, 2, 1, m["nmat"])
@@ -1252,6 +1404,40 @@ def _rand_gap(norb=2, Nx=1, Ny=4, Nz=1, nmat=4, seed=0):
     return (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
 
 
+def _Pk(g):
+    """Delta_{ba}(-k, iw_n): the momentum reversal, carrying the orbital
+    transpose (as on the static path)."""
+    from hwave.solver.kgrid import reverse_fft_axes
+    return np.swapaxes(reverse_fft_axes(g, (2, 3, 4)), 0, 1)
+
+
+def _Pw(g):
+    """Delta_{ab}(k, -iw_n): the plain frequency reversal. Invariance under it
+    is what "even frequency" means."""
+    return g[..., ::-1]
+
+
+# (sign under Pk, sign under Pw) of each of the four sectors the combined
+# parity operator P = Pk Pw splits into.
+_SECTOR_SIGNS = (("even_k_even_w", (1.0, 1.0)),
+                 ("odd_k_even_w", (-1.0, 1.0)),
+                 ("even_k_odd_w", (1.0, -1.0)),
+                 ("odd_k_odd_w", (-1.0, -1.0)))
+
+
+def _sector_project(g, sector):
+    sk, sw = dict(_SECTOR_SIGNS)[sector]
+    return 0.25 * (g + sk * _Pk(g) + sw * _Pw(g) + sk * sw * _Pk(_Pw(g)))
+
+
+def _pure_sector(shape, sector, seed):
+    """A normalized random state living purely in one of the four sectors."""
+    rng = np.random.default_rng(seed)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    v = _sector_project(g, sector)
+    return v / np.linalg.norm(v)
+
+
 def test_reverse_kw_is_an_involution():
     from hwave.solver import eliashberg_dynamic as ed
     g = _rand_gap(seed=1)
@@ -1260,15 +1446,17 @@ def test_reverse_kw_is_an_involution():
 
 
 def test_parity_projectors_split_even_odd():
+    """The channel projectors select the EVEN-FREQUENCY sectors: (even k,
+    even w) for singlet, (odd k, even w) for triplet. The two odd-frequency
+    sectors -- also allowed by the combined parity -- belong to neither."""
     from hwave.solver import eliashberg_dynamic as ed
-    g = _rand_gap(seed=2)
-    P = ed._reverse_kw_and_orbital
-    ge = 0.5 * (g + P(g))   # combined-even  (P ge = ge)   -> singlet sector
-    go = 0.5 * (g - P(g))   # combined-odd   (P go = -go)  -> triplet sector
-    # even gap is fixed by the singlet projector, annihilated by triplet
+    shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(shape, "even_k_even_w", 2)    # conventional singlet
+    go = _pure_sector(shape, "odd_k_even_w", 3)     # conventional triplet
+    # even-k/even-w gap is fixed by the singlet projector, killed by triplet
     assert np.allclose(ed._project_parity_dynamic(ge, "singlet"), ge, atol=1e-12)
     assert np.linalg.norm(ed._project_parity_dynamic(ge, "triplet")) < 1e-10
-    # odd gap is fixed by the triplet projector, annihilated by singlet
+    # odd-k/even-w gap is fixed by the triplet projector, killed by singlet
     assert np.allclose(ed._project_parity_dynamic(go, "triplet"), go, atol=1e-12)
     assert np.linalg.norm(ed._project_parity_dynamic(go, "singlet")) < 1e-10
     # parity labels
@@ -1276,26 +1464,345 @@ def test_parity_projectors_split_even_odd():
     assert not ed._is_parity_dynamic(ge, "triplet")
     assert ed._is_parity_dynamic(go, "triplet")
     assert not ed._is_parity_dynamic(go, "singlet")
+    # the odd-frequency sectors are in NEITHER channel (they were reported as
+    # singlet / triplet by the combined-parity-only projector of issue #209)
+    for sector, seed in (("even_k_odd_w", 4), ("odd_k_odd_w", 5)):
+        gq = _pure_sector(shape, sector, seed)
+        for pt in ("singlet", "triplet"):
+            assert np.linalg.norm(ed._project_parity_dynamic(gq, pt)) < 1e-10
+            assert not ed._is_parity_dynamic(gq, pt)
+
+
+def test_channel_projectors_are_even_frequency():
+    """Structure of the two channel projectors and of gap_sector_weights."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (2, 2, 4, 4, 1, 8)
+    rng = np.random.default_rng(17)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    s = ed._project_parity_dynamic(g, "singlet")
+    t = ed._project_parity_dynamic(g, "triplet")
+    # singlet: even under the (k, orbital) reversal AND under the plain
+    # frequency reversal w -> -w (which is what "even frequency" means)
+    assert np.allclose(_Pk(s), s, atol=1e-12)
+    assert np.allclose(s[..., ::-1], s, atol=1e-12)
+    assert np.allclose(_Pw(s), s, atol=1e-12)
+    # triplet: odd under (k, orbital), still even in frequency
+    assert np.allclose(_Pk(t), -t, atol=1e-12)
+    assert np.allclose(t[..., ::-1], t, atol=1e-12)
+    assert np.allclose(_Pw(t), t, atol=1e-12)
+    # idempotent and mutually orthogonal
+    assert np.allclose(ed._project_parity_dynamic(s, "singlet"), s, atol=1e-12)
+    assert np.allclose(ed._project_parity_dynamic(t, "triplet"), t, atol=1e-12)
+    assert np.linalg.norm(ed._project_parity_dynamic(s, "triplet")) < 1e-12
+    assert np.linalg.norm(ed._project_parity_dynamic(t, "singlet")) < 1e-12
+    # gap_sector_weights: unit vectors on the four pure states, sum 1 in general
+    for i, (label, _signs) in enumerate(_SECTOR_SIGNS):
+        w = ed.gap_sector_weights(_pure_sector(shape, label, 100 + i))
+        assert set(w) == {lab for lab, _ in _SECTOR_SIGNS}
+        assert np.isclose(w[label], 1.0, atol=1e-10)
+        for other, _ in _SECTOR_SIGNS:
+            if other != label:
+                assert abs(w[other]) < 1e-10
+    wg = ed.gap_sector_weights(g)
+    assert np.isclose(sum(wg.values()), 1.0, atol=1e-10)
+    # a zero gap reports all-zero weights instead of dividing by zero
+    wz = ed.gap_sector_weights(np.zeros(shape, dtype=complex))
+    assert all(v == 0.0 for v in wz.values())
+
+
+def test_singlet_projector_is_bit_identical_where_pk_is_the_identity():
+    """On a grid where every k is its own inverse and there is one orbital,
+    Pk is the identity, so the SINGLET projector reduces exactly to the
+    historical (1 + P)/2 -- bit for bit, which is what keeps such runs
+    numerically unchanged. The TRIPLET sector is empty there: its projector is
+    identically zero, not the historical (1 - P)/2."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 2, 2, 1, 8)
+    rng = np.random.default_rng(5)
+    g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    historical = 0.5 * (g + ed._reverse_kw_and_orbital(g))
+    assert np.array_equal(ed._project_parity_dynamic(g, "singlet"), historical)
+    assert np.array_equal(ed._project_parity_dynamic(g, "triplet"),
+                          np.zeros(shape, dtype=complex))
+    # ... and the historical odd projector is NOT zero, so the two genuinely
+    # differ for the triplet
+    assert np.linalg.norm(0.5 * (g - ed._reverse_kw_and_orbital(g))) > 0.0
 
 
 def test_reorder_promotes_channel_parity_eigenpair():
     """The odd mode has the larger eigenvalue but the singlet request must
-    surface the even (combined-parity +1) eigenpair as leading."""
+    surface the (even k, even w) eigenpair as leading."""
     from hwave.solver import eliashberg_dynamic as ed
-    gap_shape = (2, 2, 1, 4, 1, 4)
-    P = ed._reverse_kw_and_orbital
-    g = _rand_gap(seed=3)
-    ge = 0.5 * (g + P(g))              # even/singlet
-    go = 0.5 * (g - P(g))              # odd/triplet
+    gap_shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(gap_shape, "even_k_even_w", 31)   # singlet
+    go = _pure_sector(gap_shape, "odd_k_even_w", 32)    # triplet
     vecs = np.column_stack([go.ravel(), ge.ravel()])   # odd first (col 0)
     vals = np.array([2.0 + 0j, 1.0 + 0j])              # odd has larger lambda
-    rvals, rvecs, match = ed._reorder_eigenpairs_by_parity_dynamic(
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
         vals, vecs, gap_shape, "singlet")
+    assert selection == "channel"
     # even (lambda=1) promoted to leading; match flags reordered with it
     assert np.isclose(rvals[0].real, 1.0)
     assert bool(match[0]) is True
     assert bool(match[1]) is False
     assert np.allclose(rvecs[:, 0], ge.ravel(), atol=1e-12)
+
+
+def test_reorder_prefers_even_frequency_state():
+    """Regression for issue #209: an odd-frequency (even k, odd w) mode has
+    combined parity -1 and the old projector promoted it for a triplet
+    request even though it is not a conventional triplet. The channels are
+    now the even-frequency sectors, so that mode matches NEITHER channel."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    A = _pure_sector(gap_shape, "even_k_odd_w", 41)    # odd frequency
+    B = _pure_sector(gap_shape, "odd_k_even_w", 42)    # conventional triplet
+    C = _pure_sector(gap_shape, "even_k_even_w", 43)   # conventional singlet
+    # distinct sectors are orthogonal
+    for x, y in ((A, B), (A, C), (B, C)):
+        assert abs(np.vdot(x.ravel(), y.ravel())) < 1e-12
+    vecs = np.column_stack([A.ravel(), C.ravel(), B.ravel()])
+    vals = np.array([0.9 + 0j, 0.7 + 0j, 0.5 + 0j])    # descending
+
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "triplet")
+    assert selection == "channel"
+    assert np.isclose(rvals[0].real, 0.5)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1                       # A is NOT a triplet
+    assert np.allclose(rvecs[:, 0], B.ravel(), atol=1e-12)
+
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "singlet")
+    assert selection == "channel"
+    assert np.isclose(rvals[0].real, 0.7)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1                       # A is NOT a singlet
+    assert np.allclose(rvecs[:, 0], C.ravel(), atol=1e-12)
+
+
+def test_projected_iteration_returns_even_frequency_triplet():
+    """The projected power iteration for a triplet request converges on the
+    (odd k, even w) state (lambda = 0.5), not on the larger odd-frequency
+    eigenvalue (0.9), and reports the sector weights of what it returned."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    A = _pure_sector(gap_shape, "even_k_odd_w", 51).ravel()
+    B = _pure_sector(gap_shape, "odd_k_even_w", 52).ravel()
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        ca, cb = np.vdot(A, x), np.vdot(B, x)
+        rest = x - ca * A - cb * B
+        return 0.9 * ca * A + 0.5 * cb * B + 0.01 * rest
+
+    # p_x-like seed: sin(kx), flat in frequency -> (odd k, even w)
+    kx = 2.0 * np.pi * np.arange(gap_shape[2]) / gap_shape[2]
+    phi0 = np.zeros(gap_shape, dtype=complex)
+    phi0 += np.sin(kx)[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis,
+                       np.newaxis]
+    phi0 /= np.linalg.norm(phi0)
+    # a small odd-frequency admixture: the combined-parity-only projector of
+    # issue #209 keeps it (A also has combined parity -1) and the iteration
+    # then converges on lambda = 0.9; the even-frequency projector removes it.
+    phi0 = phi0 + 0.05 * A.reshape(gap_shape)
+
+    out = ed.run_leading_eigenproblem(
+        matvec, gap_shape,
+        {"solver_mode": "iteration", "max_iter": 500,
+         "convergence_tol": 1e-8, "alpha": 0.5},
+        "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
+    assert len(out) == 9
+    lam, gap_w, _evs, _match, _note, _leak, weights, projection, \
+        eig_selection = out
+    assert projection == "channel"
+    assert eig_selection == "iteration"
+    assert np.isclose(lam, 0.5, atol=1e-6)
+    assert weights["odd_k_even_w"] > 0.999
+    assert weights["even_k_odd_w"] < 1e-6
+    assert np.isclose(sum(weights.values()), 1.0, atol=1e-10)
+
+
+class _Op:
+    """Minimal LinearOperator stand-in for the leakage probes."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def matvec(self, x):
+        return self.fn(x)
+
+
+def test_channel_leakage_zero_for_sector_preserving_operator():
+    """``_channel_leakage`` is ~0 for a kernel that maps the channel sector
+    into itself, and O(1) for one that maps it out of the sector -- including
+    a kernel that respects the combined parity but mixes the frequency
+    parity, which ``_parity_leakage`` cannot see."""
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 4, 4, 1, 8)
+
+    # diagonal in the sector basis: every sector is an eigenspace
+    def diag(x):
+        g = np.asarray(x).reshape(shape)
+        out = np.zeros_like(g)
+        for i, (label, _s) in enumerate(_SECTOR_SIGNS):
+            out = out + (0.3 + 0.1 * i) * _sector_project(g, label)
+        return out.ravel()
+
+    for pt in ("singlet", "triplet"):
+        assert ed._channel_leakage(_Op(diag), shape, pt) < 1e-12
+        assert ed._parity_leakage(_Op(diag), shape, pt) < 1e-12
+
+    # swap one (even k, even w) vector with one (odd k, odd w) vector: both
+    # have combined parity +1, so the COMBINED probe sees nothing, while the
+    # singlet channel sector is mapped straight out of itself
+    u = _pure_sector(shape, "even_k_even_w", 61).ravel()
+    v = _pure_sector(shape, "odd_k_odd_w", 62).ravel()
+
+    def swap(x):
+        x = np.asarray(x).ravel()
+        cu, cv = np.vdot(u, x), np.vdot(v, x)
+        # the 0.01 * rest term keeps the image non-degenerate on a probe that
+        # is orthogonal to both u and v (a zero image would make the norm
+        # fraction meaningless)
+        return cu * v + cv * u + 0.01 * (x - cu * u - cv * v)
+
+    assert ed._parity_leakage(_Op(swap), shape, "singlet") < 1e-12
+    assert ed._channel_leakage(_Op(swap), shape, "singlet") > 0.9
+
+
+def test_channel_leakage_is_none_and_the_iteration_refuses_an_empty_sector():
+    """On a 2-point-per-axis one-orbital grid no odd-k function exists, so the
+    triplet sector is empty: ``_channel_leakage`` reports ``None`` (not the
+    0.0 that would read as "perfectly preserved") and the iteration refuses
+    with a message that names the grid, not a generic seed failure."""
+    import pytest
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 2, 2, 1, 8)
+
+    def matvec(x):
+        return np.asarray(x).ravel()
+
+    assert ed._channel_leakage(_Op(matvec), shape, "triplet") is None
+    # the singlet sector on the same grid is NOT empty
+    assert ed._channel_leakage(_Op(matvec), shape, "singlet") == 0.0
+
+    rng = np.random.default_rng(3)
+    phi0 = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+    with pytest.raises(ValueError, match="empty on this k grid"):
+        ed.run_leading_eigenproblem(
+            matvec, shape, {"solver_mode": "iteration", "max_iter": 3},
+            "triplet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
+            nmat=8)
+
+
+def test_iteration_falls_back_to_combined_parity_projection(caplog):
+    """A kernel that commutes with the combined parity but mixes the frequency
+    parity must not have its eigenproblem restricted to the even-frequency
+    sector: the iteration projects onto the combined-parity sector instead,
+    says so, and records ``sector_selection = "combined_parity"``."""
+    import logging
+    from hwave.solver import eliashberg_dynamic as ed
+    shape = (1, 1, 4, 4, 1, 8)
+    u = _pure_sector(shape, "even_k_even_w", 71).ravel()
+    v = _pure_sector(shape, "odd_k_odd_w", 72).ravel()
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        cu, cv = np.vdot(u, x), np.vdot(v, x)
+        rest = x - cu * u - cv * v
+        return cu * v + cv * u + 0.01 * rest
+
+    phi0 = (0.6 * u + 0.8 * v).reshape(shape)
+
+    with caplog.at_level(logging.WARNING, logger="qlms.eliashberg_dynamic"):
+        out = ed.run_leading_eigenproblem(
+            matvec, shape,
+            {"solver_mode": "iteration", "max_iter": 500,
+             "convergence_tol": 1e-10, "alpha": 0.5},
+            "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None,
+            nmat=8)
+    assert len(out) == 9
+    lam, _gap, _evs, _match, _note, leak, weights, selection, _eig_sel = out
+    assert selection == "combined_parity"
+    assert leak is not None and leak < 1e-10       # combined parity IS a symmetry
+    assert any("frequency parity is not a symmetry" in r.message
+               for r in caplog.records), caplog.text
+    # the eigenvalue is a genuine eigenvalue of the kernel (+1 on u + v),
+    # and the gap is the even/odd-frequency mixture that eigenvector is
+    assert np.isclose(lam, 1.0, atol=1e-6)
+    assert weights["even_k_even_w"] > 0.4
+    assert weights["odd_k_odd_w"] > 0.4
+
+
+def test_reorder_falls_back_to_combined_parity_when_no_channel_eigenpair():
+    """Two-stage matching: the channel sector first, and only if nothing lies
+    in it, the channel's combined-parity sector (with a warning)."""
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    oo = _pure_sector(gap_shape, "odd_k_odd_w", 81)      # combined parity +1
+    eo = _pure_sector(gap_shape, "even_k_odd_w", 82)     # combined parity -1
+    vecs = np.column_stack([eo.ravel(), oo.ravel()])
+    vals = np.array([2.0 + 0j, 1.0 + 0j])
+    rvals, rvecs, match, selection = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "singlet")
+    # no even-frequency singlet exists here; the odd-frequency state with the
+    # singlet's combined parity is promoted instead, and the stage is named
+    assert selection == "combined_parity"
+    assert np.isclose(rvals[0].real, 1.0)
+    assert bool(match[0]) is True
+    assert int(match.sum()) == 1
+    assert np.allclose(rvecs[:, 0], oo.ravel(), atol=1e-12)
+    # neither stage matches a triplet request here (eo is combined-odd, but
+    # it is not an even-frequency triplet and oo is the wrong parity)
+    _rv, _rc, match_t, selection_t = ed._reorder_eigenpairs_by_parity_dynamic(
+        vals, vecs, gap_shape, "triplet")
+    assert selection_t == "combined_parity"
+    assert bool(match_t[0]) is True and np.allclose(_rc[:, 0], eo.ravel())
+
+
+def test_eigenvalue_file_labels_the_combined_parity_fallback(tmp_path):
+    """When no eigenpair lies in the channel's even-frequency sector, the
+    match column must NOT be labelled as a channel-parity match -- that is the
+    ambiguity issue #209 removes -- and the file records the stage used.
+
+    The combined-parity fallback is reached only on the UNPROJECTED path, i.e.
+    when the kernel does NOT conserve the even-frequency channel (issue #202
+    projects a conserved channel instead). This kernel swaps the even-frequency
+    channel with an odd-frequency mode of the SAME combined parity, so it leaks
+    out of the channel (no projected solve) while its eigenvectors still lie in
+    the channel's combined-parity sector."""
+    import os
+    from hwave.solver import eliashberg_dynamic as ed
+    gap_shape = (1, 1, 4, 4, 1, 8)
+    a = _pure_sector(gap_shape, "even_k_even_w", 91).ravel()   # channel, combined +1
+    b = _pure_sector(gap_shape, "odd_k_odd_w", 92).ravel()     # odd freq, combined +1
+
+    def matvec(x):
+        x = np.asarray(x).ravel()
+        ca, cb = np.vdot(a, x), np.vdot(b, x)
+        rest = x - ca * a - cb * b
+        # swap a <-> b: eigenvectors (a +- b)/sqrt(2), eigenvalues +-0.9, each an
+        # even/odd-frequency mixture of definite (singlet) combined parity
+        return 0.9 * ca * b + 0.9 * cb * a + 0.001 * rest
+
+    phi0 = _pure_sector(gap_shape, "even_k_even_w", 94)
+    out = ed.run_leading_eigenproblem(
+        matvec, gap_shape,
+        {"solver_mode": "eigenvalue", "num_eigenvalues": 3},
+        "singlet", phi0=phi0, seed_vec=None, use_ir=False, axF=None, nmat=8)
+    lam, _gap, evs, match, note, _leak, _weights, selection, _eig_sel = out
+    assert selection == "combined_parity"
+    assert np.isclose(lam, 0.9, atol=1e-6)
+
+    path = os.path.join(str(tmp_path), "eigenvalue.dat")
+    ed.write_eigenvalue_file(path, lam, evs, match, note, selection=selection)
+    with open(path) as fh:
+        text = fh.read()
+    assert "# sector_selection=combined_parity" in text
+    assert "match(1=combined-parity sector; no even-frequency eigenpair)" in text
+    assert "match(1=channel-parity)" not in text
+    assert "match(1=channel even-frequency sector)" not in text
 
 
 def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
@@ -1352,20 +1859,25 @@ def test_project_seed_dynamic_guard():
     sector (mirrors sc._solve_iteration's guard), else returns a normalized
     in-sector seed."""
     from hwave.solver import eliashberg_dynamic as ed
-    P = ed._reverse_kw_and_orbital
-    g = _rand_gap(seed=7)
-    ge = 0.5 * (g + P(g))   # even/singlet
-    go = 0.5 * (g - P(g))   # odd/triplet
+    shape = (2, 2, 4, 4, 1, 8)
+    ge = _pure_sector(shape, "even_k_even_w", 71)   # singlet sector
+    go = _pure_sector(shape, "odd_k_even_w", 72)    # triplet sector
     # even seed survives the singlet projection, in-sector and non-zero, and is
     # returned WITHOUT renormalization (mirrors static _solve_iteration).
     s = ed._project_seed_dynamic(ge, "singlet")
     assert np.linalg.norm(s) > 0
-    assert np.allclose(s, ge, atol=1e-12)   # ge is already even -> unchanged
+    assert np.allclose(s, ge, atol=1e-12)   # ge is already in-sector
     assert ed._is_parity_dynamic(s, "singlet")
-    # a pure-odd seed has no singlet component -> raise
+    # a pure odd-k seed has no singlet component -> raise
     import pytest
-    with pytest.raises(ValueError, match="parity sector"):
+    with pytest.raises(ValueError, match="sector"):
         ed._project_seed_dynamic(go, "singlet")
+    # and so does an odd-FREQUENCY seed, for either channel
+    for sector, seed in (("even_k_odd_w", 73), ("odd_k_odd_w", 74)):
+        gq = _pure_sector(shape, sector, seed)
+        for pt in ("singlet", "triplet"):
+            with pytest.raises(ValueError, match="sector"):
+                ed._project_seed_dynamic(gq, pt)
 
 
 def test_parity_leakage_zero_for_commuting_operator():
@@ -1381,12 +1893,11 @@ def test_parity_leakage_zero_for_commuting_operator():
     ident = _Op(lambda x: x)
     assert ed._parity_leakage(ident, gap_shape, "singlet") < 1e-12
 
-    # elementwise multiply by a P-ODD field d (P d = -d): it maps an even probe
-    # to an odd image (and vice versa), i.e. the kernel does NOT commute with P,
-    # so every probe leaks fully into the opposite sector.
-    P = ed._reverse_kw_and_orbital
-    r = _rand_gap(seed=13)
-    d = 0.5 * (r - P(r))                 # odd projection -> P d = -d
+    # elementwise multiply by an (odd k, even w) field d: it maps a singlet
+    # probe to a triplet image (and vice versa), i.e. the kernel does NOT
+    # commute with the channel projection, so every probe leaks fully into the
+    # opposite channel sector.
+    d = _pure_sector(gap_shape, "odd_k_even_w", 13)
     def mult(x):
         return (d * x.reshape(gap_shape)).ravel()
     assert ed._parity_leakage(_Op(mult), gap_shape, "singlet") > 0.9
@@ -1439,9 +1950,16 @@ def _dyn_input(tmp_path, extra_eli):
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
     m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    # This 2x2x1 one-orbital fixture is repulsive-dominant: the largest-REAL
+    # eigenvalue is not the largest-magnitude one, so a plain which='LM' set
+    # would trigger issue #202's automatic re-solve on the un-seeded run while
+    # a seeded run (which does not re-solve, by design) would still track the
+    # LM branch, and the two would disagree. Selecting by largest real part up
+    # front (spectral_shift="auto") is the documented way to keep a seeded
+    # continuation consistent with the un-seeded leading run.
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
            "pairing_type": "singlet", "solver_mode": "eigenvalue",
-           "num_eigenvalues": 6}
+           "num_eigenvalues": 6, "spectral_shift": "auto"}
     eli.update(extra_eli)
     return {
         "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
@@ -1488,3 +2006,367 @@ def test_seed_gap_nmat_mismatch_raises(tmp_path):
     inp, _ = _dyn_input(tmp_path, {"seed_eigenvector": bad})        # run Nmat=8
     with pytest.raises(ValueError, match="Nmat"):
         ed.solve_dynamic(inp)
+
+
+# ---------------------------------------------------------------------------
+# Issue #202: the dynamic Arnoldi leading eigenvalue must not depend on
+# num_eigenvalues. A plain arnoldi set (which='LM', largest MAGNITUDE) can miss
+# a small POSITIVE channel eigenvalue that is masked by larger repulsive
+# (negative) ones; the driver must re-solve once with spectral_shift="auto"
+# (which='LR', largest REAL part) and report that instead.
+# ---------------------------------------------------------------------------
+import os as _os
+import shutil as _shutil
+import tempfile as _tempfile
+import logging as _logging
+import unittest as _unittest
+from contextlib import contextmanager as _contextmanager
+from unittest import mock as _mock
+
+
+@_contextmanager
+def _capture_dynamic_warnings():
+    """Capture WARNING records of the ``qlms.eliashberg_dynamic`` logger with a
+    handler attached directly to it, and force its level, so the assertion does
+    not depend on logging state another module left behind in the full
+    ``unittest discover`` run (assertLogs alone is fragile under that order)."""
+    lg = _logging.getLogger("qlms.eliashberg_dynamic")
+    records = []
+
+    class _Collect(_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Collect()
+    handler.setLevel(_logging.WARNING)
+    prev_level = lg.level
+    lg.addHandler(handler)
+    lg.setLevel(_logging.WARNING)
+    try:
+        yield records
+    finally:
+        lg.removeHandler(handler)
+        lg.setLevel(prev_level)
+
+
+def _orthonormal_in_sector(shape, sector, n, seed0):
+    """``n`` orthonormal random states, all living purely in ``sector``."""
+    vecs = []
+    for i in range(n):
+        v = _pure_sector(shape, sector, seed0 + i).ravel()
+        for u in vecs:
+            v = v - np.vdot(u, v) * u
+        nrm = np.linalg.norm(v)
+        assert nrm > 1e-8, "sector too small for {} vectors".format(n)
+        vecs.append(v / nrm)
+    return vecs
+
+
+def _diagonal_kernel(basis, eigs, rest_scale):
+    """A kernel diagonal in ``basis`` (eigenvalue ``eigs[i]`` on ``basis[i]``)
+    and equal to ``rest_scale`` on the orthogonal complement."""
+    def matvec(x):
+        x = np.asarray(x).ravel().astype(complex)
+        out = np.zeros_like(x)
+        rest = x.copy()
+        for u, lam in zip(basis, eigs):
+            c = np.vdot(u, x)
+            out = out + lam * c * u
+            rest = rest - c * u
+        return out + rest_scale * rest
+    return matvec
+
+
+class TestDynamicArnoldiSelection(_unittest.TestCase):
+    SHAPE = (1, 1, 4, 4, 1, 8)          # singlet channel = even_k_even_w
+    CHANNEL = "even_k_even_w"
+
+    def _run(self, matvec, eli_param, *, seed_vec=None):
+        from hwave.solver import eliashberg_dynamic as ed
+        return ed.run_leading_eigenproblem(
+            matvec, self.SHAPE, eli_param, "singlet",
+            phi0=_pure_sector(self.SHAPE, self.CHANNEL, 900),
+            seed_vec=seed_vec, use_ir=False, axF=None, nmat=self.SHAPE[-1])
+
+    def _masked_positive_kernel(self):
+        # A kernel that CONSERVES the channel sector: the channel holds one
+        # small positive eigenvalue (+0.15), and there are TWO larger-REAL
+        # OPPOSITE-sector modes (+1.0, +0.8) that a plain which='LM' set surfaces
+        # first. The channel projection removes them, so the reported channel
+        # eigenvalue is +0.15 regardless of num_eigenvalues (issue #202).
+        channel = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 1, 10)[0]
+        op1 = _pure_sector(self.SHAPE, "odd_k_even_w", 20).ravel()
+        op2 = _pure_sector(self.SHAPE, "even_k_odd_w", 21).ravel()
+        return _diagonal_kernel([channel, op1, op2], [0.15, 1.0, 0.8],
+                                rest_scale=0.0)
+
+    def _all_negative_kernel(self):
+        # Channel-conserving, but every channel eigenvalue is negative and the
+        # complement is far below them: the channel's largest REAL part is the
+        # least-negative mode, which the projected solve must report (not a
+        # spurious zero from the null space).
+        basis = _orthonormal_in_sector(self.SHAPE, self.CHANNEL, 3, 30)
+        return (_diagonal_kernel(basis, [-0.9, -0.7, -0.5], rest_scale=-3.0),
+                basis)
+
+    def _non_conserving_kernel(self):
+        # Maps the channel sector OUT of itself (swap with an odd-frequency
+        # mode), so the channel projection is not valid and the run falls back
+        # to the unprojected LM -> LR retry.
+        u = _pure_sector(self.SHAPE, "even_k_even_w", 40).ravel()
+        w = _pure_sector(self.SHAPE, "even_k_odd_w", 41).ravel()
+
+        def matvec(x):
+            x = np.asarray(x).ravel().astype(complex)
+            cu, cw = np.vdot(u, x), np.vdot(w, x)
+            rest = x - cu * u - cw * w
+            return 0.9 * cu * w + 0.9 * cw * u + 0.001 * rest
+        return matvec
+
+    def test_projected_solve_independent_of_num_eigenvalues(self):
+        # Reproducing test for issue #202 (fix round 1): on a channel-conserving
+        # kernel with larger-real opposite-sector modes, a short and a long
+        # num_eigenvalues must report the SAME channel eigenvalue (the sector's
+        # true leading, +0.15). Before the projected solve, num_eigenvalues=2
+        # reported +1.0 and =6 reported +0.15.
+        matvec = self._masked_positive_kernel()
+        results = {}
+        for k in (2, 6):
+            with _capture_dynamic_warnings() as recs:
+                out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                         "num_eigenvalues": k})
+            self.assertEqual(len(out), 9)
+            lam, _g, _e, _m, note, _l, _w, sector, selection = out
+            results[k] = lam
+            self.assertAlmostEqual(lam, 0.15, places=5)
+            self.assertEqual(selection, "LR_projected")
+            self.assertEqual(sector, "channel")
+            self.assertIsNone(note)
+            self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+        self.assertAlmostEqual(results[2], results[6], places=8)
+
+    def test_projected_solve_repulsive_channel_reports_least_negative(self):
+        matvec, _basis = self._all_negative_kernel()
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 2})
+        lam, _g, _e, _m, _note, _l, _w, sector, selection = out
+        self.assertAlmostEqual(lam, -0.5, places=5)   # least negative in channel
+        self.assertEqual(selection, "LR_projected")
+        self.assertEqual(sector, "channel")
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+
+    def test_projected_solve_runs_a_single_leading_solve(self):
+        # "no more than one extra solve on any path": the projected path solves
+        # the projected operator exactly once (the scale preliminary is a raw
+        # ARPACK pass, not a _solve_leading call).
+        import hwave.sc as sc
+        matvec = self._masked_positive_kernel()
+        calls = []
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(1)
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            self._run(matvec, {"solver_mode": "eigenvalue",
+                               "num_eigenvalues": 3})
+        self.assertEqual(len(calls), 1, "projected path must not re-solve")
+
+    def test_non_conserving_falls_back_to_unprojected_retry(self):
+        matvec = self._non_conserving_kernel()
+        calls = []
+        import hwave.sc as sc
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(k.get("spectral_shift"))
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            with _capture_dynamic_warnings() as recs:
+                out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                         "num_eigenvalues": 2})
+        selection = out[8]
+        note = out[4]
+        self.assertEqual(selection, "LR_retry")
+        # exactly one extra solve: the plain LM solve then the auto re-solve
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[1], "auto")
+        self.assertIsNotNone(note)
+        self.assertEqual(
+            1, len([r for r in recs
+                    if "re-solving with spectral_shift" in r.getMessage()]))
+
+    def test_seeded_run_is_not_projected(self):
+        matvec, basis = self._all_negative_kernel()
+        seed = basis[2]                        # a channel eigenvector
+        with _capture_dynamic_warnings() as recs:
+            out = self._run(matvec, {"solver_mode": "eigenvalue",
+                                     "num_eigenvalues": 2}, seed_vec=seed)
+        selection = out[8]
+        note = out[4]
+        self.assertNotEqual(selection, "LR_projected")
+        self.assertIsNone(note)
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+
+    def test_dense_path_reports_dense_selection(self):
+        # A 2-dimensional operator routes through _solve_leading's dense path,
+        # which is a largest-real solve, not "LM"; the provenance must say so and
+        # no redundant re-solve may run (should_fix #3/#4). A seed keeps the run
+        # on the unprojected path so the dense selection is what is reported.
+        from hwave.solver import eliashberg_dynamic as ed
+        import hwave.sc as sc
+        shape = (1, 1, 1, 1, 1, 2)
+        M = np.array([[0.3, 0.1], [0.05, 0.2]], dtype=complex)
+
+        def matvec(x):
+            return M @ np.asarray(x).ravel()
+
+        phi0 = np.ones(shape, dtype=complex)
+        phi0 /= np.linalg.norm(phi0)
+        seed = np.array([1.0, 0.0], dtype=complex)
+        calls = []
+        real_solve = sc._solve_leading
+
+        def counting(*a, **k):
+            calls.append(1)
+            return real_solve(*a, **k)
+
+        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+            with _capture_dynamic_warnings() as recs:
+                out = ed.run_leading_eigenproblem(
+                    matvec, shape, {"solver_mode": "eigenvalue",
+                                    "num_eigenvalues": 2},
+                    "singlet", phi0=phi0, seed_vec=seed, use_ir=False, axF=None,
+                    nmat=2)
+        self.assertEqual(out[8], "dense-LR")
+        self.assertEqual(len(calls), 1, "dense path must not re-solve")
+        self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
+
+    def test_eigenvalue_selection_in_file_header_and_npz(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        tmp = _tempfile.mkdtemp()
+        try:
+            gap = np.zeros(self.SHAPE, dtype=complex)
+            gap[0, 0, 0, 0, 0, self.SHAPE[-1] // 2] = 1.0
+            kx = np.linspace(0.0, 2 * np.pi, self.SHAPE[2], endpoint=False)
+            ky = np.linspace(0.0, 2 * np.pi, self.SHAPE[3], endpoint=False)
+            kz = np.linspace(0.0, 2 * np.pi, self.SHAPE[4], endpoint=False)
+            ed.write_dynamic_outputs(
+                tmp, gap, 0.15, 0.5, "singlet", kx, ky, kz, 2.0,
+                eigenvalue_selection="LR_projected")
+            with np.load(_os.path.join(tmp, "gap_dynamic.npz"),
+                         allow_pickle=False) as d:
+                self.assertIn("eigenvalue_selection", d.files)
+                self.assertEqual(str(d["eigenvalue_selection"]), "LR_projected")
+            ev_path = _os.path.join(tmp, "eigenvalue.dat")
+            ed.write_eigenvalue_file(ev_path, 0.15, None, None, None,
+                                     eigenvalue_selection="LR_projected")
+            with open(ev_path) as fh:
+                text = fh.read()
+            self.assertIn("# eigenvalue_selection: LR_projected", text)
+            # omitted when None
+            ev_path2 = _os.path.join(tmp, "eigenvalue2.dat")
+            ed.write_eigenvalue_file(ev_path2, 0.15, None, None, None)
+            with open(ev_path2) as fh:
+                self.assertNotIn("eigenvalue_selection", fh.read())
+        finally:
+            _shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- issue #203: on-site static chi kept as a flat operator, like the bond ---
+
+def _write_static_dominated_flex(outdir, C0, Nx=4, Ny=4, Nz=1, nmat=256,
+                                 beta=2.0):
+    """A FLEX output whose spin susceptibility is STATIC-DOMINATED: a large
+    frequency-flat component ``C0`` plus a small dynamic bump. This is the
+    near-critical regime issue #57/#203 care about; on the IR path the flat
+    component must be retained as an operator, not aliased into the bosonic
+    fit. green is a plain non-interacting Green function on the cos band."""
+    import os
+    os.makedirs(outdir, exist_ok=True)
+    nvol = Nx * Ny * Nz
+    kx = 2 * np.pi * np.arange(Nx) / Nx
+    ky = 2 * np.pi * np.arange(Ny) / Ny
+    eps = (-2 * (np.cos(kx)[:, None] + np.cos(ky)[None, :])).reshape(nvol)
+    nf = 2 * np.arange(nmat) + 1 - nmat
+    wf = nf * np.pi / beta
+    green = np.empty((1, nmat, nvol, 1, 1), dtype=complex)
+    for v in range(nvol):
+        green[0, :, v, 0, 0] = 1.0 / (1j * wf - eps[v])
+    nb = 2 * np.arange(nmat) - nmat
+    wb = nb * np.pi / beta
+    g = 1.5
+    dyn = 0.3 / (1.0 + (wb / g) ** 2)
+    chis = np.empty((nmat, nvol, 1, 1), dtype=complex)
+    chic = np.empty((nmat, nvol, 1, 1), dtype=complex)
+    for v in range(nvol):
+        chis[:, v, 0, 0] = C0 + dyn              # large flat + small dynamic
+        chic[:, v, 0, 0] = 0.05 + 0.02 / (1.0 + (wb / g) ** 2)
+    np.savez(os.path.join(outdir, "chiq_s.npz"), chiq_s=chis,
+             chi_convention="myo", chi_orbital_layout="acbd",
+             momentum_convention="e_plus_ikR")
+    np.savez(os.path.join(outdir, "chiq_c.npz"), chiq_c=chic,
+             chi_convention="myo", chi_orbital_layout="acbd",
+             momentum_convention="e_plus_ikR")
+    np.savez(os.path.join(outdir, "green.npz"), green=green,
+             momentum_convention="e_plus_ikR")
+
+
+def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
+                          ir_wmax=10.0):
+    from hwave.solver import eliashberg_dynamic as ed
+    eli = {"chi0q_mode": "flex", "frequency": "dynamic",
+           "pairing_type": "singlet", "solver_mode": "iteration",
+           "num_eigenvalues": 1, "max_iter": 200}
+    if basis != "uniform":
+        eli["matsubara_basis"] = basis
+        eli["ir_wmax"] = ir_wmax
+        if keep_static:
+            eli["ir_keep_static_chi"] = True
+    inp = {"mode": {"param": {"T": 0.5, "CellShape": [4, 4, 1],
+                              "SubShape": [1, 1, 1], "Nmat": 256,
+                              "filling": 0.5}},
+           "file": {"input": {"interaction": {
+                        "path_to_input": indir, "Geometry": "geom.dat",
+                        "Transfer": "transfer.dat",
+                        "CoulombIntra": "coulombintra.dat"}},
+                    "output": {"path_to_output": outdir}},
+           "eliashberg": eli}
+    return ed.solve_dynamic(inp)
+
+
+def test_ir_keep_static_chi_matches_uniform_for_large_flat_component(tmp_path):
+    """Issue #203: with a static-dominated spin susceptibility, the IR path
+    with ir_keep_static_chi retains the flat component as an operator (like the
+    bond path) and its leading eigenvalue AGREES with the uniform-grid result.
+    Dropping the constant instead (no keep_static) loses the static weight and
+    gives a badly wrong eigenvalue -- and the OLD keep behaviour, which added
+    the flat constant back onto every frequency node, aliased it into the
+    bosonic IR fit and was also wrong."""
+    pytest.importorskip("sparse_ir")
+    import os
+    indir = str(tmp_path / "in")
+    os.makedirs(indir, exist_ok=True)
+    _write_geom_transfer_coulomb(indir, norb=1)
+    out_u = str(tmp_path / "out_u")
+    out_ir = str(tmp_path / "out_ir")
+    out_ir_nk = str(tmp_path / "out_ir_nk")
+    for d in (out_u, out_ir, out_ir_nk):
+        _write_static_dominated_flex(d, C0=3.0)
+
+    lam_u = _solve_dynamic_lambda(indir, out_u, "uniform")
+    lam_ir = _solve_dynamic_lambda(indir, out_ir, "ir", keep_static=True)
+    lam_ir_nokeep = _solve_dynamic_lambda(indir, out_ir_nk, "ir",
+                                          keep_static=False)
+
+    assert np.isfinite(lam_u) and np.isfinite(lam_ir)
+    # the retained flat operator reproduces the uniform-grid eigenvalue
+    assert abs(lam_ir - lam_u) / abs(lam_u) < 2e-2, \
+        "lam_ir={} lam_u={}".format(lam_ir, lam_u)
+    # dropping the large static component instead is far off: keeping it matters
+    assert abs(lam_ir_nokeep - lam_u) / abs(lam_u) > 0.2, \
+        "dropping the static component should be wrong: nokeep={} u={}".format(
+            lam_ir_nokeep, lam_u)

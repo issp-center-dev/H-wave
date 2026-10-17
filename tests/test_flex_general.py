@@ -143,6 +143,77 @@ def _write_2d_2orb_onsite_fixture(dirpath):
         f.write(coulombinter)
 
 
+def _write_2d_2orb_full_kanamori_fixture(dirpath):
+    """Materialize the on-site 2-orbital fixture with the FULL Kanamori set.
+
+    Same geometry/transfer as ``_write_2d_2orb_onsite_fixture`` but with every
+    two-body term the general path supports -- CoulombIntra, CoulombInter,
+    Hund, Exchange, PairHop, Ising -- each written SYMMETRICALLY in the orbital
+    indices (``X[1,2] == X[2,1]``), the physical case.  This exercises all four
+    cases of ``build_sc_matrices_myo``, so the S/C matrices are dense rather
+    than density-block-diagonal.
+    """
+    _write_2d_2orb_onsite_fixture(dirpath)
+    extra = {
+        "hund": 0.30,
+        "exchange": 0.20,
+        "pairhop": 0.10,
+        "ising": 0.15,
+    }
+    names = {"hund": "Hund", "exchange": "Exchange",
+             "pairhop": "PairHop", "ising": "Ising"}
+    for stem, value in extra.items():
+        body = ("{} in wannier90-like format for uhfk\n"
+                "2\n1\n 1\n"
+                "   0    0    0    1    2   {:.12f}   0.000000000000\n"
+                "   0    0    0    2    1   {:.12f}   0.000000000000\n"
+                ).format(names[stem], value, value)
+        with open(os.path.join(dirpath, stem + ".dat"), "w") as f:
+            f.write(body)
+
+
+def _write_2d_3orb_onsite_fixture(dirpath):
+    """A 3-orbital on-site CoulombIntra fixture.
+
+    Three orbitals are needed wherever a test has to tell the spin-orbital
+    dimension ``norb * ns`` from the orbital-pair dimension ``norb^2``: at
+    ``norb = 2`` both are 4 and the distinction is invisible.  Here they are 6
+    and 9.
+    """
+    os.makedirs(dirpath, exist_ok=True)
+    norb = 3
+    geom = ("  1.000000000000   0.000000000000   0.000000000000\n"
+            "  0.000000000000   1.000000000000   0.000000000000\n"
+            "  0.000000000000   0.000000000000   1.000000000000\n"
+            "3\n"
+            "    0.000000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.500000000000000e+00     0.000000000000000e+00     0.000000000000000e+00\n"
+            "    0.000000000000000e+00     0.500000000000000e+00     0.000000000000000e+00\n")
+    rows = []
+    for a in range(1, norb + 1):
+        rows.append("   0    1    0    {0}    {0}  1.0 0.0".format(a))
+        rows.append("   0   -1    0    {0}    {0}  1.0 0.0".format(a))
+    # a little inter-orbital hopping so the Green function is not orbital block
+    # diagonal (otherwise the saved arrays are trivially structured)
+    rows.append("   0    0    0    1    2  0.4 0.0")
+    rows.append("   0    0    0    2    1  0.4 0.0")
+    rows.append("   0    0    0    2    3  0.3 0.0")
+    rows.append("   0    0    0    3    2  0.3 0.0")
+    transfer = ("Transfer in wannier90-like format for uhfk\n"
+                "3\n"
+                "9\n"
+                " 1 1 1 1 1 1 1 1 1\n" + "\n".join(rows) + "\n")
+    intra = ("CoulombIntra in wannier90-like format for uhfk\n"
+             "3\n1\n 1\n"
+             + "".join("   0    0    0    {0}    {0}   4.000000000000   "
+                       "0.000000000000\n".format(a)
+                       for a in range(1, norb + 1)))
+    for name, txt in (("geom.dat", geom), ("transfer.dat", transfer),
+                      ("coulombintra.dat", intra)):
+        with open(os.path.join(dirpath, name), "w") as fh:
+            fh.write(txt)
+
+
 def _make_general_flex(norb=2):
     """Build a spin-free general FLEX solver.
 
@@ -222,14 +293,20 @@ class TestInflateGeneral(unittest.TestCase):
         chi0q_raw = _fake_general_chi0q(flex)
         chi0q, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0q_raw, None)
 
-        # chi0q is converted RPA->MYO via an orbital-pair transpose; the shape
-        # is unchanged (all four orbital legs are norb).
+        # chi0q passes through with its orbital-pair index order UNCHANGED: the
+        # native RPA [a,c,b,d] order is already the one the downstream S/C math
+        # and _sigma_orbital_contract consume.  An "RPA->MYO" transpose here
+        # used to transpose V_eff and hence the orbital off-diagonal of Sigma
+        # (issue #91), so pin the pass-through explicitly.
         nvol = flex.lattice.nvol
         self.assertEqual(chi0q.ndim, 6)
         self.assertEqual(chi0q.shape,
                          (flex.nmat, nvol, no, no, no, no))
-        np.testing.assert_array_equal(
-            chi0q, chi0q_raw.transpose(0, 1, 4, 5, 2, 3))
+        np.testing.assert_array_equal(chi0q, chi0q_raw)
+        # ...and the fixture is asymmetric, so the assertion is not vacuous.
+        self.assertGreater(
+            np.linalg.norm(chi0q_raw - chi0q_raw.transpose(0, 1, 4, 5, 2, 3)),
+            1e-6)
 
         # S/C matrices reshaped to (nvol, norb^2, norb^2).
         self.assertEqual(Us.shape, (nvol, no * no, no * no))
@@ -275,9 +352,9 @@ class TestChiGeneralConsistency(unittest.TestCase):
 
 
 class TestGeneralOutputConvention(unittest.TestCase):
-    """The general path computes internally in MYO convention but must expose
-    the public chi0q output in the same RPA [a,c,b,d] orbital convention as the
-    reduced path, so the saved chi0q key has one consistent meaning."""
+    """The general path works in the native RPA [a,c,b,d] orbital-pair order
+    throughout, so the public chi0q output carries the same convention as the
+    reduced path and the saved chi0q key has one consistent meaning."""
 
     def test_output_chi0q_is_rpa_convention(self):
         flex = _make_general_flex(norb=2)
@@ -289,15 +366,121 @@ class TestGeneralOutputConvention(unittest.TestCase):
         np.testing.assert_allclose(
             chi0q_out, chi0_raw, atol=1e-12,
             err_msg="general output chi0q must stay in RPA [a,c,b,d] convention")
-        # internal MYO chi0q (the transpose) must differ for a non-symmetric
-        # tensor -- confirms the output is genuinely back-converted, not MYO.
-        myo = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
-        self.assertGreater(np.linalg.norm(chi0q_out - myo), 1e-6)
+        # the orbital-pair transpose must differ for a non-symmetric tensor,
+        # so the assertion above is not vacuously satisfied.
+        transposed = chi0_raw.transpose(0, 1, 4, 5, 2, 3)
+        self.assertGreater(np.linalg.norm(chi0q_out - transposed), 1e-6)
+
+    def test_output_chi_s_c_are_rpa_convention(self):
+        """chi_s/chi_c must exit _flex_compute_veff_general in the same RPA
+        [a,c,b,d] orbital convention as chi0q_out -- i.e. as the channel solve
+        of the RPA-convention chi0, with NO orbital-pair transpose anywhere.
+
+        The Eliashberg loader (sc._compute_vertices_flex) consumes chi_s/chi_c
+        with native-[a,c,b,d]-layout S/C matrices, so a stray transpose here
+        builds a transposed pairing vertex and a wrong static lambda
+        (issue #78: chi0q_mode='flex' disagreed with 'load' for identical Sigma=0
+        physics)."""
+        flex = _make_general_flex(norb=2)
+        # Solve the channels independently from the RAW (RPA-convention) chi0,
+        # so the assertion is anchored to a genuine cross-computation.
+        flex._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex)
+        _, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+        chi_s_ref, chi_c_ref = flex._solve_channels_general(chi0_raw, Us, Uc)
+
+        flex._myo_sc_cache = None
+        _, _, chi_s_out, chi_c_out = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+
+        np.testing.assert_allclose(
+            chi_s_out, chi_s_ref, atol=1e-12,
+            err_msg="chi_s must be exposed in RPA [a,c,b,d] convention")
+        np.testing.assert_allclose(
+            chi_c_out, chi_c_ref, atol=1e-12,
+            err_msg="chi_c must be exposed in RPA [a,c,b,d] convention")
+        # ...and genuinely differ from the pair-transposed layout (norb=2 is
+        # asymmetric), so the assertions above are not vacuously satisfied.
+        inv = (0, 1, 4, 5, 2, 3)
+        self.assertGreater(
+            np.linalg.norm(chi_s_out - chi_s_ref.transpose(inv)), 1e-6)
+        self.assertGreater(
+            np.linalg.norm(chi_c_out - chi_c_ref.transpose(inv)), 1e-6)
+
+    def test_flex_vertex_matches_load_vertex_sigma0(self):
+        """Physical regression for issue #78: for identical Sigma=0 physics the
+        Eliashberg pairing vertex built from general-FLEX chi_s/chi_c
+        (sc._compute_vertices_flex, convention='myo') must equal the vertex the
+        'load' path builds directly from the same chi0q
+        (sc._compute_vertices_general).
+
+        This is the end-to-end check the layout-only tests cannot make: a
+        wrong-direction or missing orbital-pair transpose of chi_s/chi_c makes
+        S @ chi @ S build a transposed pairing vertex, so the two paths disagree
+        (that was the bug). The J=0 on-site 2-orbital fixture is used so the MYO
+        and Kuroki S/C matrices coincide and the singlet/triplet vertices must
+        match exactly."""
+        import os
+        import tempfile
+        import hwave.sc as sc
+
+        flex = _make_general_flex(norb=2)   # J=0 on-site 2-orbital fixture
+        flex._myo_sc_cache = None
+        norb = flex.norb
+        Nx, Ny, Nz = flex.lattice.shape
+        nvol = flex.lattice.nvol
+        nd = norb * norb
+        nmat = flex.nmat
+        si = nmat // 2
+
+        # Same random asymmetric chi0q feeds BOTH paths: FLEX and the load
+        # path both solve the RPA channels natively from it, in the same
+        # orbital-pair order (issues #78/#91).
+        chi0_raw = _fake_general_chi0q(flex)   # (nmat, nvol, a, c, b, d)
+        chi0q_out, _, chi_s, chi_c = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+
+        # Build the interaction on the same grid from the same fixture files the
+        # FLEX solver read, so both S/C matrices come from identical U/U'.
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_onsite")
+        input_dict = {"file": {"input": {"interaction": {
+            "path_to_input": dirpath,
+            "Geometry": "geom.dat", "Transfer": "transfer.dat",
+            "CoulombIntra": "coulombintra.dat",
+            "CoulombInter": "coulombinter.dat"}}}}
+        _, _, interactions = sc._read_interaction_files(input_dict)
+        kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
+        ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
+        kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
+        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+
+        # load path consumes chi0q as (a,c,b,d, Nx,Ny,Nz, nmat)
+        chi0q_load = chi0q_out.transpose(2, 3, 4, 5, 1, 0).reshape(
+            norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+        # flex path consumes the static chi_s/chi_c as (Nx,Ny,Nz, nd,nd)
+        chis_stat = chi_s[si].reshape(Nx, Ny, Nz, nd, nd)
+        chic_stat = chi_c[si].reshape(Nx, Ny, Nz, nd, nd)
+
+        for pairing in ("singlet", "triplet"):
+            Vs_flex = sc._compute_vertices_flex(
+                chis_stat, chic_stat, inter_k, norb, Nx, Ny, Nz,
+                pairing_type=pairing, convention="myo")
+            Vs_load = sc._compute_vertices_general(
+                chi0q_load, inter_k, norb, Nx, Ny, Nz, nmat,
+                pairing_type=pairing, static_index=si)
+            np.testing.assert_allclose(
+                Vs_flex, Vs_load, rtol=1e-8, atol=1e-10,
+                err_msg="flex vertex ({}) must match load vertex for "
+                        "Sigma=0".format(pairing))
 
 
 class TestGeneralChiConventionRoundTrip(unittest.TestCase):
-    """General FLEX tags saved chiq_s/chiq_c as MYO; the Eliashberg loader reads
-    that tag back so the pairing vertex uses MYO (not Kuroki) S/C matrices."""
+    """General FLEX tags saved chiq_s/chiq_c with chi_convention='myo'; the
+    Eliashberg loader reads that tag back so the pairing vertex uses the MYO
+    (not Kuroki) S/C matrices. The arrays themselves are stored in the public
+    [a,c,b,d] index order (issue #78); the tag selects the S/C charge
+    convention, not the index layout."""
 
     def _save_and_reload_convention(self, flex):
         import tempfile
@@ -322,6 +505,30 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         flex = _make_general_flex(norb=2)
         self.assertEqual(self._save_and_reload_convention(flex), "myo")
 
+    def test_green_file_carries_scalar_beta_provenance(self):
+        """The uniform green writer must stamp beta = 1/T (issue #86): the
+        Eliashberg consumer validates its own beta against this field, so
+        a temperature mismatch fails fast instead of silently corrupting
+        the pair bubble."""
+        import tempfile
+        flex = _make_general_flex(norb=2)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = tmp.name
+        green = np.zeros((1, flex.nmat, flex.lattice.nvol,
+                          flex.norb, flex.norb), dtype=complex)
+        flex.save_results({"path_to_output": d, "green": "green.npz"},
+                          {"green": green})
+        with np.load(os.path.join(d, "green.npz")) as data:
+            self.assertIn("beta", data)
+            beta = np.asarray(data["beta"])
+            # ndim 0, not just size 1: the loader's scalar gate rejects
+            # rank-1 metadata, so a future writer regression to shape (1,)
+            # must fail HERE, not at every user's load
+            self.assertEqual(beta.ndim, 0)
+            self.assertAlmostEqual(float(beta.item()), 1.0 / flex.T,
+                                   places=13)
+
     def test_legacy_file_without_tag_defaults_kuroki(self):
         import tempfile
         import hwave.sc as sc
@@ -329,9 +536,12 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         # write a legacy chiq file with NO chi_convention field
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr)
-        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, momentum_convention="e_plus_ikR")
+        # Nmat matches the 4-point frequency axis: a metadata-less file is
+        # only centered when its axis IS the configured full grid (#186).
         input_dict = {"file": {"output": {"path_to_output": d}},
+                      "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
         _, _, _, conv = sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
         self.assertEqual(conv, "kuroki")
@@ -343,25 +553,31 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
         # spin says myo, charge says kuroki -> must not silently combine
-        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo")
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, chi_convention="myo", momentum_convention="e_plus_ikR")
         np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr,
-                 chi_convention="kuroki")
+                 chi_convention="kuroki", momentum_convention="e_plus_ikR")
+        # Nmat matches the 4-point frequency axis so the convention mismatch
+        # is what raises here, not the metadata-less static-slice guard.
         input_dict = {"file": {"output": {"path_to_output": d}},
+                      "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
         with self.assertRaises(ValueError):
             sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
 
-    def test_real_rank6_chi_roundtrips_to_myo_flattening(self):
-        """Save REAL general-path (rank-6 MYO) chi_s/chi_c, reload through the
-        Eliashberg loader, and confirm the static slice flattens to (nd,nd) in
-        the MYO row=(m,n)/col=(mu,nu) order that build_sc_matrices_myo expects."""
+    def test_real_rank6_chi_roundtrips_to_native_flattening(self):
+        """Save REAL general-path (rank-6) chi_s/chi_c, reload through the
+        Eliashberg loader, and confirm the static slice flattens to (nd,nd)
+        consistently. The public chi_s/chi_c are exposed in the RPA [a,c,b,d]
+        orbital convention (issue #78), so the loader passes the orbital-pair
+        arrays through unchanged and the round trip is an identity."""
         import tempfile
         import hwave.sc as sc
         flex = _make_general_flex(norb=2)
         flex._myo_sc_cache = None
         chi0 = _fake_general_chi0q(flex)
         _, _, chi_s, chi_c = flex._flex_compute_veff_general(chi0, None)
-        # real general chi is rank-6 (nmat, nvol, m, n, mu, nu)
+        # real general chi is rank-6 (nmat, nvol, a, c, b, d) after the public
+        # back-transpose (issue #78); MYO ordering is internal to the S/C math
         self.assertEqual(chi_s.ndim, 6)
         nx, ny, nz = flex.lattice.shape
         nd = flex.norb * flex.norb
@@ -376,10 +592,142 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
             input_dict, flex.norb, nx, ny, nz)
         self.assertEqual(conv, "myo")
         self.assertEqual(chis.shape, (nx, ny, nz, nd, nd))
-        # expected static slice flattened with row=(m,n), col=(mu,nu)
+        # expected static slice flattened in the public [a,c,b,d] convention
         center = flex.nmat // 2
         expected = chi_s[center].reshape(nx, ny, nz, nd, nd)
         np.testing.assert_allclose(chis, expected, atol=1e-12)
+
+
+class TestChiOrbitalLayoutMarker(unittest.TestCase):
+    """The chiq_s/chiq_c files carry an explicit ``chi_orbital_layout="acbd"``
+    marker so the on-disk index order is self-describing (issue #78 follow-up).
+
+    Reader contract (_read_flex_chi_raw):
+    - marker present and != "acbd"  -> ValueError (future layout changes fail fast)
+    - marker absent + tag "myo"     -> ValueError (pre-#78 dev build stored the
+      MYO-transposed arrays under the same tag; must be regenerated)
+    - marker absent + tag "kuroki" / untagged -> accepted (reduced-path layout
+      never changed; legacy files stay readable)
+    """
+
+    def _write_pair(self, d, meta_s=None, meta_c=None, nd=4, nmat=4, nvol=4):
+        arr = np.zeros((nmat, nvol, nd, nd), dtype=complex)
+        np.savez(os.path.join(d, "chiq_s.npz"), chiq_s=arr, **(meta_s or {}), momentum_convention="e_plus_ikR")
+        np.savez(os.path.join(d, "chiq_c.npz"), chiq_c=arr, **(meta_c or {}), momentum_convention="e_plus_ikR")
+        return {"file": {"output": {"path_to_output": d}}, "eliashberg": {}}
+
+    def test_writer_stamps_acbd_layout_for_orbital_pair_files_only(self):
+        """The marker describes four orbital legs stored as the pairs (a,c),
+        (b,d).  Only the general path writes such a file: the reduced-path
+        arrays are indexed by spin-orbital ``s*norb + a`` and have to have a
+        spin block extracted before they are an orbital-pair object at all, so
+        stamping them "acbd" would be false metadata.  The reader accepts
+        marker-less "kuroki" files."""
+        import tempfile
+        flex = _make_general_flex(norb=2)
+        nd = flex.norb * flex.norb
+        shape = (flex.nmat, flex.lattice.nvol, nd, nd)
+        green_info = {"chiq_s": np.zeros(shape, dtype=complex),
+                      "chiq_c": np.zeros(shape, dtype=complex)}
+        for general, conv in ((True, "myo"), (False, "kuroki")):
+            d = tempfile.mkdtemp()
+            flex._flex_general = general
+            flex.save_results(
+                {"path_to_output": d, "chiq_s": "chiq_s", "chiq_c": "chiq_c"},
+                green_info)
+            for name in ("chiq_s.npz", "chiq_c.npz"):
+                with np.load(os.path.join(d, name)) as data:
+                    self.assertEqual(str(data["chi_convention"]), conv)
+                    if general:
+                        self.assertEqual(
+                            str(data["chi_orbital_layout"]), "acbd")
+                    else:
+                        self.assertNotIn("chi_orbital_layout", data)
+
+    def test_real_reduced_run_writes_spin_orbital_axes_and_no_marker(self):
+        """End-to-end counterpart of the writer test above.
+
+        The one above toggles a flag on a general solver and writes synthetic
+        norb^2 arrays, so it cannot show what a real reduced run puts on disk.
+        Run the reduced scheme for real and check the two facts the marker
+        contract rests on: the saved axes are spin-orbital (nd = norb * ns, not
+        norb^2) and no orbital-pair layout marker is claimed for them.
+        """
+        import tempfile
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+
+        with tempfile.TemporaryDirectory(prefix="hwave_layout_") as d:
+            _write_2d_3orb_onsite_fixture(d)
+            info_input = {
+                'path_to_input': d,
+                'interaction': {
+                    'path_to_input': d,
+                    'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                    'CoulombIntra': 'coulombintra.dat',
+                },
+            }
+            ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+            green_info = read_input_k.QLMSkInput(info_input).get_param('green')
+            solver = solver_flex.FLEX(ham, {}, {
+                'mode': 'FLEX',
+                'param': {'T': 0.5, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                          'SubShape': [1, 1, 1], 'Nmat': 8,
+                          'IterationMax': 1, 'Mix': 1.0},
+                'calc_scheme': 'reduced'})
+            out = os.path.join(d, "output")
+            os.makedirs(out, exist_ok=True)
+            solver.solve(green_info, out)
+            solver.save_results(
+                {"path_to_output": out, "chiq_s": "chiq_s", "chiq_c": "chiq_c"},
+                green_info)
+
+            norb, ns = solver.norb, solver.ns
+            # norb = 3 on purpose: at norb = 2 the spin-orbital dimension
+            # norb*ns and the orbital-pair dimension norb^2 are both 4 and the
+            # assertion below could not tell them apart.
+            self.assertEqual((norb, ns), (3, 2))
+            self.assertNotEqual(norb * ns, norb * norb)
+            for name, key in (("chiq_s.npz", "chiq_s"), ("chiq_c.npz", "chiq_c")):
+                with np.load(os.path.join(out, name)) as data:
+                    self.assertEqual(str(data["chi_convention"]), "kuroki")
+                    self.assertNotIn("chi_orbital_layout", data)
+                    # spin-orbital axes (6), NOT orbital-pair (9)
+                    self.assertEqual(data[key].shape[-1], norb * ns)
+                    self.assertNotEqual(data[key].shape[-1], norb * norb)
+
+    def test_reader_rejects_myo_without_layout_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        inp = self._write_pair(tempfile.mkdtemp(),
+                               meta_s={"chi_convention": "myo"},
+                               meta_c={"chi_convention": "myo"})
+        with self.assertRaisesRegex(ValueError, "chi_orbital_layout"):
+            sc._read_flex_chi_raw(inp)
+
+    def test_reader_rejects_unknown_layout_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "myo", "chi_orbital_layout": "myo_pair"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        with self.assertRaisesRegex(ValueError, "acbd"):
+            sc._read_flex_chi_raw(inp)
+
+    def test_reader_accepts_kuroki_without_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "kuroki"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
+        self.assertEqual(conv, "kuroki")
+
+    def test_reader_accepts_myo_with_acbd_marker(self):
+        import tempfile
+        import hwave.sc as sc
+        meta = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
+        inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
+        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
+        self.assertEqual(conv, "myo")
 
 
 class TestVeffGeneral(unittest.TestCase):
@@ -493,24 +841,43 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         with self.assertRaises(ValueError):
             solver.solve(green_info, info_file['output']['path_to_output'])
 
-    def test_general_rejects_offsite_interaction(self):
-        """The general (v1) path supports on-site interactions only; an off-site
-        interaction entry (irvec != (0,0,0)) must fail-fast with a ValueError
-        when the MYO S/C matrices are built in _inflate_chi0q_and_ham_general."""
-        flex = _make_general_flex(norb=2)
-        pham = flex.ham_info.param_ham
-        # param_ham[itype] is a dict {(irvec, orbvec): value}; inject an off-site
-        # CoulombInter entry mirroring that real key structure.  irvec=(1,0,0) is
-        # off-site; orbvec=(0,1) is a valid orbital pair.
-        key = ((1, 0, 0), (0, 1))
-        pham.setdefault("CoulombInter", {})[key] = 1.0
-        # ensure a clean cache so the guard (cache-MISS branch) actually runs:
-        flex._myo_sc_cache = None
-        chi0_raw = _fake_general_chi0q(flex)
-        with self.assertRaises(ValueError) as cm:
-            flex._inflate_chi0q_and_ham_general(chi0_raw, None)
-        # confirm we hit the off-site guard specifically (not some other error)
-        self.assertIn("off-site", str(cm.exception).lower())
+    def test_general_offsite_policy_per_type(self):
+        """Off-site entries are accepted for CoulombInter, Hund and Ising --
+        same-orbital or inter-orbital -- as their Hartree (density-slot)
+        vertex, the class measured element-complete equal to the RPA ring
+        (tests/test_flex_offsite_general.py, #181 Tier 1). Off-site
+        Exchange (longitudinal content unadjudicated, Tier 2) and PairHop
+        (no local-bilinear regrouping) are rejected, and so is any other
+        type handed in off-site through an internal table (fail closed;
+        the reader already refuses an off-site CoulombIntra row, #93)."""
+        # accepted (a one-sided internal TABLE is fine: both solvers reduce
+        # it to its reversal-symmetric part; file input must be closed
+        # since #93)
+        for itype, orbvec in (("CoulombInter", (0, 0)), ("CoulombInter", (0, 1)),
+                              ("Hund", (0, 0)), ("Hund", (0, 1)),
+                              ("Ising", (0, 0)), ("Ising", (0, 1)),
+                              ("PairLift", (0, 1))):
+            with self.subTest(accepted=itype, orbvec=orbvec):
+                flex = _make_general_flex(norb=2)
+                flex.ham_info.param_ham.setdefault(itype, {})[
+                    ((1, 0, 0), orbvec)] = 1.0
+                flex._myo_sc_cache = None
+                chi0_raw = _fake_general_chi0q(flex)
+                flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+
+        # rejected
+        for itype, orbvec in (("Exchange", (0, 1)), ("PairHop", (0, 1)),
+                              ("CoulombIntra", (0, 0))):
+            with self.subTest(rejected=itype):
+                flex = _make_general_flex(norb=2)
+                flex.ham_info.param_ham.setdefault(itype, {})[
+                    ((1, 0, 0), orbvec)] = 1.0
+                flex._myo_sc_cache = None
+                chi0_raw = _fake_general_chi0q(flex)
+                with self.assertRaises(ValueError) as cm:
+                    flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+                self.assertIn("off-site", str(cm.exception).lower())
+                self.assertIn(itype, str(cm.exception))
 
     def test_general_pairlift_is_inert_and_warns(self):
         """PairLift contributes S=C=0 to the particle-hole spin/charge vertex
@@ -551,49 +918,154 @@ class TestFLEXGeneralGuards(unittest.TestCase):
 
 
 class TestFLEXGeneralWarningGating(unittest.TestCase):
-    """The density-density reduction warning must fire for reduced/squashed but
-    be suppressed for general (where the off-diagonal vertices are kept)."""
+    """Scheme policy for exchange-type input: reduced REJECTS Exchange (no
+    density-diagonal vertex content -- one policy since #107), while general
+    keeps the full vertex and constructs quietly."""
 
-    def _construct(self, scheme):
-        """Construct a 2-orbital FLEX while pretending an Exchange interaction is
-        present. ``self.ham_info`` is a fresh ``Interaction`` built inside
-        ``RPA.__init__`` (not the passed object), so patch the class method
-        ``Interaction.has_interaction_exchange`` rather than an instance — this
-        also avoids wiring an extra interaction file."""
-        from unittest.mock import patch
+    def _construct(self, scheme, exchange=True):
+        """Construct a 2-orbital FLEX with a real Exchange interaction
+        (hund_onsite.dat parsed under the Exchange key -- any on-site
+        inter-orbital file works). The former version mocked the
+        has_interaction_exchange flag; the policy is content-based now."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as solver_flex
-        import hwave.solver.rpa as solver_rpa
-        info_input = {
+        idict = {
             'path_to_input': 'tests/rpa/input_2orb',
-            'interaction': {
-                'path_to_input': 'tests/rpa/input_2orb',
-                'Geometry': 'geom.dat',
-                'Transfer': 'transfer.dat',
-                'CoulombIntra': 'coulombintra.dat',
-                'CoulombInter': 'coulombinter.dat',
-            },
+            'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat',
+            'CoulombIntra': 'coulombintra.dat',
         }
-        ham = read_input_k.QLMSkInput(info_input).get_param("ham")
+        if exchange:
+            idict['Exchange'] = 'hund_onsite.dat'
+        ham = read_input_k.QLMSkInput(
+            {'path_to_input': 'tests/rpa/input_2orb',
+             'interaction': idict}).get_param("ham")
         info_mode = {
             'mode': 'FLEX',
             'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
                       'SubShape': [1, 1, 1], 'Nmat': 32},
             'calc_scheme': scheme,
         }
-        with patch.object(solver_rpa.Interaction, 'has_interaction_exchange',
-                          return_value=True):
-            return solver_flex.FLEX(ham, {}, info_mode)
+        return solver_flex.FLEX(ham, {}, info_mode)
 
-    def test_warning_retained_for_squashed(self):
-        # 'squashed' (not 'reduced': RPA errors on reduced+exchange, rpa.py:643).
-        with self.assertLogs('hwave.solver.flex', level='WARNING') as cm:
+    def test_squashed_with_exchange_is_rejected(self):
+        # calc_scheme='squashed' was removed in H-wave 2.0 (#144): the
+        # rejection now fires at construction, for the scheme itself,
+        # before the Exchange-content check is ever reached. (Prior to
+        # #144: one policy since #107 -- was: reduced errored, squashed
+        # warned of an 'approximation' while dropping the vertex entirely.)
+        with self.assertRaises(ValueError) as cm:
             self._construct('squashed')
-        self.assertTrue(any('density-density' in m for m in cm.output))
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
 
-    def test_warning_suppressed_for_general(self):
+    def test_general_with_exchange_constructs_quietly(self):
         with _assert_no_warning(self, 'hwave.solver.flex'):
             self._construct('general')
+
+
+def _intersite_v_inter_k(norb=2, U=4.0, V_same=0.8, V_cross=0.3,
+                        Nx=2, Ny=2, Nz=1):
+    """``inter_k`` with an inter-site CoulombInter that has a SAME-ORBITAL part.
+
+    ``CoulombInter[a, a]`` is what an extended Hubbard ``V`` between the same
+    orbital on neighbouring sites produces after the R-sum; it is q-dependent
+    and it is NOT the on-site ``CoulombIntra``.  The Kanamori helper above never
+    populates it (it only fills ``a != b``), which is why the charge-diagonal
+    omission is invisible there.
+    """
+    shape = (norb, norb, Nx, Ny, Nz)
+    CoulombIntra = np.zeros(shape, dtype=complex)
+    CoulombInter = np.zeros(shape, dtype=complex)
+    # a q-dependent V so the test cannot pass by a constant coincidence
+    qramp = np.arange(Nx * Ny * Nz, dtype=float).reshape(Nx, Ny, Nz) + 1.0
+    for a in range(norb):
+        CoulombIntra[a, a, :] = U
+        CoulombInter[a, a, :] = V_same * qramp
+        for b in range(norb):
+            if a != b:
+                CoulombInter[a, b, :] = V_cross * qramp
+    return {"CoulombIntra": CoulombIntra, "CoulombInter": CoulombInter}
+
+
+class TestChargeDiagonalIntersiteV(unittest.TestCase):
+    """Issue #95: the charge matrix must carry 2 V_aa(q) on its diagonal.
+
+    ``C[(a,a),(a,a)]`` is the Hartree channel for orbital ``a``.  It gets ``U_a``
+    from the on-site interaction and ``2 V_aa(q)`` from an inter-site
+    CoulombInter between the same orbital on neighbouring sites.  The latter was
+    dropped, because the case that adds ``+2 U'`` to the charge channel excluded
+    ``a == b``.
+
+    The intended form is visible elsewhere in the same file: the simple
+    two-index formulation used by ``chi0q_mode="load"`` builds the charge
+    vertex as ``Wc = U_k + 2 V_k`` (``_compute_vertices_simple``), diagonal
+    included.
+    """
+
+    def _assert_charge_diagonal(self, builder, extra=None):
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        U, V_same = 4.0, 0.8
+        ik = _intersite_v_inter_k(norb=norb, U=U, V_same=V_same,
+                                  Nx=Nx, Ny=Ny, Nz=Nz)
+        if extra:
+            ik.update(extra)
+        S, C = builder(ik, norb, Nx, Ny, Nz)
+        V_aa = ik["CoulombInter"]
+        for a in range(norb):
+            idx = a * norb + a
+            np.testing.assert_allclose(
+                C[:, :, :, idx, idx], U + 2.0 * V_aa[a, a],
+                rtol=0.0, atol=1e-12,
+                err_msg="C[({0},{0}),({0},{0})] must be U + 2 V_{0}{0}(q)".format(a))
+            # the spin channel takes no Hartree term: S stays at U
+            np.testing.assert_allclose(
+                S[:, :, :, idx, idx], U, rtol=0.0, atol=1e-12,
+                err_msg="S[({0},{0}),({0},{0})] must stay U".format(a))
+        # guard against a vacuous fixture: V_aa really is nonzero and q-dependent
+        self.assertGreater(np.max(np.abs(V_aa[0, 0])), 1e-6)
+        self.assertGreater(np.ptp(np.abs(V_aa[0, 0])), 1e-6)
+
+    def test_kuroki_builder(self):
+        from hwave.sc import _build_sc_matrices_all_q
+        self._assert_charge_diagonal(_build_sc_matrices_all_q)
+
+    def test_myo_builder(self):
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        self._assert_charge_diagonal(build_sc_matrices_myo)
+
+    def test_diagonal_hund_and_ising_do_not_leak_onto_the_diagonal(self):
+        """Only CoulombInter may reach C[(a,a),(a,a)].
+
+        An orbital has no Hund or Ising coupling with itself, but the readers
+        accept such an entry (#93).  Widening the density case to include
+        ``a == b`` must not let those through -- they would move S as well.
+        """
+        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
+        shape = (2, 2, 2, 2, 1)
+        diag = np.zeros(shape, dtype=complex)
+        for a in range(2):
+            diag[a, a, :] = 1.0
+        extra = {"Hund": 0.3 * diag, "Ising": 0.2 * diag}
+        for builder in (_build_sc_matrices_all_q, build_sc_matrices_myo):
+            self._assert_charge_diagonal(builder, extra=extra)
+
+    def test_single_q_builder_agrees_with_the_all_q_builder(self):
+        """The private single-q sibling is used as a reference by other tests,
+        so it must not drift from the all-q builder."""
+        from hwave.sc import _build_sc_matrices_all_q, _build_sc_matrices
+        norb, Nx, Ny, Nz = 2, 2, 2, 1
+        ik = _intersite_v_inter_k(norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
+        Sa, Ca = _build_sc_matrices_all_q(ik, norb, Nx, Ny, Nz)
+        for ix in range(Nx):
+            for iy in range(Ny):
+                for iz in range(Nz):
+                    S1, C1 = _build_sc_matrices(ik, norb, ix, iy, iz)
+                    np.testing.assert_allclose(S1, Sa[ix, iy, iz],
+                                               rtol=0.0, atol=1e-12)
+                    np.testing.assert_allclose(C1, Ca[ix, iy, iz],
+                                               rtol=0.0, atol=1e-12)
 
 
 def _kanamori_inter_k(norb=2, U=4.0, Up=2.0, J=0.5, Jp=0.5,
@@ -644,44 +1116,37 @@ class TestMYOSCMatrices(unittest.TestCase):
         def el(M, l1, l2, l3, l4):
             return M[0, 0, 0, l1 * 2 + l2, l3 * 2 + l4]
 
-        # Case 2 (ab,ab): the MYO-specific charge element
-        self.assertAlmostEqual(el(S, 0, 1, 0, 1), Up)
-        self.assertAlmostEqual(el(C, 0, 1, 0, 1), -Up + 2 * J)
+        # Case 2 (ab,ab): S = U' - J + J', C = -U' + J + J' (issue #113;
+        # for J = J' the charge value equals the standard Kanamori -U' + 2J,
+        # now from the corrected per-type split)
+        self.assertAlmostEqual(el(S, 0, 1, 0, 1), Up - J + Jp)
+        self.assertAlmostEqual(el(C, 0, 1, 0, 1), -Up + J + Jp)
         # Case 3 (aa,bb)
         self.assertAlmostEqual(el(S, 0, 0, 1, 1), J)
         self.assertAlmostEqual(el(C, 0, 0, 1, 1), 2 * Up - J)
-        # Case 4 (ab,ba)
-        self.assertAlmostEqual(el(S, 0, 1, 1, 0), Jp)
-        self.assertAlmostEqual(el(C, 0, 1, 1, 0), Jp)
+        # Case 4 (ab,ba): PairHop only (issue #113)
+        self.assertAlmostEqual(el(S, 0, 1, 1, 0), 0.0)
+        self.assertAlmostEqual(el(C, 0, 1, 1, 0), 0.0)
         # Case 1 (aaaa)
         self.assertAlmostEqual(el(S, 0, 0, 0, 0), U)
         self.assertAlmostEqual(el(C, 0, 0, 0, 0), U)
 
-    def test_diverges_from_kuroki_only_at_charge_abab(self):
+    def test_the_two_builders_are_one_implementation(self):
+        """The MYO-vs-Kuroki charge (ab,ab) divergence was adjudicated by
+        exact diagonalization (issue #113): the exact per-type values are
+        Hund +J and Exchange +J', whose sum reproduces MYO's -U'+2J for the
+        Kanamori combination. With that fixed, `build_sc_matrices_myo`
+        delegates to `_build_sc_matrices_all_q`; assert equality so any
+        future re-divergence fails loudly."""
         from hwave.sc import _build_sc_matrices_all_q
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
-        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.5
+        U, Up, J, Jp = 4.0, 2.0, 0.5, 0.3   # J != J' on purpose
         ik = _kanamori_inter_k(norb=2, U=U, Up=Up, J=J, Jp=Jp,
                                Nx=2, Ny=2, Nz=1)
         Sm, Cm = build_sc_matrices_myo(ik, 2, 2, 2, 1)
         Sk, Ck = _build_sc_matrices_all_q(ik, 2, 2, 2, 1)
-
-        # Spin matrices identical.
-        np.testing.assert_allclose(Sm, Sk)
-
-        # Charge differs ONLY at the (ab,ab) entries, by exactly +J there.
-        diff = Cm - Ck
-        # (ab,ab): idx12 == idx34 with l1!=l2; for norb=2 these are
-        # (0,1)&(0,1) -> flat (1,1) and (1,0)&(1,0) -> flat (2,2).
-        nonzero = [(1, 1), (2, 2)]
-        mask = np.zeros((4, 4), dtype=bool)
-        for (i, j) in nonzero:
-            mask[i, j] = True
-        nz = diff[..., mask]
-        np.testing.assert_allclose(nz, J)
-        zero = diff[..., ~mask]
-        np.testing.assert_allclose(zero, 0.0, atol=1.0e-12)
-
+        np.testing.assert_allclose(Sm, Sk, atol=0)
+        np.testing.assert_allclose(Cm, Ck, atol=0)
 
 class TestBruteForceRef(unittest.TestCase):
     """Structural sanity checks for the physical-index brute-force reference
@@ -763,9 +1228,11 @@ class TestBruteForceRef(unittest.TestCase):
 
     def test_chi0_matches_naive_einsum(self):
         """Cross-check chi0_bruteforce against an independent einsum/roll
-        implementation of the SAME MYO Eq.(5) -- guards against a loop typo
-        (closes the coverage gap flagged in the Codex review; sigma already
-        had such a cross-check, chi0 did not)."""
+        implementation of the SAME bubble formula -- guards against a loop typo
+        (sigma already had such a cross-check, chi0 did not).
+
+        The orbital slots themselves are anchored outside this codebase in
+        tests/test_flex_sopt_index_order.py; this test only guards the loop."""
         from tests.flex_bruteforce_ref import chi0_bruteforce
         rng = np.random.default_rng(7)
         norb, Nk, nmat = 2, 4, 4
@@ -776,14 +1243,14 @@ class TestBruteForceRef(unittest.TestCase):
         chi0_ref = chi0_bruteforce(G, T=T, Nk=Nk)
 
         # Independent einsum/roll path. For each (q, iv) shift, build
-        # Gs[mu,m,k,iw] = G[mu,m,(k+q)%Nk,(iw+iv)%nmat] via np.roll
+        # Gs[m,mu,k,iw] = G[m,mu,(k+q)%Nk,(iw+iv)%nmat] via np.roll
         # (roll by -q on the k axis and -iv on the iw axis), then contract
-        # over (k, iw) with G[n,nu,k,iw]:  chi0[m,n,mu,nu] = -(T/Nk) sum Gs*G.
+        # over (k, iw) with G[nu,n,k,iw]:  chi0[m,n,mu,nu] = -(T/Nk) sum Gs*G.
         chi0_ein = np.zeros((norb, norb, norb, norb, Nk, nmat), dtype=complex)
         for q in range(Nk):
             for iv in range(nmat):
                 Gs = np.roll(np.roll(G, -q, axis=2), -iv, axis=3)
-                chi0_ein[:, :, :, :, q, iv] = np.einsum('amki,nbki->mnab', Gs, G)
+                chi0_ein[:, :, :, :, q, iv] = np.einsum('maki,bnki->mnab', Gs, G)
         chi0_ein *= -(T / Nk)
 
         np.testing.assert_allclose(chi0_ref, chi0_ein, atol=1.0e-12)
@@ -1062,18 +1529,146 @@ def _make_chi0_general_flex():
     return solver
 
 
-class TestChi0ConventionMatchesMYO(unittest.TestCase):
-    """Lock the RPA-vs-MYO orbital-pair transpose as an intentional fact.
+class TestPublicChannelsUnchangedByTransposeRemoval(unittest.TestCase):
+    """Removing the transpose at its source must not move the SAVED channels.
 
-    ``RPA._calc_chi0q`` returns the bare bubble in the RPA convention
-    ``chi0_opt[..., a, c, b, d]``.  The MYO brute-force reference returns
-    ``chi0_bf[m, n, mu, nu, q, iv]``.  The relation found (and locked by the
-    fix) is ``chi0_opt[q, a, c, b, d] == chi0_bf[b, d, a, c, q, 0]`` (MYO
-    ``(m,n,mu,nu) = (b,d,a,c)``), i.e. the RPA row pair ``(a,c)`` is MYO's
-    column ``(mu,nu)`` and the RPA column pair ``(b,d)`` is MYO's row ``(m,n)``.
+    Issue #78 was fixed at the output boundary: the channels were solved from
+    the orbital-pair-TRANSPOSED chi0 and transposed back on the way out, giving
+    ``transpose(solve(transpose(chi0), U))``.  Removing the transpose at its
+    source gives ``solve(chi0, U)`` with no compensation.  By the push-through
+    identity those coincide, so the saved files are unchanged and only V_eff
+    (hence Sigma) moves -- but ONLY while the S/C matrices are symmetric under
+    the orbital-pair transpose.
+
+    That symmetry holds for orbital-symmetric on-site parameters (the physical
+    case) and nothing in the readers enforces it, so it is asserted here for
+    the full Kanamori set before the equivalence is checked.
     """
 
-    def test_calc_chi0q_matches_bruteforce_transposed(self):
+    def _full_kanamori_flex(self):
+        import tempfile
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as solver_flex
+
+        dirpath = os.path.join(tempfile.gettempdir(),
+                               "hwave_flex_2d_2orb_full_kanamori")
+        _write_2d_2orb_full_kanamori_fixture(dirpath)
+        info_input = {
+            'path_to_input': dirpath,
+            'interaction': {
+                'path_to_input': dirpath,
+                'Geometry': 'geom.dat', 'Transfer': 'transfer.dat',
+                'CoulombIntra': 'coulombintra.dat',
+                'CoulombInter': 'coulombinter.dat',
+                'Hund': 'hund.dat', 'Exchange': 'exchange.dat',
+                'PairHop': 'pairhop.dat', 'Ising': 'ising.dat',
+            },
+        }
+        ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+        info_mode = {
+            'mode': 'FLEX',
+            'param': {'T': 2.0, 'mu': 0.0, 'CellShape': [4, 4, 1],
+                      'SubShape': [1, 1, 1], 'Nmat': 8},
+            'calc_scheme': 'general',
+        }
+        flex = solver_flex.FLEX(ham, {}, info_mode)
+        flex.spin_mode = "spin-free"
+        return flex
+
+    def test_sc_matrices_are_orbital_pair_symmetric(self):
+        """The precondition for the compatibility claim above."""
+        flex = self._full_kanamori_flex()
+        flex._myo_sc_cache = None
+        _, Us, Uc = flex._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(flex), None)
+        # dense, not just density-block-diagonal -- the full Kanamori set is
+        # really exercising all four builder cases
+        ndx = flex.norb * flex.norb
+        dens = [a * flex.norb + a for a in range(flex.norb)]
+        mask = np.ones(ndx, dtype=bool)
+        mask[dens] = False
+        self.assertGreater(np.max(np.abs(Us[:, mask, :])), 1e-6)
+        for name, M in (("Us", Us), ("Uc", Uc)):
+            np.testing.assert_allclose(
+                M, np.swapaxes(M, -1, -2), atol=1e-12,
+                err_msg="{} is not orbital-pair symmetric; the saved "
+                        "susceptibilities are then NOT preserved by the "
+                        "issue #91 fix".format(name))
+
+    def test_public_channels_match_the_output_boundary_correction(self):
+        """The saved channels are the same either way."""
+        flex = self._full_kanamori_flex()
+        chi0_raw = _fake_general_chi0q(flex)
+
+        flex._myo_sc_cache = None
+        _, _, chi_s_new, chi_c_new = \
+            flex._flex_compute_veff_general(chi0_raw, None)
+
+        # Explicit reconstruction of the OUTPUT-BOUNDARY correction: solve the
+        # channels from the orbital-pair-transposed chi0, then transpose back.
+        inv = (0, 1, 4, 5, 2, 3)
+        flex._myo_sc_cache = None
+        _, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+        chi_s_old, chi_c_old = flex._solve_channels_general(
+            chi0_raw.transpose(inv), Us, Uc)
+        chi_s_old = chi_s_old.transpose(inv)
+        chi_c_old = chi_c_old.transpose(inv)
+
+        # The relation is exact algebra for pair-symmetric S/C, so the residual
+        # is pure floating-point error (~1e-15 relative on this well-conditioned
+        # fixture).  rtol is pinned to 0 so the assertion really tests that,
+        # instead of inheriting numpy's default rtol=1e-7.
+        scale = max(np.max(np.abs(chi_s_new)), np.max(np.abs(chi_c_new)))
+        self.assertGreater(scale, 1e-6)
+        np.testing.assert_allclose(chi_s_new, chi_s_old,
+                                   rtol=0.0, atol=1e-12 * scale)
+        np.testing.assert_allclose(chi_c_new, chi_c_old,
+                                   rtol=0.0, atol=1e-12 * scale)
+        # ...and not vacuously: the pair transpose really does move these
+        # arrays, so the agreement above is a statement about the algebra and
+        # not about a symmetric tensor.
+        self.assertGreater(
+            np.max(np.abs(chi_s_new - chi_s_new.transpose(inv))), 1e-6)
+
+    def test_asymmetric_interaction_is_not_covered_by_the_claim(self):
+        """Guard the *scope* of the compatibility claim: with an asymmetric
+        orbital interaction matrix the S/C matrices lose their pair symmetry
+        and the saved channels genuinely move.  Documented, not silently
+        assumed away."""
+        flex = self._full_kanamori_flex()
+        flex._myo_sc_cache = None
+        chi0_raw = _fake_general_chi0q(flex)
+        _, Us, Uc = flex._inflate_chi0q_and_ham_general(chi0_raw, None)
+
+        # break the pair symmetry the way an asymmetric Hund entry would
+        Us = np.array(Us, copy=True)
+        Us[:, 0, 3] += 0.6
+        self.assertGreater(np.max(np.abs(Us - np.swapaxes(Us, -1, -2))), 1e-6)
+
+        inv = (0, 1, 4, 5, 2, 3)
+        chi_s_new, _ = flex._solve_channels_general(chi0_raw, Us, Uc)
+        chi_s_old, _ = flex._solve_channels_general(
+            chi0_raw.transpose(inv), Us, Uc)
+        chi_s_old = chi_s_old.transpose(inv)
+        self.assertGreater(np.max(np.abs(chi_s_new - chi_s_old)), 1e-6)
+
+
+class TestChi0ConventionMatchesBruteForce(unittest.TestCase):
+    """Lock the orbital-pair index order shared by the production bubble and the
+    brute-force reference.
+
+    ``RPA._calc_chi0q`` returns the bare bubble as ``chi0_opt[..., a, c, b, d]``
+    and the brute-force reference returns ``chi0_bf[m, n, mu, nu, q, iv]``.
+    The two use the SAME orbital-pair order:
+    ``chi0_opt[q, a, c, b, d] == chi0_bf[a, c, b, d, q, 0]``.
+
+    This relation used to be a transpose (``chi0_bf[b, d, a, c, ...]``), which
+    is what made the general path's self-energy come out transposed off the
+    orbital diagonal (issue #91).  The order asserted here is the one selected
+    by exact diagonalization in ``tests/test_flex_sopt_index_order.py``.
+    """
+
+    def test_calc_chi0q_matches_bruteforce(self):
         from tests.flex_bruteforce_ref import chi0_bruteforce
         solver = _make_chi0_general_flex()
         nk = solver.lattice.nvol
@@ -1098,7 +1693,7 @@ class TestChi0ConventionMatchesMYO(unittest.TestCase):
             G_bf[:, :, k, 0] = green_kw[0, 0, k]
         chi0_bf = chi0_bruteforce(G_bf, T=solver.T, Nk=nk)
 
-        # chi0_opt[0, q, a, c, b, d] == chi0_bf[b, d, a, c, q, 0]
+        # chi0_opt[0, q, a, c, b, d] == chi0_bf[a, c, b, d, q, 0]
         for q in range(nk):
             for a in range(no):
                 for c in range(no):
@@ -1106,8 +1701,13 @@ class TestChi0ConventionMatchesMYO(unittest.TestCase):
                         for d in range(no):
                             np.testing.assert_allclose(
                                 chi0_opt[0, q, a, c, b, d],
-                                chi0_bf[b, d, a, c, q, 0],
+                                chi0_bf[a, c, b, d, q, 0],
                                 atol=1e-10)
+
+        # Guard against a vacuous pass: the bubble must not be pair-symmetric,
+        # or the transposed relation would satisfy this too.
+        pair = chi0_bf[..., 0, 0].reshape(no * no, no * no)
+        self.assertGreater(np.linalg.norm(pair - pair.T), 1e-6)
 
 
 class TestGeneralPipelinePhysical(unittest.TestCase):
@@ -1216,8 +1816,9 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
 
     # 2-orbital: build directly from a self-contained ON-SITE 2-orbital fixture
     # (mirrors the _construct / TestGeneralSolveEndToEnd path, but WITHOUT
-    # patching exchange).  The general path rejects off-site two-body terms, so
-    # both the general and squashed runs here use on-site U' for a fair compare.
+    # patching exchange).  The general path rejects off-site two-body terms
+    # other than same-orbital CoulombInter, so both the general and reduced
+    # runs here use on-site U' for a fair compare.
     import tempfile
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as solver_flex
@@ -1243,6 +1844,247 @@ def _run_flex_sigma(scheme, *, norb1=True, U=None, extra_interactions=None,
     return green_info["sigma"]
 
 
+def _run_flex_sigma_2orb_onsite(scheme, *, interactions=("coulombintra",),
+                                IterationMax=1, Mix=1.0, want_solver=False,
+                                filling=None, matsubara_basis=None):
+    """Run a 2-orbital on-site FLEX model and return its self-energy.
+
+    ``interactions`` selects which of the on-site interaction files written by
+    ``_write_2d_2orb_full_kanamori_fixture`` are wired up.  With the default
+    (``CoulombIntra`` alone) the MYO S/C matrices are nonzero only on the
+    density-density pair block ``(l,l),(m,m)``, so the vertex reduction that
+    distinguishes the two schemes has nothing to discard and ``reduced`` and
+    ``general`` must agree on the SELF-ENERGY, not merely on the susceptibility
+    (issue #91).
+
+    ``IterationMax=1`` / ``Mix=1.0`` (the default) is the sharpest probe: both
+    schemes start from the identical bare Green function, so any difference is
+    produced by that single step alone.
+
+    ``filling`` selects the fixed-particle-number mode: passing it replaces the
+    fixed ``mu`` and sets ``calc_mu = True`` (``rpa.py``: a supplied ``mu``
+    forces ``calc_mu = False``), so the per-iteration ``_find_mu_dressed``
+    re-solve is exercised.  Callers that care assert ``solver.calc_mu``.
+
+    ``matsubara_basis='ir'`` routes the run through the sparse-IR variants
+    (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which build
+    chi0 and contract Sigma on the IR nodes rather than the uniform grid.
+    """
+    import tempfile
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+
+    files = {"coulombintra": ('CoulombIntra', 'coulombintra.dat'),
+             "coulombinter": ('CoulombInter', 'coulombinter.dat'),
+             "hund": ('Hund', 'hund.dat'),
+             "exchange": ('Exchange', 'exchange.dat'),
+             "pairhop": ('PairHop', 'pairhop.dat'),
+             "ising": ('Ising', 'ising.dat')}
+
+    # Own input AND output directory: the two schemes write the same output
+    # file names, and other tests share tests/flex/output_2orb.
+    with tempfile.TemporaryDirectory(prefix="hwave_i91_") as dirpath:
+        _write_2d_2orb_full_kanamori_fixture(dirpath)
+        inter = {'path_to_input': dirpath,
+                 'Geometry': 'geom.dat', 'Transfer': 'transfer.dat'}
+        for name in interactions:
+            key, fname = files[name]
+            inter[key] = fname
+        info_input = {'path_to_input': dirpath, 'interaction': inter}
+        ham = read_input_k.QLMSkInput(info_input).get_param('ham')
+        green_info = read_input_k.QLMSkInput(info_input).get_param('green')
+        param = {'T': 0.5,
+                 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+                 'Nmat': 32, 'IterationMax': IterationMax, 'Mix': Mix,
+                 'EPS': 8}
+        # mu and filling are mutually exclusive: supplying mu turns the
+        # chemical-potential re-solve OFF.
+        if filling is None:
+            param['mu'] = 0.0
+        else:
+            param['filling'] = filling
+        if matsubara_basis is not None:
+            param['matsubara_basis'] = matsubara_basis
+        info_mode = {
+            'mode': 'FLEX',
+            'param': param,
+            'calc_scheme': scheme,
+        }
+        solver = solver_flex.FLEX(ham, {}, info_mode)
+        outdir = os.path.join(dirpath, "output")
+        os.makedirs(outdir, exist_ok=True)
+        solver.solve(green_info, outdir)
+        if want_solver:
+            return green_info["sigma"], solver
+        return green_info["sigma"]
+
+
+def _run_flex_sigma_2orb_intra_only(scheme):
+    """Backwards-compatible alias for the CoulombIntra-only single step."""
+    return _run_flex_sigma_2orb_onsite(scheme)
+
+
+class TestCoulombIntraSchemeAgreement(unittest.TestCase):
+    """Issue #91: for a density-only interaction the two schemes must agree on
+    the SELF-ENERGY.
+
+    A susceptibility-level assertion passes even with the orbital-pair index
+    order transposed (the transpose is invisible once chi is written back in
+    the RPA convention), which is exactly how the mismatch survived.  These
+    tests therefore compare sigma, and separately assert the orbital
+    OFF-diagonal -- the only place a pair-index transpose shows up.
+    """
+
+    def test_coulombintra_only_sigma_matches_reduced(self):
+        sig_gen = _run_flex_sigma_2orb_intra_only("general")
+        sig_red = _run_flex_sigma_2orb_intra_only("reduced")
+        scale = np.max(np.abs(sig_red))
+        self.assertGreater(scale, 1e-6, "degenerate fixture: sigma is ~zero")
+        # exact agreement is required here, so pin rtol to 0 rather than
+        # inheriting numpy's default rtol=1e-7 (observed residual ~1e-15)
+        np.testing.assert_allclose(sig_gen, sig_red,
+                                   rtol=0.0, atol=1e-12 * scale)
+
+    def test_coulombintra_only_offdiagonal_matches_reduced(self):
+        """The diagonal agrees even when the pair index is transposed, so pin
+        the off-diagonal explicitly and require it to be nontrivial."""
+        sig_gen = _run_flex_sigma_2orb_intra_only("general")
+        sig_red = _run_flex_sigma_2orb_intra_only("reduced")
+        norb = sig_red.shape[-1]
+        off = ~np.eye(norb, dtype=bool)
+        off_red = sig_red[..., off]
+        self.assertGreater(np.max(np.abs(off_red)), 1e-6,
+                           "fixture has no orbital off-diagonal sigma; it "
+                           "cannot detect a pair-index transpose")
+        np.testing.assert_allclose(sig_gen[..., off], off_red,
+                                   rtol=0.0,
+                                   atol=1e-12 * np.max(np.abs(sig_red)))
+
+    def _assert_converged_agreement(self, **kw):
+        sig_gen, solver_gen = _run_flex_sigma_2orb_onsite(
+            "general", IterationMax=200, Mix=0.3, want_solver=True, **kw)
+        sig_red, solver_red = _run_flex_sigma_2orb_onsite(
+            "reduced", IterationMax=200, Mix=0.3, want_solver=True, **kw)
+        self.assertTrue(solver_gen.scf_converged)
+        self.assertTrue(solver_red.scf_converged)
+        # Both schemes see the same self-energy at every step, so they should
+        # trip the convergence threshold together.  Allow one iteration of slack
+        # rather than exact equality: the two paths reach the same values
+        # through different arithmetic (element-wise product vs. rank-4
+        # contraction), so a residual that lands within round-off of EPS could
+        # legitimately be crossed one step apart on another BLAS.
+        self.assertLessEqual(
+            abs(solver_gen.scf_iterations - solver_red.scf_iterations), 1)
+        scale = np.max(np.abs(sig_red))
+        self.assertGreater(scale, 1e-6)
+        np.testing.assert_allclose(sig_gen, sig_red,
+                                   rtol=0.0, atol=1e-12 * scale)
+        return solver_gen, solver_red
+
+    def test_coulombintra_only_matches_reduced_at_convergence(self):
+        """Agreement must survive the SCF loop, not just the first step.
+
+        The single-step tests above pin the kernel; this pins that nothing in
+        the mixing or convergence path reintroduces a difference.
+        """
+        solver_gen, _ = self._assert_converged_agreement()
+        # this variant fixes mu, so it does NOT exercise the mu re-solve
+        self.assertFalse(solver_gen.calc_mu)
+
+    def test_coulombintra_only_matches_reduced_at_fixed_filling(self):
+        """Same, with the chemical potential re-solved every iteration.
+
+        With ``filling`` instead of ``mu``, FLEX calls ``_find_mu_dressed`` from
+        the dressed Green function at each step, so mu itself becomes part of
+        the SCF trajectory.  The fixed-mu variant above cannot cover this: a
+        supplied ``mu`` sets ``calc_mu = False``.
+        """
+        solver_gen, solver_red = self._assert_converged_agreement(filling=0.4)
+        self.assertTrue(solver_gen.calc_mu)
+        self.assertTrue(solver_red.calc_mu)
+        # the re-solved chemical potentials must agree too
+        self.assertAlmostEqual(solver_gen.mu, solver_red.mu, places=10)
+
+    def test_coulombintra_only_matches_reduced_on_the_ir_grid(self):
+        """The same contract on the sparse-IR path.
+
+        ``matsubara_basis = 'ir'`` uses different chi0 and self-energy routines
+        (``_calc_chi0q_general_ir`` / ``_calc_self_energy_general_ir``), which
+        build the bubble on the IR nodes.  They must produce it in the same
+        orbital-pair index order as the uniform routines, or the general path
+        would be corrected on one grid and not the other.
+        """
+        kw = dict(matsubara_basis="ir", want_solver=True)
+        sig_gen, solver = _run_flex_sigma_2orb_onsite("general", **kw)
+        sig_red = _run_flex_sigma_2orb_onsite("reduced", matsubara_basis="ir")
+        self.assertTrue(solver.use_ir, "the IR path was not actually taken")
+        norb = sig_red.shape[-1]
+        off = ~np.eye(norb, dtype=bool)
+        self.assertGreater(np.max(np.abs(sig_red[..., off])), 1e-6,
+                           "no orbital off-diagonal weight; cannot detect a "
+                           "pair-index transpose")
+        scale = np.max(np.abs(sig_red))
+        np.testing.assert_allclose(sig_gen, sig_red,
+                                   rtol=0.0, atol=1e-12 * scale)
+
+    def test_the_reason_is_that_coulombintra_has_no_offdensity_vertex(self):
+        """Document WHY the schemes must agree, so the tests above cannot pass
+        for the wrong reason: for CoulombIntra the MYO S/C matrices live
+        entirely on the density-density pair block, which is exactly what the
+        reduced scheme keeps."""
+        _, solver = _run_flex_sigma_2orb_onsite("general", want_solver=True)
+        _, Us, Uc = solver._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(solver), None)
+        norb = solver.norb
+        dens = [a * norb + a for a in range(norb)]
+        mask = np.ones(norb * norb, dtype=bool)
+        mask[dens] = False
+        for name, M in (("Us", Us), ("Uc", Uc)):
+            self.assertLess(np.max(np.abs(M[..., mask, :])), 1e-12, name)
+            self.assertLess(np.max(np.abs(M[..., :, mask])), 1e-12, name)
+        self.assertGreater(np.max(np.abs(Us)), 1e-6, "S is identically zero")
+
+    def test_an_offdensity_vertex_does_make_the_schemes_differ(self):
+        """The boundary of the contract.
+
+        Adding an interaction that puts weight OFF the density-density pair
+        block (here CoulombInter, via the MYO ``(ab),(ab)`` case) is physics the
+        reduced scheme drops by construction, so the two schemes must then
+        disagree.  Without this, a future change that made the general path
+        silently discard its off-diagonal vertices would still satisfy every
+        agreement test above.
+        """
+        sets = ("coulombintra", "coulombinter")
+        sig_gen, solver = _run_flex_sigma_2orb_onsite(
+            "general", interactions=sets, want_solver=True)
+        sig_red = _run_flex_sigma_2orb_onsite("reduced", interactions=sets)
+
+        # the off-density weight is present ...
+        _, Us, Uc = solver._inflate_chi0q_and_ham_general(
+            _fake_general_chi0q(solver), None)
+        norb = solver.norb
+        mask = np.ones(norb * norb, dtype=bool)
+        mask[[a * norb + a for a in range(norb)]] = False
+        # NOTE: index the two axes in sequence.  `M[..., mask, mask]` would be
+        # a *pairwise* boolean selection -- the diagonal of the off-density
+        # block -- which happens to be where CoulombInter lands, so it would
+        # pass here while missing the (ab),(ba) weight of Exchange/PairHop.
+        off = max(np.max(np.abs(Us[..., mask, :])),
+                  np.max(np.abs(Us[..., :, mask])),
+                  np.max(np.abs(Uc[..., mask, :])),
+                  np.max(np.abs(Uc[..., :, mask])))
+        self.assertGreater(off, 1e-6)
+
+        # ... and it shows up in the self-energy
+        self.assertTrue(np.all(np.isfinite(sig_gen)))
+        self.assertTrue(np.all(np.isfinite(sig_red)))
+        scale = np.max(np.abs(sig_red))
+        self.assertGreater(scale, 1e-6,
+                           "reduced sigma is ~zero; the relative threshold "
+                           "below would then be vacuous")
+        self.assertGreater(np.max(np.abs(sig_gen - sig_red)), 1e-3 * scale)
+
+
 class TestGeneralLimits(unittest.TestCase):
     """Task 9: limit & regression tests for the general FLEX path.
 
@@ -1262,10 +2104,10 @@ class TestGeneralLimits(unittest.TestCase):
 
     def test_multiorbital_general_differs_from_reduced(self):
         # 2-orbital, CoulombIntra + CoulombInter (U, U'); J=0.  The general path
-        # keeps the inter-orbital U' vertices that the reduced/squashed
+        # keeps the inter-orbital U' vertices that the reduced
         # density-density reduction drops, so the converged sigmas must differ.
         sig_gen = _run_flex_sigma("general", norb1=False)
-        sig_red = _run_flex_sigma("squashed", norb1=False)
+        sig_red = _run_flex_sigma("reduced", norb1=False)
         self.assertGreater(np.linalg.norm(sig_gen - sig_red), 1e-8)
         self.assertTrue(np.all(np.isfinite(sig_gen))
                         and np.all(np.isfinite(sig_red)))
@@ -1274,14 +2116,13 @@ class TestGeneralLimits(unittest.TestCase):
 
     def test_general_no_density_density_warning(self):
         """General-path construction with an exchange-type interaction present
-        must NOT emit the density-density reduction warning.
+        must NOT emit any density-density warning.
 
-        This is the focused Hund-suppression counterpart to
-        TestFLEXGeneralWarningGating.test_warning_suppressed_for_general: it
-        reuses the exact same construction (which patches
-        ``Interaction.has_interaction_exchange`` to True so an exchange/Hund-type
-        interaction is seen as present), and asserts the warning stays silent on
-        the new-physics general path.
+        Counterpart to
+        TestFLEXGeneralWarningGating.test_general_with_exchange_constructs_quietly:
+        it reuses the same construction (a real Exchange interaction file;
+        the former mock of has_interaction_exchange is gone -- the policy is
+        content-based) and asserts silence on the general path.
         """
         gating = TestFLEXGeneralWarningGating()
         with _assert_no_warning(self, 'hwave.solver.flex'):

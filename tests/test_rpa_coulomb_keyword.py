@@ -60,6 +60,13 @@ class TestRPACoulombKeyword(unittest.TestCase):
         np.testing.assert_allclose(
             obj_c.ham_inter_q, obj_ref.ham_inter_q, rtol=0.0, atol=1e-12,
             err_msg="'Coulomb' must equal CoulombIntra + CoulombInter")
+        # the Fierz correction (#104) must also agree between the two routes:
+        # the fixture has an on-site inter-orbital entry, so it is nonempty
+        self.assertIsNotNone(obj_c.ham_fierz_q)
+        self.assertIsNotNone(obj_ref.ham_fierz_q)
+        np.testing.assert_allclose(
+            obj_c.ham_fierz_q, obj_ref.ham_fierz_q, rtol=0.0, atol=1e-12,
+            err_msg="aggregate and explicit Fierz tensors must agree")
 
     def test_coulomb_conflicts_with_explicit_terms(self):
         norb = 1
@@ -99,10 +106,14 @@ class TestHwaveScCoulombKeyword(unittest.TestCase):
             self._write_w90(os.path.join(d, "transfer.dat"),
                             [((1, 0, 0), 0, 0, 1.0), ((-1, 0, 0), 0, 0, 1.0)],
                             norb=2)
+            # Hermitian-closed declarations (issue #93: the readers now
+            # reject one-sided/unclosed tables at read time)
             self._write_w90(os.path.join(d, "coulomb.dat"),
                             [((0, 0, 0), 0, 0, 2.0),   # r=0 diag -> intra
                              ((0, 0, 0), 0, 1, 0.3),   # r=0 offdiag -> inter
-                             ((1, 0, 0), 0, 0, 0.5)],  # r!=0 -> inter
+                             ((0, 0, 0), 1, 0, 0.3),
+                             ((1, 0, 0), 0, 0, 0.5),   # r!=0 -> inter
+                             ((-1, 0, 0), 0, 0, 0.5)],
                             norb=2)
             input_dict = {
                 "file": {"input": {"interaction": {

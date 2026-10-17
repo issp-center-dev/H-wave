@@ -23,12 +23,117 @@ Wraps the optional ``sparse-ir`` package behind explicit H-wave conventions:
   dispatch -- see :meth:`IRAxis.mats`).
 """
 import logging
+from collections import OrderedDict
 
 import numpy as np
 
 from hwave.solver import backend as _bk
 
 _logger = logging.getLogger(__name__)
+
+#: Largest tolerated coefficient-space roundtrip residual
+#: ``max |pinv(E) @ E - I_L|`` of an IR sampling design matrix ``E``
+#: (issue #153). ``pinv(E) @ E`` is exactly the fit-then-evaluate identity
+#: every :class:`IRAxis` transform is built on, so this single number
+#: detects BOTH ways the construction degrades at small
+#: ``Lambda = beta * wmax``: an underdetermined node set (fewer sampling
+#: nodes than basis functions -- the residual is then O(1), while the
+#: condition number stays small and notices nothing) and a merely
+#: ill-conditioned one (the residual tracks ``cond(E) * eps_machine``).
+#:
+#: Calibrated by measurement, not guessed (wmax = 5 unless noted):
+#:
+#:   healthy, Lambda = 0.5 .. 5e4 and eps = 1e-6 .. 1e-12 .. max 6.3e-14
+#:   beta = 0.1  (shipped-fixture regime) .............. 8.2e-16 .. 9.5e-16
+#:   beta = 1.0 / 10 / 100 / 500 ...................... 1.3e-15 .. 3.5e-14
+#:   -- threshold 1e-11 --
+#:   beta = 0.005, F (pole fit ~110% wrong) ............ 9.7e-11
+#:   beta = 0.002, F (pole fit ~215% wrong) ............ 3.7e-10
+#:   beta = 0.001, F (pole fit ~330% wrong) ............ 9.9e-09
+#:   beta <= 0.02, B (n_freq = 1 < L = 4, underdetermined)  O(1)
+#:
+#: The threshold therefore clears the worst HEALTHY residual by 160x and
+#: sits 10x below the mildest MEASURABLY WRONG one; against the beta = 0.1
+#: point the shipped tests rely on it has over four decades of margin.
+IR_FIT_RESIDUAL_MAX = 1e-11
+
+#: Roundtrip-residual ceiling for the TALL uniform-grid / arbitrary-frequency
+#: fit designs (issue #183), a SEPARATE, looser bound from the square node
+#: matrices above. A coarse uniform grid legitimately samples the L basis
+#: functions less well than sparse-ir's own optimal node sets, so its
+#: coefficient roundtrip max|pinv(design)@design - I| is naturally larger --
+#: measured 4e-10 at the shipped beta=50, wmax=8 fixture with nmat=64, which
+#: the strict 1e-11 node bound would wrongly reject. This ceiling instead
+#: tracks the classic cond ~ 1e10 danger line (residual ~ cond*eps_machine),
+#: which is exactly where the OLD freq-point path already warned. Measured at
+#: beta=50, wmax=8, nmat=64: healthy Lambda=400 gives 4e-10; raising wmax so
+#: the coarse grid can no longer resolve the growing basis drives it through
+#: 1.5e-5 (Lambda=800) to ~0.2 (Lambda>=1200) -- the unbounded regime #183
+#: reported (dynamic eigenvalue ~1e18). 1e-6 clears every healthy case by
+#: >60x and sits >5 decades below the ill-conditioned ones.
+IR_UNIFORM_FIT_RESIDUAL_MAX = 1e-6
+
+#: rcond for the tall fit pseudo-inverses (issue #183). np.linalg.pinv drops
+#: singular values below rcond * max_sv. This sits far below the smallest
+#: singular-value ratio of any design this guard ACCEPTS (cond <~ 1e10), so
+#: those pinvs are bit-for-bit identical to the default-rcond result; it only
+#: bites once Lambda = beta*wmax is pushed so high the uniform grid cannot
+#: resolve the L basis functions, capping the otherwise ~1e18 amplification to
+#: a finite matrix the roundtrip check then rejects with an actionable error.
+_FIT_PINV_RCOND = 1e-12
+
+
+def _cond_str(mat):
+    """Condition number of ``mat`` rendered for an error message.
+
+    Purely diagnostic, and computed while an error is already being raised,
+    so it must never be able to replace that error with one of its own: it
+    runs its own SVD, which can fail (non-convergence) or trip on non-finite
+    entries exactly in the degenerate regimes this is reporting on. Any such
+    failure degrades to 'unavailable' rather than letting a bare LinAlgError
+    escape in place of the contextual ValueError the caller promised.
+    """
+    try:
+        return "{:.3e}".format(float(np.linalg.cond(mat)))
+    except (np.linalg.LinAlgError, ValueError, FloatingPointError):
+        return "unavailable"
+
+
+def auto_wmax(eigenvalues, mu, interaction_scale, *, factor=3.0,
+              param_hint="[mode.param] ir_wmax"):
+    """Heuristic default for the IR real-frequency cutoff ``ir_wmax`` shared
+    by FLEX and the dynamic Eliashberg solver (issue #184).
+
+    Returns ``factor * (max|eigenvalues - mu| + interaction_scale)``: the
+    spectral half-range measured ABOUT the chemical potential ``mu`` plus the
+    largest interaction scale, times a safety ``factor`` (design Sec. 4). The
+    chemical potential is what sets where the spectral weight sits relative to
+    zero, so subtracting it means an on-site energy offset that shifts the
+    band WITHOUT widening it does not leak into the estimate (the pre-#57
+    ``2 * max|eps|`` form double-counted exactly that offset).
+
+    Both call sites must produce the SAME number for the same physical model,
+    so this is the one place the formula lives. ``param_hint`` names the config
+    key to set explicitly in the raised message ("[mode.param] ir_wmax" for
+    FLEX, "[eliashberg] ir_wmax" for the dynamic solver); the caller's own
+    mu resolution and interaction scale are passed in.
+
+    Raises ``ValueError`` (not a bare nan/inf) when the result is not a
+    positive finite float -- a degenerate model (zero bandwidth and zero
+    interaction) or a non-finite input -- with the actionable remedy.
+    """
+    evals = np.asarray(eigenvalues)
+    band = float(np.abs(evals - float(mu)).max())
+    u = float(interaction_scale)
+    wmax = float(factor) * (band + u)
+    if not np.isfinite(wmax) or wmax <= 0.0:
+        raise ValueError(
+            "ir_wmax auto-estimate is not a positive finite number "
+            "(spectral half-range max|eps - mu| = {}, interaction scale = {}, "
+            "factor {} gave {}); set {} explicitly (a real-frequency bandwidth "
+            "in the same energy units as the Hamiltonian).".format(
+                band, u, factor, wmax, param_hint))
+    return wmax
 
 
 def _import_sparse_ir():
@@ -117,6 +222,17 @@ class IRAxis:
     u_beta_minus : ndarray (L,)
         Basis values u_l(beta^-), for equal-time observables
         (n = -Re[coeffs @ u_beta_minus] for a fermionic Green's function).
+    u_zero_plus : ndarray (L,)
+        Basis values u_l(0^+), the ONE-SIDED equal-time limit f(0^+).
+    u_matsubara_sum : ndarray (L,)
+        The coefficient contraction giving the UNREGULARIZED Matsubara sum
+        ``(1/beta) sum_n f(i w_n)``, i.e. the MIDPOINT of the tau = 0 jump.
+        The extension is anti-periodic for a fermion and periodic for a
+        boson, so the combination follows the statistics:
+        ``0.5 * (u_zero_plus - u_beta_minus)`` for ``'F'`` and
+        ``0.5 * (u_zero_plus + u_beta_minus)`` for ``'B'``. This -- not
+        ``u_zero_plus`` -- is what a frequency-flat (delta(tau)) vertex
+        multiplies.
     """
 
     def __init__(self, beta, wmax, eps, statistics):
@@ -172,12 +288,21 @@ class IRAxis:
         # eval_freq (n_freq, L): node values = eval_freq @ coeffs, so the
         # last-axis application uses its transpose; fits use the pinv
         # transposed likewise. pinv(eval)(L, n) -> fit matrix (n, L).
-        eval_freq = basis.uhat(self.freq_n).T          # (n_freq, L)
-        eval_tau = basis.u(self.tau).T                 # (n_tau, L)
+        # ``uhat``/``u`` return (L, n_nodes); a single node collapses that to
+        # a 1-D (L,) array, which ``pinv`` rejects outright -- reshape so the
+        # design matrices are unambiguously (n_nodes, L) before the guard
+        # below inspects them. For the ordinary n_nodes > 1 case the reshape
+        # is a no-op view, so the arithmetic is bit-for-bit what it was.
+        eval_freq = np.asarray(
+            basis.uhat(self.freq_n)).reshape(self.L, self.n_freq).T   # (n_freq, L)
+        eval_tau = np.asarray(
+            basis.u(self.tau)).reshape(self.L, self.n_tau).T          # (n_tau, L)
+        pinv_freq = self._pinv_checked(eval_freq, "Matsubara")        # (L, n_freq)
+        pinv_tau = self._pinv_checked(eval_tau, "tau")                # (L, n_tau)
         self._m = {}
-        self._m["fit_freq"] = np.ascontiguousarray(np.linalg.pinv(eval_freq).T)  # (n_freq, L)
+        self._m["fit_freq"] = np.ascontiguousarray(pinv_freq.T)                  # (n_freq, L)
         self._m["eval_freq"] = np.ascontiguousarray(eval_freq.T)                 # (L, n_freq)
-        self._m["fit_tau"] = np.ascontiguousarray(np.linalg.pinv(eval_tau).T)    # (n_tau, L)
+        self._m["fit_tau"] = np.ascontiguousarray(pinv_tau.T)                    # (n_tau, L)
         self._m["eval_tau"] = np.ascontiguousarray(eval_tau.T)                   # (L, n_tau)
         # composites: nodes -> nodes through coefficient space
         self._m["freq_to_tau"] = np.ascontiguousarray(
@@ -186,13 +311,179 @@ class IRAxis:
             self._m["fit_tau"] @ self._m["eval_freq"])         # (n_tau, n_freq)
 
         self.u_beta_minus = basis.u(self.beta * (1.0 - 1e-15))  # (L,)
-        # u_l(0^+): equal-time evaluation at the other endpoint, e.g. the
-        # anomalous bubble F(tau=0) = (1/beta) sum_nu F(i nu) needed by the
-        # instantaneous-vertex term of the dynamic Eliashberg kernel.
+        # u_l(0^+): the ONE-SIDED equal-time evaluation at the other endpoint.
+        # Note that this is NOT the Matsubara sum (1/beta) sum_nu f(i nu) -- see
+        # u_matsubara_sum just below, which is what the frequency-flat term of
+        # the dynamic Eliashberg kernel multiplies.
         self.u_zero_plus = basis.u(self.beta * 1e-15)            # (L,)
+        # Weights of the UNREGULARIZED Matsubara sum
+        #     (1/beta) sum_{n = -inf}^{inf} f(i w_n)  =  coeffs @ u_matsubara_sum,
+        # i.e. the Fourier series of the (anti)periodic extension evaluated at
+        # tau = 0, which converges to the MIDPOINT of the jump:
+        #     0.5 * (f(0^+) + f(0^-)).
+        # The extension fixes f(0^-) from f(beta^-) and the sign DEPENDS ON THE
+        # STATISTICS: anti-periodic for a fermion (f(0^-) = -f(beta^-), hence
+        # the minus below) and periodic for a boson (f(0^-) = +f(beta^-)).
+        # Since u_l(beta - tau) = (-1)^l u_l(tau) the fermionic combination
+        # keeps only the odd-l part (the bosonic one only the even-l part), and
+        # that is exactly the piece INVARIANT under the node-axis reversal
+        # n -> -n. The raw u_zero_plus instead returns
+        # f(0^+) = midpoint + half the tau-jump, and the jump half
+        # ANTI-commutes with that reversal -- so a frequency-flat vertex, whose
+        # frequency convolution collapses to exactly this sum, must contract
+        # with u_matsubara_sum and never with u_zero_plus.
+        sign = -1.0 if self.statistics == "F" else +1.0
+        self.u_matsubara_sum = 0.5 * (np.asarray(self.u_zero_plus)
+                                      + sign * np.asarray(self.u_beta_minus))
 
         # device mirrors, filled lazily per array module
         self._device_m = {}
+
+        # Bounded, PER-INSTANCE LRU cache for tau_to_freq_points' fused
+        # tau-fit + Matsubara-evaluate matrices (see that method): an
+        # OrderedDict keyed by (freq_tuple, xp), maxsize 8, evicted oldest-
+        # first. Deliberately NOT a functools.lru_cache on the method (that
+        # would be one cache shared across every IRAxis instance ever
+        # constructed, keyed on (self, freq_tuple, xp) -- self only
+        # participates in equality/hash by identity, so it does not merge
+        # entries across instances, but it DOES (a) keep every instance
+        # that was ever used with tau_to_freq_points alive for the
+        # lifetime of the process, since the cache holds a strong
+        # reference to self as part of its key, and (b) share one global
+        # maxsize=8 budget across all instances, so more than ~8
+        # concurrently-live axes (e.g. a temperature scan constructing one
+        # IRAxis pair per point) would evict each other's entries even
+        # though each axis only ever asks for a couple of distinct point
+        # sets). A per-instance dict has no such cross-instance coupling:
+        # it is garbage-collected along with the instance, and its budget
+        # is per-axis, not shared.
+        self._tau_freq_pts_cache = OrderedDict()
+
+    # -- construction-time conditioning guard (issue #153) --------------------
+
+    def _params_str(self):
+        return ("beta={!r}, wmax={!r}, eps={!r}, statistics={!r} "
+                "(Lambda = beta*wmax = {!r})".format(
+                    self.beta, self.wmax, self.eps, self.statistics,
+                    self.beta * self.wmax))
+
+    _REMEDY = ("Increase beta*wmax -- raise ir_wmax (or lower the "
+               "temperature) -- or loosen eps (ir_tol).")
+
+    def _pinv_checked(self, eval_mat, axis_name):
+        """Pseudo-invert an IR sampling design matrix ``eval_mat`` (n_nodes,
+        L) and verify the result actually inverts it.
+
+        At small ``Lambda = beta * wmax`` sparse-ir's sampling node sets stop
+        supporting a well-posed least-squares fit onto the L coefficients, and
+        the unguarded build reacted in one of two unacceptable ways (#153):
+        a bare ``LinAlgError`` out of ``pinv`` when the node set collapsed
+        below L points, or -- worse -- a silent success whose transform
+        matrices were wrong by factors of order one, with no exception at all.
+
+        Both are caught here by the SAME quantity, the coefficient-space
+        roundtrip residual ``max |pinv(E) @ E - I_L|``, compared against
+        :data:`IR_FIT_RESIDUAL_MAX`. An underdetermined node set cannot be
+        diagnosed by conditioning alone -- ``cond(E)`` of a short-and-wide E
+        is perfectly small while its pinv is a right inverse only, so the
+        fit is not unique -- which is why the structural case is rejected
+        explicitly first, with the message that actually explains it.
+        """
+        n_nodes = eval_mat.shape[0]
+        if n_nodes < self.L:
+            raise ValueError(
+                "IR axis is not constructible at {}: sparse-ir returned only "
+                "{} {} sampling node(s) for a basis of size L={}, so the fit "
+                "onto the IR coefficients is underdetermined and the "
+                "transform matrices would be meaningless. {}".format(
+                    self._params_str(), n_nodes, axis_name, self.L,
+                    self._REMEDY))
+        try:
+            pinv = np.linalg.pinv(eval_mat)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                "IR axis is not constructible at {}: pseudo-inverting the {} "
+                "sampling matrix ({}x{}) failed ({}). {}".format(
+                    self._params_str(), axis_name, n_nodes, self.L, exc,
+                    self._REMEDY))
+        residual = float(np.max(np.abs(
+            pinv @ eval_mat - np.eye(self.L, dtype=pinv.dtype))))
+        if not (residual <= IR_FIT_RESIDUAL_MAX):
+            raise ValueError(
+                "IR axis is ill-conditioned at {}: the {} sampling matrix "
+                "({}x{}, condition number {}) does not admit a reliable "
+                "fit -- its coefficient roundtrip residual "
+                "max|pinv(E)@E - I| is {:.3e}, above the tolerated {:.1e}. "
+                "The transform matrices built from it would be silently "
+                "wrong rather than merely inaccurate. {}".format(
+                    self._params_str(), axis_name, n_nodes, self.L,
+                    _cond_str(eval_mat), residual,
+                    IR_FIT_RESIDUAL_MAX, self._REMEDY))
+        return pinv
+
+    #: Remedy for the LARGE-Lambda failure of the tall fit designs (issue
+    #: #183) -- the opposite direction from ``_REMEDY`` above: here the fit is
+    #: ill-conditioned because beta*wmax is too LARGE for the sampling grid to
+    #: resolve, so the fix is to shrink Lambda or sample it more finely.
+    _FIT_REMEDY = ("Lower ir_wmax (or raise the temperature) so beta*wmax is "
+                   "smaller, increase Nmat so the uniform grid resolves the "
+                   "basis, or loosen ir_tol.")
+
+    def _pinv_checked_fit(self, design, name, ncol):
+        """Pseudo-invert a TALL least-squares fit design matrix ``design``
+        (n_points, ncol) and verify it inverts in coefficient space -- the
+        generalization of :meth:`_pinv_checked` to the uniform-grid and
+        arbitrary-frequency fits that :meth:`uniform_matrices` and
+        :meth:`_freq_points_fit_matrix` build (issue #183).
+
+        ``ncol`` is the number of fit columns: ``L`` for the plain fit, or
+        ``L + 1`` for the augmented fit whose extra constant column isolates a
+        frequency-independent component. The conditioning contract is the SAME
+        coefficient-space roundtrip quantity as the square node guard, here the
+        (ncol x ncol) LEFT product ``max|pinv(design) @ design - I_ncol|``
+        (n_points >> ncol), but compared against the looser, tall-fit-specific
+        :data:`IR_UNIFORM_FIT_RESIDUAL_MAX`: a coarse uniform grid resolves the
+        basis less well than sparse-ir's own node sets, so its healthy residual
+        is larger than the strict node bound would allow.
+
+        As ``Lambda = beta * wmax`` grows the sampling grid can no longer
+        resolve the L basis functions and the bare ``pinv`` amplified without
+        bound (#183 measured the dynamic eigenvalue reaching ~1e18); the
+        explicit :data:`_FIT_PINV_RCOND` caps that and this check rejects the
+        result with an ``ir_wmax`` / ``ir_tol`` / ``Nmat`` remedy instead of
+        returning a silently-wrong fit.
+        """
+        n_points = design.shape[0]
+        if n_points < ncol:
+            raise ValueError(
+                "IR fit is underdetermined at {}: the {} design matrix has "
+                "only {} sample point(s) for {} fit column(s), so the "
+                "least-squares fit onto the IR coefficients is not unique and "
+                "its matrices would be meaningless. {}".format(
+                    self._params_str(), name, n_points, ncol, self._FIT_REMEDY))
+        try:
+            pinv = np.linalg.pinv(design, rcond=_FIT_PINV_RCOND)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                "IR fit is not constructible at {}: pseudo-inverting the {} "
+                "design matrix ({}x{}) failed ({}). {}".format(
+                    self._params_str(), name, n_points, ncol, exc,
+                    self._FIT_REMEDY))
+        residual = float(np.max(np.abs(
+            pinv @ design - np.eye(ncol, dtype=pinv.dtype))))
+        if not (residual <= IR_UNIFORM_FIT_RESIDUAL_MAX):
+            raise ValueError(
+                "IR fit is ill-conditioned at {}: the {} design matrix "
+                "({}x{}, condition number {}) does not admit a reliable fit -- "
+                "its coefficient roundtrip residual "
+                "max|pinv(design)@design - I| is {:.3e}, above the tolerated "
+                "{:.1e}. The fit matrices built from it would be silently "
+                "wrong -- issue #183 measured the dynamic eigenvalue growing "
+                "without bound as ir_wmax is raised. {}".format(
+                    self._params_str(), name, n_points, ncol,
+                    _cond_str(design), residual,
+                    IR_UNIFORM_FIT_RESIDUAL_MAX, self._FIT_REMEDY))
+        return pinv
 
     # -- matrix access with backend dispatch ---------------------------------
 
@@ -258,6 +549,165 @@ class IRAxis:
         """(..., n_freq) node values -> values on ARBITRARY tau points
         (fused fit + evaluate, cached like :meth:`eval_to_tau_points`)."""
         return self.eval_to_tau_points(self.fit_from_freq(arr), tau_points)
+
+    def tau_to_freq_points(self, arr, freq_indices):
+        """Fit ``arr`` from THIS axis's own tau-sampling nodes (LAST axis --
+        the same axis convention as every other ``IRAxis`` transform; there
+        is no ``axis`` argument) and evaluate at the given INTEGER Matsubara
+        indices ``freq_indices`` (sparse_ir convention: ``i w = n pi /
+        beta``). Fused fit(tau) + evaluate(freq_indices), analogous to
+        :meth:`freq_to_tau_points` with the two axes swapped.
+
+        Parameters
+        ----------
+        arr : ndarray
+            ``arr.shape[-1]`` must equal ``self.n_tau`` (this axis's
+            tau-node count) -- validated.
+        freq_indices : 1-D, non-empty, integer, sparse_ir Matsubara indices.
+            Parity must match ``self.statistics`` (odd for 'F', even for
+            'B'), else ``ValueError``. Order is PRESERVED in the output and
+            duplicates are permitted -- the evaluation matrix carries one
+            row per requested point (not a set).
+
+        Returns
+        -------
+        ndarray
+            ``arr`` with the last axis replaced by ``len(freq_indices)``.
+
+        Notes
+        -----
+        The evaluation matrix is built via ``sparse_ir.MatsubaraSampling``
+        / ``basis.uhat`` at the UNIQUE, SORTED set of the requested points
+        (fit from this axis's tau sampling, evaluate at the points) and
+        cached in a BOUNDED, PER-INSTANCE cache (an ``OrderedDict`` on
+        ``self``, ``self._tau_freq_pts_cache``, keyed by
+        ``(tuple(sorted(set(freq_indices))), array module)``, LRU-evicted
+        at ``maxsize=8`` -- current use is only ``[0]``; the bound prevents
+        unbounded growth on arbitrary tuples; caching on the UNIQUE-SORTED
+        key means ``[2, 0, 0]`` and ``[0, 2]`` share one cache entry).
+        Being per-instance, the cache is garbage-collected along with the
+        axis it belongs to and its 8-entry budget is never shared across
+        (or thrashed by) other ``IRAxis`` instances -- unlike a
+        ``functools.lru_cache`` on the method, which would be ONE cache
+        shared by every instance ever constructed (see the field's own
+        comment in ``__init__`` for the two concrete failure modes that
+        would cause). The matrix itself is mirrored to the requesting
+        array's device the same way the other cached matrices in this
+        class are (:meth:`mats`).
+
+        BACKEND VERSION DIFFERENCE (load-bearing): ``sparse_ir``'s
+        ``MatsubaraSampling`` does not consistently preserve the caller's
+        point ORDER across versions -- ``sparse-ir`` 1.1.7 (e.g. the
+        Python-3.9 CI leg, which cannot resolve 2.x) silently SORTS (and
+        may deduplicate) the ``sampling_points`` it is constructed with,
+        while ``sparse-ir`` 2.1.1 preserves the given order and duplicates
+        verbatim. Trusting ``smpl.sampling_points`` for COLUMN ORDER after
+        construction is therefore unsafe: on 1.1.7, requesting ``[2, 0,
+        0]`` silently returns columns for the SORTED ``[0, 0, 2]`` instead,
+        so the first output column becomes the value at index 0 (wrong)
+        instead of index 2. This method never reads
+        ``smpl.sampling_points`` back for ordering: it evaluates only at
+        the unique, sorted, WE-CONTROLLED point array (using
+        ``MatsubaraSampling`` purely as a validity check on that array,
+        discarding its return value) and then GATHERS the result into the
+        caller's requested order (with duplicates) via a value->position
+        lookup -- correct and identical in COST regardless of which
+        backend behavior is in effect, and immune to any further
+        reordering a backend might perform on an input that is already
+        sorted and duplicate-free.
+        """
+        freq_indices = np.asarray(freq_indices)
+        if freq_indices.ndim != 1 or freq_indices.size == 0:
+            raise ValueError(
+                "tau_to_freq_points: freq_indices must be a 1-D, non-empty "
+                "array of integer Matsubara indices, got shape {}"
+                .format(freq_indices.shape))
+        if not np.issubdtype(freq_indices.dtype, np.integer):
+            raise ValueError(
+                "tau_to_freq_points: freq_indices must contain integer "
+                "Matsubara indices, got dtype {}".format(freq_indices.dtype))
+        want_odd = 1 if self.statistics == "F" else 0
+        if np.any(np.abs(freq_indices) % 2 != want_odd):
+            raise ValueError(
+                "tau_to_freq_points: freq_indices parity does not match "
+                "this axis's statistics={!r} ({} indices required)."
+                .format(self.statistics, "odd" if want_odd else "even"))
+        if arr.shape[-1] != self.n_tau:
+            raise ValueError(
+                "tau_to_freq_points: arr.shape[-1] ({}) must equal this "
+                "axis's tau-node count n_tau ({})".format(
+                    arr.shape[-1], self.n_tau))
+
+        xp = _bk.array_module_of(arr)
+        freq_list = [int(n) for n in freq_indices]
+        # Cache/evaluate on the UNIQUE, SORTED point set only -- see the
+        # "BACKEND VERSION DIFFERENCE" note above for why the requested
+        # (possibly unsorted, possibly duplicated) order is never fed
+        # straight through to sparse_ir.
+        unique_sorted = tuple(sorted(set(freq_list)))
+        mat = self._tau_to_freq_points_matrix(unique_sorted, xp)
+        result_unique = arr @ mat   # (..., len(unique_sorted))
+
+        if freq_list == list(unique_sorted):
+            # Already the unique/sorted set itself (the overwhelmingly
+            # common case, e.g. the single-point [0] call from
+            # bubble._ir_bond_static) -- no gather needed.
+            return result_unique
+
+        # Gather into the REQUESTED order (duplicates permitted): position
+        # of each requested index within unique_sorted, by VALUE (never by
+        # any backend-reported row/column order).
+        position = {value: i for i, value in enumerate(unique_sorted)}
+        gather_idx = [position[value] for value in freq_list]
+        return result_unique[..., gather_idx]
+
+    def _tau_to_freq_points_matrix(self, freq_tuple, xp):
+        """Per-instance bounded LRU lookup (``self._tau_freq_pts_cache``,
+        maxsize 8) for :meth:`tau_to_freq_points`'s fused tau-fit +
+        Matsubara-evaluate matrix, keyed by ``(freq_tuple, xp)``.
+        ``freq_tuple`` MUST already be unique and sorted (the caller,
+        :meth:`tau_to_freq_points`, enforces this and gathers the result
+        back to the requested order/duplicates afterward -- see that
+        method's "BACKEND VERSION DIFFERENCE" docstring note). A hit moves
+        the entry to most-recently-used; a miss builds the matrix
+        (:meth:`_build_tau_to_freq_points_matrix`), inserts it, and evicts
+        the oldest entry once the cache exceeds 8 entries."""
+        cache = self._tau_freq_pts_cache
+        key = (freq_tuple, xp)
+        if key in cache:
+            cache.move_to_end(key)
+            return cache[key]
+        mat = self._build_tau_to_freq_points_matrix(freq_tuple, xp)
+        cache[key] = mat
+        cache.move_to_end(key)
+        if len(cache) > 8:
+            cache.popitem(last=False)
+        return mat
+
+    def _build_tau_to_freq_points_matrix(self, freq_tuple, xp):
+        """Build (never caches itself -- see :meth:`_tau_to_freq_points_matrix`)
+        the fused tau-fit + Matsubara-evaluate matrix ``(n_tau, npts)`` for
+        the given UNIQUE, SORTED integer Matsubara indices, on the host,
+        then mirrors it to ``xp`` if requested."""
+        sparse_ir = _import_sparse_ir()
+        freq_n = np.array(freq_tuple, dtype=np.int64)
+        # sparse_ir's own Matsubara-point validity check (kept for parity
+        # with the rest of this module's cached transforms, which all
+        # validate their point sets via MatsubaraSampling) -- its RETURN
+        # VALUE is deliberately discarded: sparse-ir 1.x silently
+        # sorts/deduplicates the sampling_points it was constructed with,
+        # so `smpl.sampling_points` cannot be trusted for column order
+        # (see tau_to_freq_points' docstring). `freq_n` (already unique
+        # and sorted by the caller) is used directly for `basis.uhat`
+        # instead, on both backend versions.
+        sparse_ir.MatsubaraSampling(self._basis, sampling_points=freq_n)
+        eval_mat = np.asarray(self._basis.uhat(freq_n))
+        eval_mat = eval_mat.reshape(self.L, freq_n.size)   # (L, npts)
+        composite = np.ascontiguousarray(
+            self._m["fit_tau"] @ eval_mat)                 # (n_tau, npts)
+        if xp is not np:
+            composite = xp.asarray(composite)
+        return composite
 
     def fit_from_freq_points(self, arr, freq_n):
         """(..., npts) values at ARBITRARY integer Matsubara indices
@@ -326,22 +776,13 @@ class IRAxis:
         if key not in self._device_m:
             design = np.ascontiguousarray(
                 self._basis.uhat(freq_n).T)             # (npts, L)
-            rank = np.linalg.matrix_rank(design)
-            if rank < self.L:
-                raise ValueError(
-                    "fit_from_freq_points: the design matrix for this node "
-                    "set is rank-deficient ({} < L={}); the node set cannot "
-                    "determine the coefficients.".format(rank, self.L))
-            sv = np.linalg.svd(design, compute_uv=False)
-            cond = float(sv[0] / sv[-1])
-            if cond > 1e10:
-                _logger.warning(
-                    "fit_from_freq_points: ill-conditioned node set "
-                    "(cond=%.2e); the fit may amplify noise.", cond)
-            else:
-                _logger.debug("fit_from_freq_points: cond=%.2e", cond)
-            self._device_m[key] = np.ascontiguousarray(
-                np.linalg.pinv(design).T)               # (npts, L)
+            # Guard the fit exactly as the uniform grid is (issue #183):
+            # rank-deficient or ill-conditioned node sets now RAISE the
+            # actionable, contextual error instead of a bare pinv that
+            # silently amplifies noise into physics.
+            pinv = self._pinv_checked_fit(
+                design, "arbitrary-frequency", self.L)
+            self._device_m[key] = np.ascontiguousarray(pinv.T)  # (npts, L)
 
     # -- uniform-grid (centered H-wave) interface ----------------------------
 
@@ -367,10 +808,17 @@ class IRAxis:
             eval_u = self._basis.uhat(self._uniform_n(nmat)).T   # (nmat, L)
             ev = np.ascontiguousarray(eval_u.T)                   # (L, nmat)
             design = eval_u
+            ncol = self.L
             if with_constant:
                 design = np.hstack([eval_u,
                                     np.ones((nmat, 1), dtype=eval_u.dtype)])
-            fit = np.ascontiguousarray(np.linalg.pinv(design).T)  # (nmat, L[+1])
+                ncol = self.L + 1
+            # Guarded pinv (issue #183): at large Lambda = beta*wmax the coarse
+            # uniform grid can no longer resolve the L basis functions and the
+            # bare pinv amplified without bound; _pinv_checked_fit caps that and
+            # raises an actionable error rather than returning a garbage fit.
+            pinv = self._pinv_checked_fit(design, "uniform-grid", ncol)
+            fit = np.ascontiguousarray(pinv.T)                    # (nmat, L[+1])
             self._device_m[key] = (fit, ev)
         return self._device_m[key]
 

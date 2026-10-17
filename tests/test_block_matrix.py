@@ -2540,7 +2540,8 @@ class TestUHFkSpinOrbitalInteraction(unittest.TestCase):
         """Ising interaction: normal vs spin-orbital mode.
 
         Ising spin table: [0,0,0,0]=1, [1,1,1,1]=1, [0,1,1,0]=-1, [1,0,0,1]=-1
-        This represents J Sz_i Sz_j (Hartree + Fock).
+        With no 1/4 factor this represents J (n_up-n_down)_i (n_up-n_down)_j
+        (Hartree + Fock), the shared k-space convention since #106.
         """
         norb_phys, nvol = 2, 2
         nd = 2 * norb_phys

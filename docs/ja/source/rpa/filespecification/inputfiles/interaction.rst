@@ -3,7 +3,7 @@
 相互作用指定ファイル
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-次の形で表わされるハミルトニアンの一体項および二体相互作用項について、その係数 :math:`T_{\alpha\beta}(r_{ij})` および :math:`J_{\alpha\beta}(r_{ij})`, :math:`V_{\alpha\beta}(r_{ij})`, :math:`U_{\alpha}` を共通のWannier90(-like)形式で記述します。
+次の形で表わされるハミルトニアンの一体項および二体相互作用項について、その係数\ :math:`T_{\alpha\beta}(r_{ij})`\ および\ :math:`J_{\alpha\beta}(r_{ij})`, :math:`V_{\alpha\beta}(r_{ij})`, :math:`U_{\alpha}`\ を共通のWannier90(-like)形式で記述します。
 なお、乱雑位相近似では一般化二体相互作用 InterAll 形式には対応していません。
 
     
@@ -16,15 +16,72 @@
     **CoulombInter**:
       :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}`, :math:`\quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) S^{z}_{i\alpha} S^{z}_{j\beta}`, :math:`\quad S^{z}_{i\alpha}=\frac{1}{2}(n_{i\alpha\uparrow} - n_{i\alpha\downarrow})`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}}`
+      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
+
+.. note::
+
+   上の式のうち2つは、ソルバーが以前から実装している内容に合わせて修正した
+   ものです。\ **入力ファイルを変更する必要はなく**\ 、数値結果も変わりません。
+
+   - **Hund**: 実装されている規約は上のとおりマイナス符号を伴います。
+     したがって強磁性的な（同スピン間で引力的な）Hund 結合は、係数
+     :math:`J^{\rm Hund}_{\alpha\beta}(r_{ij})`\ を正の値として宣言します。
+   - **PairLift**: 宣言した各行はそのエルミート共役とともにハミルトニアンに
+     含まれます（``PairHop``\ と同様）。改訂前の本ページでは\ ``+ h.c.``\ の
+     記載が漏れていました。
+
+.. _rpa_interaction_orientation:
+
+.. note::
+
+   **規約：**\ 上の全ての式で\ :math:`r_{ij} = R_j - R_i`\ です。すなわち
+   ``[rx] [ry] [rz] [alpha] [beta] ...``\ という行は、軌道\ ``[alpha]``\ を
+   元のセルに、軌道\ ``[beta]``\ を\ :math:`\vec{r} = (r_x, r_y, r_z)`\ だけ
+   並進したセルに置きます。これは一体項のファイルでも二体項のファイルでも
+   同じです。
+
+   **2.0.0 との互換性：**\ H-wave 2.0.0 までは、平均場ソルバー（``UHFk``\ 、
+   および\ ``FLEX``\ の Hartree-Fock 項）はオフサイトの二体行を2つのセルを
+   入れ替えて読んでいましたが、RPA・FLEX・Eliashberg の頂点は上の規約に
+   従っていました。今回から平均場も上の規約に従います。\ ``UHFk``\ の結果
+   （および\ ``flex_hartree_fock = true``\ または
+   ``flex_second_order = "local"``\ を指定した\ ``FLEX``\ の結果）が変わるのは、
+   異なる2つの軌道をもつオフサイト行、または複素係数をもつオフサイト行が
+   ある場合だけです。全てのオンサイト相互作用、実数で軌道対角な全ての
+   オフサイト行、実数の単一軌道入力、およびボンド分解チャネルを用いない
+   （``longitudinal_bond_channels = false``\ 、既定値）、かつ影響を受けない
+   感受率から計算した RPA と Eliashberg の全ての結果は変わりません
+   （``chi0q_mode = "flex"``\ の Eliashberg 計算は、感受率を生成した FLEX 計算
+   に従って変わります）。\ ``calc_type = "ring"``\ と
+   ``longitudinal_bond_channels = true``\ を指定した RPA/FLEX 計算も、実数の
+   軌道間オフサイトボンドでは結果が変わります（混合した2次のブロックが厳密に
+   なりました。issue #192）。Hartree-Fock 項とボンド分解チャネルのいずれも
+   使わない\ ``flex_second_order = "takimoto"``\ の計算は変わりません。\ **入力ファイルを変更する必要はありません。**
+
+   **再現手順と複合パイプライン：**\ 2.0.0 の\ ``UHFk``\ の数値を再現するには、
+   全てのオフサイト二体行の変位を反転してください
+   （``[rx] [ry] [rz]`` → ``[-rx] [-ry] [-rz]``\ 。``Transfer``\ や\ ``Extern``\ などの一体項の行、
+   およびオンサイトの行は対象外です。また、軌道の
+   添字を入れ替えてはいけません。複素結合に対して誤りになります）。ただし、
+   このように変位を反転したファイルは、RPA と Eliashberg のソルバーが計算する
+   内容を変えてしまいます。元のファイルに対するこれらの 2.0.0 の結果は、
+   もともと正しいものでした。\ ``flex_hartree_fock = true``\ を指定した 2.0.0 の
+   ``FLEX``\ 計算は、単一の入力ファイルでは再現できません（2.0.0 は一回の計算
+   の中で平均場項と頂点項を異なる向きで評価していたためです）。\ ``UHFk``\ の
+   出力を RPA や Eliashberg のソルバーに渡していた 2.0.0 のパイプラインを
+   再現するには、\ ``UHFk``\ だけを変位を反転したファイルで、後段は元の
+   ファイルで実行する必要があります。2.0.0 では、2つの段階が異なる
+   ハミルトニアンを解いていたためです。従来の食い違いに対する回避策を入れて
+   いた場合は取り除き、影響を受ける自己無撞着計算は 2.0.0 の初期値からでは
+   なく最初からやり直してください。
 
 
 以下にファイル例を示します。
@@ -62,11 +119,11 @@
 
 -  3行: ``[Npts]``
 
--  4 - :math:`\lceil N_\text{pts} / 15 \rceil + 3` 行:
+-  4 - :math:`\lceil N_\text{pts} / 15 \rceil + 3`\ 行:
    ``[n_1] [n_2] ...``
 
--  :math:`\lceil N_\text{pts} / 15 \rceil + 4` 行以降:
-   ``[r_x] [r_x] [r_x] [alpha] [beta] [J.real] [J.imag]``
+-  :math:`\lceil N_\text{pts} / 15 \rceil + 4`\ 行以降:
+   ``[r_x] [r_y] [r_z] [alpha] [beta] [J.real] [J.imag]``
 
 パラメータ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -85,7 +142,7 @@
    **説明 :**
    並進ベクトル全体が入る直方体に含まれるセルの数を指定します。
 
--  ``[n1]``, ``[n1]``, ...
+-  ``[n1]``, ``[n2]``, ...
 
    **形式 :** int型
 
@@ -105,14 +162,14 @@
 
    **説明 :**
    軌道のインデックスを指定します。
-   ``[alpha]`` が元のセル内の軌道、``[beta]`` が :math:`\vec{r}` 離れたセル内の軌道を指します。
+   ``[alpha]``\ が元のセル内の軌道、``[beta]``\ が\ :math:`\vec{r}`\ 離れたセル内の軌道を指します。
 
 -  ``[J.real]``, ``[J.imag]``
 
    **形式 :** float型
 
    **説明 :**
-   係数 :math:`J_{\alpha\beta}(\vec{r})` の実部と虚部を指定します。
+   係数\ :math:`J_{\alpha\beta}(\vec{r})`\ の実部と虚部を指定します。
 
 
 使用ルール
@@ -122,23 +179,23 @@
 
 -  行数固定で読み込みを行うため、ヘッダの省略はできません。
 
--  係数行列のうち、省略された要素は 0と仮定します。
+-  係数行列のうち、省略された要素は 0と仮定します。なお、エルミート共役の相手\ :math:`X_{ba}(-R)`\ が省略された宣言済みエントリは読み込み時に拒否されます（バージョン 2.0 以降）。結合の両方向を宣言してください。
 
--  並進ベクトルは全て ``CellShape`` 内に収まるとします。
-   ``r_x``, ``r_y``, ``r_z`` の範囲が ``CellShape`` のx,y,z軸のサイズを超える場合はエラーで終了します。
+-  並進ベクトルは全て\ ``CellShape``\ 内に収まるとします。
+   ``r_x``, ``r_y``, ``r_z``\ の範囲が\ ``CellShape``\ のx,y,z軸のサイズを超える場合はエラーで終了します。
 
--  ``mode.enable_spin_orbital`` が ``true`` の場合、Transfer項の軌道インデックスは
-   インターリーブ規約で解釈され、1〜 :math:`2 N_\text{orbital}` の値をとります。
-   複合インデックスは :math:`2\alpha + s + 1`（1始まり）であり、
-   :math:`\alpha = 0, \ldots, N_\text{orbital}-1` が物理軌道インデックス、
-   :math:`s \in \{0, 1\}` がスピンインデックスです。
-   ``mode.enable_spin_orbital`` が ``false`` の場合は、インデックスの範囲が
-   1〜 :math:`N_\text{orbital}` の行のみ考慮します。
+-  ``mode.enable_spin_orbital``\ が\ ``true``\ の場合、Transfer項の軌道インデックスは
+   インターリーブ規約で解釈され、1〜\ :math:`2 N_\text{orbital}`\ の値をとります。
+   複合インデックスは\ :math:`2\alpha + s + 1`\ （1始まり）であり、
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1`\ が物理軌道インデックス、
+   :math:`s \in \{0, 1\}`\ がスピンインデックスです。
+   ``mode.enable_spin_orbital``\ が\ ``false``\ の場合は、インデックスの範囲が
+   1〜\ :math:`N_\text{orbital}`\ の行のみ考慮します。
 
    .. note::
 
-      **移行上の注意（RPA）：** スピン軌道入力の幾何 ``Norbit`` はスピン軌道数（= 物理軌道数 × 2）
-      になりました。既存の RPA スピン軌道計算の ``geom.dat`` の ``Norbit`` は2倍にしてください。
+      **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数（= 物理軌道数 × 2）
+      になりました。既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
    
 .. raw:: latex

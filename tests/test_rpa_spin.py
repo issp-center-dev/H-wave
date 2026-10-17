@@ -197,8 +197,19 @@ class TestRPAspin(unittest.TestCase):
         })
 
     #----------------------------------------------------------------
+    # calc_scheme='squashed' was removed in H-wave 2.0 (#144): every
+    # configuration below now fails at construction, before run_test()
+    # ever reaches solve(). These pin that construction-time rejection
+    # for the same parameter matrix the 'reduced' tests above exercise
+    # (same interactions/spin-orbital combinations, scheme swapped).
+    def _assert_squashed_rejected(self, params):
+        with self.assertRaises(ValueError) as cm:
+            self.run_test(params)
+        self.assertIn("calc_scheme='squashed' was removed in H-wave 2.0",
+                      str(cm.exception))
+
     def test_squashed_spin_free(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': False,
             'calc_scheme': 'squashed',
             'inter': {
@@ -207,7 +218,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     def test_squashed_spin_diag(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': False,
             'calc_scheme': 'squashed',
             'inter': {
@@ -217,7 +228,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     def test_squashed_spin_free2(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': True,
             'calc_scheme': 'squashed',
             'inter': {
@@ -226,7 +237,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     def test_squashed_spin_diag2(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': True,
             'calc_scheme': 'squashed',
             'inter': {
@@ -235,7 +246,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     def test_squashed_spin_diag3(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': True,
             'calc_scheme': 'squashed',
             'inter': {
@@ -245,7 +256,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     def test_squashed_spinful(self):
-        self.run_test({
+        self._assert_squashed_rejected({
             'enable_spin_orbital': True,
             'calc_scheme': 'squashed',
             'inter': {
@@ -254,7 +265,7 @@ class TestRPAspin(unittest.TestCase):
         })
 
     # def test_squashed_spinful_with_interaction(self):
-    #     self.run_test({
+    #     self._assert_squashed_rejected({
     #         'enable_spin_orbital': True,
     #         'calc_scheme': 'squashed',
     #         'inter': {

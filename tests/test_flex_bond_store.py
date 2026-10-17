@@ -1,0 +1,316 @@
+"""BondBlockStore and the dynamic bubble assembly (spec 2026-09-06
+sections 3.1 and 3.5): pair/frequency-batch views, detach/release,
+rollback, the static-slice pin against bond_bubble_static, and the
+every-frequency channel-0 identity with the general bubble under a
+nonzero coeff_tail."""
+import os
+import unittest
+from unittest import mock
+
+import numpy as np
+
+import hwave.qlmsio.read_input_k as read_input_k
+
+_IN2 = "tests/rpa/input_2orb"
+
+
+def _flex(param_extra):
+    import hwave.solver.flex as flex_mod
+    idict = {"path_to_input": _IN2, "Geometry": "geom.dat", "Transfer": "transfer.dat",
+             "CoulombInter": "coulombinter.dat"}
+    r = read_input_k.QLMSkInput({"path_to_input": _IN2, "interaction": idict})
+    par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+           "Nmat": 32, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
+    par.update(param_extra)
+    info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"}
+    return flex_mod.FLEX(r.get_param("ham"), {}, info), r
+
+
+class TestBondBlockStore(unittest.TestCase):
+
+    def test_views_detach_release(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        nmat, nvol, nd, B = 4, 3, 4, 2
+        with BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
+            blk = np.arange(nmat * nvol * nd * nd, dtype=float).reshape(nmat, nvol, nd, nd) + 0j
+            store.put_pair("chibar", 1, 0, blk)
+            np.testing.assert_array_equal(store.get_pair("chibar", 1, 0), blk)
+            full = store.get_freq_batch("chibar", 1, 3)
+            self.assertEqual(full.shape, (2, nvol, B * nd, B * nd))
+            self.assertTrue(full.flags.c_contiguous)
+            np.testing.assert_array_equal(full[:, :, nd:, :nd], blk[1:3])
+            store.put_freq_batch("W", 0, 4, np.ones((4, nvol, B * nd, B * nd), complex))
+            w = store.detach("W")
+            self.assertTrue(w.flags.owndata)
+            with self.assertRaises(KeyError):
+                store.get_pair("W", 0, 0)
+        with self.assertRaises(RuntimeError):
+            store.get_pair("chibar", 0, 0)                       # released
+        self.assertEqual(np.abs(w).max(), 1.0)                  # detached array survives
+
+    def test_release_on_exception_and_rollback(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        try:
+            with BondBlockStore(2, 2, 2, 1, ("chibar",)) as store:
+                raise ValueError("boom")
+        except ValueError:
+            pass
+        with self.assertRaises(RuntimeError):
+            store.get_freq_batch("chibar", 0, 1)
+        with self.assertRaises(ValueError):
+            BondBlockStore(2, 2, 2, 1, ("chibar", "chibar"))    # duplicate name refused
+
+
+class TestBubbleAssembly(unittest.TestCase):
+
+    def _prepared(self, coeff_tail):
+        s, r = _flex({"coeff_tail": coeff_tail})
+        gi = r.get_param("green")
+        os.makedirs("tests/flex/output", exist_ok=True)
+        s.solve(gi, "tests/flex/output")           # gate off: builds green0 / tails
+        return s, gi
+
+    def test_static_slice_equals_bond_bubble_static(self):
+        from hwave.solver import bond_channels as bc, bubble
+        from hwave.solver.flex_bond import BondBlockStore, assemble_bubble
+        s, gi = self._prepared(0.0)
+        topo = bc.resolve_bond_topology(s.ham_info.param_ham, np.eye(3), s.norb,
+                                        active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+        view = bc.BondSetView(topo)
+        nd, nvol, nmat = s.norb ** 2, s.lattice.nvol, s.nmat
+        ND = view.n_channels * nd
+        with BondBlockStore(nmat, nvol, ND, nd, ("chibar",)) as store:
+            assemble_bubble(store, s.green0, s.green0_tail, 0.5, view, (4, 4, 1), 1)
+            stat = bubble.bond_bubble_static(s.green0, s.green0_tail, 0.5, view, spatial_shape=(4, 4, 1))
+            np.testing.assert_allclose(store.get_freq_batch("chibar", nmat // 2, nmat // 2 + 1)[0],
+                                       np.asarray(stat), rtol=0, atol=1e-13)
+
+    def test_channel_zero_equals_general_bubble_at_every_frequency_with_tail(self):
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.flex_bond import BondBlockStore, assemble_bubble
+        s, gi = self._prepared(1.0)
+        topo = bc.resolve_bond_topology(s.ham_info.param_ham, np.eye(3), s.norb,
+                                        active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+        view = bc.BondSetView(topo)
+        nd, nvol, nmat, norb = s.norb ** 2, s.lattice.nvol, s.nmat, s.norb
+        ND = view.n_channels * nd
+        # the loop's own green_scf / green0_tail: bare G minus the tail (first iteration)
+        beta = 0.5
+        green_kw = s._calc_dressed_green(beta, s.mu, np.zeros((1, nmat, nvol, norb, norb), complex))
+        iomega = (np.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
+        ev = s.H0_eigenvector
+        VVt = ev @ np.conj(ev).swapaxes(-2, -1)
+        tail_w = ((1.0 / (1j * iomega))[None, :, None, None, None] * VVt[:, None])
+        green_scf = green_kw - tail_w
+        ref = s._calc_chi0q(green_scf, s.green0_tail, beta)[0]       # (nmat, nvol, norb, norb, norb, norb)
+        with BondBlockStore(nmat, nvol, ND, nd, ("chibar",)) as store:
+            assemble_bubble(store, green_scf, s.green0_tail, beta, view, (4, 4, 1), 1)
+            ch0 = store.get_freq_batch("chibar", 0, nmat)[:, :, :nd, :nd]
+        np.testing.assert_allclose(ch0.reshape(nmat, nvol, norb, norb, norb, norb), ref, rtol=0, atol=1e-12)
+
+
+class TestBubbleTailModule(unittest.TestCase):
+    """``assemble_bubble`` computes on the module of ``green_scf`` (issue
+    #196), so a tail from another module is a caller error and must be
+    named as such at the entry rather than deep inside the kernel. There
+    is one array module on this machine, so the two modules are faked."""
+
+    def test_tail_on_a_different_module_is_refused_by_name(self):
+        from hwave.solver import flex_bond
+        modules = {}
+
+        def _module_of(arr):
+            return modules.get(id(arr), np)
+        green = np.zeros((1, 4, 4, 1, 1), dtype=complex)
+        tail = np.zeros_like(green)
+        modules[id(green)] = _FakeModule("cupy")
+        modules[id(tail)] = _FakeModule("numpy")
+        with mock.patch.object(flex_bond._bk, "array_module_of", _module_of):
+            with self.assertRaises(ValueError) as cm:
+                flex_bond.assemble_bubble(None, green, tail, 1.0, None, (4, 1, 1), 1)
+        msg = str(cm.exception)
+        self.assertIn("green0_tail", msg)
+        self.assertIn("cupy", msg)
+        self.assertIn("numpy", msg)
+
+    def test_matching_modules_are_accepted(self):
+        """The same guard must not fire when both live on one module -- the
+        numpy path has to stay exactly as it was."""
+        from hwave.solver import flex_bond
+        green = np.zeros((1, 4, 4, 1, 1), dtype=complex)
+        tail = np.zeros_like(green)
+        with self.assertRaises(Exception) as cm:
+            flex_bond.assemble_bubble(None, green, tail, 1.0, None, (4, 1, 1), 1)
+        # it got past the module guard and failed on the fake bond set instead
+        self.assertNotIn("green0_tail", str(cm.exception))
+
+
+class _FakeModule:
+    def __init__(self, name):
+        self.__name__ = name
+
+
+class TestBondDeviceContext(unittest.TestCase):
+
+    def _arrays(self):
+        rng = np.random.default_rng(1)
+        nvol, ND, nd = 3, 4, 2
+        S = rng.normal(size=(nvol, ND, ND)) + 0j
+        C = rng.normal(size=(nvol, ND, ND)) + 0j
+        S_on = rng.normal(size=(nvol, nd, nd)) + 0j
+        C_on = rng.normal(size=(nvol, nd, nd)) + 0j
+        perm = np.array([0, 1, 3, 2])
+        mask = np.ones((ND, ND))
+        return S, C, S_on, C_on, perm, mask
+
+    def test_numpy_backend_passes_host_arrays_through(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+            self.assertIs(dev.xp, np)
+            self.assertIs(dev.S, S)
+            self.assertIs(dev.C, C)
+            self.assertIs(dev.S_on, S_on)
+            self.assertIs(dev.C_on, C_on)
+            self.assertIs(dev.perm, perm)
+            self.assertIs(dev.mask, mask)
+            np.testing.assert_array_equal(dev.SpC_on, S_on + C_on)
+            self.assertFalse(dev.released)
+        self.assertTrue(dev.released)
+        with self.assertRaises(RuntimeError):
+            dev.S
+
+    def test_green0_tail_is_owned_and_released(self):
+        """The bubble now computes on the module of the Green function, so
+        the tail it is paired with is a solve-scoped device array of the
+        context rather than a per-iteration transfer (issue #196)."""
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        tail = np.arange(6, dtype=complex).reshape(1, 2, 3)
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask,
+                               green0_tail=tail) as dev:
+            self.assertIs(dev.green0_tail, tail)          # numpy: the identity
+        self.assertTrue(dev.released)
+        with self.assertRaises(RuntimeError):
+            dev.green0_tail
+
+    def test_green0_tail_defaults_to_none(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+            self.assertIsNone(dev.green0_tail)
+
+    def test_green0_tail_is_transferred_once(self):
+        from hwave.solver import flex_bond
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        tail = np.zeros((1, 2, 3), dtype=complex)
+        seen = []
+        fake_xp = object()
+
+        def _to_device(a, xp):
+            seen.append(id(a))
+            return a
+        with mock.patch.object(flex_bond._bk, "to_device", _to_device):
+            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask,
+                                             green0_tail=tail):
+                pass
+        self.assertEqual(len(seen), 8)         # the seven vertices plus the tail
+        self.assertEqual(seen.count(id(tail)), 1)
+
+    def test_transfer_uses_to_device_once_per_array(self):
+        from hwave.solver import flex_bond
+        S, C, S_on, C_on, perm, mask = self._arrays()
+        seen = []
+        fake_xp = object()
+        def _to_device(a, xp):
+            seen.append((id(a), xp))
+            return a
+        with mock.patch.object(flex_bond._bk, "to_device", _to_device):
+            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask) as dev:
+                self.assertIs(dev.xp, fake_xp)
+        self.assertEqual(len(seen), 7)                      # S, C, S_on, C_on, SpC_on, perm, mask
+        self.assertTrue(all(x is fake_xp for _, x in seen))
+
+
+class TestReleaseSlot(unittest.TestCase):
+    def test_release_slot_frees_and_refuses_access(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar", "W")) as store:
+            store.put_freq_batch("W", 0, 4, np.ones((4, 2, 2, 2), complex))
+            store.release_slot("W")
+            with self.assertRaisesRegex(KeyError, "slot 'W' was released"):
+                store.get_freq_batch("W", 0, 2)
+            with self.assertRaisesRegex(KeyError, "slot 'W' was released"):
+                store.get_pair("W", 0, 0)
+            # the other slot is untouched
+            self.assertEqual(store.get_freq_batch("chibar", 0, 4).shape, (4, 2, 2, 2))
+        self.assertTrue(store.released)
+
+    def test_release_slot_unknown_name(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar",)) as store:
+            with self.assertRaisesRegex(KeyError, "no slot 'W'"):
+                store.release_slot("W")
+
+    def test_release_slot_after_release_says_released(self):
+        """After ``release`` every array is gone, so a slot name would look
+        "unknown" and the KeyError would send the caller chasing a typo
+        instead of a lifetime error."""
+        from hwave.solver.flex_bond import BondBlockStore
+        with BondBlockStore(4, 2, 2, 1, ("chibar", "W")) as store:
+            pass
+        self.assertTrue(store.released)
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("W")
+        with self.assertRaisesRegex(RuntimeError, "BondBlockStore: released"):
+            store.release_slot("nonexistent")
+
+
+class TestDeviceContextOptional(unittest.TestCase):
+    def test_optional_arrays_are_none(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        with BondDeviceContext(np, S, 2 * S) as dev:
+            self.assertIs(dev.xp, np)
+            np.testing.assert_array_equal(dev.S, S)
+            np.testing.assert_array_equal(dev.C, 2 * S)
+            for name in ("S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail"):
+                self.assertIsNone(getattr(dev, name))
+
+    def test_full_construction_unchanged(self):
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        with BondDeviceContext(np, S, S, S, S, np.arange(2), np.zeros((2, 2))) as dev:
+            np.testing.assert_array_equal(dev.SpC_on, 2 * S)
+
+    def test_on_site_pair_must_be_given_together(self):
+        """``SpC_on`` is formed only when BOTH on-site vertices are present, so
+        one of them alone would be silently dropped into a context whose
+        ``SpC_on`` is ``None``."""
+        from hwave.solver.flex_bond import BondDeviceContext
+        S = np.eye(2, dtype=complex)[None]
+        for S_on, C_on in ((S, None), (None, S)):
+            with self.assertRaisesRegex(ValueError, "S_on.*C_on|C_on.*S_on"):
+                BondDeviceContext(np, S, S, S_on, C_on)
+
+
+class TestOutputNameRegistry(unittest.TestCase):
+    def test_pairing_output_names_registered(self):
+        from hwave.solver import flex_bond
+        for name in ("eliashberg_bond_singlet", "eliashberg_bond_triplet"):
+            self.assertIn(name, flex_bond._NPZ_ARTIFACTS)
+            self.assertEqual(flex_bond._DEFAULT_FILES[name], name)
+        for name in ("eigenvalue_bond_singlet", "eigenvalue_bond_triplet",
+                     "gap_bond_singlet", "gap_bond_triplet"):
+            self.assertEqual(flex_bond._DEFAULT_FILES[name], name + ".dat")
+
+    def test_pairing_output_collision_refused(self):
+        from hwave.solver import flex_bond
+        with self.assertRaisesRegex(ValueError, "resolve to the same file"):
+            flex_bond.resolve_output_paths(
+                {"eliashberg_bond_singlet": "x", "chiq_s": "x"}, "/tmp/o",
+                ("eliashberg_bond_singlet", "chiq_s"))
+
+
+if __name__ == "__main__":
+    unittest.main()

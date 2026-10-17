@@ -1,0 +1,337 @@
+"""Registry of the OPT-IN ("heavy") tests, and the decorator that gates them.
+
+The suite runs in two shapes:
+
+* the FAST gate -- what every push/PR runs. ``HWAVE_FULL_TESTS`` is unset,
+  and every test named in :data:`HEAVY_TESTS` below is skipped.
+* the FULL suite -- run with ``HWAVE_FULL_TESTS=1``. Nothing is skipped by
+  this module.
+
+    HWAVE_FULL_TESTS=1 python -m unittest discover tests/ -v
+    HWAVE_FULL_TESTS=1 pytest tests/ -v
+
+Why this exists: a measured full ``pytest tests/`` run was 882 s over 2252
+tests, and 631 s of that (71%) sat in 86 tests spread over the four
+exact-diagonalization (ED) oracle modules, plus a single 171 s case in
+``test_bubble_kernel.py``. Those tests re-derive numerical CONTENT from a
+dense Lehmann/ED sum; that content only moves when a vertex table or a
+bubble kernel is edited deliberately, which is exactly the change a
+pre-merge FULL run is there to catch. Everyday structural edits do not
+move it, so paying 10+ minutes for them on every push buys nothing.
+
+THE SELECTION RULE
+------------------
+**A test whose OWN runtime is roughly 5 s or more is opt-in.** Not the
+module's runtime, not the class's -- the individual test method's. That is
+why the entries below are per-method: several of these classes hold both a
+30 s ED granule and a sub-second guard, and the guard stays in the fast
+gate.
+
+THE TWO DOCUMENTED EXCEPTIONS
+-----------------------------
+Four tests exceed the 5 s rule and STAY in the fast gate anyway. They are
+NOT decorated, and they are deliberately absent from :data:`HEAVY_TESTS`:
+
+* ``test_spinful_transverse_ed.TestGateS0ExtractionAdjudication``
+  (``test_step3_dressed_extraction_matches_totalned``,
+  ``test_step4_g2_g4_swap_mutation_must_fail``), ~31 s
+* ``test_spinful_transverse_ed.TestGateS2ProductionRouting``
+  (``test_old_slice_then_solve_fails_the_s0_granule``,
+  ``test_production_passes_the_s0_granule``), ~31 s
+
+Reason: everything in :data:`HEAVY_TESTS` pins per-type numerical CONTENT.
+These four pin the production ROUTING instead -- that ``solve()`` takes the
+dressed-extraction path at all, and that the old slice-then-solve path
+still fails the S0 granule. Routing is what an everyday structural change
+actually breaks, and these four are also what fixes issue #110 in place;
+losing them from the per-push gate would be losing the guard, not deferring
+a re-measurement. Their cost is accepted knowingly.
+
+And the inverse: two tests BELOW the 5 s rule are registered anyway --
+``test_flex_second_order_ed_chain.TestG4``'s ``test_coulombinter_chain``
+(~2.6 s) and ``test_hund_ising_chain_recorded`` (~1.9 s). They are the same
+exact-diagonalization content, on the same two chain fixtures and at the
+same Matsubara working point, as their ~18 s sibling
+``test_interorbital_bond_chain``, which is over the rule; splitting the
+three between the two shapes of the suite would mean a fast gate that
+re-derives most of a chain ED without ever reaching the verdict the module
+exists for. Their cost is deferred knowingly, with the sibling.
+
+Every OTHER entry below is over the rule on its own, measured. Two of them
+sit close to it and carry the measurement in their reason string, so that a
+reader who wants to re-check the selection does not have to re-time them
+blind.
+
+CONSISTENCY IS ENFORCED, NOT TRUSTED
+------------------------------------
+``tests/test_heavy_tests_registry.py`` fails the FAST gate when this file
+and reality disagree: an entry naming a test that does not exist, a test
+carrying :func:`heavy` but missing from :data:`HEAVY_TESTS`, or an entry
+whose test is not actually skipped with ``HWAVE_FULL_TESTS`` unset.
+
+The gate is a ``unittest``-level skip (``unittest.skipUnless``) on purpose:
+the gating CI runner is ``python -m unittest discover``, where a
+module-level ``pytest.skip`` degrades to a collection ERROR rather than a
+skip.
+"""
+
+import os
+import unittest
+
+#: Environment variable that opts into the full suite. Any value other than
+#: the falsey spellings below (and other than "unset") enables it.
+FULL_SUITE_ENV = "HWAVE_FULL_TESTS"
+
+#: Spellings of "off". Everything else -- "1", "true", "yes", "on", and any
+#: other non-empty string -- is truthy. Kept deliberately small so a typo
+#: like HWAVE_FULL_TESTS=ture errs towards RUNNING the tests rather than
+#: silently skipping them in a run the operator believed was full.
+_FALSEY = frozenset({"", "0", "false", "no", "off"})
+
+
+def full_suite_enabled():
+    """True when ``HWAVE_FULL_TESTS`` asks for the full suite.
+
+    Read at import time by :func:`heavy` (that is when ``unittest`` needs
+    the skip decision), and again by the consistency test, which reports
+    which shape of the suite it is checking.
+    """
+    return os.environ.get(FULL_SUITE_ENV, "").strip().lower() not in _FALSEY
+
+
+#: The opt-in set, as data: ``(module, class, method, reason)``. ``module``
+#: is the bare module name under ``tests/`` (no ``tests.`` prefix and no
+#: ``.py``), matching how the consistency test and the CI discovery command
+#: both name modules. Keep it sorted by module then class then method.
+#:
+#: To add a test here: measure it, confirm it is >= ~5 s on its own, add
+#: the row, and decorate the method with :func:`heavy`. Doing only one of
+#: the two fails ``test_heavy_tests_registry.py``.
+HEAVY_TESTS = (
+    # --- tests/test_bond_longitudinal_ed.py -- longitudinal bond ED granules
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
+     "test_coulombinter_interorbital",
+     "case-M off-site CoulombInter bond blocks vs ED (S and C)"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
+     "test_exchange_interorbital_oracle_only_recorded",
+     "case-M off-site Exchange bond rule vs ED, oracle-only record"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
+     "test_g3_bond_blocks_are_load_bearing_interorbital",
+     "G3 on case M: bond blocks reproduce ED; Hartree-only misses by >= 10 tol"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
+     "test_hund_interorbital",
+     "case-M off-site Hund bond blocks vs ED (S and C)"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
+     "test_ising_interorbital",
+     "case-M off-site Ising bond blocks vs ED (S and C)"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesFx5",
+     "test_coulombinter_g1_g2",
+     "fx5 off-site CoulombInter bond blocks vs ED, shells 1 and 2"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesFx5",
+     "test_exchange_g1_oracle_only_recorded",
+     "fx5 off-site Exchange bond rule vs ED, oracle-only record"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesFx5",
+     "test_g3_bond_blocks_are_load_bearing",
+     "G3: bond blocks reproduce ED; Hartree-only misses by >= 10 tol"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesFx5",
+     "test_hund_g1",
+     "fx5 off-site Hund bond blocks vs ED"),
+    ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesFx5",
+     "test_ising_g1",
+     "fx5 off-site Ising bond blocks vs ED"),
+    # --- tests/test_bond_transverse_ed.py -- W_pm bond ED granules -------
+    ("test_bond_transverse_ed", "TestTask6ProductionPipelineGranules",
+     "test_granule_multiorbital_offsite_coulombinter_regression",
+     "multi-orbital off-site CoulombInter production granule vs ED"),
+    ("test_bond_transverse_ed", "TestTask6ProductionPipelineGranules",
+     "test_granule_multiorbital_offsite_exchange_both_orientations",
+     "multi-orbital off-site Exchange production granule, both orientations"),
+    ("test_bond_transverse_ed", "TestW0Granules",
+     "test_granule_a_multiorbital_offsite_exchange",
+     "W0 granule A: multi-orbital off-site Exchange vs ED"),
+    # --- tests/test_bond_vs_ed_oracle.py -- bond-channel ED oracle -------
+    ("test_bond_vs_ed_oracle", "TestCaseM", "test_joint_ray_ph_1_1",
+     "case-M joint-ray ph adjudication at (1,1)"),
+    ("test_bond_vs_ed_oracle", "TestCaseM", "test_joint_ray_pp_1_1",
+     "case-M joint-ray pp adjudication at (1,1)"),
+    ("test_bond_vs_ed_oracle", "TestPpInterOrbitalSanityFx3", "test_g_minus",
+     "fx3 inter-orbital pp sanity, g- direction"),
+    ("test_bond_vs_ed_oracle", "TestPpInterOrbitalSanityFx3", "test_g_plus",
+     "fx3 inter-orbital pp sanity, g+ direction"),
+    # --- tests/test_bubble_kernel.py -------------------------------------
+    ("test_bubble_kernel", "TestIrBondOracle",
+     "test_matches_direct_lehmann_sum",
+     "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
+     "single most expensive test in the suite"),
+    # --- tests/test_eliashberg_bond_entry.py -- the two pairing entries ---
+    ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
+     "test_ir_lambda_arm_matches_uniform",
+     "the IR arm of the entry-level agreement case: two real bond-gate FLEX "
+     "runs (4x4, Nmat 64 and 128) plus eight hwave_sc solves on their "
+     "archives, one per channel per Matsubara basis, comparing lambda_ir with "
+     "lambda_uniform on the same archive -- it also needs sparse-ir, which "
+     "the fast gate does not require. Its uniform sibling "
+     "(test_uniform_lambda_and_outputs, 2.2 s) and the two-entry agreement "
+     "case (TestInProcess.test_inprocess_equals_postprocessing, 1.2 s) are "
+     "deliberately NOT registered: they are the only end-to-end runs of the "
+     "hwave_sc bond entry, and a fast gate without them would exercise its "
+     "refusals and nothing else"),
+    # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
+    ("test_flex_bond_gpu", "TestEndToEndEquivalence",
+     "test_two_orbital_bond_chain",
+     "two whole bond-gate FLEX solves of the two-orbital fixture (4x4, "
+     "Nmat = 8, EPS = 1e-12, 45 iterations each), one per array backend, "
+     "compared end to end -- 4.5 s measured on an A100, so it sits right "
+     "at the rule; on a machine WITHOUT a CUDA device the whole class is "
+     "skipped from setUpClass anyway, and the fast gate pays nothing"),
+    # --- tests/test_flex_bond_memory.py -- #181 Phase B memory validation --
+    ("test_flex_bond_memory", "TestSubprocessRSS",
+     "test_subprocess_rss_below_estimate_plus_allowance",
+     "bond-resolved FLEX peak RSS of a subprocess vs the preflight estimate "
+     "plus the calibrated interpreter baseline (6x6, Nmat=64, depth 8, "
+     "full output)"),
+    # --- tests/test_flex_bond_onari_trend.py -- #181 Phase B trend milestone --
+    ("test_flex_bond_onari_trend", "TestFlexBondOnariTrend",
+     "test_regenerated_greens_reproduce_the_pinned_lambda",
+     "regenerate the Hartree-Fock bond FLEX greens of the Onari-type trend "
+     "milestone (hours; HWAVE_RUN_SLOW_FIXTURES=1) and re-derive lambda_t"),
+    # --- tests/test_flex_second_order_ed_chain.py -- #181 second-order G4 --
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_coulombinter_chain",
+     "G4: exact diagonalisation of the L = 4 single-orbital chain pins the "
+     "off-site second order of CoulombInter (O(V^2), O(U V), O(U^2)) for "
+     "the local path plus the dropped class and for the bond gate"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_hund_ising_chain_recorded",
+     "G4 (recorded): off-site Hund and Ising on the L = 4 chain against "
+     "exact diagonalisation, printed rather than asserted"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_hund_times_offsite_v_chain",
+     "G4: the mixed O(J V) coefficient of on-site Hund against the "
+     "asymmetric inter-orbital off-site bond on the L = 3 two-orbital "
+     "chain, and the vanishing of the mixed dropped class"),
+    ("test_flex_second_order_ed_chain", "TestG4",
+     "test_interorbital_bond_chain",
+     "G4: the L = 3 two-orbital chain with an orbital-asymmetric "
+     "inter-orbital off-site bond adjudicates the off-site vertex "
+     "orientation and the bond gate, both asserted -- the gate against a "
+     "floor the test measures itself and against the exact oracle"),
+    # --- tests/test_flex_second_order_ed_onsite.py -- #181 second-order G3 --
+    ("test_flex_second_order_ed_onsite", "TestG3",
+     "test_every_type_and_pair",
+     "G3: exact diagonalisation of the single-site three-orbital model pins "
+     "the on-site second order of all seven interaction types and seven "
+     "mixed pairs (~35 production maps at Nmat = 4096)"),
+    # --- tests/test_flex_second_order_sopt.py -- #181 second-order gates --
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_covering_set_equals_the_local_oracle",
+     "G2 (b): end-to-end second-order coefficients of the general path over "
+     "the covering set of 10 pure types and 12 mixed pairs, against the "
+     "independent real-space oracle (Richardson ladder, ~600 maps)"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_b_dropped_class_load_bearing_for_v",
+     "G2 (b): the off/off uncrossed class the local weighting drops is not "
+     "negligible for the off-site V, so the covering-set gate really pins "
+     "the local weighting"),
+    ("test_flex_second_order_sopt", "TestG2Heavy",
+     "test_c_gate_on_reproduces_the_full_oracle",
+     "G2 (c): with the bond gate on the second order is the FULL oracle for "
+     "off-site CoulombInter; the off-site Hund/Ising outcome is recorded"),
+    # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
+    ("test_offsite_exchange_ed_longitudinal",
+     "TestOffsiteExchangeLongitudinalControls",
+     "test_one_orbital_controls_and_the_fock_residual_identity",
+     "off-site Exchange vs density-bond controls, one-orbital ring (ED)"),
+    ("test_offsite_exchange_ed_longitudinal",
+     "TestOffsiteExchangeLongitudinalControls",
+     "test_two_orbital_interorbital_exchange_and_controls",
+     "off-site inter-orbital Exchange longitudinal content vs ED, L=3 norb=2"),
+    # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
+    ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
+     "general-scheme RPA first-order response vs ED"),
+    # --- tests/test_spinful_transverse_ed.py -- t_so granule campaign ----
+    ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
+     "test_norb2_coulombinter",
+     "t_so granule campaign, norb=2 CoulombInter"),
+    ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
+     "test_norb2_exchange", "t_so granule campaign, norb=2 Exchange"),
+    ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
+     "test_norb2_hund", "t_so granule campaign, norb=2 Hund"),
+    ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
+     "test_norb2_pairhop_complex",
+     "t_so granule campaign, norb=2 PairHop (complex phase)"),
+    ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
+     "test_norb2_pairlift", "t_so granule campaign, norb=2 PairLift"),
+    ("test_spinful_transverse_ed", "TestTask4SVDSensitivityGate",
+     "test_norb2_active_types_direction_set",
+     "SVD sensitivity gate over the norb=2 active-type direction set"),
+    ("test_spinful_transverse_ed", "TestTask4SVDSensitivityGate",
+     "test_norb2_tso_mediated_direction_set",
+     "SVD sensitivity gate over the t_so-mediated direction set"),
+    ("test_spinful_transverse_ed", "TestTask4TsoZeroControl",
+     "test_hund_returns_to_pass_zero_at_tso_zero",
+     "t_so=0 isolation control for Hund"),
+    ("test_spinful_transverse_ed", "TestTask4TsoZeroControl",
+     "test_pairlift_returns_to_pass_zero_at_tso_zero",
+     "t_so=0 isolation control for PairLift"),
+    # --- tests/test_uhfk_orientation.py -- #193 end-to-end UHFk gate -----
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_all_types_bond",
+     "three UHFk runs per case x two inter-orbital Ising/Exchange/PairLift "
+     "cases (normal and spin-orbital) against the reference revision on "
+     "the reversed declaration (6.1-6.4 s measured)"),
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_bond_variants",
+     "three UHFk runs per case x three cases (Fock off, spin-orbital) "
+     "against the reference revision on the reversed declaration "
+     "(5.7 s measured -- the closest entry to the rule)"),
+    ("test_uhfk_orientation", "TestUHFkOrientation", "test_pairhop_complex",
+     "three UHFk runs per case x eight complex-PairHop cases (norb 2 and "
+     "1, Fock on and off, normal and spin-orbital) against the reference "
+     "revision on the reversed declaration"),
+)
+
+#: The four fast-gate tests that exceed the 5 s rule by documented
+#: exception (see the module docstring). Data, not prose, so the
+#: consistency test can assert they are NOT skipped in the fast gate --
+#: silently decorating one of them would otherwise go unnoticed.
+FAST_GATE_EXCEPTIONS = (
+    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
+     "test_step3_dressed_extraction_matches_totalned"),
+    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
+     "test_step4_g2_g4_swap_mutation_must_fail"),
+    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
+     "test_old_slice_then_solve_fails_the_s0_granule"),
+    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
+     "test_production_passes_the_s0_granule"),
+)
+
+#: Attribute stamped on every method :func:`heavy` decorates. The
+#: consistency test scans the discovered suite for it, which is how a
+#: decorated-but-unregistered test gets caught.
+HEAVY_MARKER_ATTR = "__hwave_heavy__"
+
+SKIP_REASON = (
+    "heavy opt-in test (>= ~5 s on its own); set {}=1 to run the full "
+    "suite".format(FULL_SUITE_ENV)
+)
+
+
+def heavy(test_method):
+    """Mark ``test_method`` opt-in: skipped unless ``HWAVE_FULL_TESTS``.
+
+    ``unittest.skipUnless`` (NOT ``pytest.mark.skipif``) because
+    ``python -m unittest discover`` is the gating runner. The returned
+    object carries :data:`HEAVY_MARKER_ATTR` in both suite shapes -- the
+    marker records the DECLARATION, whereas ``__unittest_skip__`` records
+    the current run's decision, and the consistency test needs both.
+    """
+    decorated = unittest.skipUnless(full_suite_enabled(), SKIP_REASON)(
+        test_method)
+    setattr(decorated, HEAVY_MARKER_ATTR, True)
+    return decorated
+
+
+def heavy_test_ids():
+    """The registry as ``"module.Class.method"`` strings (a frozenset)."""
+    return frozenset(
+        "{}.{}.{}".format(mod, cls, meth)
+        for mod, cls, meth, _reason in HEAVY_TESTS)

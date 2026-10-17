@@ -1,0 +1,6 @@
+CoulombInter in wannier90-like format for uhfk (equivalence-table full-Kanamori fixture, V=1.0, on-site pair (1,2))
+2
+2
+ 1 1
+   0    0    0    1    2   1.000000000000   0.000000000000
+   0    0    0    2    1   1.000000000000   0.000000000000
