@@ -277,6 +277,45 @@ and the latter on the output files (such as locations to store).
   
   - ``random``: set the initial configuration by random numbers.
 
+- ``geometry_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the geometry in the real-space site representation,
+  in the ``geometry.dat`` format written by StdFace of mVMC: three lattice vectors, one line with
+  the three boundary phases (not used by UHFk, which takes ``BoundaryCondition``), three supercell
+  vectors, then one ``x y z orbital`` row per site. It is required by
+  ``initial_uhf`` and by ``onebodyg`` in ``file.output``. It is optional otherwise.
+
+- ``initial_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the initial configuration of the one-body Green's function
+  in the real-space site representation. Each line holds one element
+  ``i s j t Re Im`` (sites and spins of :math:`\langle c^\dagger_{is} c_{jt}\rangle`), without a header;
+  this is the layout that ``onebodyg`` in ``file.output`` writes, so that output can be fed back here.
+  A file with the five-line header of the UHFr one-body Green's function output is also accepted
+  when its first line starts with ``=``. It cannot be specified together with ``initial``.
+  A state with sublattice order under ``SubShape`` larger than ``[1, 1, 1]`` should be given through
+  ``initial`` instead. When neither ``initial`` nor ``initial_uhf`` is set, the initial configuration
+  follows ``initial_mode``.
+
+- ``onebodyg_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the list of the one-body Green's function elements
+  (the ``greenone.def`` format of mVMC and UHFr: five header lines, then one ``i s j t`` row per
+  element) to be written by ``onebodyg``
+  in ``file.output``. It is optional otherwise.
+
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -347,6 +386,18 @@ to the definition files.
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
   If it is set to an empty string, no output will be generated.
+
+- ``onebodyg``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the name of the file to store the one-body Green's function elements
+  listed in ``onebodyg_uhf`` in the real-space site representation (``i s j t Re Im`` per line,
+  no header). ``geometry_uhf`` and ``onebodyg_uhf`` in ``file.input`` are required.
+  Under ``SubShape`` larger than ``[1, 1, 1]`` the elements keep the sublattice resolution of the
+  converged state. If it is not set, no output will be generated.
 
 - ``rpa``
 
