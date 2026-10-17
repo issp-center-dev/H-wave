@@ -977,6 +977,11 @@ class UHFk(solver_base):
         return green
 
     def _initial_green_uhf(self, info, geom):
+        if self.has_sublattice:
+            logger.error("initial_uhf requires SubShape = [1, 1, 1]; give a sublattice-ordered initial state through "
+                         "initial (green.npz) instead")
+            exit(1)
+
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
         norb     = self.norb
@@ -1004,10 +1009,7 @@ class UHFk(solver_base):
         # Primitive-cell translation invariance makes the origin row sufficient
         # for this initial guess. Sublattice-ordered states need green_sublattice
         # input instead: a single origin row cannot preserve their site dependence.
-        if self.has_sublattice:
-            return self._reshape_green(green_uhf[0])
-        else:
-            return green_uhf[0]
+        return green_uhf[0]
 
     @do_profile
     def _make_ham_trans(self):

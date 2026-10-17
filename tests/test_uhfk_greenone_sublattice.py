@@ -21,8 +21,6 @@ import tempfile
 import numpy as np
 import pytest
 
-np.float = float
-
 from hwave.qlmsio.read_input_k import QLMSkInput
 from hwave.solver.uhfk import UHFk
 
@@ -298,7 +296,11 @@ def test_initial_uhf_round_trip(anisotropic_case, tmp_path, with_header):
     np.testing.assert_allclose(restarted['green'], case['green'], atol=1e-8, rtol=0)
 
 
-# The AF initial_uhf round trip is intentionally omitted: _initial_green_uhf
-# retains only the origin row, assuming primitive-cell translation invariance.
-# It cannot retain different AF sublattice densities; its folded branch also
-# passes self.norb rather than self.norb_orig to _reshape_green's input array.
+def test_initial_uhf_rejects_sublattice(tmp_path, caplog):
+    initial_uhf = tmp_path / 'initial_uhf.dat'
+    initial_uhf.write_text('0 0 0 0 0.5 0\n0 1 0 1 0.5 0\n')
+    with pytest.raises(SystemExit) as error:
+        _run_case(tmp_path, (2, 1, 1), False, initial_uhf=initial_uhf)
+    assert error.value.code == 1
+    assert ('initial_uhf requires SubShape = [1, 1, 1]; give a sublattice-ordered '
+            'initial state through initial (green.npz) instead') in caplog.text
