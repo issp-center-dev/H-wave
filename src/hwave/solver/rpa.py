@@ -8,6 +8,7 @@ import numpy.fft as FFT
 import itertools
 import copy
 from requests.structures import CaseInsensitiveDict
+from .base import ParamDict
 
 try:
     from .perf import do_profile
@@ -1447,7 +1448,7 @@ class RPA:
 
         self.param_ham = param_ham
         self.info_log = info_log
-        self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
+        self.param_mod = ParamDict(info_mode.get("param", {}))
         # The two experimental bond gates are mutually exclusive by
         # calc_type (#181 Tier 3 Phase A); refuse both TRUE here, before
         # any numerical state is built, so nothing else can mask it.
@@ -1681,7 +1682,7 @@ class RPA:
                 "under '{}'. chiq output becomes rank-6; memory/solve cost grow "
                 "from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per (q, freq) "
                 "(estimated principal array {:.3f} GB). To keep the 1.0.x "
-                "behaviour request calc_scheme = 'reduced' explicitly (a "
+                "behaviour request [mode] calc_scheme = 'reduced' explicitly (a "
                 "documented approximation).".format(
                     self.calc_scheme, token, legacy, ", ".join(sorted(types)),
                     legacy, est / 1e9))
@@ -3223,7 +3224,7 @@ class RPA:
                     hint = (" calc_scheme='auto' resolved to 'general' ({}) for this "
                             "input, but the supplied chi0q has the 4-axis reduced "
                             "layout. Supply a rank-6 chi0q, or request "
-                            "calc_scheme = 'reduced' explicitly to accept the "
+                            "[mode] calc_scheme = 'reduced' explicitly to accept the "
                             "documented approximation.".format(self._scheme_resolution))
                 raise ValueError(
                     "chi0q from {}: unexpected shape for general scheme: "

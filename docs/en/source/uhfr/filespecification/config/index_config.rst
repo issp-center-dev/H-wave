@@ -56,6 +56,16 @@ Parameters
 ``mode`` section
 ================================
 
+Only the keys ``mode``, ``calc_scheme``, ``calc_type``,
+``enable_spin_orbital`` and ``flag_fock`` (those the chosen solver supports,
+see below) are written in the ``mode`` table itself, with exactly this
+spelling and case; every other solver parameter goes in ``mode.param``.
+``hwave`` stops with an error when ``mode`` contains any other key or a
+differently cased one, and when ``mode.param`` contains one of these keys (in
+any case) or a nested ``param`` table. At the end of a run it warns about the
+``mode.param`` keys the run did not read: a misspelled name, or a parameter
+that has no effect under the current settings.
+
 - ``mode``
 
   **Type :**

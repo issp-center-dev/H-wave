@@ -5,9 +5,71 @@ for Hartree-Fock calculations, including parameter handling and validation.
 
 """
 import sys
+from collections.abc import ItemsView, ValuesView
 from requests.structures import CaseInsensitiveDict
 import logging
 logger = logging.getLogger("qlms").getChild("solver")
+
+
+class ParamDict(CaseInsensitiveDict):
+    """The solver's ``[mode.param]`` table, recording which keys it read.
+
+    Every read through ``[]``, ``get`` or ``in`` adds the lower-cased key to
+    :attr:`accessed`. Iterating the table (``items()``, ``values()``, e.g.
+    to log every parameter) does not count as a read. A ``ParamDict`` built
+    from another one, or returned by :meth:`copy`, shares its record, so
+    every copy a solver makes of the table reports into the same set
+    (``copy.deepcopy`` gives an independent record). ``hwave`` uses the
+    record to report the keys of the input file that the run never read
+    (GitHub issue #236).
+    """
+
+    def __init__(self, data=None, **kwargs):
+        if isinstance(data, ParamDict):
+            # a copy is not a read: take the entries without touching them
+            self.accessed = data.accessed
+            super().__init__(dict(data._store.values()), **kwargs)
+        else:
+            self.accessed = set()
+            super().__init__(data, **kwargs)
+
+    def __getitem__(self, key):
+        self.accessed.add(key.lower())
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self.accessed.add(key.lower())
+        return key.lower() in self._store
+
+    def items(self):
+        return _UntrackedItems(self)
+
+    def values(self):
+        return _UntrackedValues(self)
+
+    def copy(self):
+        return ParamDict(self)
+
+
+class _UntrackedItems(ItemsView):
+    """``items()`` view of a :class:`ParamDict` that does not record reads."""
+
+    def __iter__(self):
+        for key, value in self._mapping._store.values():
+            yield (key, value)
+
+    def __contains__(self, item):
+        key, value = item
+        entry = self._mapping._store.get(key.lower())
+        return entry is not None and (entry[1] is value or entry[1] == value)
+
+
+class _UntrackedValues(ValuesView):
+    """``values()`` view of a :class:`ParamDict` that does not record reads."""
+
+    def __iter__(self):
+        for _, value in self._mapping._store.values():
+            yield value
 
 
 class solver_base():
@@ -86,7 +148,9 @@ class solver_base():
             for key, value in info_mode_param.items():
                 self.param_mod[key] = value
         else:
-            self.param_mod = CaseInsensitiveDict(para_init)
+            self.param_mod = ParamDict(para_init)
+            if isinstance(info_mode_param, ParamDict):
+                self.param_mod.accessed = info_mode_param.accessed
             for key, value in info_mode_param.items():
                 self.param_mod[key] = value
 
