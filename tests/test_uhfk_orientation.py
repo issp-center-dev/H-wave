@@ -448,6 +448,18 @@ def _reversed_dir(case):
         os.path.join(_FIXTURES, case.fixture), case.twobody, copy=tuple(copy))
 
 
+#: the ``energy.dat`` members that sum the per-type interaction energies
+_TOTALS = ("Energy_Total", "FreeEnergy_Total")
+
+
+def _refixed(case):
+    """The ``energy.dat`` members of ``case`` whose formula the fix of issue
+    #233 changed: the off-site Fock contraction (every off-site type, with
+    the Fock term on) and PairHop's direct contraction (on or off)."""
+    return {"Energy_" + t for t in case.files
+            if t != "CoulombIntra" and (case.fock or t == "PairHop")}
+
+
 class _OrientationMixin:
     """Shared assertions, mixed into the two gates below (a plain mixin, so
     that no empty ``TestCase`` is discovered for it)."""
@@ -489,8 +501,10 @@ class _OrientationMixin:
 
     def _assert_same_run(self, a, b, what, case):
         """Every member of two runs is EXACTLY equal: the key sets, every
-        ``energy.dat`` number and every ``green.dat.npz`` array, at
-        ``np.array_equal`` -- no tolerance, not even at round-off.
+        ``energy.dat`` number (except the off-site energy members that the
+        fix of issue #233 recomputes, see below) and every
+        ``green.dat.npz`` array, at ``np.array_equal`` -- no tolerance, not
+        even at round-off.
 
         The two runs do the same arithmetic on the same machine (see the
         module docstring): the oriented table of ``F`` and the reference
@@ -505,21 +519,46 @@ class _OrientationMixin:
         self.assertEqual(sorted(ga), sorted(gb),
                          "{}: green.dat.npz member names differ".format(what))
         self._assert_offsite_energy_is_live(case, ea, what)
+        # The reference revision predates the fix of issue #233 (the Fock
+        # part of the off-site double-counting energy paired G_ab(r) with
+        # G_ba(r)), so the energy members of the off-site types, and the
+        # _TOTALS that sum them, are computed by a different formula from
+        # the same (bit-identical) Green function. They are left out of the
+        # exact comparison; their values are pinned against -Tr(H_int rho)/2
+        # by tests/test_uhfk_offsite_fock_energy.py. What the two runs must
+        # still share exactly is everything else, and each total must move
+        # by exactly what those members move by.
+        refixed = _refixed(case)
         for key in sorted(ea):
+            if key in refixed or key in _TOTALS:
+                continue
             self.assertEqual(
                 ea[key], eb[key],
                 "{}: energy.dat member {} differs by {:.3e} absolute"
                 .format(what, key, abs(ea[key] - eb[key])))
+        moved = sum(ea[k] - eb[k] for k in refixed if k in ea)
+        for key in _TOTALS:
+            if key in ea:
+                self.assertAlmostEqual(
+                    ea[key] - eb[key], moved, delta=1e-12,
+                    msg="{}: {} moved by {:.3e}, the off-site energy members "
+                        "by {:.3e}".format(what, key, ea[key] - eb[key], moved))
         for key in sorted(ga):
             self.assertTrue(
                 np.array_equal(ga[key], gb[key]),
                 "{}: green.dat.npz member {} is not bit-identical"
                 .format(what, key))
 
-    def _relative_energy_gap(self, a, b):
+    def _relative_energy_gap(self, a, b, case=None):
+        """Relative gap in ``Energy_Total``. With ``case``, the members of
+        :func:`_refixed` are taken out of both totals first, so that two
+        trees on either side of the fix of issue #233 are compared on the
+        part they compute by the same formula."""
         ea, eb = a[0], b[0]
-        return abs(ea["Energy_Total"] - eb["Energy_Total"]) / max(
-            abs(ea["Energy_Total"]), 1e-30)
+        drop = _refixed(case) if case is not None else ()
+        ta = ea["Energy_Total"] - sum(ea[k] for k in drop if k in ea)
+        tb = eb["Energy_Total"] - sum(eb[k] for k in drop if k in eb)
+        return abs(ta - tb) / max(abs(ta), 1e-30)
 
     def _relative_green_gap(self, a, b):
         """The largest relative difference over the ``green.dat.npz``
@@ -551,6 +590,19 @@ class _OrientationMixin:
             scale = max(float(np.abs(x).max()), 1e-30)
             gap = max(gap, float(np.abs(x - y).max()) / scale)
         return gap
+
+
+class TestRefixedMembers(unittest.TestCase):
+    """The exemption of :func:`_refixed` is no wider than the fix of #233:
+    a Hartree-only case keeps every member under the exact comparison."""
+
+    def test_hartree_only_cases_exempt_nothing(self):
+        for label in ("bond/norb2/fock=off", "bond/norb2/fock=off/so"):
+            self.assertEqual(_refixed(CASES[label]), set(), label)
+
+    def test_pairhop_is_exempt_with_the_fock_term_off(self):
+        self.assertEqual(_refixed(CASES["pairhop/norb2/fock=off"]),
+                         {"Energy_PairHop"})
 
 
 class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
@@ -600,6 +652,8 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                     "UNREVERSED declaration returns the same Green function "
                     "to {:.3e} relative".format(label, green_gap))
             else:
+                # the shared-formula part of the total (see _refixed)
+                gap = self._relative_energy_gap(mine, control, case)
                 # the coinciding direction, asserted rather than assumed:
                 # the reason is structural (see the module docstring), so a
                 # change that makes the orientation visible here has to come
