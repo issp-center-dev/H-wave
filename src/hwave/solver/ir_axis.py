@@ -91,12 +91,15 @@ def _cond_str(mat):
     runs its own SVD, which can fail (non-convergence) or trip on non-finite
     entries exactly in the degenerate regimes this is reporting on. Any such
     failure degrades to 'unavailable' rather than letting a bare LinAlgError
-    escape in place of the contextual ValueError the caller promised.
+    escape in place of the contextual ValueError the caller promised. A
+    non-finite result degrades the same way: depending on the numpy version,
+    an SVD of non-finite entries either raises or returns ``nan``.
     """
     try:
-        return "{:.3e}".format(float(np.linalg.cond(mat)))
+        cond = float(np.linalg.cond(mat))
     except (np.linalg.LinAlgError, ValueError, FloatingPointError):
         return "unavailable"
+    return "{:.3e}".format(cond) if np.isfinite(cond) else "unavailable"
 
 
 def auto_wmax(eigenvalues, mu, interaction_scale, *, factor=3.0,
