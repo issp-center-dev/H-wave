@@ -50,8 +50,11 @@ parameters to regimes moved. So the fixed-point tests were replaced by:
    relying on it, so a future sampling change yields a diagnosis rather than
    a mystery;
 2. an environment-adaptive ladder scan that pins the issue's actual
-   contract -- a clean error somewhere on the descending-beta ladder, and
-   NEVER a silent success with a bad residual anywhere on it;
+   contract on the real library -- every rejection on the descending-beta
+   ladder is a clean contextual error, and there is NEVER a silent success
+   with a bad residual anywhere on it (whether the ladder produces a
+   rejection at all is version dependent: pylibsparseir >= 0.10 rejects
+   none of it);
 3. mock- and direct-call-based tests for the raise machinery and message
    content, which depend on no sampling behaviour at all.
 """
@@ -89,8 +92,10 @@ EPS = 1e-8
 # sparse-ir 1.1.7 distributes RAISE/built differently across the same ladder
 # (measured: 4 rejections / 10 builds, versus 6 / 8 on 2.1.1) and inverts
 # several individual points -- but in BOTH versions at least one point is
-# rejected and NO built point escapes the residual threshold, which is
-# exactly what the two assertions below require.
+# rejected and NO built point escapes the residual threshold. pylibsparseir
+# >= 0.10 rejects NO point of this ladder (measured with 0.10.0 and 0.12.0),
+# which is why the scan below asserts the shape of any rejection and the
+# absence of silent wrongness, not that a rejection occurs.
 LADDER_BETAS = (0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005)
 LADDER_WMAX = 5.0
 
@@ -126,16 +131,21 @@ class TestGuardContractOnBetaLadder(unittest.TestCase):
                                   _roundtrip_residuals(ax)))
         return rejections, built
 
-    def test_ladder_produces_at_least_one_contextual_rejection(self):
-        """(a) The guard must actually engage somewhere on the ladder, and
-        every rejection it issues must be the contextual ValueError -- not a
-        bare LinAlgError (which, note, IS a ValueError subclass)."""
+    def test_every_ladder_rejection_is_contextual(self):
+        """(a) Every rejection the guard issues on the ladder must be the
+        contextual ValueError -- not a bare LinAlgError (which, note, IS a
+        ValueError subclass).
+
+        Whether the ladder produces a rejection AT ALL is not asserted: that
+        depends on the sparse-ir / pylibsparseir version (pylibsparseir >=
+        0.10 samples every point of this ladder adequately, so nothing is
+        rejected there), and the guard's engagement is pinned
+        version-independently by TestGuardFailureRoutes, which drives each
+        rejection route -- structural, pinv failure, bad residual -- through
+        mocks. What this scan pins on the REAL library is the shape of any
+        rejection it does issue, and (b) below that nothing silently wrong
+        is ever built."""
         rejections, built = self._scan()
-        self.assertTrue(
-            rejections,
-            "no point on the descending-beta ladder {} (wmax={}, eps={}) was "
-            "rejected; the guard never engages in this environment"
-            .format(LADDER_BETAS, LADDER_WMAX, EPS))
         for beta, statistics, exc in rejections:
             where = "beta={}, statistics={}".format(beta, statistics)
             self.assertNotIsInstance(exc, np.linalg.LinAlgError, where)
