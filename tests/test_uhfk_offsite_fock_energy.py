@@ -1,7 +1,7 @@
 """Double-counting energies must equal -Tr(H_int rho)/2.
 
 The unequal intra-cell/inter-cell hoppings make the two directed orbital
-coherences differ. The on-site Exchange case fixes the sign and total-cell
+coherences differ. The on-site Exchange case pins down the sign and total-cell
 normalization independently of the off-site regression.
 
 Before the fix, plain UHFk gave these (energy, -Tr(H_int rho)/2) values:
@@ -10,6 +10,8 @@ Ising off-site:    (+0.000927187264, +0.154288384881), error -0.153361197617.
 PairHop off-site:  (-0.000001837374, -0.540038047857), error +0.540036210483
                   with Fock either enabled or disabled.
 On-site Exchange and PairHop already agreed to within 1e-15.
+Off-site CoulombInter and Hund share the generic Fock contraction and
+failed the same way; off-site PairLift failed with enable_spin_orbital.
 
 PairHop's Hamiltonian contracts conj(G[r,v,b,u,a]) with the expectation
 conj(G[r,t,b,s,a]). Relabeling its spin table gives the direct product
@@ -28,8 +30,10 @@ from hwave.solver.uhfk import UHFk
 @pytest.mark.parametrize("interaction, offset, fock", [
     ("Exchange", 0, True), ("Exchange", 1, True), ("Ising", 1, True),
     ("PairHop", 0, True), ("PairHop", 1, True), ("PairHop", 1, False),
+    ("CoulombInter", 1, True), ("Hund", 1, True), ("PairLift", 1, True),
 ], ids=["onsite-exchange", "offsite-exchange", "offsite-ising", "onsite-pairhop",
-        "offsite-pairhop", "offsite-pairhop-no-fock"])
+        "offsite-pairhop", "offsite-pairhop-no-fock",
+        "offsite-coulombinter", "offsite-hund", "offsite-pairlift"])
 def test_fock_double_counting_matches_mean_field(interaction, offset, fock, spin_orbital):
     transfer = {
         ((0, 0, 0), (0, 0)): -0.4,
