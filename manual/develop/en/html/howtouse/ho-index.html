@@ -56,6 +56,11 @@ of the FLEX solver, <code class="docutils literal notranslate"><span class="pre"
 Requires sparse-ir 2.0 or later. Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[ir]&quot;</span></code>
 (or <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;sparse-ir&gt;=2&quot;</span></code>); without it, <code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code> is a
 fail-fast error with this install hint.)</p></li>
+<li><p>threadpoolctl module (optional; with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> and
+<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code> larger than 1 it threads the host-side batched linear
+algebra of the bond channels. Install with <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[threads]&quot;</span></code>
+(or <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">threadpoolctl</span></code>); without it that work runs serially,
+with a warning.)</p></li>
 </ul>
 <p>Note that <a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a> is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
 The spatial FFTs of the RPA/FLEX/dynamic-Eliashberg solvers switch to

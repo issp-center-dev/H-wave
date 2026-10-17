@@ -649,9 +649,17 @@ Integer (default value is 1)</p>
 <p><strong>Description :</strong>
 Number of worker threads for the spatial FFTs (parallelized via
 <code class="docutils literal notranslate"><span class="pre">scipy.fft</span></code>). The default 1 keeps the serial numpy path, unchanged
-from previous releases (opt-in); -1 uses all cores. Ignored on the
-GPU. Set a smaller number when running several calculations
-concurrently.</p>
+from previous releases (opt-in); -1 uses all cores. The GPU path
+ignores it for the FFTs and the on-device work (the one exception is
+described below). Set a smaller number when running several calculations
+concurrently.
+With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> the same number also threads the
+host-side batched dressing (solve, conditioning guard, products) of the
+bond channels, including the host-side exact decomposition of the GPU
+conditioning guard; this needs
+<code class="docutils literal notranslate"><span class="pre">threadpoolctl</span></code> (<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[threads]&quot;</span></code>; otherwise it stays
+serial, with a warning). The results
+agree with the serial ones to rounding error.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">mixing_scheme</span></code></p>
 <p><strong>Type :</strong>

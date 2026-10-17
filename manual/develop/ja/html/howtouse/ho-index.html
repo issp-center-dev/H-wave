@@ -58,6 +58,10 @@ CPU実行にフォールバックします。）</p></li>
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>にのみ必要です。
 sparse-ir 2.0 以降が必要です。<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[ir]&quot;</span></code>（または<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;sparse-ir&gt;=2&quot;</span></code>）でインストールできます。未導入で<code class="docutils literal notranslate"><span class="pre">&quot;ir&quot;</span></code>
 を指定した場合はインストール手順つきの明示エラーになります。）</p></li>
+<li><p>threadpoolctl モジュール（任意。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>で
+<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>を 2 以上にしたとき、ボンドチャネルのホスト側バッチ計算を
+スレッド並列化します。<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;hwave[threads]&quot;</span></code>（または<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">threadpoolctl</span></code>）でインストールできます。未導入の場合は
+警告を出して直列実行します。）</p></li>
 </ul>
 <p>なお、H-waveのUHFk、RPA、FLEXモードでは<a class="reference external" href="https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html">numpy.fft</a>をFFT計算に利用しています。
 RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>
