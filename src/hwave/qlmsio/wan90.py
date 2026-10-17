@@ -113,9 +113,9 @@ def read_geometry(name_in):
         logger.error("read_geom: file {} not found".format(name_in))
         exit(1)
         
-    info_geometry["unit_vec"] = np.array([data.split() for data in lines[0:unit_vec_line_end]], dtype=np.float)
-    info_geometry["degree"] = np.array(lines[unit_vec_line_end].split(), dtype=np.float)
-    info_geometry["cell_vec"] = np.array([data.split() for data in lines[cell_vec_line_start:cell_vec_line_end]], dtype=np.float)
+    info_geometry["unit_vec"] = np.array([data.split() for data in lines[0:unit_vec_line_end]], dtype=float)
+    info_geometry["degree"] = np.array(lines[unit_vec_line_end].split(), dtype=float)
+    info_geometry["cell_vec"] = np.array([data.split() for data in lines[cell_vec_line_start:cell_vec_line_end]], dtype=float)
     info_geometry["site2vec"] = {}
     for idx, data in enumerate(lines[cell_vec_line_end:]):
         if len(data.split()) == n_kpath_line:
