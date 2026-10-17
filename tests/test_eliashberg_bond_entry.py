@@ -107,7 +107,7 @@ class TestSidecarWriter(unittest.TestCase):
         c_npy = os.path.join(self.tmp, "longitudinal_bond_chi_c_w.npy")
         self.assertTrue(os.path.exists(index) and os.path.exists(s_npy) and os.path.exists(c_npy))
         with np.load(index) as d:
-            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(int(d["bond_archive_schema"]), 3)
             self.assertEqual(str(d["bond_archive_layout"]), "sidecar")
             self.assertNotIn("chi_s_w", d.files)
             self.assertNotIn("chi_c_w", d.files)

@@ -778,7 +778,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
 
     def _with_cell(self, inp, cell):
         inp = dict(inp)
-        inp["mode"] = {"param": {"CellShape": list(cell)}}
+        inp["mode"] = {"param": dict(inp["mode"]["param"], CellShape=list(cell))}
         return inp
 
     def test_version_2_on_a_two_site_axis_is_accepted(self):
