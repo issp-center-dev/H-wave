@@ -32,7 +32,7 @@
   chi0q_mode = "load"
   pairing_type = "singlet"
   init_gap = "cos"
-  max_iter = 500
+  max_iter = 1000
   alpha = 0.5
   convergence_tol = 1.0e-5
   num_eigenvalues = 10
