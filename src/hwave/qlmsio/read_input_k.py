@@ -195,7 +195,7 @@ class QLMSkInput():
             # only when its opening separator is present.
             with open(file_name) as stream:
                 skiprows = 5 if stream.readline().lstrip().startswith("=") else 0
-            data = np.loadtxt(file_name, skiprows=skiprows)
+            data = np.loadtxt(file_name, skiprows=skiprows, ndmin=2)
         except FileNotFoundError:
             logger.error("read_input_k: file not found: {}".format(file_name))
             exit(1)
@@ -230,7 +230,7 @@ class QLMSkInput():
             If input file is not found
         """
         try:
-            _data = np.loadtxt(file_name, dtype=np.int32, skiprows = 5)
+            _data = np.loadtxt(file_name, dtype=np.int32, skiprows = 5, ndmin=2)
         except FileNotFoundError:
             logger.error("read_input_k: file not found: {}".format(file_name))
             exit(1)
