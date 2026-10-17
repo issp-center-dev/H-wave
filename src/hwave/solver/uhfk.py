@@ -1828,11 +1828,11 @@ class UHFk(solver_base):
 
                 if type == "PairHop":
                     if self.iflag_fock:
-                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r, optimize=True)
-                        w2 = np.einsum('stuv, rsaub, rtavb -> rab', spin, gab_r, gab_r, optimize=True)
+                        w1 = np.einsum('stuv, rvbsa, rubta -> rab', spin, np.conjugate(gab_r), np.conjugate(gab_r), optimize=True)
+                        w2 = np.einsum('stuv, rubsa, rvbta -> rab', spin, np.conjugate(gab_r), np.conjugate(gab_r), optimize=True)
                         ee = np.einsum('rab, rab ->', jab_r, w1-w2)
                     else:
-                        w1 = np.einsum('stuv, rsavb, rtaub -> rab', spin, gab_r, gab_r, optimize=True)
+                        w1 = np.einsum('stuv, rvbsa, rubta -> rab', spin, np.conjugate(gab_r), np.conjugate(gab_r), optimize=True)
                         ee = np.einsum('rab, rab ->', jab_r, w1)
                     energy[type] = -ee/2.0*nvol
 
@@ -1840,7 +1840,7 @@ class UHFk(solver_base):
                     if self.iflag_fock:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
                         w1b = np.broadcast_to(w1, (nvol,norb_inter,norb_inter))
-                        w2 = np.einsum('stuv, rubsa, rvatb -> rab', spin, gab_r, gab_r, optimize=True)
+                        w2 = np.einsum('stuv, rubsa, rtbva -> rab', spin, np.conjugate(gab_r), gab_r, optimize=True)
                         ee = np.einsum('rab, rab->', jab_r, w1b-w2)
                     else:
                         w1 = np.einsum('stuv, vasa, ubtb -> ab', spin, gab_r[0], gab_r[0])
