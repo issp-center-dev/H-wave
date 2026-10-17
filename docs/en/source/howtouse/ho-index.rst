@@ -23,6 +23,11 @@ Basic usage
     Requires sparse-ir 2.0 or later. Install with ``pip install "hwave[ir]"``
     (or ``pip install "sparse-ir>=2"``); without it, ``"ir"`` is a
     fail-fast error with this install hint.)
+  - threadpoolctl module (optional; with ``longitudinal_bond_channels`` and
+    ``fft_workers`` larger than 1 it threads the host-side batched linear
+    algebra of the bond channels. Install with ``pip install "hwave[threads]"``
+    (or ``pip install threadpoolctl``); without it that work runs serially,
+    with a warning.)
 
   Note that `numpy.fft <https://numpy.org/doc/stable/reference/generated/numpy.fft.fft.html>`_ is used for FFT calculations in H-wave UHFk, RPA, and FLEX modes.
   The spatial FFTs of the RPA/FLEX/dynamic-Eliashberg solvers switch to
