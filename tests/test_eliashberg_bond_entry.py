@@ -1553,7 +1553,8 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
         import json
         import subprocess
         import sys
-        from tests.test_flex_second_order_compat import reference_subprocess_env
+        from tests.test_flex_second_order_compat import (own_tree_subprocess_env,
+                                                         reference_subprocess_env)
         path = os.path.join(self.work, "input_{}.json".format(name))
         inp = _bond_compat_input(out_dir)
         if interaction_dir is not None:
@@ -1562,8 +1563,7 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
             json.dump(inp, fh)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured by the coverage run
-            env = dict(os.environ,
-                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            env = own_tree_subprocess_env(checkout)
         else:
             env = reference_subprocess_env(checkout)
         subprocess.run([sys.executable, "-B", "-c", _QLMS_RUN, path],

@@ -70,13 +70,33 @@ _FILES = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "gre
 _COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
 
 
+#: Thread counts pinned to one in every comparison subprocess. The
+#: comparisons against the reference revision are exact (bit for bit), and
+#: a multithreaded BLAS or OpenMP reduction may sum in a different order
+#: from one process to the next: a CI run once saw two identical UHFk
+#: calculations differ by one unit in the last place of an energy.
+_SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+                      "MKL_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
+                      "BLIS_NUM_THREADS": "1"}
+
+
+def own_tree_subprocess_env(checkout):
+    """Environment for a subprocess that runs THIS tree in a comparison:
+    its ``src`` first on ``PYTHONPATH``, pytest-cov's hooks kept (this tree
+    stays measured) and the BLAS/OpenMP thread counts pinned to one."""
+    return dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(checkout, "src"), checkout)),
+                **_SINGLE_THREAD_ENV)
+
+
 def reference_subprocess_env(checkout):
     """Environment for a subprocess that runs the REFERENCE checkout: its
-    ``src`` first on ``PYTHONPATH`` and pytest-cov's subprocess hooks
+    ``src`` first on ``PYTHONPATH``, the BLAS/OpenMP thread counts pinned to
+    one (as for this tree's run), and pytest-cov's subprocess hooks
     removed, so the reference tree is never measured as part of this
     tree's coverage (it is a different revision; measuring it halves the
     reported total)."""
-    env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(checkout, "src"), checkout)),
+               **_SINGLE_THREAD_ENV)
     for key in _COVERAGE_ENV:
         env.pop(key, None)
     return env
@@ -85,7 +105,7 @@ def reference_subprocess_env(checkout):
 def _run(checkout, path, inter, out, so, extra=None):
     if checkout == os.getcwd():
         # this tree's own run: keep it measured
-        env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+        env = own_tree_subprocess_env(checkout)
     else:
         env = reference_subprocess_env(checkout)
     subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so,
@@ -608,6 +628,27 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
             self.skipTest(why)
         self.assertIsNone(dev)
         self.assertIn("cannot read the revision", why)
+
+
+class TestComparisonThreadPinning(unittest.TestCase):
+    """Both sides of an exact comparison run with one BLAS/OpenMP thread,
+    whatever the caller's environment says."""
+
+    def test_both_helpers_pin_the_thread_counts(self):
+        with mock.patch.dict(os.environ, {"OPENBLAS_NUM_THREADS": "8",
+                                          "OMP_NUM_THREADS": "8"}):
+            for env in (own_tree_subprocess_env("/tmp/here"),
+                        reference_subprocess_env("/tmp/reference")):
+                for key in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS",
+                            "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+                            "BLIS_NUM_THREADS"):
+                    self.assertEqual(env[key], "1", key)
+
+    def test_own_tree_env_keeps_coverage_hooks(self):
+        with mock.patch.dict(os.environ, {"COV_CORE_SOURCE": "src/hwave"}):
+            env = own_tree_subprocess_env("/tmp/here")
+        self.assertEqual(env["COV_CORE_SOURCE"], "src/hwave")
+        self.assertEqual(env["PYTHONPATH"].split(os.pathsep), ["/tmp/here/src", "/tmp/here"])
 
 
 class TestReferenceSubprocessEnv(unittest.TestCase):

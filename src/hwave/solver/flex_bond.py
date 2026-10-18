@@ -10,6 +10,7 @@ from . import backend as _bk
 from . import matsubara as _ms
 from . import bubble as _bubble
 from . import second_order as _so
+from . import threaded as _threaded
 
 
 class BondBlockStore:
@@ -239,8 +240,15 @@ def _at(iteration):
     return "" if iteration is None else " (SCF iteration {})".format(iteration)
 
 
+def _sandwich(left, x, right, workers):
+    """``left[None] @ x @ right[None]``, thread-chunked on the host."""
+    if _bk.array_module_of(x) is np:
+        return _threaded.sandwich(left, x, right, workers=workers)
+    return left[None] @ x @ right[None]
+
+
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
-           guard_policy="refuse", violations=None, guard_method="auto", stats=None):
+           guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
@@ -248,7 +256,8 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
                                       # the warnings of a tolerated violation do not
                                       # pass through the refusal wrapper below, so the
                                       # iteration reaches them at the source
-                                      iteration=iteration, guard_method=guard_method, stats=stats)
+                                      iteration=iteration, guard_method=guard_method, stats=stats,
+                                      workers=workers)
     except ValueError as exc:
         if iteration is None:
             raise
@@ -337,7 +346,7 @@ class DressResult:
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       second_order="takimoto", guard_freqs="all", guard_policy="refuse",
-                      guard_method="auto"):
+                      guard_method="auto", workers=1):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -447,7 +456,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
         collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
         chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats)
+                             guard_freqs, guard_policy, violations, guard_method, stats, workers)
         cond_s = min(cond_s, cs if cs is not None else np.inf)
         collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -455,10 +464,10 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if output_full:
             store.put_freq_batch("chi_s_w", l0, l1, _bk.to_host(chi_s_b))
         chi_s_b -= cb
-        W_b = 1.5 * (S[None] @ chi_s_b @ S[None])
+        W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
         chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats)
+                             guard_freqs, guard_policy, violations, guard_method, stats, workers)
         cond_c = min(cond_c, cc if cc is not None else np.inf)
         collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
@@ -466,13 +475,13 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if output_full:
             store.put_freq_batch("chi_c_w", l0, l1, _bk.to_host(chi_c_b))
         chi_c_b -= cb
-        W_b += 0.5 * (C[None] @ chi_c_b @ C[None])
+        W_b += 0.5 * _sandwich(C, chi_c_b, C, workers)
         del chi_c_b
         # second-order term. A / Bc carry BOTH the channel-0 block of the
         # legacy kernel and the mixed blocks of either kernel, so they are
         # built once, before the channel-0 branch.
-        A = S[None] @ cb @ S[None]
-        Bc = C[None] @ cb @ C[None]
+        A = _sandwich(S, cb, S, workers)
+        Bc = _sandwich(C, cb, C, workers)
         if second_order == "local":
             # accumulate_batch is array-module generic; `factors` must carry arrays
             # of xp's module (the caller passes the device pack on the GPU)

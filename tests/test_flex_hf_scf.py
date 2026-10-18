@@ -176,6 +176,7 @@ class TestG0Off(unittest.TestCase):
 
     def test_byte_identity_against_develop(self):
         from tests.test_flex_second_order_compat import (develop_checkout,
+                                                           own_tree_subprocess_env,
                                                            reference_subprocess_env, moved_stamp)
         here = os.getcwd()
         # one shared rule with the other develop-comparison harnesses: the
@@ -190,7 +191,8 @@ class TestG0Off(unittest.TestCase):
                 # from the helper is harmless; only the reference invocation
                 # needs pytest-cov's subprocess hooks stripped -- this
                 # tree's run stays measured
-                env = None if root == here else reference_subprocess_env(root)
+                env = (own_tree_subprocess_env(root) if root == here
+                       else reference_subprocess_env(root))
                 subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out],
                                check=True, cwd=here, env=env)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
@@ -243,6 +245,7 @@ class TestG0Off(unittest.TestCase):
         difference in the map.
         """
         from tests.test_flex_second_order_compat import (develop_checkout,
+                                                           own_tree_subprocess_env,
                                                            reference_subprocess_env)
         here = os.getcwd()
         develop, why = develop_checkout()
@@ -263,7 +266,8 @@ class TestG0Off(unittest.TestCase):
                                        (develop, rev, c)):
                     # same rule as above: only the reference invocations lose
                     # pytest-cov's subprocess hooks
-                    env = None if root == here else reference_subprocess_env(root)
+                    env = (own_tree_subprocess_env(root) if root == here
+                       else reference_subprocess_env(root))
                     subprocess.run([sys.executable, "-B", "-c", _HF_FIRST_MAP_SCRIPT,
                                     root, inp, out], check=True, cwd=here, env=env)
                 mine = np.load(os.path.join(a, "static.npz"))["sigma_static"]

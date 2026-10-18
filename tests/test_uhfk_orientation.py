@@ -43,8 +43,11 @@ generator they would each have to agree about), same mixing, same
 eigen-decompositions, same iteration count. A tolerance here would hide a
 real difference in the mean field. The only thing that could separate the
 two processes is a different numpy/BLAS on the two ``PYTHONPATH``s, which
-is not a thing on one machine. The comparison below therefore carries NO
-tolerance at all, not even a round-off fallback.
+is not a thing on one machine; both runs also pin the BLAS/OpenMP thread
+counts to one, so that no multithreaded reduction can sum in another order.
+The comparison below therefore carries NO tolerance at all, not even a
+round-off fallback. (The ``energy.dat`` members whose formula changed after
+the reference revision are the documented exception: see :func:`_refixed`.)
 
 WHICH CASES THE ORIENTATION ACTUALLY MOVES (and why the rest cannot)
 --------------------------------------------------------------------
@@ -396,9 +399,8 @@ def _run(checkout, indir, case):
         shutil.copytree(indir, work, dirs_exist_ok=True)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured
-            env = dict(os.environ)
-            env["PYTHONPATH"] = os.pathsep.join(
-                (os.path.join(checkout, "src"), checkout))
+            from tests.test_flex_second_order_compat import own_tree_subprocess_env
+            env = own_tree_subprocess_env(checkout)
         else:
             from tests.test_flex_second_order_compat import reference_subprocess_env
             env = reference_subprocess_env(checkout)
@@ -451,10 +453,14 @@ _TOTALS = ("Energy_Total", "FreeEnergy_Total")
 
 def _refixed(case):
     """The ``energy.dat`` members of ``case`` whose formula the fix of issue
-    #233 changed: the off-site Fock contraction (every off-site type, with
-    the Fock term on) and PairHop's direct contraction (on or off)."""
-    return {"Energy_" + t for t in case.files
-            if t != "CoulombIntra" and (case.fock or t == "PairHop")}
+    #233 changed: the Fock contraction of every two-body type (with the
+    Fock term on) and PairHop's direct contraction (on or off).
+
+    The on-site ``CoulombIntra`` is included: its value is mathematically
+    unchanged (at ``r = 0`` the old and the new product are complex
+    conjugates), but the new contraction sums in another order, and on CI
+    the spin-orbital case came out one unit in the last place apart."""
+    return {"Energy_" + t for t in case.files if case.fock or t == "PairHop"}
 
 
 class _OrientationMixin:
@@ -518,7 +524,7 @@ class _OrientationMixin:
         self._assert_offsite_energy_is_live(case, ea, what)
         # The reference revision predates the fix of issue #233 (the Fock
         # part of the off-site double-counting energy paired G_ab(r) with
-        # G_ba(r)), so the energy members of the off-site types, and the
+        # G_ba(r)), so the energy members of _refixed, and the
         # _TOTALS that sum them, are computed by a different formula from
         # the same (bit-identical) Green function. They are left out of the
         # exact comparison; their values are pinned against -Tr(H_int rho)/2
@@ -526,6 +532,10 @@ class _OrientationMixin:
         # still share exactly is everything else, and each total must move
         # by exactly what those members move by.
         refixed = _refixed(case)
+        for key in sorted(refixed):
+            # an exempted member must still be there, on both sides
+            self.assertIn(key, ea, "{}: energy.dat has no {}".format(what, key))
+            self.assertIn(key, eb, "{}: the reference has no {}".format(what, key))
         for key in sorted(ea):
             if key in refixed or key in _TOTALS:
                 continue
@@ -533,12 +543,12 @@ class _OrientationMixin:
                 ea[key], eb[key],
                 "{}: energy.dat member {} differs by {:.3e} absolute"
                 .format(what, key, abs(ea[key] - eb[key])))
-        moved = sum(ea[k] - eb[k] for k in refixed if k in ea)
+        moved = sum(ea[k] - eb[k] for k in refixed)
         for key in _TOTALS:
             if key in ea:
                 self.assertAlmostEqual(
                     ea[key] - eb[key], moved, delta=1e-12,
-                    msg="{}: {} moved by {:.3e}, the off-site energy members "
+                    msg="{}: {} moved by {:.3e}, the exempted energy members "
                         "by {:.3e}".format(what, key, ea[key] - eb[key], moved))
         for key in sorted(ga):
             self.assertTrue(
@@ -596,6 +606,10 @@ class TestRefixedMembers(unittest.TestCase):
     def test_hartree_only_cases_exempt_nothing(self):
         for label in ("bond/norb2/fock=off", "bond/norb2/fock=off/so"):
             self.assertEqual(_refixed(CASES[label]), set(), label)
+
+    def test_on_site_coulomb_is_exempt_with_the_fock_term_on(self):
+        self.assertIn("Energy_CoulombIntra", _refixed(CASES["alltypes/norb2/fock=on/so"]))
+        self.assertNotIn("Energy_CoulombIntra", _refixed(CASES["pairhop/norb2/fock=off"]))
 
     def test_pairhop_is_exempt_with_the_fock_term_off(self):
         self.assertEqual(_refixed(CASES["pairhop/norb2/fock=off"]),
