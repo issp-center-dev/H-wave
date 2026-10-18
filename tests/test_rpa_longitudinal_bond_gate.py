@@ -522,7 +522,7 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertEqual(gi["longitudinal_bond_chiq_s_static"].shape, (nvol,) + (s.norb,) * 4)
         self.assertEqual(gi["longitudinal_bond_reverse"].shape, (B,))
         self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising"])
-        self.assertEqual(int(gi["longitudinal_bond_schema"]), 1)
+        self.assertEqual(int(gi["longitudinal_bond_schema"]), 2)
         self.assertEqual(int(gi["longitudinal_bond_max_shells"]), -1)
         self.assertEqual(tuple(gi["longitudinal_bond_spatial_shape"]), (4, 4, 1))
         self.assertEqual(str(gi["longitudinal_bond_spin_mode"]), "spin-free")

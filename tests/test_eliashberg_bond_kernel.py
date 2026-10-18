@@ -559,12 +559,18 @@ class TestKernelUniform(unittest.TestCase):
                                     # tau_to_fermion pins the bosonic index to
                                     # l = n - m + nmat//2 taken MODULO nmat.
                                     l = (n - m + nmat // 2) % nmat
+                                    # pair legs (issue #232): the ROW channel
+                                    # al carries the input phase e^{-ik'.R},
+                                    # the COLUMN channel be the output phase
+                                    # e^{-ik.R} -- the geometry proven against
+                                    # an independent spin-orbital reference in
+                                    # tests/test_bond_pairing_placement.py
                                     for al in range(B):
-                                        pa = np.exp(1j * (kx[ix] * dr[al, 0]
-                                                          + ky[iy] * dr[al, 1]))
+                                        pa = np.exp(-1j * (kx[jx] * dr[al, 0]
+                                                           + ky[jy] * dr[al, 1]))
                                         for be in range(B):
-                                            pb = np.exp(1j * (kx[jx] * dr[be, 0]
-                                                              + ky[jy] * dr[be, 1]))
+                                            pb = np.exp(-1j * (kx[ix] * dr[be, 0]
+                                                               + ky[iy] * dr[be, 1]))
                                             blk = Gam[l, q, al * nd:(al + 1) * nd,
                                                       be * nd:(be + 1) * nd]
                                             blk4 = blk.reshape(norb, norb, norb, norb)

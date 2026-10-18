@@ -993,8 +993,8 @@ class Interaction:
             # for every type except PairHop they multiply the SAME operator,
             # so the table entering the vertex is the mean
             #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
-            # Without this the ring read a one-sided off-site declaration as
-            # v e^{+iqR} (the documented sign, #133) where the operator it
+            # Without this the ring read a one-sided off-site declaration with
+            # its bare phase where the operator it
             # declares -- v n_a(i) n_a(i+R),
             # even in R by the site sum -- has the exact vertex v cos(qR)
             # (measured: chiq differed by 1.2e-2 from the symmetric reading
@@ -1028,11 +1028,17 @@ class Interaction:
             tbl = _symmetrised(type, tbl)
             for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
+                # A row (R, a, b) puts orbital a in the original cell and b
+                # in the cell displaced by R -- the same bond as a Transfer
+                # row (R, a, b) (Wannier90 / RESPACK, issue #232). In this
+                # layout (beta pair first) that operator sits at -R; storing
+                # it at +R put it on the opposite bond.
+                rvec = tuple(-r for r in irvec)
                 for spinvec, w in spins.items():
                     s1,s2,s3,s4 = spinvec
                     # beta beta' alpha alpha'
                     orb = (s4, b, s3, b, s1, a, s2, a)
-                    ham_r[(*irvec, *orb)] += v * w
+                    ham_r[(*rvec, *orb)] += v * w
 
         # pairhop-type interaction
         #   H^PH = P^{\alpha\alpha^\prime}
@@ -2992,7 +2998,9 @@ class RPA:
                         green_info["chiq_pm_bond_static"]
                     save_kwargs["chiq_pm_static"] = \
                         green_info["chiq_pm_static"]
-                    save_kwargs["transverse_bond_schema_version"] = 1
+                    # 2: channel m carries the rows declared at -delta_r[m],
+                    # the bond of their Transfer rows (issue #232)
+                    save_kwargs["transverse_bond_schema_version"] = 2
                     save_kwargs["transverse_output_kind"] = "bond_static"
                     save_kwargs["transverse_bond_delta_r"] = \
                         np.asarray(topo.delta_r)
@@ -5851,7 +5859,9 @@ class RPA:
                 else int(self.longitudinal_bond_max_shells)),
             "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
             "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
-            "longitudinal_bond_schema": np.int64(1),
+            # 2: channel m carries the rows declared at -delta_r[m], the bond
+            # of their Transfer rows (issue #232)
+            "longitudinal_bond_schema": np.int64(2),
         }
         green_info.update(out)
         logger.info(

@@ -275,7 +275,7 @@ class FLEX(RPA):
                           "longitudinal_bond_cond_tol")
 
     #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
-    #: ``"npz"`` (the default single-file schema-2 archive) and ``"sidecar"``
+    #: ``"npz"`` (the default single-file archive) and ``"sidecar"``
     #: (an index npz plus the two big channel members as memory-mappable
     #: ``.npy`` files next to it).
     _BOND_OUTPUT_LAYOUTS = ("npz", "sidecar")
@@ -482,7 +482,7 @@ class FLEX(RPA):
         if not isinstance(layout, str) or layout.strip().lower() not in FLEX._BOND_OUTPUT_LAYOUTS:
             raise ValueError(
                 "[mode.param] longitudinal_bond_output_layout must be \"npz\" or \"sidecar\" "
-                "(\"npz\" writes the single-file schema-2 archive, the default; \"sidecar\" writes "
+                "(\"npz\" writes the single-file archive, the default; \"sidecar\" writes "
                 "an index npz plus the two big channel members as memory-mappable .npy files next "
                 "to it), got {!r}".format(layout))
         out["longitudinal_bond_output_layout"] = layout.strip().lower()
@@ -988,6 +988,7 @@ class FLEX(RPA):
             file_name = os.path.join(path_to_input,
                                      info_inputfile["sigma_init"])
             env = self._read_sigma(file_name)
+            self._check_seed_placement(file_name)
             if env.marker not in (None, "split", "total"):
                 raise ValueError(
                     "sigma_init file '{}' carries an unknown sigma_convention {!r} "
@@ -1047,6 +1048,19 @@ class FLEX(RPA):
             if ir_meta is not None:
                 info["sigma_init_ir"] = ir_meta
         return info
+
+    def _check_seed_placement(self, file_name):
+        """Refuse a ``sigma_init`` written before the bond-placement
+        correction of issue #232 when this run's declaration is
+        placement-sensitive (judged on the PRE-fold declaration and the
+        CellShape grid): such a seed belongs to a different Hamiltonian."""
+        from hwave.sc import check_placement_stamp
+        hi = getattr(self, "ham_info", None)
+        decl = (getattr(hi, "param_ham_orig", None) or getattr(hi, "param_ham", None)
+                if hi is not None else None)
+        grid = getattr(getattr(self, "lattice", None), "cellshape", None)
+        with np.load(file_name) as data:
+            check_placement_stamp(data, file_name, decl, grid=grid, what="sigma_init")
 
     def _read_sigma(self, file_name):
         """Load a saved self-energy array from a FLEX ``sigma.npz``.
@@ -2379,7 +2393,9 @@ class FLEX(RPA):
                 else int(self.longitudinal_bond_max_shells)),
             "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
             "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
-            "longitudinal_bond_schema": np.int64(1),
+            # 2: channel m carries the rows declared at -delta_r[m], the bond
+            # of their Transfer rows (issue #232)
+            "longitudinal_bond_schema": np.int64(2),
             "longitudinal_bond_source": np.str_("last_map"),
             "longitudinal_bond_guard_freqs": np.str_(self.longitudinal_bond_guard_freqs),
             "longitudinal_bond_cond_tol": np.float64(self.longitudinal_bond_cond_tol),
@@ -4491,13 +4507,15 @@ class FLEX(RPA):
         # a downstream Eliashberg run cannot silently pair these
         # susceptibilities with vertices from a different adjudication.
         # Version 2 = the #113 exact-diagonalization values (Hund / Exchange /
-        # Ising corrected); files without the field predate #113.
+        # Ising corrected); files without the field predate #113. Version 3 =
+        # version 2 with every off-site row on the bond of its Transfer row
+        # (#232; version 2 put it on the opposite bond).
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
                            chi_convention=("myo" if self._flex_general
                                            else "kuroki"),
-                           sc_vertex_version=2,
+                           sc_vertex_version=3,
                            # Fourier-sign provenance (issue #133): q labels
                            # follow the documented e^{+iqR} convention
                            momentum_convention=MOMENTUM_CONVENTION,
@@ -4577,6 +4595,8 @@ class FLEX(RPA):
                      wavevector_index=self.wavenum_table,
                      cell_shape=np.array(self.lattice.shape),
                      momentum_convention=MOMENTUM_CONVENTION,
+                     # bond placement of issue #232 (see read_init)
+                     sc_vertex_version=np.int64(3),
                      **_freq_meta("F"),
                      **self._second_order_members())
             logger.info("save_results: save sigma in file {}".format(file_name))
@@ -4607,6 +4627,9 @@ class FLEX(RPA):
                      # silently corrupting the pair bubble
                      beta=1.0 / self.T,
                      momentum_convention=MOMENTUM_CONVENTION,
+                     # bond placement of issue #232 (checked by the
+                     # Eliashberg consumers, hwave.sc.check_placement_stamp)
+                     sc_vertex_version=np.int64(3),
                      **green_extra,
                      **_freq_meta("F"),
                      **self._second_order_members())
@@ -4659,7 +4682,8 @@ class FLEX(RPA):
                 np.save(os.path.join(out_dir, s_base), chi_s_w)
                 np.save(os.path.join(out_dir, c_base), chi_c_w)
                 np.savez(file_name,
-                         bond_archive_schema=np.int64(2),
+                         # 3: rows filed on the bond of their Transfer rows (#232)
+                         bond_archive_schema=np.int64(3),
                          bond_archive_layout=np.str_("sidecar"),
                          chi_s_w_file=np.str_(s_base),
                          chi_c_w_file=np.str_(c_base),
@@ -4667,10 +4691,11 @@ class FLEX(RPA):
             else:
                 # the default single-file archive: every pre-existing member
                 # keeps its exact positional order and bond_archive_layout is
-                # APPENDED last, so the ordered prefix is byte-for-byte what the
-                # schema-2 reference archive writes (issue #205)
+                # APPENDED last, so the ordered prefix has the member order of
+                # the archive written before the layout field existed (issue #205)
                 np.savez(file_name,
-                         bond_archive_schema=np.int64(2),
+                         # 3: rows filed on the bond of their Transfer rows (#232)
+                         bond_archive_schema=np.int64(3),
                          chi_s_w=chi_s_w,
                          chi_c_w=chi_c_w,
                          **tail_members,

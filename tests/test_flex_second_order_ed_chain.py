@@ -27,8 +27,8 @@ Two fixtures, and what each adjudicates
 * ``_fx_orbital()`` -- ``L = 3``, TWO orbitals, and an ORBITAL-ASYMMETRIC
   inter-orbital bond (``v_01(+x) = v``, ``v_10(+x) = 0.6 v``). This is the
   fixture that adjudicated the two ledger items of the campaign: the
-  orientation of the off-site density vertex (the documented reading, the
-  orientation fix of issue #193) and the bond gate on inter-orbital bonds
+  orientation of the off-site density vertex (on the bond of the Transfer
+  row with the same ``(R, a, b)``, issue #232) and the bond gate on inter-orbital bonds
   (issue #192, closed by the pair permutation of spec 2026-09-16 R3). Both
   are ASSERTED here now. Its verdicts are in :class:`TestG4`'s methods and
   in the module's measured table below. The same fixture also carries the
@@ -53,41 +53,39 @@ cannot discriminate one).
 
 Which Hamiltonian the chain ED must be
 --------------------------------------
-The declared row ``(R, a, b, v)`` of an off-site two-body type places
-orbital ``a`` in the ORIGINAL cell and orbital ``b`` in the cell displaced
-by ``R``,
+The declared row ``(R, a, b, v)`` of an off-site two-body type sits on the
+SAME bond as a ``transfer.dat`` row ``(R, a, b)``: in both file formats
+(Wannier90 / RESPACK) orbital ``a`` is in the ORIGINAL cell and orbital
+``b`` in the cell displaced by ``R`` (``docs/en`` UHFk interaction file
+page: "``[alpha]`` corresponds to the orbital alpha in the original cell,
+and ``[beta]`` corresponds to the orbital beta in the cell displaced by
+r"; issue #232).
 
-    v n_{j, a} n_{j+R, b}
+The ED fixture works in the frame of the solver's Green function, which is
+the global MIRROR of the file frame: ``EDFixture.build_h1`` puts the hop
+``t[(a, b)]`` of the Transfer row ``(+1, a, b)`` on ``(j + 1, a) <- (j, b)``,
+and :meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
+pins that against the solver's own band. In that frame a two-body row on
+the Transfer row's bond therefore reads
 
--- the DOCUMENTED reading (``docs/en`` UHFk interaction file page:
-"``[alpha]`` corresponds to the orbital alpha in the original cell, and
-``[beta]`` corresponds to the orbital beta in the cell displaced by r"),
-which the mean-field kernel implements since the orientation fix of issue
-#193. Note that this is the OPPOSITE placement from the one a
-``transfer.dat`` row gets in this code base -- ``EDFixture.build_h1`` puts
-``t[(a, b)]`` on ``(j + R, a) <- (j, b)``, which
-:meth:`TestChainHamiltonian.test_bare_green_matches_the_production_solver`
-pins against the solver's own band.
+    v n_{j+R, a} n_{j, b}
 
-READ THAT ASYMMETRY CAREFULLY, because it invites the wrong repair. It is
-a statement about the SOLVER'S INTERNAL MATRIX FRAME and nothing else: the
-one-body Hamiltonian is carried as the matrix of ``c^dag_{r,a} c_{0,b}``,
-whose two index slots are placed the other way round from the two density
-slots of a two-body row. There is no second public file convention here --
-``transfer.dat`` and the two-body files are each read exactly as their
-documentation says, and a user writing either file never meets this. So do
-NOT "fix" it by flipping the one-body reading, or by re-flipping the
-two-body one to match it: both are already right, the frames simply differ
-inside the code, and the ED fixture has to reproduce BOTH of them to be
-comparable with production at all.
+-- orbital ``a`` on the displaced site, exactly like the hop. Only the
+RELATIVE placement of the one-body and two-body rows is physical (a global
+mirror relabels sites and changes no result), so the placement must be
+written in the same frame as the hop; reading the documentation's
+"original cell" literally in this mirrored frame (``v n_{j,a} n_{j+R,b}``)
+puts the row on the OPPOSITE bond, which is what this module, and the
+solvers, did before issue #232. ``_ed_terms(..., opposite_bond=True)``
+builds that placement for the two-sided checks.
 
 This is NOT assumed here. :meth:`TestChain
 Hamiltonian.test_ed_hamiltonian_is_the_production_mean_field` compares the
 first-order functional of the ED term list against UHFk's OWN mean-field
 kernel (``hwave.solver.hartree_fock.accumulate_hf``, Hartree AND Fock, at
-the same density) and fails with the opposite (orbital-swapped) placement
-by 5.4e-2 / 1.4e-2 of the mean field on the two inter-orbital fixtures,
-while the documented placement matches at 1e-16. On the single-orbital
+the same density) and fails with the opposite-bond placement by
+5.4e-2 / 1.4e-2 of the mean field on the two inter-orbital fixtures,
+while the Transfer-bond placement matches at 1e-16. On the single-orbital
 chain the two placements are the same Hamiltonian, which is why only the
 two-orbital fixture can decide it.
 :meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`
@@ -95,17 +93,19 @@ extends that adjudication to EVERY off-site type the kernel accepts
 (``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``, ``PairLift``,
 ``PairHop``) and to both settings of the kernel's ``include_fock`` switch,
 on spin-coherent densities -- which the spin-flip types need in order to
-have a mean field at all.
+have a mean field at all. The placement of the solvers themselves is
+checked independently of this module (no exact diagonalization, no H-wave
+code on the reference side) by ``tests/test_two_body_placement.py``.
 
 SCOPE OF THAT CLAIM, and of every verdict below it. What is adjudicated
 here is the second-order vertex against UHFk's MEAN-FIELD READING of a
 declared row: ``accumulate_hf`` is what defines the orbital placement the
 chain ED implements, and the gate then asks whether the second order is
-consistent with THAT Hamiltonian. Since the orientation fix that reading
-IS the documented one, so the pin is now anchored to the file-format
-definition and not only to internal consistency; what the module still
-cannot decide on its own is whether the DOCUMENTATION is the intended
-convention. The k-space bridge the comparison rides on (exponent sign,
+consistent with THAT Hamiltonian. Since issue #232 that reading puts a
+two-body row on the bond of the Transfer row with the same ``(R, a, b)``,
+so the pin is anchored to the file-format definition (checked on its own
+by ``tests/test_two_body_placement.py``) and not only to internal
+consistency. The k-space bridge the comparison rides on (exponent sign,
 orbital index order) is pinned separately, on a band that can see it, by
 :meth:`TestChainHamiltonian.test_fourier_sign_and_orbital_order_are_pinned`
 -- without that pin a flipped bridge would silently select the opposite
@@ -150,8 +150,8 @@ bound is expressed in it.
 
 The v^2 row was the campaign's open item, and both halves of it are now
 settled. The STANDALONE local path plus the dropped class reproduces the
-exact inter-orbital off-site second order (so the DOCUMENTED orientation
-of the off-site density vertex -- orbital ``a`` in the original cell -- is
+exact inter-orbital off-site second order (so the orientation of the
+off-site density vertex -- on the Transfer row's bond, issue #232 -- is
 confirmed by exact diagonalisation). The BOND GATE used to miss it by
 4.0e-2 -- twenty times the tolerance, and nearly twice the whole off/off
 uncrossed class it is supposed to be resumming (2.2e-2 of the
@@ -201,8 +201,9 @@ UP, DN = 0, 1
 #: (:meth:`TestChainHamiltonian.test_first_order_gate_every_type_documented_reading`):
 #: ONE inter-orbital nearest-neighbour bond per type, declared in both
 #: orientations as a reader delivers it. Orbital 1 sits in the original
-#: cell and orbital 2 in the cell displaced by ``+x``, so the orbital swap
-#: maps each declaration onto a DIFFERENT Hamiltonian. ``PairHop`` carries a
+#: cell and orbital 2 in the cell displaced by ``+x`` (the bond of the
+#: Transfer row ``(+x, 1, 2)``), so the opposite-bond placement maps each
+#: declaration onto a DIFFERENT Hamiltonian. ``PairHop`` carries a
 #: complex amplitude (its mirrored row is the conjugate), which is the only
 #: type whose orientation the kernel can get wrong on a REAL declaration.
 _GATE_ROWS = {
@@ -223,9 +224,10 @@ _GATE_ONSITE = {"CoulombIntra": [(0, 0, 0, 1, 1, 0.5, 0.0)]}
 #: the EQUAL-SITE density ``gbb`` alone (``accumulate_hf``'s ``hh0``), so
 #: on a translation-invariant density it is independent of the
 #: displacement ``r`` -- and a Hermitian-closed declaration is invariant
-#: under the orbital swap once ``r`` is dropped. The gate therefore asserts
-#: EQUALITY of the two placements there instead of a miss; with the Fock
-#: term on, every type including these misses by 9.4e-2 ... 4.5e-1.
+#: under the opposite-bond placement once ``r`` is dropped. The gate
+#: therefore asserts EQUALITY of the two placements there instead of a miss;
+#: with the Fock term on, every type including these misses by
+#: 9.6e-2 ... 4.5e-1.
 #: ``PairHop`` is absent because its direct term reads the INTER-SITE
 #: density, so it sees the orientation in both Fock settings.
 _HARTREE_ORIENTATION_BLIND = ("CoulombInter", "Hund", "Ising", "Exchange",
@@ -476,14 +478,16 @@ def _rows_interorbital(v, ratio=0.6):
     ``v_01(+x) = v`` and ``v_10(+x) = ratio * v`` with ``ratio != 1``, each
     with its reversed partner. Both orbital assignments of the SAME
     displacement are declared with DIFFERENT amplitudes, so nothing here is
-    invariant under the orbital swap the ED adjudicates."""
+    invariant under the placement swap the ED adjudicates (for these
+    density rows the opposite-bond placement IS the orbital swap)."""
     return {"CoulombInter": [(1, 0, 0, 1, 2, v, 0.0), (-1, 0, 0, 2, 1, v, 0.0),
                              (1, 0, 0, 2, 1, ratio * v, 0.0), (-1, 0, 0, 1, 2, ratio * v, 0.0)]}
 
 
 def _rows_interorbital_one(v):
     """ONE inter-orbital bond of the two-orbital chain, both orientations:
-    ``v_01(+x) = v`` alone. The orbital swap maps this declaration onto a
+    ``v_01(+x) = v`` alone. The opposite-bond placement (for a density
+    row, the orbital swap) maps this declaration onto a
     DIFFERENT Hamiltonian (unlike :func:`_rows_interorbital` at ratio 1,
     where the two declared bonds exchange and the swap is a symmetry), so
     this is the shape the orientation check needs."""
@@ -509,21 +513,24 @@ def _rows_hund_offsite_v(j, v):
     return rows
 
 
-def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
+def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, opposite_bond=False):
     """The quartic term list (``(p, q, r, s, coeff)`` for
     ``coeff c^dag_p c_q c^dag_r c_s``, the form ``SectorED`` consumes) of
     the Hamiltonian the DECLARED rows describe.
 
-    A row ``(R, a, b, v)`` places orbital ``a`` in the ORIGINAL cell ``j``
-    and orbital ``b`` in the cell displaced by ``R`` -- the DOCUMENTED
-    reading of an interaction row (``docs/en`` UHFk interaction file page:
-    "``[alpha]`` corresponds to the orbital alpha in the original cell, and
-    ``[beta]`` ... in the cell displaced by r"), which the mean-field
-    kernel implements since the orientation fix of issue #193. ``w`` is the
-    mirrored-row weight.
+    A row ``(R, a, b, v)`` is on the SAME bond as a Transfer row
+    ``(R, a, b)`` (Wannier90 / RESPACK; ``docs/en`` UHFk interaction file
+    page: "``[alpha]`` corresponds to the orbital alpha in the original
+    cell, and ``[beta]`` ... in the cell displaced by r"; issue #232). In
+    the fixture's frame -- the global mirror of the file frame, fixed by
+    ``EDFixture.build_h1`` putting the hop ``t[(a, b)]`` of the Transfer row
+    ``(+1, a, b)`` on ``(j + 1, a) <- (j, b)`` -- that bond carries orbital
+    ``a`` on site ``j' = j + R`` and orbital ``b`` on site ``j``. ``w`` is
+    the mirrored-row weight.
 
-    Writing ``j' = j + R``, the monomials are the ``docs/en`` definitions
-    with ``i -> j`` (orbital ``a``) and ``j -> j'`` (orbital ``b``):
+    The monomials are the ``docs/en`` definitions with ``i -> j'``
+    (orbital ``a``) and ``j -> j`` (orbital ``b``); below ``j`` labels the
+    site of orbital ``a`` and ``j'`` that of orbital ``b`` for brevity:
 
     ``CoulombIntra``
         ``v n_{j,a,up} n_{j,a,dn}`` (on-site, same orbital).
@@ -560,8 +567,10 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
         ``(-R, b, a, conj v)`` IS the Hermitian conjugate of this one, so a
         Hermitian-closed declaration already carries the ``h.c.``.
 
-    ``swap_orbitals`` builds the OPPOSITE placement (``a`` in the displaced
-    cell) and exists only so the orientation can be checked two-sidedly.
+    ``opposite_bond`` builds the OPPOSITE placement (orbital ``a`` on ``j``,
+    ``b`` on ``j + R`` in the fixture's frame -- the bond the solvers put a
+    two-body row on before issue #232) and exists only so the placement can
+    be checked two-sidedly.
     """
     terms = []
     for itype, rows in rows_by_type.items():
@@ -571,8 +580,6 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
             if v == 0.0:
                 continue
             a, b, R = a1 - 1, b1 - 1, rx
-            if swap_orbitals:
-                a, b = b, a
             if itype == "CoulombIntra":
                 if (rx, ry, rz) != (0, 0, 0) or a != b:
                     raise ValueError("CoulombIntra must be an on-site same-orbital row")
@@ -593,9 +600,12 @@ def _ed_terms(fx, rows_by_type, mirrored_weight=0.5, swap_orbitals=False):
             elif itype not in ("Exchange", "PairLift", "PairHop"):
                 raise ValueError("chain ED: unsupported interaction type {!r}".format(itype))
             for j in range(fx.L):
-                jp = (j + R) % fx.L
-                ma = [fx.mode(j, a, s) for s in (UP, DN)]     # orbital a, ORIGINAL cell
-                mb = [fx.mode(jp, b, s) for s in (UP, DN)]    # orbital b, cell displaced by R
+                # the Transfer row's bond: orbital a on j + R, orbital b on j
+                # in the fixture's frame (opposite_bond: a on j, b on j + R)
+                ja, jb = ((j, (j + R) % fx.L) if opposite_bond
+                          else ((j + R) % fx.L, j))
+                ma = [fx.mode(ja, a, s) for s in (UP, DN)]    # orbital a
+                mb = [fx.mode(jb, b, s) for s in (UP, DN)]    # orbital b
                 if sigma is not None:
                     for s1 in range(2):
                         for s2 in range(2):
@@ -1254,14 +1264,15 @@ class TestChainHamiltonian(unittest.TestCase):
         This is what fixes the chain Hamiltonian, and it is two-sided in
         both conventions at once:
 
-        * the ORBITAL PLACEMENT of an off-site row -- now the DOCUMENTED
-          one (orbital ``a`` in the original cell). Measured deviation from
-          the production mean field with the opposite placement: 0 on the
-          single-orbital chain (where the two are the same Hamiltonian),
-          5.434e-2 of the mean field on the single inter-orbital bond and
-          1.359e-2 on the asymmetric pair, while the documented placement
-          matches at 2.1e-16 / 3.9e-16 (every case here is at or below
-          2.8e-15). This is the convention the campaign's second-order
+        * the ORBITAL PLACEMENT of an off-site row -- on the bond of the
+          Transfer row with the same ``(R, a, b)`` (issue #232; orbital
+          ``a`` on site ``j + R`` in the fixture's frame). Measured
+          deviation from the production mean field with the opposite-bond
+          placement: 0 on the single-orbital chain (where the two are the
+          same Hamiltonian), 5.434e-2 of the mean field on the single
+          inter-orbital bond and 1.359e-2 on the asymmetric pair, while the
+          Transfer-bond placement matches at 2.8e-17 / 2.6e-16 (every case
+          here is at or below 2.8e-15). This is the convention the campaign's second-order
           comparison rests on, and it is measured here rather than assumed.
         * the MIRRORED-ROW weight: at the full weight the off-site part of
           the mean field is doubled -- 1.000 of the mean field's own size
@@ -1298,7 +1309,7 @@ class TestChainHamiltonian(unittest.TestCase):
                 up = ref[:, :norb, :norb]
                 mine = _to_k(fx, _hf_sigma(fx, _ed_terms(fx, rows), rho))
                 np.testing.assert_allclose(mine, up, atol=1e-11 * scale)
-                swapped = _to_k(fx, _hf_sigma(fx, _ed_terms(fx, rows, swap_orbitals=True), rho))
+                swapped = _to_k(fx, _hf_sigma(fx, _ed_terms(fx, rows, opposite_bond=True), rho))
                 if orbital_sensitive:
                     self.assertGreater(np.abs(swapped - up).max(), 1e-3 * scale,
                                        "{}: the orbital placement of the off-site row is not "
@@ -1334,8 +1345,8 @@ class TestChainHamiltonian(unittest.TestCase):
         documented, grouped = [], []
         for j in range(fx.L):
             jp = (j + R) % fx.L
-            ma = [fx.mode(j, a, s) for s in (UP, DN)]
-            mb = [fx.mode(jp, b, s) for s in (UP, DN)]
+            ma = [fx.mode(jp, a, s) for s in (UP, DN)]   # the Transfer row's bond:
+            mb = [fx.mode(j, b, s) for s in (UP, DN)]    # a on j + R, b on j
             for s in (UP, DN):
                 documented.append((ma[s], mb[s], mb[1 - s], ma[1 - s], v))
                 grouped.append((ma[s], ma[1 - s], mb[1 - s], mb[s], -v))
@@ -1368,9 +1379,10 @@ class TestChainHamiltonian(unittest.TestCase):
     def test_first_order_gate_every_type_documented_reading(self):
         """G-HF, every type: for each off-site interaction type the kernel
         accepts, the production Hartree-Fock self-energy on a spin-coherent
-        density equals the Wick derivative of the DOCUMENTED-reading ED
-        Hamiltonian -- in BOTH of the kernel's Fock settings, on the FULL
-        spin-orbital matrix -- and the opposite orbital placement does not.
+        density equals the Wick derivative of the ED Hamiltonian that puts
+        each row on the Transfer row's bond (issue #232) -- in BOTH of the
+        kernel's Fock settings, on the FULL spin-orbital matrix -- and the
+        opposite-bond placement does not.
 
         Why this fixture and this density. ``_fx_complex`` is the
         inversion- and transpose-asymmetric two-orbital ``L = 3`` band, so
@@ -1393,16 +1405,16 @@ class TestChainHamiltonian(unittest.TestCase):
 
             type           flag_fock=true            flag_fock=false
                            match     miss (min)      match     miss (min)
-            CoulombInter   2.0e-16   1.4e-1          1.4e-16   blind
-            Hund           2.0e-16   4.5e-1          1.3e-16   blind
-            Ising          2.3e-16   2.1e-1          1.7e-16   blind
-            Exchange       8.0e-17   1.8e-1          0.0       blind
-            PairLift       1.7e-16   1.3e-1          0.0       blind
-            PairHop        1.3e-16   9.4e-2          4.1e-17   9.0e-2
+            CoulombInter   1.4e-16   1.4e-1          1.4e-16   blind
+            Hund           3.1e-16   4.5e-1          1.3e-16   blind
+            Ising          1.7e-16   2.1e-1          1.7e-16   blind
+            Exchange       1.5e-16   1.8e-1          0.0       blind
+            PairLift       5.8e-17   1.3e-1          0.0       blind
+            PairHop        8.2e-17   9.6e-2          8.2e-17   9.6e-2
 
         The tightest cell of the whole table is therefore ``PairHop``'s
-        9.0e-2, ninety times the 1e-3 the gate demands; the largest match
-        residual anywhere is 2.3e-16, four orders inside the 1e-12 it
+        9.6e-2, ninety times the 1e-3 the gate demands; the largest match
+        residual anywhere is 3.1e-16, four orders inside the 1e-12 it
         demands.
 
         "blind" is not a weaker check but a different one, asserted as an
@@ -1419,7 +1431,7 @@ class TestChainHamiltonian(unittest.TestCase):
             rows_by_type = dict(_GATE_ONSITE)
             rows_by_type[itype] = rows
             terms = _ed_terms(fx, rows_by_type)
-            swap_terms = _ed_terms(fx, rows_by_type, swap_orbitals=True)
+            swap_terms = _ed_terms(fx, rows_by_type, opposite_bond=True)
             onsite_terms = _ed_terms(fx, _GATE_ONSITE)
             for fock in (True, False):
                 for k, rho in enumerate(rhos):
@@ -1445,7 +1457,7 @@ class TestChainHamiltonian(unittest.TestCase):
                                                          include_fock=fock))
                         if fock or itype not in _HARTREE_ORIENTATION_BLIND:
                             self.assertGreater(np.abs(prod - swapped).max() / scale, 1e-3,
-                                               "{}: the opposite orbital placement also "
+                                               "{}: the opposite-bond placement also "
                                                "matches the production mean field -- the "
                                                "orientation is not pinned".format(itype))
                         else:
@@ -1639,13 +1651,12 @@ class TestG4(unittest.TestCase):
         Hamiltonian is pinned to UHFk's own mean field
         (:meth:`TestChainHamiltonian.test_ed_hamiltonian_is_the_production_
         mean_field`), this is an independent confirmation of the ORIENTATION
-        of the off-site density vertex -- the DOCUMENTED reading, orbital
-        ``a`` in the original cell: the OPPOSITE orbital placement of
-        the same declaration, run through the identical recipe, misses
-        ``local + dropped`` by 2.2e-2 -- eleven times the tolerance, and the
-        assertion below does fail loudly on it (that is exactly the value it
-        failed by while the local kernel still read the reversed
-        orientation, before the fix of issue #193).
+        of the off-site density vertex -- on the bond of the Transfer row
+        with the same ``(R, a, b)`` (issue #232): the OPPOSITE-bond
+        placement of the same declaration, run through the identical
+        recipe, misses ``local + dropped`` by 2.2e-2 (re-measured after
+        issue #232) -- eleven times the tolerance, and the assertion below
+        does fail loudly on it.
 
         ASSERTED -- the bond gate too (issue #192, fixed by spec 2026-09-16
         R3). Phase B's bond-resolved path is supposed to resum exactly the

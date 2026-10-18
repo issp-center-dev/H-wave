@@ -367,12 +367,12 @@ RPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照し�
 .. code-block:: text
 
     hwave_sc: === Self-consistent iteration ===
-    hwave_sc: Iteration    0: eigenvalue = 0.924446, diff = 3.544353e-01
-    hwave_sc: Iteration    1: eigenvalue = 0.817270, diff = 7.893848e-02
+    hwave_sc: Iteration    0: eigenvalue = 1.162617, diff = 1.165271e+00
+    hwave_sc: Iteration    1: eigenvalue = 0.345822, diff = 5.558347e-01
     ...
-    hwave_sc: Iteration  192: eigenvalue = 0.959725, diff = 9.900091e-06
-    hwave_sc: Converged at iteration 193
-    hwave_sc: Iteration result: eigenvalue = 0.959725, converged = True, n_iter = 193
+    hwave_sc: Iteration  607: eigenvalue = 1.041844, diff = 9.792150e-06
+    hwave_sc: Converged at iteration 608
+    hwave_sc: Iteration result: eigenvalue = 1.041844, converged = True, n_iter = 608
 
 引き続き固有値解析の結果が表示されます:
 
@@ -380,14 +380,14 @@ RPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照し�
 
     hwave_sc: === Eigenvalue analysis ===
     hwave_sc: Leading eigenvalues:
-    hwave_sc:     0: 0.959725 (|ev| = 0.959725)
-    hwave_sc:     1: 0.836778 (|ev| = 0.836778)
-    hwave_sc:     2: 0.810959 (|ev| = 0.810959)
-    hwave_sc:     3: -0.887954 (|ev| = 0.887954)
-    hwave_sc:     4: -1.071303 (|ev| = 1.071303)
-    hwave_sc:     5: -1.349775 (|ev| = 1.349775)
-    hwave_sc:     6: 0.976353 (|ev| = 0.976353)  [opposite-parity sector]
-    hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
+    hwave_sc:     0: 1.041844 (|ev| = 1.041844)
+    hwave_sc:     1: -1.233988 (|ev| = 1.233988)
+    hwave_sc:     2: -1.584929 (|ev| = 1.585014)
+    hwave_sc:     3: -1.584929 (|ev| = 1.585014)
+    hwave_sc:     4: -3.067559 (|ev| = 3.067559)
+    hwave_sc:     5: 1.031822 (|ev| = 1.031822)  [opposite-parity sector]
+    hwave_sc:     6: -0.902492 (|ev| = 0.902505)  [opposite-parity sector]
+    hwave_sc:     7: -1.280675 (|ev| = 1.280675)  [opposite-parity sector]
     ...
 
 正の固有値\ :math:`\lambda > 1`\ は、その温度で超伝導不安定性が
@@ -413,7 +413,7 @@ RPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照し�
 ギャップ関数\ :math:`\Sigma_{\alpha\beta}(\mathbf{k})`
 の運動量空間での分布を示しています。
 
-**一重項チャネル** (:math:`\lambda \approx 0.96`):
+**一重項チャネル** (:math:`\lambda \approx 1.04`):
 
 .. figure:: ../sample_sc/gap_singlet.png
    :width: 90%
@@ -422,10 +422,10 @@ RPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照し�
    一重項ギャップ関数のk空間分布。
    左: 軌道内成分\ :math:`\mathrm{Re}\,\Sigma_{00}(\mathbf{k})`\ 。
    右: 軌道間成分\ :math:`\mathrm{Re}\,\Sigma_{01}(\mathbf{k})`\ 。
-   軌道間成分が軌道内成分の約5倍大きく、
+   軌道間成分が軌道内成分の約7倍大きく、
    軌道間ペアリングが支配的であることを示す。
 
-**三重項チャネル** (:math:`\lambda \approx 0.97`):
+**三重項チャネル** (:math:`\lambda \approx 1.17`):
 
 .. figure:: ../sample_sc/gap_triplet.png
    :width: 90%
@@ -451,24 +451,24 @@ RPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照し�
    赤破線は\ :math:`\lambda = 1`\ （超伝導不安定性の判定基準）を示す。
    塗りつぶしマーカーは **物理的** な固有値（ギャップがチャネルのパリティ
    ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは **逆パリティの spurious**
-   モードである。物理的な固有値はすべて1未満。1を超える2つの白抜きマーカーは
-   *三重項* カーネルの偶パリティ解で、スピン三重項ペアリングにはパウリ原理により
-   禁止される（下記のパリティに関する注記を参照）。
+   モードである。各チャネルの主要な物理的固有値は1を超える。白抜きマーカーは
+   逆パリティの解（\ *三重項*\ カーネルの偶パリティモード（最大は2.06付近）と、
+   *一重項*\ カーネルの1.03付近の奇パリティモード）で、それぞれのスピンチャネルでは
+   パウリ原理により禁止される（下記のパリティに関する注記を参照）。
 
 Arnoldi固有値解析は複数の固有値を検出します。
 図には超伝導不安定性の判定基準\ :math:`\lambda = 1`\ に関連する
 正の固有値のみを示しています。
 一重項チャネルの主要な **物理的**\ （偶パリティ）固有値は
-:math:`\lambda_S \approx 0.96 < 1`\ で、自己無撞着反復法の結果と一致し、
-この温度で一重項SC不安定性は存在しません。
+:math:`\lambda_S \approx 1.04 > 1`\ で、自己無撞着反復法の結果と一致します。
+ここでは反復の収束が遅い（608回）ため、サンプルでは\ ``max_iter = 1000``\ と
+しています。
 
 三重項チャネルの主要な **物理的**\ （奇パリティ）固有値は
-:math:`\lambda_T \approx 0.97 < 1`\ です。三重項の計算に現れる
-:math:`1.58`\ や\ :math:`1.09`\ 付近の大きな値は偶パリティの spurious モードであり、
-三重項不安定性では **ありません**\ 。2つの物理的チャネルは非常に近く
-（\ :math:`\lambda_T \gtrsim \lambda_S`\ ）、この温度が一重項・三重項の
-クロスオーバー近傍にあることを示します。実際の転移（\ :math:`\lambda = 1`\ ）は
-より低温で到達します。
+:math:`\lambda_T \approx 1.17 > 1`\ です。三重項の計算に現れる
+:math:`2.06`\ や\ :math:`1.19`\ 付近の大きな値は偶パリティの spurious モードであり、
+三重項不安定性では **ありません**\ 。この温度では2つの物理的チャネルがともに1を
+超えており、三重項が先行します（\ :math:`\lambda_T > \lambda_S`\ ）。
 
 描画スクリプト
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -507,11 +507,11 @@ Arnoldi固有値解析は複数の固有値を検出します。
 .. code-block:: text
 
     # Iteration eigenvalue
-    9.59724792e-01
+    1.04184424e+00
     # Eigenvalue analysis
     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
-       0  9.59725061e-01 -3.63739178e-12  9.59725061e-01 1
-       1  8.36778019e-01 -3.64670431e-12  8.36778019e-01 1
+       0  1.04184433e+00 -4.52434027e-12  1.04184433e+00 1
+       1 -1.23398808e+00  4.17379712e-12  1.23398808e+00 1
        ...
 
 末尾の\ ``match``\ 列は、固有ベクトルがチャネルのパリティを持つ（物理的な
@@ -541,9 +541,8 @@ Arnoldi固有値解析は複数の固有値を検出します。
 求めることで、超伝導転移温度\ :math:`T_c`\ を決定できます。
 
 本チュートリアルでは、:math:`T = 0.1`\ で両方の物理的チャネルが不安定性の
-しきい値のわずか下にあり、:math:`\lambda_S \approx 0.96`\ （一重項・偶）、
-:math:`\lambda_T \approx 0.97`\ （三重項・奇）です。両者はほぼ縮退しており、
-三重項がわずかに先行します。
+しきい値を超えており、:math:`\lambda_S \approx 1.04`\ （一重項・偶）、
+:math:`\lambda_T \approx 1.17`\ （三重項・奇）で、三重項が先行します。
 
 .. note::
 
@@ -560,7 +559,7 @@ Arnoldi固有値解析は複数の固有値を検出します。
    パウリ原理で禁止されます）。そのため\ ``hwave_sc``\ は各反復をチャネルのパリティ
    セクターへ射影し、固有値解析は各モードを物理的（\ ``match = 1``\ ）か spurious
    （\ ``match = 0``\ ）かでラベル付けします。三重項の計算に現れる
-   :math:`\lambda \approx 1.58,\ 1.09`\ という大きな値はこのような spurious な
+   :math:`\lambda \approx 2.06,\ 1.19`\ という大きな値はこのような spurious な
    偶パリティモードであり、三重項不安定性では **ありません** 。
 
 一重項と三重項の比較
@@ -576,12 +575,13 @@ Arnoldi固有値解析は複数の固有値を検出します。
 （非物理的なセクターへ収束するのを防ぐため）。あるいは\ ``init_gap``\ を
 省略すれば、ソルバーがチャネルのパリティを自動選択します。
 同じパラメータで\ :math:`T = 0.1`\ の場合、主要な物理的固有値は
-:math:`\lambda_T \approx 0.97`\ （三重項）と\ :math:`\lambda_S \approx 0.96`
-（一重項）で、ともに1未満、三重項がわずかに先行します。これは本サンプルが
-文献 [1]_ の一重項・三重項クロスオーバー近傍にあることを示します。
-同文献では、:math:`T > 0.05`\ で三重項SC状態が一重項SC状態と競合し、低温
-(:math:`T < 0.05`) ではスピンゆらぎの増大により一重項SC転移が支配的になることが
-報告されています。実際の転移（\ :math:`\lambda = 1`\ ）は低温で到達します。
+:math:`\lambda_T \approx 1.17`\ （三重項）と\ :math:`\lambda_S \approx 1.04`
+（一重項）で、ともに1を超え、三重項が先行します。文献 [1]_ では、この RPA の
+取り扱いは高温で超伝導領域を過大評価することが指摘されています。
+なお、これらの値は文献 [1]_ を定量的に再現するものではありません。単位胞内の
+分子間相互作用（\ ``R = 0``\ の軌道間\ ``CoulombInter``\ の行）は、H-wave の
+バーテックスではオンサイトの軌道間相互作用と同様に交換の寄与も含めて入りますが、
+文献 [1]_ では密度どうしの（Hartree）部分のみを扱っています。
 
 
 .. _sc_dynamic_frequency:

@@ -1,25 +1,27 @@
-"""Spec 2026-09-16 section 2.4, gate G-UHFk: UHFk END TO END on the
-reversed declaration.
+"""Spec 2026-09-16 section 2.4, gate G-UHFk, as corrected by issue #232:
+UHFk END TO END reads an off-site two-body row as the reference revision
+does.
 
-An off-site two-body row ``(r, a, b, v)`` is read in the DOCUMENTED
-orientation since issue #193 -- ``v n_{j,a} n_{j+r,b}``, orbital ``a`` in
-the original cell and ``b`` in the cell displaced by ``r``. The previous
-release (H-wave 2.0.0, the reference revision pinned by
-``tests/test_flex_second_order_compat.DEVELOP_COMMIT``) read the two cells
-the other way round. The compatibility promise that goes with the change
-is therefore an EXACT one:
+An off-site two-body row ``(r, a, b, v)`` puts orbital ``a`` in the original
+cell and ``b`` in the cell displaced by ``r`` -- ``v n_{j,a} n_{j+r,b}``, the
+bond of a Transfer row ``(r, a, b)``, as Wannier90 / RESPACK define both
+files. The reference revision (``tests/test_flex_second_order_compat.
+DEVELOP_COMMIT``, which predates the reversal step that issue #193 added and
+issue #232 removed) already read it that way, so the gate is an EXACT
+identity on the SAME declaration:
 
     this branch's UHFk on a declaration ``F``
-        == the reference revision's UHFk on ``F^rev``
+        == the reference revision's UHFk on ``F``
 
-where ``F^rev`` negates the displacement of every off-site two-body row
-and leaves the orbital indices and the on-site rows alone
-(``tests/test_flex_hf_scf._reversed_interaction_dir`` writes it). The
-in-process, table-level version of the same statement is
-``tests/test_flex_second_order_compat`` (``new(F) == legacy(F^rev)``, at
-``np.array_equal``); this module is the end-to-end one -- two real
-``hwave.qlms.run`` processes, the two source trees, the shipped
-``energy.dat`` and ``green.dat.npz``.
+and, wherever the reading is visible at all, differs from the reference
+revision's UHFk on ``F^rev`` (every off-site two-body displacement negated,
+``tests/test_flex_hf_scf._reversed_interaction_dir``), so the identity is a
+statement about the placement and not about two runs that would agree
+anyway. That the placement is the physically right one is checked against
+an independent real-space Hartree-Fock solver in
+``tests/test_two_body_placement.py``; this module checks that the
+end-to-end pipeline (two real ``hwave.qlms.run`` processes, the two source
+trees, the shipped ``energy.dat`` and ``green.dat.npz``) carries it.
 
 CI provisions the reference revision (a detached worktree at
 ``DEVELOP_COMMIT`` under ``RUNNER_TEMP``; see
@@ -32,27 +34,25 @@ needs no reference tree and runs either way.
 
 WHY THE COMPARISON IS ``np.array_equal`` AND NOT A TOLERANCE
 ------------------------------------------------------------
-Because the two runs do the SAME arithmetic. The orientation step is a
-conjugate transpose at fixed ``r`` of the assembled displacement table,
-and the reversal of the declaration produces that same table out of the
-reference revision's builder -- bit for bit, not to round-off (Task 2's
-kernel test pins exactly that with ``np.array_equal``). The tables being
-identical, the whole SCF trajectory is identical: same initial Green
-(zero, or the COMMITTED seed :data:`_SEED` -- a file both source trees
-read, not a draw from a random generator they would each have to agree
-about), same mixing, same eigen-decompositions, same iteration count. A
-tolerance here would hide a real difference in the mean field. The only
-thing that could separate the two processes is a different numpy/BLAS on
-the two ``PYTHONPATH``s, which is not a thing on one machine. The
-comparison below therefore carries NO tolerance at all,
-not even a round-off fallback: there is no measurement such a fallback
-could be calibrated from, and it would be exactly the place where a real
-difference in the mean field could hide.
+Because the two runs do the SAME arithmetic: both trees build the same
+closed displacement tables from ``F`` (``tests/test_hartree_fock_kernel``
+pins the table identity with ``np.array_equal``), so the whole SCF
+trajectory is identical: same initial Green (zero, or the COMMITTED seed
+:data:`_SEED` -- a file both source trees read, not a draw from a random
+generator they would each have to agree about), same mixing, same
+eigen-decompositions, same iteration count. A tolerance here would hide a
+real difference in the mean field. The only thing that could separate the
+two processes is a different numpy/BLAS on the two ``PYTHONPATH``s, which
+is not a thing on one machine; both runs also pin the BLAS/OpenMP thread
+counts to one, so that no multithreaded reduction can sum in another order.
+The comparison below therefore carries NO tolerance at all, not even a
+round-off fallback. (The ``energy.dat`` members whose formula changed after
+the reference revision are the documented exception: see :func:`_refixed`.)
 
 WHICH CASES THE ORIENTATION ACTUALLY MOVES (and why the rest cannot)
 --------------------------------------------------------------------
 The identity above is asserted for every case. Its anti-vacuity control
--- the reference revision on the UNREVERSED ``F``, which must land
+-- the reference revision on the REVERSED ``F^rev``, which must land
 somewhere else -- is only meaningful where the orientation is VISIBLE at
 all, and two documented classes of case it is not. Both are structural,
 derived rather than observed, and asserted here in the coinciding
@@ -399,9 +399,8 @@ def _run(checkout, indir, case):
         shutil.copytree(indir, work, dirs_exist_ok=True)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured
-            env = dict(os.environ)
-            env["PYTHONPATH"] = os.pathsep.join(
-                (os.path.join(checkout, "src"), checkout))
+            from tests.test_flex_second_order_compat import own_tree_subprocess_env
+            env = own_tree_subprocess_env(checkout)
         else:
             from tests.test_flex_second_order_compat import reference_subprocess_env
             env = reference_subprocess_env(checkout)
@@ -454,10 +453,14 @@ _TOTALS = ("Energy_Total", "FreeEnergy_Total")
 
 def _refixed(case):
     """The ``energy.dat`` members of ``case`` whose formula the fix of issue
-    #233 changed: the off-site Fock contraction (every off-site type, with
-    the Fock term on) and PairHop's direct contraction (on or off)."""
-    return {"Energy_" + t for t in case.files
-            if t != "CoulombIntra" and (case.fock or t == "PairHop")}
+    #233 changed: the Fock contraction of every two-body type (with the
+    Fock term on) and PairHop's direct contraction (on or off).
+
+    The on-site ``CoulombIntra`` is included: its value is mathematically
+    unchanged (at ``r = 0`` the old and the new product are complex
+    conjugates), but the new contraction sums in another order, and on CI
+    the spin-orbital case came out one unit in the last place apart."""
+    return {"Energy_" + t for t in case.files if case.fock or t == "PairHop"}
 
 
 class _OrientationMixin:
@@ -521,7 +524,7 @@ class _OrientationMixin:
         self._assert_offsite_energy_is_live(case, ea, what)
         # The reference revision predates the fix of issue #233 (the Fock
         # part of the off-site double-counting energy paired G_ab(r) with
-        # G_ba(r)), so the energy members of the off-site types, and the
+        # G_ba(r)), so the energy members of _refixed, and the
         # _TOTALS that sum them, are computed by a different formula from
         # the same (bit-identical) Green function. They are left out of the
         # exact comparison; their values are pinned against -Tr(H_int rho)/2
@@ -529,6 +532,10 @@ class _OrientationMixin:
         # still share exactly is everything else, and each total must move
         # by exactly what those members move by.
         refixed = _refixed(case)
+        for key in sorted(refixed):
+            # an exempted member must still be there, on both sides
+            self.assertIn(key, ea, "{}: energy.dat has no {}".format(what, key))
+            self.assertIn(key, eb, "{}: the reference has no {}".format(what, key))
         for key in sorted(ea):
             if key in refixed or key in _TOTALS:
                 continue
@@ -536,12 +543,12 @@ class _OrientationMixin:
                 ea[key], eb[key],
                 "{}: energy.dat member {} differs by {:.3e} absolute"
                 .format(what, key, abs(ea[key] - eb[key])))
-        moved = sum(ea[k] - eb[k] for k in refixed if k in ea)
+        moved = sum(ea[k] - eb[k] for k in refixed)
         for key in _TOTALS:
             if key in ea:
                 self.assertAlmostEqual(
                     ea[key] - eb[key], moved, delta=1e-12,
-                    msg="{}: {} moved by {:.3e}, the off-site energy members "
+                    msg="{}: {} moved by {:.3e}, the exempted energy members "
                         "by {:.3e}".format(what, key, ea[key] - eb[key], moved))
         for key in sorted(ga):
             self.assertTrue(
@@ -600,6 +607,10 @@ class TestRefixedMembers(unittest.TestCase):
         for label in ("bond/norb2/fock=off", "bond/norb2/fock=off/so"):
             self.assertEqual(_refixed(CASES[label]), set(), label)
 
+    def test_on_site_coulomb_is_exempt_with_the_fock_term_on(self):
+        self.assertIn("Energy_CoulombIntra", _refixed(CASES["alltypes/norb2/fock=on/so"]))
+        self.assertNotIn("Energy_CoulombIntra", _refixed(CASES["pairhop/norb2/fock=off"]))
+
     def test_pairhop_is_exempt_with_the_fock_term_off(self):
         self.assertEqual(_refixed(CASES["pairhop/norb2/fock=off"]),
                          {"Energy_PairHop"})
@@ -607,8 +618,8 @@ class TestRefixedMembers(unittest.TestCase):
 
 class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
     """G-UHFk: this tree's UHFk on ``F`` equals the reference revision's
-    UHFk on ``F^rev``, member for member -- and, wherever the orientation
-    is visible at all, differs from the reference revision's UHFk on ``F``.
+    UHFk on ``F``, member for member -- and, wherever the placement is
+    visible at all, differs from the reference revision's UHFk on ``F^rev``.
 
     Skipped as a whole when the reference checkout is not usable: the
     shared rule of every develop-comparison harness on this branch
@@ -629,8 +640,8 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
             reversed_dir = _reversed_dir(case)
             try:
                 mine = _run(here, source, case)
-                theirs = _run(reference, reversed_dir, case)
-                control = _run(reference, source, case)
+                theirs = _run(reference, source, case)
+                control = _run(reference, reversed_dir, case)
             finally:
                 shutil.rmtree(reversed_dir, ignore_errors=True)
             self._assert_same_run(mine, theirs, "case {}".format(label), case)
@@ -640,7 +651,7 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                 self.assertGreater(
                     gap, 1e-6,
                     "case {}: the reference revision's UHFk on the "
-                    "UNREVERSED declaration is within {:.3e} relative of "
+                    "REVERSED declaration is within {:.3e} relative of "
                     "this tree's total energy, so the identity above says "
                     "nothing".format(label, gap))
                 # and the same control on the MEAN FIELD, which carries the
@@ -649,7 +660,7 @@ class TestUHFkOrientation(_OrientationMixin, unittest.TestCase):
                 self.assertGreater(
                     green_gap, 1e-6,
                     "case {}: the reference revision's UHFk on the "
-                    "UNREVERSED declaration returns the same Green function "
+                    "REVERSED declaration returns the same Green function "
                     "to {:.3e} relative".format(label, green_gap))
             else:
                 # the shared-formula part of the total (see _refixed)

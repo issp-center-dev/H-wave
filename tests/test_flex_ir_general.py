@@ -817,7 +817,9 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     import sys
     import tempfile
     from tests.test_flex_general import _write_2d_2orb_onsite_fixture
-    from tests.test_flex_second_order_compat import _members, reference_subprocess_env
+    from tests.test_flex_second_order_compat import (_members, moved_stamp,
+                                                     own_tree_subprocess_env,
+                                                     reference_subprocess_env)
     dev, why = _develop_checkout()
     if dev is None:
         pytest.skip(why)
@@ -834,8 +836,7 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
         for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
             if checkout == here:
                 # this tree's own run: keep it measured
-                env = dict(os.environ,
-                           PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+                env = own_tree_subprocess_env(checkout)
             else:
                 env = reference_subprocess_env(checkout)
             subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
@@ -845,6 +846,8 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
         for f in ma:
             for k, v in ma[f].items():
                 assert k in mb[f], (f, k)
+                if moved_stamp(k, v, mb[f][k]):
+                    continue
                 # "b" too: boolean members such as density_target_enforced
                 # are part of the archive and must not drift either
                 if np.asarray(v).dtype.kind in "fciub":

@@ -634,12 +634,12 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
         # -v^{up sigma}_{a q}(q-vector), i.e. the orbital of the EXTERNAL leg
         # indexes the ROW. :func:`build_offsite` stores the ring's pair-space
         # placement v^{pair}_{(aa),(bb)} = v^{file}_{ba} -- the row index is the
-        # orbital of the row's DISPLACED cell. Once a file row (r, a, b, v) is
-        # read as v n_{j,a} n_{j+r,b} (the DOCUMENTED orientation, which the
-        # mean-field kernel also implements since spec 2026-09-16, #193), those
-        # two are the same matrix, so the kernel uses the stored array as it is
+        # orbital of the row's DISPLACED cell. With a file row (r, a, b, v)
+        # read as v n_{j,a} n_{j+r,b} -- the bond of a Transfer row (r, a, b),
+        # which build_offsite's builder realizes since issue #232 -- those two
+        # are the same matrix, so the kernel uses the stored array as it is
         # -- no transpose here. On a bond with v_{ab}(R) != v_{ba}(R) the
-        # reversed reading is a different matrix (the two differ by q -> -q);
+        # opposite bond is a different matrix (the two differ by q -> -q);
         # the one below is what the independent real-space oracle requires on
         # every pair of coupling types (tests/test_second_order_oracle.py,
         # gate G2 (a)).

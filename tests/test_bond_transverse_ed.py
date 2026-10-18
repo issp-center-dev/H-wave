@@ -1341,10 +1341,11 @@ def _terms_exchange_offsite(fx, a, b, R, J):
     operator convention (``c^+_{a,up} c_{b,up} c^+_{b,dn} c_{a,dn}``,
     already ED-validated on-site to produce ``ham_pm``'s ``-J`` entry --
     H2's ``test_exchange`` above re-confirms it through this module's
-    own harness) to a nonzero bond displacement ``R``: the ``b``-orbital
-    legs move to site ``j+R``, the ``a``-orbital legs stay at site
-    ``j`` (a bond from site ``j``, orbital ``a``, to site ``j+R``,
-    orbital ``b``). ``coeffs["Exchange"][m][a, b] = J`` fed to
+    own harness) to a nonzero bond displacement ``R``: the row
+    ``(R, a, b)`` sits on the bond of the Transfer row ``(R, a, b)``
+    (issue #232), which in this fixture's frame (``EDFixture.build_h1``
+    puts ``t[(a, b)]`` on ``(j+1, a) <- (j, b)``) has the ``a``-orbital
+    legs on site ``j+R`` and the ``b``-orbital legs on site ``j``. ``coeffs["Exchange"][m][a, b] = J`` fed to
     ``w_expected_from_records`` uses EXACTLY this same operator
     convention, so the ``f_J = -1`` coefficient-table sign is consistent
     between the ED side and the oracle side by construction (never
@@ -1359,10 +1360,10 @@ def _terms_exchange_offsite(fx, a, b, R, J):
     terms = []
     for j in range(fx.L):
         jr = (j + R) % fx.L
-        p = fx.mode(j, a, 0)
-        q = fx.mode(jr, b, 0)
-        r = fx.mode(jr, b, 1)
-        s = fx.mode(j, a, 1)
+        p = fx.mode(jr, a, 0)
+        q = fx.mode(j, b, 0)
+        r = fx.mode(j, b, 1)
+        s = fx.mode(jr, a, 1)
         terms.append((p, q, r, s, J))
         terms.append((s, r, q, p, np.conj(J)))
     return terms
@@ -1372,11 +1373,13 @@ def _terms_ising_offsite(fx, a, b, R, v):
     """Off-site Ising term, generalizing this module's own
     ``_terms_ising_hund``'s ON-SITE (R=0) Ising formula (uhfk.py's
     documented Hamiltonian ``J (n_up - n_down)(n_up - n_down)``) to a
-    nonzero bond displacement ``R``: ``H = v * sum_j (n_{j,a,up} -
-    n_{j,a,dn}) * (n_{j+R,b,up} - n_{j+R,b,dn})``. Manifestly Hermitian
+    nonzero bond displacement ``R``: ``H = v * sum_j (n_{j+R,a,up} -
+    n_{j+R,a,dn}) * (n_{j,b,up} - n_{j,b,dn})`` -- the bond of the
+    Transfer row ``(R, a, b)`` in this fixture's frame (see
+    ``_terms_exchange_offsite``; issue #232). Manifestly Hermitian
     for real ``v`` without any mirrored (-R) declaration -- density
     operators at DIFFERENT sites commute, so
-    ``(n_{j,a,up}-n_{j,a,dn}) @ (n_{j+R,b,up}-n_{j+R,b,dn})`` is
+    ``(n_{j+R,a,up}-n_{j+R,a,dn}) @ (n_{j,b,up}-n_{j,b,dn})`` is
     Hermitian term by term, and the ``j``-sum over one period already
     visits every bond exactly once (the same reasoning
     ``canonical_density_terms``'s off-site branch relies on)."""
@@ -1385,8 +1388,8 @@ def _terms_ising_offsite(fx, a, b, R, v):
         jr = (j + R) % fx.L
         for su, su_sign in ((0, 1.0), (1, -1.0)):
             for sv, sv_sign in ((0, 1.0), (1, -1.0)):
-                p = fx.mode(j, a, su)
-                r = fx.mode(jr, b, sv)
+                p = fx.mode(jr, a, su)
+                r = fx.mode(j, b, sv)
                 terms.append((p, p, r, r, v * su_sign * sv_sign))
     return terms
 
@@ -1427,8 +1430,8 @@ class TestW0TermBuilderHamiltonianPins(unittest.TestCase):
             with np.errstate(all="ignore"):
                 for j in range(fx.L):
                     jr = (j + R) % fx.L
-                    op = (CD[fx.mode(j, a, 0)] @ C[fx.mode(jr, b, 0)]
-                          @ CD[fx.mode(jr, b, 1)] @ C[fx.mode(j, a, 1)])
+                    op = (CD[fx.mode(jr, a, 0)] @ C[fx.mode(j, b, 0)]
+                          @ CD[fx.mode(j, b, 1)] @ C[fx.mode(jr, a, 1)])
                     H = H + J * op + np.conj(J) * op.conj().T
             return H
 
@@ -1453,8 +1456,8 @@ class TestW0TermBuilderHamiltonianPins(unittest.TestCase):
             with np.errstate(all="ignore"):
                 for j in range(fx.L):
                     jr = (j + R) % fx.L
-                    sz_j = _n(j, a, 0) - _n(j, a, 1)
-                    sz_jr = _n(jr, b, 0) - _n(jr, b, 1)
+                    sz_j = _n(j, b, 0) - _n(j, b, 1)
+                    sz_jr = _n(jr, a, 0) - _n(jr, a, 1)
                     H = H + v * (sz_j @ sz_jr)
             return H
 
@@ -1689,10 +1692,17 @@ class TestW0Granules(unittest.TestCase):
             def terms_of_v(v, phase=phase):
                 return _terms_exchange_offsite(fx, a, b, R, v * phase)
 
+            # The row (R, a, b) is the bond of the Transfer row (R, a, b)
+            # (issue #232); in the solver's channel layout that operator
+            # is carried by the channel at -R (resolve_bond_topology:
+            # "channel m carries the rows declared at -delta_r[m]"), here
+            # m = 2, with its Hermitian-closed partner at m = 1 (the
+            # representative channel the oracle reads).
             block = np.zeros((2, 2), dtype=complex)
             block[a, b] = phase
             declarations = {"onsite_ham_pm": onsite_ham_pm,
-                             "Exchange": {1: block}}
+                             "Exchange": {2: block,
+                                          1: np.conj(block).T}}
             records[name] = _w0_adjudicate_direction(
                 fx, terms_of_v, topo, declarations, q_mesh,
                 "W0/exchange/{}".format(name))
@@ -1974,7 +1984,9 @@ def _terms_hund_offsite(fx, a, b, R, v):
     formula (``_terms_ising_hund``, uhfk.py's documented Hamiltonian
     ``H = -J^Hund (n_up n_up + n_dn n_dn)``, same-spin-only density-density)
     to a nonzero bond displacement ``R``:
-    ``H = -v * sum_j (n_{j,a,up} n_{j+R,b,up} + n_{j,a,dn} n_{j+R,b,dn})``.
+    ``H = -v * sum_j (n_{j+R,a,up} n_{j,b,up} + n_{j+R,a,dn} n_{j,b,dn})``
+    -- the bond of the Transfer row ``(R, a, b)`` in this fixture's frame
+    (see ``_terms_exchange_offsite``; issue #232).
     Same-spin density operators at DIFFERENT sites commute, so this is
     manifestly Hermitian for real ``v`` without a mirrored declaration
     (mirroring ``_terms_ising_offsite``'s own reasoning)."""
@@ -1982,8 +1994,8 @@ def _terms_hund_offsite(fx, a, b, R, v):
     for j in range(fx.L):
         jr = (j + R) % fx.L
         for s in range(2):
-            p = fx.mode(j, a, s)
-            r = fx.mode(jr, b, s)
+            p = fx.mode(jr, a, s)
+            r = fx.mode(j, b, s)
             terms.append((p, p, r, r, -v))
     return terms
 
@@ -1996,17 +2008,19 @@ def _terms_pairlift_offsite(fx, a, b, R, v):
     operator is Sz-BREAKING -- any PairLift ED reference uses the dense
     route, never SectorED"), generalizing the on-site convention
     (``oracle._terms_for``'s PairLift branch, ``H = v*A + conj(v)*A^dagger``)
-    to a nonzero bond displacement ``R`` (orbital ``a`` at site ``j``,
-    orbital ``b`` at site ``j+R``). The dagger term mirrors
+    to a nonzero bond displacement ``R`` (orbital ``a`` at site ``j+R``,
+    orbital ``b`` at site ``j`` -- the bond of the Transfer row
+    ``(R, a, b)`` in this fixture's frame, see ``_terms_exchange_offsite``;
+    issue #232). The dagger term mirrors
     ``_terms_exchange_offsite``'s own ``(s, r, q, p, conj(coeff))``
     pattern exactly."""
     terms = []
     for j in range(fx.L):
         jr = (j + R) % fx.L
-        p = fx.mode(j, a, 0)
-        q = fx.mode(j, a, 1)
-        r = fx.mode(jr, b, 0)
-        s = fx.mode(jr, b, 1)
+        p = fx.mode(jr, a, 0)
+        q = fx.mode(jr, a, 1)
+        r = fx.mode(j, b, 0)
+        s = fx.mode(j, b, 1)
         terms.append((p, q, r, s, v))
         terms.append((s, r, q, p, np.conj(v)))
     return terms

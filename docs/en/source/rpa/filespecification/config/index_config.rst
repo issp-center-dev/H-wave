@@ -732,9 +732,11 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   instead of ``chiq_s.npz`` / ``chiq_c.npz``. The producing FLEX run must
   have used ``longitudinal_bond_channels = true`` AND
   ``longitudinal_bond_output_full = true`` under a version writing archive
-  schema 2 (see the description of ``longitudinal_bond`` in
+  schema 3 (see the description of ``longitudinal_bond`` in
   ``file.output`` and :ref:`the archive reference <subsec:chiq_rpa>`); an
-  older schema-1 archive is refused with a message asking for a re-run.
+  older schema-1 archive is refused with a message asking for a re-run, and
+  a schema-2 archive is accepted only when the declared off-site
+  interactions are symmetric under :math:`R \to -R` on the run's grid.
   Refused together with ``bond_green`` / ``bond_max_shells`` (the Green
   function and the bond topology come from ``path_to_flex_output`` and the
   archive, not from these static-bond-path keys) and ``zero_chi_s`` /

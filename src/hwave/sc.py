@@ -725,11 +725,13 @@ def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
     # bypassed that closure and consistency check.
     V_r0 = np.array(bond_set.v_onsite, dtype=complex, copy=True)
 
-    # Filtered V_ab(q) = V_ab(R=0) + sum_{m>=1} V_ab(Delta r_m) e^{-i q.Delta r_m}
-    # -- same e^{-iqR} convention as _build_interaction_k._to_k, so the m=0
-    # block is element-wise consistent with the rest of sc.py. (For the real
-    # inversion-symmetric interactions v1 accepts, V(q) is real and the phase
-    # sign is immaterial.)
+    # Filtered V_ab(q) = V_ab(R=0) + sum_{m>=1} v_bond[m]_ab e^{-i q.Delta r_m},
+    # where channel m carries the rows declared at -Delta r_m (issue #232):
+    # per declared row (R, a, b, v) that is v e^{+iqR} untransposed, which on
+    # a Hermitian-closed table equals _build_interaction_k._to_k's
+    # pair-transposed e^{-iqR}, so the m=0 block is element-wise consistent
+    # with the rest of sc.py. (For the real inversion-symmetric interactions
+    # v1 accepts, V(q) is real and the phase sign is immaterial.)
     kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
         kx_array, ky_array, kz_array, indexing='ij')
     V_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
@@ -741,10 +743,11 @@ def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
         # ED-adjudication campaign; tests/test_bond_vs_ed_oracle.py::
         # TestNullDirectionSolverSide). resolve_interactions guarantees,
         # EXACTLY, that bond_set.v_bond[reverse[m]][b, a] ==
-        # conj(bond_set.v_bond[m][a, b]): the declared channel V_ab(R_m) and
-        # its reversal partner V_ba(-R_m) multiply the SAME physical operator
-        # sum_j n_{j,a} n_{j+R_m,b} (site relabeling j' = j+R_m turns the
-        # partner's sum_j n_{j,b} n_{j-R_m,a} into the identical sum), so
+        # conj(bond_set.v_bond[m][a, b]): channel m holds the row V_ab declared
+        # at -R_m and channel reverse[m] its partner V_ba declared at +R_m;
+        # both multiply the SAME physical operator sum_j n_{j,a} n_{j-R_m,b}
+        # (site relabeling turns the partner's sum_j n_{j,b} n_{j+R_m,a} into
+        # the identical sum), so
         # Hermiticity forces their combined Hamiltonian coefficient
         # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b]) ==
         # 2*Re(v_bond[m][a,b]) -- real, and INDEPENDENT of q (this is the full
@@ -1701,9 +1704,9 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
     )
 
     def _to_k(value_r, transpose=True):
-        # Same Fourier phase as the solver core, e^{+iqR} since the #133
-        # sign alignment, but the ORBITAL PAIR is stored transposed: an
-        # entry (R, (a, b)) lands at [b, a].
+        # The ORBITAL PAIR is stored transposed -- an entry (R, (a, b))
+        # lands at [b, a] -- with the phase e^{-iqR} (issue #232; the
+        # one-body Hamiltonian keeps e^{+ikR}, see the end of this comment).
         #
         # The interaction is a four-index object, and its MATRIX form carries a
         # pair-index transpose that the one-body Hamiltonian does not. H-wave's
@@ -1766,8 +1769,13 @@ def _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb):
             orb1, orb2 = orbvec
             Rx, Ry, Rz = irvec
             i1, i2 = (orb2, orb1) if transpose else (orb1, orb2)
+            # A row (R, a, b) is the bond of a Transfer row (R, a, b): a in
+            # the original cell, b in the cell displaced by R (Wannier90 /
+            # RESPACK, issue #232). With the slot convention above that
+            # operator carries e^{-ik.R}; e^{+ik.R} put it on the opposite
+            # bond.
             val_k[i1, i2, :, :, :] += value * np.exp(
-                +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
+                -1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
             )
         return val_k
 
@@ -2453,8 +2461,8 @@ def _compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         Spin vertex, shape (norb, norb, Nx, Ny, Nz).
     """
     # Symmetrise FIRST (PR #129 round 3): this path read the raw tables,
-    # so a one-sided off-site declaration entered as v e^{+iqR} (the
-    # documented sign, #133) while the
+    # so a one-sided off-site declaration entered with its bare phase
+    # (v e^{-iqR} since issue #232) while the
     # ring and the general S/C route read the same Hamiltonian as
     # v cos(qR) -- measured drift 0.7 at q = pi/2 for V(R=+x) = 0.7.
     # SKIPPED when the caller proved the raw declarations partner-closed
@@ -2988,13 +2996,15 @@ def _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
          legacy_tags) = _read_flex_chi_raw(
             input_dict, interactions=interactions)
         ir_meta = None
-        green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+        green_w = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                   interactions=interactions)
     else:
         (chi_s_raw, chi_c_raw, chi_convention, ir_meta,
          legacy_tags) = _read_flex_chi_raw(
             input_dict, allow_ir=True, interactions=interactions)
         green_w, green_meta = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
-                                               allow_ir=True)
+                                               allow_ir=True,
+                                               interactions=interactions)
         if green_w is not None and (green_meta is None) != (ir_meta is None):
             raise ValueError(
                 "all dynamic-Eliashberg inputs must share one encoding; "
@@ -3060,6 +3070,106 @@ def _legacy_up_block_only(data):
     if "chi_spin_blocks" not in data:
         return False
     return str(data["chi_spin_blocks"]).strip().lower() == "up_only"
+
+
+def _offsite_mirror_asymmetry(table, grid=None):
+    """Max |X[R,(a,b)] - X[-R,(a,b)]| over the off-site entries of a raw
+    declaration table: zero exactly when moving every off-site row to the
+    opposite bond leaves the table unchanged, i.e. when the bond placement
+    of issue #232 cannot change any result computed from it.
+
+    With ``grid`` (the ``CellShape`` the run used) the comparison is made
+    on that grid -- keys are accumulated modulo the grid, so wrapped or
+    aliased displacements, and a displacement that is its own reverse on
+    the grid (``+x`` and ``-x`` on a 2-site axis), compare as the vertex
+    sees them. Without it the keys are compared literally, a missing mirror
+    reading as zero, which fails CLOSED (reported as asymmetric)."""
+    if grid is not None:
+        grid = tuple(int(n) for n in grid)
+        agg = {}
+        for (irvec, orbvec), v in table.items():
+            r = tuple(int(x) % n for x, n in zip(irvec, grid))
+            key = (r, tuple(orbvec))
+            agg[key] = agg.get(key, 0.0) + complex(v)
+        table = agg
+        mirror_of = lambda r: tuple((-x) % n for x, n in zip(r, grid))
+        onsite = tuple(0 for _ in grid)
+    else:
+        mirror_of = lambda r: tuple(-x for x in r)
+        onsite = (0, 0, 0)
+    worst = 0.0
+    for (irvec, orbvec), v in table.items():
+        irvec = tuple(int(x) for x in irvec)
+        if irvec == onsite:
+            continue
+        mirror = table.get((mirror_of(irvec), tuple(orbvec)), 0.0)
+        diff = abs(complex(v) - complex(mirror))
+        if not np.isfinite(diff):
+            return float("inf")
+        worst = max(worst, diff)
+    return worst
+
+
+#: The two-body types whose off-site placement reaches a FLEX artifact
+#: (PairLift has no particle-hole content, see _read_flex_chi_raw).
+_PLACEMENT_TYPES = ("Coulomb", "CoulombInter", "Hund", "Ising", "Exchange",
+                    "PairHop")
+
+#: ``sc_vertex_version`` from which a FLEX artifact puts every off-site row
+#: on the bond of its Transfer row (issue #232).
+PLACEMENT_VERSION = 3
+
+
+def _decode_version_stamp(data, key, path):
+    """``int`` value of the scalar stamp ``key`` in an npz, ``None`` when
+    absent; anything but one finite, exactly integral number is refused.
+    The field is read once, so a malformed stamp reports as such."""
+    if key not in getattr(data, "files", data):
+        return None
+    shown = "<unreadable>"
+    try:
+        raw = data[key]
+        shown = repr(raw)
+        arr = np.asarray(raw)
+        if arr.dtype.kind not in "iufc" or arr.size != 1:
+            raise ValueError("not a numeric scalar")
+        val = complex(arr.reshape(())[()])
+        if val.imag != 0.0 or not (np.isfinite(val.real)
+                                   and float(val.real).is_integer()):
+            raise ValueError("not an integer")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("'{}' carries a malformed {} field ({}).".format(path, key, shown))
+    return int(val.real)
+
+
+def placement_sensitive_types(interactions, grid=None):
+    """The declared two-body types whose off-site table is not symmetric
+    under R -> -R (on ``grid`` when given) -- the declarations for which an
+    artifact written before issue #232 describes a different Hamiltonian."""
+    if not interactions:
+        return []
+    return [t for t in _PLACEMENT_TYPES
+            if interactions.get(t)
+            and _offsite_mirror_asymmetry(interactions[t], grid=grid) > 0.0]
+
+
+def check_placement_stamp(data, path, interactions, grid=None, what="FLEX file"):
+    """Refuse a FLEX artifact written before the bond-placement correction
+    of issue #232 (``sc_vertex_version`` absent or below
+    :data:`PLACEMENT_VERSION`) when the declaration is placement-sensitive;
+    accept it otherwise."""
+    ver = _decode_version_stamp(data, "sc_vertex_version", path)
+    if ver is not None and ver >= PLACEMENT_VERSION:
+        return
+    sensitive = placement_sensitive_types(interactions, grid)
+    if sensitive:
+        raise ValueError(
+            "{} '{}' was written before the bond-placement correction of issue #232 "
+            "(sc_vertex_version {}), which put an off-site row on the bond opposite its "
+            "Transfer row, and {} declare(s) off-site rows that are not symmetric under "
+            "R -> -R, so the file describes a different Hamiltonian; regenerate it with "
+            "the current code.".format(what, path, "absent" if ver is None else ver,
+                                       ", ".join(sensitive)))
 
 
 def _onsite_transpose_asymmetry(table):
@@ -3229,11 +3339,27 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                     and _onsite_hermitian_pair_mismatch(
                         interactions["PairHop"]) > 0.0):
                 resym = ["PairHop"]
-        if affected or orientation or resym:
+        # #232: version 3 puts an off-site row (R, a, b) on the bond of a
+        # Transfer row (R, a, b); every earlier file was computed with it on
+        # the opposite bond. That only matters for a table that is not
+        # symmetric under R -> -R.
+        # PairLift is exempt for the same reason as in the orientation rule
+        # above: its particle-hole content is exactly zero on both sides.
+        placement = placement_sensitive_types(
+            interactions,
+            grid=(_grid if "CellShape" in input_dict.get("mode", {}).get(
+                "param", {}) else None))
+        if affected or orientation or resym or placement:
             versions = {}
             for data, path in ((data_s, chi_s_path), (data_c, chi_c_path)):
                 if "sc_vertex_version" not in data:
                     reasons = []
+                    if placement:
+                        reasons.append(
+                            "{} declare(s) off-site rows that are not "
+                            "symmetric under R -> -R, which a file this old "
+                            "placed on the bond opposite their Transfer rows "
+                            "(#232)".format(", ".join(placement)))
                     if affected:
                         reasons.append(
                             "the interaction set contains {} whose vertex "
@@ -3270,8 +3396,13 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                 # strict decode: the tag must be a single integral scalar.
                 # A plain int() would silently truncate (2.9 -> 2, accepted)
                 # and non-finite values would escape as OverflowError.
+                shown = "<unreadable>"
                 try:
-                    arr = np.asarray(data["sc_vertex_version"])
+                    raw = data["sc_vertex_version"]
+                    shown = repr(raw)
+                    arr = np.asarray(raw)
+                    if arr.dtype.kind not in "iufc":    # no bool, str or object stamps
+                        raise ValueError("not numeric")
                     if arr.size != 1:
                         raise ValueError("not a scalar")
                     val = complex(arr.reshape(())[()])
@@ -3283,20 +3414,32 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
                 except (TypeError, ValueError, OverflowError):
                     raise ValueError(
                         "FLEX susceptibility file '{}' carries a malformed "
-                        "sc_vertex_version field ({!r}).".format(
-                            path, data["sc_vertex_version"]))
+                        "sc_vertex_version field ({}).".format(path, shown))
             if len(set(versions.values())) != 1:
                 raise ValueError(
                     "FLEX chi_s and chi_c carry different sc_vertex_version "
                     "values ({}); they must come from the same run.".format(
                         versions))
             ver = next(iter(versions.values()))
-            if ver != 2:
+            if ver not in (2, 3):
                 raise ValueError(
                     "FLEX susceptibility files carry sc_vertex_version = {} "
-                    "but this code supports version 2 (the #113 exact-"
-                    "diagonalization vertex content); regenerate the "
-                    "susceptibilities with the current code.".format(ver))
+                    "but this code supports version 2 or version 3 (the "
+                    "#113 exact-diagonalization vertex content; version 3 "
+                    "also places off-site rows on the bond of their Transfer "
+                    "rows, #232); "
+                    "regenerate the susceptibilities with the current "
+                    "code.".format(ver))
+            if ver == 2 and placement:
+                raise ValueError(
+                    "FLEX susceptibility files carry sc_vertex_version = 2, "
+                    "and {} declare(s) off-site rows that are not symmetric "
+                    "under R -> -R. Version-2 runs placed such a row on the "
+                    "bond opposite its Transfer row (#232), so pairing those "
+                    "susceptibilities with the current vertices would "
+                    "silently mix two different interactions -- regenerate "
+                    "the susceptibilities with the current code.".format(
+                        ", ".join(placement)))
     # Self-describing index-order marker (issue #78 follow-up). Current files
     # always store [a,c,b,d]; the marker exists so a pre-#78 dev output (the
     # general path stored MYO-transposed arrays under the SAME "myo" tag,
@@ -3886,7 +4029,8 @@ def _validate_bond_green_nmat(nfreq, green_path, label="bond_green"):
     return nfreq
 
 
-def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
+def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
+                     interactions=None):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
 
     Returns shape ``(norb, norb, Nx, Ny, Nz, nfreq)`` (full fermionic axis;
@@ -3899,6 +4043,13 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False):
         return (None, None) if allow_ir else None
     logger.info("Loading FLEX dressed Green from: {}".format(green_path))
     data_g = np.load(green_path)
+    if interactions is not None:
+        _grid_cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
+        check_placement_stamp(
+            data_g, green_path, interactions,
+            grid=(tuple(int(x) for x in list(_grid_cs) + [1] * (3 - len(_grid_cs)))
+                  if _grid_cs is not None else None),
+            what="FLEX Green file")
     if not allow_ir:
         _reject_ir_native(data_g, green_path, _STATIC_IR_HINT)
     green_raw = data_g["green"]
@@ -4149,7 +4300,8 @@ def _load_flex_susceptibilities(input_dict, norb, Nx, Ny, Nz,
     chic = _expand_flex_chi(chi_c_raw[center_c:center_c + 1],
                             norb, Nx, Ny, Nz, chi_convention)[0]
 
-    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    green_dressed = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                     interactions=interactions)
     return chis, chic, green_dressed, chi_convention
 
 

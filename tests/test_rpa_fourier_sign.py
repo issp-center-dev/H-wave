@@ -111,10 +111,12 @@ class TestTransferSign(unittest.TestCase):
 class TestInteractionSign(unittest.TestCase):
 
     def test_w_q_is_documented_sign(self):
-        """The density slots of the assembled vertex must carry
-        V_ab(q) = sum_R X_ab(R) e^{+iqR}, not V_ab(-q). The directional
-        bond gives V_01(q) = V e^{+iq} and V_10(q) = V e^{-iq}, which a
-        flipped sign would swap."""
+        """The density slots of the assembled vertex for the directional
+        bond (+1, 0, 1): V_01 = V e^{-iq} and V_10 = V e^{+iq} in the slots
+        below. That is the row on the bond of the Transfer row (+1, 0, 1),
+        verified against an independent real-space Hartree response in
+        tests/test_two_body_placement.py (issue #232); the opposite signs,
+        which this test pinned before #232, put it on the opposite bond."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         _write_chain(tmp.name, so=False, norb_phys=2)
@@ -126,17 +128,22 @@ class TestInteractionSign(unittest.TestCase):
         q = 2.0 * np.pi * np.arange(LX) / LX
         w01 = ham[:, 0, 1, 0, 1, 1, 0, 1, 0]     # a=0, b=1: V_01(q)
         w10 = ham[:, 0, 0, 0, 0, 1, 1, 1, 1]     # a=1, b=0: V_10(q)
-        np.testing.assert_allclose(w01, V_DIR * np.exp(+1j * q), atol=1e-12)
-        np.testing.assert_allclose(w10, V_DIR * np.exp(-1j * q), atol=1e-12)
+        np.testing.assert_allclose(w01, V_DIR * np.exp(-1j * q), atol=1e-12)
+        np.testing.assert_allclose(w10, V_DIR * np.exp(+1j * q), atol=1e-12)
 
 
 class TestSpinOrbitalChiqConsistency(unittest.TestCase):
 
     def test_so_chiq_combines_chi0_and_w_at_the_same_q(self):
-        """The mixed-convention catcher: before #133 the SO mode solved
-        [1 + chi0(q) W(-q)]^-1 chi0(q). Build both candidates from the
-        solver's OWN chi0q and the analytic W and pin the consistent one;
-        this test fails against the pre-#133 code."""
+        """chiq = [1 + chi0(q) w(-q)]^-1 chi0(q) in the SO mode, with w(q)
+        the analytic vertex below (V(q) = sum_R X(R) e^{+iqR}, pair
+        transposed): the assembly that puts the row on the bond of its
+        Transfer row, as the non-SO mode does (issue #232; the placement is
+        verified against an independent real-space Hartree response in
+        tests/test_two_body_placement.py). Build both candidates from the
+        solver's OWN chi0q and the analytic w and pin the consistent one --
+        the two modes agreeing at the same q is what this catches; before
+        #232 both matched the w(q) assembly, the opposite bond."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         _write_chain(tmp.name, so=True, norb_phys=2)
@@ -185,10 +192,10 @@ class TestSpinOrbitalChiqConsistency(unittest.TestCase):
                     if not np.allclose(manual, chiq[il, q], atol=1e-10):
                         ok = False
             matches[sign] = ok
-        self.assertTrue(matches[+1],
-                        "chiq must match the documented-sign W(q) assembly")
-        self.assertFalse(matches[-1],
-                         "chiq must NOT match the W(-q) assembly")
+        self.assertTrue(matches[-1],
+                        "chiq must match the w(-q) assembly")
+        self.assertFalse(matches[+1],
+                         "chiq must NOT match the w(q) assembly")
 
 
 if __name__ == "__main__":

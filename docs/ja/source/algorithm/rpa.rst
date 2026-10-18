@@ -150,7 +150,7 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
     X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    W^{\alpha_1\alpha_1', \beta_1\beta_1'}_{\bf q}
     X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
@@ -166,13 +166,10 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
     
 .. note::
 
-   **相互作用と感受率の添字対の規約について。**
-   上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
-   その変換は RPA 方程式の一部です。
+   **相互作用が RPA 方程式に入る形について。** バーテックスは添字対の位置
+   ではなく、運動量の対応から決まります。
 
    既約感受率の2つのペアスロットには以下の双一次形式が対応します。
-   左のペアは生成演算子の添字が **後**、右のペアは生成演算子の添字が
-   **前** です。
 
    .. math::
       X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
@@ -180,29 +177,66 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
       \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle
 
    これは上の Green 関数の積 :math:`G^{\alpha\beta}(k+q)
-   G^{\beta'\alpha'}(k)` が表すものです。一方、相互作用
-   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}`\ が掛かる演算子は
-   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
-   感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
-   バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
-   もの（式中の\ :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`\ ）
-   であり、行列としては次のように書けます。
+   G^{\beta'\alpha'}(k)` が表すもので、左のペアは\ :math:`-{\bf q}`\ での応答、
+   右のペアは\ :math:`+{\bf q}`\ の場です。ハミルトニアンでは
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}`\ が
+   :math:`(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'})(+{\bf q})\,
+   (c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta})(-{\bf q})`\ に掛かり、
+   その\ **第2ペア**\ が\ :math:`+{\bf q}`\ を、\ **第1ペア**\ が
+   :math:`-{\bf q}`\ を運びます。したがって連鎖
+   :math:`X^{(0)\,\cdot,\beta_1\beta_1'}\,W\,X^{\alpha_1\alpha_1',\cdot}`\ では、
+   :math:`X^{(0)}`\ の場の双一次形式
+   :math:`c^{\dagger}_{\beta_1}c^{\mathstrut}_{\beta_1'}`\ には\ :math:`W`\ の
+   第2ペア（\ :math:`\alpha\alpha' = \beta_1\beta_1'`\ ）が、\ :math:`X`\ の応答の
+   双一次形式\ :math:`c^{\dagger}_{\alpha_1'}c^{\mathstrut}_{\alpha_1}`\ には
+   第1ペア（\ :math:`\beta\beta' = \alpha_1\alpha_1'`\ ）が対応し、上の頂点
+   :math:`W^{\alpha_1\alpha_1',\beta_1\beta_1'}_{\bf q}`\ が得られます。
+   行列としては次のように書けます。
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}
+      = W^{\alpha\alpha',\,\beta\beta'}_{\bf q}
 
-   この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
-   実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
-   同じ値を持つため）。効いてくるのは **複素の** ペア交差型相互作用、
-   すなわち複素のエルミート閉じた\ ``PairHop``\ の場合だけで、変換を省くと
-   複素共役なハミルトニアンに対する感受率が得られてしまいます。
-   H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
-   transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
-   テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
-   保存される\ ``chiq``/``chi0q``\ と相互作用ファイルの規約は、それぞれの節に
-   記載のとおりで変わりません。
+   これは相互作用テンソルの2つのペアを入れ替えたもので、ペア内の並べ替えは
+   行いません。ハミルトニアンの2つの双一次形式を入れ替える（あわせて
+   :math:`{\bf q} \to -{\bf q}`\ と付け替える）と恒等式
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q} =
+   W^{\alpha'\alpha,\beta'\beta}_{-{\bf q}}`\ が得られるので、同じ頂点は
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}`\ （ペアの位置は
+   そのままで各ペア内を並べ替え、\ :math:`-{\bf q}`\ で評価したもの）とも
+   書けます。ソルバーが組み立てるのはこの形です。上の式で第1の形を用いるのは、
+   そこでは運動量の対応が明示的になるからです。ソルバーが第2の形を用いるのは、
+   フーリエ変換した相互作用テーブルからペアごとに読み取れるからです。
+
+   **訂正（issue #232）。** このページの以前の版と手法論文
+   （arXiv:2308.00324）の Eq. (20) は、代わりにペアを位置で割り当てて
+   いました。このページは頂点を
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`\ （上の並べ替えた形を
+   :math:`+{\bf q}`\ で評価したもの）と書いていました。論文（その Eq. (16) は
+   :math:`+{\bf q}`\ のペアを先に置きます）は、Eq. (16) と Eq. (19) からは
+   :math:`W^{\beta_1\beta_1',\alpha_1'\alpha_1}_{\bf q}`\ が得られるところを
+   :math:`W^{\alpha_1\alpha_1',\beta_1'\beta_1}_{\bf q}`\ と書いていました
+   （掲載された成分は正しい成分のエルミート共役です。同論文 Eq. (21) の下の
+   行列表記\ :math:`[\boldsymbol{W}(q)]^{ab} = W^{ba}_{\bf q}`\ は Eq. (20) と
+   整合しています）。実数の結合では、どちらも\ :math:`+{\bf q}`\ の代わりに
+   :math:`-{\bf q}`\ の相互作用を使うことに相当し、相互作用ファイルの
+   オフサイト行\ :math:`(R, a, b)`\ を、トランスファーの行\ :math:`(R, a, b)`\ が
+   作用するボンドとは逆向きのボンドに置いてしまいます。修正前のリリースは
+   この形を実装していたため、\ :math:`R \to -R`\ について対称でないオフサイト
+   相互作用を全て誤ったボンドに置いていました（\ :ref:`相互作用指定ファイルの注意書き
+   <rpa_interaction_orientation>`\ を参照）。
+   :math:`X_{ab}(R) = X_{ab}(-R)`\ を満たすテーブル（オンサイト相互作用、
+   実数の1軌道のボンド、鏡映対称な多軌道のボンド）では2つの形は一致します。
+
+   並べ替えた形において、ペア内の並べ替えは密度型（ペア対角）成分に対しては
+   恒等変換であり、より一般に実数のエルミート閉じた宣言に対しても値が
+   変わりません（転置先のスロットが同じ値を持つため）。効いてくるのは
+   **複素の** ペア交差型相互作用、すなわち複素のエルミート閉じた\ ``PairHop``\ の
+   場合だけで、並べ替えを省くと複素共役なハミルトニアンに対する感受率が
+   得られてしまいます。transverse (ladder) の組み立てはこの変換を通しません。
+   こちらは相互作用テンソル自身を組み替えるため、ハミルトニアン規約のまま
+   受け取ります。保存される\ ``chiq``/``chi0q``\ と相互作用ファイルの規約は、
+   それぞれの節に記載のとおりで変わりません。
 
 上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)` )が一番大きなサイズの多次元配列となり、そのサイズは\ :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`\ で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
@@ -232,11 +266,17 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
     - \sum_{\alpha_2,\alpha_3}
       \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
     X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
-    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    W^{\alpha_3\sigma_3\sigma_3', \alpha_2\sigma_2'\sigma_2}_{\bf q}
     X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
     \end{aligned}
 
-となります。\ :math:`\alpha\sigma\sigma'`\ を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
+となります。一般化軌道の場合と同様に、この頂点は\ :math:`X^{(0)}`\ の場の双一次形式
+:math:`c^{\dagger}_{\alpha_2\sigma_2'}c^{\mathstrut}_{\alpha_2\sigma_2}`\ （\ :math:`+{\bf q}`\ ）を相互作用の第2ペアに、
+:math:`X`\ の応答の双一次形式
+:math:`c^{\dagger}_{\alpha_3\sigma_3'}c^{\mathstrut}_{\alpha_3\sigma_3}`\ （\ :math:`-{\bf q}`\ ）を第1ペアに対応させたものです
+（issue #232。以前の版では\ :math:`W^{\alpha_2,\alpha_3}_{\sigma_2'\sigma_2,\sigma_3'\sigma_3}({\bf q})`\ と書いており、
+2つのペアの役割が逆でした）。
+\ :math:`\alpha\sigma\sigma'`\ を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
 
 .. math::
     \begin{aligned}
@@ -667,11 +707,12 @@ V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
 となります。ここで\ :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
 V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 ファイル自身の向き（:math:`\alpha`\ が元のセル）でのフーリエ変換です。密度
-スロット上には、ring の頂点と同じく軌道添字を転置して
-（:math:`\alpha \leftrightarrow \beta`\ ）
+スロット上には、ring の頂点と同じく軌道添字を転置し
+（:math:`\alpha \leftrightarrow \beta`\ ）、\ :math:`-\mathbf{q}`\ で
+（上の注意書き「相互作用が RPA 方程式に入る形について」を参照）
 :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`\ として入ります。これは ring の
+-\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})`\ として入ります。これは ring の
 頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
 スロットではゼロ）であり、以下で\ :math:`\bar\chi`\ と取る積は
 :math:`A^{\sigma}_{\rm on}`\ ・
@@ -794,9 +835,13 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 置いたものです。ここで\ :math:`w_t`\ はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて\ ``CoulombInter``
 :math:`(+1, -1)`\ 、\ ``Hund`` :math:`(-1, +1)`\ 、\ ``Ising``
-:math:`(+1, -1)`\ ）です。相互作用ファイルの向きでは、宣言された行
-:math:`V_{ab}(R_m)`\ はスロット\ :math:`(m, a, b)`\ に、その逆向きの行
-:math:`V_{ba}(-R_m)`\ はスロット\ :math:`(-m, b, a)`\ に入ります。
+:math:`(+1, -1)`\ ）です。相互作用ファイルで宣言された行
+:math:`V_{ab}(R)`\ は、\ :math:`R_m = -R`\ のチャネルのスロット
+:math:`(m, a, b)`\ に、その逆向きの行\ :math:`V_{ba}(-R)`\ はスロット
+:math:`(-m, b, a)`\ に入ります。これは、その交換交差がトランスファーの行
+:math:`(R, a, b)`\ のボンドに作用するチャネルです（issue #232。以前の
+リリースはこの行を\ :math:`R_m = R`\ のチャネル、すなわち逆向きのボンドに
+置いていました）。
 ドレスされた
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi`\ と
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi`\ 、およびその
