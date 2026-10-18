@@ -88,6 +88,15 @@ in TOML format. It is composed of the following three sections.</p>
 <h2>Parameters<a class="headerlink" href="#parameters" title="Link to this heading">¶</a></h2>
 <section id="mode-section">
 <h3><code class="docutils literal notranslate"><span class="pre">mode</span></code> section<a class="headerlink" href="#mode-section" title="Link to this heading">¶</a></h3>
+<p>Only the keys <code class="docutils literal notranslate"><span class="pre">mode</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_type</span></code>,
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> and <code class="docutils literal notranslate"><span class="pre">flag_fock</span></code> (those the chosen solver supports,
+see below) are written in the <code class="docutils literal notranslate"><span class="pre">mode</span></code> table itself, with exactly this
+spelling and case; every other solver parameter goes in <code class="docutils literal notranslate"><span class="pre">mode.param</span></code>.
+<code class="docutils literal notranslate"><span class="pre">hwave</span></code> stops with an error when <code class="docutils literal notranslate"><span class="pre">mode</span></code> contains any other key or a
+differently cased one, and when <code class="docutils literal notranslate"><span class="pre">mode.param</span></code> contains one of these keys (in
+any case) or a nested <code class="docutils literal notranslate"><span class="pre">param</span></code> table. At the end of a run it warns about the
+<code class="docutils literal notranslate"><span class="pre">mode.param</span></code> keys the run did not read: a misspelled name, or a parameter
+that has no effect under the current settings.</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p>
 <p><strong>Type :</strong>

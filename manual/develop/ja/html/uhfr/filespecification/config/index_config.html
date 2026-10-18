@@ -80,6 +80,14 @@ green = "green.dat"
 <h2>パラメータ<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h2>
 <section id="mode">
 <h3><code class="docutils literal notranslate"><span class="pre">mode</span></code>セクション<a class="headerlink" href="#mode" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">mode</span></code>テーブル自体に書くキーは<code class="docutils literal notranslate"><span class="pre">mode</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_type</span></code>、
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>、<code class="docutils literal notranslate"><span class="pre">flag_fock</span></code>（選んだソルバーが対応しているもの。以下を参照）
+だけで、名前は大文字・小文字も含めてこのとおりに書きます。それ以外のソルバーの
+パラメータは<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>に書きます。<code class="docutils literal notranslate"><span class="pre">mode</span></code>にそれ以外のキーや大文字・小文字の
+異なるキーがある場合、また<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>にこれらのキー（大文字・小文字を問わない）や
+入れ子の<code class="docutils literal notranslate"><span class="pre">param</span></code>テーブルがある場合、<code class="docutils literal notranslate"><span class="pre">hwave</span></code>はエラーで停止します。また、計算の
+最後に、その計算で読まれなかった<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>のキー（綴りの誤りや、現在の設定では
+効かないパラメータ）を警告します。</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p>
 <p><strong>形式 :</strong> string型</p>
