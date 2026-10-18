@@ -53,7 +53,10 @@ idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat",
 r = read_input_k.QLMSkInput({"path_to_input": p, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
        "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson",
-       "flex_second_order": "takimoto"}
+       "flex_second_order": "takimoto",
+       # both orbitals on one site: the behaviour of the reference revision,
+       # which ignores the key, stated so that no #234 warning enters the log
+       "orbital_site": [0, 0]}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
 s.solve(gi, out)

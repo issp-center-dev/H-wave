@@ -1511,6 +1511,8 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     info_mode_rpa = dict(info_mode)
     info_mode_rpa["calc_scheme"] = calc_scheme
+    # hwave_sc has already reported an undeclared orbital_site (#234)
+    info_mode_rpa["_orbital_site_reported"] = True
     # Forward the RESOLVED boolean, not the raw value: RPA mixes truthiness
     # and == True checks on this flag, so a string "false" would diverge
     # internally (round-1 review of #83's guard).
@@ -2117,6 +2119,62 @@ def _accumulate_coeff(dst, coeff, value):
         dst += coeff * value
 
 
+class SiteSplitInteractionK(dict):
+    """A k-space interaction table (as returned by
+    :func:`_build_interaction_k`) that also carries the locality split
+    ``(inter_k_onsite, inter_k_offsite)`` implied by
+    ``[mode.param] orbital_site`` (#234): the ``R = 0`` rows between
+    orbitals of different sites form the off-site part. The S/C builders
+    pick the split up from the table itself, so every hwave_sc vertex path
+    that receives the table honours the declaration."""
+
+    def __init__(self, data, locality_split):
+        super().__init__(data)
+        self.locality_split = locality_split
+
+
+def _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions, norb,
+                                   input_dict):
+    """:func:`_build_interaction_k` for the hwave_sc entries, honouring
+    ``[mode.param] orbital_site`` (#234).
+
+    Without the key, or when no ``R = 0`` row joins orbitals of different
+    sites, the plain table is returned (unchanged results). Otherwise the
+    table carries a locality split in which those rows are off-site: their
+    Hartree (density) part stays, their exchange crossing is left out, as
+    in the RPA ring and the FLEX general path. Every other row keeps
+    today's treatment (an ``R != 0`` row still enters the Fock slot through
+    the collapsed-bond approximation, see GitHub issue #239)."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver.sites import (parse_orbital_site, warn_if_undeclared,
+                                    cross_site_rows)
+    param = CaseInsensitiveDict(input_dict.get("mode", {}).get("param", {}) or {})
+    site = parse_orbital_site(param.get("orbital_site"), norb)
+    warn_if_undeclared(interactions, site, "hwave_sc")
+    inter_k = _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb)
+    rows = cross_site_rows(interactions, site)
+    if not rows:
+        return inter_k
+    for t in ("Exchange", "PairHop", "PairLift"):
+        if t in rows:
+            logger.warning(
+                "hwave_sc: %d R = 0 %s row(s) join orbitals of different sites "
+                "([mode.param] orbital_site); like off-site %s they have no "
+                "density part and are left out of the vertex.", len(rows[t]), t, t)
+    offsite = {t: {key: interactions[t][key] for key in keys} for t, keys in rows.items()}
+    onsite = {}
+    for t, tbl in interactions.items():
+        drop = set(rows.get(t, ()))
+        kept = {key: v for key, v in tbl.items() if key not in drop}
+        if kept:
+            onsite[t] = kept
+    split = (_build_interaction_k(kx_array, ky_array, kz_array, onsite, norb),
+             _build_interaction_k(kx_array, ky_array, kz_array, offsite, norb))
+    logger.info("hwave_sc: orbital_site makes %s R = 0 row(s) inter-site (Hartree part "
+                "only).", ", ".join("{} {}".format(len(v), t) for t, v in rows.items()))
+    return SiteSplitInteractionK(inter_k, split)
+
+
 def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
                              _presymmetrised=False, locality_split=None):
     """Build spin (S) and charge (C) interaction matrices for all q-points at once.
@@ -2162,6 +2220,10 @@ def _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz,
     C_all : ndarray
         Charge interaction matrices, shape (Nx, Ny, Nz, norb^2, norb^2).
     """
+    if locality_split is None:
+        # an hwave_sc table built with [mode.param] orbital_site (#234)
+        # carries its own split (see _build_interaction_k_for_sites)
+        locality_split = getattr(inter_k, "locality_split", None)
     nd = norb * norb
     S_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
     C_all = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
@@ -2317,16 +2379,21 @@ def _build_sc_matrices(inter_k, norb, ix, iy, iz):
     # matrices are never built for the whole grid. Indexing goes through
     # np.arange so numpy negative indices keep their usual meaning and
     # out-of-range indices raise instead of returning empty slices.
-    inter_sym = _symmetrise_interactions_k(inter_k)
-    inter_1 = {}
-    for t, M in inter_sym.items():
-        jx = np.arange(M.shape[2])[ix]
-        jy = np.arange(M.shape[3])[iy]
-        jz = np.arange(M.shape[4])[iz]
-        inter_1[t] = np.ascontiguousarray(
-            M[:, :, jx:jx+1, jy:jy+1, jz:jz+1])
+    def _slice(table):
+        out = {}
+        for t, M in _symmetrise_interactions_k(table).items():
+            jx = np.arange(M.shape[2])[ix]
+            jy = np.arange(M.shape[3])[iy]
+            jz = np.arange(M.shape[4])[iz]
+            out[t] = np.ascontiguousarray(M[:, :, jx:jx+1, jy:jy+1, jz:jz+1])
+        return out
+
+    inter_1 = _slice(inter_k)
+    split = getattr(inter_k, "locality_split", None)
+    split_1 = None if split is None else (_slice(split[0]), _slice(split[1]))
     S_all, C_all = _build_sc_matrices_all_q(inter_1, norb, 1, 1, 1,
-                                            _presymmetrised=True)
+                                            _presymmetrised=True,
+                                            locality_split=split_1)
     return S_all[0, 0, 0], C_all[0, 0, 0]
 
 def _declarations_partner_closed(interactions, Nx, Ny, Nz, norb):
@@ -2804,8 +2871,17 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
     # Attribute through the same assembled-and-symmetrised path as the
     # decision: a raw declaration that symmetrises to zero (#112) must not
     # be named as a cause.
+    def _one_type(k):
+        split = getattr(inter_k, "locality_split", None)
+        if split is None:
+            return {k: inter_k[k]}
+        on, off = split
+        return SiteSplitInteractionK(
+            {k: inter_k[k]},
+            ({k: on[k]} if k in on else {}, {k: off[k]} if k in off else {}))
+
     missing = [k for k in configured
-               if _off_density_sc_weight({k: inter_k[k]}, norb,
+               if _off_density_sc_weight(_one_type(k), norb,
                                          Nx, Ny, Nz) != 0.0] or configured
     logger.warning(
         "The Eliashberg vertex is being built from %s, which carries only the "
@@ -6948,7 +7024,8 @@ def calc_eliashberg(input_dict):
 
     # --- Step 7: Build interaction in k-space ---
     logger.info("Building interactions in k-space...")
-    inter_k = _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb)
+    inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions,
+                                             norb, input_dict)
 
     # Pre-built Eliashberg operator + provenance record; only the bond path
     # sets them (every other path builds its operator from Vs_q/G2 as before).

@@ -9,6 +9,7 @@ import itertools
 import copy
 from requests.structures import CaseInsensitiveDict
 from .base import ParamDict
+from .sites import is_onsite, cross_site_rows
 
 try:
     from .perf import do_profile
@@ -736,6 +737,22 @@ class Interaction:
         # Reused by RPA._reshape_green to decode the folded orbital index.
         self.norb_orig = _so_physical_norb(orig_norb, self.enable_spin_orbital)
 
+        # Which orbitals share a site (#234): an R = 0 row between orbitals
+        # of different sites gets the off-site treatment in the q-only
+        # vertex (Hartree part only). Labels index the PRE-fold (physical)
+        # orbitals; every locality test below reads the pre-fold table.
+        from .sites import parse_orbital_site, warn_if_undeclared
+        _param = info_mode.get("param", {}) or {}
+        if not isinstance(_param, ParamDict):
+            # keys are case-insensitive; a ParamDict (from hwave) is read
+            # directly so that the read is recorded
+            _param = CaseInsensitiveDict(_param)
+        self.orbital_site = parse_orbital_site(_param.get("orbital_site"), self.norb_orig)
+        if not info_mode.get("_orbital_site_reported", False):
+            warn_if_undeclared(
+                self.param_ham_orig if self.lattice.has_sublattice else self.param_ham,
+                self.orbital_site, info_mode.get("mode", "RPA"))
+
         # create hamiltonian
         self._make_ham_trans()
         self._make_ham_inter()
@@ -1071,12 +1088,13 @@ class Interaction:
                         else self.param_ham.get(type, {}))
             offsite = [(irvec, orbvec, v)
                        for (irvec, orbvec), v in orig_tbl.items()
-                       if tuple(int(x) for x in irvec) != (0, 0, 0)]
+                       if not is_onsite(irvec, orbvec, getattr(self, "orbital_site", None))]
             if offsite:
                 shown = offsite[:8]
                 logger.warning(
                     "PairHop declares %d off-site term(s) (irvec != "
-                    "(0,0,0)) that this solver discards: only the "
+                    "(0,0,0), or between orbitals of different sites "
+                    "per orbital_site) that this solver discards: only the "
                     "on-site part of PairHop is represented (an off-site "
                     "PairHop's transverse contribution lies outside the "
                     "particle-hole channel space this solver dresses -- "
@@ -1110,7 +1128,7 @@ class Interaction:
             # the unfolded path is bit-for-bit unchanged.
             onsite_tbl = {}
             for (irvec, orbvec), v in orig_tbl.items():
-                if tuple(int(x) for x in irvec) == (0, 0, 0):
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)):
                     onsite_tbl[(irvec, orbvec)] = v
             if not onsite_tbl:
                 return
@@ -1194,7 +1212,7 @@ class Interaction:
                     tbl = self.param_ham.get(type, {})
             filtered = {}
             for (irvec, orbvec), v in tbl.items():
-                if tuple(irvec) == (0, 0, 0) and orbvec[0] != orbvec[1]:
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)) and orbvec[0] != orbvec[1]:
                     filtered[(irvec, orbvec)] = v
             if not filtered:
                 return
@@ -1367,7 +1385,7 @@ class Interaction:
                     tbl = self.param_ham.get(type, {})
             filtered = {}
             for (irvec, orbvec), v in tbl.items():
-                if tuple(irvec) == (0, 0, 0):
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)):
                     filtered[(irvec, orbvec)] = v
             if not filtered:
                 continue
@@ -2815,6 +2833,7 @@ class RPA:
                     self._transverse_bond_resource_preflight(
                         self._transverse_bond_topo)
                 else:
+                    self._reject_cross_site_rows_under_ladder()
                     self._check_transverse_representable(ham_orig)
 
             # solve longitudinal (ring) RPA
@@ -4321,6 +4340,26 @@ class RPA:
         cross_sym = _mean(cross_block)
         flip_sym = _mean(spin_flip_block)
         return -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
+
+    def _reject_cross_site_rows_under_ladder(self):
+        """``calc_type='ring+ladder'`` judges locality on the folded,
+        q-only transverse vertex, which cannot tell an ``R = 0`` row
+        between orbitals of different sites (``orbital_site``, #234) from
+        an on-site one; refuse such rows rather than give them the on-site
+        transverse treatment."""
+        ham_info = self.ham_info
+        site = getattr(ham_info, "orbital_site", None)
+        source = (ham_info.param_ham_orig if getattr(self.lattice, "has_sublattice", False)
+                  else ham_info.param_ham)
+        rows = cross_site_rows(source, site)
+        if rows:
+            t, found = next(iter(rows.items()))
+            raise ValueError(
+                "calc_type='ring+ladder' cannot represent an R = 0 interaction between "
+                "orbitals of different sites ([mode.param] orbital_site): {} declares {} "
+                "such row(s), e.g. {}. Use calc_type='ring', or the bond-resolved "
+                "transverse gate (transverse_bond_channels=true), or declare these "
+                "orbitals on one site.".format(t, len(found), found[0]))
 
     def _check_transverse_representable(self, ham_orig):
         """Reject input whose transverse vertex is not a function of q alone.
