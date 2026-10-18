@@ -160,7 +160,7 @@ c_{\bf{k},\alpha} = \sum_{\gamma} u_{\alpha \gamma, \bf{k}} d_{\bf{k}, \gamma}
 X^{\alpha\alpha', \beta\beta'}(q)&amp;=
 X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
 X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+W^{\alpha_1\alpha_1', \beta_1\beta_1'}_{\bf q}
 X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
 \end{aligned}\]</div>
 <p>ここで、<span class="math notranslate nohighlight">\(\alpha \alpha'\)</span>などをまとめて一つのindexにすると行列形式で表すことができ、
@@ -172,38 +172,69 @@ X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
 \end{aligned}\end{split}\]</div>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p><strong>相互作用と感受率の添字対の規約について。</strong>
-上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
-その変換は RPA 方程式の一部です。</p>
-<p>既約感受率の2つのペアスロットには以下の双一次形式が対応します。
-左のペアは生成演算子の添字が <strong>後</strong>、右のペアは生成演算子の添字が
-<strong>前</strong> です。</p>
+<p><strong>相互作用が RPA 方程式に入る形について。</strong> バーテックスは添字対の位置
+ではなく、運動量の対応から決まります。</p>
+<p>既約感受率の2つのペアスロットには以下の双一次形式が対応します。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
 <span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
 \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
 \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle\]</div>
 <p>これは上の Green 関数の積 <span class="math notranslate nohighlight">\(G^{\alpha\beta}(k+q)
-G^{\beta'\alpha'}(k)\)</span> が表すものです。一方、相互作用
-<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span>が掛かる演算子は
-<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}\)</span> であり、<strong>どちらのペアでも</strong>
-感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
-バーテックスは、相互作用テンソルの <strong>各ペア内で添字を入れ替えた</strong>
-もの（式中の<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span>）
-であり、行列としては次のように書けます。</p>
+G^{\beta'\alpha'}(k)\)</span> が表すもので、左のペアは<span class="math notranslate nohighlight">\(-{\bf q}\)</span>での応答、
+右のペアは<span class="math notranslate nohighlight">\(+{\bf q}\)</span>の場です。ハミルトニアンでは
+<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span>が
+<span class="math notranslate nohighlight">\((c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'})(+{\bf q})\,
+(c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta})(-{\bf q})\)</span>に掛かり、
+その<strong>第2ペア</strong>が<span class="math notranslate nohighlight">\(+{\bf q}\)</span>を、<strong>第1ペア</strong>が
+<span class="math notranslate nohighlight">\(-{\bf q}\)</span>を運びます。したがって連鎖
+<span class="math notranslate nohighlight">\(X^{(0)\,\cdot,\beta_1\beta_1'}\,W\,X^{\alpha_1\alpha_1',\cdot}\)</span>では、
+<span class="math notranslate nohighlight">\(X^{(0)}\)</span>の場の双一次形式
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\beta_1}c^{\mathstrut}_{\beta_1'}\)</span>には<span class="math notranslate nohighlight">\(W\)</span>の
+第2ペア（<span class="math notranslate nohighlight">\(\alpha\alpha' = \beta_1\beta_1'\)</span>）が、<span class="math notranslate nohighlight">\(X\)</span>の応答の
+双一次形式<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_1'}c^{\mathstrut}_{\alpha_1}\)</span>には
+第1ペア（<span class="math notranslate nohighlight">\(\beta\beta' = \alpha_1\alpha_1'\)</span>）が対応し、上の頂点
+<span class="math notranslate nohighlight">\(W^{\alpha_1\alpha_1',\beta_1\beta_1'}_{\bf q}\)</span>が得られます。
+行列としては次のように書けます。</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-11">
 <span class="eqno">(7.22)<a class="headerlink" href="#equation-algorithm-rpa-11" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-= W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}\]</div>
-<p>この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
-実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
-同じ値を持つため）。効いてくるのは <strong>複素の</strong> ペア交差型相互作用、
-すなわち複素のエルミート閉じた<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の場合だけで、変換を省くと
-複素共役なハミルトニアンに対する感受率が得られてしまいます。
-H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
-transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
-テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
-保存される<code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>と相互作用ファイルの規約は、それぞれの節に
-記載のとおりで変わりません。</p>
+= W^{\alpha\alpha',\,\beta\beta'}_{\bf q}\]</div>
+<p>これは相互作用テンソルの2つのペアを入れ替えたもので、ペア内の並べ替えは
+行いません。ハミルトニアンの2つの双一次形式を入れ替える（あわせて
+<span class="math notranslate nohighlight">\({\bf q} \to -{\bf q}\)</span>と付け替える）と恒等式
+<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q} =
+W^{\alpha'\alpha,\beta'\beta}_{-{\bf q}}\)</span>が得られるので、同じ頂点は
+<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}\)</span>（ペアの位置は
+そのままで各ペア内を並べ替え、<span class="math notranslate nohighlight">\(-{\bf q}\)</span>で評価したもの）とも
+書けます。ソルバーが組み立てるのはこの形です。上の式で第1の形を用いるのは、
+そこでは運動量の対応が明示的になるからです。ソルバーが第2の形を用いるのは、
+フーリエ変換した相互作用テーブルからペアごとに読み取れるからです。</p>
+<p><strong>訂正（issue #232）。</strong> このページの以前の版と手法論文
+（arXiv:2308.00324）の Eq. (20) は、代わりにペアを位置で割り当てて
+いました。このページは頂点を
+<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span>（上の並べ替えた形を
+<span class="math notranslate nohighlight">\(+{\bf q}\)</span>で評価したもの）と書いていました。論文（その Eq. (16) は
+<span class="math notranslate nohighlight">\(+{\bf q}\)</span>のペアを先に置きます）は、Eq. (16) と Eq. (19) からは
+<span class="math notranslate nohighlight">\(W^{\beta_1\beta_1',\alpha_1'\alpha_1}_{\bf q}\)</span>が得られるところを
+<span class="math notranslate nohighlight">\(W^{\alpha_1\alpha_1',\beta_1'\beta_1}_{\bf q}\)</span>と書いていました
+（掲載された成分は正しい成分のエルミート共役です。同論文 Eq. (21) の下の
+行列表記<span class="math notranslate nohighlight">\([\boldsymbol{W}(q)]^{ab} = W^{ba}_{\bf q}\)</span>は Eq. (20) と
+整合しています）。実数の結合では、どちらも<span class="math notranslate nohighlight">\(+{\bf q}\)</span>の代わりに
+<span class="math notranslate nohighlight">\(-{\bf q}\)</span>の相互作用を使うことに相当し、相互作用ファイルの
+オフサイト行<span class="math notranslate nohighlight">\((R, a, b)\)</span>を、トランスファーの行<span class="math notranslate nohighlight">\((R, a, b)\)</span>が
+作用するボンドとは逆向きのボンドに置いてしまいます。修正前のリリースは
+この形を実装していたため、<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称でないオフサイト
+相互作用を全て誤ったボンドに置いていました（<a class="reference internal" href="../rpa/filespecification/inputfiles/interaction.html#rpa-interaction-orientation"><span class="std std-ref">相互作用指定ファイルの注意書き</span></a>を参照）。
+<span class="math notranslate nohighlight">\(X_{ab}(R) = X_{ab}(-R)\)</span>を満たすテーブル（オンサイト相互作用、
+実数の1軌道のボンド、鏡映対称な多軌道のボンド）では2つの形は一致します。</p>
+<p>並べ替えた形において、ペア内の並べ替えは密度型（ペア対角）成分に対しては
+恒等変換であり、より一般に実数のエルミート閉じた宣言に対しても値が
+変わりません（転置先のスロットが同じ値を持つため）。効いてくるのは
+<strong>複素の</strong> ペア交差型相互作用、すなわち複素のエルミート閉じた<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の
+場合だけで、並べ替えを省くと複素共役なハミルトニアンに対する感受率が
+得られてしまいます。transverse (ladder) の組み立てはこの変換を通しません。
+こちらは相互作用テンソル自身を組み替えるため、ハミルトニアン規約のまま
+受け取ります。保存される<code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>と相互作用ファイルの規約は、
+それぞれの節に記載のとおりで変わりません。</p>
 </div>
 <p>上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( <span class="math notranslate nohighlight">\(X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)\)</span> )が一番大きなサイズの多次元配列となり、そのサイズは<span class="math notranslate nohighlight">\(N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}\)</span>で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、</p>
@@ -228,10 +259,16 @@ X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
 - \sum_{\alpha_2,\alpha_3}
   \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
-W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+W^{\alpha_3\sigma_3\sigma_3', \alpha_2\sigma_2'\sigma_2}_{\bf q}
 X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
 \end{aligned}\]</div>
-<p>となります。<span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span>を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、</p>
+<p>となります。一般化軌道の場合と同様に、この頂点は<span class="math notranslate nohighlight">\(X^{(0)}\)</span>の場の双一次形式
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_2\sigma_2'}c^{\mathstrut}_{\alpha_2\sigma_2}\)</span>（<span class="math notranslate nohighlight">\(+{\bf q}\)</span>）を相互作用の第2ペアに、
+<span class="math notranslate nohighlight">\(X\)</span>の応答の双一次形式
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_3\sigma_3'}c^{\mathstrut}_{\alpha_3\sigma_3}\)</span>（<span class="math notranslate nohighlight">\(-{\bf q}\)</span>）を第1ペアに対応させたものです
+（issue #232。以前の版では<span class="math notranslate nohighlight">\(W^{\alpha_2,\alpha_3}_{\sigma_2'\sigma_2,\sigma_3'\sigma_3}({\bf q})\)</span>と書いており、
+2つのペアの役割が逆でした）。
+<span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span>を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-15">
 <span class="eqno">(7.26)<a class="headerlink" href="#equation-algorithm-rpa-15" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
  \hat{X}(q)&amp;=\hat{X}^{(0)}(q)-\hat{X}^{(0)}(q)\hat{W}(q)\hat{X}(q)\nonumber\\
@@ -605,11 +642,12 @@ G_{rr'}(\tau)\,G_{ss'}(\tau)\,G_{q'q}(-\tau)\]</div>
 <p>となります。ここで<span class="math notranslate nohighlight">\(v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
 V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}\)</span>は、相互作用
 ファイル自身の向き（<span class="math notranslate nohighlight">\(\alpha\)</span>が元のセル）でのフーリエ変換です。密度
-スロット上には、ring の頂点と同じく軌道添字を転置して
-（<span class="math notranslate nohighlight">\(\alpha \leftrightarrow \beta\)</span>）
+スロット上には、ring の頂点と同じく軌道添字を転置し
+（<span class="math notranslate nohighlight">\(\alpha \leftrightarrow \beta\)</span>）、<span class="math notranslate nohighlight">\(-\mathbf{q}\)</span>で
+（上の注意書き「相互作用が RPA 方程式に入る形について」を参照）
 <span class="math notranslate nohighlight">\([A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})\)</span>として入ります。これは ring の
+-\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})\)</span>として入ります。これは ring の
 頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
 スロットではゼロ）であり、以下で<span class="math notranslate nohighlight">\(\bar\chi\)</span>と取る積は
 <span class="math notranslate nohighlight">\(A^{\sigma}_{\rm on}\)</span>・
@@ -731,9 +769,13 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 置いたものです。ここで<span class="math notranslate nohighlight">\(w_t\)</span>はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 <span class="math notranslate nohighlight">\((+1, -1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>
-<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。相互作用ファイルの向きでは、宣言された行
-<span class="math notranslate nohighlight">\(V_{ab}(R_m)\)</span>はスロット<span class="math notranslate nohighlight">\((m, a, b)\)</span>に、その逆向きの行
-<span class="math notranslate nohighlight">\(V_{ba}(-R_m)\)</span>はスロット<span class="math notranslate nohighlight">\((-m, b, a)\)</span>に入ります。
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。相互作用ファイルで宣言された行
+<span class="math notranslate nohighlight">\(V_{ab}(R)\)</span>は、<span class="math notranslate nohighlight">\(R_m = -R\)</span>のチャネルのスロット
+<span class="math notranslate nohighlight">\((m, a, b)\)</span>に、その逆向きの行<span class="math notranslate nohighlight">\(V_{ba}(-R)\)</span>はスロット
+<span class="math notranslate nohighlight">\((-m, b, a)\)</span>に入ります。これは、その交換交差がトランスファーの行
+<span class="math notranslate nohighlight">\((R, a, b)\)</span>のボンドに作用するチャネルです（issue #232。以前の
+リリースはこの行を<span class="math notranslate nohighlight">\(R_m = R\)</span>のチャネル、すなわち逆向きのボンドに
+置いていました）。
 ドレスされた
 <span class="math notranslate nohighlight">\(\chi_s = [1 - \bar\chi S]^{-1}\bar\chi\)</span>と
 <span class="math notranslate nohighlight">\(\chi_c = [1 + \bar\chi C]^{-1}\bar\chi\)</span>、およびその

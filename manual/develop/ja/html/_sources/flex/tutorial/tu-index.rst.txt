@@ -646,7 +646,7 @@ bond 分解頂点によるペアリング固有値
 解くことができます -- :ref:`動的振動数の節 <sc_dynamic_frequency>`
 のオンサイトの\ ``chiq_s.npz`` / ``chiq_c.npz``\ バーテックスの
 代わりに用います。インプロセスの経路に必要なのはこれだけです。
-動的ボンドアーカイブ\ ``longitudinal_bond.npz``\ （スキーマ2）は
+動的ボンドアーカイブ\ ``longitudinal_bond.npz``\ （スキーマ3）は
 ``longitudinal_bond_output_full = true``\ を指定したときにのみ
 書き出され、``hwave_sc``\ を経由する後処理の経路でのみ必要になります。
 このカーネルに到達する経路は2つあり、どちらも
@@ -675,9 +675,11 @@ bond 分解頂点によるペアリング固有値
   ``[file.input] path_to_flex_output``\ に FLEX 計算の出力ディレクトリを
   指定します。その FLEX 計算が\ ``longitudinal_bond_output_full =
   true``\ で（アーカイブはこの場合にのみ書き出されます）、かつ
-  アーカイブスキーマ2を書き出すバージョンで実行されている必要が
+  アーカイブスキーマ3を書き出すバージョンで実行されている必要が
   あります -- 古いスキーマ1のアーカイブは再計算を求めるメッセージと
-  ともに拒否されます。1回の実行につき1つのチャネル
+  ともに拒否され、スキーマ2のアーカイブは、宣言されたオフサイト相互作用が
+  実行時の格子上で\ :math:`R \to -R`\ について対称な場合にのみ
+  受け付けられます。1回の実行につき1つのチャネル
   （``[eliashberg] pairing_type``\ ）のみを解き、オンサイトの動的
   ソルバーと同じファイル名（``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・
   ``eigenvalue.dat``\ ）で書き出します。
@@ -1174,6 +1176,12 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   読み込み側がこれらを
   必須とすることはなく、異なるカーネルで作られた\ ``sigma_init``\ も警告付きで
   受理されます。:ref:`rpa_chiq_provenance`\ を参照してください。
+- ``sc_vertex_version``: ``3``\ 。issue #232 のボンド配置（オフサイト二体行を、
+  その Transfer 行のボンド上に置く）を表します。相互作用が\ ``CellShape``\ の
+  格子上で\ :math:`R \to -R`\ について対称でないオフサイト行を宣言している場合
+  （\ :ref:`相互作用定義ファイルのページの注意 <rpa_interaction_orientation>`\ を参照）、
+  このキーを持たない、またはより古い値を持つ\ ``sigma_init``\ の種は拒否され、
+  それ以外の場合は受理されます。
 
 .. note::
 
@@ -1191,6 +1199,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   ``sigma``\ と同じ形状
 - ``flex_second_order`` / ``flex_second_order_schema``: 上の\ ``sigma.npz``
   と同じです。
+- ``sc_vertex_version``: 上の\ ``sigma.npz``\ と同じです。同じ条件のもとで、
+  ``hwave_sc``\ はより古い\ ``green.npz``\ を拒否します。
 
 これらの出力ファイルはEliashberg方程式ソルバー (``hwave_sc``) の
 入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。

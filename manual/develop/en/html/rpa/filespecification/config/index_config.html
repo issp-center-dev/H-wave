@@ -705,9 +705,11 @@ vertex is built from a FLEX run’s dynamic bond-resolved susceptibilities
 instead of <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>. The producing FLEX run must
 have used <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> AND
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> under a version writing archive
-schema 2 (see the description of <code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code> in
+schema 3 (see the description of <code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code> in
 <code class="docutils literal notranslate"><span class="pre">file.output</span></code> and <a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-chiq-rpa"><span class="std std-ref">the archive reference</span></a>); an
-older schema-1 archive is refused with a message asking for a re-run.
+older schema-1 archive is refused with a message asking for a re-run, and
+a schema-2 archive is accepted only when the declared off-site
+interactions are symmetric under <span class="math notranslate nohighlight">\(R \to -R\)</span> on the run’s grid.
 Refused together with <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> (the Green
 function and the bond topology come from <code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code> and the
 archive, not from these static-bond-path keys) and <code class="docutils literal notranslate"><span class="pre">zero_chi_s</span></code> /

@@ -584,9 +584,11 @@ GPU 経路が使われます。
 <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>）から構築され、<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>は
 使われません。生成元の FLEX 計算は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
 <span class="pre">true</span></code><strong>かつ</strong><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>を、
-アーカイブスキーマ2を書き出すバージョンで実行している必要があります
+アーカイブスキーマ3を書き出すバージョンで実行している必要があります
 （<code class="docutils literal notranslate"><span class="pre">file.output</span></code>の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code>の説明と
 <a class="reference internal" href="../outputfiles/chiq_rpa.html#subsec-chiq-rpa"><span class="std std-ref">アーカイブの出力リファレンス</span></a>を参照）。
+スキーマ2のアーカイブは、宣言されたオフサイト相互作用が実行時の格子上で
+<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称な場合にのみ受け付けられます。
 古いスキーマ1のアーカイブは再計算を求めるメッセージとともに拒否
 されます。<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>（Green 関数と
 ボンドトポロジーはこれらの静的ボンド経路のキーではなく

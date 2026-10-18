@@ -191,7 +191,16 @@ Hund・Ising・Exchange のいずれかに非対称なオンサイト軌道間�
 （<span class="math notranslate nohighlight">\(X_{ab} = X_{ba}\)</span>、物理的に通常の入力すべて）、PairHop に
 ついてはエルミート共役で閉じた宣言（<span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span>、
 物理的に妥当な形であり、転置対称である必要はありません）です。
-reduced スキームのファイルはこの向きに依存しません。</p>
+reduced スキームのファイルはこの向きに依存しません。
+<code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">3</span></code>が記録された感受率ファイル（issue #232）では、
+全てのオフサイト行を、同じ<code class="docutils literal notranslate"><span class="pre">(R,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>をもつトランスファーの行の
+ボンドに置きます。CoulombInter、Hund、Ising、Exchange、
+PairHop のいずれかが（PairLift は上と同じ理由で対象外です）
+<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称でない
+（<span class="math notranslate nohighlight">\(X_{ab}(R) \neq X_{ab}(-R)\)</span>）オフサイト行を宣言している場合、
+<code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">2</span></code>が記録されたファイル、またはバージョンが記録
+されていないファイルはどちらのスキームでも拒否されます。そのようなファイルは、その行を逆向きのボンドに置いて計算された
+ものだからです。</p>
 </div>
 <p>RPA感受率は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">

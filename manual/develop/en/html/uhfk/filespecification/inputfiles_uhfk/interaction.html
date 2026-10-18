@@ -86,41 +86,55 @@ missing from earlier editions of this page.</p></li>
 original cell and <code class="docutils literal notranslate"><span class="pre">[beta]</span></code> in the cell displaced by
 <span class="math notranslate nohighlight">\(\vec{r} = (r_x, r_y, r_z)\)</span>, for the one-body and the two-body files
 alike.</p>
-<p><strong>Compatibility with version 2.0.0.</strong> Up to H-wave 2.0.0 the mean-field
-solvers (<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>; the Hartree-Fock term of <code class="docutils literal notranslate"><span class="pre">FLEX</span></code>) read an off-site
-two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
-vertices used the rule above; the mean field now follows it too. Results of
-<code class="docutils literal notranslate"><span class="pre">UHFk</span></code> (and of <code class="docutils literal notranslate"><span class="pre">FLEX</span></code> with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> or
-<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>) change only for off-site rows with two
-different orbitals or a complex coefficient; every on-site interaction,
-every real orbital-diagonal off-site row, every real single-orbital input,
-and every RPA or Eliashberg result without the bond-resolved channels
-(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>, the default) and computed from an
-unaffected susceptibility are unchanged (an Eliashberg run with
-<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> moves together with the FLEX run that produced its
-susceptibility). For FLEX/RPA calculations that share this
-interaction format: a run with <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> and
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> on real inter-orbital off-site bonds
-changes as well (its mixed second-order blocks are now exact, issue #192),
-and runs under <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> without the Hartree-Fock
-term and without the bond-resolved channels are unchanged.
+<p><strong>Correction of the bond placement (issue #232).</strong> A two-body row and a
+one-body row with the same <code class="docutils literal notranslate"><span class="pre">(R,</span> <span class="pre">a,</span> <span class="pre">b)</span></code> act on the same bond, as the
+Wannier90 <code class="docutils literal notranslate"><span class="pre">hr.dat</span></code> and RESPACK <code class="docutils literal notranslate"><span class="pre">zvo_*r.dat</span></code> formats define them.
+Earlier versions did not do this everywhere: the RPA solver (released
+versions up to and including v1.0.1 among them), the FLEX vertex
+(including <code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code> and the bond-resolved
+channels) and the Eliashberg vertices put an off-site two-body row on
+the bond OPPOSITE its one-body row. The released <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> placed it
+correctly (development versions between issues #193 and #232, which
+were never part of a release, had moved it, and the Hartree-Fock term
+of <code class="docutils literal notranslate"><span class="pre">FLEX</span></code>, to the opposite bond as well). From the first release that
+includes issue #232, all solvers follow the convention above. Results
+change only for off-site rows that are not symmetric under
+<span class="math notranslate nohighlight">\(R \to -R\)</span> (<span class="math notranslate nohighlight">\(X_{ab}(R) \neq X_{ab}(-R)\)</span>), the generic case
+of multi-orbital RESPACK input: a bond between two different orbitals
+<span class="math notranslate nohighlight">\(a \neq b\)</span> is declared as <span class="math notranslate nohighlight">\(X_{ab}(R)\)</span> together with its
+partner <span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span>, and <span class="math notranslate nohighlight">\(X_{ab}(-R)\)</span> – the same pair of
+orbitals on the mirrored bond – is in general a different number;
+every on-site interaction, every real single-orbital input and every
+table with <span class="math notranslate nohighlight">\(X_{ab}(R) = X_{ab}(-R)\)</span> is unaffected
+(a complex off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is affected even with a single orbital,
+because its coefficient at <span class="math notranslate nohighlight">\(-R\)</span> is the complex conjugate).
 <strong>No input file needs to be changed.</strong></p>
-<p><strong>Reproduction recipe and composite pipelines.</strong> To reproduce a 2.0.0
-<code class="docutils literal notranslate"><span class="pre">UHFk</span></code> number, negate the displacement of every off-site two-body row
-(<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>; not the one-body <code class="docutils literal notranslate"><span class="pre">Transfer</span></code>
-rows, not the on-site
-rows; do not swap the orbital indices, which is wrong for complex
-couplings) – and note that this negated file changes what the RPA and
-Eliashberg solvers compute, whose 2.0.0 results on the original file were
-already correct. A 2.0.0 <code class="docutils literal notranslate"><span class="pre">FLEX</span></code> run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>
-cannot be reproduced with a single modified file, because that release
-evaluated the mean-field term and the vertices in different orientations
-within one run. A 2.0.0 pipeline that fed <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> output into the RPA or
-Eliashberg solvers is reproduced only by running <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> on the negated
-file and the later stages on the original one, because 2.0.0 solved a
-different Hamiltonian in the two stages. Remove any workaround you added
-for the old discrepancy, and restart affected self-consistent runs from
-scratch rather than from 2.0.0 seeds.</p>
+<p><strong>Reproducing earlier results.</strong> An earlier RPA, FLEX-vertex or
+Eliashberg result is reproduced by negating the displacement of every
+off-site two-body row (<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> -&gt; <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>; not
+the one-body rows such as <code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, not the on-site rows, and
+without swapping the orbital indices, which is wrong for complex
+couplings) – that negated file describes the Hamiltonian those versions
+actually solved. The exception is the bond-resolved pairing kernel
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> and the dynamic bond path of
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>): with more than one orbital it also coupled the gap to the
+bond channels with a wrong pair geometry, corrected at the same time, so
+multi-orbital results of that kernel can change even for an off-site
+table that is symmetric under <span class="math notranslate nohighlight">\(R \to -R\)</span>, and cannot be
+reproduced from a modified file. Released <code class="docutils literal notranslate"><span class="pre">UHFk</span></code> results are
+unchanged. An earlier
+<code class="docutils literal notranslate"><span class="pre">FLEX</span></code> run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> evaluated the mean-field
+term and the vertices on different bonds and cannot be reproduced with
+a single file. Keep such reproduction runs in a separate directory:
+their outputs carry the current version stamps although they describe
+the old Hamiltonian. FLEX susceptibility, self-energy and Green-function
+files now carry <code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">3</span></code> and the dynamic bond archive
+<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">3</span></code>; the Eliashberg solvers and a FLEX
+<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed refuse an older file when the interaction declares
+an off-site row that is not symmetric under <span class="math notranslate nohighlight">\(R \to -R\)</span>, so
+regenerate those files by re-running FLEX. Remove any workaround added
+for the old placement, and restart affected self-consistent runs from
+scratch rather than from earlier seeds.</p>
 </div>
 <p>An example of the file is shown below.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry

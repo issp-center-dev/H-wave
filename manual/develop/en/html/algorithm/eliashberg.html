@@ -195,7 +195,14 @@ transpose-checked interactions, transpose-symmetric declarations
 PairHop, Hermitian-closed declarations
 (<span class="math notranslate nohighlight">\(P_{ba} = P_{ab}^{*}\)</span>) – the physically valid form, which
 need not be transpose-symmetric. Reduced-scheme files never depended
-on this orientation.</p>
+on this orientation. Susceptibility files stamped
+<code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">3</span></code> (issue #232) place every off-site row on the
+bond of the transfer row with the same <code class="docutils literal notranslate"><span class="pre">(R,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>; a file stamped
+<code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">2</span></code>, or an unversioned one, is refused, in either
+scheme, when CoulombInter, Hund, Ising, Exchange or PairHop declares an
+off-site row (PairLift is exempt, as above) that is not symmetric under
+<span class="math notranslate nohighlight">\(R \to -R\)</span> (<span class="math notranslate nohighlight">\(X_{ab}(R) \neq X_{ab}(-R)\)</span>), because such a
+file was computed with that row on the opposite bond.</p>
 </div>
 <p>The RPA susceptibilities are</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-8">

@@ -656,7 +656,7 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 解くことができます -- <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>
 のオンサイトの<code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code>バーテックスの
 代わりに用います。インプロセスの経路に必要なのはこれだけです。
-動的ボンドアーカイブ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ2）は
+動的ボンドアーカイブ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ3）は
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定したときにのみ
 書き出され、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を経由する後処理の経路でのみ必要になります。
 このカーネルに到達する経路は2つあり、どちらも
@@ -685,9 +685,11 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>に FLEX 計算の出力ディレクトリを
 指定します。その FLEX 計算が<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span>
 <span class="pre">true</span></code>で（アーカイブはこの場合にのみ書き出されます）、かつ
-アーカイブスキーマ2を書き出すバージョンで実行されている必要が
+アーカイブスキーマ3を書き出すバージョンで実行されている必要が
 あります -- 古いスキーマ1のアーカイブは再計算を求めるメッセージと
-ともに拒否されます。1回の実行につき1つのチャネル
+ともに拒否され、スキーマ2のアーカイブは、宣言されたオフサイト相互作用が
+実行時の格子上で<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称な場合にのみ
+受け付けられます。1回の実行につき1つのチャネル
 （<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">pairing_type</span></code>）のみを解き、オンサイトの動的
 ソルバーと同じファイル名（<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>）で書き出します。</p></li>
@@ -1229,6 +1231,12 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 読み込み側がこれらを
 必須とすることはなく、異なるカーネルで作られた<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>も警告付きで
 受理されます。<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">スキームの来歴</span></a>を参照してください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: <code class="docutils literal notranslate"><span class="pre">3</span></code>。issue #232 のボンド配置（オフサイト二体行を、
+その Transfer 行のボンド上に置く）を表します。相互作用が<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>の
+格子上で<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称でないオフサイト行を宣言している場合
+（<a class="reference internal" href="../../rpa/filespecification/inputfiles/interaction.html#rpa-interaction-orientation"><span class="std std-ref">相互作用定義ファイルのページの注意</span></a>を参照）、
+このキーを持たない、またはより古い値を持つ<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>の種は拒否され、
+それ以外の場合は受理されます。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
@@ -1247,6 +1255,8 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <code class="docutils literal notranslate"><span class="pre">sigma</span></code>と同じ形状</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: 上の<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
 と同じです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: 上の<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>と同じです。同じ条件のもとで、
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はより古い<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を拒否します。</p></li>
 </ul>
 <p>これらの出力ファイルはEliashberg方程式ソルバー (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の
 入力としても使用できます。詳細は<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>

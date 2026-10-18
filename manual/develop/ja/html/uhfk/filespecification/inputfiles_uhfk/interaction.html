@@ -81,40 +81,48 @@
 元のセルに、軌道<code class="docutils literal notranslate"><span class="pre">[beta]</span></code>を<span class="math notranslate nohighlight">\(\vec{r} = (r_x, r_y, r_z)\)</span>だけ
 並進したセルに置きます。これは一体項のファイルでも二体項のファイルでも
 同じです。</p>
-<p><strong>2.0.0 との互換性：</strong>H-wave 2.0.0 までは、平均場ソルバー（<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>、
-および<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の Hartree-Fock 項）はオフサイトの二体行を2つのセルを
-入れ替えて読んでいましたが、RPA・FLEX・Eliashberg の頂点は上の規約に
-従っていました。今回から平均場も上の規約に従います。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の結果
-（および<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>または
-<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>を指定した<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の結果）が変わるのは、
-異なる2つの軌道をもつオフサイト行、または複素係数をもつオフサイト行が
-ある場合だけです。全てのオンサイト相互作用、実数で軌道対角な全ての
-オフサイト行、実数の単一軌道入力、およびボンド分解チャネルを用いない
-（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）、かつ影響を受けない
-感受率から計算した RPA と Eliashberg の全ての結果は変わりません
-（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>の Eliashberg 計算は、感受率を生成した FLEX 計算
-に従って変わります）。同じ相互作用ファイル形式を用いる FLEX/RPA 計算に
-ついては：<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code>と
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した計算も、実数の軌道間
-オフサイトボンドでは結果が変わります（混合した2次のブロックが厳密に
-なりました。issue #192）。Hartree-Fock 項とボンド分解チャネルのいずれも
-使わない<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>の計算は変わりません。<strong>入力ファイルを変更する必要はありません。</strong></p>
-<p><strong>再現手順と複合パイプライン：</strong>2.0.0 の<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の数値を再現するには、
-全てのオフサイト二体行の変位を反転してください
-（<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> → <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>。一体項の<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>の行、およびオンサイトの行は
-対象外です。また、軌道の
-添字を入れ替えてはいけません。複素結合に対して誤りになります）。ただし、
-このように変位を反転したファイルは、RPA と Eliashberg のソルバーが計算する
-内容を変えてしまいます。元のファイルに対するこれらの 2.0.0 の結果は、
-もともと正しいものでした。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した 2.0.0 の
-<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>計算は、単一の入力ファイルでは再現できません（2.0.0 は一回の計算
-の中で平均場項と頂点項を異なる向きで評価していたためです）。<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の
-出力を RPA や Eliashberg のソルバーに渡していた 2.0.0 のパイプラインを
-再現するには、<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>だけを変位を反転したファイルで、後段は元の
-ファイルで実行する必要があります。2.0.0 では、2つの段階が異なる
-ハミルトニアンを解いていたためです。従来の食い違いに対する回避策を入れて
-いた場合は取り除き、影響を受ける自己無撞着計算は 2.0.0 の初期値からでは
-なく最初からやり直してください。</p>
+<p><strong>ボンドの配置の修正（issue #232）：</strong>同じ<code class="docutils literal notranslate"><span class="pre">(R,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>をもつ二体項の行と
+一体項の行は、Wannier90 の<code class="docutils literal notranslate"><span class="pre">hr.dat</span></code>や RESPACK の<code class="docutils literal notranslate"><span class="pre">zvo_*r.dat</span></code>の形式が
+定義するとおり、同じボンドに作用します。以前のバージョンでは、これが全ての
+箇所で守られていませんでした。RPA ソルバー（v1.0.1 までのリリース版を
+含みます）、FLEX の頂点（<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>とボンド分解
+チャネルを含みます）、および Eliashberg の頂点は、オフサイトの二体行を
+対応する一体項の行とは<strong>逆向きの</strong>ボンドに置いていました。リリース版の
+<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>は正しく置いていました（issue #193 から #232 までの間の開発版は
+リリースには含まれていませんが、そこでは<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>と<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>の
+Hartree-Fock 項もあわせて逆向きのボンドに移されていました）。issue #232 を
+含む最初のリリースからは、全てのソルバーが上の規約に従います。結果が変わるのは、
+<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称でない
+（<span class="math notranslate nohighlight">\(X_{ab}(R) \neq X_{ab}(-R)\)</span>）オフサイト行がある場合だけで、
+これは多軌道の RESPACK 入力では一般的な場合です。異なる2つの軌道
+<span class="math notranslate nohighlight">\(a \neq b\)</span>の間のボンドは、<span class="math notranslate nohighlight">\(X_{ab}(R)\)</span>とその相手
+<span class="math notranslate nohighlight">\(X_{ba}(-R)\)</span>の組として宣言され、<span class="math notranslate nohighlight">\(X_{ab}(-R)\)</span>（同じ軌道の組の、
+鏡映したボンド上の値）は一般には異なる値です。全てのオンサイト相互作用、
+全ての実数の単一軌道入力、および<span class="math notranslate nohighlight">\(X_{ab}(R) = X_{ab}(-R)\)</span>を満たす
+全てのテーブルは影響を受けません（複素数のオフサイト<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は、
+<span class="math notranslate nohighlight">\(-R\)</span>での係数が複素共役になるため、単一軌道でも影響を受けます）。<strong>入力ファイルを変更する必要はありません。</strong></p>
+<p><strong>以前の結果の再現：</strong>以前の RPA、FLEX の頂点、または Eliashberg の結果は、
+全てのオフサイト二体行の変位を反転することで再現できます
+（<code class="docutils literal notranslate"><span class="pre">[rx]</span> <span class="pre">[ry]</span> <span class="pre">[rz]</span></code> → <code class="docutils literal notranslate"><span class="pre">[-rx]</span> <span class="pre">[-ry]</span> <span class="pre">[-rz]</span></code>。<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>などの一体項の行、
+およびオンサイトの行は対象外です。また、軌道の添字を入れ替えてはいけません。
+複素結合に対して誤りになります）。このように変位を反転したファイルが、
+それらのバージョンが実際に解いていたハミルトニアンを表します。例外はボンド分解した
+対形成カーネル（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>および<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の動的
+ボンド経路）です。このカーネルは軌道が複数ある場合、ギャップを誤った対の幾何で
+ボンドチャネルに結合させてもいたため、これも同時に修正されました。そのため、
+このカーネルの多軌道の結果は、<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称なオフサイト
+テーブルであっても変わることがあり、変更したファイルから再現することはできません。
+リリース版の<code class="docutils literal notranslate"><span class="pre">UHFk</span></code>の結果は変わりません。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>を指定した以前の
+<code class="docutils literal notranslate"><span class="pre">FLEX</span></code>計算は、平均場項と頂点を異なるボンドで評価していたため、単一の
+ファイルでは再現できません。このような再現計算は別のディレクトリで行って
+ください。その出力には、古いハミルトニアンを表すにもかかわらず現在の
+バージョン刻印が記録されます。FLEX の感受率・自己エネルギー・グリーン関数の
+ファイルには現在<code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span> <span class="pre">=</span> <span class="pre">3</span></code>が、動的ボンドアーカイブには
+<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">3</span></code>が記録されます。相互作用が<span class="math notranslate nohighlight">\(R \to -R\)</span>に
+ついて対称でないオフサイト行を宣言している場合、Eliashberg の各ソルバーおよび
+FLEX の<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>の種はそれより古いファイルを拒否するので、FLEX を再実行してそれらのファイルを再生成してください。以前の配置に
+対する回避策を入れていた場合は取り除き、影響を受ける自己無撞着計算は以前の
+初期値からではなく最初からやり直してください。</p>
 </div>
 <p>以下にファイル例を示します。</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>wannier90 format for vmcdry.out or HPhi -sdry

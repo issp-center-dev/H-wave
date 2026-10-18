@@ -196,7 +196,11 @@ for s1 in (0, 1):
 スピン／電荷の RPA 分母の<span class="math notranslate nohighlight">\(q\)</span>にわたる最小の条件数スコア。不安定性の
 下限に達すると実行は拒否されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>の
 場合はゼロ振動数スライスのみにわたる最小値を報告します）、
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code>（整数、<code class="docutils literal notranslate"><span class="pre">1</span></code>）。</p></li>
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_schema</span></code>（整数、<code class="docutils literal notranslate"><span class="pre">2</span></code>。issue #232 のボンド配置の
+修正より前は<code class="docutils literal notranslate"><span class="pre">1</span></code>で、そのときチャネル<code class="docutils literal notranslate"><span class="pre">m</span></code>には<code class="docutils literal notranslate"><span class="pre">-delta_r[m]</span></code>では
+なく<code class="docutils literal notranslate"><span class="pre">+delta_r[m]</span></code>で宣言された行が入っていました。キーと配列の形状は
+同じで、H-wave の読み込み処理はこの刻印を検査しません。外部での後処理のための
+ものです）。</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>で<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の
 Hartree-Fock FLEX）、同じ16個のキーは <strong>最後の</strong> 自己無撞着写像を記述し
@@ -242,8 +246,9 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">&quot;refuse&quot;</span></code>では常に<code class="docutils literal notranslate"><span class="pre">0</span></code>）が含まれます。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、専用アーカイブ
 （<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>、デフォルト<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>）に
-<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code>（<code class="docutils literal notranslate"><span class="pre">2</span></code>。以下のボンド分解した動的 Eliashberg
-対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code>（<code class="docutils literal notranslate"><span class="pre">3</span></code>。issue #232 のボンド配置の修正より前は
+<code class="docutils literal notranslate"><span class="pre">2</span></code>、以下のボンド分解した動的 Eliashberg 対形成ソルバーが追加される前は
+<code class="docutils literal notranslate"><span class="pre">1</span></code>です。この段落末尾の注を参照）、
 動的な<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>
 （<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>、<code class="docutils literal notranslate"><span class="pre">freq_axis</span> <span class="pre">=</span> <span class="pre">&quot;bosonic</span> <span class="pre">l</span> <span class="pre">-&gt;</span> <span class="pre">2l</span> <span class="pre">-</span> <span class="pre">nmat&quot;</span></code>）、
 瞬時のボンドバーテックス<code class="docutils literal notranslate"><span class="pre">S_bond</span></code>と<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>（複素<code class="docutils literal notranslate"><span class="pre">ndarray(nvol,</span>
@@ -262,7 +267,12 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 （<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">S_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">C_bond</span></code> / <code class="docutils literal notranslate"><span class="pre">norb</span></code>を
 含まない）は、そのソルバーによって、このバージョンでの再計算を求める
 メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
-スキーマ2でも変わりません。</p>
+スキーマ2でも変わりません。また、スキーマ3はスキーマ2と同じキーと配列の形状を
+もちます。スキーマ2のアーカイブは、各オフサイト行を
+トランスファーの行とは逆向きのボンドのチャネルに置いていました。対形成
+ソルバーは、相互作用が実行時の格子上で<span class="math notranslate nohighlight">\(R \to -R\)</span>について対称で
+ないオフサイト行を宣言している場合には、FLEX の再計算を求めるメッセージとともに
+これを拒否し、それ以外では受け付けます。</p>
 <p>アーカイブには<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_output_layout</span></code>で選択した
 ディスク上のレイアウトを表す<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>（文字列）も記録されます。
 デフォルトの<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>レイアウトでは<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>はこの単一
@@ -281,7 +291,7 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 </section>
 <section id="eliashberg">
 <span id="subsec-eliashberg-bond-outputs"></span><h1>ボンド分解した動的 Eliashberg 対形成の出力<a class="headerlink" href="#eliashberg" title="Link to this heading">¶</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ2、前述）のボンド分解した動的
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スキーマ3、前述）のボンド分解した動的
 対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
 あります。後処理の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span>
 <span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）と、FLEX の計算の最後に
@@ -320,8 +330,12 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 いずれか。カーネルが選んだメモリ配置）、<code class="docutils literal notranslate"><span class="pre">bond_parity_leakage</span></code>
 （実測されたパリティ交換の漏れ。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
 <span class="pre">parity_leakage_tol</span></code>を参照）、<code class="docutils literal notranslate"><span class="pre">gap_bond_projection</span></code>（各ボンド
-形状因子へ射影したギャップ。複素<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">norb,</span> <span class="pre">norb,</span> <span class="pre">Nmat)</span></code>）
-を追加で持ちます。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の場合はさらに
+形状因子へ射影したギャップ。複素<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">norb,</span> <span class="pre">norb,</span> <span class="pre">Nmat)</span></code>。
+<code class="docutils literal notranslate"><span class="pre">gap_bond_projection[m,</span> <span class="pre">a,</span> <span class="pre">b]</span></code>は、軌道<code class="docutils literal notranslate"><span class="pre">a</span></code>が原点のセルに、軌道<code class="docutils literal notranslate"><span class="pre">b</span></code>が
+<span class="math notranslate nohighlight">\(+R_m\)</span>のセル（<code class="docutils literal notranslate"><span class="pre">R_m</span> <span class="pre">=</span> <span class="pre">delta_r[m]</span></code>）にある対の実空間ギャップ振幅
+<span class="math notranslate nohighlight">\(\Delta_{ab}(+R_m)\)</span>、すなわち Transfer 行<span class="math notranslate nohighlight">\((+R_m, a, b)\)</span>のボンド上の
+振幅で、<span class="math notranslate nohighlight">\(\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)\)</span>とします）を追加で持ちます。<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>の場合はさらに
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_L</span></code>・
 <code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code>（ボンドバーテックスの成分ごとの IR
 フィット残差。実数<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">B)</span></code>。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>

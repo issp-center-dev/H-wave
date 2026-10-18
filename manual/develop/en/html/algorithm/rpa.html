@@ -157,7 +157,7 @@ X^{\alpha\alpha', \beta\beta'}(q)&amp;=
 X^{(0)\alpha\alpha', \beta\beta'}(q)
 - \sum_{\alpha_1\alpha_1'\beta_1\beta_1'}
 X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+W^{\alpha_1\alpha_1', \beta_1\beta_1'}_{\bf q}
 X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
 \end{aligned}\]</div>
 <p>Combining indices such as <span class="math notranslate nohighlight">\(\alpha\alpha^\prime\)</span> into one index, they are expressed
@@ -169,41 +169,72 @@ in the matrix form. Then finally it leads to the expression:</p>
 \end{aligned}\end{split}\]</div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><strong>Index-pair convention between the interaction and the susceptibility.</strong>
-The two objects above label their index pairs with opposite orderings
-inside each pair, and converting between them is part of the RPA
-equation, not an afterthought.</p>
-<p>The two pair slots of the bare susceptibility carry the bilinears
-below – the left pair with its creation index <em>second</em>, the right
-pair with its creation index <em>first</em> –</p>
+<p><strong>How the interaction enters the RPA equation.</strong> The vertex follows
+from matching momenta, not from the positions of the index pairs.</p>
+<p>The two pair slots of the bare susceptibility carry the bilinears</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-9">
 <span class="eqno">(7.20)<a class="headerlink" href="#equation-algorithm-rpa-9" title="Link to this equation">¶</a></span>\[X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
 \Big\langle \big(c^{\dagger}_{\alpha'}c^{\mathstrut}_{\alpha}\big)(-q)\;;\;
 \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle ,\]</div>
 <p>which is what the Green-function product <span class="math notranslate nohighlight">\(G^{\alpha\beta}(k+q)
-G^{\beta'\alpha'}(k)\)</span> above encodes. The interaction
-<span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span> multiplies
-<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}\)</span>, i.e. in <em>each</em> pair its
-ordering is the reverse of the susceptibility’s.  The vertex entering
-the RPA equation above is therefore the interaction tensor with the
-two indices of <em>each pair</em> transposed – written there as
-<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span> – i.e. as a
-matrix,</p>
+G^{\beta'\alpha'}(k)\)</span> above encodes: the left pair is the response at
+<span class="math notranslate nohighlight">\(-{\bf q}\)</span>, the right pair the field at <span class="math notranslate nohighlight">\(+{\bf q}\)</span>. In the
+Hamiltonian, <span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q}\)</span> multiplies
+<span class="math notranslate nohighlight">\((c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'})(+{\bf q})\,
+(c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta})(-{\bf q})\)</span>: its SECOND pair
+carries <span class="math notranslate nohighlight">\(+{\bf q}\)</span> and its FIRST pair <span class="math notranslate nohighlight">\(-{\bf q}\)</span>. In the
+chain <span class="math notranslate nohighlight">\(X^{(0)\,\cdot,\beta_1\beta_1'}\,W\,X^{\alpha_1\alpha_1',\cdot}\)</span>
+the field bilinear <span class="math notranslate nohighlight">\(c^{\dagger}_{\beta_1}c^{\mathstrut}_{\beta_1'}\)</span>
+of <span class="math notranslate nohighlight">\(X^{(0)}\)</span> is therefore matched by the second pair of
+<span class="math notranslate nohighlight">\(W\)</span> (<span class="math notranslate nohighlight">\(\alpha\alpha' = \beta_1\beta_1'\)</span>) and the response
+bilinear <span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_1'}c^{\mathstrut}_{\alpha_1}\)</span> of
+<span class="math notranslate nohighlight">\(X\)</span> by the first pair (<span class="math notranslate nohighlight">\(\beta\beta' = \alpha_1\alpha_1'\)</span>),
+which gives the vertex <span class="math notranslate nohighlight">\(W^{\alpha_1\alpha_1',\beta_1\beta_1'}_{\bf q}\)</span>
+above. As a matrix,</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-10">
 <span class="eqno">(7.21)<a class="headerlink" href="#equation-algorithm-rpa-10" title="Link to this equation">¶</a></span>\[\hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-= W^{\beta'\beta,\,\alpha'\alpha}_{\bf q},\]</div>
-<p>with both index pairs reordered.</p>
-<p>The conversion is the identity on density (pair-diagonal) components
-and, more generally, on any real Hermitian-closed declaration, since
-the transposed slot then carries the same value.  It is observable
-only for a <em>complex</em> pair-crossing interaction – a complex
-Hermitian-closed <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> – where omitting it returns the
-susceptibility of the complex-conjugate Hamiltonian.  H-wave applies
-the conversion when it assembles the vertex for the ring solve.  The
-transverse (ladder) assembly is <em>not</em> routed through it: that
-assembly re-pairs the interaction tensor itself and therefore
-consumes the Hamiltonian convention directly.  The stored
+= W^{\alpha\alpha',\,\beta\beta'}_{\bf q},\]</div>
+<p>the interaction tensor with its two pairs exchanged and nothing
+reordered inside a pair. Exchanging the two bilinears of the
+Hamiltonian (and relabeling <span class="math notranslate nohighlight">\({\bf q} \to -{\bf q}\)</span>) gives the
+identity <span class="math notranslate nohighlight">\(W^{\beta\beta',\alpha\alpha'}_{\bf q} =
+W^{\alpha'\alpha,\beta'\beta}_{-{\bf q}}\)</span>, so the same vertex can be
+written <span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}\)</span> – the
+pairs in place, each pair reordered, at <span class="math notranslate nohighlight">\(-{\bf q}\)</span> – which is the
+form the solver assembles. The equation above uses the first form
+because there the momentum matching is explicit; the solver uses the
+second because it is read off the Fourier-transformed interaction table
+pair by pair.</p>
+<p><strong>Correction (issue #232).</strong> Earlier editions of this page, and Eq. (20)
+of the method paper (arXiv:2308.00324), assigned the pairs by position
+instead: this page wrote the vertex as
+<span class="math notranslate nohighlight">\(W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}\)</span> (the reordered
+form above, but at <span class="math notranslate nohighlight">\(+{\bf q}\)</span>), and the paper, whose Eq. (16)
+puts the <span class="math notranslate nohighlight">\(+{\bf q}\)</span> pair first, as
+<span class="math notranslate nohighlight">\(W^{\alpha_1\alpha_1',\beta_1'\beta_1}_{\bf q}\)</span> where its
+Eqs. (16) and (19) give <span class="math notranslate nohighlight">\(W^{\beta_1\beta_1',\alpha_1'\alpha_1}_{\bf q}\)</span>
+(the printed entry is the Hermitian conjugate of the correct one; the
+matrix notation below its Eq. (21), <span class="math notranslate nohighlight">\([\boldsymbol{W}(q)]^{ab} =
+W^{ba}_{\bf q}\)</span>, is consistent with its Eq. (20)). For real couplings
+both amount to the interaction at <span class="math notranslate nohighlight">\(-{\bf q}\)</span> in place of
+<span class="math notranslate nohighlight">\(+{\bf q}\)</span>, which puts an off-site row <span class="math notranslate nohighlight">\((R, a, b)\)</span> of an
+interaction file on the bond opposite the one a transfer row
+<span class="math notranslate nohighlight">\((R, a, b)\)</span> acts on. Releases before the correction implemented
+that form, so every off-site interaction that is not symmetric under
+<span class="math notranslate nohighlight">\(R \to -R\)</span> was placed on the wrong bond (see <a class="reference internal" href="../rpa/filespecification/inputfiles/interaction.html#rpa-interaction-orientation"><span class="std std-ref">the note on
+the interaction definition file page</span></a>).
+For a table with <span class="math notranslate nohighlight">\(X_{ab}(R) = X_{ab}(-R)\)</span> – on-site
+interactions, real single-orbital bonds, mirror-symmetric
+multi-orbital bonds – the two forms coincide.</p>
+<p>In the reordered form, reordering inside a pair is the identity on
+density (pair-diagonal) components and, more generally, on any real
+Hermitian-closed declaration, since the transposed slot then carries
+the same value. It is observable only for a <em>complex</em> pair-crossing
+interaction – a complex Hermitian-closed <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> – where omitting
+it returns the susceptibility of the complex-conjugate Hamiltonian.
+The transverse (ladder) assembly is <em>not</em> routed through this
+conversion: that assembly re-pairs the interaction tensor itself and
+therefore consumes the Hamiltonian convention directly. The stored
 <code class="docutils literal notranslate"><span class="pre">chiq</span></code>/<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and the interaction files keep the conventions
 documented in their own sections.</p>
 </div>
@@ -237,10 +268,18 @@ X^{(0)\alpha, \beta}_{\sigma\sigma'\sigma_1\sigma_1'}(q)
 - \sum_{\alpha_2,\alpha_3}
   \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
 X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
-W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+W^{\alpha_3\sigma_3\sigma_3', \alpha_2\sigma_2'\sigma_2}_{\bf q}
 X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q).
 \end{aligned}\]</div>
-<p>If <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> is regarded as a single index,
+<p>As in the generalised-orbital case, the vertex matches the field
+bilinear <span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_2\sigma_2'}c^{\mathstrut}_{\alpha_2\sigma_2}\)</span>
+of <span class="math notranslate nohighlight">\(X^{(0)}\)</span> (at <span class="math notranslate nohighlight">\(+{\bf q}\)</span>) with the second pair of the
+interaction and the response bilinear
+<span class="math notranslate nohighlight">\(c^{\dagger}_{\alpha_3\sigma_3'}c^{\mathstrut}_{\alpha_3\sigma_3}\)</span> of
+<span class="math notranslate nohighlight">\(X\)</span> (at <span class="math notranslate nohighlight">\(-{\bf q}\)</span>) with its first pair (issue #232; earlier
+editions wrote <span class="math notranslate nohighlight">\(W^{\alpha_2,\alpha_3}_{\sigma_2'\sigma_2,\sigma_3'\sigma_3}({\bf q})\)</span>,
+the two pairs in the opposite roles).
+If <span class="math notranslate nohighlight">\(\alpha\sigma\sigma'\)</span> is regarded as a single index,
 it can be put into matrix form and, as in the case of generalised orbitals, can be used as a</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-14">
 <span class="eqno">(7.25)<a class="headerlink" href="#equation-algorithm-rpa-14" title="Link to this equation">¶</a></span>\[\begin{split}\begin{aligned}
@@ -644,10 +683,12 @@ pair basis and are</p>
 V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}\)</span> is the Fourier
 transform of the interaction file in its own orientation (<span class="math notranslate nohighlight">\(\alpha\)</span> in
 the original cell). On the density slots it enters with transposed orbital
-indices (<span class="math notranslate nohighlight">\(\alpha \leftrightarrow \beta\)</span>), as the ring vertex does:
+indices (<span class="math notranslate nohighlight">\(\alpha \leftrightarrow \beta\)</span>) and at <span class="math notranslate nohighlight">\(-\mathbf{q}\)</span>,
+as the ring vertex does (see the note “How the interaction enters the
+RPA equation” above):
 <span class="math notranslate nohighlight">\([A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})\)</span>. It is the same matrix the
+-\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})\)</span>. It is the same matrix the
 ring vertex uses, understood as a matrix on the density slots of the pair
 basis (zero on every other slot), so that each product with
 <span class="math notranslate nohighlight">\(\bar\chi\)</span> below is a
@@ -779,10 +820,13 @@ exchange crossing of the off-site term, <span class="math notranslate nohighligh
 V^{(t)}_{l_1 l_2}(R_m)\)</span>, where <span class="math notranslate nohighlight">\(w_t\)</span> is the same per-type
 coefficient the on-site exchange slot uses (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 <span class="math notranslate nohighlight">\((+1, -1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\((+1, -1)\)</span>
-for the spin and charge channels). In the orientation of the interaction
-file, a declared row <span class="math notranslate nohighlight">\(V_{ab}(R_m)\)</span> occupies the slot
-<span class="math notranslate nohighlight">\((m, a, b)\)</span> and its reverse row <span class="math notranslate nohighlight">\(V_{ba}(-R_m)\)</span> the slot
-<span class="math notranslate nohighlight">\((-m, b, a)\)</span>. The dressed objects
+for the spin and charge channels). A declared row <span class="math notranslate nohighlight">\(V_{ab}(R)\)</span> of
+the interaction file occupies the slot <span class="math notranslate nohighlight">\((m, a, b)\)</span> of the channel
+with <span class="math notranslate nohighlight">\(R_m = -R\)</span>, and its reverse row <span class="math notranslate nohighlight">\(V_{ba}(-R)\)</span> the slot
+<span class="math notranslate nohighlight">\((-m, b, a)\)</span>: that is the channel whose exchange crossing acts on
+the bond of a transfer row <span class="math notranslate nohighlight">\((R, a, b)\)</span> (issue #232; earlier
+releases filed the row on the channel <span class="math notranslate nohighlight">\(R_m = R\)</span>, i.e. on the
+opposite bond). The dressed objects
 <span class="math notranslate nohighlight">\(\chi_s = [1 - \bar\chi S]^{-1}\bar\chi\)</span> and
 <span class="math notranslate nohighlight">\(\chi_c = [1 + \bar\chi C]^{-1}\bar\chi\)</span> and their
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks are written under the

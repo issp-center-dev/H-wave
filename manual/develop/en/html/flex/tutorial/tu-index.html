@@ -701,7 +701,7 @@ SAME bond-resolved, frequency-resolved pairing vertex the self-energy used
 – rather than the on-site <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c.npz</span></code> vertex of
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a>. That is all
 the in-process entry needs. The dynamic bond archive
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code> (schema 2), which is written only with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code> (schema 3), which is written only with
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>, is needed solely by the
 post-processing entry through <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>. Two entries reach this kernel
 and build it from the same arrays, so they agree to round-off on the
@@ -727,9 +727,11 @@ results.</p></li>
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> in a separate <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> input, pointing
 <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code> at the FLEX run’s output directory.
 Requires <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> on that FLEX run (the
-archive is written only then) under a version writing archive schema 2
+archive is written only then) under a version writing archive schema 3
 – an older schema-1 archive is refused with a message asking for a
-re-run. Solves ONE channel per run (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">pairing_type</span></code>), and
+re-run, and a schema-2 archive is accepted only when the declared
+off-site interactions are symmetric under <span class="math notranslate nohighlight">\(R \to -R\)</span> on the run’s
+grid. Solves ONE channel per run (<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">pairing_type</span></code>), and
 writes the same file names as the on-site dynamic solver
 (<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>).</p></li>
 </ul>
@@ -1267,6 +1269,12 @@ this key was introduced (H-wave 2.0.0 and earlier); readers never require
 them, and a <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed
 recording a different kernel is accepted with a warning. See
 <a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#rpa-chiq-provenance"><span class="std std-ref">Scheme provenance</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: <code class="docutils literal notranslate"><span class="pre">3</span></code>, the bond placement of issue #232 (an
+off-site two-body row on the bond of its transfer row). A <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
+seed without it, or with an older value, is refused when the interaction
+declares an off-site row that is not symmetric under <span class="math notranslate nohighlight">\(R \to -R\)</span> on
+the <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> grid (see <a class="reference internal" href="../../rpa/filespecification/inputfiles/interaction.html#rpa-interaction-orientation"><span class="std std-ref">the note on the interaction definition
+file page</span></a>), and accepted otherwise.</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -1285,6 +1293,8 @@ still being consumed as <code class="docutils literal notranslate"><span class="
 same shape as <code class="docutils literal notranslate"><span class="pre">sigma</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_second_order_schema</span></code>: as for
 <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> above.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: as for <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> above; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses an
+older <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> under the same condition.</p></li>
 </ul>
 <p>These output files can also be used as input for the
 Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
