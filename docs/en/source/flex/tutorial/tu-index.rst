@@ -686,7 +686,7 @@ SAME bond-resolved, frequency-resolved pairing vertex the self-energy used
 -- rather than the on-site ``chiq_s.npz`` / ``chiq_c.npz`` vertex of
 :ref:`the dynamic-frequency section <sc_dynamic_frequency>`. That is all
 the in-process entry needs. The dynamic bond archive
-``longitudinal_bond.npz`` (schema 2), which is written only with
+``longitudinal_bond.npz`` (schema 3), which is written only with
 ``longitudinal_bond_output_full = true``, is needed solely by the
 post-processing entry through ``hwave_sc``. Two entries reach this kernel
 and build it from the same arrays, so they agree to round-off on the
@@ -712,9 +712,11 @@ uniform Matsubara grid:
   ``chi0q_mode = "flex"`` in a separate ``hwave_sc`` input, pointing
   ``[file.input] path_to_flex_output`` at the FLEX run's output directory.
   Requires ``longitudinal_bond_output_full = true`` on that FLEX run (the
-  archive is written only then) under a version writing archive schema 2
+  archive is written only then) under a version writing archive schema 3
   -- an older schema-1 archive is refused with a message asking for a
-  re-run. Solves ONE channel per run (``[eliashberg] pairing_type``), and
+  re-run, and a schema-2 archive is accepted only when the declared
+  off-site interactions are symmetric under :math:`R \to -R` on the run's
+  grid. Solves ONE channel per run (``[eliashberg] pairing_type``), and
   writes the same file names as the on-site dynamic solver
   (``gap_dynamic.npz``, ``gap.dat``, ``eigenvalue.dat``).
 
@@ -1204,6 +1206,12 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   them, and a ``sigma_init`` seed
   recording a different kernel is accepted with a warning. See
   :ref:`rpa_chiq_provenance`.
+- ``sc_vertex_version``: ``3``, the bond placement of issue #232 (an
+  off-site two-body row on the bond of its transfer row). A ``sigma_init``
+  seed without it, or with an older value, is refused when the interaction
+  declares an off-site row that is not symmetric under :math:`R \to -R` on
+  the ``CellShape`` grid (see :ref:`the note on the interaction definition
+  file page <rpa_interaction_orientation>`), and accepted otherwise.
 
 .. note::
 
@@ -1221,6 +1229,8 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   same shape as ``sigma``.
 - ``flex_second_order`` / ``flex_second_order_schema``: as for
   ``sigma.npz`` above.
+- ``sc_vertex_version``: as for ``sigma.npz`` above; ``hwave_sc`` refuses an
+  older ``green.npz`` under the same condition.
 
 These output files can also be used as input for the
 Eliashberg equation solver (``hwave_sc``) to analyze

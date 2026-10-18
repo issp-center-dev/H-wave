@@ -58,7 +58,7 @@ class TestArchiveSchema2(unittest.TestCase):
     def test_archive_carries_vertices(self):
         s, gi = _run_gate(self.tmp)
         with np.load(os.path.join(self.tmp, "longitudinal_bond.npz")) as d:
-            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(int(d["bond_archive_schema"]), 3)
             self.assertEqual(int(d["norb"]), s.norb)
             np.testing.assert_array_equal(d["S_bond"], s._bond_S)
             np.testing.assert_array_equal(d["C_bond"], s._bond_C)
@@ -107,7 +107,7 @@ class TestSidecarWriter(unittest.TestCase):
         c_npy = os.path.join(self.tmp, "longitudinal_bond_chi_c_w.npy")
         self.assertTrue(os.path.exists(index) and os.path.exists(s_npy) and os.path.exists(c_npy))
         with np.load(index) as d:
-            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(int(d["bond_archive_schema"]), 3)
             self.assertEqual(str(d["bond_archive_layout"]), "sidecar")
             self.assertNotIn("chi_s_w", d.files)
             self.assertNotIn("chi_c_w", d.files)
@@ -180,9 +180,31 @@ class TestLoadBondArchive(unittest.TestCase):
         self._rewrite(bond_archive_schema=np.int64(1))
         with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
             self._load()
-        self._rewrite(bond_archive_schema=np.int64(3))
+        self._rewrite(bond_archive_schema=np.int64(4))
         with self.assertRaisesRegex(ValueError, "unsupported archive schema"):
             self._load()
+
+    def test_schema2_refused_only_for_a_mirror_asymmetric_declaration(self):
+        """Schema 2 put an off-site row on the bond opposite its Transfer row
+        (issue #232): refused when the declaration is not symmetric under
+        R -> -R on the run's grid, accepted when it is."""
+        self._rewrite(bond_archive_schema=np.int64(2))
+        asym = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}}
+        with self.assertRaisesRegex(ValueError, "#232"):
+            self._load(interactions=asym)
+        sym = {"CoulombInter": {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}}
+        self._load(interactions=sym)
+        self._load()
+        # a type the archive is not built from cannot make it stale
+        self._load(interactions={"PairLift": asym["CoulombInter"]})
+
+    def test_malformed_schema_is_refused(self):
+        for bad in (np.float64(3.9), np.float64(np.nan), np.complex128(3 + 1j),
+                    np.array([3, 3]), np.str_("3"), np.bool_(True)):
+            with self.subTest(schema=bad):
+                self._rewrite(bond_archive_schema=bad)
+                with self.assertRaisesRegex(ValueError, "malformed bond_archive_schema"):
+                    self._load()
 
     def test_validations(self):
         with self.assertRaisesRegex(ValueError, "nmat"):
@@ -314,6 +336,18 @@ class TestLoadBondArchive(unittest.TestCase):
         np.savez(no_chi, **members)
         with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
             call(no_chi)
+        # a schema stamp whose .npy member is cut short (header intact, data
+        # body missing) is the same contract refusal, not a bare numpy error
+        import zipfile
+        bad_stamp = os.path.join(self.tmp, "bad_stamp.npz")
+        with zipfile.ZipFile(self.path) as src, zipfile.ZipFile(bad_stamp, "w") as dst:
+            for info in src.infolist():
+                data = src.read(info.filename)
+                if info.filename == "bond_archive_schema.npy":
+                    data = data[:-4]
+                dst.writestr(info, data)
+        with self.assertRaisesRegex(ValueError, r"bad_stamp\.npz.*(not a valid bond archive|malformed)"):
+            call(bad_stamp)
         # the valid archive still loads
         self._load()
 
@@ -1426,7 +1460,9 @@ BOND_REFERENCE_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND"
 #: (1 -> 2). Every other member of the archive -- and every other output
 #: file -- must come out of both revisions bit for bit.
 _ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema",
-                            "longitudinal_bond_cond_tol", "bond_archive_layout"))
+                            "longitudinal_bond_cond_tol", "bond_archive_layout",
+                            # the stamp issue #232 moved
+                            "longitudinal_bond_schema"))
 
 #: The provenance members the guard-policy work (issue #199) adds to EVERY
 #: archive of a Hartree-Fock / bond-gate run, the bond archive included:
@@ -1451,6 +1487,8 @@ _BOND_GUARD_DELTA = frozenset(("longitudinal_bond_guard_method",
                                "longitudinal_bond_guard_exact_blocks_total",
                                "longitudinal_bond_guard_exact_blocks_max",
                                "longitudinal_bond_guard_blocks_per_iteration"))
+#: Version stamps of the chi files that issue #232 moved: (reference, branch).
+_STAMP_DELTA = {"sc_vertex_version": (2, 3), "longitudinal_bond_schema": (1, 2)}
 
 #: The driver both revisions run: one ``qlms.run`` on an input dict read from
 #: a file. A file rather than an argument because the reference tree is
@@ -1511,15 +1549,18 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
         for d in (self.ref_out, self.new_out, self.work):
             shutil.rmtree(d, ignore_errors=True)
 
-    def _run(self, checkout, out_dir, name):
+    def _run(self, checkout, out_dir, name, interaction_dir=None):
         import json
         import subprocess
         import sys
         from tests.test_flex_second_order_compat import (own_tree_subprocess_env,
                                                          reference_subprocess_env)
         path = os.path.join(self.work, "input_{}.json".format(name))
+        inp = _bond_compat_input(out_dir)
+        if interaction_dir is not None:
+            inp["file"]["input"]["interaction"]["path_to_input"] = interaction_dir
         with open(path, "w") as fh:
-            json.dump(_bond_compat_input(out_dir), fh)
+            json.dump(inp, fh)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured by the coverage run
             env = own_tree_subprocess_env(checkout)
@@ -1539,7 +1580,21 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                                     require_env=BOND_REFERENCE_REQUIRE_ENV)
         if dev is None:
             raise unittest.SkipTest(why)
-        self._run(dev, self.ref_out, "reference")
+        # The reference revision's vertex paths put an off-site row (r, a, b)
+        # on the bond opposite its Transfer row; this tree puts it on the
+        # Transfer row's bond (issue #232), i.e. where the reference puts the
+        # row (-r, a, b). The fixture is single-band, so the physics is the
+        # same either way, but only the reversed declaration makes the two
+        # revisions add the SAME terms in the SAME order -- which is what a
+        # byte-for-byte comparison needs.
+        from tests.test_flex_hf_scf import _reversed_interaction_dir
+        rev = _reversed_interaction_dir(
+            _IN1, ("coulombinter.dat",),
+            copy=("geom.dat", "transfer.dat", "coulombintra.dat"))
+        try:
+            self._run(dev, self.ref_out, "reference", interaction_dir=rev)
+        finally:
+            shutil.rmtree(rev, ignore_errors=True)
         self._run(os.getcwd(), self.new_out, "branch")
         ref_files = sorted(os.listdir(self.ref_out))
         self.assertEqual(ref_files, sorted(os.listdir(self.new_out)),
@@ -1555,18 +1610,25 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
             with np.load(a) as da, np.load(b) as db:
                 if fn != "longitudinal_bond.npz":
                     # every member the reference wrote, bit for bit; the only
-                    # members this side may add are the provenance pair
+                    # members this side may add are the provenance pair ...
                     self.assertEqual(set(da.files) - set(db.files), set(),
                                      "{}: members the reference wrote are missing".format(fn))
                     added = set(db.files) - set(da.files)
                     # ... plus, where the bond members are written (the
                     # chiq_s / chiq_c archives carry them too), the recorded
-                    # conditioning floor and the guard method / counts
+                    # conditioning floor and the guard method / counts, and on
+                    # sigma.npz / green.npz the placement stamp of issue #232
                     self.assertTrue(_PROVENANCE_DELTA <= added, (fn, added))
                     self.assertTrue(
                         added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"}
-                        | _BOND_GUARD_DELTA, (fn, added))
+                        | _BOND_GUARD_DELTA | {"sc_vertex_version"}, (fn, added))
+                    if "sc_vertex_version" in added:
+                        self.assertEqual(int(db["sc_vertex_version"]), 3, fn)
                     for k in da.files:
+                        if k in _STAMP_DELTA:
+                            # the version stamps this branch moves (issue #232)
+                            self.assertEqual((int(da[k]), int(db[k])), _STAMP_DELTA[k], fn)
+                            continue
                         np.testing.assert_array_equal(da[k], db[k],
                                                       err_msg="{} {}".format(fn, k))
                     self._assert_default_provenance(db, fn)
@@ -1585,7 +1647,7 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                     np.testing.assert_array_equal(da[k], db[k],
                                                   err_msg="{} {}".format(fn, k))
                 self.assertEqual(int(da["bond_archive_schema"]), 1)
-                self.assertEqual(int(db["bond_archive_schema"]), 2)
+                self.assertEqual(int(db["bond_archive_schema"]), 3)
                 self.assertEqual(float(db["longitudinal_bond_cond_tol"]), 1.0e-3)
                 self._assert_default_provenance(db, fn)
 

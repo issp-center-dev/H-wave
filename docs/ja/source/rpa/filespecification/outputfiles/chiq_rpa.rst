@@ -187,7 +187,11 @@ chiq のデータ形式
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
   下限に達すると実行は拒否されます。\ ``longitudinal_bond_guard_freqs = "static"``\ の
   場合はゼロ振動数スライスのみにわたる最小値を報告します）、
-  ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
+  ``longitudinal_bond_schema``\ （整数、\ ``2``\ 。issue #232 のボンド配置の
+  修正より前は\ ``1``\ で、そのときチャネル\ ``m``\ には\ ``-delta_r[m]``\ では
+  なく\ ``+delta_r[m]``\ で宣言された行が入っていました。キーと配列の形状は
+  同じで、H-wave の読み込み処理はこの刻印を検査しません。外部での後処理のための
+  ものです）。
 
 ``mode = "FLEX"``\ で\ ``longitudinal_bond_channels = true``\ の場合（:ref:`flex_bond_hf`\ の
 Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写像を記述し
@@ -235,8 +239,9 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``"refuse"``\ では常に\ ``0``\ ）が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
-``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
-対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+``bond_archive_schema``\ （``3``\ 。issue #232 のボンド配置の修正より前は
+``2``\ 、以下のボンド分解した動的 Eliashberg 対形成ソルバーが追加される前は
+``1``\ です。この段落末尾の注を参照）、
 動的な\ ``chi_s_w``\ と\ ``chi_c_w``
 （``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
 瞬時のボンドバーテックス\ ``S_bond``\ と\ ``C_bond``\ （複素\ ``ndarray(nvol,
@@ -255,7 +260,12 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （``bond_archive_schema = 1``\ 、``S_bond`` / ``C_bond`` / ``norb``\ を
 含まない）は、そのソルバーによって、このバージョンでの再計算を求める
 メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
-スキーマ2でも変わりません。
+スキーマ2でも変わりません。また、スキーマ3はスキーマ2と同じキーと配列の形状を
+もちます。スキーマ2のアーカイブは、各オフサイト行を
+トランスファーの行とは逆向きのボンドのチャネルに置いていました。対形成
+ソルバーは、相互作用が実行時の格子上で\ :math:`R \to -R`\ について対称で
+ないオフサイト行を宣言している場合には、FLEX の再計算を求めるメッセージとともに
+これを拒否し、それ以外では受け付けます。
 
 アーカイブには\ ``[mode.param] longitudinal_bond_output_layout``\ で選択した
 ディスク上のレイアウトを表す\ ``bond_archive_layout``\ （文字列）も記録されます。
@@ -279,7 +289,7 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 ボンド分解した動的 Eliashberg 対形成の出力
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``longitudinal_bond.npz``\ （スキーマ2、前述）のボンド分解した動的
+``longitudinal_bond.npz``\ （スキーマ3、前述）のボンド分解した動的
 対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
 あります。後処理の\ ``hwave_sc``\ （``[eliashberg] bond_channels =
 true``\ と\ ``frequency = "dynamic"``\ ）と、FLEX の計算の最後に
@@ -319,8 +329,12 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 いずれか。カーネルが選んだメモリ配置）、\ ``bond_parity_leakage``
 （実測されたパリティ交換の漏れ。\ ``[eliashberg]
 parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
-形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ ）
-を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
+形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ 。
+``gap_bond_projection[m, a, b]``\ は、軌道\ ``a``\ が原点のセルに、軌道\ ``b``\ が
+:math:`+R_m`\ のセル（``R_m = delta_r[m]``\ ）にある対の実空間ギャップ振幅
+:math:`\Delta_{ab}(+R_m)`\ 、すなわち Transfer 行\ :math:`(+R_m, a, b)`\ のボンド上の
+振幅で、\ :math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`\ とします）を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ ・\ ``ir_L``\ ・
 ``bond_ir_fit_residual_rel``\ （ボンドバーテックスの成分ごとの IR
 フィット残差。実数\ ``ndarray(B, B)``\ 。\ ``[eliashberg]

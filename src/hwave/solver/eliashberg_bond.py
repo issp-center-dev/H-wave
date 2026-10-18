@@ -565,17 +565,37 @@ class BondPairKernel:
     .. code-block:: text
 
         F(k, n)        = sum G2(k, n) phi(k, n)                 (orbital pair)
-        F_beta(r, tau) = roll(ifft F(r, tau), -R_beta)
-        P_alpha        = - sum_beta Gamma_{alpha beta}(r, tau) F_beta(r, tau)
-        out(k, n)      = tau->freq fft sum_alpha roll(P_alpha, -R_alpha)
+        F_alpha(r, tau) = roll(ifft F(r, tau), +R_alpha)
+        P_beta         = - sum_alpha Gamma_{alpha beta}(r, tau) F_alpha(r, tau)
+        out(k, n)      = tau->freq fft sum_beta roll(P_beta, +R_beta)
 
     i.e. ``2B`` rolls and ``B**2`` real-space multiply-accumulates per matvec.
     The roll convention is spec 4.3: ``e^{+ik.R} f(k)`` is ``f(r + R)``, which
-    on the FFT grid is ``xp.roll(f, -R, axis=(2, 3, 4))`` -- the same rule the
-    static bond kernel (:func:`~hwave.solver.bond_channels.make_bond_kernel`)
-    realizes with explicit ``e^{+ik.dr_m}`` phases and the FLEX bond transport
-    (``flex_bond.calc_self_energy_bond``) realizes with its ``R_alpha -
-    R_beta`` shift.
+    on the FFT grid is ``xp.roll(f, -R, axis=(2, 3, 4))``; the pair legs here
+    carry ``e^{-ik.R}``, i.e. ``xp.roll(f, +R)``.
+
+    Pair-leg geometry (issue #232). In momentum space one matvec is
+
+    .. code-block:: text
+
+        out_{a d}(k) = -(1/N) sum_{alpha, beta} e^{-ik.R_beta}
+            sum_{k'} Gamma_{alpha beta; a b c d}(k - k') e^{-ik'.R_alpha} F_{b c}(k')
+
+    with ``Gamma_{alpha beta; a b c d}`` the ph-layout block (row pair
+    ``(alpha; a, b)``, column pair ``(beta; c, d)``). The ROW channel
+    ``alpha`` carries the INPUT phase and the COLUMN channel ``beta`` the
+    OUTPUT phase, and both phases are ``e^{-ik.R}``, because channel ``m``'s slot ``(a, b)`` is the bond with orbital ``a``
+    in the origin cell and ``b`` in the cell at ``-R_m`` -- the bond the
+    two-body rows declared at ``-R_m`` act on, which is where
+    ``resolve_bond_topology`` stores them. This is the bond of the Transfer
+    row with the same ``(R, a, b)`` as the declared two-body row (Wannier90
+    / RESPACK convention). The second-order vertex of an inter-orbital,
+    mirror-asymmetric CoulombInter model built this way equals an
+    independent spin-orbital second-order calculation to round-off, and the
+    opposite placement misses by O(1)
+    (``tests/test_bond_pairing_placement.py``). The previous leg assignment
+    (row channel on the output, column channel on the input, both
+    ``e^{+ik.R}``) reproduced neither placement.
 
     The frequency-independent bare vertex ``V_inst`` (spec 4.2) is added to the
     CHANNEL-0 block at every bosonic frequency: on the dense uniform tau grid
@@ -769,33 +789,38 @@ class BondPairKernel:
         else:
             F_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(F, axis=-1), axes=ax,
                                      workers=self.workers)
+        # Pair legs (issue #232): the block (alpha, beta) takes its INPUT pair
+        # from the row channel alpha and hands its OUTPUT pair to the column
+        # channel beta, both with the phase e^{-ik.R} (a roll by +R): channel
+        # m's slot (a, b) is the bond with orbital a in the origin cell and b
+        # at -R_m, the bond its two-body rows (declared at -R_m) act on. See
+        # the class docstring.
         acc = [None] * self.B
         acc0 = [None] * self.B
-        for b in range(self.B):
-            Rb = self.delta_r[b]
-            F_b = F_rt if Rb == (0, 0, 0) else xp.roll(F_rt, tuple(-x for x in Rb), axis=ax)
-            F0_b = None
-            if self._const_rt is not None:
-                F0_b = F0_r if Rb == (0, 0, 0) else xp.roll(F0_r, tuple(-x for x in Rb),
-                                                            axis=ax)
-            for a in range(self.B):
-                G_ab = self._get_block(a, b)
-                P = -xp.einsum("abcdxyzt,bcxyzt->adxyzt", G_ab, F_b)
-                acc[a] = P if acc[a] is None else acc[a] + P
-                del G_ab, P
-                if F0_b is not None:
-                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz",
-                                    xp.asarray(self._const_rt[(a, b)]), F0_b)
-                    acc0[a] = P0 if acc0[a] is None else acc0[a] + P0
-        out_rt = None
-        out0_r = None
         for a in range(self.B):
             Ra = self.delta_r[a]
-            t = acc[a] if Ra == (0, 0, 0) else xp.roll(acc[a], tuple(-x for x in Ra), axis=ax)
+            F_a = F_rt if Ra == (0, 0, 0) else xp.roll(F_rt, Ra, axis=ax)
+            F0_a = None
+            if self._const_rt is not None:
+                F0_a = F0_r if Ra == (0, 0, 0) else xp.roll(F0_r, Ra, axis=ax)
+            for b in range(self.B):
+                G_ab = self._get_block(a, b)
+                P = -xp.einsum("abcdxyzt,bcxyzt->adxyzt", G_ab, F_a)
+                acc[b] = P if acc[b] is None else acc[b] + P
+                del G_ab, P
+                if F0_a is not None:
+                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz",
+                                    xp.asarray(self._const_rt[(a, b)]), F0_a)
+                    acc0[b] = P0 if acc0[b] is None else acc0[b] + P0
+            del F_a, F0_a
+        out_rt = None
+        out0_r = None
+        for b in range(self.B):
+            Rb = self.delta_r[b]
+            t = acc[b] if Rb == (0, 0, 0) else xp.roll(acc[b], Rb, axis=ax)
             out_rt = t if out_rt is None else out_rt + t
-            if acc0[a] is not None:
-                t0 = acc0[a] if Ra == (0, 0, 0) else xp.roll(acc0[a], tuple(-x for x in Ra),
-                                                             axis=ax)
+            if acc0[b] is not None:
+                t0 = acc0[b] if Rb == (0, 0, 0) else xp.roll(acc0[b], Rb, axis=ax)
                 out0_r = t0 if out0_r is None else out0_r + t0
         if self.is_ir:
             out = self.axF.tau_to_freq(_bk.spatial_fftn(out_rt, axes=ax, workers=self.workers))
@@ -818,6 +843,21 @@ class BondPairKernel:
 def gap_bond_projection(gap_w, view, spatial_shape):
     """Project a gap onto the bond form factors: ``psi_m = (1/N) sum_k
     e^{-i k . R_m} Delta(k)`` for every channel ``m`` (spec 4.4, 5.1).
+
+    Convention. With the gap's Fourier convention ``Delta_ab(k) = sum_R
+    e^{+ik.R} Delta_ab(R)`` (the pairing term ``sum_k Delta_ab(k) c+_{k a}
+    c+_{-k b}``, the same convention the kernels act in), ``psi_m[a, b, n] =
+    Delta_ab(+R_m)`` is the real-space gap amplitude of the pair with
+    orbital ``a`` in the origin cell and orbital ``b`` in the cell at
+    ``+R_m`` (``R_m = view.delta_r[m]``), i.e. on the bond of the Transfer
+    row ``(+R_m, a, b)`` -- the bond the two-body rows DECLARED at ``+R_m``
+    act on. These rows live in channel ``reverse[m]`` of the vertex (channel
+    ``m`` holds the rows declared at ``-R_m``, issue #232), so ``psi_m`` is
+    NOT the pair amplitude on the bond of vertex channel ``m``'s slot
+    ``(a, b)`` (``a`` at the origin, ``b`` at ``-R_m``); that one is
+    ``psi_{reverse[m]}[a, b]``.
+    Pinned against an independent real-space reference in
+    ``tests/test_bond_pairing_placement.py``.
 
     Parameters
     ----------

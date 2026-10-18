@@ -220,8 +220,8 @@ def _as_index_array(member, name, path):
     return arr.astype(np.int64)
 
 
-#: what a schema-2 bond archive is, named in every "malformed file" refusal
-_ARCHIVE_CONTRACT = ("not a valid bond archive (schema-2, written by FLEX with "
+#: what a bond archive is, named in every "malformed file" refusal
+_ARCHIVE_CONTRACT = ("not a valid bond archive (schema 3, written by FLEX with "
                      "longitudinal_bond_channels = true and "
                      "longitudinal_bond_output_full = true)")
 
@@ -239,14 +239,53 @@ def _archive_contract_error(path, exc):
 def _require(d, key, path):
     """One member of an open archive, or the contract ValueError if it is
     missing (bare ``KeyError``) or unreadable (a truncated member surfaces as a
-    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access)."""
+    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access, or as numpy's
+    ``ValueError`` when an ``.npy`` member's data body is cut short)."""
     try:
         return d[key]
-    except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+    except (KeyError, zipfile.BadZipFile, EOFError, OSError, ValueError) as exc:
         raise _archive_contract_error(path, exc)
 
 
-def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected):
+#: Placement-aware bond archives (issue #232): schema 3 files every declared
+#: row on the channel whose kernels act on the bond of its Transfer row;
+#: schema 2 put it on the opposite bond.
+_BOND_ARCHIVE_SCHEMA = 3
+
+
+def _placement_sensitive_types(interactions, cell_shape):
+    """The two-body types whose declaration is not symmetric under R -> -R
+    on the run's grid -- the tables for which a schema-2 archive (#232)
+    holds a different Hamiltonian."""
+    if not interactions:
+        return []
+    from hwave.sc import _offsite_mirror_asymmetry
+    # the types the archive's bond channels are built from (an aggregate
+    # Coulomb table carries CoulombInter rows)
+    return [t for t in ("Coulomb", "CoulombInter", "Hund", "Ising")
+            if interactions.get(t)
+            and _offsite_mirror_asymmetry(interactions[t], grid=cell_shape) > 0.0]
+
+
+def _archive_schema(member, path):
+    """The schema stamp as an int, refusing anything but one finite, exactly
+    integral real scalar (``int()`` would silently truncate 3.9 to 3)."""
+    arr = np.asarray(member)
+    try:
+        if arr.dtype.kind not in "iufc":            # no bool, str or object stamps
+            raise ValueError("not numeric")
+        if arr.size != 1:
+            raise ValueError("not a scalar")
+        val = complex(arr.reshape(())[()])
+        if val.imag != 0.0 or not (np.isfinite(val.real) and float(val.real).is_integer()):
+            raise ValueError("not an integer")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("bond archive {}: malformed bond_archive_schema {!r}".format(path, member))
+    return int(val.real)
+
+
+def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected,
+                      interactions=None):
     from hwave.solver.rpa import check_momentum_marker
     if not os.path.exists(path):
         raise ValueError("bond archive not found: {} (post-processing needs a FLEX run with "
@@ -257,14 +296,25 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         raise _archive_contract_error(path, exc)
     with d:
         files = set(d.files)
-        schema = int(d["bond_archive_schema"]) if "bond_archive_schema" in files else 0
+        schema = (_archive_schema(_require(d, "bond_archive_schema", path), path)
+                  if "bond_archive_schema" in files else 0)
         if schema == 1 or "S_bond" not in files:
             raise ValueError(
                 "bond archive {}: schema {} was written by a version without the bond vertices S and C; "
                 "re-run FLEX under this version with longitudinal_bond_channels = true and "
                 "longitudinal_bond_output_full = true".format(path, schema))
-        if schema != 2:
+        if schema not in (2, _BOND_ARCHIVE_SCHEMA):
             raise ValueError("bond archive {}: unsupported archive schema {}".format(path, schema))
+        if schema == 2:
+            sensitive = _placement_sensitive_types(interactions, tuple(cell_shape_expected))
+            if sensitive:
+                raise ValueError(
+                    "bond archive {}: schema 2 was written by a version that put an off-site "
+                    "row on the bond opposite its Transfer row (issue #232), and {} declare(s) "
+                    "off-site rows that are not symmetric under R -> -R, so the archive "
+                    "describes a different Hamiltonian; re-run FLEX under this version with "
+                    "longitudinal_bond_channels = true and longitudinal_bond_output_full = "
+                    "true".format(path, ", ".join(sensitive)))
         # the on-disk layout (issue #205): "npz" (the default; the two big
         # channel members live inside this file) or "sidecar" (they are raw
         # .npy files named here and read next to the index). An archive written
@@ -470,11 +520,13 @@ def solve_dynamic_bond(input_dict):
     arch_name = str(eli_param.get("flex_bond_archive", "longitudinal_bond.npz"))
     arch_path = arch_name if os.path.isabs(arch_name) else os.path.join(flex_dir, arch_name)
     arch = load_bond_archive(arch_path, norb=norb, nmat_expected=nmat,
-                             cell_shape_expected=(Nx, Ny, Nz), beta_expected=beta)
+                             cell_shape_expected=(Nx, Ny, Nz), beta_expected=beta,
+                             interactions=interactions)
     logger.info("bond pairing: archive %s (B = %d, ND = %d, nmat = %d)",
                 arch_path, arch.B, arch.ND, arch.nmat)
 
-    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                interactions=interactions)
     if green is None:
         raise ValueError(
             "dynamic bond Eliashberg requires the dressed green.npz of the same "

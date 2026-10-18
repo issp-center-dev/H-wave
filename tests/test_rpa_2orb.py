@@ -163,7 +163,13 @@ class RPATwoOrbital:
             for idqy, ky in enumerate(ky_array):
                 I = np.identity(8, dtype=np.complex128)
                 chi0 = chi0q[:,:,:,:, idqx, idqy,Nmat//2]
-                Vxq = V*(1.0+np.exp(1J*kx))   # e^{+iqR} (#133)
+                # The rows (0, 1, 2) and (-1, 1, 2) of coulombinter.dat sit on
+                # the bonds of the Transfer rows with the same (R, a, b)
+                # (issue #232; verified against independent real-space
+                # references in tests/test_two_body_placement.py). In this
+                # matrix layout that bond carries e^{-iq} -- the e^{+iq} used
+                # before #232 put the R = -1 row on the opposite bond.
+                Vxq = V*(1.0+np.exp(-1J*kx))
                 Vyq = 2.0*V*np.cos(ky)
                 # FULL pair-space bubble per spin block. The historical
                 # truncation to the palindromic slots ((aa), (bb)) was exact

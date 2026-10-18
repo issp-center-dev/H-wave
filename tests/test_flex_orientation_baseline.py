@@ -1,6 +1,8 @@
 """Fixed-state regression vectors for the paths the interaction-row
 orientation change (issue #193, spec 2026-09-16 section 2.4 / D-5)
-legitimately MOVED.
+legitimately MOVED -- re-recorded with the bond-placement correction of
+issue #232, after the exact-diagonalization and oracle gates below had been
+corrected to put a two-body row on the bond of its Transfer row, and pass.
 
 Those paths -- the FLEX Hartree-Fock map, the local second-order kernel's
 off-site vertex and the bond gate's mixed second-order blocks -- no longer
@@ -17,9 +19,11 @@ reviewed code produced", nothing more. Their CORRECTNESS is established
 elsewhere, by the exact-diagonalization and oracle gates of the orientation
 work:
 
-* ``tests/test_hartree_fock_orientation.py`` and
-  ``tests/test_hartree_fock_kernel.py`` -- the mean-field (Hartree-Fock)
-  reading of an off-site row against ED, for every two-body type;
+* ``tests/test_two_body_placement.py`` -- the mean-field (Hartree-Fock)
+  reading of an off-site row against an independent real-space solver for
+  CoulombInter, Hund, Ising, Exchange and PairHop (PairLift needs a
+  spin-coherent state and is gated, with every other type, by the chain ED
+  below), and the RPA paths against independent real-space responses;
 * ``tests/test_flex_second_order_ed_chain.py`` -- the local second-order
   kernel and the bond gate's blocks against a chain ED;
 * ``tests/test_second_order_oracle.py`` and

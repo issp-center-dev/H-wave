@@ -517,10 +517,14 @@ class TestBareBondVertices(ApproxTestCase):
         S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0, C0, norb)
         q0 = (0, 0, 0)
 
-        # (1) Fock placement: the m != 0 bond-diagonal element (ab,ab) must carry
-        # +/-Re(V_ab(R_m)), NOT +/-Re(V_ba(R_m)) -- Re(VAB) != Re(VBA) makes a
-        # transposition visible directly (no cancellation needed).
-        m_plus = bond_set.delta_r.index((1, 0, 0))
+        # (1) Fock placement: the bond-diagonal element (ab,ab) of the channel
+        # that files a declared row (R, a, b) must carry +/-Re(V_ab(R)), NOT
+        # +/-Re(V_ba(R)) -- Re(VAB) != Re(VBA) makes a transposition visible
+        # directly (no cancellation needed). The resolvers file the rows
+        # declared at R on the channel at -R (a row (R, a, b) is the bond of a
+        # Transfer row (R, a, b), issue #232), so the rows declared at +R sit
+        # on the -R channel.
+        m_plus = bond_set.delta_r.index((-1, 0, 0))
         self.assertApprox(
             S_bond[q0][_idx(norb, m_plus, 0, 1), _idx(norb, m_plus, 0, 1)],
             VAB.real)
@@ -897,14 +901,22 @@ def _direct_bond_kernel(F_q, Vpp, green, bond_set, beta, phi):
     """Literal O(N_k^2) evaluation of the two-part bond Eliashberg operator
     (spec S4.5), independent of make_bond_kernel.
 
-    K phi(k)_{ab} = -(1/N) sum_{k'} [ Veff_fl(k,k') + Veff_pp(k,k') ]_{ab,cd}
-                                     X_cd(k')
+    K phi(k)_{ad} = -(1/N) sum_{k'} [ sum_{bc} Veff_fl(k,k')_{abcd} X_bc(k')
+                                     + sum_{(bc)} Veff_pp(k,k')_{(ad),(bc)} X_bc(k') ]
     with
       X_cd(k')      = sum_{ef} G2[c,e,d,f](k') phi_{ef}(k')      (cd = c*norb+d)
-      Veff_fl_{ab,cd}(k,k') = sum_{m,m'} e^{i k.dr_m} F_q(k-k')_{(m,ab),(m',cd)}
-                                          e^{i k'.dr_m'}
-      Veff_pp_{ab,cd}(k,k') = 1/2 sum_{m,m'} Vpp_{(m,ab),(m',cd)}
-                                          e^{i (k.dr_m' - k'.dr_m)}
+      Veff_fl_{abcd}(k,k') = sum_{m,m'} e^{-i k'.dr_m} F_q(k-k')_{(m,ab),(m',cd)}
+                                          e^{-i k.dr_m'}
+      Veff_pp_{ab,cd}(k,k') = 1/2 sum_{m,m'} e^{-i k.dr_m} Vpp_{(m,ab),(m',cd)}
+                                          e^{+i k'.dr_m'}
+    i.e. the fluctuation part crosses the orbitals of the ph-layout F
+    (``Y_ad <- F_(ab),(cd) X_bc``) and takes its input leg from the ROW
+    channel and its output leg from the COLUMN channel, and the bare Cooper
+    part is a plain matrix-vector product; every pair leg carries
+    ``e^{-ik.dr}``. This is the pair geometry issue #232 fixed (a declared
+    two-body row on the bond of its Transfer row), proven against an
+    independent spin-orbital reference in
+    tests/test_bond_pairing_placement.py.
     """
     norb = green.shape[0]
     nd = norb * norb
@@ -945,24 +957,27 @@ def _direct_bond_kernel(F_q, Vpp, green, bond_set, beta, phi):
                         for pz in range(Nz):
                             qx, qy, qz = (kx - px) % Nx, (ky - py) % Ny, (kz - pz) % Nz
                             Fblk = F_q[qx, qy, qz]
-                            Veff = np.zeros((nd, nd), dtype=complex)
+                            Veff = np.zeros((norb,) * 4, dtype=complex)
                             for m in range(B):
-                                em = np.exp(1j * kdot(kx, ky, kz, dr[m]))
+                                e_in = np.exp(-1j * kdot(px, py, pz, dr[m]))
                                 for mp in range(B):
-                                    emp = np.exp(1j * kdot(px, py, pz, dr[mp]))
-                                    Veff += em * emp * Fblk[
+                                    e_out = np.exp(-1j * kdot(kx, ky, kz, dr[mp]))
+                                    Veff += e_in * e_out * Fblk[
                                         m * nd:(m + 1) * nd,
-                                        mp * nd:(mp + 1) * nd]
+                                        mp * nd:(mp + 1) * nd].reshape((norb,) * 4)
                             Vpp_eff = np.zeros((nd, nd), dtype=complex)
                             for m in range(B):
                                 for mp in range(B):
                                     ph = np.exp(1j * (
-                                        kdot(kx, ky, kz, dr[mp])
-                                        - kdot(px, py, pz, dr[m])))
+                                        kdot(px, py, pz, dr[mp])
+                                        - kdot(kx, ky, kz, dr[m])))
                                     Vpp_eff += 0.5 * ph * Vpp[
                                         m * nd:(m + 1) * nd,
                                         mp * nd:(mp + 1) * nd]
-                            acc += (Veff + Vpp_eff) @ X[:, px, py, pz]
+                            Xp = X[:, px, py, pz]
+                            acc += np.einsum("abcd,bc->ad", Veff,
+                                             Xp.reshape(norb, norb)).reshape(nd)
+                            acc += Vpp_eff @ Xp
                 out[:, kx, ky, kz] = -(1.0 / N) * acc
     return out.reshape(norb, norb, Nx, Ny, Nz)
 
@@ -981,9 +996,9 @@ class TestMakeBondKernel(unittest.TestCase):
     def test_bond_kernel_reference_oracle_singleband(self):
         """Spec S7.5: the LinearOperator equals a direct O(N_k^2) evaluation of the
         two-part V_eff(k,k') on a 4x4 grid, pinning the two phase conventions
-        (fluctuation e^{i(k.dr_m + k'.dr_m')}, instantaneous cross phase
-        e^{i(k.dr_m' - k'.dr_m)}), the q=k-k' argument, and the -(1/N) / -1/2
-        normalizations."""
+        (fluctuation e^{-i(k'.dr_m + k.dr_m')} with the row channel m on the
+        input leg, instantaneous e^{-i(k.dr_m - k'.dr_m')}; issue #232), the
+        q=k-k' argument, and the -(1/N) / -1/2 normalizations."""
         from hwave.solver.bond_channels import make_bond_kernel
 
         for pairing_type in ["singlet", "triplet"]:

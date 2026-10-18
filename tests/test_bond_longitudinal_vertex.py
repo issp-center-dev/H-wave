@@ -61,7 +61,9 @@ class TestBuildScBondChannel(unittest.TestCase):
         self.assertTrue(np.array_equal(S[:, :nd, :nd], S0))
         self.assertTrue(np.array_equal(C[:, :nd, :nd], S0))
         s_h, c_h = sc_coefficients("Hund", "cross")     # (-1, +1)
-        m_plus = [tuple(r) for r in topo.delta_r].index((1, 0, 0))
+        # the declared row (+x, 0, 1) is filed on the channel at -x (a row
+        # (R, a, b) is the bond of a Transfer row (R, a, b), issue #232)
+        m_plus = [tuple(r) for r in topo.delta_r].index((-1, 0, 0))
         m_minus = int(topo.reverse[m_plus])
         I1 = m_plus * nd + 0 * norb + 1                  # (m, a=0, b=1)
         I2 = m_minus * nd + 1 * norb + 0                 # (reverse m, b=1, a=0)

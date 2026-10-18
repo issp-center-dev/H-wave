@@ -362,9 +362,13 @@ class TestBondM0BlockHermitizationDirect(ApproxTestCase):
         a ``q=0``-only check cannot catch an orbital-order swap in the
         Hartree slot. At ``q!=0`` the two orbital orders pick up DIFFERENT
         phases and so give DIFFERENT complex values -- pinned here directly
-        against the closed form ``V_ab(q) = Re(V_ab(+R)) e^{-iq} +
-        Re(V_ab(-R)) e^{+iq}`` (``_build_bond_m0_blocks``' documented
-        ``e^{-iq.R}`` convention).
+        against the closed form ``V_ab(q) = Re(V_ab(+R)) e^{+iq} +
+        Re(V_ab(-R)) e^{-iq}``, ``V_ab(R)`` the DECLARED row ``(R, a, b)``:
+        ``_build_bond_m0_blocks`` applies ``e^{-iq.dr_m}`` to channel ``m``,
+        and channel ``m`` carries the row declared at ``-dr_m`` (a row
+        ``(R, a, b)`` is the bond of the Transfer row ``(R, a, b)``, issue
+        #232; the case-M ED granules of this module adjudicate that
+        placement through this very Hartree slot).
 
         Same ``VAB``/``VBA`` values as
         ``test_bond_channels._build_asymmetric_two_orbital_bond`` (not
@@ -392,8 +396,8 @@ class TestBondM0BlockHermitizationDirect(ApproxTestCase):
 
         # V_01(+R)=VAB, V_01(-R)=conj(VBA) (declared/synthesized above);
         # V_10(+R)=VBA, V_10(-R)=conj(VAB). Re(conj(z)) == Re(z).
-        V_q_01 = VAB.real * np.exp(-1j * q) + VBA.real * np.exp(1j * q)
-        V_q_10 = VBA.real * np.exp(-1j * q) + VAB.real * np.exp(1j * q)
+        V_q_01 = VAB.real * np.exp(1j * q) + VBA.real * np.exp(-1j * q)
+        V_q_10 = VBA.real * np.exp(1j * q) + VAB.real * np.exp(-1j * q)
         assert abs(V_q_01 - V_q_10) > 1e-3  # genuinely order-sensitive at this q
 
         assert_approx_array(
@@ -1278,18 +1282,22 @@ class TestDwMatrices(ApproxTestCase):
         assert_approx_array(dC, dC1 + 0.6 * dC2, rel=0, abs=1e-14)
 
     def _case_m_direction(self, R_decl, a, b):
-        """Shared support-pattern check for case-M's g+/g- directions:
-        the bond-diagonal Fock slot at (R_decl, a, b) and its Hermitian-
-        closed partner (-R_decl, b, a) each carry dS=+1/dC=-1, and the
-        (aa),(bb) Hartree cross slot carries dC0 = 2*e^{-i*q*R_decl}
-        (``_build_bond_m0_blocks``' ``V_ab(q) = sum_{m>=1} V_ab(dr_m)
-        e^{-i q.dr_m}``, here only the ``R_decl`` shell nonzero at (a,b))."""
+        """Shared support-pattern check for case-M's g+/g- directions.
+        The declared row (R_decl, a, b) is the bond of the Transfer row
+        (R_decl, a, b) (issue #232), which the bond channels carry at the
+        channel -R_decl (``resolve_interactions``: channel m holds the
+        block declared at -dr_m): the bond-diagonal Fock slot at
+        (-R_decl, a, b) and its Hermitian-closed partner (R_decl, b, a)
+        each carry dS=+1/dC=-1, and the (aa),(bb) Hartree cross slot
+        carries dC0 = 2*e^{+i*q*R_decl} (``_build_bond_m0_blocks``'
+        ``V_ab(q) = sum_{m>=1} v_bond[m]_ab e^{-i q.dr_m}``, here only the
+        channel -R_decl nonzero at (a,b))."""
         fx = fx3()
         decls = _two_sided_decl([(R_decl, a, b, 1.0)])
         dS, dC = dW_matrices(fx, decls)
         bond_set = resolve_interactions(decls, np.eye(3), norb=2)
-        m_fwd = bond_set.delta_r.index((R_decl, 0, 0))
-        m_bwd = bond_set.delta_r.index((-R_decl, 0, 0))
+        m_fwd = bond_set.delta_r.index((-R_decl, 0, 0))
+        m_bwd = bond_set.delta_r.index((R_decl, 0, 0))
         nd = 4
         I_ab = m_fwd * nd + a * 2 + b
         I_ba = m_bwd * nd + b * 2 + a
@@ -1306,8 +1314,8 @@ class TestDwMatrices(ApproxTestCase):
             # C0 is Hermitian (bond_set's reversal closure gives
             # V_q[b,a] = conj(V_q[a,b])), so the (bb,aa) cross slot carries
             # the conjugate of (aa,bb), not zero.
-            expected_C[I_aa, I_bb] = 2.0 * np.exp(-1j * qv * R_decl)
-            expected_C[I_bb, I_aa] = 2.0 * np.exp(1j * qv * R_decl)
+            expected_C[I_aa, I_bb] = 2.0 * np.exp(1j * qv * R_decl)
+            expected_C[I_bb, I_aa] = 2.0 * np.exp(-1j * qv * R_decl)
             with self.subTest(q=q):
                 assert_approx_array(dS[q], expected_S, rel=0, abs=1e-10)
                 assert_approx_array(dC[q], expected_C, rel=0, abs=1e-10)
@@ -2028,7 +2036,10 @@ def dVpp_matrices(fx, closed_decls, channels):
     finite-Nmat/Richardson residual (~1.4e-4), while the SWAPPED argument
     fails by O(1) (~0.14, matching the signal) -- i.e. the ED-side
     convention is the SAME UNSWAPPED one used throughout this whole
-    campaign (design doc: "Sigma_j n_{j,a} n_{j+R,b}"), and it is
+    campaign (design doc: "Sigma_j n_{j,a} n_{j+R,b}"; since issue #232
+    ``canonical_density_terms`` writes it as ``Sigma_j n_{j+R,a} n_{j,b}``
+    in the fixture's frame -- the bond of the Transfer row ``(R, a, b)``
+    -- and the unswapped argument is still the one that matches), and it is
     ``bare_bond_vertices``' Vpp slot -- reusing the ph enlarged-index
     convention for a DIFFERENT physical operator (a pair, not a bond
     bilinear) -- that needs reindexing to align with it, not the ED term.
@@ -2279,7 +2290,9 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
     reproduces the ph prediction at the expected residual (~1.4e-4), the
     SWAPPED one fails by O(1) (~0.14) -- i.e. round 2 was RIGHT that the ED
     side should stay unswapped (matching the design doc's own definition,
-    "Sigma_j n_{j,a} n_{j+R,b}"). The real defect was in
+    "Sigma_j n_{j,a} n_{j+R,b}"; since issue #232 the ED term reads
+    ``Sigma_j n_{j+R,a} n_{j,b}`` in the fixture's frame, the bond of the
+    Transfer row ``(R, a, b)``, and still takes the unswapped argument). The real defect was in
     ``dVpp_matrices``: ``bare_bond_vertices``' enlarged Vpp slot reuses
     ``S_bond``/``C_bond``'s SAME index convention, and Task 5's
     ``ed_to_solver_bond_map`` already established (reviewed, load-bearing)
@@ -2786,8 +2799,10 @@ def _dw_support_masks_case_m(direction, bond_set):
     the (a,b)/(b,a) orbital-pair slot, plus a q-dependent CROSS Hartree entry
     at the (aa),(bb) slot with a!=b").
 
-    g+ declares V_01(+1)=g, V_10(-1)=g (no R=0 component): the m!=0 Fock
-    diagonal touches I=(m_{+1}, idx=(0,1)) and I=(m_{-1}, idx=(1,0)) in BOTH
+    g+ declares V_01(+1)=g, V_10(-1)=g (no R=0 component). A declared row
+    (R, a, b) is carried by the bond channel at -R (it is the bond of the
+    Transfer row (R, a, b), issue #232), so the m!=0 Fock
+    diagonal touches I=(m_{-1}, idx=(0,1)) and I=(m_{+1}, idx=(1,0)) in BOTH
     S and C (``bare_bond_vertices``: ``S_bond[I,I]=+V``, ``C_bond[I,I]=-V``);
     since ``v_onsite`` is untouched (zero) here, the m=0 Fock sub-block is
     exactly zero in S -- S carries NO Hartree term, matching the fx5
@@ -2807,9 +2822,9 @@ def _dw_support_masks_case_m(direction, bond_set):
     m_plus = bond_set.delta_r.index((1, 0, 0))
     m_minus = bond_set.delta_r.index((-1, 0, 0))
     if direction == "g+":
-        touched = [(m_plus, 0, 1), (m_minus, 1, 0)]
-    else:
         touched = [(m_minus, 0, 1), (m_plus, 1, 0)]
+    else:
+        touched = [(m_plus, 0, 1), (m_minus, 1, 0)]
     for (m, l1, l2) in touched:
         I = m * nd + l1 * norb + l2
         S_supp[I, I] = True
@@ -2936,8 +2951,8 @@ def _case_m_pp_channels():
 
 def _dvpp_support_masks_case_m(direction, channels):
     """ANALYTIC support of ``Q_eta (dVpp_eta) Q_eta`` for one case-M pp unit
-    direction (mirrors ``_dvpp_support_masks``, Task 7). g+/g- both touch
-    the NON-fixed-point pair ``{(-1,0,1),(1,1,0)}`` / ``{(1,0,1),(-1,1,0)}``
+    direction (mirrors ``_dvpp_support_masks``, Task 7). g+/g- touch
+    the NON-fixed-point pair ``{(1,0,1),(-1,1,0)}`` / ``{(-1,0,1),(1,1,0)}``
     -- an inter-orbital bond channel is NEVER its own exchange partner
     (a!=b always here, unlike fx5's on-site same-orbital U), so BOTH pp_s
     and pp_t get the SAME full 2x2 block (no triplet fixed-point
@@ -2945,8 +2960,9 @@ def _dvpp_support_masks_case_m(direction, channels):
 
     NOTE the channel pairing here is the MIRROR IMAGE of the raw
     (pre-reindex) ``bare_bond_vertices`` diagonal touched by each direction
-    (g+'s raw D touches ``(1,0,1)``/``(-1,1,0)``; g-'s touches
-    ``(-1,0,1)``/``(1,1,0)``) -- ``dVpp_matrices``' own orbital-swap
+    (g+'s raw D touches ``(-1,0,1)``/``(1,1,0)``; g-'s touches
+    ``(1,0,1)``/``(-1,1,0)`` -- a declared row (R, a, b) is carried by the
+    bond channel at -R, issue #232) -- ``dVpp_matrices``' own orbital-swap
     reindex permutes ``(R,a,b) -> (R,b,a)`` on BOTH matrix axes before this
     module ever sees it (Task 7's finding, load-bearing here), which swaps
     which of the two channels in each pp pair ends up carrying the nonzero
@@ -2959,8 +2975,8 @@ def _dvpp_support_masks_case_m(direction, channels):
     n = len(channels)
     index_of = {ch: i for i, ch in enumerate(channels)}
     raw_channels = {
-        "g+": [(-1, 0, 1), (1, 1, 0)],
-        "g-": [(1, 0, 1), (-1, 1, 0)],
+        "g+": [(1, 0, 1), (-1, 1, 0)],
+        "g-": [(-1, 0, 1), (1, 1, 0)],
     }[direction]
     S_supp = np.zeros((n, n), dtype=bool)
     T_supp = np.zeros((n, n), dtype=bool)

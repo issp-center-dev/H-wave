@@ -194,7 +194,10 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   :math:`q`; the run is refused when it reaches the instability floor; with
   ``longitudinal_bond_guard_freqs = "static"`` these report the minimum over
   the zero-frequency slice only) and ``longitudinal_bond_schema`` (integer,
-  ``1``).
+  ``2``; ``1`` before the bond-placement correction of issue #232, under
+  which channel ``m`` carried the rows declared at ``+delta_r[m]`` instead
+  of ``-delta_r[m]``; the keys and array shapes are the same, and no H-wave
+  reader checks this stamp -- it is there for external post-processing).
 
 In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
 Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the
@@ -245,9 +248,10 @@ several; ``0`` when no violation occurred, and always ``0`` under
 ``"refuse"``, which ends the run at the first one).
 With ``longitudinal_bond_output_full = true`` the dedicated archive
 (``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
-holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic
-Eliashberg pairing solver below was added; see the note at the end of this
-paragraph), the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
+holds ``bond_archive_schema`` (``3``; ``2`` before the bond-placement
+correction of issue #232, ``1`` before the bond-resolved dynamic Eliashberg
+pairing solver below was added; see the note at the end of this paragraph),
+the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
 J)``, ``freq_axis = "bosonic l -> 2l - nmat"``), the instantaneous bond
 vertices ``S_bond`` and ``C_bond`` (complex ``ndarray(nvol, ND, ND)``, the
 same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
@@ -266,7 +270,12 @@ bond-resolved dynamic Eliashberg pairing solver needs in addition to
 version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
 ``norb``) is refused by that solver with a message asking for a re-run
 under this version. Every schema-1 key keeps its value and meaning
-unchanged under schema 2.
+unchanged under schema 2, and schema 3 has the same keys and array shapes
+as schema 2. A schema-2 archive filed each off-site row on the channel of
+the bond opposite its transfer row; the pairing solver refuses it, with a
+message asking for a re-run of FLEX, when the interaction declares an
+off-site row that is not symmetric under :math:`R \to -R` on the run's
+grid, and accepts it otherwise.
 
 The archive also records ``bond_archive_layout`` (string), the on-disk
 layout selected by ``[mode.param] longitudinal_bond_output_layout``. With
@@ -291,7 +300,7 @@ Bond-resolved dynamic Eliashberg pairing outputs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Two entries solve the linearized Eliashberg equation with the bond-resolved,
-dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
+dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 3,
 above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
 with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
 solve (``[mode.param] longitudinal_bond_pairing``, see the configuration
@@ -329,7 +338,12 @@ above), ``bond_archive`` (the resolved archive path), ``bond_residency``
 chose), ``bond_parity_leakage`` (the measured parity-commutation leakage;
 see ``[eliashberg] parity_leakage_tol``) and ``gap_bond_projection`` -- the
 gap projected onto each bond form factor, complex ``ndarray(B, norb, norb,
-Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
+Nmat)``: ``gap_bond_projection[m, a, b]`` is the real-space gap amplitude
+:math:`\Delta_{ab}(+R_m)` of the pair with orbital ``a`` in the origin cell
+and orbital ``b`` in the cell at :math:`+R_m` (``R_m = delta_r[m]``), i.e.
+on the bond of the transfer row :math:`(+R_m, a, b)`, with
+:math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`. With ``matsubara_basis = "ir"`` it additionally carries
 ``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_L`` and
 ``bond_ir_fit_residual_rel`` (the componentwise IR fit residual of the bond
 vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).

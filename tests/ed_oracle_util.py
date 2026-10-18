@@ -219,8 +219,20 @@ def canonical_density_terms(fx, pairs):
         U * n_{j,a,up} n_{j,a,dn}  (matches _h_int).
       - otherwise (CoulombInter V, on- or off-site, any orbitals): per
         site, ALL FOUR spin pairings
-        V * n_{j,a,sigma} n_{j+R,b,sigma'} for sigma, sigma' in
+        V * n_{j+R,a,sigma} n_{j,b,sigma'} for sigma, sigma' in
         {up, dn} x {up, dn}  (the spin-summed density product).
+
+    Placement of an off-site entry: ``(a, b, R, coeff)`` is the two-body
+    row ``(R, a, b)`` of an interaction file, which sits on the SAME bond
+    as a Transfer row ``(R, a, b)`` (Wannier90 / RESPACK convention: a in
+    the original cell, b in the cell displaced by R; issue #232).
+    ``EDFixture.build_h1`` puts the hop ``t[(a, b)]`` of the Transfer row
+    ``(+1, a, b)`` on ``(j+1, a) <- (j, b)`` -- the frame pinned against the
+    solver's bare Green function, which is the global mirror of the file
+    frame -- so in this frame the two-body row places orbital ``a`` on site
+    ``j + R`` and orbital ``b`` on site ``j``, exactly as the hop does.
+    (Only off-site inter-orbital entries are sensitive: for ``a == b`` the
+    two placements are related by a translation.)
     Element-level pins for U, single-orbital V, and case-M inter-orbital
     V are part of the Task-3 tests. The one-body t matrix (orbital
     domain) lifts to the spin-orbital H1 as t (x) I_spin via mode(j,o,s).
@@ -239,11 +251,11 @@ def canonical_density_terms(fx, pairs):
                 terms.append((p, p, r, r, coeff))
         else:
             for j in range(fx.L):
-                jp = (j + R) % fx.L
+                ja = (j + R) % fx.L         # orbital a on the displaced site
                 for s1 in range(2):
                     for s2 in range(2):
-                        p = fx.mode(j, a, s1)
-                        r = fx.mode(jp, b, s2)
+                        p = fx.mode(ja, a, s1)
+                        r = fx.mode(j, b, s2)
                         terms.append((p, p, r, r, coeff))
     return terms
 
