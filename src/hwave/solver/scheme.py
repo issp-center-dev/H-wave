@@ -126,7 +126,7 @@ def declared_types(tables):
             raise ValueError(
                 "no capability entry for interaction '{}': calc_scheme='auto' "
                 "cannot judge it. Add a record to hwave.solver.scheme.CAPABILITIES "
-                "or request calc_scheme explicitly.".format(key))
+                "or request [mode] calc_scheme explicitly.".format(key))
         if is_structurally_nonzero(tables[key], source=str(key)):
             out.add(canon)
     return frozenset(out)

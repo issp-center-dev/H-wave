@@ -19,6 +19,7 @@ import contextlib
 import os
 import numpy as np
 from requests.structures import CaseInsensitiveDict
+from .base import ParamDict
 
 try:
     from .perf import do_profile
@@ -172,7 +173,7 @@ def _auto_general_remediation(solver):
         return ""
     return (" calc_scheme='auto' resolved to 'general' ({}) because a "
             "cross-carrying interaction is declared; to run this "
-            "configuration as in H-wave 1.0.x request calc_scheme = "
+            "configuration as in H-wave 1.0.x request [mode] calc_scheme = "
             "'reduced' explicitly (a documented approximation)."
             .format(token))
 
@@ -305,7 +306,7 @@ class FLEX(RPA):
         """Every FLEX-only raw key, parsed BEFORE the base constructor
         (spec 2026-09-08 section 3): flex_second_order first (type/value,
         step 1), then the Phase B keys."""
-        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        param = ParamDict(info_mode.get("param", {}) or {})
         out = {"flex_second_order": "local", "flex_second_order_explicit": False}
         if "flex_second_order" in param:
             v = param["flex_second_order"]
@@ -373,7 +374,7 @@ class FLEX(RPA):
         stale bond-only keys (gate off) are NOT parsed and are listed in
         one warning."""
         import numbers
-        param = CaseInsensitiveDict(info_mode.get("param", {}) or {})
+        param = ParamDict(info_mode.get("param", {}) or {})
         out = {}
         # step 1: types of the switches
         for key in FLEX._PHASE_B_SWITCHES:
@@ -888,7 +889,7 @@ class FLEX(RPA):
                     "during iteration. chiq output becomes rank-6; memory/solve "
                     "cost grow from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per "
                     "(q, freq) (estimated principal array {:.3f} GB). To keep the "
-                    "1.0.x behaviour request calc_scheme = 'reduced' explicitly "
+                    "1.0.x behaviour request [mode] calc_scheme = 'reduced' explicitly "
                     "(a documented approximation).".format(
                         chosen, token, legacy,
                         ", ".join(sorted(t for t in types

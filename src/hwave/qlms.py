@@ -16,6 +16,58 @@ import hwave.solver.rpa as sol_rpa
 import hwave.solver.flex as sol_flex
 from requests.structures import CaseInsensitiveDict
 
+#: the keys read from the [mode] table itself (every other solver setting
+#: belongs in [mode.param]). [mode] is a plain TOML table, so these names
+#: are matched exactly.
+MODE_TABLE_KEYS = ("mode", "param", "calc_scheme", "calc_type",
+                   "enable_spin_orbital", "flag_fock")
+
+
+def check_mode_tables(info_mode):
+    """Messages for keys of ``[mode]`` / ``[mode.param]`` that the solvers
+    would silently ignore: a ``[mode]`` key placed in ``[mode.param]``, an
+    unknown key in ``[mode]`` (a solver parameter belongs in
+    ``[mode.param]``), or a ``[mode]`` key spelled with different case.
+    An empty list means the tables are well placed."""
+    from collections.abc import Mapping
+    errors = []
+    by_lower = {k.lower(): k for k in MODE_TABLE_KEYS}
+    for key in info_mode:
+        if key in MODE_TABLE_KEYS:
+            continue
+        if key.lower() in by_lower:
+            errors.append("[mode] {!r} is not read: keys of [mode] are case-sensitive, "
+                          "write it as {!r}.".format(key, by_lower[key.lower()]))
+        else:
+            errors.append("[mode] {!r} is not a [mode] key and would be ignored; solver "
+                          "parameters belong in [mode.param].".format(key))
+    param = info_mode.get("param", {})
+    if isinstance(param, Mapping):
+        for key in param:
+            if key.lower() == "param":
+                errors.append("[mode.param] {!r}: [mode.param] has no nested param "
+                              "table.".format(key))
+            elif key.lower() in by_lower:
+                errors.append("[mode.param] {!r} is read from [mode], not from [mode.param]; "
+                              "move it to [mode] as {!r}.".format(key, by_lower[key.lower()]))
+    return errors
+
+
+def report_unused_params(info_mode, solver, logger):
+    """Warn once about the ``[mode.param]`` keys this run never read
+    (a misspelled or misplaced parameter has no effect otherwise)."""
+    from hwave.solver.base import ParamDict
+    param = info_mode.get("param")
+    if not isinstance(param, ParamDict):
+        return
+    unused = [k for k, _ in param.items() if k.lower() not in param.accessed]
+    if unused:
+        logger.warning("[mode.param] key(s) not read by this {} run: {}. A misspelled or "
+                       "misplaced key has no effect; keys that only apply to other "
+                       "settings of the solver are listed as well.".format(
+                           info_mode.get("mode"), ", ".join(sorted(unused))))
+
+
 def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     """Run Hartree-Fock calculation with given input parameters.
     
@@ -71,6 +123,18 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         logger.error("mode is not defined in [mode].")
         exit(1)
     mode = info_mode["mode"]
+
+    # A key in the wrong table, or a [mode] key spelled with other case, used
+    # to be ignored without a word (GitHub issue #236).
+    placement_errors = check_mode_tables(info_mode)
+    if placement_errors:
+        for msg in placement_errors:
+            logger.error(msg)
+        exit(1)
+    # record which [mode.param] keys the solver reads (reported at the end)
+    from hwave.solver.base import ParamDict
+    info_mode = dict(info_mode)
+    info_mode["param"] = ParamDict(info_mode.get("param", {}) or {})
 
     # Initialize solver based on calculation mode
     if mode == "UHFr":
@@ -161,6 +225,7 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")
     solver.save_results(info_outputfile, green_info)
+    report_unused_params(info_mode, solver, logger)
     logger.info("All procedures are finished.")
 
     if mode == "FLEX":
