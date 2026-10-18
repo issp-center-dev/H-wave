@@ -43,7 +43,10 @@ read, not a draw from a random generator they would each have to agree
 about), same mixing, same eigen-decompositions, same iteration count. A
 tolerance here would hide a real difference in the mean field. The only
 thing that could separate the two processes is a different numpy/BLAS on
-the two ``PYTHONPATH``s, which is not a thing on one machine. The
+the two ``PYTHONPATH``s, which is not a thing on one machine, or a
+multithreaded reduction summing in another order -- which is why both runs
+pin the BLAS/OpenMP thread counts to one (a CI run once saw a one-ulp
+difference in an energy without it). The
 comparison below therefore carries NO tolerance at all,
 not even a round-off fallback: there is no measurement such a fallback
 could be calibrated from, and it would be exactly the place where a real
@@ -399,9 +402,8 @@ def _run(checkout, indir, case):
         shutil.copytree(indir, work, dirs_exist_ok=True)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured
-            env = dict(os.environ)
-            env["PYTHONPATH"] = os.pathsep.join(
-                (os.path.join(checkout, "src"), checkout))
+            from tests.test_flex_second_order_compat import own_tree_subprocess_env
+            env = own_tree_subprocess_env(checkout)
         else:
             from tests.test_flex_second_order_compat import reference_subprocess_env
             env = reference_subprocess_env(checkout)
