@@ -862,7 +862,8 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 ``enable_spin_orbital``\ は非対応。\ ``Nmat``\ は偶数である必要が
 あります。\ ``transverse_bond_channels``\ とは併用できず、
 ``mode = "FLEX"``\ では同じキーが :ref:`flex_bond_hf`\ の自己無撞着な
-Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
+Hartree-Fock FLEX 版を選択します（そこではオフサイトの\ ``Exchange``\ は
+引き続き拒否されます）。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 ``longitudinal_bond_cond_min_s`` / ``_c``\ として出力）。推定ピーク
 ホストメモリは高コストな計算の前に\ ``longitudinal_bond_memory_cap_gb``

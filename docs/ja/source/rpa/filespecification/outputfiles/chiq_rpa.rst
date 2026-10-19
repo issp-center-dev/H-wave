@@ -182,7 +182,7 @@ chiq のデータ形式
   ``chi_bar = -(T/N) sum_k G G, per site``\ ）、
   ``longitudinal_bond_types``\ （文字列配列。\ ``CoulombInter, Hund, Ising``\ の
   3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
-  ブロックはゼロ。RPA モードでオフサイトの Exchange が宣言されている場合は
+  ブロックはゼロ。RPA モードでオフサイトの\ ``Exchange``\ が宣言されている場合は
   その後ろに\ ``Exchange``\ が加わります）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c``\ （浮動小数。
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の

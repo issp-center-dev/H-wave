@@ -911,7 +911,8 @@ basis is planned); no sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
 gate cannot be combined with ``transverse_bond_channels``; in ``mode =
 "FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX
-treatment of :ref:`flex_bond_hf`. Each RPA
+treatment of :ref:`flex_bond_hf` (where an off-site ``Exchange`` is still
+rejected). Each RPA
 denominator is checked for conditioning at every :math:`q` and the run
 is refused inside the instability region (the smallest scores are
 reported as ``longitudinal_bond_cond_min_s`` / ``_c``); the estimated
