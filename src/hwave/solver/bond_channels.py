@@ -2556,12 +2556,18 @@ _TRANSVERSE_ACTIVE_TYPES = ("CoulombInter", "Ising", "Exchange")
 # Every interaction type the shared resolver can read a bond shell from
 # (#181 Tier 3 Phase A). A caller selects a subset as ``active_types``:
 # the transverse (spin-flip) channel reads _TRANSVERSE_ACTIVE_TYPES, the
-# longitudinal (spin/charge) channel _LONGITUDINAL_ACTIVE_TYPES -- Hund is
-# a longitudinal bond source with no transverse content, Exchange the
-# reverse (its longitudinal content is adjudicated absent, Tier 2; its
-# promotion through the bond basis is a recorded follow-up).
+# longitudinal (spin/charge) channel _LONGITUDINAL_BOND_TYPES -- Hund is
+# a longitudinal bond source with no transverse content. An off-site
+# Exchange has no q-representable longitudinal content (Tier 2), so it
+# never enters the channel-0 (Hartree) block, whose types are the density
+# types _LONGITUDINAL_ACTIVE_TYPES; its longitudinal content is the
+# bond-diagonal Fock crossing alone (``cross`` (+1, +1) of
+# vertex_table.ADJUDICATED_SC), adjudicated against exact diagonalization
+# (tests/test_bond_longitudinal_ed.py), so it is a bond source of the
+# longitudinal channel. Its spin-flip content is the transverse channel's.
 _BOND_RESOLVABLE_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
 _LONGITUDINAL_ACTIVE_TYPES = ("CoulombInter", "Hund", "Ising")
+_LONGITUDINAL_BOND_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
 
 
 def _as_readonly_int_array(value, name, *, ndim, last_dim=None):

@@ -299,20 +299,23 @@ that has no effect under the current settings.
   channel for ``calc_type = "ring"`` with ``calc_scheme = "general"`` (or
   ``"auto"`` resolving to it) on a spin-free system (see
   :ref:`rpa_longitudinal_bond`). The exchange (Fock)
-  crossing of the off-site ``CoulombInter``, ``Hund`` and ``Ising``
-  terms -- which the standard ring omits -- is carried on a bond-enlarged
+  crossing of the off-site ``CoulombInter``, ``Hund``, ``Ising`` and
+  ``Exchange`` terms -- which the standard ring omits -- is carried on a bond-enlarged
   pair basis, and the dressed static susceptibilities are written to the
   ``chiq`` file under the ``longitudinal_bond_*`` keys; the ``chiq``
   array inside that file is not overwritten and stays the standard ring
   result. The gate requires at least one
-  declared off-site ``CoulombInter``/``Hund``/``Ising`` shell (a
-  declared-zero coefficient counts), real coefficients, an even
+  declared off-site ``CoulombInter``/``Hund``/``Ising``/``Exchange``
+  shell (a declared-zero coefficient counts), real coefficients, an even
   ``Nmat``, no sublattice, no ``chi0q_init`` and no
-  ``enable_spin_orbital``; an off-site ``Exchange`` or ``PairHop``
-  declaration is rejected with an error. It cannot be combined with
+  ``enable_spin_orbital``; an off-site ``PairHop`` declaration is
+  rejected with an error. An off-site ``Exchange`` enters through its
+  bond (Fock) crossing only -- it has no Hartree content -- and its
+  spin-flip content is the transverse channel's
+  (``transverse_bond_channels``), not this one's. It cannot be combined with
   ``transverse_bond_channels = true``. In ``mode = "FLEX"`` the same key
   enables the self-consistent bond-resolved channel of the Hartree-Fock
-  FLEX (experimental; requires ``flex_hartree_fock = true``,
+  FLEX (experimental; off-site ``Exchange`` is still rejected there; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
   grid, no sublattice and an even ``Nmat``; see
   :ref:`flex_bond_hf`). With ``longitudinal_bond_channels = true``

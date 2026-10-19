@@ -882,8 +882,8 @@ matrix in the :math:`m = m' = 0` block plus, on the bond diagonal
 exchange crossing of the off-site term, :math:`w_t\, \mathrm{Re}\,
 V^{(t)}_{l_1 l_2}(R_m)`, where :math:`w_t` is the same per-type
 coefficient the on-site exchange slot uses (``CoulombInter``
-:math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`
-for the spin and charge channels). A declared row :math:`V_{ab}(R)` of
+:math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`,
+``Exchange`` :math:`(+1, +1)` for the spin and charge channels). A declared row :math:`V_{ab}(R)` of
 the interaction file occupies the slot :math:`(m, a, b)` of the channel
 with :math:`R_m = -R`, and its reverse row :math:`V_{ba}(-R)` the slot
 :math:`(-m, b, a)`: that is the channel whose exchange crossing acts on
@@ -898,17 +898,21 @@ that file is not overwritten and stays the standard ring result. When every off-
 collapsed blocks equal the standard ring's static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first
-order in the coupling for off-site ``CoulombInter``, ``Hund`` and
-``Ising`` (same-orbital and inter-orbital bonds), and the Hartree-only
-vertex was verified to miss the same data.
+order in the coupling for off-site ``CoulombInter``, ``Hund``, ``Ising``
+and ``Exchange`` (same-orbital and inter-orbital bonds), and the
+Hartree-only vertex was verified to miss the same data. An off-site
+``Exchange`` has no Hartree (channel-0) content; its longitudinal content
+is the bond-diagonal Fock crossing alone, and its spin-flip content
+belongs to the transverse channel.
 
 Limitations of this version: real off-site coefficients only; off-site
-``Exchange`` and ``PairHop`` declarations are rejected (their promotion
-through the bond basis is planned); no sublattice folding, no
+``PairHop`` declarations are rejected (their promotion through the bond
+basis is planned); no sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
 gate cannot be combined with ``transverse_bond_channels``; in ``mode =
 "FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX
-treatment of :ref:`flex_bond_hf`. Each RPA
+treatment of :ref:`flex_bond_hf` (where an off-site ``Exchange`` is still
+rejected). Each RPA
 denominator is checked for conditioning at every :math:`q` and the run
 is refused inside the instability region (the smallest scores are
 reported as ``longitudinal_bond_cond_min_s`` / ``_c``); the estimated
