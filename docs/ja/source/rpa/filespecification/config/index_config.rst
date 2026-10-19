@@ -450,7 +450,10 @@ TOML形式
   ``chi_s_w`` / ``chi_c_w``\ （ボソン振動数上の\ ``ndarray(l, q, I, J)``\ ）
   を、\ ``[file.output] longitudinal_bond``\ で指定した専用アーカイブ
   （デフォルト\ ``longitudinal_bond.npz``\ ）に書き出します。ボンド分解
-  した解法の常駐メモリが2倍になります。アーカイブのサイズは書き出し前に
+  した解法の常駐メモリに\ ``(Nmat, nvol, ND, ND)``\ の複素バッファが2つ
+  加わります（それ以外の常駐分は、バブルとそれを上書きする有効相互作用で
+  1つ、\ ``longitudinal_bond_pairing``\ を使う場合は2つです）。
+  アーカイブのサイズは書き出し前に
   ログに出力されます。\ ``longitudinal_bond_channels = true``\ でない
   場合は警告付きで無視されます。
 

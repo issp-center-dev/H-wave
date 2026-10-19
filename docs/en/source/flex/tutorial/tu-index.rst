@@ -581,7 +581,7 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
      # longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it
      # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
      # longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD
-     # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)
+     # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (+2 full bond buffers of memory)
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -733,8 +733,8 @@ The archive's two dominant members, ``chi_s_w`` and ``chi_c_w``, are each
 ``Nmat * nvol * ND**2 * 16`` bytes (complex128; ``ND = B * norb**2`` with
 ``B`` the number of bond channels the FLEX run kept, channel 0 the on-site
 term), so the archive as a whole is about ``2 * Nmat * nvol * ND**2 * 16``
-bytes -- the same doubling ``longitudinal_bond_output_full = true`` (above)
-already costs the FLEX solve's own persistent memory. For in-process-only
+bytes -- the same two buffers that ``longitudinal_bond_output_full = true``
+(above) already adds to the FLEX solve's own persistent memory. For in-process-only
 use leave ``longitudinal_bond_output_full`` at ``false``: the archive is
 written only for the post-processing entry, and on a multi-orbital model it
 is tens of GB on disk. The pairing kernel adds its own working set on top

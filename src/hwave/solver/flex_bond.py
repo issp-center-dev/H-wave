@@ -24,12 +24,24 @@ class BondBlockStore:
     contiguous ``(nb, nvol, ND, ND)`` view) are the only ways in and out;
     ``detach(name)`` transfers ownership of one array to the caller.
     A future streaming store implements the same five methods.
+
+    ``aliases`` maps extra names onto allocated ones, so that two roles
+    share one array: without in-process pairing the FLEX map writes ``W``
+    over the ``chibar`` batch it has just consumed (issue #222), with
+    ``aliases={"W": "chibar"}``. An alias cannot be detached or released
+    on its own.
     """
 
-    def __init__(self, nmat, nvol, ND, nd, names):
+    def __init__(self, nmat, nvol, ND, nd, names, aliases=None):
         names = tuple(names)
         if len(set(names)) != len(names):
             raise ValueError("BondBlockStore: duplicate array names {}".format(names))
+        aliases = dict(aliases or {})
+        for alias, target in aliases.items():
+            if alias in names or target not in names:
+                raise ValueError("BondBlockStore: alias {!r} -> {!r} must name a new name "
+                                 "for an allocated array {}".format(alias, target, names))
+        self._aliases = aliases
         if ND % nd != 0:
             raise ValueError("BondBlockStore: ND={} is not a multiple of nd={}".format(ND, nd))
         self.nmat, self.nvol, self.ND, self.nd = int(nmat), int(nvol), int(ND), int(nd)
@@ -55,6 +67,7 @@ class BondBlockStore:
     def _arr(self, name):
         if self._released:
             raise RuntimeError("BondBlockStore: released")
+        name = self._aliases.get(name, name)
         if name in self._released_slots:
             raise KeyError("BondBlockStore: slot {!r} was released".format(name))
         return self._arrays[name]
@@ -75,7 +88,13 @@ class BondBlockStore:
     def get_freq_batch(self, name, l0, l1):
         return self._arr(name)[l0:l1]
 
+    def _refuse_alias(self, name, what):
+        if name in self._aliases:
+            raise ValueError("BondBlockStore: cannot {} {!r}, an alias of {!r}".format(
+                what, name, self._aliases[name]))
+
     def detach(self, name):
+        self._refuse_alias(name, "detach")
         a = self._arr(name)
         del self._arrays[name]
         return a
@@ -88,6 +107,7 @@ class BondBlockStore:
         # "unknown": say what really happened instead
         if self._released:
             raise RuntimeError("BondBlockStore: released")
+        self._refuse_alias(name, "release")
         if name not in self._arrays:
             if name in self._released_slots:
                 return
@@ -502,7 +522,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if not bool(xp.all(xp.isfinite(W_b))):
             raise _NonFiniteError("non-finite effective interaction W in the frequency batch "
                                   "[{}, {}){}".format(l0, l1, _at(iteration)))
-        store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))          # written ONCE, last
+        # written ONCE, last: when "W" aliases "chibar" (issue #222) this
+        # overwrites the batch just consumed, and nothing above reads it again
+        store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
         del W_b, cb
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
@@ -635,13 +657,18 @@ def transport_ops(B, nmat, nvol, norb):
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
-                         guard_freqs="all", guard_enabled=True):
+                         guard_freqs="all", guard_enabled=True, w_in_place=False):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
     selected ``nb``), ``persistent``, ``nb``, ``peak`` and the symbols;
     raises ``ValueError`` naming every row when even ``nb = 1`` exceeds
     the cap, or when ``freq_batch`` does.
+
+    ``w_in_place`` (issue #222): ``W`` is written over ``chibar`` in ONE
+    store slot, so the ``chibar_W`` row is ``U`` instead of ``2 U``. The
+    solver sets it exactly when no in-process pairing follows the solve
+    (the pairing reads the last map's ``chibar`` back).
 
     ``factor_bytes`` is the compiled second-order factor pack's
     ``SecondOrderFactors.nbytes`` (0 with the legacy
@@ -726,7 +753,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     S = nvol * ND * ND * it
     H = nvol * P * it
     persistent_rows = {
-        "chibar_W": 2 * U,
+        "chibar_W": (1 if w_in_place else 2) * U,
         "chi_sc_w": 2 * U if output_full else 0,
         "vertices_static": 5 * S,
         "state": G + H,
