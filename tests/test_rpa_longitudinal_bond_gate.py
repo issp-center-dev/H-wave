@@ -144,9 +144,8 @@ class TestGatePrerequisites(unittest.TestCase):
         cases = [
             ({}, {"CoulombInter": "onsite_inter.dat"}, _IN, "declared off-site"),
             ({}, {"PairHop": "offsite_pairhop.dat"}, _EQ2, "PairHop"),
-            ({}, {"Exchange": "offsite_exchange.dat"}, _EQ2, "Exchange"),
             ({}, {"CoulombInter": "offsite_coulombinter_interorb.dat",
-                  "Exchange": "offsite_exchange.dat"}, _EQ2, "Exchange"),
+                  "PairHop": "offsite_pairhop.dat"}, _EQ2, "PairHop"),
             ({"SubShape": [2, 1, 1]}, None, _IN, "sublattice"),
         ]
         for extra, inter, path, fragment in cases:
@@ -314,7 +313,7 @@ class TestGatePrerequisites(unittest.TestCase):
     def test_accepts_and_returns_topology_and_split(self):
         s = self._gate()
         topo, split = s._validate_longitudinal_bond_prereqs()
-        self.assertEqual(tuple(topo.coeffs), ("CoulombInter", "Hund", "Ising"))
+        self.assertEqual(tuple(topo.coeffs), ("CoulombInter", "Hund", "Ising", "Exchange"))
         self.assertGreater(topo.delta_r.shape[0], 1)
         self.assertEqual(split.offsite_types, ("CoulombInter",))
         self.assertFalse(split.has_fold)
@@ -521,7 +520,7 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertEqual(gi["longitudinal_bond_chi_c"].shape, (nvol, B * nd, B * nd))
         self.assertEqual(gi["longitudinal_bond_chiq_s_static"].shape, (nvol,) + (s.norb,) * 4)
         self.assertEqual(gi["longitudinal_bond_reverse"].shape, (B,))
-        self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising"])
+        self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising", "Exchange"])
         self.assertEqual(int(gi["longitudinal_bond_schema"]), 2)
         self.assertEqual(int(gi["longitudinal_bond_max_shells"]), -1)
         self.assertEqual(tuple(gi["longitudinal_bond_spatial_shape"]), (4, 4, 1))
@@ -631,6 +630,79 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         gi2 = r.get_param("green")
         s_off.solve(gi2, self._OUT)
         np.testing.assert_array_equal(np.asarray(gi["chiq"]), np.asarray(gi2["chiq"]))
+
+    def test_offsite_exchange_is_a_bond_source(self):
+        """An off-site Exchange (#181): accepted, alone on its shell; its bond
+        blocks are the ``cross`` (+1, +1) Fock crossing and it adds nothing
+        to the channel-0 (Hartree) block; the gate's outputs equal the direct
+        evaluation, and differ from the declared-zero topology."""
+        from hwave.solver import bond_channels as bc, bubble
+        from hwave.solver.offsite import sc_matrices_from_split
+        outs = {}
+        for scale in (1.0, 0.0):
+            s, r = _build({"longitudinal_bond_channels": True},
+                          {"Exchange": "offsite_exchange.dat"}, path=_EQ2)
+            if scale == 0.0:
+                for key in list(s.ham_info.param_ham["Exchange"]):
+                    s.ham_info.param_ham["Exchange"][key] = 0.0
+            gi = r.get_param("green")
+            os.makedirs(self._OUT, exist_ok=True)
+            s.solve(gi, self._OUT)
+            outs[scale] = (s, gi)
+        s, gi = outs[1.0]
+        topo, split = s._validate_longitudinal_bond_prereqs()
+        self.assertIn("Exchange", topo.coeffs)
+        self.assertEqual(int(np.asarray(topo.delta_r).shape[0]), 3)
+        nx, ny, nz = s.lattice.shape
+        nvol, nd = s.lattice.nvol, s.norb ** 2
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                        s.norb, nx, ny, nz)
+        S0 = S0.reshape(nvol, nd, nd)
+        C0 = C0.reshape(nvol, nd, nd)
+        np.testing.assert_array_equal(S0, 0.0)       # no Hartree content
+        np.testing.assert_array_equal(C0, 0.0)
+        S = bc.build_sc_bond_channel(topo, S0, "S")
+        C = bc.build_sc_bond_channel(topo, C0, "C")
+        # the bond-diagonal (+1, +1) entries: J = 0.2 on (m, 0, 1) and its reverse
+        self.assertAlmostEqual(np.abs(S).max(), 0.2, delta=1e-15)
+        np.testing.assert_array_equal(S, C)
+        chi_bar = np.asarray(bubble.bond_bubble_static(
+            s.green0, s.green0_tail, 1.0 / 2.0, bc.BondSetView(topo),
+            spatial_shape=(nx, ny, nz)))
+        chi_s, _ = bc.dress_channel(chi_bar, S, "spin", spatial_shape=(nx, ny, nz))
+        chi_c, _ = bc.dress_channel(chi_bar, C, "charge", spatial_shape=(nx, ny, nz))
+        np.testing.assert_allclose(np.asarray(gi["longitudinal_bond_chi_s"]), chi_s,
+                                   rtol=0, atol=1e-12)
+        np.testing.assert_allclose(np.asarray(gi["longitudinal_bond_chi_c"]), chi_c,
+                                   rtol=0, atol=1e-12)
+        zero = outs[0.0][1]
+        for k in ("longitudinal_bond_chi_s", "longitudinal_bond_chi_c"):
+            a, b = np.asarray(gi[k]), np.asarray(zero[k])
+            self.assertGreater(np.abs(a - b).max(), 1e-3 * np.abs(b).max(), k)
+
+    def test_exchange_free_input_keeps_the_previous_bond_vertices(self):
+        """Adding Exchange to the longitudinal bond types changes nothing for
+        an input without one: the same shells, and bit-identical S/C."""
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.offsite import sc_matrices_from_split
+        s, _ = _build({"longitudinal_bond_channels": True},
+                      {"CoulombInter": "coulombinter.dat", "Hund": "offsite_hund.dat"})
+        s.spin_mode = "spin-free"
+        topo, split = s._validate_longitudinal_bond_prereqs()
+        from requests.structures import CaseInsensitiveDict
+        old = bc.resolve_bond_topology(
+            CaseInsensitiveDict(split.whole_tbl), np.eye(3), s.norb,
+            max_shells=s.longitudinal_bond_max_shells,
+            active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
+        np.testing.assert_array_equal(np.asarray(topo.delta_r), np.asarray(old.delta_r))
+        nx, ny, nz = s.lattice.shape
+        nvol, nd = s.lattice.nvol, s.norb ** 2
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                        s.norb, nx, ny, nz)
+        S0, C0 = S0.reshape(nvol, nd, nd), C0.reshape(nvol, nd, nd)
+        for ch, W0 in (("S", S0), ("C", C0)):
+            np.testing.assert_array_equal(bc.build_sc_bond_channel(topo, W0, ch),
+                                          bc.build_sc_bond_channel(old, W0, ch))
 
     def test_gate_absent_and_explicit_false_are_bitwise_identical(self):
         s1, r1 = _build({})

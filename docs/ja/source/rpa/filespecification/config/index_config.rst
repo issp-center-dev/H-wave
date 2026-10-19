@@ -252,13 +252,16 @@ TOML形式
   感受率を\ ``chiq``\ ファイルの\ ``longitudinal_bond_*``\ キーに書き
   出します。ファイル内の配列\ ``chiq``\ は上書きされず、標準の ring の
   結果のままです。少なくとも
-  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``\ シェルの宣言
+  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``/``Exchange``\ シェルの宣言
   （係数ゼロの宣言も可）、実数の係数、偶数の\ ``Nmat``\ 、副格子なし、
   ``chi0q_init``\ なし、\ ``enable_spin_orbital``\ なしが必要で、
-  オフサイトの\ ``Exchange``\ または\ ``PairHop``\ の宣言はエラーとして
-  拒否されます。\ ``transverse_bond_channels = true``\ とは併用でき
+  オフサイトの\ ``PairHop``\ の宣言はエラーとして拒否されます。
+  オフサイトの\ ``Exchange``\ はボンド（Fock）交差のみを通じて入り
+  （Hartree 成分はありません）、スピン反転成分はこのチャネルではなく
+  横チャネル（\ ``transverse_bond_channels``\ ）の扱いです。\ ``transverse_bond_channels = true``\ とは併用でき
   ません。\ ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
-  自己無撞着なボンド分解チャネルを有効にします（実験的機能。
+  自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
+``Exchange``\ はそこでは引き続き拒否されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
   が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\

@@ -36,14 +36,20 @@ split in :mod:`hwave.sc`).
 OFF-SITE content (R != 0): only the ``density`` family is
 q-representable (Hartree vertex V_ab(q)); the ``cross``/``antidiag``
 families describe a non-local pair off-site and are on-site only. In
-particular, off-site Exchange and PairLift have NO longitudinal entry:
+particular, off-site Exchange and PairLift have NO q-representable
+(channel-0) longitudinal entry:
 adjudicated by exact diagonalization (#181 Tier 2,
 tests/test_offsite_exchange_ed_longitudinal.py) -- Exchange's density
 slots measure 1e-3 against the controls' 2.0 / 1.0 per unit coupling and
 a purely imaginary J gives a numerically vanishing (< 1e-6) longitudinal
 response; PairLift's longitudinal response vanishes off-site as it does
-on-site. Their content is transverse (RING_SPIN_FLIP below), which is
-why the table carries no off-site entry for either.
+on-site. Their local-bilinear content is transverse (RING_SPIN_FLIP
+below), which is why the table carries no off-site entry for either.
+An off-site Exchange does have a NON-local longitudinal content, the
+bond-diagonal Fock crossing: the bond-resolved longitudinal channel
+(bond_channels._LONGITUDINAL_BOND_TYPES) carries it with this table's
+on-site ``cross`` coefficients (+1, +1), adjudicated against exact
+diagonalization (tests/test_bond_longitudinal_ed.py).
 
 ``S`` enters the spin channel as ``[1 - chi0 S]^-1 chi0`` and ``C`` the
 charge channel as ``[1 + chi0 C]^-1 chi0``. Entries are per unit

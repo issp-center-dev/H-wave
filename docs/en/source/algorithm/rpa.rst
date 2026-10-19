@@ -898,13 +898,16 @@ that file is not overwritten and stays the standard ring result. When every off-
 collapsed blocks equal the standard ring's static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first
-order in the coupling for off-site ``CoulombInter``, ``Hund`` and
-``Ising`` (same-orbital and inter-orbital bonds), and the Hartree-only
-vertex was verified to miss the same data.
+order in the coupling for off-site ``CoulombInter``, ``Hund``, ``Ising``
+and ``Exchange`` (same-orbital and inter-orbital bonds), and the
+Hartree-only vertex was verified to miss the same data. An off-site
+``Exchange`` has no Hartree (channel-0) content; its longitudinal content
+is the bond-diagonal Fock crossing alone, and its spin-flip content
+belongs to the transverse channel.
 
 Limitations of this version: real off-site coefficients only; off-site
-``Exchange`` and ``PairHop`` declarations are rejected (their promotion
-through the bond basis is planned); no sublattice folding, no
+``PairHop`` declarations are rejected (their promotion through the bond
+basis is planned); no sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
 gate cannot be combined with ``transverse_bond_channels``; in ``mode =
 "FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX

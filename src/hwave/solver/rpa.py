@@ -5643,7 +5643,7 @@ class RPA:
         ``ValueError`` naming the gate; there is no fallback. Called from
         ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
         work. Returns ``(topo, split)``: the master bond topology over
-        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` and the pre-fold
+        ``bond_channels._LONGITUDINAL_BOND_TYPES`` and the pre-fold
         :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
         is built from.
         """
@@ -5675,19 +5675,12 @@ class RPA:
                 "Omega = 0 slice at Nmat//2); got Nmat={}.".format(self.nmat))
 
         split = split_locality(self.ham_info, self.lattice)
-        for itype in ("PairHop", "Exchange"):
+        for itype in ("PairHop",):
             if itype in split.offsite_types:
                 (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
-                if itype == "PairHop":
-                    reason = ("no local-pair particle-hole form exists for "
-                              "an inter-site pair hopping (Phase C of GitHub "
-                              "issue #181)")
-                else:
-                    reason = ("exact diagonalization finds no q-representable "
-                              "longitudinal content (#181 Tier 2); its "
-                              "bond-resolved promotion is a recorded "
-                              "follow-up, so the gate refuses it rather than "
-                              "silently dropping it")
+                reason = ("no local-pair particle-hole form exists for "
+                          "an inter-site pair hopping (Phase C of GitHub "
+                          "issue #181)")
                 raise ValueError(
                     g + " does not support an off-site '{}' declaration "
                     "(irvec={}, orbvec={} -- the declared displacement and "
@@ -5708,11 +5701,11 @@ class RPA:
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+            active_types=bond_channels._LONGITUDINAL_BOND_TYPES)
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
                 g + " requires at least one declared off-site CoulombInter, "
-                "Hund or Ising shell (a declared-but-zero coefficient "
+                "Hund, Ising or Exchange shell (a declared-but-zero coefficient "
                 "counts; the aggregate Coulomb table's off-site part "
                 "counts); none is present after longitudinal_bond_max_shells "
                 "truncation, so the bond channels have nothing to "
@@ -5811,7 +5804,7 @@ class RPA:
         green_kw, green0_tail : the solver's single-block Green tensor
             ``(1, nmat, nvol, norb, norb)`` and its tail (or None).
         beta : float
-        topo : bond_channels.BondTopology over _LONGITUDINAL_ACTIVE_TYPES.
+        topo : bond_channels.BondTopology over _LONGITUDINAL_BOND_TYPES.
         S0, C0 : ndarray (nvol, nd, nd)
             The Tier-1 locality-split S/C matrices (channel-0 blocks).
 

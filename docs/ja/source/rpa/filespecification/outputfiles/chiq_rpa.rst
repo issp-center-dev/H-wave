@@ -180,9 +180,12 @@ chiq のデータ形式
   ``longitudinal_bond_spin_mode``\ （文字列、\ ``spin-free``\ ）、
   ``longitudinal_bond_normalization``\ （文字列:
   ``chi_bar = -(T/N) sum_k G G, per site``\ ）、
-  ``longitudinal_bond_types``\ （文字列配列。常に\ ``CoulombInter, Hund, Ising``\ の
-  3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
-  ブロックはゼロ）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
+  ``longitudinal_bond_types``\ （文字列配列。RPA モードでは常に
+  ``CoulombInter, Hund, Ising, Exchange``\ の4種で、宣言の有無によらずボンド
+  ブロックを構成する種類の組。未宣言の種類のブロックはゼロ。\ ``Exchange``\ は
+  RPA の gate がオフサイトの Exchange を受け付けるようになった際に加わりました。
+  Exchange を含まない実行のボンドブロックは従来と同じです。FLEX モードでは
+  ``CoulombInter, Hund, Ising``\ のままです）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c``\ （浮動小数。
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
   下限に達すると実行は拒否されます。\ ``longitudinal_bond_guard_freqs = "static"``\ の
