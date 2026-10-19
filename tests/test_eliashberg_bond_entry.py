@@ -766,7 +766,8 @@ class TestPostProcessingRuns(unittest.TestCase):
         re-reads each sidecar member, so it exercises repeated memmap
         open/close.
 
-        The leading eigenvalue matches to 1e-13 (measured |diff| 5.3e-15). The
+        The leading eigenvalue matches to 1e-12 (measured |diff| 5.3e-15
+        locally; 1.2e-13, intermittently, on the CI Linux runners). The
         output gap is already gauge-fixed (_fix_gauge), so it is compared
         directly at rtol = 0, atol = 1e-11; the measured gap max|diff| is
         3.2e-13 (uniform) / 1.9e-14 (IR) at Nmat 64 -- the eigensolver's
@@ -812,7 +813,7 @@ class TestPostProcessingRuns(unittest.TestCase):
                 lam_npz, gap_npz = ref[b["tag"]]
                 self.assertTrue(np.isfinite(lam_npz))
                 self.assertAlmostEqual(lam_side, lam_npz,
-                                       delta=1e-13 * max(1.0, abs(lam_npz)), msg=b["tag"])
+                                       delta=1e-12 * max(1.0, abs(lam_npz)), msg=b["tag"])
                 maxdiff = float(np.max(np.abs(gap_side - gap_npz)))
                 np.testing.assert_allclose(gap_side, gap_npz, rtol=0, atol=1e-11,
                                            err_msg="{}: gap max|diff|={:.3e}".format(b["tag"], maxdiff))
