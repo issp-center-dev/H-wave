@@ -67,6 +67,8 @@ H = 0.05
 LAMS = (-2 * H, -H, 0.0, H, 2 * H)
 NMATS = (128, 256)
 TOL_C1, TOL_C2, MISS = 5e-5, 2e-4, 1e-2
+#: singlet <-> triplet blocks: round-off only (parity is exact on both sides)
+TOL_CROSS = 1e-9
 
 _K = 2 * np.pi * np.arange(L) / L
 #: pair-space basis (c, d, d'): orbital c (up) at the origin, d (down) at d'
@@ -224,6 +226,23 @@ def _sector_errors(want, got):
     return out
 
 
+def _cross_parity_errors(want, got):
+    """``{order: (|P_s d P_t| + |P_t d P_s|) / |a|}``, ``d = a - b`` the
+    coefficient difference and ``a`` the ED coefficient (Frobenius norms):
+    the singlet <-> triplet blocks, which the per-sector comparison drops.
+    ED conserves the pair's spin parity, and the production ladder must not
+    leak a gap into the other sector (measured: 9e-14 at first order, 5e-12
+    at second, i.e. round-off; asserted below ``TOL_CROSS``)."""
+    P = _parity_projectors()
+    out = {}
+    for order, (a, b) in enumerate(zip(_coefficients(want), _coefficients(got)), 1):
+        d = a - b
+        cross = np.linalg.norm(P["singlet"] @ d @ P["triplet"]) \
+            + np.linalg.norm(P["triplet"] @ d @ P["singlet"])
+        out[order] = cross / np.linalg.norm(a)
+    return out
+
+
 class TestPairingVertexAgainstED(unittest.TestCase):
 
     @heavy
@@ -242,6 +261,9 @@ class TestPairingVertexAgainstED(unittest.TestCase):
         for (order, eta), dev in sorted(errs.items()):
             tol = TOL_C1 if order == 1 else TOL_C2
             self.assertLess(dev, tol, "order {} {}: {:.3e}".format(order, eta, dev))
+        for order, dev in sorted(_cross_parity_errors(_ed_series(), _richardson()).items()):
+            self.assertLess(dev, TOL_CROSS,
+                            "order {} singlet<->triplet: {:.3e}".format(order, dev))
 
     @heavy
     def test_opposite_placement_is_missed(self):
