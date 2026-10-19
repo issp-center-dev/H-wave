@@ -2,6 +2,7 @@
 section 3.6): the named-buffer table, the batch selection, the refusal
 naming every row, the operation warnings, the tracer invariant and the
 subprocess RSS validation."""
+import contextlib
 import json
 import logging
 import os
@@ -118,6 +119,30 @@ def _preimport():
     import hwave.sc  # noqa: F401
 
 
+@contextlib.contextmanager
+def _coverage_paused():
+    """Pause a running coverage measurement (``pytest --cov``) for the
+    traced solve. The coverage tracer allocates its own bookkeeping while it
+    runs, and tracemalloc counts it: under CI's ``--cov`` the measured phase
+    peaks of the two-orbital fixture grew by about 17 KB, more than the whole
+    margin of ``post_scf`` (about 15 KB without coverage, on Linux and macOS
+    alike), so the develop tree itself failed the invariant when this test
+    ran alone. Every line the traced solve executes has already run in an
+    untraced solve or another test, so nothing goes uncovered."""
+    try:
+        import coverage
+        cov = coverage.Coverage.current()
+    except ImportError:
+        cov = None
+    if cov is not None:
+        cov.stop()
+    try:
+        yield
+    finally:
+        if cov is not None:
+            cov.start()
+
+
 class _Tracer:
     """``solver._phase_tracer``: per-phase tracemalloc peaks measured from
     the traced memory at SOLVE entry (``base``), so every buffer the solve
@@ -170,13 +195,24 @@ class TestSolverPreflight(unittest.TestCase):
         _preimport()
         tracer = _Tracer()
         s._phase_tracer = tracer
-        tracemalloc.start()
-        try:
+        with _coverage_paused():
+            # an identical untraced solve first, with coverage paused too:
+            # code that so far ran only under the coverage tracer allocates
+            # the interpreter's specialization caches on its first untraced
+            # run (a few hundred bytes), which must not land in the peaks
+            w, rw = _solver(param_extra)
+            gw = rw.get_param("green")
+            gw.update(green_extra or {})
             with tempfile.TemporaryDirectory() as out:
-                tracer.base = tracemalloc.get_traced_memory()[0]
-                s.solve(gi, out)
-        finally:
-            tracemalloc.stop()
+                w.solve(gw, out)
+            del w, rw, gw
+            tracemalloc.start()
+            try:
+                with tempfile.TemporaryDirectory() as out:
+                    tracer.base = tracemalloc.get_traced_memory()[0]
+                    s.solve(gi, out)
+            finally:
+                tracemalloc.stop()
         return s, tracer
 
     def test_preflight_rows_match_tracemalloc_per_phase(self):
@@ -198,7 +234,8 @@ class TestSolverPreflight(unittest.TestCase):
         import hwave.solver.flex as flex_mod
         s, r = _solver({"IterationMax": 1})
         gi = r.get_param("green")
-        with tempfile.TemporaryDirectory() as out:
+        with tempfile.TemporaryDirectory() as out, _coverage_paused():
+            # the seed solve also runs with coverage paused (see _run_traced)
             s.solve(gi, out)
             s.save_results({"path_to_output": out, "sigma": "sigma.npz"}, gi)
             s2, r2 = _solver({"IterationMax": 1})
