@@ -250,6 +250,45 @@ that has no effect under the current settings.
   this resummation; it remains excluded (as it is in the
   non-spin-orbital ladder).
 
+- ``orbital_site``
+
+  **Type :**
+  List of non-negative integers (default: not set)
+
+  **Description :**
+  Assigns each orbital of the original cell to a site (atom or molecule);
+  in spin-orbital mode the list runs over the physical orbitals. Orbitals
+  with the same label are on the same site. Read by ``hwave`` (RPA, FLEX)
+  and by ``hwave_sc``; the UHF solvers do not use it.
+
+  An ``R = 0`` two-body row between orbitals of DIFFERENT sites -- for
+  example the two molecules of a dimer that share a unit cell -- is an
+  inter-site interaction. With the key, such a row is treated like an
+  off-site row: in the RPA ring, the FLEX general path (vertex and second
+  order) and the non-bond ``hwave_sc`` vertex only its density (Hartree)
+  part enters, and its exchange crossing does not. (In the non-bond
+  ``hwave_sc`` vertex, ``R != 0`` rows still contribute an approximate,
+  collapsed exchange term; see GitHub issue #239.) Rows of types without a
+  density part follow the off-site rules: between different sites,
+  ``Exchange`` and ``PairHop`` are refused in FLEX general, ``PairHop`` is
+  dropped with a warning in RPA, and ``Exchange``, ``PairHop`` and
+  ``PairLift`` are dropped with a warning in ``hwave_sc``.
+
+  Without the key every orbital is taken to be on one site: every ``R = 0``
+  row gets the on-site (Kanamori) treatment, exchange crossing included.
+  That is correct for orbitals of one atom (``U'``, ``J``) but makes the
+  result depend on the choice of unit cell when the orbitals are different
+  sites, so a warning names the ``R = 0`` inter-orbital rows when the key is
+  absent; for an atomic multi-orbital model declare all orbitals on one site
+  (e.g. ``orbital_site = [0, 0]``).
+
+  Not affected: the bond-resolved paths (``longitudinal_bond_channels``,
+  ``transverse_bond_channels``), which resolve the exchange of every bond,
+  the in-cell ones included, and the Hartree-Fock self-energy of
+  ``flex_hartree_fock``, which keeps the exchange of every row.
+  ``calc_type = "ring+ladder"`` without the bond gate refuses rows between
+  different sites.
+
 - ``longitudinal_bond_channels``
 
   **Type :**

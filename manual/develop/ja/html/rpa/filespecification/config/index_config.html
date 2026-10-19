@@ -237,6 +237,36 @@ Green 関数の等時刻不連続を復元します（tail 項がジャンプを
 exchange 配線は2つのフェルミオン運動量に依存するためこの再帰和では
 表現できず、（非スピン軌道の ladder と同様に）含まれません。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">orbital_site</span></code></p>
+<p><strong>形式 :</strong> 非負整数のリスト (デフォルトは指定なし)</p>
+<p><strong>説明 :</strong>
+元の単位胞の各軌道がどのサイト（原子や分子）に属するかを指定します。
+スピン軌道モードでは物理軌道ごとに並べます。同じラベルの軌道は同じサイトに
+属します。<code class="docutils literal notranslate"><span class="pre">hwave</span></code>（RPA、FLEX）と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が読み、UHF の
+ソルバーは使いません。</p>
+<p><code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の二体項の行のうち、<strong>異なる</strong>サイトの軌道を結ぶもの（たとえば
+単位胞を共有する二量体の2つの分子間の相互作用）はサイト間の相互作用です。
+このキーを指定すると、そのような行は off-site の行と同じに扱われます。RPA の
+ring、FLEX の general（バーテックスと2次）、ボンド分解しない<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の
+バーテックスでは、その密度（Hartree）部分だけが入り、交換の寄与は入りません
+（ボンド分解しない<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のバーテックスでは、<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">!=</span> <span class="pre">0</span></code>の行は
+近似的に、つぶした形の交換項を引き続き与えます。GitHub issue #239 を参照）。
+密度部分を持たない種類の行は off-site の規則に従います。異なるサイト間の
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は FLEX の general では拒否され、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は
+RPA で警告とともに除かれ、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で警告とともに除かれます。</p>
+<p>キーを指定しない場合は全軌道が1つのサイトにあるとみなされ、<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の
+行はすべてオンサイト（Kanamori）として交換の寄与も含めて扱われます。これは
+1つの原子の軌道（<code class="docutils literal notranslate"><span class="pre">U'</span></code>、<code class="docutils literal notranslate"><span class="pre">J</span></code>）には正しい扱いですが、軌道が別々の
+サイトである場合には結果が単位胞の取り方に依存するため、キーがない場合は
+<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の軌道間の行を挙げて警告します。原子の多軌道模型では全軌道を1つの
+サイトに宣言してください（例:<code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">=</span> <span class="pre">[0,</span> <span class="pre">0]</span></code>）。</p>
+<p>影響を受けないもの: ボンド分解の経路（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>、
+<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>）は、単位胞内のものも含めすべてのボンドの交換を
+分解して扱います。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>の Hartree-Fock 自己エネルギーは
+すべての行の交換を保持します。ボンド分解なしの<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>は、
+異なるサイト間の行を拒否します。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>)</p>
 <p><strong>説明 :</strong>

@@ -138,6 +138,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
   mode = "RPA"
 
 [mode.param]
+  orbital_site = [0, 1]  # the two molecules are different sites
   T = 0.1
   CellShape = [32, 32, 1]
   SubShape = [1, 1, 1]
@@ -165,7 +166,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
   chi0q_mode = "load"
   pairing_type = "singlet"
   init_gap = "cos"
-  max_iter = 1000
+  max_iter = 500
   alpha = 0.5
   convergence_tol = 1.0e-5
   num_eigenvalues = 10
@@ -457,25 +458,25 @@ iteration and/or eigenvalue analysis.</p></li>
 </ol>
 <p>The output log shows the iteration progress:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Self-consistent iteration ===
-hwave_sc: Iteration    0: eigenvalue = 1.162617, diff = 1.165271e+00
-hwave_sc: Iteration    1: eigenvalue = 0.345822, diff = 5.558347e-01
+hwave_sc: Iteration    0: eigenvalue = 0.909443, diff = 5.659296e-01
+hwave_sc: Iteration    1: eigenvalue = 0.699373, diff = 8.679877e-02
 ...
-hwave_sc: Iteration  607: eigenvalue = 1.041844, diff = 9.792150e-06
-hwave_sc: Converged at iteration 608
-hwave_sc: Iteration result: eigenvalue = 1.041844, converged = True, n_iter = 608
+hwave_sc: Iteration  132: eigenvalue = 0.942845, diff = 9.971819e-06
+hwave_sc: Converged at iteration 133
+hwave_sc: Iteration result: eigenvalue = 0.942845, converged = True, n_iter = 133
 </pre></div>
 </div>
 <p>followed by the eigenvalue analysis:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Eigenvalue analysis ===
 hwave_sc: Leading eigenvalues:
-hwave_sc:     0: 1.041844 (|ev| = 1.041844)
-hwave_sc:     1: -1.233988 (|ev| = 1.233988)
-hwave_sc:     2: -1.584929 (|ev| = 1.585014)
-hwave_sc:     3: -1.584929 (|ev| = 1.585014)
-hwave_sc:     4: -3.067559 (|ev| = 3.067559)
-hwave_sc:     5: 1.031822 (|ev| = 1.031822)  [opposite-parity sector]
-hwave_sc:     6: -0.902492 (|ev| = 0.902505)  [opposite-parity sector]
-hwave_sc:     7: -1.280675 (|ev| = 1.280675)  [opposite-parity sector]
+hwave_sc:     0: 0.942845 (|ev| = 0.942845)
+hwave_sc:     1: 0.790190 (|ev| = 0.790190)
+hwave_sc:     2: -0.962522 (|ev| = 0.962522)
+hwave_sc:     3: -1.120544 (|ev| = 1.120544)
+hwave_sc:     4: -1.356804 (|ev| = 1.356804)
+hwave_sc:     5: 0.953007 (|ev| = 0.953007)  [opposite-parity sector]
+hwave_sc:     6: 0.794702 (|ev| = 0.794702)  [opposite-parity sector]
+hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 ...
 </pre></div>
 </div>
@@ -497,7 +498,7 @@ spurious).</p>
 <h3>Gap function<a class="headerlink" href="#gap-function" title="Link to this heading">¶</a></h3>
 <p>The following figures show the gap function <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 in momentum space obtained from the self-consistent iteration.</p>
-<p><strong>Singlet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 1.04\)</span>):</p>
+<p><strong>Singlet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.94\)</span>):</p>
 <figure class="align-center" id="id6">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
@@ -505,11 +506,11 @@ in momentum space obtained from the self-consistent iteration.</p>
 <p><span class="caption-number">Fig. 5.3 </span><span class="caption-text">Singlet gap function in k-space. Left: intra-orbital component
 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>.
 Right: inter-orbital component <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>.
-The inter-orbital component is about 7 times larger than the intra-orbital one,
+The inter-orbital component is about 4 times larger than the intra-orbital one,
 indicating that inter-orbital pairing is dominant.</span><a class="headerlink" href="#id6" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
-<p><strong>Triplet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 1.17\)</span>):</p>
+<p><strong>Triplet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 1.00\)</span>):</p>
 <figure class="align-center" id="id7">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
@@ -535,25 +536,24 @@ for both singlet and triplet channels.</p>
 The dashed red line indicates <span class="math notranslate nohighlight">\(\lambda = 1\)</span> (SC instability criterion).
 Filled markers are the <strong>physical</strong> eigenvalues (the gap has the channel
 parity: even for singlet, odd for triplet); open markers are <strong>spurious</strong>
-opposite-parity modes. The leading physical eigenvalue of each channel lies
-above 1. The open markers are opposite-parity solutions – even-parity modes
-of the <em>triplet</em> kernel (the largest near 2.06) and an odd-parity mode of the
-<em>singlet</em> kernel near 1.03 – which the Pauli principle forbids for the
-respective spin channel (see the parity note below).</span><a class="headerlink" href="#id8" title="Link to this image">¶</a></p>
+opposite-parity modes. All physical eigenvalues lie below 1 (the triplet one
+only just). The two open markers above 1 are even-parity solutions of the
+<em>triplet</em> kernel, which the Pauli principle forbids for spin-triplet pairing
+(see the parity note below).</span><a class="headerlink" href="#id8" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>The Arnoldi eigenvalue analysis finds multiple eigenvalues.
 The figure shows only positive eigenvalues, which are relevant for the
 SC instability criterion <span class="math notranslate nohighlight">\(\lambda = 1\)</span>.
 For the singlet channel, the leading <strong>physical</strong> (even-parity) eigenvalue is
-<span class="math notranslate nohighlight">\(\lambda_S \approx 1.04 &gt; 1\)</span>, matching the self-consistent iteration
-result. The iteration converges slowly here (608 iterations), which is why the
-sample sets <code class="docutils literal notranslate"><span class="pre">max_iter</span> <span class="pre">=</span> <span class="pre">1000</span></code>.</p>
+<span class="math notranslate nohighlight">\(\lambda_S \approx 0.94 &lt; 1\)</span>, matching the self-consistent iteration
+result, so there is no singlet SC instability at this temperature.</p>
 <p>For the triplet channel, the leading <strong>physical</strong> (odd-parity) eigenvalue is
-<span class="math notranslate nohighlight">\(\lambda_T \approx 1.17 &gt; 1\)</span>. The larger values near <span class="math notranslate nohighlight">\(2.06\)</span> and
-<span class="math notranslate nohighlight">\(1.19\)</span> that appear in the triplet calculation are even-parity (spurious)
-modes and are <strong>not</strong> triplet instabilities. Both physical channels exceed 1 at
-this temperature, with the triplet leading (<span class="math notranslate nohighlight">\(\lambda_T &gt; \lambda_S\)</span>).</p>
+<span class="math notranslate nohighlight">\(\lambda_T \approx 0.999\)</span>, just below 1. The larger values near
+<span class="math notranslate nohighlight">\(1.58\)</span> and <span class="math notranslate nohighlight">\(1.09\)</span> that appear in the triplet calculation are
+even-parity (spurious) modes and are <strong>not</strong> triplet instabilities. The triplet
+leads (<span class="math notranslate nohighlight">\(\lambda_T &gt; \lambda_S\)</span>) and is at the threshold, so this
+temperature lies close to the triplet transition.</p>
 </section>
 <section id="plotting-script">
 <h3>Plotting script<a class="headerlink" href="#plotting-script" title="Link to this heading">¶</a></h3>
@@ -580,11 +580,11 @@ Each line contains:</p>
 <span id="sc-eigenvalue-dat"></span><h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
 <p>The eigenvalues of the linearized Eliashberg equation:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Iteration eigenvalue
-1.04184424e+00
+9.42845268e-01
 # Eigenvalue analysis
 # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
-   0  1.04184433e+00 -4.52434027e-12  1.04184433e+00 1
-   1 -1.23398808e+00  4.17379712e-12  1.23398808e+00 1
+   0  9.42844825e-01 -3.65296976e-12  9.42844825e-01 1
+   1  7.90190294e-01 -3.37474212e-12  7.90190294e-01 1
    ...
 </pre></div>
 </div>
@@ -612,9 +612,10 @@ The self-consistency condition <span class="math notranslate nohighlight">\(\Del
 <p>By varying the temperature and finding the point where the largest
 positive eigenvalue reaches <span class="math notranslate nohighlight">\(\lambda = 1\)</span>, one can determine
 the superconducting transition temperature <span class="math notranslate nohighlight">\(T_c\)</span>.</p>
-<p>In this example, at <span class="math notranslate nohighlight">\(T = 0.1\)</span> both physical channels are above the
-instability threshold, with <span class="math notranslate nohighlight">\(\lambda_S \approx 1.04\)</span> (singlet, even) and
-<span class="math notranslate nohighlight">\(\lambda_T \approx 1.17\)</span> (triplet, odd); the triplet leads.</p>
+<p>In this example, at <span class="math notranslate nohighlight">\(T = 0.1\)</span> both physical channels are below the
+instability threshold, with <span class="math notranslate nohighlight">\(\lambda_S \approx 0.94\)</span> (singlet, even) and
+<span class="math notranslate nohighlight">\(\lambda_T \approx 1.00\)</span> (triplet, odd); the triplet leads and is at the
+threshold.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><strong>Parity and the Pauli principle.</strong>
@@ -632,7 +633,7 @@ triplet kernel would be a totally symmetric pair state, forbidden by Pauli).
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> therefore projects each self-consistent iterate onto the
 channel’s parity sector, and the eigenvalue analysis labels each mode as
 physical (<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">1</span></code>) or spurious (<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">0</span></code>). The large values
-<span class="math notranslate nohighlight">\(\lambda \approx 2.06,\ 1.19\)</span> seen in the triplet calculation are such
+<span class="math notranslate nohighlight">\(\lambda \approx 1.58,\ 1.09\)</span> seen in the triplet calculation are such
 spurious even-parity modes, <strong>not</strong> triplet instabilities.</p>
 </div>
 <section id="singlet-vs-triplet-comparison">
@@ -646,14 +647,19 @@ odd-parity (triplet) seed such as <code class="docutils literal notranslate"><sp
 error rather than converging to an unphysical sector. Equivalently, omit
 <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> entirely to let the solver pick the channel’s parity automatically.
 At <span class="math notranslate nohighlight">\(T = 0.1\)</span> with the same parameters, the leading physical eigenvalues are
-<span class="math notranslate nohighlight">\(\lambda_T \approx 1.17\)</span> (triplet) and <span class="math notranslate nohighlight">\(\lambda_S \approx 1.04\)</span>
-(singlet): both exceed 1, and the triplet leads. Ref. <a class="footnote-reference brackets" href="#id2" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> notes that this
-RPA treatment overestimates the superconducting region at high temperature.
-These numbers are not a quantitative reproduction of Ref. <a class="footnote-reference brackets" href="#id2" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>: the in-cell
-inter-molecule interaction (the <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> inter-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row)
-enters H-wave’s vertex together with its exchange crossing, as an on-site
-inter-orbital interaction would, whereas Ref. <a class="footnote-reference brackets" href="#id2" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> keeps only its
-density-density (Hartree) part.</p>
+<span class="math notranslate nohighlight">\(\lambda_T \approx 1.00\)</span> (triplet) and <span class="math notranslate nohighlight">\(\lambda_S \approx 0.94\)</span>
+(singlet): the triplet leads and sits at the threshold, in line with Ref. <a class="footnote-reference brackets" href="#id2" id="id3" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>,
+where the triplet SC state competes with the singlet for <span class="math notranslate nohighlight">\(T &gt; 0.05\)</span>.</p>
+<p>The two molecules of the unit cell are different sites, which the input
+declares with <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">=</span> <span class="pre">[0,</span> <span class="pre">1]</span></code>: their in-cell interaction (the
+<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> inter-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row) then enters, like every other
+inter-molecule interaction, through its density-density (Hartree) part only,
+as in Ref. <a class="footnote-reference brackets" href="#id2" id="id4" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>. Without the key it would be treated as an interaction within
+one site, with its exchange crossing (see <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> in the
+configuration reference). The pairing vertex of <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> still adds the
+exchange of the inter-cell interactions in an approximate, collapsed form
+(GitHub issue #239), so the numbers are not a quantitative reproduction of
+Ref. <a class="footnote-reference brackets" href="#id2" id="id5" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a>.</p>
 </section>
 </section>
 <section id="dynamic-frequency-dependent-eliashberg-equation">

@@ -283,6 +283,40 @@ terms depends on both fermionic momenta and is not representable in
 this resummation; it remains excluded (as it is in the
 non-spin-orbital ladder).</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">orbital_site</span></code></p>
+<p><strong>Type :</strong>
+List of non-negative integers (default: not set)</p>
+<p><strong>Description :</strong>
+Assigns each orbital of the original cell to a site (atom or molecule);
+in spin-orbital mode the list runs over the physical orbitals. Orbitals
+with the same label are on the same site. Read by <code class="docutils literal notranslate"><span class="pre">hwave</span></code> (RPA, FLEX)
+and by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; the UHF solvers do not use it.</p>
+<p>An <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> two-body row between orbitals of DIFFERENT sites – for
+example the two molecules of a dimer that share a unit cell – is an
+inter-site interaction. With the key, such a row is treated like an
+off-site row: in the RPA ring, the FLEX general path (vertex and second
+order) and the non-bond <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> vertex only its density (Hartree)
+part enters, and its exchange crossing does not. (In the non-bond
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> vertex, <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">!=</span> <span class="pre">0</span></code> rows still contribute an approximate,
+collapsed exchange term; see GitHub issue #239.) Rows of types without a
+density part follow the off-site rules: between different sites,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are refused in FLEX general, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is
+dropped with a warning in RPA, and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> and
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are dropped with a warning in <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.</p>
+<p>Without the key every orbital is taken to be on one site: every <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>
+row gets the on-site (Kanamori) treatment, exchange crossing included.
+That is correct for orbitals of one atom (<code class="docutils literal notranslate"><span class="pre">U'</span></code>, <code class="docutils literal notranslate"><span class="pre">J</span></code>) but makes the
+result depend on the choice of unit cell when the orbitals are different
+sites, so a warning names the <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> inter-orbital rows when the key is
+absent; for an atomic multi-orbital model declare all orbitals on one site
+(e.g. <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">=</span> <span class="pre">[0,</span> <span class="pre">0]</span></code>).</p>
+<p>Not affected: the bond-resolved paths (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>,
+<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>), which resolve the exchange of every bond,
+the in-cell ones included, and the Hartree-Fock self-energy of
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>, which keeps the exchange of every row.
+<code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code> without the bond gate refuses rows between
+different sites.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code></p>
 <p><strong>Type :</strong>
 Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p>
