@@ -550,7 +550,7 @@ GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartr
      # longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否
      # longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き
      # longitudinal_bond_guard_freqs = "all"  # "static" ならゼロ振動数のみ特異値分解で検査
-     # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）
+     # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（ボンドバッファ2つ分のメモリ増）
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -699,7 +699,7 @@ bond 分解頂点によるペアリング固有値
 チャネル数でチャネル0がオンサイト項）です。したがってアーカイブ
 全体はおよそ\ ``2 * Nmat * nvol * ND**2 * 16``\ バイトになり、これは
 前述の\ ``longitudinal_bond_output_full = true``\ がすでに FLEX の
-計算自身の常駐メモリに課しているのと同じ倍増です。インプロセスの
+計算自身の常駐メモリに加えているのと同じバッファ2つ分です。インプロセスの
 経路のみを使う場合は\ ``longitudinal_bond_output_full``\ を
 ``false``\ のままにしてください。アーカイブは後処理の経路のためだけに
 書き出されるものであり、多軌道モデルではディスク上で数十 GB に

@@ -1804,7 +1804,8 @@ class FLEX(RPA):
             factor_bytes=(0 if self._second_order_factors is None
                           else int(self._second_order_factors.nbytes)),
             guard_freqs=self.longitudinal_bond_guard_freqs,
-            guard_enabled=self.longitudinal_bond_cond_tol is not None)
+            guard_enabled=self.longitudinal_bond_cond_tol is not None,
+            w_in_place=self._bond_w_in_place())
         est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
         gib = flex_bond._GIB
         logger.info(
@@ -2035,11 +2036,9 @@ class FLEX(RPA):
         with contextlib.ExitStack() as stack:
             store = dev = None
             if gate:
-                names = ["chibar", "W"]
-                if self.longitudinal_bond_output_full:
-                    names += ["chi_s_w", "chi_c_w"]
+                names, aliases = self._bond_store_layout()
                 store = stack.enter_context(flex_bond.BondBlockStore(
-                    nmat, nvol, self._bond_view.n_channels * nd, nd, tuple(names)))
+                    nmat, nvol, self._bond_view.n_channels * nd, nd, names, aliases))
                 self._phase_b_prepare_vertices()
                 # The immutable bond inputs are transferred once per solve,
                 # after the memory preflight measured the device (spec 4.2);
@@ -2274,6 +2273,26 @@ class FLEX(RPA):
             "longitudinal_bond_cond_tol deliberately.".format(
                 n, n - m, m, self.longitudinal_bond_cond_tol,
                 res.cond_min_s, res.cond_min_c))
+
+    def _bond_w_in_place(self):
+        """Whether ``W`` shares the ``chibar`` slot of the block store (issue
+        #222): every map rebuilds ``chibar`` before it reads it, and the
+        dressing consumes each ``chibar`` batch before it writes the ``W``
+        batch over it. The in-process pairing reads the LAST map's
+        ``chibar`` after the solve, so it keeps the two slots."""
+        return self.longitudinal_bond_pairing == "none"
+
+    def _bond_store_layout(self):
+        """``(names, aliases)`` of the bond block store."""
+        names = ["chibar"]
+        aliases = {}
+        if self._bond_w_in_place():
+            aliases["W"] = "chibar"
+        else:
+            names.append("W")
+        if self.longitudinal_bond_output_full:
+            names += ["chi_s_w", "chi_c_w"]
+        return tuple(names), aliases
 
     def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
