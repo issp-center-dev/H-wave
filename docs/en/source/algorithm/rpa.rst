@@ -882,8 +882,8 @@ matrix in the :math:`m = m' = 0` block plus, on the bond diagonal
 exchange crossing of the off-site term, :math:`w_t\, \mathrm{Re}\,
 V^{(t)}_{l_1 l_2}(R_m)`, where :math:`w_t` is the same per-type
 coefficient the on-site exchange slot uses (``CoulombInter``
-:math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`
-for the spin and charge channels). A declared row :math:`V_{ab}(R)` of
+:math:`(+1, -1)`, ``Hund`` :math:`(-1, +1)`, ``Ising`` :math:`(+1, -1)`,
+``Exchange`` :math:`(+1, +1)` for the spin and charge channels). A declared row :math:`V_{ab}(R)` of
 the interaction file occupies the slot :math:`(m, a, b)` of the channel
 with :math:`R_m = -R`, and its reverse row :math:`V_{ba}(-R)` the slot
 :math:`(-m, b, a)`: that is the channel whose exchange crossing acts on
