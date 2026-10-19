@@ -769,7 +769,7 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 置いたものです。ここで<span class="math notranslate nohighlight">\(w_t\)</span>はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
 <span class="math notranslate nohighlight">\((+1, -1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>
-<span class="math notranslate nohighlight">\((+1, -1)\)</span>）です。相互作用ファイルで宣言された行
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\((+1, +1)\)</span>）です。相互作用ファイルで宣言された行
 <span class="math notranslate nohighlight">\(V_{ab}(R)\)</span>は、<span class="math notranslate nohighlight">\(R_m = -R\)</span>のチャネルのスロット
 <span class="math notranslate nohighlight">\((m, a, b)\)</span>に、その逆向きの行<span class="math notranslate nohighlight">\(V_{ba}(-R)\)</span>はスロット
 <span class="math notranslate nohighlight">\((-m, b, a)\)</span>に入ります。これは、その交換交差がトランスファーの行
@@ -784,16 +784,19 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 上書きされず、標準の ring の結果のままです。オフサイト係数が全てゼロなら縮約ブロックは
 標準の ring の静的スピン・電荷チャネルと一致し、非零なら交換交差の分だけ
 異なります。ボンドブロックはオフサイトの<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
-<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>（同一軌道・軌道間ボンド）について結合の1次
-まで厳密対角化と照合され、Hartree のみの頂点では同じデータを再現
-できないことも確認されています。</p>
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>（同一軌道・軌道間ボンド）について
+結合の1次まで厳密対角化と照合され、Hartree のみの頂点では同じデータを再現
+できないことも確認されています。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>は Hartree
+（チャネル0）成分を持たず、縦成分はボンド対角の Fock 交差のみで、スピン反転
+成分は横チャネルに属します。</p>
 <p>このバージョンの制限: オフサイト係数は実数のみ。オフサイトの
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言は拒否されます（ボンド基底での
-取り込みは今後の予定）。副格子折り畳み・<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言は拒否されます（ボンド基底での取り込みは今後の
+予定）。副格子折り畳み・<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>・
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>は非対応。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数である必要が
 あります。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>とは併用できず、
 <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の自己無撞着な
-Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
+Hartree-Fock FLEX 版を選択します（そこではオフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>は
+引き続き拒否されます）。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>として出力）。推定ピーク
 ホストメモリは高コストな計算の前に<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>

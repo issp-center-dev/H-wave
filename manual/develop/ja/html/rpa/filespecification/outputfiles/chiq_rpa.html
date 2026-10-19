@@ -189,9 +189,10 @@ for s1 in (0, 1):
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_spin_mode</span></code>（文字列、<code class="docutils literal notranslate"><span class="pre">spin-free</span></code>）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_normalization</span></code>（文字列:
 <code class="docutils literal notranslate"><span class="pre">chi_bar</span> <span class="pre">=</span> <span class="pre">-(T/N)</span> <span class="pre">sum_k</span> <span class="pre">G</span> <span class="pre">G,</span> <span class="pre">per</span> <span class="pre">site</span></code>）、
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_types</span></code>（文字列配列。常に<code class="docutils literal notranslate"><span class="pre">CoulombInter,</span> <span class="pre">Hund,</span> <span class="pre">Ising</span></code>の
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_types</span></code>（文字列配列。<code class="docutils literal notranslate"><span class="pre">CoulombInter,</span> <span class="pre">Hund,</span> <span class="pre">Ising</span></code>の
 3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
-ブロックはゼロ）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>（整数。未指定なら<code class="docutils literal notranslate"><span class="pre">-1</span></code>）、
+ブロックはゼロ。RPA モードでオフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>が宣言されている場合は
+その後ろに<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>が加わります）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>（整数。未指定なら<code class="docutils literal notranslate"><span class="pre">-1</span></code>）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_c</span></code>（浮動小数。
 スピン／電荷の RPA 分母の<span class="math notranslate nohighlight">\(q\)</span>にわたる最小の条件数スコア。不安定性の
 下限に達すると実行は拒否されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>の

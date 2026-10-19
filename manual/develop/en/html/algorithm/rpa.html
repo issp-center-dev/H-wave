@@ -819,8 +819,8 @@ matrix in the <span class="math notranslate nohighlight">\(m = m' = 0\)</span> b
 exchange crossing of the off-site term, <span class="math notranslate nohighlight">\(w_t\, \mathrm{Re}\,
 V^{(t)}_{l_1 l_2}(R_m)\)</span>, where <span class="math notranslate nohighlight">\(w_t\)</span> is the same per-type
 coefficient the on-site exchange slot uses (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>
-<span class="math notranslate nohighlight">\((+1, -1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\((+1, -1)\)</span>
-for the spin and charge channels). A declared row <span class="math notranslate nohighlight">\(V_{ab}(R)\)</span> of
+<span class="math notranslate nohighlight">\((+1, -1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> <span class="math notranslate nohighlight">\((-1, +1)\)</span>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> <span class="math notranslate nohighlight">\((+1, -1)\)</span>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> <span class="math notranslate nohighlight">\((+1, +1)\)</span> for the spin and charge channels). A declared row <span class="math notranslate nohighlight">\(V_{ab}(R)\)</span> of
 the interaction file occupies the slot <span class="math notranslate nohighlight">\((m, a, b)\)</span> of the channel
 with <span class="math notranslate nohighlight">\(R_m = -R\)</span>, and its reverse row <span class="math notranslate nohighlight">\(V_{ba}(-R)\)</span> the slot
 <span class="math notranslate nohighlight">\((-m, b, a)\)</span>: that is the channel whose exchange crossing acts on
@@ -835,16 +835,20 @@ that file is not overwritten and stays the standard ring result. When every off-
 collapsed blocks equal the standard ring’s static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first
-order in the coupling for off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and
-<code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital and inter-orbital bonds), and the Hartree-only
-vertex was verified to miss the same data.</p>
+order in the coupling for off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
+and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (same-orbital and inter-orbital bonds), and the
+Hartree-only vertex was verified to miss the same data. An off-site
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> has no Hartree (channel-0) content; its longitudinal content
+is the bond-diagonal Fock crossing alone, and its spin-flip content
+belongs to the transverse channel.</p>
 <p>Limitations of this version: real off-site coefficients only; off-site
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declarations are rejected (their promotion
-through the bond basis is planned); no sublattice folding, no
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declarations are rejected (their promotion through the bond
+basis is planned); no sublattice folding, no
 <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, no <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even; the
 gate cannot be combined with <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>; in <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span>
 <span class="pre">&quot;FLEX&quot;</span></code> the same key selects the self-consistent Hartree-Fock FLEX
-treatment of <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>. Each RPA
+treatment of <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> (where an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is still
+rejected). Each RPA
 denominator is checked for conditioning at every <span class="math notranslate nohighlight">\(q\)</span> and the run
 is refused inside the instability region (the smallest scores are
 reported as <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>); the estimated

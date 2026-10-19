@@ -194,9 +194,11 @@ first), <code class="docutils literal notranslate"><span class="pre">longitudina
 <code class="docutils literal notranslate"><span class="pre">q</span> <span class="pre">=</span> <span class="pre">2*pi*(n_x/N_x,</span> <span class="pre">n_y/N_y,</span> <span class="pre">n_z/N_z),</span> <span class="pre">C-order</span> <span class="pre">flattened</span></code>),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_spin_mode</span></code> (string, <code class="docutils literal notranslate"><span class="pre">spin-free</span></code>),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_normalization</span></code> (string: <code class="docutils literal notranslate"><span class="pre">chi_bar</span> <span class="pre">=</span> <span class="pre">-(T/N)</span> <span class="pre">sum_k</span> <span class="pre">G</span> <span class="pre">G,</span>
-<span class="pre">per</span> <span class="pre">site</span></code>), <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_types</span></code> (string array, always
+<span class="pre">per</span> <span class="pre">site</span></code>), <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_types</span></code> (string array,
 <code class="docutils literal notranslate"><span class="pre">CoulombInter,</span> <span class="pre">Hund,</span> <span class="pre">Ising</span></code> – the types whose bond blocks the channel
-builds, declared or not; an undeclared type contributes zero blocks),
+builds, declared or not; an undeclared type contributes zero blocks –
+followed by <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> in RPA mode when an off-site Exchange is
+declared),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code> (integer, <code class="docutils literal notranslate"><span class="pre">-1</span></code> when unset),
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_c</span></code> (float:
 the smallest conditioning score of the spin / charge RPA denominator over

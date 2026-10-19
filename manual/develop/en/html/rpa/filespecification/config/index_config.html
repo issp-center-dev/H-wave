@@ -325,20 +325,23 @@ Boolean (default value is <code class="docutils literal notranslate"><span class
 channel for <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> (or
 <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> resolving to it) on a spin-free system (see
 <a class="reference internal" href="../../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>). The exchange (Fock)
-crossing of the off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
-terms – which the standard ring omits – is carried on a bond-enlarged
+crossing of the off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> terms – which the standard ring omits – is carried on a bond-enlarged
 pair basis, and the dressed static susceptibilities are written to the
 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> file under the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> keys; the <code class="docutils literal notranslate"><span class="pre">chiq</span></code>
 array inside that file is not overwritten and stays the standard ring
 result. The gate requires at least one
-declared off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code> shell (a
-declared-zero coefficient counts), real coefficients, an even
+declared off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+shell (a declared-zero coefficient counts), real coefficients, an even
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, no sublattice, no <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> and no
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
-declaration is rejected with an error. It cannot be combined with
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declaration is
+rejected with an error. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> enters through its
+bond (Fock) crossing only – it has no Hartree content – and its
+spin-flip content is the transverse channel’s
+(<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>), not this one’s. It cannot be combined with
 <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> the same key
 enables the self-consistent bond-resolved channel of the Hartree-Fock
-FLEX (experimental; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+FLEX (experimental; off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is still rejected there; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
 grid, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
 <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>

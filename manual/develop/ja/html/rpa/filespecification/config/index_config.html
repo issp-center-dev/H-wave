@@ -274,18 +274,22 @@ RPA で警告とともに除かれ、<code class="docutils literal notranslate">
 （または<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>がそれに解決される場合）・スピンフリー系で、
 ボンド分解した縦方向（スピン・電荷）チャネルを有効にします
 （<a class="reference internal" href="../../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">ボンド分解した縦方向チャネル（実験的機能）</span></a>を参照）。標準の ring では省かれる
-オフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>項の交換
-（Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
+オフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>項の
+交換（Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
 感受率を<code class="docutils literal notranslate"><span class="pre">chiq</span></code>ファイルの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>キーに書き
 出します。ファイル内の配列<code class="docutils literal notranslate"><span class="pre">chiq</span></code>は上書きされず、標準の ring の
 結果のままです。少なくとも
-1つのオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>シェルの宣言
+1つのオフサイト<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>シェルの宣言
 （係数ゼロの宣言も可）、実数の係数、偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>、副格子なし、
 <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>なし、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>なしが必要で、
-オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>または<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言はエラーとして
-拒否されます。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とは併用でき
-ません。<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが Hartree-Fock FLEX の
-自己無撞着なボンド分解チャネルを有効にします（実験的機能。
+オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の宣言はエラーとして拒否されます。
+オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>はボンド（Fock）交差のみを通じて入り
+（Hartree 成分はありません）、スピン反転成分はこのチャネルではなく
+横チャネル（<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>）の扱いです。
+<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とは併用できません。
+<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが Hartree-Fock FLEX の
+自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>はそこでは引き続き拒否されます。
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
 スピンフリー系・一様松原格子・副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
 が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）かつ<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、
