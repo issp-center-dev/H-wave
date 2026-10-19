@@ -5,6 +5,7 @@
   mode = "FLEX"
 
 [mode.param]
+  orbital_site = [0, 0]  # both orbitals belong to one atom (Kanamori U', J)
   T = 1.0
   CellShape = [8, 8, 1]
   SubShape = [1, 1, 1]

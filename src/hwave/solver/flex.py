@@ -782,7 +782,12 @@ class FLEX(RPA):
         if scheme == "general" and self.flex_second_order == "local":
             from hwave.solver.offsite import split_locality
             from hwave.solver.second_order import build_factors
-            split = split_locality(self.ham_info, self.lattice)
+            # the q-only second order follows orbital_site (#234); under the
+            # bond gate every bond's exchange is resolved, in-cell ones too
+            split = split_locality(
+                self.ham_info, self.lattice,
+                site=(None if getattr(self, "longitudinal_bond_channels", False)
+                      else getattr(self.ham_info, "orbital_site", None)))
             self._second_order_factors = build_factors(split, self.lattice, self.norb)
             logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
                 len(self._second_order_factors.triples),
@@ -3663,7 +3668,8 @@ class FLEX(RPA):
             # FLEX policy: off-site PairLift is inert (skipped, not
             # listed), Exchange/PairHop are rejected, and only the density
             # types reach the S/C builder (as their Hartree vertex).
-            split = split_locality(self.ham_info, self.lattice)
+            split = split_locality(self.ham_info, self.lattice,
+                                   site=getattr(self.ham_info, "orbital_site", None))
             has_fold = split.has_fold
             rejected_reason = {
                 "Exchange": (
@@ -3699,6 +3705,10 @@ class FLEX(RPA):
                         "no q-representable off-site vertex exists "
                         "for this type in the pair-space spin/charge "
                         "matrices")
+                    if tuple(int(x) for x in irvec) == (0, 0, 0):
+                        reason += ("; this R = 0 row joins orbitals of different "
+                                   "sites ([mode.param] orbital_site), so it is "
+                                   "treated as an off-site entry")
                     # No auto->reduced remediation hint here: the
                     # reduced scheme rejects Exchange and PairHop as
                     # well (no density-density content), so the hint

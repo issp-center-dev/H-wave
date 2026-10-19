@@ -5,6 +5,7 @@
   mode = "RPA"
 
 [mode.param]
+  orbital_site = [0, 1]  # the two molecules are different sites
   T = 0.1
   CellShape = [32, 32, 1]
   SubShape = [1, 1, 1]

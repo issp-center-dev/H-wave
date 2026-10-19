@@ -2089,8 +2089,8 @@ def solve_dynamic(input_dict):
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
     ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
-    inter_k = sc._build_interaction_k(kx_array, ky_array, kz_array,
-                                      interactions, norb)
+    inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
+                                                interactions, norb, input_dict)
 
     # --- FLEX inputs (full frequency) ---
     if use_ir:
