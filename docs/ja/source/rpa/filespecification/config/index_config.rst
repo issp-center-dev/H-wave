@@ -247,8 +247,8 @@ TOML形式
   （または\ ``"auto"``\ がそれに解決される場合）・スピンフリー系で、
   ボンド分解した縦方向（スピン・電荷）チャネルを有効にします
   （:ref:`rpa_longitudinal_bond`\ を参照）。標準の ring では省かれる
-  オフサイト\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ 項の交換
-  （Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
+  オフサイト\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ 項の
+  交換（Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
   感受率を\ ``chiq``\ ファイルの\ ``longitudinal_bond_*``\ キーに書き
   出します。ファイル内の配列\ ``chiq``\ は上書きされず、標準の ring の
   結果のままです。少なくとも
@@ -258,10 +258,11 @@ TOML形式
   オフサイトの\ ``PairHop``\ の宣言はエラーとして拒否されます。
   オフサイトの\ ``Exchange``\ はボンド（Fock）交差のみを通じて入り
   （Hartree 成分はありません）、スピン反転成分はこのチャネルではなく
-  横チャネル（\ ``transverse_bond_channels``\ ）の扱いです。\ ``transverse_bond_channels = true``\ とは併用でき
-  ません。\ ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
+  横チャネル（\ ``transverse_bond_channels``\ ）の扱いです。
+  ``transverse_bond_channels = true``\ とは併用できません。
+  ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
   自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
-``Exchange``\ はそこでは引き続き拒否されます。
+  ``Exchange``\ はそこでは引き続き拒否されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
   が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\

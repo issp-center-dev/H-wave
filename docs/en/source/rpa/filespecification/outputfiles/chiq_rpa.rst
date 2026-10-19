@@ -185,13 +185,11 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened``),
   ``longitudinal_bond_spin_mode`` (string, ``spin-free``),
   ``longitudinal_bond_normalization`` (string: ``chi_bar = -(T/N) sum_k G G,
-  per site``), ``longitudinal_bond_types`` (string array, always
-  ``CoulombInter, Hund, Ising, Exchange`` in RPA mode -- the types whose
-  bond blocks the channel builds, declared or not; an undeclared type
-  contributes zero blocks. ``Exchange`` was added when the RPA gate began
-  to accept an off-site Exchange; a run without one has the same bond
-  blocks as before. In FLEX mode the list stays ``CoulombInter, Hund,
-  Ising``),
+  per site``), ``longitudinal_bond_types`` (string array,
+  ``CoulombInter, Hund, Ising`` -- the types whose bond blocks the channel
+  builds, declared or not; an undeclared type contributes zero blocks --
+  followed by ``Exchange`` in RPA mode when an off-site Exchange is
+  declared),
   ``longitudinal_bond_max_shells`` (integer, ``-1`` when unset),
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c`` (float:
   the smallest conditioning score of the spin / charge RPA denominator over

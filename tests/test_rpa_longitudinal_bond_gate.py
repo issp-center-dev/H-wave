@@ -313,7 +313,7 @@ class TestGatePrerequisites(unittest.TestCase):
     def test_accepts_and_returns_topology_and_split(self):
         s = self._gate()
         topo, split = s._validate_longitudinal_bond_prereqs()
-        self.assertEqual(tuple(topo.coeffs), ("CoulombInter", "Hund", "Ising", "Exchange"))
+        self.assertEqual(tuple(topo.coeffs), ("CoulombInter", "Hund", "Ising"))
         self.assertGreater(topo.delta_r.shape[0], 1)
         self.assertEqual(split.offsite_types, ("CoulombInter",))
         self.assertFalse(split.has_fold)
@@ -520,7 +520,7 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertEqual(gi["longitudinal_bond_chi_c"].shape, (nvol, B * nd, B * nd))
         self.assertEqual(gi["longitudinal_bond_chiq_s_static"].shape, (nvol,) + (s.norb,) * 4)
         self.assertEqual(gi["longitudinal_bond_reverse"].shape, (B,))
-        self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising", "Exchange"])
+        self.assertEqual(list(gi["longitudinal_bond_types"]), ["CoulombInter", "Hund", "Ising"])
         self.assertEqual(int(gi["longitudinal_bond_schema"]), 2)
         self.assertEqual(int(gi["longitudinal_bond_max_shells"]), -1)
         self.assertEqual(tuple(gi["longitudinal_bond_spatial_shape"]), (4, 4, 1))
@@ -651,7 +651,9 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
             outs[scale] = (s, gi)
         s, gi = outs[1.0]
         topo, split = s._validate_longitudinal_bond_prereqs()
-        self.assertIn("Exchange", topo.coeffs)
+        self.assertEqual(tuple(topo.coeffs), ("CoulombInter", "Hund", "Ising", "Exchange"))
+        self.assertEqual(list(gi["longitudinal_bond_types"]),
+                         ["CoulombInter", "Hund", "Ising", "Exchange"])
         self.assertEqual(int(np.asarray(topo.delta_r).shape[0]), 3)
         nx, ny, nz = s.lattice.shape
         nvol, nd = s.lattice.nvol, s.norb ** 2

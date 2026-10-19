@@ -5643,7 +5643,9 @@ class RPA:
         ``ValueError`` naming the gate; there is no fallback. Called from
         ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
         work. Returns ``(topo, split)``: the master bond topology over
-        ``bond_channels._LONGITUDINAL_BOND_TYPES`` and the pre-fold
+        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` (plus ``Exchange``
+        when an off-site Exchange is declared: ``_LONGITUDINAL_BOND_TYPES``)
+        and the pre-fold
         :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
         is built from.
         """
@@ -5701,7 +5703,12 @@ class RPA:
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            active_types=bond_channels._LONGITUDINAL_BOND_TYPES)
+            # Exchange joins the bond types only when an off-site one is
+            # declared, so an Exchange-free run keeps its previous topology
+            # and longitudinal_bond_types metadata exactly
+            active_types=(bond_channels._LONGITUDINAL_BOND_TYPES
+                          if "Exchange" in split.offsite_types
+                          else bond_channels._LONGITUDINAL_ACTIVE_TYPES))
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
                 g + " requires at least one declared off-site CoulombInter, "
@@ -5804,7 +5811,8 @@ class RPA:
         green_kw, green0_tail : the solver's single-block Green tensor
             ``(1, nmat, nvol, norb, norb)`` and its tail (or None).
         beta : float
-        topo : bond_channels.BondTopology over _LONGITUDINAL_BOND_TYPES.
+        topo : bond_channels.BondTopology (see
+            _validate_longitudinal_bond_prereqs for its types).
         S0, C0 : ndarray (nvol, nd, nd)
             The Tier-1 locality-split S/C matrices (channel-0 blocks).
 
