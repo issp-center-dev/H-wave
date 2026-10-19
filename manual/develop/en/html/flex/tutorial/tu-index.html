@@ -602,7 +602,7 @@ lists the four bonds <code class="docutils literal notranslate"><span class="pre
 <span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # refuse before running if the estimate exceeds it</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # override the automatic frequency batch</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD</span>
-<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (doubles the memory)</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (+2 full bond buffers of memory)</span>
 <span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
 <span class="k">[file.input.interaction]</span>
@@ -745,8 +745,8 @@ solver controls.</p>
 <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code> bytes (complex128; <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">norb**2</span></code> with
 <code class="docutils literal notranslate"><span class="pre">B</span></code> the number of bond channels the FLEX run kept, channel 0 the on-site
 term), so the archive as a whole is about <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code>
-bytes – the same doubling <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (above)
-already costs the FLEX solve’s own persistent memory. For in-process-only
+bytes – the same two buffers that <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(above) already adds to the FLEX solve’s own persistent memory. For in-process-only
 use leave <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> at <code class="docutils literal notranslate"><span class="pre">false</span></code>: the archive is
 written only for the post-processing entry, and on a multi-orbital model it
 is tens of GB on disk. The pairing kernel adds its own working set on top

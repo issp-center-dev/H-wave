@@ -514,8 +514,11 @@ that has no effect under the current settings.
   ``chi_s_w`` / ``chi_c_w`` (``ndarray(l, q, I, J)`` over the bosonic
   frequencies) of the last SCF map into the dedicated archive named by
   ``[file.output] longitudinal_bond`` (default ``longitudinal_bond.npz``).
-  Doubles the persistent memory of the bond-resolved solve; the archive
-  size is logged before writing. Ignored with a warning unless
+  Adds two ``(Nmat, nvol, ND, ND)`` complex buffers to the persistent
+  memory of the bond-resolved solve, which otherwise holds one such buffer
+  (the bubble, overwritten in place by the effective interaction) or two
+  with ``longitudinal_bond_pairing``; the archive size is logged before
+  writing. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_output_layout``

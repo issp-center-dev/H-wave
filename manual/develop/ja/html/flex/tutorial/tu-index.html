@@ -566,7 +566,7 @@ GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <s
 <span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 8.0  # 推定値がこれを超えると実行前に拒否</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_guard_freqs = "all"  # "static" ならゼロ振動数のみ特異値分解で検査</span>
-<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（メモリ2倍）</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（ボンドバッファ2つ分のメモリ増）</span>
 <span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
 <span class="k">[file.input.interaction]</span>
@@ -705,7 +705,7 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 チャネル数でチャネル0がオンサイト項）です。したがってアーカイブ
 全体はおよそ<code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND**2</span> <span class="pre">*</span> <span class="pre">16</span></code>バイトになり、これは
 前述の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>がすでに FLEX の
-計算自身の常駐メモリに課しているのと同じ倍増です。インプロセスの
+計算自身の常駐メモリに加えているのと同じバッファ2つ分です。インプロセスの
 経路のみを使う場合は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>を
 <code class="docutils literal notranslate"><span class="pre">false</span></code>のままにしてください。アーカイブは後処理の経路のためだけに
 書き出されるものであり、多軌道モデルではディスク上で数十 GB に

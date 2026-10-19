@@ -455,7 +455,10 @@ GPU 経路が使われます。
 <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code> / <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>（ボソン振動数上の<code class="docutils literal notranslate"><span class="pre">ndarray(l,</span> <span class="pre">q,</span> <span class="pre">I,</span> <span class="pre">J)</span></code>）
 を、<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>で指定した専用アーカイブ
 （デフォルト<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>）に書き出します。ボンド分解
-した解法の常駐メモリが2倍になります。アーカイブのサイズは書き出し前に
+した解法の常駐メモリに<code class="docutils literal notranslate"><span class="pre">(Nmat,</span> <span class="pre">nvol,</span> <span class="pre">ND,</span> <span class="pre">ND)</span></code>の複素バッファが2つ
+加わります（それ以外の常駐分は、バブルとそれを上書きする有効相互作用で
+1つ、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>を使う場合は2つです）。
+アーカイブのサイズは書き出し前に
 ログに出力されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない
 場合は警告付きで無視されます。</p>
 </li>
