@@ -911,8 +911,7 @@ basis is planned); no sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
 gate cannot be combined with ``transverse_bond_channels``; in ``mode =
 "FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX
-treatment of :ref:`flex_bond_hf` (where an off-site ``Exchange`` is still
-rejected). Each RPA
+treatment of :ref:`flex_bond_hf`. Each RPA
 denominator is checked for conditioning at every :math:`q` and the run
 is refused inside the instability region (the smallest scores are
 reported as ``longitudinal_bond_cond_min_s`` / ``_c``); the estimated
@@ -1003,7 +1002,33 @@ half of the direct :math:`V^2` term and no :math:`UV` cross term at second
 order. (With ``longitudinal_bond_channels = true`` the bond-resolved blocks
 are exact at second order on every bond, inter-orbital ones included: the
 mixed on-site :math:`\times` bond blocks read the bond side at the
-transposed orbital pair, issue #192.) The ordinary
+transposed orbital pair, issue #192.)
+
+An off-site ``Exchange`` (:math:`-J S^+_i S^-_j`) is accepted by the bond
+channels (not by ``flex_hartree_fock`` alone, where its first order would
+enter without any higher order). Its longitudinal content is the bond
+(Fock) crossing; its second order mixes spin-flip and density vertices
+across bonds, which the rule above does not carry. With an off-site
+``Exchange`` declared, the second order of EVERY block is therefore built
+directly in the bond-enlarged basis, :math:`W^{(2)} = \tfrac{1}{2}\sum
+A(q)\,\bar\chi(q, i\nu)\,B(q)` over the spin labels, from every pair of
+antisymmetrised interaction entries in every placement; the second-order
+self-energy then equals the independent real-space enumeration on every
+tested combination (Exchange alone, with on-site Kanamori terms, with
+density terms on the same and on other bonds, the Heisenberg bond). Beyond
+second order FLEX counts the transverse spin fluctuations as two copies of
+the longitudinal one, which is exact only for a spin-rotation (SU(2))
+symmetric interaction: on a bond that requires
+:math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}` (each row with its
+partner), and the run logs a warning for every declared bond that breaks it.
+The exact second order needs its own factors -- two ``(nvol, ND, ND)``
+arrays per contributing spin triple, counted against
+``longitudinal_bond_memory_cap_gb`` -- and two extra ``ND x ND`` products
+per triple at every :math:`(q, i\nu)`, so declaring an off-site
+``Exchange`` raises the cost of a map noticeably; nonzero off-site
+``PairLift`` rows enter this second order too, and their displacements must
+be kept by ``longitudinal_bond_max_shells``.
+The ordinary
 ``chi0q``, ``chiq_s``, ``chiq_c`` outputs of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects of the last map;
 the sixteen ``longitudinal_bond_*`` static keys of the previous section are
@@ -1015,7 +1040,8 @@ a run with ``flex_hartree_fock = true``; a legacy archive is converted with
 UHFk mean field, ``--uhfk-trans-mod trans_mod.npz --bare-transfer
 transfer.dat``). Domain of this version: spin-free general scheme, uniform
 Matsubara grid, CPU, no sublattice, no external field, real off-site
-coefficients, off-site ``Exchange`` / ``PairHop`` refused; the estimated peak
+coefficients, off-site ``PairHop`` refused (off-site ``Exchange`` only with
+``longitudinal_bond_channels = true``); the estimated peak
 memory of the whole solve is checked against
 ``longitudinal_bond_memory_cap_gb`` and the frequency batch is chosen to fit
 it.

@@ -411,6 +411,10 @@ _OFFSITE = {
                            (0, 1, 0, 1, 1, 0.6, 0.0), (0, -1, 0, 1, 1, 0.6, 0.0)]},   # asymmetric bond
     "JV": {"Hund": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0)]},
     "IV": {"Ising": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0)]},
+    # issue #181: an off-site Exchange on an orbital-asymmetric inter-orbital
+    # bond plus a same-orbital one (the general off-site factors)
+    "XV": {"Exchange": [(1, 0, 0, 1, 2, 1.0, 0.0), (-1, 0, 0, 2, 1, 1.0, 0.0),
+                        (0, 1, 0, 1, 1, 0.6, 0.0), (0, -1, 0, 1, 1, 0.6, 0.0)]},
 }
 
 

@@ -788,10 +788,17 @@ class FLEX(RPA):
                 self.ham_info, self.lattice,
                 site=(None if getattr(self, "longitudinal_bond_channels", False)
                       else getattr(self.ham_info, "orbital_site", None)))
-            self._second_order_factors = build_factors(split, self.lattice, self.norb)
+            # with the bond channels and an off-site Exchange the second order
+            # comes from the bond-enlarged factors (built after the memory
+            # admission); the q-only off-site factors would be dead weight
+            offsite = not (getattr(self, "longitudinal_bond_channels", False)
+                           and "Exchange" in split.offsite_types)
+            self._second_order_factors = build_factors(split, self.lattice, self.norb,
+                                                       offsite=offsite)
             logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
                 len(self._second_order_factors.triples),
-                "yes" if self._second_order_factors.vpair is not None else "no",
+("general" if self._second_order_factors.A_off is not None else
+                 "density" if self._second_order_factors.vpair is not None else "no"),
                 self._second_order_factors.nbytes / 2 ** 20))
 
         self.max_iter = int(self.param_mod.get("IterationMax", 100))
@@ -1288,7 +1295,9 @@ class FLEX(RPA):
                     A_on=tuple(xp.asarray(a) for a in f.A_on),
                     B_on=tuple(xp.asarray(b) for b in f.B_on),
                     vpair=None if f.vpair is None else xp.asarray(f.vpair),
-                    nbytes=f.nbytes)
+                    nbytes=f.nbytes, off_triples=f.off_triples,
+                    A_off=None if f.A_off is None else tuple(xp.asarray(a) for a in f.A_off),
+                    B_off=None if f.B_off is None else tuple(xp.asarray(b) for b in f.B_off))
 
         # Step 2: Compute bare Green's function G0(k, iwn)
         if self.use_ir:
@@ -1601,7 +1610,7 @@ class FLEX(RPA):
         for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
                      "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on",
-                     "_bond_types",
+                     "_bond_types", "_bond_w2", "_bond_w2_xp", "_bond_w2_entries",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
                      "_bond_xp_name",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
@@ -1707,9 +1716,25 @@ class FLEX(RPA):
         if self.longitudinal_bond_channels:
             self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs(split)
             self._bond_view = bond_channels.BondSetView(self._bond_topo)
+            # issue #181: with an off-site Exchange the second order of every
+            # block comes from the exact bond-enlarged factors; their entries
+            # (cheap) are collected here so that the memory preflight counts
+            # the arrays, which are allocated only once it has admitted them
+            self._bond_w2 = None
+            self._bond_w2_xp = None
+            self._bond_w2_entries = None
+            if "Exchange" in self._bond_split.offsite_types:
+                from hwave.solver.second_order import bond_w2_entries
+                self._bond_w2_entries = bond_w2_entries(
+                    self._bond_split, norb, self._bond_topo.delta_r)
             env = green_info.get("sigma_init_envelope")
             split_seed = env is not None and getattr(env, "marker", None) == "split"
             self._bond_est = self._bond_memory_preflight(self._bond_topo, split_seed)
+            if self._bond_w2_entries is not None:
+                from hwave.solver.second_order import build_bond_w2_factors
+                self._bond_w2 = build_bond_w2_factors(
+                    self._bond_split, norb, self._bond_topo.delta_r,
+                    tuple(int(x) for x in self.lattice.shape), entries=self._bond_w2_entries)
             self._bond_nb = int(self._bond_est["nb"])
 
     def _validate_phase_b_interactions(self):
@@ -1724,17 +1749,18 @@ class FLEX(RPA):
         if getattr(self.ham_info, "enable_spin_orbital", False):
             raise ValueError(g + " does not support enable_spin_orbital.")
         split = split_locality(self.ham_info, self.lattice)
-        for itype in ("PairHop", "Exchange"):
+        refused = ("PairHop",) if self.longitudinal_bond_channels else ("PairHop", "Exchange")
+        for itype in refused:
             if itype in split.offsite_types:
                 (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
                 if itype == "PairHop":
                     reason = ("no local-pair particle-hole form exists for an inter-site "
                               "pair hopping (Phase C of GitHub issue #181)")
                 else:
-                    reason = ("exact diagonalization finds no q-representable longitudinal "
-                              "content (#181 Tier 2); its bond-resolved promotion is a "
-                              "recorded follow-up, so the gate refuses it rather than "
-                              "silently dropping it")
+                    reason = ("an off-site Exchange has no Hartree content, only the "
+                              "bond-resolved Fock crossing, so without the bond channels "
+                              "its first order would enter alone while every higher order "
+                              "is missing; set longitudinal_bond_channels = true")
                 raise ValueError(
                     g + " does not support an off-site '{}' declaration (irvec={}, "
                     "orbvec={} -- the declared displacement and the zero-based orbital "
@@ -1761,13 +1787,25 @@ class FLEX(RPA):
         from hwave.solver import bond_channels
         g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
         interactions = CaseInsensitiveDict(split.whole_tbl)
+        if "Exchange" in split.offsite_types and "PairLift" in split.offsite_types:
+            # the exact second order built with an off-site Exchange carries the
+            # off-site PairLift rows too, so their displacements must be channels
+            # of the bond basis: declared-zero CoulombInter shells (no vertex
+            # content of their own)
+            ci = dict(interactions.get("CoulombInter") or {})
+            for key in split.offsite_tbl["PairLift"]:
+                ci.setdefault(key, 0.0)
+            interactions["CoulombInter"] = ci
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+            active_types=(bond_channels._LONGITUDINAL_BOND_TYPES
+                          if "Exchange" in split.offsite_types
+                          else bond_channels._LONGITUDINAL_ACTIVE_TYPES))
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
-                g + " requires at least one declared off-site CoulombInter, Hund or Ising "
+                g + " requires at least one declared off-site CoulombInter, Hund, Ising or "
+                "Exchange "
                 "shell (a declared-but-zero coefficient counts; the aggregate Coulomb "
                 "table's off-site part counts); none is present after "
                 "longitudinal_bond_max_shells truncation, so the bond channels have "
@@ -1777,7 +1815,62 @@ class FLEX(RPA):
                 raise ValueError(
                     g + ": off-site {} coefficients must be real in this version (a "
                     "complex coefficient was declared).".format(t))
+        if "Exchange" in split.offsite_types and "PairLift" in split.offsite_types:
+            have = {tuple(int(c) for c in d) for d in np.asarray(topo.delta_r)}
+            for (irvec, orbvec), v in split.offsite_tbl["PairLift"].items():
+                R = tuple(int(c) for c in irvec)
+                if v != 0 and (R not in have or tuple(-c for c in R) not in have):
+                    raise ValueError(
+                        g + ": the off-site PairLift row at irvec={} (orbitals {}) is outside "
+                        "the bond shells kept by longitudinal_bond_max_shells; with an "
+                        "off-site Exchange its second order needs that displacement. Raise "
+                        "longitudinal_bond_max_shells or remove the row."
+                        .format(R, tuple(int(o) + 1 for o in orbvec)))
+        self._warn_non_su2_bonds(topo)
         return topo, split
+
+    @staticmethod
+    def _non_su2_bonds(topo, rel_tol=1e-10):
+        """Bond entries ``(delta_r[m], (a, b))`` of the resolved topology
+        (reversal-closed, after max-shell selection) whose spin part is not
+        rotation invariant: a bond is SU(2) symmetric exactly when
+        ``J_Exchange = J_Hund - 2 J_Ising`` on it (the file convention, each
+        row with its partner; pinned by exact diagonalization in
+        ``tests/test_flex_bond_exchange.py``)."""
+        zero = None
+        arrs = {}
+        for t in ("Ising", "Hund", "Exchange"):
+            if t in topo.coeffs:
+                arrs[t] = np.asarray(topo.coeffs[t]).real
+                zero = np.zeros_like(arrs[t])
+        if zero is None:
+            return []
+        jI, jH, jE = (arrs.get(t, zero) for t in ("Ising", "Hund", "Exchange"))
+        scale = np.maximum(np.maximum(np.abs(jI), np.abs(jH)), np.abs(jE))
+        dev = np.abs(jE - (jH - 2.0 * jI))
+        bad = np.argwhere((scale > 0) & (dev > rel_tol * scale))
+        delta = np.asarray(topo.delta_r)
+        return [(tuple(int(c) for c in delta[m]), (int(a), int(b))) for m, a, b in bad]
+
+    def _warn_non_su2_bonds(self, topo):
+        """One warning when a declared bond's spin part breaks spin-rotation
+        symmetry. FLEX counts the transverse spin fluctuations as two copies
+        of the longitudinal one (the 3/2 of the spin channel), which is exact
+        only for an SU(2)-symmetric interaction; the second order stays exact
+        (it is built from every term explicitly), the resummation beyond it
+        does not."""
+        bad = self._non_su2_bonds(topo)
+        if bad:
+            shown = ", ".join("R={} orbitals={}".format(tuple(k[0]), tuple(o + 1 for o in k[1]))
+                              for k in bad[:4])
+            logger.warning(
+                "[mode.param] longitudinal_bond_channels=true (FLEX): the off-site spin "
+                "interaction is not spin-rotation (SU(2)) symmetric on %d bond row(s) "
+                "(%s%s): SU(2) needs J_Exchange = J_Hund - 2 J_Ising on every bond. The "
+                "self-energy is exact to second order, but beyond it FLEX counts the "
+                "transverse spin fluctuations as copies of the longitudinal one, which "
+                "this interaction does not satisfy.",
+                len(bad), shown, ", ..." if len(bad) > 4 else "")
 
     def _bond_memory_preflight(self, topo, split_seed):
         """The spec 3.6 admission estimate (absolute, ordinary FLEX arrays
@@ -1801,8 +1894,10 @@ class FLEX(RPA):
             split_seed=split_seed, n_types=n_types,
             freq_batch=self.longitudinal_bond_freq_batch,
             cap_gb=self.longitudinal_bond_memory_cap_gb, mixing=self.mixing_scheme,
-            factor_bytes=(0 if self._second_order_factors is None
-                          else int(self._second_order_factors.nbytes)),
+            factor_bytes=((0 if self._second_order_factors is None
+                           else int(self._second_order_factors.nbytes))
+                          + self._bond_w2_bytes()),
+            w2_triples=self._bond_w2_ntriples(),
             guard_freqs=self.longitudinal_bond_guard_freqs,
             guard_enabled=self.longitudinal_bond_cond_tol is not None,
             w_in_place=self._bond_w_in_place())
@@ -1975,6 +2070,35 @@ class FLEX(RPA):
         self._path_to_output = path_to_output
         return flex_bond.resolve_output_paths(info_outputfile, path_to_output,
                                               self._phase_b_active_outputs(info_outputfile))
+
+    def _bond_w2_ntriples(self):
+        entries = getattr(self, "_bond_w2_entries", None)
+        if entries is None:
+            return 0
+        from hwave.solver.second_order import bond_w2_triples
+        return len(bond_w2_triples(entries))
+
+    def _bond_w2_bytes(self):
+        """Bytes of the bond-enlarged second-order factors this solve will
+        allocate (zero without an off-site Exchange)."""
+        entries = getattr(self, "_bond_w2_entries", None)
+        if entries is None:
+            return 0
+        from hwave.solver.second_order import bond_w2_bytes, bond_w2_triples
+        ND = int(np.asarray(self._bond_topo.delta_r).shape[0]) * self.norb ** 2
+        return bond_w2_bytes(len(bond_w2_triples(entries)), self.lattice.nvol, ND)
+
+    def _bond_w2_on(self, xp):
+        """The bond-enlarged second-order factors on ``xp`` (moved once per
+        array module), or None."""
+        w2 = getattr(self, "_bond_w2", None)
+        if w2 is None:
+            return None
+        cached = getattr(self, "_bond_w2_xp", None)
+        if cached is None or cached[0] is not xp:
+            cached = (xp, [(t, _bk.to_device(A, xp), _bk.to_device(B, xp)) for t, A, B in w2])
+            self._bond_w2_xp = cached
+        return cached[1]
 
     def _phase_b_prepare_vertices(self):
         """S, C on the bond basis, cached once per solve (spec 3.5)."""
@@ -2344,7 +2468,8 @@ class FLEX(RPA):
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy,
-                    guard_method="auto", workers=workers)
+                    guard_method="auto", workers=workers,
+                    bond_w2=self._bond_w2_on(xp))
             phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(

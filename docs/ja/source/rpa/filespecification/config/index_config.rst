@@ -262,7 +262,8 @@ TOML形式
   ``transverse_bond_channels = true``\ とは併用できません。
   ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
   自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
-  ``Exchange``\ はそこでは引き続き拒否されます。
+  ``Exchange``\ もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
+  スピン部分が SU(2) 対称でない場合は警告が出力されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
   が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
@@ -286,7 +287,9 @@ TOML形式
   残します（1以上）。近似のためのパラメータでは **ありません** 。非零の
   係数が宣言されたシェルを落とす切り捨ては拒否されるため、落とせるのは
   係数ゼロで宣言されたシェルだけです。物理的な相互作用を除きたい場合は
-  相互作用ファイルで係数をゼロにしてください。
+  相互作用ファイルで係数をゼロにしてください。FLEX モードでオフサイトの
+  ``Exchange``\ がある場合は、非零のオフサイト\ ``PairLift``\ 行の変位も厳密な
+  2次に必要なため、残す必要があります。
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_memory_cap_gb``
@@ -390,7 +393,10 @@ TOML形式
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
   スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
   （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
-  偶数の\ ``Nmat``\ が必要です。\ ``gpu = true``\ は受理されます。
+  偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ は単独では拒否されます
+  （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。
+  ``longitudinal_bond_channels = true``\ と併用する場合は受け付けられます。
+  ``gpu = true``\ は受理されます。
   単独では通常の FLEX の GPU 経路が使われ（下記\ ``gpu``\ を参照）、
   ``longitudinal_bond_channels = true``\ の場合は代わりに
   ``longitudinal_bond_channels``\ の項で説明するボンド分解した

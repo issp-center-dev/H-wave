@@ -315,7 +315,9 @@ that has no effect under the current settings.
   (``transverse_bond_channels``), not this one's. It cannot be combined with
   ``transverse_bond_channels = true``. In ``mode = "FLEX"`` the same key
   enables the self-consistent bond-resolved channel of the Hartree-Fock
-  FLEX (experimental; off-site ``Exchange`` is still rejected there; requires ``flex_hartree_fock = true``,
+  FLEX (experimental; an off-site ``Exchange`` is accepted there too, with
+  its second order built exactly and a warning when a bond's spin part is
+  not SU(2) symmetric; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
   grid, no sublattice and an even ``Nmat``; see
   :ref:`flex_bond_hf`). With ``longitudinal_bond_channels = true``
@@ -342,7 +344,9 @@ that has no effect under the current settings.
   that would drop a shell carrying a declared nonzero coefficient is
   rejected, so it can only remove declared-zero (spectator) shells; to
   exclude a physical interaction, set its coefficient to zero in the
-  interaction file. Ignored with a warning unless
+  interaction file. In FLEX mode with an off-site ``Exchange``, the
+  displacements of nonzero off-site ``PairLift`` rows are needed by the
+  exact second order and must be kept as well. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_memory_cap_gb``
@@ -447,7 +451,10 @@ that has no effect under the current settings.
   iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
   "general"`` on a spin-free system, the uniform Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
-  field and an even ``Nmat``. ``gpu = true`` is accepted: on its own
+  field and an even ``Nmat``. An off-site ``Exchange`` is refused on its
+  own (it has no Hartree content, so its first order would enter without
+  any higher order); it is accepted together with
+  ``longitudinal_bond_channels = true``. ``gpu = true`` is accepted: on its own
   the ordinary FLEX GPU path applies (see ``gpu`` below); with
   ``longitudinal_bond_channels = true`` the bond-resolved GPU path
   described there applies instead.

@@ -862,8 +862,7 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 ``enable_spin_orbital``\ は非対応。\ ``Nmat``\ は偶数である必要が
 あります。\ ``transverse_bond_channels``\ とは併用できず、
 ``mode = "FLEX"``\ では同じキーが :ref:`flex_bond_hf`\ の自己無撞着な
-Hartree-Fock FLEX 版を選択します（そこではオフサイトの\ ``Exchange``\ は
-引き続き拒否されます）。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
+Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての\ :math:`q`\ で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 ``longitudinal_bond_cond_min_s`` / ``_c``\ として出力）。推定ピーク
 ホストメモリは高コストな計算の前に\ ``longitudinal_bond_memory_cap_gb``
@@ -937,6 +936,28 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 :math:`UV`\ 交差項を持ちません。（``longitudinal_bond_channels = true``\ では、
 ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
 ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
+
+オフサイトの\ ``Exchange``\ （\ :math:`-J S^+_i S^-_j`\ ）はボンド分解チャネルで
+受け付けられます（\ ``flex_hartree_fock``\ のみでは、その1次だけが高次なしに
+入ることになるため拒否されます）。その縦成分はボンド（Fock）交差であり、2次は
+ボンドをまたいでスピン反転頂点と密度頂点が混ざるため、上の規則では表せません。
+そこでオフサイトの\ ``Exchange``\ が宣言されている場合は、全ブロックの2次を
+ボンド拡張基底で直接、\ :math:`W^{(2)} = \tfrac{1}{2}\sum A(q)\,\bar\chi(q, i\nu)\,B(q)`\
+（スピンの添字についての和）として、反対称化した相互作用の全ての要素の組から
+全ての配置について組み立てます。2次の自己エネルギーは、試した全ての組み合わせ
+（Exchange 単独、オンサイトの Kanamori 項との組、同じボンドや別のボンドの密度項
+との組、Heisenberg 型のボンド）で独立な実空間の数え上げと一致します。2次より
+高い次数では、FLEX は横方向のスピンゆらぎを縦方向の2つのコピーとして数えるため、
+これが厳密なのはスピン回転（SU(2)）対称な相互作用の場合だけです。ボンドについて
+これは\ :math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}`\ （各行とその相方）を
+意味し、これを満たさないボンドがあると警告が出力されます。厳密な2次には専用の
+係数（寄与するスピンの組ごとに\ ``(nvol, ND, ND)``\ の配列2つ。
+``longitudinal_bond_memory_cap_gb``\ の見積もりに含まれます）と、各
+:math:`(q, i\nu)`\ で組ごとに2回の\ ``ND x ND``\ 行列積が加わるため、オフサイトの
+``Exchange``\ を宣言すると写像のコストは目に見えて増えます。非零のオフサイト
+``PairLift``\ 行もこの2次に入り、その変位は\ ``longitudinal_bond_max_shells``\ で
+残しておく必要があります。
+
 このような計算の通常の
 ``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ 出力は、最後の写像のボンド分解した量の
 :math:`(m = 0, m' = 0)`\ ブロックです。前節の16個の\ ``longitudinal_bond_*``\ 静的キーも
@@ -947,7 +968,8 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 （``--zero-static``\ 、\ ``--static static.npz``\ 、または UHFk 平均場からは
 ``--uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat``\ ）。このバージョンの
 適用範囲: スピンフリーの一般スキーム、一様松原格子、CPU、副格子なし、外場なし、実数の
-オフサイト係数、オフサイト\ ``Exchange`` / ``PairHop``\ は拒否。解法全体の推定ピーク
+オフサイト係数、オフサイト\ ``PairHop``\ は拒否（オフサイト\ ``Exchange``\ は
+``longitudinal_bond_channels = true``\ の場合のみ）。解法全体の推定ピーク
 メモリは\ ``longitudinal_bond_memory_cap_gb``\ と照合され、振動数バッチはそれに収まる
 ように選ばれます。
 
