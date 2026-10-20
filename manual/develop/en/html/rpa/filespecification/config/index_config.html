@@ -341,7 +341,9 @@ spin-flip content is the transverse channel’s
 (<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>), not this one’s. It cannot be combined with
 <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> the same key
 enables the self-consistent bond-resolved channel of the Hartree-Fock
-FLEX (experimental; off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is still rejected there; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+FLEX (experimental; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is accepted there too, with
+its second order built exactly and a warning when a bond’s spin part is
+not SU(2) symmetric; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
 grid, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
 <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
@@ -366,7 +368,9 @@ shells (must be &gt;= 1). This is NOT an approximation knob: a truncation
 that would drop a shell carrying a declared nonzero coefficient is
 rejected, so it can only remove declared-zero (spectator) shells; to
 exclude a physical interaction, set its coefficient to zero in the
-interaction file. Ignored with a warning unless
+interaction file. In FLEX mode with an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, the
+displacements of nonzero off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> rows are needed by the
+exact second order and must be kept as well. Ignored with a warning unless
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code></p>
@@ -461,7 +465,10 @@ and off-site) to the FLEX self-energy, <span class="math notranslate nohighlight
 iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
 <span class="pre">&quot;general&quot;</span></code> on a spin-free system, the uniform Matsubara grid
 (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), no sublattice, no external
-field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is accepted: on its own
+field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is refused on its
+own (it has no Hartree content, so its first order would enter without
+any higher order); it is accepted together with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is accepted: on its own
 the ordinary FLEX GPU path applies (see <code class="docutils literal notranslate"><span class="pre">gpu</span></code> below); with
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> the bond-resolved GPU path
 described there applies instead.

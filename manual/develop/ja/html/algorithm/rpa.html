@@ -795,8 +795,7 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)\)</span>、
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>は非対応。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は偶数である必要が
 あります。<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>とは併用できず、
 <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の自己無撞着な
-Hartree-Fock FLEX 版を選択します（そこではオフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>は
-引き続き拒否されます）。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
+Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての<span class="math notranslate nohighlight">\(q\)</span>で条件数が検査され、
 不安定領域では実行が拒否されます（最小スコアは
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>として出力）。推定ピーク
 ホストメモリは高コストな計算の前に<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>
@@ -856,8 +855,27 @@ G_{cd}(k - q, i\omega_n - i\nu)\]</div>
 従来の<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code>の式では、2次で直接<span class="math notranslate nohighlight">\(V^2\)</span>項の半分のみを持ち、
 <span class="math notranslate nohighlight">\(UV\)</span>交差項を持ちません。（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>では、
 ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
-ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
-このような計算の通常の
+ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。</p>
+<p>オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>（<span class="math notranslate nohighlight">\(-J S^+_i S^-_j\)</span>）はボンド分解チャネルで
+受け付けられます（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>のみでは、その1次だけが高次なしに
+入ることになるため拒否されます）。その縦成分はボンド（Fock）交差であり、2次は
+ボンドをまたいでスピン反転頂点と密度頂点が混ざるため、上の規則では表せません。
+そこでオフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>が宣言されている場合は、全ブロックの2次を
+ボンド拡張基底で直接、<span class="math notranslate nohighlight">\(W^{(2)} = \tfrac{1}{2}\sum A(q)\,\bar\chi(q, i\nu)\,B(q)\)</span>（スピンの添字についての和）として、反対称化した相互作用の全ての要素の組から
+全ての配置について組み立てます。2次の自己エネルギーは、試した全ての組み合わせ
+（Exchange 単独、オンサイトの Kanamori 項との組、同じボンドや別のボンドの密度項
+との組、Heisenberg 型のボンド）で独立な実空間の数え上げと一致します。2次より
+高い次数では、FLEX は横方向のスピンゆらぎを縦方向の2つのコピーとして数えるため、
+これが厳密なのはスピン回転（SU(2)）対称な相互作用の場合だけです。ボンドについて
+これは<span class="math notranslate nohighlight">\(J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}\)</span>（各行とその相方）を
+意味し、これを満たさないボンドがあると警告が出力されます。厳密な2次には専用の
+係数（寄与するスピンの組ごとに<code class="docutils literal notranslate"><span class="pre">(nvol,</span> <span class="pre">ND,</span> <span class="pre">ND)</span></code>の配列2つ。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>の見積もりに含まれます）と、各
+<span class="math notranslate nohighlight">\((q, i\nu)\)</span>で組ごとに2回の<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">x</span> <span class="pre">ND</span></code>行列積が加わるため、オフサイトの
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>を宣言すると写像のコストは目に見えて増えます。非零のオフサイト
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>行もこの2次に入り、その変位は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>で
+残しておく必要があります。</p>
+<p>このような計算の通常の
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>出力は、最後の写像のボンド分解した量の
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。前節の16個の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code>静的キーも
 書き出され、要求に応じて動的チャネル全体も出力されます
@@ -867,7 +885,8 @@ G_{cd}(k - q, i\omega_n - i\nu)\]</div>
 （<code class="docutils literal notranslate"><span class="pre">--zero-static</span></code>、<code class="docutils literal notranslate"><span class="pre">--static</span> <span class="pre">static.npz</span></code>、または UHFk 平均場からは
 <code class="docutils literal notranslate"><span class="pre">--uhfk-trans-mod</span> <span class="pre">trans_mod.npz</span> <span class="pre">--bare-transfer</span> <span class="pre">transfer.dat</span></code>）。このバージョンの
 適用範囲: スピンフリーの一般スキーム、一様松原格子、CPU、副格子なし、外場なし、実数の
-オフサイト係数、オフサイト<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> / <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は拒否。解法全体の推定ピーク
+オフサイト係数、オフサイト<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は拒否（オフサイト<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>は
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合のみ）。解法全体の推定ピーク
 メモリは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>と照合され、振動数バッチはそれに収まる
 ように選ばれます。</p>
 <aside class="footnote-list brackets">

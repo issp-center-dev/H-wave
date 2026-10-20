@@ -289,7 +289,8 @@ RPA で警告とともに除かれ、<code class="docutils literal notranslate">
 <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とは併用できません。
 <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では同じキーが Hartree-Fock FLEX の
 自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>はそこでは引き続き拒否されます。
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
+スピン部分が SU(2) 対称でない場合は警告が出力されます。
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
 スピンフリー系・一様松原格子・副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
 が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）かつ<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、
@@ -310,7 +311,9 @@ CPU 実行と一致します。出力には<code class="docutils literal notrans
 残します（1以上）。近似のためのパラメータでは <strong>ありません</strong> 。非零の
 係数が宣言されたシェルを落とす切り捨ては拒否されるため、落とせるのは
 係数ゼロで宣言されたシェルだけです。物理的な相互作用を除きたい場合は
-相互作用ファイルで係数をゼロにしてください。
+相互作用ファイルで係数をゼロにしてください。FLEX モードでオフサイトの
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>がある場合は、非零のオフサイト<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>行の変位も厳密な
+2次に必要なため、残す必要があります。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code></p>
@@ -401,7 +404,10 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 ドレスドグリーン関数から再計算。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。
 スピンフリー系での<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、一様松原格子
 （<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>は拒否）、副格子なし、外場なし、
-偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は受理されます。
+偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>は単独では拒否されます
+（Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と併用する場合は受け付けられます。
+<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は受理されます。
 単独では通常の FLEX の GPU 経路が使われ（下記<code class="docutils literal notranslate"><span class="pre">gpu</span></code>を参照）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は代わりに
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>の項で説明するボンド分解した
