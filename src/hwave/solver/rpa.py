@@ -5643,8 +5643,9 @@ class RPA:
         ``ValueError`` naming the gate; there is no fallback. Called from
         ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
         work. Returns ``(topo, split)``: the master bond topology over
-        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` (plus ``Exchange``
-        when an off-site Exchange is declared: ``_LONGITUDINAL_BOND_TYPES``)
+        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` (plus each
+        declared off-site Exchange / PairHop:
+        ``bond_channels.longitudinal_bond_types``)
         and the pre-fold
         :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
         is built from.
@@ -5677,18 +5678,6 @@ class RPA:
                 "Omega = 0 slice at Nmat//2); got Nmat={}.".format(self.nmat))
 
         split = split_locality(self.ham_info, self.lattice)
-        for itype in ("PairHop",):
-            if itype in split.offsite_types:
-                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
-                reason = ("no local-pair particle-hole form exists for "
-                          "an inter-site pair hopping (Phase C of GitHub "
-                          "issue #181)")
-                raise ValueError(
-                    g + " does not support an off-site '{}' declaration "
-                    "(irvec={}, orbvec={} -- the declared displacement and "
-                    "the zero-based orbital pair): {}. Remove those entries "
-                    "from the interaction input.".format(
-                        itype, tuple(irvec), tuple(orbvec), reason))
         if "PairLift" in split.offsite_types:
             logger.info(
                 g + ": off-site PairLift declarations carry no longitudinal "
@@ -5703,16 +5692,14 @@ class RPA:
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            # Exchange joins the bond types only when an off-site one is
-            # declared, so an Exchange-free run keeps its previous topology
-            # and longitudinal_bond_types metadata exactly
-            active_types=(bond_channels._LONGITUDINAL_BOND_TYPES
-                          if "Exchange" in split.offsite_types
-                          else bond_channels._LONGITUDINAL_ACTIVE_TYPES))
+            # Exchange and PairHop join the bond types only when an off-site
+            # one is declared, so a run without them keeps its previous
+            # topology and longitudinal_bond_types metadata exactly
+            active_types=bond_channels.longitudinal_bond_types(split.offsite_types))
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
                 g + " requires at least one declared off-site CoulombInter, "
-                "Hund, Ising or Exchange shell (a declared-but-zero coefficient "
+                "Hund, Ising, Exchange or PairHop shell (a declared-but-zero coefficient "
                 "counts; the aggregate Coulomb table's off-site part "
                 "counts); none is present after longitudinal_bond_max_shells "
                 "truncation, so the bond channels have nothing to "
@@ -5839,11 +5826,13 @@ class RPA:
             workers=getattr(self, "fft_workers", 1))
         chi_bar = np.ascontiguousarray(_bk.to_host(chi_bar))
         types = tuple(topo.coeffs)
-        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types)
+        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types,
+                                                     spatial_shape=spatial_shape)
         chi_s, cond_s = bond_channels.dress_channel(
             chi_bar, S_bond, "spin", spatial_shape=spatial_shape)
         del S_bond
-        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types)
+        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types,
+                                                     spatial_shape=spatial_shape)
         chi_c, cond_c = bond_channels.dress_channel(
             chi_bar, C_bond, "charge", spatial_shape=spatial_shape)
         del C_bond

@@ -56,6 +56,14 @@ CASES = {
     "V other bond+X": {"CoulombInter": [(0, 1, 0, 1, 1, 0.7, 0.0), (0, -1, 0, 1, 1, 0.7, 0.0)],
                        "Exchange": EXCH},
     "Kanamori+V+X": _KANAMORI,
+    # off-site PairHop (issue #181 Phase C): alone, with density terms and
+    # with Exchange on the same bond, and with an on-site U
+    "PH": {"PairHop": [r[:5] + (0.6, 0.0) for r in EXCH]},
+    "V+PH same bond": {"CoulombInter": [r[:5] + (0.7, 0.0) for r in EXCH],
+                       "PairHop": [r[:5] + (0.6, 0.0) for r in EXCH]},
+    "X+PH same bond": {"Exchange": EXCH, "PairHop": [r[:5] + (0.6, 0.0) for r in EXCH]},
+    "U+PH other bond": {"CoulombIntra": [(0, 0, 0, 1, 1, 0.8, 0.0), (0, 0, 0, 2, 2, 0.8, 0.0)],
+                        "PairHop": [(0, 1, 0, 1, 1, 0.6, 0.0), (0, -1, 0, 1, 1, 0.6, 0.0)]},
     # off-site PairLift on another bond (inert at first order on the
     # paramagnet, but present at second order)
     "PL other bond+X": {"PairLift": [(0, 1, 0, 1, 2, 0.4, 0.0), (0, -1, 0, 2, 1, 0.4, 0.0)],
@@ -290,9 +298,12 @@ class TestPolicy(unittest.TestCase):
         return s, gi
 
     def test_without_the_bond_channels_an_offsite_exchange_is_refused(self):
-        s, gi = self._solver({"Exchange": [r[:5] + (0.2, 0.0) for r in EXCH]}, gate=False)
-        with self.assertRaisesRegex(ValueError, "longitudinal_bond_channels = true"):
-            s._validate_phase_b_interactions()
+        for t in ("Exchange", "PairHop"):
+            with self.subTest(type=t):
+                s, gi = self._solver({t: [r[:5] + (0.2, 0.0) for r in EXCH]}, gate=False)
+                with self.assertRaisesRegex(ValueError, "off-site {} .*longitudinal_bond_channels "
+                                                        "= true".format(t)):
+                    s._validate_phase_b_interactions()
 
     def test_gate_accepts_and_warns_only_off_the_su2_ratio(self):
         log = logging.getLogger("hwave.solver.flex")

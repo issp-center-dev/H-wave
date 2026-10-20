@@ -380,6 +380,11 @@ def _two_site_records(itype, a, b, v, norb):
         # +w c+_{a s} c_{b s} c+_{b -s} c_{a -s} = -w c+_{a s} c+_{b -s} c_{b s} c_{a -s}
         return [(g(0, a, s1), g(1, b, 1 - s1), g(1, b, s1), g(0, a, 1 - s1), -w)
                 for s1 in (UP, DN)]
+    if itype == "PairHop":
+        # w c+_{a up} c+_{a dn} c_{b dn} c_{b up}: the on-site monomial of
+        # _records with a on site 0 and b on site 1 (not mirrored: the
+        # partner row is the Hermitian conjugate)
+        return [(g(0, a, UP), g(0, a, DN), g(1, b, DN), g(1, b, UP), w)]
     if itype == "PairLift":
         # the on-site monomials of _records with a on site 0 and b on site 1
         return [(g(0, a, UP), g(1, b, UP), g(1, b, DN), g(0, a, DN), w),
@@ -478,7 +483,7 @@ def _site_records(itype, R, a, b, v, norb):
 
 
 #: off-site types the bond-enlarged second order represents (issue #181)
-BOND_W2_OFFSITE_TYPES = OFFSITE_DENSITY_TYPES + OFFSITE_FLIP_TYPES + ("PairLift",)
+BOND_W2_OFFSITE_TYPES = OFFSITE_DENSITY_TYPES + OFFSITE_FLIP_TYPES + ("PairHop", "PairLift")
 
 
 def bond_w2_entries(split, norb, delta_r):
@@ -492,7 +497,7 @@ def bond_w2_entries(split, norb, delta_r):
     (:func:`close_onsite_rows`, after the same validation, so an on-site
     same-orbital row of a two-orbital type raises :class:`DegenerateRowError`
     here as it does there); the off-site rows are those of
-    :data:`BOND_W2_OFFSITE_TYPES` (off-site PairHop is refused upstream).
+    :data:`BOND_W2_OFFSITE_TYPES`.
     Raises ``KeyError`` when a needed displacement is not a channel of
     ``delta_r``."""
     nd = norb * norb
