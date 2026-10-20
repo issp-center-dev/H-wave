@@ -38,6 +38,15 @@ transpose that is invisible on the orbital diagonal and wrong by ~40% off it.
 The order below is the one pinned against an exactly-diagonalized 3-orbital
 model in ``tests/test_flex_sopt_index_order.py``, which is independent of any
 convention choice made inside this codebase.
+
+Note on the vertex's pair orientation (issue #251).  With this bubble, a ring
+term built as the matrix product ``U chi0 U ...`` (rows and columns in the
+bubble's pair flatten ``(m, n)`` / ``(mu, nu)``) enters Eq.(3) as
+``V_{mu m, nu n}`` only after BOTH of its pairs are transposed; only then is
+the self-energy the functional derivative of ``Tr (chi0 U)^n`` (conserving).
+The transpose is invisible for the density-only U of the exact-diagonalization
+pin above. ``tests/test_flex_ring_orientation.py`` checks it for this pair of
+functions and for the production kernel.
 """
 
 import numpy as np

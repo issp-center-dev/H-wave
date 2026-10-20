@@ -180,6 +180,7 @@ class TestG0Off(unittest.TestCase):
     def test_byte_identity_against_develop(self):
         from tests.test_flex_second_order_compat import (develop_checkout,
                                                            own_tree_subprocess_env,
+                                                           reference_script,
                                                            reference_subprocess_env, moved_stamp)
         here = os.getcwd()
         # one shared rule with the other develop-comparison harnesses: the
@@ -196,7 +197,9 @@ class TestG0Off(unittest.TestCase):
                 # tree's run stays measured
                 env = (own_tree_subprocess_env(root) if root == here
                        else reference_subprocess_env(root))
-                subprocess.run([sys.executable, "-B", "-c", _G0_SCRIPT, root, out],
+                # the reference run gets issue #251's orientation change only
+                script = _G0_SCRIPT if root == here else reference_script(_G0_SCRIPT)
+                subprocess.run([sys.executable, "-B", "-c", script, root, out],
                                check=True, cwd=here, env=env)
             for name in ("sigma.npz", "green.npz", "chi0q.npz", "chiq.npz"):
                 da, db = np.load(os.path.join(a, name), allow_pickle=True), np.load(os.path.join(b, name), allow_pickle=True)

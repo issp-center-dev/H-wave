@@ -102,13 +102,87 @@ def reference_subprocess_env(checkout):
     return env
 
 
+#: Issue #251 changed, on purpose, the pair orientation in which the default
+#: "local" kernel of the general FLEX path contracts its ring (third order
+#: and up): it is now the conserving one, that of the exact second order (the
+#: legacy "takimoto" kernel keeps the earlier one). The reference revision
+#: predates the change, so a comparison against it gets exactly that one
+#: change applied to the reference run before the run starts
+#: (:func:`reference_script` prefixes it to the script): the ring is
+#: transposed before the exact second order is added, in the same batches
+#: and the same operations as this tree, so every other number still has to
+#: agree with the reference bit for bit. The patch is skipped when the
+#: reference already carries the change (it then defines
+#: ``_pair_transpose_into``).
+REFERENCE_RING_ORIENTATION = r"""
+import numpy as _np
+import hwave.solver.flex as _F
+
+
+def _ring_pair_transposed(v, no):
+    lead = v.shape[:-2]
+    nl = len(lead)
+    return _np.ascontiguousarray(v.reshape(*lead, no, no, no, no).transpose(
+        *range(nl), nl + 1, nl, nl + 3, nl + 2)).reshape(v.shape)
+
+
+_reference_veff = _F.FLEX._calc_veff_general
+
+
+def _veff_issue_251(self, chi0q, chi_s, chi_c, Us, Uc, factors=None, second_order="takimoto"):
+    no = chi0q.shape[2]
+    if second_order != "local":
+        # the legacy "takimoto" kernel keeps the earlier orientation
+        return _reference_veff(self, chi0q, chi_s, chi_c, Us, Uc, factors=factors,
+                               second_order=second_order)
+    from hwave.solver.second_order import accumulate_batch
+    nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+    ndx = no * no
+    chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+    chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+    chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+    v_eff = _np.zeros((nmat, nvol, ndx, ndx), dtype=_np.complex128)
+    nb = max(1, nmat // 8)
+    T1 = _np.empty((nb, nvol, ndx, ndx), dtype=_np.complex128)
+    T2 = _np.empty((nb, nvol, ndx, ndx), dtype=_np.complex128)
+    for l0 in range(0, nmat, nb):
+        l1 = min(nmat, l0 + nb)
+        n = l1 - l0
+        out = v_eff[l0:l1]
+        for chi_2d, UB, w in ((chis_2d, Us[None], 1.5), (chic_2d, Uc[None], 0.5)):
+            _np.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+            _np.matmul(UB, T1[:n], out=T2[:n])
+            _np.matmul(T2[:n], UB, out=T1[:n])
+            T1[:n] *= w
+            T2[:n] = _ring_pair_transposed(T1[:n], no)
+            out += T2[:n]
+        accumulate_batch(out, chi0_2d[l0:l1], l0, factors, work=(T1[:n], T2[:n]))
+    return v_eff
+
+
+if not hasattr(_F, "_pair_transpose_into"):
+    _F.FLEX._calc_veff_general = _veff_issue_251
+"""
+
+
+def reference_script(script):
+    """``script`` for a run of the REFERENCE checkout: issue #251's
+    orientation change applied first (:data:`REFERENCE_RING_ORIENTATION`).
+    The reference environment (:func:`reference_subprocess_env`) already
+    puts the reference ``src`` first on ``PYTHONPATH``, so the prefix
+    patches the reference revision's own module."""
+    return REFERENCE_RING_ORIENTATION + script
+
+
 def _run(checkout, path, inter, out, so, extra=None):
     if checkout == os.getcwd():
         # this tree's own run: keep it measured
         env = own_tree_subprocess_env(checkout)
+        script = _RUN
     else:
         env = reference_subprocess_env(checkout)
-    subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so,
+        script = reference_script(_RUN)
+    subprocess.run([sys.executable, "-B", "-c", script, path, json.dumps(inter), out, so,
                     json.dumps(extra or {})],
                    env=env, check=True, capture_output=True, cwd=checkout)
 
@@ -446,9 +520,13 @@ class TestCompatibility(unittest.TestCase):
                     shape = (s.nmat, s.lattice.nvol, ndx, ndx)
                     c0 = chi0q.reshape(shape)
                     UsB, UcB = Us[np.newaxis], Uc[np.newaxis]
-                    ref = (1.5 * (UsB @ (chi_s.reshape(shape) - c0) @ UsB)
-                           + 0.5 * (UcB @ (chi_c.reshape(shape) - c0) @ UcB)
-                           + dense_w2(c0, f))
+                    ring = (1.5 * (UsB @ (chi_s.reshape(shape) - c0) @ UsB)
+                            + 0.5 * (UcB @ (chi_c.reshape(shape) - c0) @ UcB))
+                    no = s.norb
+                    # the ring in the kernel's pair orientation (issue #251)
+                    ring = ring.reshape(*shape[:2], no, no, no, no).transpose(
+                        0, 1, 3, 2, 5, 4).reshape(shape)
+                    ref = ring + dense_w2(c0, f)
                     scale = np.abs(ref).max()
                     self.assertGreater(scale, 1e-6)                 # anti-vacuity
                     np.testing.assert_allclose(v, ref, rtol=0, atol=1e-13 * scale)

@@ -14,6 +14,13 @@ implementation and committed under ``tests/flex_orientation/``, so that a
 later unintended change to any of them fails here with a number rather than
 disappearing into a develop comparison that stopped covering it.
 
+``smoke.npz`` (its ``"local"`` members) and ``mixed_w.npz`` were
+re-recorded once more for issue #251 (the default kernel's ring, third order
+and up, contracted in the conserving pair orientation), after
+``tests/test_flex_ring_orientation.py`` -- the Phi-derivability gate of that
+change -- passed; the ``"takimoto"`` members, ``hf_map.npz`` and ``w2.npz``
+did not move.
+
 These vectors are regression PINS, not oracles. They say "this is what the
 reviewed code produced", nothing more. Their CORRECTNESS is established
 elsewhere, by the exact-diagonalization and oracle gates of the orientation
