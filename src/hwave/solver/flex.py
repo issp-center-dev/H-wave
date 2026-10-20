@@ -39,6 +39,7 @@ from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
+from . import spin_orbital
 from . import matsubara as _ms
 
 
@@ -4640,7 +4641,7 @@ class FLEX(RPA):
                      # FLEX chi0q comes from the same spin-block-ordered RPA
                      # internals; tag it so the chi0q consumers (RPA read_chi0q,
                      # hwave_sc _load_chi0q) accept the file in SO mode.
-                     index_convention="spin_block",
+                     index_convention=spin_orbital.INDEX_CONVENTION,
                      **tail_meta,
                      **_freq_meta("B"),
                      **_scheme_stamp(self))

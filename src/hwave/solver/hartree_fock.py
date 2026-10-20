@@ -4,8 +4,9 @@ docs/superpowers/specs/2026-09-06-flex-bond-sigma-phase-b-181-design.md,
 section 2.2).
 
 Two pure functions carry the interaction part of ``UHFk._make_ham_inter``
-and ``UHFk._make_ham`` (NORMAL spin-major mode; UHFk's ``enable_spin_orbital``
-branch is not shared in this version):
+and ``UHFk._make_ham`` (spin-major layout; UHFk's ``enable_spin_orbital``
+mode calls them on the virtual spin-block frame of
+:mod:`hwave.solver.spin_orbital` and maps the result back, #83):
 
 * :func:`build_interaction_tables` -- the raw pre-fold interaction dict ->
   per-type reversal-symmetrised real-space coefficient tables and the

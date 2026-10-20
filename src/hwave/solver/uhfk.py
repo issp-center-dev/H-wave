@@ -7,6 +7,7 @@ from .perf import do_profile
 from . import fold
 from .kgrid import reverse_fft_axes
 from . import hartree_fock
+from . import spin_orbital
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -79,9 +80,7 @@ class UHFk(solver_base):
         self.iflag_fock = self._to_bool(param.get('flag_fock', True), 'flag_fock')
         
         # Enable/disable spin-orbital coupling
-        self.enable_spin_orbital = self._to_bool(
-            param.get('enable_spin_orbital', False), 'enable_spin_orbital'
-        )
+        self.enable_spin_orbital = spin_orbital.resolve_flag(param)
 
     def _to_bool(self, value, param_name):
         """Convert a value to boolean with type validation.
@@ -274,10 +273,8 @@ class UHFk(solver_base):
         if self.enable_spin_orbital:
             # Spin is already encoded in orbital index (Wannier90 SOI format)
             ns = 1
-            if norb % 2 != 0:
-                logger.error("In spin-orbital mode, norb must be even (got {})".format(norb))
-                exit(1)
-            self.norb_phys_orig = norb // 2
+            self.norb_phys_orig = spin_orbital.physical_norb(
+                norb, True, source="Geometry")
         else:
             # Spin is separate degree of freedom
             ns = 2
@@ -1122,13 +1119,14 @@ class UHFk(solver_base):
                 orb_connected_h = (jab_sum > 0).any(axis=1).astype(float)
 
                 if self.enable_spin_orbital:
-                    # In spin-orbital mode: (s, a) -> so_idx = 2*a + s
+                    # In spin-orbital mode: (s, a) -> the interleaved index
                     for s in range(2):
                         for t in range(2):
                             if spin_mat_h[s, t] > 0:
                                 for a in range(norb_inter):
                                     if orb_connected_h[a]:
-                                        connectivity[2 * a + s, 2 * a + t] += 1.0
+                                        connectivity[spin_orbital.interleaved_index(a, s),
+                                                     spin_orbital.interleaved_index(a, t)] += 1.0
                     if self.iflag_fock:
                         spin_fock = np.max(np.abs(spin), axis=(1, 3))
                         for s in range(2):
@@ -1137,7 +1135,8 @@ class UHFk(solver_base):
                                     for a in range(norb_inter):
                                         for b in range(norb_inter):
                                             if jab_sum[a, b] > 0:
-                                                connectivity[2 * a + s, 2 * b + t] += jab_sum[a, b]
+                                                connectivity[spin_orbital.interleaved_index(a, s),
+                                                                     spin_orbital.interleaved_index(b, t)] += jab_sum[a, b]
                 else:
                     # Normal mode: (s, a) -> nd_idx = s * norb + a
                     for s in range(ns):
@@ -1226,8 +1225,8 @@ class UHFk(solver_base):
             group_nconds_dict = {}  # group_id -> ncond
             for blk in blocks:
                 if self.enable_spin_orbital:
-                    n_up = np.sum(blk % 2 == 0)
-                    n_down = np.sum(blk % 2 == 1)
+                    n_up = np.sum(spin_orbital.spin_of(np.asarray(blk)) == 0)
+                    n_down = np.sum(spin_orbital.spin_of(np.asarray(blk)) == 1)
                 else:
                     n_up = np.sum(blk < norb)
                     n_down = np.sum(blk >= norb)
@@ -1280,57 +1279,24 @@ class UHFk(solver_base):
                             len(group_nconds), group_nconds))
 
     def _so_to_virtual_green(self, G_so):
-        """Convert spin-orbital Green function to virtual (ns=2, norb_phys) form.
-
-        In spin-orbital mode, index = 2*orb + spin (interleaved).
-        This converts to the standard (nvol, 2, norb_phys, 2, norb_phys) form
-        so existing interaction contractions can be reused.
-
-        Parameters
-        ----------
-        G_so : ndarray, shape (nvol, 1, nd, 1, nd)
-            Green function in spin-orbital basis
-
-        Returns
-        -------
-        ndarray, shape (nvol, 2, norb_phys, 2, norb_phys)
-            Green function in virtual spin-separate form
-        """
+        """Spin-orbital Green function ``(nvol, 1, nd, 1, nd)`` (interleaved
+        index ``2*orb + spin``) -> the virtual spin-separate form
+        ``(nvol, 2, norb_phys, 2, norb_phys)``: the spin-block reorder of
+        :mod:`hwave.solver.spin_orbital`, so the normal-mode interaction
+        contractions apply unchanged."""
         nvol = G_so.shape[0]
-        norb_phys = self.norb_phys
-        G_flat = G_so.reshape(nvol, self.nd, self.nd)
-        G_virt = np.zeros((nvol, 2, norb_phys, 2, norb_phys), dtype=np.complex128)
-        for s in range(2):
-            for t in range(2):
-                G_virt[:, s, :, t, :] = G_flat[:, s::2, t::2]
-        return G_virt
+        norb_phys = self.nd // 2
+        G_sb = spin_orbital.interleaved_to_spinblock(
+            G_so.reshape(nvol, self.nd, self.nd), norb_phys)
+        return np.ascontiguousarray(G_sb).reshape(nvol, 2, norb_phys, 2, norb_phys)
 
     def _virtual_ham_to_so(self, H_virt):
-        """Convert virtual (ns=2, norb_phys) Hamiltonian to spin-orbital form.
-
-        Inverse of _so_to_virtual_green for the Hamiltonian matrix.
-        Converts from (nvol, 2, norb_phys, 2, norb_phys) ordering
-        where index = s*norb_phys + a, to spin-orbital ordering
-        where index = 2*a + s.
-
-        Parameters
-        ----------
-        H_virt : ndarray, shape (nvol, 2, norb_phys, 2, norb_phys)
-            Hamiltonian in virtual spin-separate form
-
-        Returns
-        -------
-        ndarray, shape (nvol, nd, nd)
-            Hamiltonian in spin-orbital basis
-        """
+        """Inverse of :meth:`_so_to_virtual_green` for a Hamiltonian
+        ``(nvol, 2, norb_phys, 2, norb_phys)`` -> ``(nvol, nd, nd)`` in the
+        interleaved order."""
         nvol = H_virt.shape[0]
-        norb_phys = self.norb_phys
-        nd = self.nd
-        H_so = np.zeros((nvol, nd, nd), dtype=np.complex128)
-        for s in range(2):
-            for t in range(2):
-                H_so[:, s::2, t::2] = H_virt[:, s, :, t, :]
-        return H_so
+        return np.ascontiguousarray(spin_orbital.spinblock_to_interleaved(
+            H_virt.reshape(nvol, self.nd, self.nd), self.nd // 2))
 
     @do_profile
     def _make_ham(self):
@@ -1342,18 +1308,11 @@ class UHFk(solver_base):
         ns       = self.ns
 
         # In spin-orbital mode, use virtual (ns=2, norb_phys) form for interactions
+        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
         if self.enable_spin_orbital:
-            norb_inter = self.norb_phys
-            nd_virt = 2 * norb_inter
             gab_r = self._so_to_virtual_green(self.Green)
         else:
-            norb_inter = self.norb
-            nd_virt = nd
             gab_r = self.Green
-
-        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
-        # diagonal part G_{bb,st}(r=0) : gbb(s,t,b)
-        gbb = np.diagonal(gab_r, axis1=2, axis2=4)[0,:,:,:]
 
         # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
         ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
@@ -1362,88 +1321,29 @@ class UHFk(solver_base):
         logger.debug("Transfer")
         ham += self.ham_trans
 
-        # interaction term: Coulomb type
+        # interaction term: the shared kernel adds every interaction
+        # contribution IN PLACE, in the original order and with the original
+        # expressions (bit-identical in normal mode; #181 Phase B). In
+        # spin-orbital mode it runs in the virtual spin-block frame and the
+        # sum is mapped back to the interleaved order (#83).
         if not self.enable_spin_orbital:
-            # normal (spin-major) mode: the shared kernel adds every
-            # interaction contribution IN PLACE, in the original order and
-            # with the original expressions (bit-identical; #181 Phase B)
             hartree_fock.accumulate_hf(
                 ham, gab_r, self.inter_table, self.spin_table, self.shape,
                 include_fock=self.iflag_fock, debug=logger.debug)
         else:
-            for type in ['CoulombIntra', 'CoulombInter', 'Hund', 'Ising', 'PairLift', 'Exchange']:
-                if self.inter_table[type] is not None:
-                    logger.debug(type)
+            # accumulate onto the transfer term reordered to the virtual
+            # frame: the reorder is a pure permutation, so every element sees
+            # the same additions in the same order as the interleaved loop
+            # this replaced (bit-identical)
+            ham_virt = np.ascontiguousarray(
+                spin_orbital.interleaved_to_spinblock(ham, nd // 2))
+            hartree_fock.accumulate_hf(
+                ham_virt, gab_r, self.inter_table, self.spin_table, self.shape,
+                include_fock=self.iflag_fock, debug=logger.debug)
+            ham = self._virtual_ham_to_so(
+                ham_virt.reshape(nvol, 2, nd // 2, 2, nd // 2))
 
-                    # coefficient of interaction term J_{ab}(r)
-                    jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
-                    # and its spin combination  Spin(s1,s2,s3,s4)
-                    spin = self.spin_table[type]
-
-                    # non-cross term
-                    #   sum_r J_{ab}(r) G_{bb,uv}(0) Spin{s,u,v,t}
-                    hh0 = np.einsum('uvb, suvt -> stb', gbb, spin)
-                    hh1 = np.einsum('rab, stb -> rsta', jab_r, hh0)
-                    hh2 = np.einsum('rsta, ab -> rsatb', hh1, np.eye(norb_inter, norb_inter))
-                    hh3 = np.sum(hh2, axis=0)  # shape: (2, norb_inter, 2, norb_inter)
-
-                    if self.enable_spin_orbital:
-                        hh3_nd = self._virtual_ham_to_so(
-                            np.broadcast_to(hh3.reshape(1, 2, norb_inter, 2, norb_inter),
-                                           (nvol, 2, norb_inter, 2, norb_inter)).copy()
-                        )
-                    else:
-                        hh3_nd = np.broadcast_to(hh3.reshape(nd, nd), (nvol, nd, nd))
-
-                    ham += hh3_nd
-
-                    # cross term
-                    #   - sum_r J_{ab}(r) G_{ba,uv}(r) Spin{s,u,t,v} e^{ikr}
-                    if self.iflag_fock:
-                        hh4 = np.einsum('rab, rubva, sutv -> rsatb', jab_r, gab_r, spin, optimize=True)
-
-                        #   fourier transform: sum_r (*) e^{ikr}
-                        hh5 = np.fft.ifftn(hh4.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
-
-                        if self.enable_spin_orbital:
-                            ham -= self._virtual_ham_to_so(
-                                hh5.reshape(nvol, 2, norb_inter, 2, norb_inter)
-                            )
-                        else:
-                            ham -= hh5.reshape(nvol, nd, nd)
-
-            # interaction term: PairHop type
-            for type in ['PairHop']:
-                if self.inter_table[type] is not None:
-                    logger.debug(type)
-
-                    # coefficient of interaction term J_{ab}(r)
-                    jab_r = self.inter_table[type].reshape(nvol,norb_inter,norb_inter)
-                    # and its spin combination  Spin(s1,s2,s3,s4)
-                    spin = self.spin_table[type]
-
-                    # non-cross and cross term
-                    #   + sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,v,t} e^{ikr}
-                    #   - sum_r J_{ab}(r) G_{ab,uv}(-r) Spin{s,u,t,v} e^{ikr}
-
-                    if self.iflag_fock:
-                        hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                        hh2 = np.einsum('rvbua, sutv -> rsbta', np.conjugate(gab_r), spin)
-                        hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, (hh1 - hh2))
-                        hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
-                    else:
-                        hh1 = np.einsum('rvbua, suvt -> rsbta', np.conjugate(gab_r), spin)
-                        hh3 = np.einsum('rab, rsbta -> rsatb', jab_r, hh1)
-                        hh4 = np.fft.ifftn(hh3.reshape(nx,ny,nz,nd_virt,nd_virt), axes=(0,1,2), norm='forward')
-
-                    if self.enable_spin_orbital:
-                        ham += self._virtual_ham_to_so(
-                            hh4.reshape(nvol, 2, norb_inter, 2, norb_inter)
-                        )
-                    else:
-                        ham += hh4.reshape(nvol, nd, nd)
-
-            # Enforce block structure: zero out cross-block entries
+        # Enforce block structure: zero out cross-block entries
         if len(self.block_info) > 1:
             mask = np.zeros((nd, nd), dtype=bool)
             for blk in self.block_info:
@@ -1687,18 +1587,17 @@ class UHFk(solver_base):
 
         # expectation value of the spin vector (Sx, Sy, Sz)
         if self.enable_spin_orbital:
-            # In spin-orbital basis: index = 2*orb + spin. The on-site density
-            # matrix rho_{ij} = <c^dag_j c_i> has spin structure, so the full
-            # spin vector is meaningful (Sx, Sy nonzero under spin mixing / SOC).
+            # The on-site density matrix rho_{ij} = <c^dag_j c_i> has spin
+            # structure, so the full spin vector is meaningful (Sx, Sy nonzero
+            # under spin mixing / SOC).
             #   S_alpha = (1/2) sum_a Tr[ sigma_alpha rho_a ]
-            # with rho_a the 2x2 (up,down) on-site block of orbital a.
-            m = gab_r[0]
-            g0 = np.diagonal(m)                  # rho_{ii}
-            ud = np.diagonal(m, offset=1)[0::2]  # G[2a, 2a+1] = <c^dag_down c_up>
-            du = np.diagonal(m, offset=-1)[0::2] # G[2a+1, 2a] = <c^dag_up c_down>
-            sz_diag = np.zeros(nd)
-            sz_diag[0::2] = 1.0   # up spins
-            sz_diag[1::2] = -1.0  # down spins
+            # with rho_a the 2x2 (up,down) on-site block of orbital a, read in
+            # the virtual spin-block frame m[s, a, t, b].
+            m = self._so_to_virtual_green(self.Green)[0]
+            g0 = np.diagonal(gab_r[0])           # rho_{ii}, interleaved
+            sz_diag = np.where(spin_orbital.spin_of(np.arange(nd)) == 0, 1.0, -1.0)
+            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_down c_up>
+            du = np.diagonal(m[1, :, 0, :])      # <c^dag_up c_down>
             sz = np.sum(g0 * sz_diag) * nvol
             sx = np.sum(ud + du) * nvol
             sy = np.sum(1j * (ud - du)) * nvol
