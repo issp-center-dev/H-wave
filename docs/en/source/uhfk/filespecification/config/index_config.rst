@@ -61,7 +61,8 @@ that has no effect under the current settings.
 - ``enable_spin_orbital`` (default value is ``false``)
 
   **Type :**
-  Boolean
+  Boolean (a recognized string such as ``"true"`` is accepted with a warning;
+  an unrecognized value is an error)
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.

@@ -4445,28 +4445,10 @@ def _coerce_run_beta(T):
 
 
 def _coerce_config_bool(value, name):
-    """Strictly parse a physics-relevant boolean config switch.
-
-    backend.as_bool reads any unrecognized string ("ture", "garbage") as
-    False and any nonzero integer as True -- for a switch that changes the
-    physics (or gates a rejection), a spelling error must fail loudly
-    instead of silently flipping the behavior. Accepted: real booleans,
-    integers 0/1, and the strings true/false/yes/no/on/off/0/1 (case- and
-    whitespace-insensitive).
-    """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)) and value in (0, 1):
-        return bool(value)
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v in ("true", "yes", "on", "1"):
-            return True
-        if v in ("false", "no", "off", "0"):
-            return False
-    raise ValueError(
-        "{} = {!r} is not a recognized boolean; use "
-        "true/false (or yes/no, on/off, 0/1).".format(name, value))
+    """Strictly parse a physics-relevant boolean config switch
+    (:func:`hwave.solver.backend.strict_bool`)."""
+    from hwave.solver.backend import strict_bool
+    return strict_bool(value, name)
 
 
 def _coerce_g2_tail(value):
@@ -4475,20 +4457,11 @@ def _coerce_g2_tail(value):
 
 
 def _resolve_spin_orbital_flag(input_dict):
-    """Resolve [mode] enable_spin_orbital to a real boolean, strictly.
-
-    One resolver for every consumer in this module: the raw value used to
-    be forwarded as-is, so a string "false" was truthy at the chi0q
-    convention check and internally inconsistent inside RPA (its orbital
-    counting uses truthiness while the transfer remap tests == True).
-    Case-insensitive key lookup (config layers disagree on case handling;
-    PR #128 sweep); unrecognized values raise.
-    """
-    from requests.structures import CaseInsensitiveDict
-    return _coerce_config_bool(
-        CaseInsensitiveDict(input_dict.get("mode", {})).get(
-            "enable_spin_orbital", False),
-        "[mode] enable_spin_orbital")
+    """Resolve [mode] enable_spin_orbital to a real boolean, strictly
+    (:func:`hwave.solver.spin_orbital.resolve_flag`, the one resolver every
+    solver uses; case-insensitive key lookup, unrecognized values raise)."""
+    from hwave.solver import spin_orbital
+    return spin_orbital.resolve_flag(input_dict.get("mode", {}))
 
 
 # Threshold for the asymptotic-regime diagnostic below: at the window edge

@@ -37,6 +37,7 @@ from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
+from . import spin_orbital
 
 
 #: Emitted whenever a PairLift declaration is solved: its particle-hole
@@ -68,48 +69,10 @@ def canonical_scheme_name(raw):
     return str(raw).lower()
 
 
-def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
-    """Reject a stored chi0q whose spin-orbital index convention is unknown.
-
-    RPA writes ``index_convention="spin_block"`` (spin*norb+orb) into its
-    chi0q.npz / chiq.npz. UHFk instead uses the interleaved (2*orb+spin)
-    ordering, and chi0q files produced before the SO convention fix
-    (commit 9dd9a21) carry no ``index_convention`` key at all. In spin-orbital
-    mode the two orderings differ, so silently accepting such a file would mix
-    conventions and corrupt the result. Outside spin-orbital mode the
-    convention is irrelevant and this is a no-op.
-
-    Parameters
-    ----------
-    data : Mapping
-        Loaded npz (e.g. ``numpy.load(...)``); must support ``in`` and ``[]``.
-    enable_spin_orbital : bool
-        Whether the consuming calculation runs in spin-orbital mode.
-    file_name : str, optional
-        Source path, used only for the error message.
-
-    Raises
-    ------
-    ValueError
-        If spin-orbital mode is on and the file lacks a ``spin_block``
-        ``index_convention`` marker.
-    """
-    if not enable_spin_orbital:
-        return
-    if "index_convention" not in data:
-        raise ValueError(
-            "chi0q file '{}' lacks an 'index_convention' marker. It predates "
-            "the spin-orbital index convention fix and may use the interleaved "
-            "(2*orb+spin) ordering; regenerate it with the current RPA solver "
-            "(which writes index_convention='spin_block').".format(file_name)
-        )
-    conv = str(data["index_convention"])
-    if conv != "spin_block":
-        raise ValueError(
-            "chi0q file '{}' has index_convention='{}', but spin-orbital mode "
-            "requires 'spin_block' (spin*norb+orb). Regenerate it with the "
-            "current RPA solver.".format(file_name, conv)
-        )
+# The spin-orbital conventions live in hwave.solver.spin_orbital (#83);
+# re-exported under their historical names for existing importers.
+from .spin_orbital import validate_chi0q_index_convention  # noqa: E402,F401
+from .spin_orbital import physical_norb as _so_physical_norb  # noqa: E402,F401
 
 MOMENTUM_CONVENTION = "e_plus_ikR"
 
@@ -312,28 +275,6 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
                 "(Files whose content is q-even are accepted: for them "
                 "the two conventions coincide.)".format(
                     file_name, asym_rel, scale))
-
-
-
-def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
-                      source="geom.dat"):
-    """Physical orbital count from a geometry ``norb``.
-
-    In spin-orbital mode ``geom.dat``'s ``norb`` is the spin-orbital count
-    (= 2 * physical orbitals = Wannier90 num_wann), matching UHFk, so halve it.
-    Evenness is validated on ``check_norb`` (the *original*, pre-sublattice-fold
-    value) so the error names the user's actual ``geom.dat`` entry, while the
-    returned count is derived from ``geom_norb`` (which may be the post-fold
-    value ``orig * subvol``).
-    """
-    if not enable_spin_orbital:
-        return geom_norb
-    cn = check_norb if check_norb is not None else geom_norb
-    if cn % 2 != 0:
-        raise ValueError(
-            "spin-orbital mode requires an even Geometry norb (the spin-orbital "
-            "count = 2 * physical orbitals); got {} in {}".format(cn, source))
-    return geom_norb // 2
 
 
 def _chi0q_fingerprint(arr):
@@ -716,7 +657,7 @@ class Interaction:
 
 
         # mode options
-        self.enable_spin_orbital = info_mode.get("enable_spin_orbital", False)
+        self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
 
         # initialize, and reshape if use sublattice
         self._init_interaction()
@@ -881,16 +822,13 @@ class Interaction:
             self.ham_extern_q = None
             return
 
-        if self.enable_spin_orbital == True:
+        if self.enable_spin_orbital:
             # The SO transfer file uses the interleaved convention
             # (index = 2*orb + spin, matching UHFk and the docs), while RPA
             # works internally in spin-block order (index = spin*norb + orb).
-            # Remap each orbital index P(i) = (i % 2) * norb + i // 2 on both
-            # the row and column so the (spin, orbital) reshapes downstream are
-            # correct. For norb_phys = 1 this is the identity.
-            def _so_interleaved_to_spinblock(i):
-                return (i % 2) * norb + i // 2
-
+            # Remap the row and column orbital indices so the (spin, orbital)
+            # reshapes downstream are correct. For norb_phys = 1 this is the
+            # identity.
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
@@ -899,8 +837,8 @@ class Interaction:
                         "spin-orbital Transfer index {} out of range [0,{}); "
                         "geom norb (SO count) must cover all transfer indices"
                         .format(orbvec, nd))
-                a = _so_interleaved_to_spinblock(orbvec[0])
-                b = _so_interleaved_to_spinblock(orbvec[1])
+                a = spin_orbital.to_spinblock_index(orbvec[0], norb)
+                b = spin_orbital.to_spinblock_index(orbvec[1], norb)
                 # accumulate: R and R+-L are distinct bonds that wrap onto
                 # the same array slot when the hopping range reaches the
                 # lattice size (numpy negative indexing)
@@ -2998,7 +2936,7 @@ class RPA:
                     # RPA orders spin-orbital axes as spin-block (spin*norb+orb),
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
-                    index_convention = "spin_block",
+                    index_convention = spin_orbital.INDEX_CONVENTION,
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
@@ -3056,7 +2994,7 @@ class RPA:
                 wavevector_unit = self.kvec,
                 wavevector_index = self.wavenum_table,
                 # spin-orbital axes are spin-block ordered (spin*norb+orb)
-                index_convention = "spin_block",
+                index_convention = spin_orbital.INDEX_CONVENTION,
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
@@ -3474,10 +3412,8 @@ class RPA:
             # orbital axes interleaved->spin-block, mirroring _make_ham_trans's
             # remap of the Transfer file. For norb_phys=1 this is the identity,
             # so non-multi-orbital SO and non-SO paths are unaffected.
-            norb_phys = self.norb_orig            # pre-fold physical orbital count
-            nd0 = tab_r.shape[-1]                 # = 2 * norb_phys
-            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
-            tab_r = tab_r[:, inv, :][:, :, inv]   # interleaved -> spin-block
+            tab_r = spin_orbital.interleaved_to_spinblock(
+                tab_r, self.norb_orig)            # pre-fold physical orbital count
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout (Hamiltonian/transfer convention)
@@ -3604,10 +3540,8 @@ class RPA:
             # self.nd. Reorder both orbital axes interleaved->spin-block, mirroring
             # _read_trans_mod (and _make_ham_trans's remap of the Transfer file).
             # For norb_phys=1 this is the identity.
-            norb_phys = self.norb_orig            # pre-fold physical orbital count
-            nd0 = green.shape[-1]                 # = 2 * norb_phys
-            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
-            green = green[:, inv, :][:, :, inv]   # interleaved -> spin-block
+            green = spin_orbital.interleaved_to_spinblock(
+                green, self.norb_orig)            # pre-fold physical orbital count
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout
