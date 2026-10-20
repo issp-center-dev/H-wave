@@ -366,7 +366,7 @@ class DressResult:
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       second_order="takimoto", guard_freqs="all", guard_policy="refuse",
-                      guard_method="auto", workers=1):
+                      guard_method="auto", workers=1, bond_w2=None):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -434,7 +434,17 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     (``"auto"``, ``"svd"`` or ``"interval"``); the number of blocks the
     guard decomposed exactly and the number it guarded, summed over both
     channels and every frequency batch, are returned as
-    ``DressResult.guard_exact_blocks`` and ``DressResult.guard_blocks``."""
+    ``DressResult.guard_exact_blocks`` and ``DressResult.guard_blocks``.
+
+    ``bond_w2`` (issue #181): the factors ``[(triple, A, B), ...]`` of
+    :func:`hwave.solver.second_order.build_bond_w2_factors`, on ``dev.xp``.
+    When given, the second order of every block is ``1/2 sum A chibar B``
+    (exact in the bond-enlarged basis, off-site Exchange included) and the
+    channel-0 kernel, the mixed-block rule and the zero bond-bond blocks
+    above are not used; ``second_order`` and ``factors`` are then ignored.
+    The ring part beyond second order is unchanged."""
+    if bond_w2 is not None:
+        second_order, factors = "takimoto", None
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
@@ -497,6 +507,19 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         chi_c_b -= cb
         W_b += 0.5 * _sandwich(C, chi_c_b, C, workers)
         del chi_c_b
+        if bond_w2 is not None:
+            for _t, Af, Bf in bond_w2:
+                T = Af[None] @ cb
+                T = T @ Bf[None]
+                T *= 0.5
+                W_b += T
+                del T
+            if not bool(xp.all(xp.isfinite(W_b))):
+                raise _NonFiniteError("non-finite effective interaction W in the frequency "
+                                      "batch [{}, {}){}".format(l0, l1, _at(iteration)))
+            store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
+            del W_b, cb
+            continue
         # second-order term. A / Bc carry BOTH the channel-0 block of the
         # legacy kernel and the mixed blocks of either kernel, so they are
         # built once, before the channel-0 branch.
@@ -643,9 +666,11 @@ def _largest_dev_phase(rows):
                key=lambda k: (rows[k], -_DEV_PHASE_ORDER.index(k)))
 
 
-def dressing_ops(nmat, nvol, ND):
-    """Operation count of the two dense ND x ND solves over all (l, q)."""
-    return 2.0 * nmat * nvol * float(ND) ** 3
+def dressing_ops(nmat, nvol, ND, w2_triples=0):
+    """Operation count of the two dense ND x ND solves over all (l, q), plus
+    the two ND x ND products per spin triple of the exact bond-enlarged
+    second order (issue #181) when it is used."""
+    return 2.0 * (1 + int(w2_triples)) * nmat * nvol * float(ND) ** 3
 
 
 def transport_ops(B, nmat, nvol, norb):
@@ -657,7 +682,8 @@ def transport_ops(B, nmat, nvol, norb):
 
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
-                         guard_freqs="all", guard_enabled=True, w_in_place=False):
+                         guard_freqs="all", guard_enabled=True, w_in_place=False,
+                         w2_triples=0):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -898,7 +924,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     return dict(persistent_rows=persistent_rows, phase_rows=phase_rows, persistent=persistent,
                 nb=nb, peak=_peak(nb), cap_bytes=cap_bytes, U=U, G_bytes=G, C_bytes=C,
                 S_bytes=S, H_bytes=H, B=B, ND=ND, nvol=nvol, nmat=nmat, table=_table(nb),
-                dressing_ops=dressing_ops(nmat, nvol, ND),
+                dressing_ops=dressing_ops(nmat, nvol, ND, w2_triples),
                 transport_ops=transport_ops(B, nmat, nvol, norb),
                 **device)
 

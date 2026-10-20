@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 TWO_ORBITAL_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop", "PairLift")
 OFFSITE_DENSITY_TYPES = ("CoulombInter", "Hund", "Ising")
+#: off-site types whose q-representable content is a SPIN-FLIP local
+#: bilinear (issue #181): they need the general off-site factors
+#: (:func:`build_offsite_general`), not the density slots of vpair
+OFFSITE_FLIP_TYPES = ("Exchange",)
 UP, DN = 0, 1
 
 
@@ -357,6 +361,245 @@ def build_offsite(split, lattice, norb):
     return vpair
 
 
+def _two_site_records(itype, a, b, v, norb):
+    """x c+_p c+_q c_s c_r of one off-site row on TWO sites: orbital ``a`` on
+    site 0, ``b`` on site 1 (the bond of the Transfer row with the same
+    ``(R, a, b)``, issue #232). Index ``(site * 2 + spin) * norb + orbital``;
+    the mirrored types carry half the row (see :data:`_MIRRORED_TYPES`)."""
+    g = lambda site, o, sp: (site * 2 + sp) * norb + o
+    w = 0.5 * v if itype in _MIRRORED_TYPES else v
+    if itype == "CoulombInter":
+        return [(g(0, a, s1), g(1, b, s2), g(1, b, s2), g(0, a, s1), w)
+                for s1, s2 in itertools.product((UP, DN), repeat=2)]
+    if itype == "Hund":
+        return [(g(0, a, s1), g(1, b, s1), g(1, b, s1), g(0, a, s1), -w) for s1 in (UP, DN)]
+    if itype == "Ising":
+        return [(g(0, a, s1), g(1, b, s2), g(1, b, s2), g(0, a, s1), w if s1 == s2 else -w)
+                for s1, s2 in itertools.product((UP, DN), repeat=2)]
+    if itype == "Exchange":
+        # +w c+_{a s} c_{b s} c+_{b -s} c_{a -s} = -w c+_{a s} c+_{b -s} c_{b s} c_{a -s}
+        return [(g(0, a, s1), g(1, b, 1 - s1), g(1, b, s1), g(0, a, 1 - s1), -w)
+                for s1 in (UP, DN)]
+    if itype == "PairLift":
+        # the on-site monomials of _records with a on site 0 and b on site 1
+        return [(g(0, a, UP), g(1, b, UP), g(1, b, DN), g(0, a, DN), w),
+                (g(1, b, DN), g(0, a, DN), g(0, a, UP), g(1, b, UP), w)]
+    raise ValueError("second_order: off-site type {!r} has no q-representable "
+                     "local-bilinear form".format(itype))
+
+
+def build_offsite_general(split, lattice, norb):
+    """The general off-site factors (issue #181): ``{(ss, sr, sq): (A, B)}``
+    with ``A``, ``B`` of shape ``(nvol, nd, nd)``, or ``None`` when no
+    off-site :data:`OFFSITE_FLIP_TYPES` row is declared (then the density
+    slots of :func:`build_offsite` carry the off-site content, as before).
+
+    Every off-site row of a supported type is written on two sites and
+    antisymmetrised (``Gamma = V - V^x``); its CROSSED (q-representable)
+    entries -- the external pair ``(c, a)`` on one site, the transport pair
+    ``(r, q)`` on the other -- are, in the layout of the on-site factors,
+
+        A[(c a), (r q)] = Gamma[(a up), (q sq), (r sr), (c ss)]
+        B[(r q), (c a)] = Gamma[(r sr), (c ss), (a up), (q sq)]
+
+    for each placement of the external pair (site 0 with the other at
+    ``+R``, site 1 with the other at ``-R``), Fourier-summed with
+    ``e^{+i q.d}`` on ``A`` and ``e^{-i q.d}`` on ``B`` for the displacement
+    ``d`` of the other site. The density types are included too, so that the
+    density x flip cross terms come out of the same products: on a
+    density-only input these factors reproduce :func:`build_offsite`'s
+    kernel exactly. Pinned element by element against the independent
+    real-space oracle's local kernel for off-site Exchange with every
+    on-site and off-site partner type (``tests/test_second_order_oracle.py``).
+    """
+    tbl = split.offsite_tbl
+    if not any(tbl.get(t) for t in OFFSITE_FLIP_TYPES):
+        return None
+    nd = norb * norb
+    nx, ny, nz = (int(x) for x in lattice.shape)
+    nvol = nx * ny * nz
+    grid = np.stack(np.meshgrid(2.0 * np.pi * np.arange(nx) / nx,
+                                2.0 * np.pi * np.arange(ny) / ny,
+                                2.0 * np.pi * np.arange(nz) / nz, indexing="ij"),
+                    axis=-1).reshape(nvol, 3)
+    n2 = 4 * norb
+    out = {}
+    for itype in OFFSITE_DENSITY_TYPES + OFFSITE_FLIP_TYPES:
+        for (irvec, orbvec), v in (tbl.get(itype) or {}).items():
+            R = np.asarray(irvec, dtype=float)
+            a, b = int(orbvec[0]), int(orbvec[1])
+            V = np.zeros((n2,) * 4, dtype=np.complex128)
+            for (p, q, s_, r, x) in _two_site_records(itype, a, b, complex(v), norb):
+                V[p, q, r, s_] += x
+                V[q, p, s_, r] += x
+            Gam = V - V.transpose(0, 1, 3, 2)
+            g = lambda site, o, sp: (site * 2 + sp) * norb + o
+            for ss, sr, sq in itertools.product((UP, DN), repeat=3):
+                for ext, oth, d in ((0, 1, R), (1, 0, -R)):
+                    A = np.zeros((nd, nd), dtype=np.complex128)
+                    B = np.zeros((nd, nd), dtype=np.complex128)
+                    for c, aa, r, q in itertools.product(range(norb), repeat=4):
+                        A[c * norb + aa, r * norb + q] = Gam[g(ext, aa, UP), g(oth, q, sq),
+                                                             g(oth, r, sr), g(ext, c, ss)]
+                        B[r * norb + q, c * norb + aa] = Gam[g(oth, r, sr), g(ext, c, ss),
+                                                             g(ext, aa, UP), g(oth, q, sq)]
+                    if not (A.any() or B.any()):
+                        continue
+                    phase = np.exp(1j * (grid @ d))
+                    Aq, Bq = out.setdefault((ss, sr, sq), (
+                        np.zeros((nvol, nd, nd), dtype=np.complex128),
+                        np.zeros((nvol, nd, nd), dtype=np.complex128)))
+                    Aq += phase[:, None, None] * A[None]
+                    Bq += phase.conj()[:, None, None] * B[None]
+    return out
+
+
+def _site_records(itype, R, a, b, v, norb):
+    """``x c+_p c+_q c_s c_r`` of one row with explicit sites: entries
+    ``((site, orbital, spin), ...)`` with ``site`` an integer 3-vector. An
+    on-site row (``R = 0``) takes :func:`_records`; an off-site one the
+    two-site monomials of :func:`_two_site_records` with orbital ``a`` at the
+    origin and ``b`` at ``R``."""
+    def split_index(P, sites):
+        site = sites[P // (2 * norb)]
+        return (site, P % norb, (P // norb) % 2)
+    if tuple(R) == (0, 0, 0):
+        z = (0, 0, 0)
+        out = []
+        for (p, q, s_, r, x) in _records(itype, a, b, v, norb):
+            # _records' index is spin * norb + orbital on ONE site
+            f = lambda P: (z, P % norb, P // norb)
+            out.append((f(p), f(q), f(s_), f(r), x))
+        return out
+    sites = ((0, 0, 0), tuple(int(c) for c in R))
+    return [(split_index(p, sites), split_index(q, sites), split_index(s_, sites),
+             split_index(r, sites), x)
+            for (p, q, s_, r, x) in _two_site_records(itype, a, b, v, norb)]
+
+
+#: off-site types the bond-enlarged second order represents (issue #181)
+BOND_W2_OFFSITE_TYPES = OFFSITE_DENSITY_TYPES + OFFSITE_FLIP_TYPES + ("PairLift",)
+
+
+def bond_w2_entries(split, norb, delta_r):
+    """The nonzero entries of the factors of :func:`build_bond_w2_factors`,
+    without any ``nvol``-sized array: ``(entries_A, entries_B)``, each a dict
+    ``{triple: [(row, col, x, site), ...]}`` with ``site`` the 3-vector whose
+    phase the entry carries. Cheap; the memory preflight counts the triples
+    from it before anything large is allocated.
+
+    The on-site rows are the CLOSED on-site table the q-only kernel compiles
+    (:func:`close_onsite_rows`, after the same validation, so an on-site
+    same-orbital row of a two-orbital type raises :class:`DegenerateRowError`
+    here as it does there); the off-site rows are those of
+    :data:`BOND_W2_OFFSITE_TYPES` (off-site PairHop is refused upstream).
+    Raises ``KeyError`` when a needed displacement is not a channel of
+    ``delta_r``."""
+    nd = norb * norb
+    delta = [tuple(int(c) for c in d) for d in np.asarray(delta_r)]
+    chan = {d: m for m, d in enumerate(delta)}
+    compile_onsite(split.onsite_tbl, norb)            # validation: rows, D7, closure
+    rows_on = close_onsite_rows(split.onsite_tbl)
+    V = {}
+
+    def add(key, x):
+        V[key] = V.get(key, 0.0) + x
+
+    def place(recs, shifts):
+        for shift in shifts:
+            mv = lambda P: (tuple(P[0][i] + shift[i] for i in range(3)), P[1], P[2])
+            for (p, q, s_, r, x) in recs:
+                p2, q2, s2, r2 = mv(p), mv(q), mv(s_), mv(r)
+                # x c+_p c+_q c_s c_r -> V[p, q, r, s] and its (q p s r) twin
+                add((p2, q2, r2, s2), x)
+                add((q2, p2, s2, r2), x)
+
+    for itype, tbl in rows_on.items():
+        for (a, b), v in tbl.items():
+            if itype == "CoulombIntra" and a != b:
+                continue          # the q-only kernel drops these too
+            place(_site_records(itype, (0, 0, 0), a, b, complex(v), norb), [(0, 0, 0)])
+    for itype in BOND_W2_OFFSITE_TYPES:
+        for (irvec, orbvec), v in (split.offsite_tbl.get(itype) or {}).items():
+            R = tuple(int(c) for c in irvec)
+            place(_site_records(itype, R, int(orbvec[0]), int(orbvec[1]), complex(v), norb),
+                  [(0, 0, 0), tuple(-c for c in R)])
+    Gam = {}
+    for (p, q, r, s_), x in V.items():
+        Gam[(p, q, r, s_)] = Gam.get((p, q, r, s_), 0.0) + x
+        Gam[(p, q, s_, r)] = Gam.get((p, q, s_, r), 0.0) - x
+    origin = (0, 0, 0)
+    sub = lambda u, w: tuple(u[i] - w[i] for i in range(3))
+    eA, eB = {}, {}
+    for (p, q, r, s_), x in Gam.items():
+        if x == 0:
+            continue
+        # A: external p = (origin, a, up), s at -R_alpha; internal (r, q)
+        if p[0] == origin and p[2] == UP:
+            al = chan[sub(origin, s_[0])]
+            ga = chan[sub(r[0], q[0])]
+            eA.setdefault((s_[2], r[2], q[2]), []).append(
+                (al * nd + s_[1] * norb + p[1], ga * nd + r[1] * norb + q[1], x, r[0]))
+        # B: the same entry read as Gamma_{r' s', p' q'}, p' = (origin, b, up)
+        rp, sp_, pp, qp = p, q, r, s_
+        if pp[0] == origin and pp[2] == UP:
+            be = chan[sub(origin, sp_[0])]
+            de = chan[sub(rp[0], qp[0])]
+            eB.setdefault((sp_[2], rp[2], qp[2]), []).append(
+                (de * nd + rp[1] * norb + qp[1], be * nd + sp_[1] * norb + pp[1], x, rp[0]))
+    return eA, eB
+
+
+def bond_w2_triples(entries):
+    """The spin triples with both an ``A`` and a ``B`` factor."""
+    eA, eB = entries
+    return sorted(set(eA) & set(eB))
+
+
+def build_bond_w2_factors(split, norb, delta_r, shape, entries=None):
+    """The EXACT second order of the bond-resolved FLEX map in the bond-
+    enlarged basis (issue #181): ``[(triple, A, B), ...]`` with ``A``, ``B`` of
+    shape ``(nvol, ND, ND)``, ``ND = len(delta_r) * norb**2``, such that
+
+        W2(q, i nu) = 1/2 sum_triples A(q) chibar(q, i nu) B(q)
+
+    with ``chibar`` the bond bubble (:func:`hwave.solver.bubble.
+    _iter_bond_dynamic`) and the result read by the bond transport
+    (:func:`hwave.solver.flex_bond.calc_self_energy_bond`). Every record pair
+    of the antisymmetrised interaction enters at weight 1/2 in every
+    placement: the external pair ``(alpha; c, a)`` is ``p = (0, a, up)``,
+    ``s = (-R_alpha, c, sigma_s)``; the internal pair ``(gamma; r, q)`` has
+    ``x_r - x_q = R_gamma`` and carries the phase ``e^{+i q.x_r}`` in ``A`` and
+    ``e^{-i q.x_r}`` in ``B``. Pinned against an independent real-space
+    enumeration of the exact second order through the production transport
+    (``tests/test_flex_bond_exchange.py``). ``entries`` reuses
+    :func:`bond_w2_entries`."""
+    eA, eB = entries if entries is not None else bond_w2_entries(split, norb, delta_r)
+    nd = norb * norb
+    ND = len(np.asarray(delta_r)) * nd
+    nx, ny, nz = (int(x) for x in shape)
+    nvol = nx * ny * nz
+    grid = np.stack(np.meshgrid(2.0 * np.pi * np.arange(nx) / nx,
+                                2.0 * np.pi * np.arange(ny) / ny,
+                                2.0 * np.pi * np.arange(nz) / nz, indexing="ij"),
+                    axis=-1).reshape(nvol, 3)
+    out = []
+    for t in bond_w2_triples((eA, eB)):
+        mats = []
+        for ents, sign in ((eA[t], 1.0), (eB[t], -1.0)):
+            M = np.zeros((nvol, ND, ND), dtype=np.complex128)
+            for (row, col, x, site) in ents:
+                M[:, row, col] += x * np.exp(1j * sign * (grid @ np.asarray(site, dtype=float)))
+            mats.append(_readonly(M))
+        out.append((t, mats[0], mats[1]))
+    return out
+
+
+def bond_w2_bytes(ntriples, nvol, ND):
+    """Bytes of the factors of :func:`build_bond_w2_factors`."""
+    return 16 * 2 * int(ntriples) * int(nvol) * int(ND) * int(ND)
+
+
 def factor_bytes(norb, nvol, offsite):
     nd = norb * norb
     return 16 * (8 * nd * nd + (4 * nvol * norb * norb if offsite else 0))
@@ -372,6 +615,12 @@ class SecondOrderFactors:
     B_on: tuple
     vpair: object           # (2, 2, nvol, norb, norb) or None
     nbytes: int
+    # issue #181: the general off-site factors, aligned with off_triples
+    # (each (nvol, nd, nd)); None unless an off-site spin-flip type is
+    # declared, in which case they carry ALL off-site content and vpair is None
+    off_triples: tuple = ()
+    A_off: tuple = None
+    B_off: tuple = None
 
 
 def _readonly(a):
@@ -380,7 +629,7 @@ def _readonly(a):
     return a
 
 
-def build_factors(split, lattice, norb):
+def build_factors(split, lattice, norb, offsite=True):
     """Spec 2.5: the sparse factors of the local kernel, from the locality
     split (on-site rows -> Gamma_on -> A/B per nonzero spin triple; off-site
     density rows -> vpair)."""
@@ -401,12 +650,27 @@ def build_factors(split, lattice, norb):
         triples.append((ss, sr, sq))
         As.append(_readonly(A))
         Bs.append(_readonly(B))
-    vpair = build_offsite(split, lattice, norb)
-    if vpair is not None:
-        vpair = _readonly(vpair)
-    nbytes = 16 * (2 * len(triples) * nd * nd + (4 * nvol * norb * norb if vpair is not None else 0))
+    general = build_offsite_general(split, lattice, norb) if offsite else None
+    off_triples, A_off, B_off = (), None, None
+    if not offsite:
+        # the bond-resolved FLEX with an off-site Exchange builds its whole
+        # second order from build_bond_w2_factors; only the on-site pack (and
+        # its validation) is needed here
+        vpair = None
+    elif general is not None:
+        vpair = None
+        off_triples = tuple(sorted(general))
+        A_off = tuple(_readonly(general[t][0]) for t in off_triples)
+        B_off = tuple(_readonly(general[t][1]) for t in off_triples)
+    else:
+        vpair = build_offsite(split, lattice, norb)
+        if vpair is not None:
+            vpair = _readonly(vpair)
+    nbytes = 16 * (2 * len(triples) * nd * nd + (4 * nvol * norb * norb if vpair is not None else 0)
+                   + 2 * len(off_triples) * nvol * nd * nd)
     return SecondOrderFactors(norb=norb, nd=nd, nvol=nvol, triples=tuple(triples), A_on=tuple(As),
-                              B_on=tuple(Bs), vpair=vpair, nbytes=nbytes)
+                              B_on=tuple(Bs), vpair=vpair, nbytes=nbytes,
+                              off_triples=off_triples, A_off=A_off, B_off=B_off)
 
 
 def _dens_slice(norb):
@@ -518,7 +782,8 @@ def _validate_batch(out_b, chibar_b, factors, work):
     # vertex: the on-site factors are (nd, nd) matrices broadcast over q, so
     # an on-site-only pack is usable at ANY nvol (the bond store's synthetic
     # fixtures rely on that). vpair is indexed by q and must match.
-    nvol = factors.nvol if factors.vpair is not None else None
+    nvol = (factors.nvol if (factors.vpair is not None or factors.A_off is not None)
+            else None)
     for name, arr in (("chibar_b", chibar_b), ("out_b", out_b)):
         shape = tuple(int(x) for x in arr.shape)
         ok = (len(shape) == 4 and shape[2] == nd and shape[3] == nd
@@ -627,6 +892,12 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
         # xp.empty (not empty_like): C-contiguous whatever chibar_b's layout
         T1 = xp.empty(tuple(chibar_b.shape), dtype=chibar_b.dtype)
         T2 = xp.empty(tuple(chibar_b.shape), dtype=chibar_b.dtype)
+    if factors.A_off is not None:
+        _accumulate_general(out_b, chibar_b, factors, T1, T2, xp)
+        if not bool(xp.all(xp.isfinite(out_b))):
+            raise NonFiniteError("non-finite second-order kernel W2 in the frequency batch "
+                                 "[{}, {})".format(l0, l0 + nb))
+        return out_b
     ds = _dens_slice(norb)
     vp = None
     if factors.vpair is not None:
@@ -685,6 +956,39 @@ def accumulate_batch(out_b, chibar_b, l0, factors, work=None):
         raise NonFiniteError("non-finite second-order kernel W2 in the frequency batch [{}, {})"
                              .format(l0, l0 + nb))
     return out_b
+
+
+def _accumulate_general(out_b, chibar_b, factors, T1, T2, xp):
+    """W2 with the general off-site factors (issue #181), per spin triple:
+
+        1/2 A_on chibar B_on + A_on chibar B_off + A_off chibar B_on
+        + A_off chibar B_off,
+
+    the weights of the local kernel (1/2 for an on-site pair, 1 as soon as
+    one vertex is off-site and crossed). ``A_off``/``B_off`` are indexed by
+    q, i.e. broadcast over the frequency batch."""
+    on = {t: (xp.asarray(A)[None, None], xp.asarray(B)[None, None])
+          for t, A, B in zip(factors.triples, factors.A_on, factors.B_on)}
+    off = {t: (xp.asarray(A)[None], xp.asarray(B)[None])
+           for t, A, B in zip(factors.off_triples, factors.A_off, factors.B_off)}
+    for t in sorted(set(on) | set(off)):
+        Aon, Bon = on.get(t, (None, None))
+        Aof, Bof = off.get(t, (None, None))
+        if Aon is not None:
+            xp.matmul(Aon, chibar_b, out=T1)
+            xp.matmul(T1, Bon, out=T2)
+            T2 *= 0.5
+            out_b += T2
+            if Bof is not None:
+                xp.matmul(T1, Bof, out=T2)
+                out_b += T2
+        if Aof is not None:
+            xp.matmul(Aof, chibar_b, out=T1)
+            xp.matmul(T1, Bof, out=T2)
+            out_b += T2
+            if Bon is not None:
+                xp.matmul(T1, Bon, out=T2)
+                out_b += T2
 
 
 def dense_w2(chibar, factors):
