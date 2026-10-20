@@ -547,7 +547,10 @@ channel dresses, so representing it would require an enlarged bilinear
 basis. In the standard calculation such entries are discarded when the
 interaction is read, before this check runs, so they are neither rejected
 nor included; a warning naming every discarded declaration is written to
-the log. Do not rely on off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> in any RPA calculation. Under
+the log. Do not rely on off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> in the standard RPA
+calculation; its longitudinal (spin/charge) content is represented by the
+bond-resolved longitudinal channel (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>).
+Under
 the experimental bond-resolved transverse channel
 (<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declaration
 is <strong>rejected with an error</strong> instead, so that no silently incomplete
@@ -835,15 +838,20 @@ that file is not overwritten and stays the standard ring result. When every off-
 collapsed blocks equal the standard ring’s static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first
-order in the coupling for off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>
-and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (same-orbital and inter-orbital bonds), and the
+order in the coupling for off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (same-orbital and inter-orbital bonds), and the
 Hartree-only vertex was verified to miss the same data. An off-site
 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> has no Hartree (channel-0) content; its longitudinal content
 is the bond-diagonal Fock crossing alone, and its spin-flip content
-belongs to the transverse channel.</p>
-<p>Limitations of this version: real off-site coefficients only; off-site
-<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declarations are rejected (their promotion through the bond
-basis is planned); no sublattice folding, no
+belongs to the transverse channel. An off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+(<span class="math notranslate nohighlight">\(J P^\dagger_i P_j\)</span>) has no Hartree content either: it couples a bond
+pair to the pair of the same orientation with the other spin, i.e. the
+channel of <span class="math notranslate nohighlight">\(-R_m\)</span> with the orbitals swapped, as
+<span class="math notranslate nohighlight">\(J e^{-i q\cdot R_m}\)</span> at <span class="math notranslate nohighlight">\((m, a, b) \to (-m, b, a)\)</span> in both the
+spin and the charge channel (read off the exact-diagonalization response
+entry by entry).</p>
+<p>Limitations of this version: real off-site coefficients only; no
+sublattice folding, no
 <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, no <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> must be even; the
 gate cannot be combined with <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>; in <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span>
 <span class="pre">&quot;FLEX&quot;</span></code> the same key selects the self-consistent Hartree-Fock FLEX
@@ -926,12 +934,14 @@ order. (With <code class="docutils literal notranslate"><span class="pre">longit
 are exact at second order on every bond, inter-orbital ones included: the
 mixed on-site <span class="math notranslate nohighlight">\(\times\)</span> bond blocks read the bond side at the
 transposed orbital pair, issue #192.)</p>
-<p>An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (<span class="math notranslate nohighlight">\(-J S^+_i S^-_j\)</span>) is accepted by the bond
-channels (not by <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> alone, where its first order would
-enter without any higher order). Its longitudinal content is the bond
-(Fock) crossing; its second order mixes spin-flip and density vertices
+<p>An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (<span class="math notranslate nohighlight">\(-J S^+_i S^-_j\)</span>) or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+(<span class="math notranslate nohighlight">\(J P^\dagger_i P_j\)</span>) is accepted by the bond channels (not by
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> alone, where its first order would enter without any
+higher order), and both are built the same way below. An Exchange’s longitudinal content is the bond
+(Fock) crossing (a PairHop’s is the reversed-bond, orbital-swapped coupling of the
+longitudinal bond channels); its second order mixes spin-flip and density vertices
 across bonds, which the rule above does not carry. With an off-site
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> declared, the second order of EVERY block is therefore built
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declared, the second order of EVERY block is therefore built
 directly in the bond-enlarged basis, <span class="math notranslate nohighlight">\(W^{(2)} = \tfrac{1}{2}\sum
 A(q)\,\bar\chi(q, i\nu)\,B(q)\)</span> over the spin labels, from every pair of
 antisymmetrised interaction entries in every placement; the second-order
@@ -962,8 +972,8 @@ a run with <code class="docutils literal notranslate"><span class="pre">flex_har
 UHFk mean field, <code class="docutils literal notranslate"><span class="pre">--uhfk-trans-mod</span> <span class="pre">trans_mod.npz</span> <span class="pre">--bare-transfer</span>
 <span class="pre">transfer.dat</span></code>). Domain of this version: spin-free general scheme, uniform
 Matsubara grid, CPU, no sublattice, no external field, real off-site
-coefficients, off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> refused (off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> only with
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>); the estimated peak
+coefficients, off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> only with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>; the estimated peak
 memory of the whole solve is checked against
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> and the frequency batch is chosen to fit
 it.</p>

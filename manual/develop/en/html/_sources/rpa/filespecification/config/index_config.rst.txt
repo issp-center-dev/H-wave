@@ -305,17 +305,17 @@ that has no effect under the current settings.
   ``chiq`` file under the ``longitudinal_bond_*`` keys; the ``chiq``
   array inside that file is not overwritten and stays the standard ring
   result. The gate requires at least one
-  declared off-site ``CoulombInter``/``Hund``/``Ising``/``Exchange``
+  declared off-site ``CoulombInter``/``Hund``/``Ising``/``Exchange``/``PairHop``
   shell (a declared-zero coefficient counts), real coefficients, an even
   ``Nmat``, no sublattice, no ``chi0q_init`` and no
-  ``enable_spin_orbital``; an off-site ``PairHop`` declaration is
-  rejected with an error. An off-site ``Exchange`` enters through its
+  ``enable_spin_orbital``. An off-site ``PairHop`` enters through its
+  bond entries only (see :ref:`rpa_longitudinal_bond`). An off-site ``Exchange`` enters through its
   bond (Fock) crossing only -- it has no Hartree content -- and its
   spin-flip content is the transverse channel's
   (``transverse_bond_channels``), not this one's. It cannot be combined with
   ``transverse_bond_channels = true``. In ``mode = "FLEX"`` the same key
   enables the self-consistent bond-resolved channel of the Hartree-Fock
-  FLEX (experimental; an off-site ``Exchange`` is accepted there too, with
+  FLEX (experimental; an off-site ``Exchange`` or ``PairHop`` is accepted there too, with
   its second order built exactly and a warning when a bond's spin part is
   not SU(2) symmetric; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
@@ -451,7 +451,7 @@ that has no effect under the current settings.
   iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
   "general"`` on a spin-free system, the uniform Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
-  field and an even ``Nmat``. An off-site ``Exchange`` is refused on its
+  field and an even ``Nmat``. An off-site ``Exchange`` or ``PairHop`` is refused on its
   own (it has no Hartree content, so its first order would enter without
   any higher order); it is accepted together with
   ``longitudinal_bond_channels = true``. ``gpu = true`` is accepted: on its own

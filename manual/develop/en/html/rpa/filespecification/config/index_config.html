@@ -331,17 +331,17 @@ pair basis, and the dressed static susceptibilities are written to the
 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> file under the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> keys; the <code class="docutils literal notranslate"><span class="pre">chiq</span></code>
 array inside that file is not overwritten and stays the standard ring
 result. The gate requires at least one
-declared off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+declared off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>/<code class="docutils literal notranslate"><span class="pre">Hund</span></code>/<code class="docutils literal notranslate"><span class="pre">Ising</span></code>/<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>/<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
 shell (a declared-zero coefficient counts), real coefficients, an even
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, no sublattice, no <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> and no
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> declaration is
-rejected with an error. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> enters through its
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> enters through its
+bond entries only (see <a class="reference internal" href="../../../algorithm/rpa.html#rpa-longitudinal-bond"><span class="std std-ref">Bond-resolved longitudinal channel (experimental)</span></a>). An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> enters through its
 bond (Fock) crossing only – it has no Hartree content – and its
 spin-flip content is the transverse channel’s
 (<code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span></code>), not this one’s. It cannot be combined with
 <code class="docutils literal notranslate"><span class="pre">transverse_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> the same key
 enables the self-consistent bond-resolved channel of the Hartree-Fock
-FLEX (experimental; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is accepted there too, with
+FLEX (experimental; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is accepted there too, with
 its second order built exactly and a warning when a bond’s spin part is
 not SU(2) symmetric; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
@@ -465,7 +465,7 @@ and off-site) to the FLEX self-energy, <span class="math notranslate nohighlight
 iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
 <span class="pre">&quot;general&quot;</span></code> on a spin-free system, the uniform Matsubara grid
 (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), no sublattice, no external
-field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> is refused on its
+field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is refused on its
 own (it has no Hartree content, so its first order would enter without
 any higher order); it is accepted together with
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is accepted: on its own
