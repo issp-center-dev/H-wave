@@ -31,18 +31,19 @@ _FLAG = "enable_spin_orbital"
 logger = logging.getLogger(__name__)
 
 
-def resolve_flag(info_mode, name="[mode] enable_spin_orbital"):
+def resolve_flag(info_mode, name="[mode] enable_spin_orbital", *, allow_float=False):
     """``enable_spin_orbital`` of a ``[mode]`` dict as a real boolean.
 
     The key lookup is case-insensitive and the value is parsed strictly
     (:func:`hwave.solver.backend.strict_bool`): a misspelled value raises
     instead of silently reading as true or false. A recognized string is
-    accepted with a warning, and an exact float 0.0/1.0 is accepted (both
-    as UHFk did before the switch was shared)."""
+    accepted with a warning. ``allow_float`` additionally accepts an exact
+    float 0.0/1.0 -- for UHFk only, whose own parser accepted them before
+    the switch was shared; every other caller rejects floats."""
     if info_mode is None:
         return False
     value = CaseInsensitiveDict(info_mode).get(_FLAG, False)
-    if isinstance(value, float) and value in (0.0, 1.0):
+    if allow_float and isinstance(value, float) and value in (0.0, 1.0):
         return bool(value)        # accepted by UHFk before the switch was shared
     if isinstance(value, str):
         logger.warning(

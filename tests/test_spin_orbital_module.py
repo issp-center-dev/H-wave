@@ -71,10 +71,29 @@ class TestResolveFlag(unittest.TestCase):
     def test_key_is_case_insensitive(self):
         self.assertIs(so.resolve_flag({"Enable_Spin_Orbital": True}), True)
 
-    def test_exact_float_zero_and_one_are_accepted(self):
-        # UHFk accepted them before the switch was shared
-        self.assertIs(so.resolve_flag({"enable_spin_orbital": 1.0}), True)
-        self.assertIs(so.resolve_flag({"enable_spin_orbital": 0.0}), False)
+    def test_exact_float_zero_and_one_only_with_allow_float(self):
+        # UHFk (allow_float) accepted them before the switch was shared;
+        # every other caller, hwave_sc's refusal gate included, rejects them
+        self.assertIs(so.resolve_flag({"enable_spin_orbital": 1.0}, allow_float=True), True)
+        self.assertIs(so.resolve_flag({"enable_spin_orbital": 0.0}, allow_float=True), False)
+        for v in (0.0, 1.0):
+            with self.subTest(v=v), self.assertRaises(ValueError):
+                so.resolve_flag({"enable_spin_orbital": v})
+
+    def test_hwave_sc_rejects_floats(self):
+        from hwave import sc
+        for v in (0.0, 1.0):
+            with self.subTest(v=v):
+                with self.assertRaises(ValueError):
+                    sc._resolve_spin_orbital_flag({"mode": {"enable_spin_orbital": v}})
+                with self.assertRaises(ValueError):
+                    sc.reject_spin_orbital_mode({"mode": {"enable_spin_orbital": v}})
+
+    def test_uhfk_reads_float_one_as_spin_orbital(self):
+        import hwave.solver.uhfk as uhfk
+        stub = uhfk.UHFk.__new__(uhfk.UHFk)
+        stub._init_mode({"enable_spin_orbital": 1.0})
+        self.assertIs(stub.enable_spin_orbital, True)
 
     def test_a_string_value_warns(self):
         with self.assertLogs("hwave.solver.spin_orbital", "WARNING") as cm:

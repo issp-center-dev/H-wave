@@ -80,7 +80,7 @@ class UHFk(solver_base):
         self.iflag_fock = self._to_bool(param.get('flag_fock', True), 'flag_fock')
         
         # Enable/disable spin-orbital coupling
-        self.enable_spin_orbital = spin_orbital.resolve_flag(param)
+        self.enable_spin_orbital = spin_orbital.resolve_flag(param, allow_float=True)
 
     def _to_bool(self, value, param_name):
         """Convert a value to boolean with type validation.
