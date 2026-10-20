@@ -582,7 +582,10 @@ rejected -- even when ``SubShape`` folds it onto an intra-cell orbital pair
    basis. In the standard calculation such entries are discarded when the
    interaction is read, before this check runs, so they are neither rejected
    nor included; a warning naming every discarded declaration is written to
-   the log. Do not rely on off-site ``PairHop`` in any RPA calculation. Under
+   the log. Do not rely on off-site ``PairHop`` in the standard RPA
+   calculation; its longitudinal (spin/charge) content is represented by the
+   bond-resolved longitudinal channel (``longitudinal_bond_channels = true``).
+   Under
    the experimental bond-resolved transverse channel
    (``transverse_bond_channels = true``) an off-site ``PairHop`` declaration
    is **rejected with an error** instead, so that no silently incomplete
@@ -898,16 +901,21 @@ that file is not overwritten and stays the standard ring result. When every off-
 collapsed blocks equal the standard ring's static spin/charge channels;
 with a nonzero off-site coefficient they differ by the exchange crossing.
 The bond blocks were verified against exact diagonalization at first
-order in the coupling for off-site ``CoulombInter``, ``Hund``, ``Ising``
-and ``Exchange`` (same-orbital and inter-orbital bonds), and the
+order in the coupling for off-site ``CoulombInter``, ``Hund``, ``Ising``,
+``Exchange`` and ``PairHop`` (same-orbital and inter-orbital bonds), and the
 Hartree-only vertex was verified to miss the same data. An off-site
 ``Exchange`` has no Hartree (channel-0) content; its longitudinal content
 is the bond-diagonal Fock crossing alone, and its spin-flip content
-belongs to the transverse channel.
+belongs to the transverse channel. An off-site ``PairHop``
+(:math:`J P^\dagger_i P_j`) has no Hartree content either: it couples a bond
+pair to the pair of the same orientation with the other spin, i.e. the
+channel of :math:`-R_m` with the orbitals swapped, as
+:math:`J e^{-i q\cdot R_m}` at :math:`(m, a, b) \to (-m, b, a)` in both the
+spin and the charge channel (read off the exact-diagonalization response
+entry by entry).
 
-Limitations of this version: real off-site coefficients only; off-site
-``PairHop`` declarations are rejected (their promotion through the bond
-basis is planned); no sublattice folding, no
+Limitations of this version: real off-site coefficients only; no
+sublattice folding, no
 ``chi0q_init``, no ``enable_spin_orbital``; ``Nmat`` must be even; the
 gate cannot be combined with ``transverse_bond_channels``; in ``mode =
 "FLEX"`` the same key selects the self-consistent Hartree-Fock FLEX
@@ -1004,12 +1012,14 @@ are exact at second order on every bond, inter-orbital ones included: the
 mixed on-site :math:`\times` bond blocks read the bond side at the
 transposed orbital pair, issue #192.)
 
-An off-site ``Exchange`` (:math:`-J S^+_i S^-_j`) is accepted by the bond
-channels (not by ``flex_hartree_fock`` alone, where its first order would
-enter without any higher order). Its longitudinal content is the bond
-(Fock) crossing; its second order mixes spin-flip and density vertices
+An off-site ``Exchange`` (:math:`-J S^+_i S^-_j`) or ``PairHop``
+(:math:`J P^\dagger_i P_j`) is accepted by the bond channels (not by
+``flex_hartree_fock`` alone, where its first order would enter without any
+higher order), and both are built the same way below. An Exchange's longitudinal content is the bond
+(Fock) crossing (a PairHop's is the reversed-bond, orbital-swapped coupling of the
+longitudinal bond channels); its second order mixes spin-flip and density vertices
 across bonds, which the rule above does not carry. With an off-site
-``Exchange`` declared, the second order of EVERY block is therefore built
+``Exchange`` or ``PairHop`` declared, the second order of EVERY block is therefore built
 directly in the bond-enlarged basis, :math:`W^{(2)} = \tfrac{1}{2}\sum
 A(q)\,\bar\chi(q, i\nu)\,B(q)` over the spin labels, from every pair of
 antisymmetrised interaction entries in every placement; the second-order
@@ -1040,8 +1050,8 @@ a run with ``flex_hartree_fock = true``; a legacy archive is converted with
 UHFk mean field, ``--uhfk-trans-mod trans_mod.npz --bare-transfer
 transfer.dat``). Domain of this version: spin-free general scheme, uniform
 Matsubara grid, CPU, no sublattice, no external field, real off-site
-coefficients, off-site ``PairHop`` refused (off-site ``Exchange`` only with
-``longitudinal_bond_channels = true``); the estimated peak
+coefficients, off-site ``Exchange`` and ``PairHop`` only with
+``longitudinal_bond_channels = true``; the estimated peak
 memory of the whole solve is checked against
 ``longitudinal_bond_memory_cap_gb`` and the frequency batch is chosen to fit
 it.

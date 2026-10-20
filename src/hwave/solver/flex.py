@@ -792,7 +792,7 @@ class FLEX(RPA):
             # comes from the bond-enlarged factors (built after the memory
             # admission); the q-only off-site factors would be dead weight
             offsite = not (getattr(self, "longitudinal_bond_channels", False)
-                           and "Exchange" in split.offsite_types)
+                           and any(t in split.offsite_types for t in ("Exchange", "PairHop")))
             self._second_order_factors = build_factors(split, self.lattice, self.norb,
                                                        offsite=offsite)
             logger.info("    second-order factors: {} on-site pairs, off-site {}, {:.3f} MiB".format(
@@ -1723,7 +1723,7 @@ class FLEX(RPA):
             self._bond_w2 = None
             self._bond_w2_xp = None
             self._bond_w2_entries = None
-            if "Exchange" in self._bond_split.offsite_types:
+            if any(t in self._bond_split.offsite_types for t in ("Exchange", "PairHop")):
                 from hwave.solver.second_order import bond_w2_entries
                 self._bond_w2_entries = bond_w2_entries(
                     self._bond_split, norb, self._bond_topo.delta_r)
@@ -1749,18 +1749,14 @@ class FLEX(RPA):
         if getattr(self.ham_info, "enable_spin_orbital", False):
             raise ValueError(g + " does not support enable_spin_orbital.")
         split = split_locality(self.ham_info, self.lattice)
-        refused = ("PairHop",) if self.longitudinal_bond_channels else ("PairHop", "Exchange")
+        refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
         for itype in refused:
             if itype in split.offsite_types:
                 (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
-                if itype == "PairHop":
-                    reason = ("no local-pair particle-hole form exists for an inter-site "
-                              "pair hopping (Phase C of GitHub issue #181)")
-                else:
-                    reason = ("an off-site Exchange has no Hartree content, only the "
-                              "bond-resolved Fock crossing, so without the bond channels "
-                              "its first order would enter alone while every higher order "
-                              "is missing; set longitudinal_bond_channels = true")
+                reason = ("an off-site {} has no Hartree content, only bond-resolved "
+                          "content, so without the bond channels its first order would "
+                          "enter alone while every higher order is missing; set "
+                          "longitudinal_bond_channels = true".format(itype))
                 raise ValueError(
                     g + " does not support an off-site '{}' declaration (irvec={}, "
                     "orbvec={} -- the declared displacement and the zero-based orbital "
@@ -1787,8 +1783,9 @@ class FLEX(RPA):
         from hwave.solver import bond_channels
         g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
         interactions = CaseInsensitiveDict(split.whole_tbl)
-        if "Exchange" in split.offsite_types and "PairLift" in split.offsite_types:
-            # the exact second order built with an off-site Exchange carries the
+        if (any(t in split.offsite_types for t in ("Exchange", "PairHop"))
+                and "PairLift" in split.offsite_types):
+            # the exact second order built with an off-site Exchange or PairHop carries the
             # off-site PairLift rows too, so their displacements must be channels
             # of the bond basis: declared-zero CoulombInter shells (no vertex
             # content of their own)
@@ -1799,13 +1796,11 @@ class FLEX(RPA):
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            active_types=(bond_channels._LONGITUDINAL_BOND_TYPES
-                          if "Exchange" in split.offsite_types
-                          else bond_channels._LONGITUDINAL_ACTIVE_TYPES))
+            active_types=bond_channels.longitudinal_bond_types(split.offsite_types))
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
-                g + " requires at least one declared off-site CoulombInter, Hund, Ising or "
-                "Exchange "
+                g + " requires at least one declared off-site CoulombInter, Hund, Ising, "
+                "Exchange or PairHop "
                 "shell (a declared-but-zero coefficient counts; the aggregate Coulomb "
                 "table's off-site part counts); none is present after "
                 "longitudinal_bond_max_shells truncation, so the bond channels have "
@@ -1815,7 +1810,8 @@ class FLEX(RPA):
                 raise ValueError(
                     g + ": off-site {} coefficients must be real in this version (a "
                     "complex coefficient was declared).".format(t))
-        if "Exchange" in split.offsite_types and "PairLift" in split.offsite_types:
+        if (any(t in split.offsite_types for t in ("Exchange", "PairHop"))
+                and "PairLift" in split.offsite_types):
             have = {tuple(int(c) for c in d) for d in np.asarray(topo.delta_r)}
             for (irvec, orbvec), v in split.offsite_tbl["PairLift"].items():
                 R = tuple(int(c) for c in irvec)
@@ -1823,7 +1819,7 @@ class FLEX(RPA):
                     raise ValueError(
                         g + ": the off-site PairLift row at irvec={} (orbitals {}) is outside "
                         "the bond shells kept by longitudinal_bond_max_shells; with an "
-                        "off-site Exchange its second order needs that displacement. Raise "
+                        "off-site Exchange or PairHop its second order needs that displacement. Raise "
                         "longitudinal_bond_max_shells or remove the row."
                         .format(R, tuple(int(o) + 1 for o in orbvec)))
         self._warn_non_su2_bonds(topo)
@@ -2115,8 +2111,10 @@ class FLEX(RPA):
         self._bond_C_on = np.ascontiguousarray(C_on.reshape(nvol, nd, nd))
         types = tuple(self._bond_topo.coeffs)
         self._bond_types = types
-        self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types)
-        self._bond_C = bond_channels.build_sc_bond_channel(self._bond_topo, C0, "C", types=types)
+        self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types,
+                                                           spatial_shape=(nx, ny, nz))
+        self._bond_C = bond_channels.build_sc_bond_channel(self._bond_topo, C0, "C", types=types,
+                                                           spatial_shape=(nx, ny, nz))
         del S0, C0
         if not (np.all(np.isfinite(self._bond_S)) and np.all(np.isfinite(self._bond_C))):
             raise _hf.NonFiniteError("non-finite bond vertices S/C")

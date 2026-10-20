@@ -32,7 +32,7 @@ class TestResolveBondTopology(unittest.TestCase):
     def test_active_types_validated(self):
         from hwave.solver import bond_channels as bc
         for bad in ((), ("CoulombInter", "CoulombInter"), ("Coulomb",),
-                    ("PairHop",), ("coulombinter",), "CoulombInter",
+                    ("PairLift",), ("coulombinter",), "CoulombInter",
                     [[]], [None], ("CoulombInter", 1)):
             with self.subTest(active_types=bad):
                 with self.assertRaises(ValueError) as cm:
@@ -56,7 +56,15 @@ class TestResolveBondTopology(unittest.TestCase):
     def test_resolvable_type_sets(self):
         from hwave.solver import bond_channels as bc
         self.assertEqual(bc._BOND_RESOLVABLE_TYPES,
-                         ("CoulombInter", "Hund", "Ising", "Exchange"))
+                         ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop"))
+        # PairHop is read only when declared (issue #181 Phase C)
+        self.assertEqual(bc.longitudinal_bond_types(()), bc._LONGITUDINAL_ACTIVE_TYPES)
+        self.assertEqual(bc.longitudinal_bond_types(("PairHop", "Exchange")),
+                         bc._LONGITUDINAL_ACTIVE_TYPES + ("Exchange", "PairHop"))
+        topo = bc.resolve_bond_topology(
+            {"PairHop": {((1, 0, 0), (0, 0)): 0.3, ((-1, 0, 0), (0, 0)): 0.3}},
+            np.eye(3), 1, active_types=("PairHop",))
+        self.assertEqual(topo.delta_r.shape, (3, 3))
         self.assertEqual(bc._LONGITUDINAL_ACTIVE_TYPES,
                          ("CoulombInter", "Hund", "Ising"))
         self.assertEqual(bc._TRANSVERSE_ACTIVE_TYPES,

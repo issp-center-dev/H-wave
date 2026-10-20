@@ -2565,9 +2565,25 @@ _TRANSVERSE_ACTIVE_TYPES = ("CoulombInter", "Ising", "Exchange")
 # vertex_table.ADJUDICATED_SC), adjudicated against exact diagonalization
 # (tests/test_bond_longitudinal_ed.py), so it is a bond source of the
 # longitudinal channel. Its spin-flip content is the transverse channel's.
-_BOND_RESOLVABLE_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
+# An off-site PairHop (Phase C) is likewise a longitudinal bond source only:
+# its S/C entries couple bond m to the reversed bond with the orbitals swapped
+# (_add_pairhop_bond_entries). _LONGITUDINAL_BOND_TYPES is the fixed
+# Exchange-only selection the existing tests use; production reads
+# longitudinal_bond_types(), which adds each declared optional type.
+_BOND_RESOLVABLE_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop")
 _LONGITUDINAL_ACTIVE_TYPES = ("CoulombInter", "Hund", "Ising")
 _LONGITUDINAL_BOND_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange")
+#: off-site types that are bond sources of the longitudinal channel only when
+#: declared (an input without them keeps its previous topology and metadata)
+_LONGITUDINAL_OPTIONAL_TYPES = ("Exchange", "PairHop")
+
+
+def longitudinal_bond_types(offsite_types):
+    """The types the longitudinal bond topology reads for a split whose
+    off-site types are ``offsite_types``: the density types, plus each of
+    :data:`_LONGITUDINAL_OPTIONAL_TYPES` that is declared off-site."""
+    return _LONGITUDINAL_ACTIVE_TYPES + tuple(
+        t for t in _LONGITUDINAL_OPTIONAL_TYPES if t in offsite_types)
 
 
 def _as_readonly_int_array(value, name, *, ndim, last_dim=None):
@@ -3734,7 +3750,8 @@ def is_real_coefficient(v, imag_tol=1e-12):
     return abs(complex(v).imag) <= imag_tol
 
 
-def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
+def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None,
+                          spatial_shape=None):
     """One channel (``"S"`` or ``"C"``) of the bond-resolved longitudinal
     vertex, shape ``(nvol, ND, ND)`` complex128, ``ND = B * norb**2``.
 
@@ -3752,6 +3769,18 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     off-site coefficient is not represented by this bond-diagonal rule).
     Every bond-diagonal entry is q-INDEPENDENT; the q-dependence of the
     vertex sits entirely in ``W0``'s density slots.
+
+    PairHop (issue #181) is not bond-diagonal: an off-site pair hopping
+    ``J P+_i P_j`` couples a bond pair to the pair of the SAME orientation
+    with the other spin, which in this frame is the REVERSED channel with
+    the orbitals swapped. Every filed entry ``(m, a, b)`` adds
+    ``J e^{-i q.delta_r[m]}`` at ``(m, a, b) -> (reverse[m], b, a)`` in both
+    channels (S and C coefficient +1); the partner row supplies the
+    Hermitian-conjugate entry. Read off, entry by entry, from the
+    exact-diagonalization first-order response (one- and two-orbital
+    rings, ``tests/test_bond_longitudinal_ed.py``). This entry is
+    q-dependent, so ``spatial_shape`` ``(nx, ny, nz)`` is required when
+    PairHop is among ``types``.
 
     FRAME. The result lives in the general path's pair frame: the one
     ``bubble.bond_bubble_static`` produces (its channel-0 block equals
@@ -3828,6 +3857,10 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     delta_r = np.asarray(topo.delta_r)
     orbits = [orb for orb in iter_reversal_orbits(topo) if orb[0] != 0]
     for t in types:
+        if t == "PairHop":
+            _add_pairhop_bond_entries(W, topo.coeffs[t], reverse, delta_r, norb, nvol,
+                                      spatial_shape, imag_tol)
+            continue
         w_t = sc_coefficients(t, "cross")[col]
         arr = topo.coeffs[t]
         for (m, a, b) in orbits:
@@ -3848,12 +3881,48 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None):
     return W
 
 
-def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None):
+def _add_pairhop_bond_entries(W, arr, reverse, delta_r, norb, nvol, spatial_shape, imag_tol):
+    """The PairHop rule of :func:`build_sc_bond_channel` (same in S and C)."""
+    if spatial_shape is None:
+        raise ValueError(
+            "build_sc_bond_channel: a PairHop bond entry is q-dependent, so "
+            "spatial_shape (nx, ny, nz) is required")
+    # the shared mesh validation: strictly positive integral extents whose
+    # product is nvol, and channels that stay distinct on the mesh
+    validate_topology_against_mesh(
+        BondTopology(delta_r=delta_r, reverse=reverse, coeffs={"PairHop": arr}),
+        spatial_shape, arrays={"W": W})
+    nx, ny, nz = (int(x) for x in spatial_shape)
+    grid = np.stack(np.meshgrid(2.0 * np.pi * np.arange(nx) / nx,
+                                2.0 * np.pi * np.arange(ny) / ny,
+                                2.0 * np.pi * np.arange(nz) / nz, indexing="ij"),
+                    axis=-1).reshape(nvol, 3)
+    nd = norb * norb
+    arr = np.asarray(arr)
+    for m in range(1, arr.shape[0]):
+        for a in range(norb):
+            for b in range(norb):
+                v = complex(arr[m, a, b])
+                if v == 0:
+                    continue
+                if not is_real_coefficient(v, imag_tol=imag_tol):
+                    raise ValueError(
+                        "build_sc_bond_channel: the off-site PairHop coefficient at "
+                        "channel {} (delta_r={}), orbitals ({}, {}) is complex ({}); "
+                        "only real off-site coefficients are supported".format(
+                            m, tuple(int(x) for x in delta_r[m]), a, b, v))
+                phase = np.exp(-1j * (grid @ np.asarray(delta_r[m], dtype=float)))
+                W[:, m * nd + a * norb + b, int(reverse[m]) * nd + b * norb + a] += v.real * phase
+
+
+def W_sc_bond(topo, S0, C0, *, imag_tol=1e-12, types=None, spatial_shape=None):
     """``(S_bond, C_bond)``: :func:`build_sc_bond_channel` for both
     channels (tests and Gate G1; production builds one channel at a time
     so that only one ``(nvol, ND, ND)`` vertex is alive)."""
-    return (build_sc_bond_channel(topo, S0, "S", imag_tol=imag_tol, types=types),
-            build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types))
+    return (build_sc_bond_channel(topo, S0, "S", imag_tol=imag_tol, types=types,
+                                  spatial_shape=spatial_shape),
+            build_sc_bond_channel(topo, C0, "C", imag_tol=imag_tol, types=types,
+                                  spatial_shape=spatial_shape))
 
 
 _GUARD_FREQS = ("all", "static")

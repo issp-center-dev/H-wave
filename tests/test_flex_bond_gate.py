@@ -154,11 +154,8 @@ class TestRefusals(unittest.TestCase):
         self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
 
     def test_refusal_precedence_tripwires(self):
-        # (6) off-site PairHop (an off-site Exchange is accepted by the gate
-        # since issue #181; without the gate it is refused, see
-        # tests/test_flex_bond_exchange.py)
-        s, r = _flex(inter={"CoulombInter": "coulombinter.dat", "PairHop": "coulombinter.dat"})
-        self._assert_refused(s, r.get_param("green"), "PairHop")
+        # (6) an off-site Exchange or PairHop is accepted by the gate since
+        # issue #181 (refused without it: tests/test_flex_bond_exchange.py)
         # (6) no declared off-site shell
         s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
         self._assert_refused(s, r.get_param("green"), "shell")

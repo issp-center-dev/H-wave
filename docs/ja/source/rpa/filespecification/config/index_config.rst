@@ -252,17 +252,18 @@ TOML形式
   感受率を\ ``chiq``\ ファイルの\ ``longitudinal_bond_*``\ キーに書き
   出します。ファイル内の配列\ ``chiq``\ は上書きされず、標準の ring の
   結果のままです。少なくとも
-  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``/``Exchange``\ シェルの宣言
+  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``/``Exchange``/``PairHop``\ シェルの宣言
   （係数ゼロの宣言も可）、実数の係数、偶数の\ ``Nmat``\ 、副格子なし、
   ``chi0q_init``\ なし、\ ``enable_spin_orbital``\ なしが必要で、
-  オフサイトの\ ``PairHop``\ の宣言はエラーとして拒否されます。
+  オフサイトの\ ``PairHop``\ はボンドの成分のみを通じて入ります
+  （:ref:`rpa_longitudinal_bond`\ を参照）。
   オフサイトの\ ``Exchange``\ はボンド（Fock）交差のみを通じて入り
   （Hartree 成分はありません）、スピン反転成分はこのチャネルではなく
   横チャネル（\ ``transverse_bond_channels``\ ）の扱いです。
   ``transverse_bond_channels = true``\ とは併用できません。
   ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
   自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
-  ``Exchange``\ もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
+  ``Exchange``\ や\ ``PairHop``\ もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
   スピン部分が SU(2) 対称でない場合は警告が出力されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
@@ -393,7 +394,7 @@ TOML形式
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
   スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
   （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
-  偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ は単独では拒否されます
+  偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ や\ ``PairHop``\ は単独では拒否されます
   （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。
   ``longitudinal_bond_channels = true``\ と併用する場合は受け付けられます。
   ``gpu = true``\ は受理されます。
