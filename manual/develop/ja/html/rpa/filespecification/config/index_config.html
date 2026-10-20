@@ -103,7 +103,8 @@
 <p><strong>説明 :</strong> 計算モードを指定します。乱雑位相近似を利用する場合には<code class="docutils literal notranslate"><span class="pre">&quot;RPA&quot;</span></code>を、ゆらぎ交換近似（FLEX）を利用する場合には<code class="docutils literal notranslate"><span class="pre">&quot;FLEX&quot;</span></code>を記載します。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p>
-<p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
+<p><strong>形式 :</strong> bool型 (デフォルトは false。<code class="docutils literal notranslate"><span class="pre">&quot;true&quot;</span></code>のように解釈できる文字列は
+警告付きで受け付け、解釈できない値はエラーになります)</p>
 <p><strong>説明 :</strong> スピン軌道相互作用を有効にします。<code class="docutils literal notranslate"><span class="pre">true</span></code>にすると、Transfer項の軌道インデックスは
 インターリーブ規約で解釈されます。複合インデックスは<span class="math notranslate nohighlight">\(2\alpha + s\)</span>（物理軌道インデックス
 <span class="math notranslate nohighlight">\(\alpha\)</span>（0始まり）、スピンインデックス<span class="math notranslate nohighlight">\(s \in \{0, 1\}\)</span>）です。</p>
