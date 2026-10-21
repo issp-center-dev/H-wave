@@ -233,9 +233,10 @@ raise ``IterationMax``, lower ``Mix``, switch to (or keep) Anderson mixing
 start the loop from :math:`\Sigma = 0` -- that is, omit ``sigma_init``
 from the ``[file.input]`` section -- rather than continuing from a seed
 written with the retired kernel. Such a seed is accepted: a seed recorded
-with ``flex_second_order = "takimoto"`` is used as the initial value only,
-the result is determined by the ``"local"`` self-consistency, and the
-solver logs a warning saying so. An archive written by H-wave 2.0.0 or an
+with ``flex_second_order = "takimoto"`` that passes the usual seed checks
+is the initial value only, every iteration uses ``"local"`` (a converged
+result is the ``"local"`` fixed point), and the solver logs a warning
+saying so. An archive written by H-wave 2.0.0 or an
 earlier release carries no kernel record at all, so only an informational
 line is logged for it.
 
