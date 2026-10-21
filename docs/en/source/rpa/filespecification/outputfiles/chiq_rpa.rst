@@ -67,7 +67,8 @@ every archive it produces (``chi0q.npz``, ``chiq.npz``, ``chiq_s.npz``,
 archive; IR-native and densified variants alike):
 
 - ``flex_second_order``: the second-order kernel of the effective
-  interaction the run used (``local`` | ``takimoto``), stored as a 0-d
+  interaction the run used (always ``local``; archives of earlier
+  development versions may carry the retired ``takimoto``), stored as a 0-d
   ``<U8`` string array (use ``str(...)`` or ``.item()``). See
   ``flex_second_order`` in the ``[mode.param]`` section of the
   configuration reference and :ref:`flex_second_order_kernel`.
@@ -78,9 +79,11 @@ Both fields are ABSENT from ``calc_scheme = "reduced"`` archives, from RPA
 archives, and from any archive written before this key was introduced
 (H-wave 2.0.0 and earlier). A missing field is
 never an error: every H-wave reader accepts such a file. When the initial
-self-energy given by ``sigma_init`` (the seed) records a different kernel
-from the current run, the solver logs one warning at WARNING level (and
-one message at INFO level when the seed carries no record at all); scripts
+self-energy given by ``sigma_init`` (the seed) records the retired
+``takimoto`` kernel, the seed is still used, as the initial value only (the
+result is determined by the ``local`` self-consistency), and the solver
+logs one warning at WARNING level saying so (and one message at INFO level
+when the seed carries no record at all); scripts
 that compare the member list of an archive strictly (the ``files``
 attribute of the object returned by ``numpy.load``) must allow the two
 additional names.

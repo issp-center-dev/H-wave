@@ -88,10 +88,11 @@ class SigmaSeedEnvelope:
     marker: object
     ir_meta: object
     file_name: str
-    # #181 follow-up: the flex_second_order kernel ("local" | "takimoto")
-    # this seed was computed with and the version of that provenance block,
-    # or None when the archive predates 2.1 or was written by the reduced
-    # scheme (which never stamps either). Kept LAST with defaults so every
+    # #181 follow-up: the flex_second_order kernel this seed was computed
+    # with ("local", or "takimoto", retired by issue #253 but still accepted
+    # in a seed) and the version of that provenance block, or None when the
+    # archive predates 2.1 or was written by the reduced scheme (which never
+    # stamps either). Kept LAST with defaults so every
     # existing positional-adjacent keyword construction of this dataclass
     # stays valid. Both are the RAW arrays as found in the file -- not
     # flattened to an element and not converted: the general path is the one

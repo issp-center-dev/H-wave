@@ -693,18 +693,17 @@ self-energy is built from the effective interaction
 where :math:`\bar\chi` is the bare bubble and :math:`\hat{U}^s`,
 :math:`\hat{U}^c` are the spin and charge vertices of the ring. Written
 this way the first two terms are the ring series from THIRD order on, and
-the whole second order of the theory sits in :math:`W^{(2)}`. Which
-expression is used for :math:`W^{(2)}` is selected by ``[mode.param]``
-``flex_second_order`` (see the configuration reference); the same key also
-selects the pair orientation in which the ring is contracted (next
-paragraph).
+the whole second order of the theory sits in :math:`W^{(2)}`, the exact
+local second order described below (``[mode.param] flex_second_order =
+"local"``, the default and the only accepted value; see the configuration
+reference). The ring is contracted in the pair orientation of the next
+paragraph.
 
 The self-energy is :math:`\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
 \sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
 \mathbf{q}, i\omega - i\nu)`. The ring terms are matrix products in the
-pair layout of the bubble, and with the default ``flex_second_order =
-"local"`` they enter this sum with the two orbitals of **both** pairs
-swapped, :math:`(\mu m) \leftrightarrow (m \mu)`. In this
+pair layout of the bubble, and they enter this sum with the two orbitals
+of **both** pairs swapped, :math:`(\mu m) \leftrightarrow (m \mu)`. In this
 orientation every order of the ring is the functional derivative of
 :math:`\mathrm{Tr}\,(\bar\chi \hat{U})^n`, so the self-energy is
 conserving (derivable from a Luttinger-Ward functional), and it is the
@@ -714,12 +713,12 @@ results of multi-orbital models with any inter-orbital interaction
 (CoulombInter, Hund, Exchange, Ising, PairHop) change, while an intra-orbital
 interaction alone (CoulombIntra) is unaffected. The bond-resolved channels
 (``longitudinal_bond_channels``) follow the same rule inside every channel
-block. The legacy ``flex_second_order = "takimoto"`` kernel keeps the earlier
-orientation, so that it still reproduces earlier releases; for inter-orbital
-interactions it is therefore not conserving.
+block. (The Takimoto-Hotta-Ueda kernel, now retired -- see the end of
+this section -- had kept the earlier orientation, so for inter-orbital interactions
+it was not conserving.)
 
-``flex_second_order = "local"`` (the default)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``flex_second_order = "local"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Write the interaction with a generalised index :math:`p = (\text{site},
 \text{orbital}, \text{spin})` as :math:`{\cal H}_{\rm int} =
@@ -843,11 +842,11 @@ with an off-site :math:`V` produces the cross term
 :math:`2 U V(\mathbf{q}) \bar\chi`, which no :math:`q`-only vertex built
 from the Hartree part alone contains.
 
-``flex_second_order = "takimoto"``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Retired: ``flex_second_order = "takimoto"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-This value keeps the legacy Takimoto-Hotta-Ueda form of the effective
-interaction verbatim,
+H-wave 2.0.0 and earlier built the general path from the Takimoto-Hotta-Ueda
+form of the effective interaction,
 
 .. math::
 
@@ -858,13 +857,16 @@ interaction verbatim,
 
 i.e. :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s \bar\chi \hat{U}^s +
 \tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c - \tfrac{1}{4}(\hat{U}^s +
-\hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`. It is exact at second order
-for a single-band Hubbard interaction and approximate for every other
-term; it is kept as the reproduction path for results obtained with
-H-wave 2.0.0 and earlier releases.
+\hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`, with its ring contracted
+in the earlier pair orientation. It is exact at second order for a
+single-band Hubbard interaction and approximate for every other term. It
+was available as ``flex_second_order = "takimoto"`` until it was retired
+(issue #253); the value is now refused at start-up with a message that
+names ``"local"``. The results of H-wave 2.0.0 and earlier can therefore no
+longer be reproduced by a setting; use an earlier release for that.
 
-Accordingly, single-band inputs containing only ``CoulombIntra`` agree
-under both values to round-off, while every multi-orbital on-site interaction
+Single-band inputs containing only ``CoulombIntra`` agree with those
+releases to round-off, while every multi-orbital on-site interaction
 (:math:`U'`, ``Hund``, ``Ising``, ``Exchange``, ``PairHop``,
 ``PairLift``) and every off-site interaction changes the general-path
 result.
@@ -872,10 +874,10 @@ result.
 .. note::
 
    With ``longitudinal_bond_channels = true`` the channel-0 block of the
-   bond-resolved effective interaction is built by the same kernel, so
-   the two values agree there as well for a single-band :math:`U + V`
-   input (the bond-resolved channels already carried the exact direct
-   :math:`V` second order). The bond-resolved blocks are exact at second
+   bond-resolved effective interaction is built by the same kernel, and
+   for a single-band :math:`U + V` input it agrees with the retired
+   expression as well (the bond-resolved channels already carried the
+   exact direct :math:`V` second order). The bond-resolved blocks are exact at second
    order on every bond, inter-orbital ones included: the mixed on-site
    :math:`\times` bond blocks read the bond side at the transposed orbital
    pair (issue #192).
@@ -999,14 +1001,9 @@ is
 
 the ring series from third order on plus the exact second order
 :math:`W^{(2)}`: on the channel-0 block the second-order kernel of the
-standard general path, built by the same accumulator and therefore selected
-by the same ``flex_second_order`` key (see
+standard general path, built by the same accumulator (see
 :ref:`flex_second_order_kernel`), so that with every off-site coefficient
-zero the run is identical to the standard Hartree-Fock FLEX -- under
-``flex_second_order = "takimoto"`` that block is the legacy
-:math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00} -
-\tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm
-on})` instead;
+zero the run is identical to the standard Hartree-Fock FLEX;
 on the mixed channel-0/bond blocks :math:`\tfrac{1}{4}(S \bar\chi S + C
 \bar\chi C)` (the exchange skeleton of the off-site interaction, once) and
 zero on the bond-bond blocks (their ring second order is the direct skeleton
@@ -1024,11 +1021,10 @@ block :math:`(m', m)`), realised as real-space rolls of :math:`G`. At second
 order in the couplings this reproduces the direct and exchange skeletons of
 the off-site interaction exactly (pinned by an independent real-space
 enumeration), including the :math:`UV` cross term. The standard general path
-under ``flex_second_order = "local"`` already carries the direct skeleton and
-the :math:`UV` cross term exactly and misses only the exchange skeleton of
-two off-site vertices; under the legacy ``"takimoto"`` expression it keeps
-half of the direct :math:`V^2` term and no :math:`UV` cross term at second
-order. (With ``longitudinal_bond_channels = true`` the bond-resolved blocks
+already carries the direct skeleton and the :math:`UV` cross term exactly and
+misses only the exchange skeleton of two off-site vertices (the retired
+Takimoto-Hotta-Ueda expression kept half of the direct :math:`V^2` term and
+no :math:`UV` cross term at second order). (With ``longitudinal_bond_channels = true`` the bond-resolved blocks
 are exact at second order on every bond, inter-orbital ones included: the
 mixed on-site :math:`\times` bond blocks read the bond side at the
 transposed orbital pair, issue #192.)

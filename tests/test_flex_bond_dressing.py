@@ -71,9 +71,8 @@ def _onsite_factors():
 class TestDressAndBuildW(unittest.TestCase):
 
     def test_w_and_collapses_and_static(self):
-        """The rev-19 channel-0 kernel ("takimoto", explicit) and the exact
-        local one ("local"); the mixed and bond-bond blocks are the same
-        under both.
+        """The channel-0 block carries the exact local second-order kernel;
+        the mixed blocks carry the exchange skeleton.
 
         The mixed (channel-0 x bond) blocks are read at the PERMUTED pair
         index on both axes -- the orbital-pair transpose inside every bond
@@ -88,42 +87,33 @@ class TestDressAndBuildW(unittest.TestCase):
         nmat, nvol, ND = chi_bar.shape[:3]
         nd = 4
         factors = _onsite_factors()
-        for output_full, second_order in ((False, "takimoto"), (True, "takimoto"),
-                                          (False, "local"), (True, "local")):
-            with self.subTest(output_full=output_full, second_order=second_order):
+        for output_full in (False, True):
+            with self.subTest(output_full=output_full):
                 names = ("chibar", "W") + (("chi_s_w", "chi_c_w") if output_full else ())
                 with BondBlockStore(nmat, nvol, ND, nd, names) as store:
                     store.put_freq_batch("chibar", 0, nmat, chi_bar)
-                    S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
-                    C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
                     view = types.SimpleNamespace(n_channels=ND // nd)
                     norb = int(round(nd ** 0.5))
-                    with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb) as dev:
+                    with BondDeviceContext.for_view(np, S, C, view, norb) as dev:
                         res = dress_and_build_w(store, dev, nb=4,
                                                 output_full=output_full, nmat=nmat,
                                                 nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
-                                                factors=factors, second_order=second_order)
+                                                factors=factors)
                     I = np.eye(ND)
                     chi_s = np.linalg.solve(I - chi_bar @ S, chi_bar)
                     chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
                     # spec 3.3 rev 19: ring beyond second order + the exact second order
                     W_ref = 1.5 * S @ (chi_s - chi_bar) @ S + 0.5 * C @ (chi_c - chi_bar) @ C
-                    if second_order == "local":
-                        # the ring's pair orientation (issue #251): the orbitals
-                        # of every pair swapped inside its channel block; the
-                        # legacy "takimoto" kernel keeps the earlier one
-                        no = int(round(nd ** 0.5))
-                        pin = np.arange(ND).reshape(ND // nd, no, no).transpose(0, 2, 1).ravel()
-                        W_ref = W_ref[..., pin[:, None], pin[None, :]]
+                    # the ring's pair orientation (issue #251): the orbitals
+                    # of every pair swapped inside its channel block
+                    no = int(round(nd ** 0.5))
+                    pin = np.arange(ND).reshape(ND // nd, no, no).transpose(0, 2, 1).ravel()
+                    W_ref = W_ref[..., pin[:, None], pin[None, :]]
                     A = S @ chi_bar @ S
                     Bc = C @ chi_bar @ C
                     W2 = np.zeros_like(W_ref)
-                    if second_order == "takimoto":
-                        W2[:, :, :nd, :nd] = (1.5 * A + 0.5 * Bc)[:, :, :nd, :nd] \
-                            - 0.25 * (S_on + C_on) @ chi_bar[:, :, :nd, :nd] @ (S_on + C_on)
-                    else:
-                        # spec 2026-09-08 D5: the exact local kernel on channel 0
-                        W2[:, :, :nd, :nd] = dense_w2(chi_bar[:, :, :nd, :nd], factors)
+                    # spec 2026-09-08 D5: the exact local kernel on channel 0
+                    W2[:, :, :nd, :nd] = dense_w2(chi_bar[:, :, :nd, :nd], factors)
                     # the pair permutation of the mixed blocks: identity on
                     # channel 0 (never reached below, which only reads the
                     # bond half), the orbital-pair transpose (l1, l2) ->
@@ -165,12 +155,12 @@ class TestDressAndBuildWDevice(unittest.TestCase):
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
         nmat, nvol, ND = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1]
         nd = 4
-        S_on = S[:, :nd, :nd].copy(); C_on = C[:, :nd, :nd].copy()
         view = types.SimpleNamespace(n_channels=ND // nd)
+        factors = _onsite_factors()
         outs = {}
         for nb in (1, 3, nmat // 2, nmat):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(np, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(np, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 puts = []
                 orig = store.put_freq_batch
@@ -179,7 +169,7 @@ class TestDressAndBuildWDevice(unittest.TestCase):
                 store.put_freq_batch = _spy
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
-                                           second_order="takimoto")
+                                           factors=factors)
                 outs[nb] = (store._arrays["W"].copy(), res.collapse0.copy(), res.static_s.copy(),
                             res.cond_min_s)
                 self.assertEqual([p for p in puts if p[0] == "W"],
@@ -355,13 +345,11 @@ class TestDressBatchGuardModes(unittest.TestCase):
 
 class TestRingOrientationUnderBondW2(unittest.TestCase):
     """Issue #251 with the exact bond-enlarged second order (``bond_w2``):
-    the caller's ``second_order`` still selects the ring's pair orientation
-    -- ``"local"`` the conserving one (the orbitals of every pair swapped
-    inside its channel block), the legacy ``"takimoto"`` the earlier one --
-    and nothing else differs between the two (the second order is the
-    ``bond_w2`` factors either way)."""
+    the ring is taken in the conserving pair orientation (the orbitals of
+    every pair swapped inside its channel block), and the second order is
+    the ``bond_w2`` factors alone."""
 
-    def test_only_the_ring_orientation_differs(self):
+    def test_ring_is_in_the_conserving_orientation(self):
         from hwave.solver import flex_bond
         nmat, nvol, norb, B = 3, 2, 3, 3
         nd = norb * norb
@@ -374,48 +362,41 @@ class TestRingOrientationUnderBondW2(unittest.TestCase):
         C = 0.7 * np.conjugate(S)
         A = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
         Bf = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
-        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
         view = types.SimpleNamespace(n_channels=B)
 
-        def run(second_order):
-            with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
-                store.put_freq_batch("chibar", 0, nmat, cb)
-                with flex_bond.BondDeviceContext.for_view(np, S, C, zero_on, zero_on,
-                                                          view, norb) as dev:
-                    flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
-                                                nmat=nmat, nvol=nvol, nd=nd,
-                                                spatial_shape=(nvol, 1, 1), factors=None,
-                                                second_order=second_order,
-                                                bond_w2=[((0, 0, 0), A, Bf)])
-                return np.array(store.get_freq_batch("W", 0, nmat))
+        with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
+            store.put_freq_batch("chibar", 0, nmat, cb)
+            with flex_bond.BondDeviceContext.for_view(np, S, C, view, norb) as dev:
+                flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
+                                            nmat=nmat, nvol=nvol, nd=nd,
+                                            spatial_shape=(nvol, 1, 1), factors=None,
+                                            bond_w2=[((0, 0, 0), A, Bf)])
+            W = np.array(store.get_freq_batch("W", 0, nmat))
 
-        W_loc, W_tak = run("local"), run("takimoto")
         eye = np.eye(ND)
         chi_s = np.linalg.solve(eye - cb @ S[None], cb)
         chi_c = np.linalg.solve(eye + cb @ C[None], cb)
         ring = 1.5 * (S[None] @ (chi_s - cb) @ S[None]) + 0.5 * (C[None] @ (chi_c - cb) @ C[None])
         pin = np.arange(ND).reshape(B, norb, norb).transpose(0, 2, 1).ravel()
-        want = ring[..., pin[:, None], pin[None, :]] - ring
-        self.assertGreater(np.abs(want).max(), 1e-3 * np.abs(ring).max())   # the swap is visible
-        np.testing.assert_allclose(W_loc - W_tak, want, rtol=0,
-                                   atol=1e-12 * np.abs(W_tak).max())
+        ring_pin = ring[..., pin[:, None], pin[None, :]]
+        self.assertGreater(np.abs(ring_pin - ring).max(), 1e-3 * np.abs(ring).max())  # visible
+        want = ring_pin + 0.5 * (A[None] @ cb @ Bf[None])
+        np.testing.assert_allclose(W, want, rtol=0, atol=1e-12 * np.abs(want).max())
 
-    def test_an_unknown_kernel_is_refused_with_bond_w2_too(self):
-        """``bond_w2`` replaces the second order but not the validation of
-        ``second_order``, which still selects the ring's orientation."""
+    def test_without_bond_w2_the_factors_are_required(self):
+        """Without ``bond_w2`` the channel-0 second order is the exact local
+        kernel, which needs the compiled factor pack."""
         from hwave.solver import flex_bond
         nvol, nd, norb, B = 2, 4, 2, 2
         ND = B * nd
         zero = np.zeros((nvol, ND, ND), dtype=np.complex128)
-        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
         view = types.SimpleNamespace(n_channels=B)
-        with flex_bond.BondDeviceContext.for_view(np, zero, zero, zero_on, zero_on,
+        with flex_bond.BondDeviceContext.for_view(np, zero, zero,
                                                   view, norb) as dev:
-            with self.assertRaisesRegex(ValueError, "second_order must be"):
+            with self.assertRaisesRegex(ValueError, "needs the factors"):
                 flex_bond.dress_and_build_w(None, dev, nb=1, output_full=False, nmat=2,
                                             nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                            second_order="nonsense",
-                                            bond_w2=[((0, 0, 0), zero, zero)])
+                                            factors=None)
 
 
 if __name__ == "__main__":

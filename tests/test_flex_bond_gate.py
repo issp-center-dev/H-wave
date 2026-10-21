@@ -454,7 +454,7 @@ class TestFailureClearing(unittest.TestCase):
     def test_caches_and_seed_are_dropped_on_every_failure(self):
         from hwave.solver import flex_bond
         attrs = ("_phase_b_seed", "_hf_tables", "_bond_topo", "_bond_split", "_bond_view",
-                 "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on", "_bond_est", "_bond_last")
+                 "_bond_S", "_bond_C", "_bond_est", "_bond_last")
         with tempfile.TemporaryDirectory() as out:
             # preflight failure (no declared shell)
             s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})

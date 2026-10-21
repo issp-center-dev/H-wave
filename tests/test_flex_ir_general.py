@@ -707,11 +707,14 @@ def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
 
 
 # --- #181 follow-up: the second-order kernel on the IR path ---------------
-# tests/test_flex_second_order_compat.py pins the two kernels against each
-# other (and "takimoto" against develop) on the UNIFORM grid. The two cases
-# below carry that contract onto the IR path: the exact local kernel must be
-# a property of the interaction, not of the Matsubara representation, and
-# "takimoto" must still be develop's code path there.
+# tests/test_flex_second_order_compat.py pins the local kernel against the
+# reference revision on the UNIFORM grid. The two cases below carry that
+# contract onto the IR path: the exact local kernel must be a property of
+# the interaction, not of the Matsubara representation, and on an on-site
+# fixture it must still be the reference revision's code path there. (Both
+# used to run the "takimoto" kernel too, which this tree refuses since issue
+# #253: the anti-vacuity leg now forms that kernel's formula in-process, and
+# the reference comparison runs "local" on both sides.)
 
 _IR_ARCHIVE_RUN = r'''
 import json, os, sys
@@ -725,8 +728,8 @@ par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat
        "IterationMax": 3, "Mix": 0.5, "EPS": 12, "matsubara_basis": "ir",
        # Pin ir_wmax on BOTH revisions so the IR basis is identical: issue #184
        # changed the FLEX auto ir_wmax default (mu-aware), so leaving it out
-       # would compare two different bases rather than the takimoto kernel this
-       # test is about (the reference revision's auto value is the old one).
+       # would compare two different bases rather than the kernel this test is
+       # about (the reference revision's auto value is the old one).
        "ir_wmax": 20.0}
 if so != "absent":
     par["flex_second_order"] = so
@@ -758,11 +761,12 @@ def test_second_order_local_ir_matches_uniform_onsite_uprime():
     kernel requested explicitly. The fixture's on-site inter-orbital
     CoulombInter (U' = 1, written by ``_write_2d_2orb_onsite_fixture``) is
     what makes the case non-trivial: with CoulombIntra alone the local
-    kernel reduces to the legacy assembly identically (spec section 3), so
-    the anti-vacuity leg below -- the same uniform run under ``"takimoto"``
-    landing on a visibly different sigma -- would be empty.
+    kernel reduces to the Takimoto-Hotta-Ueda assembly identically (spec
+    section 3), so the anti-vacuity leg below -- the effective interaction
+    of the bare state differing visibly from that assembly's -- would be
+    empty.
 
-    Cost: three converged ``Nmat = 1024`` solves, 5.1 s measured on its own.
+    Cost: two converged ``Nmat = 1024`` solves.
     That is at the opt-in threshold of ``tests/heavy_tests.py`` rather than
     over it, and the registry is keyed by ``(module, class, method)`` -- it
     cannot name a module-level pytest function -- so this case stays in the
@@ -788,21 +792,35 @@ def test_second_order_local_ir_matches_uniform_onsite_uprime():
         b = getattr(s_u, key)
         scale = np.abs(b).max()
         assert np.abs(a - b).max() / scale < 3e-2, key
-    # anti-vacuity: the local kernel is not the legacy one on this fixture
-    s_t, gi_t = _make_general_solver(1024, "uniform", T=T, iteration_max=60,
-                                     extra_param={'flex_second_order': 'takimoto'})
-    s_t.solve(gi_t, 'tests/flex/output')
-    _assert_converged(s_t)
-    gap = np.abs(s_u.sigma - s_t.sigma).max() / np.abs(s_t.sigma).max()
-    assert gap > 1e-3, "local and takimoto agree on this fixture ({}); the " \
-                       "IR parity case would be vacuous".format(gap)
+    # anti-vacuity: on this fixture the local kernel is not the retired
+    # Takimoto-Hotta-Ueda assembly (formed here on the bare state)
+    s_t, _ = _make_general_solver(64, "uniform", T=T, iteration_max=1, extra_param=local)
+    beta = 1.0 / T
+    s_t._calc_epsilon_k({})
+    G = s_t._calc_dressed_green(
+        beta, 0.0, np.zeros((1, s_t.nmat, s_t.lattice.nvol, s_t.norb, s_t.norb), complex))
+    chi0q, Us, Uc = s_t._inflate_chi0q_and_ham_general(
+        s_t._calc_chi0q(G, np.zeros_like(G), beta)[0], s_t.ham_info.ham_inter_q)
+    chi_s, chi_c = s_t._solve_channels_general(chi0q, Us, Uc)
+    v_loc = s_t._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
+                                   factors=s_t._second_order_factors)
+    ndx = s_t.norb ** 2
+    shape = (s_t.nmat, s_t.lattice.nvol, ndx, ndx)
+    UsB, UcB, UpB = Us[np.newaxis], Uc[np.newaxis], (Us + Uc)[np.newaxis]
+    v_thu = (1.5 * (UsB @ chi_s.reshape(shape) @ UsB) + 0.5 * (UcB @ chi_c.reshape(shape) @ UcB)
+             - 0.25 * (UpB @ chi0q.reshape(shape) @ UpB))
+    gap = np.abs(v_loc - v_thu).max() / np.abs(v_thu).max()
+    assert gap > 1e-3, "the local kernel and the Takimoto-Hotta-Ueda assembly agree on " \
+                       "this fixture ({}); the IR parity case would be vacuous".format(gap)
 
 
-def test_second_order_takimoto_ir_numerically_identical_to_develop():
-    """``"takimoto"`` on the IR path is still the reference revision's code
-    path: every numerical archive member of a general+IR run with the key
-    set to ``"takimoto"`` is ``np.array_equal`` to the same run, same key,
-    on the reference source tree.
+def test_second_order_local_ir_numerically_identical_to_develop():
+    """``"local"`` on the IR path is still the reference revision's code
+    path on an on-site fixture: every numerical archive member of a
+    general+IR run with the key set to ``"local"`` is ``np.array_equal`` to
+    the same run, same key, on the reference source tree (given issue
+    #251's ring orientation, :func:`tests.test_flex_second_order_compat.
+    reference_script`).
 
     The fixture is ON-SITE only (``_write_2d_2orb_onsite_fixture``), so the
     interaction-row orientation change (issue #193) does not reach it: the
@@ -829,11 +847,9 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     b = tempfile.mkdtemp(prefix="hwave_ir_so_here_")
     try:
         _write_2d_2orb_onsite_fixture(fixture)
-        # "takimoto" on BOTH sides: the reference revision is the merge that
-        # added flex_second_order and defaults it to "local", so leaving the
-        # key out there would compare two different kernels rather than two
-        # revisions (see tests/test_flex_second_order_compat.DEVELOP_COMMIT)
-        for checkout, out, so in ((dev, a, "takimoto"), (here, b, "takimoto")):
+        # the kernel named on BOTH sides (see
+        # tests/test_flex_second_order_compat.DEVELOP_COMMIT)
+        for checkout, out, so in ((dev, a, "local"), (here, b, "local")):
             if checkout == here:
                 # this tree's own run: keep it measured
                 env = own_tree_subprocess_env(checkout)

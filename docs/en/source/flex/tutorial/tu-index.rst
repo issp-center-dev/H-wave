@@ -185,30 +185,27 @@ Second order of the effective interaction (``flex_second_order``)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Under ``calc_scheme = "general"`` the second-order part :math:`W^{(2)}` of
-the effective interaction is built by default from the exact LOCAL
-second-order kernel, ``[mode.param] flex_second_order = "local"``. It
+the effective interaction is built from the exact LOCAL second-order
+kernel, ``[mode.param] flex_second_order = "local"`` (the default and the
+only accepted value). It
 carries the complete second order of every on-site interaction term, the
 direct skeleton of the off-site density terms and every mixed
 on-site/off-site diagram; only the exchange skeleton of two off-site
 vertices is left to ``longitudinal_bond_channels = true`` (see
 :ref:`flex_second_order_kernel` for the formulas and the classification).
 
-Earlier versions used the Takimoto-Hotta-Ueda expression
+H-wave 2.0.0 and earlier used the Takimoto-Hotta-Ueda expression
 :math:`-\tfrac{1}{4}(\hat{U}^s+\hat{U}^c)\chi_0(\hat{U}^s+\hat{U}^c)`,
 which is exact at second order only for a single-band Hubbard
-interaction. Set
-
-.. code-block:: toml
-
-   [mode.param]
-     flex_second_order = "takimoto"
-
-to reproduce results produced with H-wave 2.0.0 and earlier releases;
-the option stays available throughout the 2.x series.
+interaction. It was selectable as ``flex_second_order = "takimoto"`` until
+it was retired (issue #253); that value is now refused at start-up with a
+message that names ``"local"``. The results of H-wave 2.0.0 and earlier
+can therefore no longer be reproduced by a setting; use an earlier release
+for that.
 
 **What changes.** Single-band inputs containing only ``CoulombIntra``
-agree under both kernel choices (``"local"`` and ``"takimoto"``) to within
-numerical round-off, and so do single-band :math:`U + V` inputs run with
+agree with H-wave 2.0.0 and earlier to within numerical round-off, and so
+do single-band :math:`U + V` inputs run with
 the bond-resolved channels (``longitudinal_bond_channels = true``), which
 already carried the exact direct :math:`V` second order. Every
 multi-orbital on-site interaction (:math:`U'`, ``Hund``, ``Ising``,
@@ -224,28 +221,23 @@ start-up: such a row is not a two-body term, because it reduces to a
 one-body level shift, to an effective ``CoulombIntra``, or to identically
 zero. The message gives the equivalent declaration for that type (usually
 a ``CoulombIntra`` entry plus a level shift in the transfer file).
-Rewrite the interaction file as the message says, or use
-``flex_second_order = "takimoto"`` as an immediate workaround.
+Rewrite the interaction file as the message says.
 
-**Convergence.** The SCF trajectory can change with the kernel. On the
-2-orbital self-consistency fixture (on-site :math:`U`, :math:`U'`,
-``Hund`` plus off-site :math:`V`, Anderson mixing) both values needed the
-same iteration count -- 9 without and 11 with ``flex_hartree_fock =
-true`` -- and a full FLEX iteration costs about 1.2x more under
-``"local"``. If a run that used to converge now stalls, raise
-``IterationMax``, lower ``Mix``, switch to (or keep) Anderson mixing
+**Convergence.** Compared with H-wave 2.0.0 and earlier the SCF trajectory
+can change. On the 2-orbital self-consistency fixture (on-site :math:`U`,
+:math:`U'`, ``Hund`` plus off-site :math:`V`, Anderson mixing) both
+kernels needed the same iteration count -- 9 without and 11 with
+``flex_hartree_fock = true``. If a run that used to converge now stalls,
+raise ``IterationMax``, lower ``Mix``, switch to (or keep) Anderson mixing
 (``mixing_scheme = "anderson"``; the solver default is ``"linear"``), and
 start the loop from :math:`\Sigma = 0` -- that is, omit ``sigma_init``
 from the ``[file.input]`` section -- rather than continuing from a seed
-written with the other kernel: the solver warns when the seed's recorded
-``flex_second_order`` differs from the run's (and notes it when the seed
-carries no record, i.e. a reduced-scheme archive or one written before
-this key was introduced). An archive written by H-wave 2.0.0 or an earlier
-release carries no kernel record at all, so only that informational line is
-logged; if warm-starting such a seed stalls under
-``"local"``, either restart from :math:`\Sigma = 0` or set
-``flex_second_order = "takimoto"`` to match the kernel the seed was
-produced with.
+written with the retired kernel. Such a seed is accepted: a seed recorded
+with ``flex_second_order = "takimoto"`` is used as the initial value only,
+the result is determined by the ``"local"`` self-consistency, and the
+solver logs a warning saying so. An archive written by H-wave 2.0.0 or an
+earlier release carries no kernel record at all, so only an informational
+line is logged for it.
 
 
 .. _flex_near_instability:
@@ -500,11 +492,11 @@ aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
 ``Nmat`` and ``CellShape`` fixed across a continuation sweep.
 
 A ``calc_scheme = "general"`` seed also records which second-order kernel
-produced it. Seeding across kernels is allowed, and the solver warns when
-the seed's ``flex_second_order`` differs from the current run's (and notes
-it when the seed carries no such record, i.e. a reduced-scheme archive or
-one written before this key was introduced -- H-wave 2.0.0 and earlier). If
-such a run stalls, restart it from :math:`\Sigma = 0` -- see
+produced it. A seed of the retired ``"takimoto"`` kernel is accepted as the
+initial value with a warning (and the solver notes it when the seed carries
+no such record, i.e. a reduced-scheme archive or one written before this
+key was introduced -- H-wave 2.0.0 and earlier). If such a run stalls,
+restart it from :math:`\Sigma = 0` -- see
 :ref:`flex_second_order_tutorial`.
 
 .. note::
@@ -1199,12 +1191,13 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
   where ``nblock`` is the number of spin blocks (1 for spin-free mode).
 - ``flex_second_order`` / ``flex_second_order_schema``: written by
   ``calc_scheme = "general"`` runs only -- the second-order kernel of the
-  effective interaction (``local`` | ``takimoto``, a 0-d ``<U8`` string
+  effective interaction (``local``; archives of earlier development
+  versions may carry the retired ``takimoto``; a 0-d ``<U8`` string
   array) and the schema version of that record (``1``). Both are absent
   from reduced-scheme and RPA archives and from archives written before
   this key was introduced (H-wave 2.0.0 and earlier); readers never require
   them, and a ``sigma_init`` seed
-  recording a different kernel is accepted with a warning. See
+  recording the retired kernel is accepted with a warning. See
   :ref:`rpa_chiq_provenance`.
 - ``sc_vertex_version``: ``3``, the bond placement of issue #232 (an
   off-site two-body row on the bond of its transfer row). A ``sigma_init``
@@ -1340,10 +1333,10 @@ The FLEX solver accepts the following parameters in the
      - str
      - "local"
      - ``calc_scheme = "general"`` only. Second-order kernel of the
-       effective interaction: ``"local"`` (default) is the exact local
-       second order of every accepted interaction term;
-       ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression and
-       reproduces the results of H-wave 2.0.0 and earlier releases. See
+       effective interaction: ``"local"`` (default, and the only accepted
+       value) is the exact local second order of every accepted
+       interaction term. ``"takimoto"`` (the Takimoto-Hotta-Ueda
+       expression of H-wave 2.0.0 and earlier) is retired and refused. See
        :ref:`flex_second_order_tutorial` and the configuration reference.
    * - ``gpu``
      - bool

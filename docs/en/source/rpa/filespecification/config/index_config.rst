@@ -570,13 +570,13 @@ that has no effect under the current settings.
 - ``flex_second_order``
 
   **Type :**
-  String (default value is ``"local"``; FLEX mode with ``calc_scheme =
-  "general"`` only)
+  String (default value is ``"local"``, which is also the only accepted
+  value; FLEX mode with ``calc_scheme = "general"`` only)
 
   **Description :**
-  Selects the second-order part of the FLEX effective interaction on the
-  general (full-vertex) path; see
-  :ref:`flex_second_order_kernel` for the formulas.
+  The second-order part of the FLEX effective interaction on the general
+  (full-vertex) path; see :ref:`flex_second_order_kernel` for the
+  formulas.
 
   - ``"local"`` (default) builds the exact LOCAL second order: the
     complete second order of the on-site interaction (``CoulombIntra``,
@@ -590,14 +590,19 @@ that has no effect under the current settings.
     off-site vertices, which is not representable by a
     :math:`q`-only vertex: full second-order accuracy for an off-site
     interaction additionally needs ``longitudinal_bond_channels = true``.
-  - ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression
-    verbatim; its second-order (double-counting subtraction) term is
+  - ``"takimoto"`` is **retired** and refused at start-up with a
+    message that names ``"local"``. It selected the Takimoto-Hotta-Ueda
+    expression, whose second-order (double-counting subtraction) term
     :math:`-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
-    (\hat{U}^s + \hat{U}^c)`, with :math:`\bar\chi` the bare bubble
-    (the full expression is given in
-    :ref:`flex_second_order_kernel`). It is the reproduction path for
-    results produced with H-wave 2.0.0 and remains available throughout
-    the 2.x series.
+    (\hat{U}^s + \hat{U}^c)` is not exact at second order for
+    multi-orbital and off-site interactions, and whose ring was contracted
+    in a non-conserving pair orientation (see
+    :ref:`flex_second_order_kernel`). It was the kernel of H-wave 2.0.0 and
+    earlier, so the results of those releases can no longer be reproduced
+    by a setting; use an earlier release for that. A ``sigma_init`` seed
+    recorded with ``"takimoto"`` is still accepted, with a warning: it is
+    only the initial value, and the result is determined by the
+    ``"local"`` self-consistency.
 
   **Applicability:** The key is meaningful for ``mode = "FLEX"`` with
   ``calc_scheme = "general"`` only. The default is applied AFTER FLEX
@@ -621,34 +626,24 @@ that has no effect under the current settings.
   reduces to a one-body level shift, to an effective ``CoulombIntra``, or
   to identically zero. The error
   message names the row and gives the equivalent declaration for that
-  type. Rewrite the interaction file as the message says, or set
-  ``flex_second_order = "takimoto"`` as an immediate workaround (the
-  legacy expression accepts every row the general path accepted before).
+  type; rewrite the interaction file as the message says.
 
-  **Cost and memory:** Measured with ``tests/sc/second_order_cost.py`` (run
-  from the repository root; the 2-orbital ``tests/rpa/input_2orb`` geometry
-  and transfer, and the synthetic 3-orbital square lattice the script writes,
-  :math:`L = 8`, ``Nmat = 128``, minimum over repeated runs, 2026-09):
-  assembling :math:`V_{\rm eff}` under ``"local"`` costs about 1.3x to 1.6x
-  the legacy expression (2- and 3-orbital inputs; the ratio varies from run
-  to run within that band) and a full FLEX iteration about 1.1x to 1.25x.
-  Memory goes the other way: ``"local"`` accumulates the second order in
-  frequency batches, while the legacy expression materialises three
-  full-size terms, so under ``"takimoto"`` the peak of this step is about
-  three times that of ``"local"`` (:math:`V_{\rm eff} + 3\,C` versus
-  :math:`V_{\rm eff} + C/4 + F`, with :math:`C` the size of
-  :math:`V_{\rm eff}` and :math:`F` the small compiled interaction
-  factors); its transient buffers alone are twelve times larger, so a
-  large reproduction run may need more RAM than the same run under the
-  default.
+  **Cost and memory:** ``"local"`` accumulates the second order in
+  frequency batches, so the peak of this step is :math:`V_{\rm eff} +
+  C/4 + F`, with :math:`C` the size of :math:`V_{\rm eff}` and :math:`F`
+  the small compiled interaction factors. ``tests/sc/second_order_cost.py``
+  (run from the repository root) times one assembly of
+  :math:`V_{\rm eff}` and one FLEX iteration on a 2-orbital and a
+  3-orbital input.
 
-  **Convergence:** The SCF trajectory can change with the kernel. On the
-  2-orbital self-consistency fixture (on-site :math:`U`, :math:`U'`,
-  ``Hund`` plus off-site :math:`V`, Anderson mixing) both values needed
-  the same number of iterations (9 without and 11 with
-  ``flex_hartree_fock = true``), but that is one observation, not a
-  guarantee; see the :ref:`FLEX tutorial <flex_second_order_tutorial>`
-  for what to do when a run that converged before does not.
+  **Convergence:** Compared with H-wave 2.0.0 and earlier (the retired
+  ``"takimoto"`` kernel) the SCF trajectory can change. On the 2-orbital
+  self-consistency fixture (on-site :math:`U`, :math:`U'`, ``Hund`` plus
+  off-site :math:`V`, Anderson mixing) both kernels needed the same
+  number of iterations (9 without and 11 with ``flex_hartree_fock =
+  true``), but that is one observation, not a guarantee; see the
+  :ref:`FLEX tutorial <flex_second_order_tutorial>` for what to do when a
+  run that converged before does not.
 
 - ``matsubara_frequency``
 

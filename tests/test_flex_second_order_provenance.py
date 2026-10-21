@@ -1,8 +1,9 @@
 # tests/test_flex_second_order_provenance.py
 """Provenance members flex_second_order / flex_second_order_schema in every
 general-scheme archive (spec section 3), absent on reduced archives, the
-seed reader's WARNING on a kernel mismatch and INFO when absent, and the
-off-site warning wording per kernel."""
+seed reader's WARNING on a seed of the retired "takimoto" kernel (issue
+#253: accepted as an initial value) and INFO when absent, and the off-site
+warning wording."""
 import os
 import tempfile
 import unittest
@@ -19,6 +20,23 @@ def _solve_save(s, r, out, files):
     return gi
 
 
+def _retired_seed(out, name="seed_takimoto.npz"):
+    """A seed stamped with the retired ``"takimoto"`` kernel, as written by
+    a development version before issue #253: the ``sigma.npz`` of a run in
+    ``out`` with its kernel member rewritten (the sigma values are not what
+    is under test). Returns the file name."""
+    z = dict(np.load(os.path.join(out, "sigma.npz")))
+    z["flex_second_order"] = np.array("takimoto", dtype="<U8")
+    np.savez(os.path.join(out, name), **z)
+    return name
+
+
+#: the start of the seed reader's warning on a seed of the retired kernel
+_RETIRED_SEED_WARNING = ("seed computed with the retired flex_second_order = takimoto kernel; "
+                         "it is used only as the initial value and the result is determined by "
+                         "the self-consistency of flex_second_order = local")
+
+
 class TestProvenance(unittest.TestCase):
 
     #: Every archive a general-scheme FLEX run writes when asked for all of
@@ -32,12 +50,12 @@ class TestProvenance(unittest.TestCase):
 
     def test_members_in_every_general_archive(self):
         with tempfile.TemporaryDirectory() as out:
-            for so in ("local", "takimoto"):
-                s, r = _build({"flex_second_order": so, "Nmat": 8})
+            for extra in ({"flex_second_order": "local"}, {}):
+                s, r = _build(dict(extra, Nmat=8))
                 _solve_save(s, r, out, dict(self._REQUEST))
                 for f in self._ALL:
                     z = np.load(os.path.join(out, f))
-                    self.assertEqual(str(z["flex_second_order"]), so, f)
+                    self.assertEqual(str(z["flex_second_order"]), "local", f)
                     self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
                     self.assertEqual(z["flex_second_order"].dtype.kind, "U")
 
@@ -79,13 +97,13 @@ class TestProvenance(unittest.TestCase):
 
     def test_seed_warning_and_info(self):
         with tempfile.TemporaryDirectory() as out:
-            s, r = _build({"flex_second_order": "takimoto", "Nmat": 8})
+            s, r = _build({"flex_second_order": "local", "Nmat": 8})
             _solve_save(s, r, out, {"sigma": "sigma"})
+            seed = _retired_seed(out)
             s2, _ = _build({"flex_second_order": "local", "Nmat": 8})
             with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
-                s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"})
-            self.assertTrue(any("seed computed with flex_second_order = takimoto; this run uses local" in m
-                                for m in cm.output))
+                s2.read_init({"path_to_input": out, "sigma_init": seed})
+            self.assertTrue(any(_RETIRED_SEED_WARNING in m for m in cm.output), cm.output)
             z = dict(np.load(os.path.join(out, "sigma.npz")))
             z.pop("flex_second_order"); z.pop("flex_second_order_schema")
             np.savez(os.path.join(out, "legacy.npz"), **z)
@@ -97,7 +115,7 @@ class TestProvenance(unittest.TestCase):
 
     def test_warm_start_from_a_provenance_free_seed(self):
         """A seed with NO provenance pair -- what H-wave 2.0.0 and earlier
-        wrote -- is usable under either kernel: the solve completes, the
+        wrote -- is usable: the solve completes, the
         absence is reported at INFO (not warned about, and not refused), and
         the archives the new run writes carry the pair.
 
@@ -105,7 +123,7 @@ class TestProvenance(unittest.TestCase):
         but nothing else pins that such a seed actually drives a solve to
         completion and that the run stamps its OWN kernel on what it then
         writes."""
-        for so in ("local", "takimoto"):
+        for so in ("local",):
             with self.subTest(kernel=so), tempfile.TemporaryDirectory() as out:
                 s, r = _build({"flex_second_order": so, "Nmat": 8})
                 _solve_save(s, r, out, {"sigma": "sigma"})
@@ -133,26 +151,42 @@ class TestProvenance(unittest.TestCase):
                         self.assertEqual(str(zz["flex_second_order"]), so, f)
                         self.assertEqual(int(zz["flex_second_order_schema"]), 1, f)
 
-    def test_seed_mismatch_warns_in_both_directions(self):
+    def test_seed_of_the_retired_kernel_is_accepted_with_a_warning(self):
+        """A seed stamped ``"takimoto"`` (the kernel retired by issue #253) is
+        NOT refused: a seed only starts the iteration, so it is read as the
+        initial value with a warning that says so, drives a ``"local"`` solve
+        to completion, and what that run writes carries ``"local"``. A
+        ``"local"`` seed is read without the warning (the control)."""
         with tempfile.TemporaryDirectory() as out:
-            for seed_so, run_so in (("takimoto", "local"), ("local", "takimoto")):
-                with self.subTest(seed=seed_so, run=run_so):
-                    s, r = _build({"flex_second_order": seed_so, "Nmat": 8})
-                    _solve_save(s, r, out, {"sigma": "sigma"})
-                    os.replace(os.path.join(out, "sigma.npz"),
-                               os.path.join(out, "seed_{}.npz".format(seed_so)))
-                    s2, _ = _build({"flex_second_order": run_so, "Nmat": 8})
-                    with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
-                        s2.read_init({"path_to_input": out,
-                                      "sigma_init": "seed_{}.npz".format(seed_so)})
-                    self.assertTrue(any(
-                        "seed computed with flex_second_order = {}; this run uses {}".format(
-                            seed_so, run_so) in m for m in cm.output), cm.output)
+            s, r = _build({"Nmat": 8})
+            _solve_save(s, r, out, {"sigma": "sigma"})
+            seed = _retired_seed(out)
+            s2, r2 = _build({"Nmat": 8})
+            gi = r2.get_param("green")
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                gi.update(s2.read_init({"path_to_input": out, "sigma_init": seed}))
+            hits = [m for m in cm.output if _RETIRED_SEED_WARNING in m]
+            self.assertEqual(len(hits), 1, cm.output)
+            self.assertIn(seed, hits[0])
+            np.testing.assert_array_equal(
+                np.asarray(gi["sigma_init"]),
+                np.load(os.path.join(out, "sigma.npz"))["sigma"])
+            with tempfile.TemporaryDirectory() as out2:
+                s2.solve(gi, out2)
+                s2.save_results({"path_to_output": out2, "sigma": "sigma"}, gi)
+                z = np.load(os.path.join(out2, "sigma.npz"))
+                self.assertEqual(str(z["flex_second_order"]), "local")
+            # the control: a seed of this run's own kernel is not warned about
+            s3, _ = _build({"Nmat": 8})
+            with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                s3.read_init({"path_to_input": out, "sigma_init": "sigma.npz"})
+            self.assertFalse(any("seed computed" in m for m in cm.output), cm.output)
 
     def test_unreadable_seed_provenance_is_refused(self):
-        """A member outside {"local", "takimoto"} or a schema this version does
-        not read is a file this run cannot interpret, so it is refused by name
-        and value instead of being warned about (or silently accepted)."""
+        """A member outside {"local", "takimoto"} (the current kernel and the
+        retired one) or a schema this version does not read is a file this
+        run cannot interpret, so it is refused by name and value instead of
+        being warned about (or silently accepted)."""
         with tempfile.TemporaryDirectory() as out:
             s, r = _build({"flex_second_order": "local", "Nmat": 8})
             _solve_save(s, r, out, {"sigma": "sigma"})
@@ -199,6 +233,8 @@ class TestProvenance(unittest.TestCase):
                 "selector_vector": dict(
                     flex_second_order=np.array(["local", "unknown"], dtype="<U8")),
                 "selector_case": dict(flex_second_order=np.array("Local", dtype="<U8")),
+                "selector_case_retired": dict(
+                    flex_second_order=np.array("Takimoto", dtype="<U8")),
                 "selector_empty": dict(flex_second_order=np.array([], dtype="<U8")),
                 "selector_number": dict(flex_second_order=np.int64(1)),
             }
@@ -220,13 +256,13 @@ class TestProvenance(unittest.TestCase):
         a ``calc_scheme = "General"`` run must still compare the seed's kernel
         with this run's."""
         with tempfile.TemporaryDirectory() as out:
-            s, r = _build({"flex_second_order": "takimoto", "Nmat": 8})
+            s, r = _build({"flex_second_order": "local", "Nmat": 8})
             _solve_save(s, r, out, {"sigma": "sigma"})
+            seed = _retired_seed(out)
             s2, _ = _build({"flex_second_order": "local", "Nmat": 8}, calc_scheme="General")
             with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
-                s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"})
-            self.assertTrue(any("seed computed with flex_second_order = takimoto" in m
-                                for m in cm.output), cm.output)
+                s2.read_init({"path_to_input": out, "sigma_init": seed})
+            self.assertTrue(any(_RETIRED_SEED_WARNING in m for m in cm.output), cm.output)
 
     def test_members_in_the_dedicated_bond_archive(self):
         """The bond archive is written by its own branch of save_results, so it
@@ -263,7 +299,7 @@ class TestProvenance(unittest.TestCase):
                 self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
 
     def test_offsite_warning_wording(self):
-        for so, needle in (("local", "exact at second order"), ("takimoto", "is omitted (the same approximation")):
+        for so, needle in (("local", "exact at second order"),):
             with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
                 s, r = _build({"flex_second_order": so, "Nmat": 8})
                 s._calc_epsilon_k({})

@@ -38,8 +38,7 @@ def _factors_norb1(rows_by_type, shape=(4, 4, 1)):
             idict[t] = t.lower() + ".dat"
         r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
         par = {"T": 2.0, "filling": 0.5, "CellShape": list(shape), "SubShape": [1, 1, 1],
-               "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
-               "flex_second_order": "takimoto"}
+               "Nmat": 8, "IterationMax": 1, "Mix": 1.0, "EPS": 1}
         s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
                                                    "enable_spin_orbital": False,
                                                    "calc_scheme": "general"})

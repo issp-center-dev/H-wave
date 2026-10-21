@@ -53,7 +53,7 @@ idict = {"path_to_input": p, "Geometry": "geom.dat", "Transfer": "transfer.dat",
 r = read_input_k.QLMSkInput({"path_to_input": p, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
        "IterationMax": 3, "Mix": 0.5, "EPS": 8, "mixing_scheme": "anderson",
-       "flex_second_order": "takimoto",
+       "flex_second_order": "local",
        # both orbitals on one site: the behaviour of the reference revision,
        # which ignores the key, stated so that no #234 warning enters the log
        "orbital_site": [0, 0]}
@@ -77,7 +77,7 @@ r = read_input_k.QLMSkInput({"path_to_input": inp, "interaction": idict})
 # first Hartree-Fock map, taken on the bare (Sigma = 0) density, unmixed
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 32,
        "IterationMax": 1, "Mix": 1.0, "EPS": 8, "mixing_scheme": "linear",
-       "flex_hartree_fock": True, "flex_second_order": "takimoto"}
+       "flex_hartree_fock": True, "flex_second_order": "local"}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
                                            "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
@@ -156,11 +156,13 @@ class TestG0Off(unittest.TestCase):
     equal those of the reference revision (the main checkout, pinned by
     tests/test_flex_second_order_compat.DEVELOP_COMMIT).
 
-    The run below pins flex_second_order = "takimoto" explicitly, on BOTH
-    sides: the reference revision defaults the key to "local", so leaving
-    it out would compare two different kernels (spec 2026-09-08 D2). The
-    default kernel is compared against this same legacy one by
-    tests/test_flex_second_order_compat.py.
+    The run below pins flex_second_order = "local" explicitly, on BOTH
+    sides (the default of both revisions; spec 2026-09-08 D2). It used to
+    pin the "takimoto" kernel, which this tree refuses since issue #253;
+    on this on-site declaration the "local" kernel of the reference
+    revision, given issue #251's ring orientation by
+    tests/test_flex_second_order_compat.reference_script, is the same
+    computation as this tree's.
 
     The declaration it runs is ON-SITE only (onsite_inter.dat +
     coulombintra.dat): an on-site declaration has no row whose placement
@@ -224,10 +226,10 @@ class TestG0Off(unittest.TestCase):
                 lb = fh.read().replace(develop, "<root>").replace(b, "<out>")
             # the whole stream, nothing filtered: the reference revision is
             # the merge that introduced flex_second_order, so it logs the
-            # same "flex_second_order = takimoto" INFO line this side does
+            # same "flex_second_order = local" INFO line this side does
             # (an earlier version of this guard stripped that line, which
             # would now DELETE a line from one side only)
-            self.assertIn("flex_second_order = takimoto", la)
+            self.assertIn("flex_second_order = local", la)
             self.assertEqual(la, lb)
 
     def test_first_map_static_equals_develop_on_the_same_declaration(self):

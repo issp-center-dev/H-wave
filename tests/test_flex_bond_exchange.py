@@ -201,12 +201,11 @@ def _one_map(lam, rows, legacy=False):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, tail, beta, s._bond_view, sopt._SHAPE, 1)
-            with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C, s._bond_S_on,
-                                                       s._bond_C_on, s._bond_view, norb) as dev:
+            with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C,
+                                                      s._bond_view, norb) as dev:
                 flex_bond.dress_and_build_w(
                     store, dev, nb=nmat, output_full=False, nmat=nmat, nvol=nvol, nd=nd,
                     spatial_shape=sopt._SHAPE, factors=s._second_order_factors,
-                    second_order=s.flex_second_order,
                     bond_w2=None if legacy else s._bond_w2_on(np))
             sig = flex_bond.calc_self_energy_bond(store, G, beta, s._bond_view, sopt._SHAPE,
                                                   norb, 1)
@@ -289,10 +288,10 @@ class TestSU2Criterion(unittest.TestCase):
 
 class TestPolicy(unittest.TestCase):
 
-    def _solver(self, rows, gate, extra=None, second_order=None):
+    def _solver(self, rows, gate, extra=None):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d, True)
-        s, gi = sopt._solver(d, _write_inputs(d, 1.0, rows), gate, second_order=second_order)
+        s, gi = sopt._solver(d, _write_inputs(d, 1.0, rows), gate)
         for k, v in (extra or {}).items():
             setattr(s, k, v)
         return s, gi
@@ -329,14 +328,21 @@ class TestPolicy(unittest.TestCase):
 
     def test_degenerate_onsite_row_is_refused(self):
         from hwave.solver.second_order import DegenerateRowError
-        # flex_second_order = "takimoto": the q-only kernel (which refuses the
-        # row at construction under "local") is not built, so the refusal must
-        # come from the bond-enlarged factors themselves
-        s, gi = self._solver({"Exchange": [r[:5] + (0.2, 0.0) for r in EXCH]
-                              + [(0, 0, 0, 1, 1, 0.3, 0.0)]}, gate=True, second_order="takimoto")
-        s._phase_b_reset(gi)
+        from hwave.solver.second_order import build_bond_w2_factors
+        rows = {"Exchange": [r[:5] + (0.2, 0.0) for r in EXCH] + [(0, 0, 0, 1, 1, 0.3, 0.0)]}
+        # the solver refuses the row at construction, where the q-only
+        # second-order kernel is compiled ...
         with self.assertRaises(DegenerateRowError):
-            s._phase_b_preflight(gi)
+            self._solver(rows, gate=True)
+        # ... and the bond-enlarged factors refuse it themselves (the split
+        # is taken from a solver whose q-only compile is skipped)
+        from unittest import mock
+        from hwave.solver import second_order
+        stub = types.SimpleNamespace(triples=(), A_off=None, vpair=None, nbytes=0)
+        with mock.patch.object(second_order, "build_factors", return_value=stub):
+            _, split = _split_for(rows)
+        with self.assertRaises(DegenerateRowError):
+            build_bond_w2_factors(split, NORB, _delta_r(rows), _SHAPE)
 
     def test_memory_cap_refuses_before_the_factors_are_allocated(self):
         from unittest import mock

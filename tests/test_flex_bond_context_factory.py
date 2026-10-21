@@ -28,9 +28,7 @@ def _vertices(B, norb, seed=0):
     rng = np.random.default_rng(seed)
     S = rng.normal(size=(ND, ND))
     C = rng.normal(size=(ND, ND))
-    S_on = rng.normal(size=(nd, nd))
-    C_on = rng.normal(size=(nd, nd))
-    return S, C, S_on, C_on
+    return S, C
 
 
 class TestMixedBlockMask(unittest.TestCase):
@@ -58,12 +56,12 @@ class TestForView(unittest.TestCase):
     def test_equals_the_manual_construction(self):
         B, norb = 3, 2
         nd = norb * norb
-        S, C, S_on, C_on = _vertices(B, norb)
+        S, C = _vertices(B, norb)
         tail = np.arange(12.0).reshape(3, 4)
         view = types.SimpleNamespace(n_channels=B)
-        with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb,
+        with BondDeviceContext.for_view(np, S, C, view, norb,
                                         green0_tail=tail) as dev, \
-                BondDeviceContext(np, S, C, S_on, C_on,
+                BondDeviceContext(np, S, C,
                                   _mixed_pair_permutation(B, nd, norb),
                                   _inline_mask(B, nd), green0_tail=tail) as ref:
             for name in BondDeviceContext._NAMES:
@@ -71,13 +69,11 @@ class TestForView(unittest.TestCase):
                     np.testing.assert_array_equal(getattr(dev, name), getattr(ref, name))
             self.assertIs(dev.xp, np)
 
-    def test_without_on_site_vertices(self):
+    def test_one_orbital_mask(self):
         B, norb = 2, 1
-        S, C, _S_on, _C_on = _vertices(B, norb)
+        S, C = _vertices(B, norb)
         view = types.SimpleNamespace(n_channels=B)
-        with BondDeviceContext.for_view(np, S, C, None, None, view, norb) as dev:
-            self.assertIsNone(dev.S_on)
-            self.assertIsNone(dev.SpC_on)
+        with BondDeviceContext.for_view(np, S, C, view, norb) as dev:
             np.testing.assert_array_equal(dev.mask, _inline_mask(B, 1))
 
     def test_uses_the_module_level_permutation(self):
@@ -86,43 +82,43 @@ class TestForView(unittest.TestCase):
         # keep looking it up on the module so that control still bites
         B, norb = 2, 2
         nd = norb * norb
-        S, C, S_on, C_on = _vertices(B, norb)
+        S, C = _vertices(B, norb)
         view = types.SimpleNamespace(n_channels=B)
         with mock.patch.object(flex_bond, "_mixed_pair_permutation",
                                lambda B_, nd_, norb_: np.arange(B_ * nd_)):
-            with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb) as dev:
+            with BondDeviceContext.for_view(np, S, C, view, norb) as dev:
                 np.testing.assert_array_equal(dev.perm, np.arange(B * nd))
-        with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb) as dev:
+        with BondDeviceContext.for_view(np, S, C, view, norb) as dev:
             self.assertFalse(np.array_equal(dev.perm, np.arange(B * nd)))
 
     def test_accepts_a_permutation_override(self):
         B, norb = 2, 2
         nd = norb * norb
-        S, C, S_on, C_on = _vertices(B, norb)
+        S, C = _vertices(B, norb)
         view = types.SimpleNamespace(n_channels=B)
         ident = np.arange(B * nd)
-        with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb,
+        with BondDeviceContext.for_view(np, S, C, view, norb,
                                         perm=ident) as dev:
             np.testing.assert_array_equal(dev.perm, ident)
 
     def test_refuses_a_vertex_of_the_wrong_pair_dimension(self):
         B, norb = 2, 2
-        S, C, S_on, C_on = _vertices(B + 1, norb)       # ND = 3 nd, view says 2
+        S, C = _vertices(B + 1, norb)       # ND = 3 nd, view says 2
         view = types.SimpleNamespace(n_channels=B)
         with self.assertRaises(ValueError) as cm:
-            BondDeviceContext.for_view(np, S, C, S_on, C_on, view, norb)
+            BondDeviceContext.for_view(np, S, C, view, norb)
         self.assertIn("n_channels", str(cm.exception))
 
     def test_refuses_a_non_square_or_mismatched_vertex(self):
         B, norb = 2, 2
         nd = norb * norb
-        S, C, S_on, C_on = _vertices(B, norb)
+        S, C = _vertices(B, norb)
         view = types.SimpleNamespace(n_channels=B)
         with self.assertRaises(ValueError) as cm:      # S not square
-            BondDeviceContext.for_view(np, S[:, :-1], C, S_on, C_on, view, norb)
+            BondDeviceContext.for_view(np, S[:, :-1], C, view, norb)
         self.assertIn("vertex S", str(cm.exception))
         with self.assertRaises(ValueError) as cm:      # C of another pair dimension
-            BondDeviceContext.for_view(np, S, np.eye(B * nd + nd), S_on, C_on, view, norb)
+            BondDeviceContext.for_view(np, S, np.eye(B * nd + nd), view, norb)
         self.assertIn("vertex C", str(cm.exception))
 
     def test_reads_shapes_without_converting_the_arrays(self):
@@ -138,8 +134,7 @@ class TestForView(unittest.TestCase):
             def __array__(self, *a, **k):
                 raise TypeError("implicit conversion is refused")
         with mock.patch.object(flex_bond._bk, "to_device", lambda a, xp: a):
-            with BondDeviceContext.for_view(np, _Opaque(), _Opaque(), None, None,
-                                            view, norb) as dev:
+            with BondDeviceContext.for_view(np, _Opaque(), _Opaque(), view, norb) as dev:
                 self.assertIsInstance(dev.S, _Opaque)
 
 

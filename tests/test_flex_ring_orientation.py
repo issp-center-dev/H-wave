@@ -4,7 +4,7 @@
 A FLEX self-energy is Phi-derivable: its order-n ring term is the functional
 derivative of ``Phi_n[G] = sum_q Tr (chi0[G] U)^n``. Using ONLY the solver's
 own routines -- the bubble ``_calc_chi0q``, the effective interaction
-``_calc_veff_general`` (default ``flex_second_order = "local"``) and the
+``_calc_veff_general`` (``flex_second_order = "local"``) and the
 self-energy kernel
 ``_calc_self_energy_general`` -- this is checked as the statement that the
 ratio ``dPhi_n / Tr[Sigma_n dG]`` is the SAME for every direction ``dG`` (a
@@ -125,12 +125,11 @@ class TestRingOrientation(unittest.TestCase):
         r = np.array(ratios)
         return float(np.max(np.abs(r - r.mean())) / abs(r.mean()))
 
-    def _veff(self, chi_s, chi_c, Us, Uc, kernel):
-        factors = self.s._second_order_factors if kernel == "local" else None
+    def _veff(self, chi_s, chi_c, Us, Uc):
         return self.s._calc_veff_general(self._chi0(self.G), chi_s, chi_c, Us, Uc,
-                                         factors=factors, second_order=kernel)
+                                         factors=self.s._second_order_factors)
 
-    def _ring3(self, channel, kernel, U):
+    def _ring3(self, channel, U):
         """Sigma of the third-order ring term of one channel, isolated by
         differencing two production assemblies."""
         c0 = self._chi0(self.G)
@@ -139,19 +138,17 @@ class TestRingOrientation(unittest.TestCase):
         sign = 1.0 if channel == "spin" else -1.0     # chi_s = [1 - chi0 Us]^-1 chi0, chi_c with +
         third = (c2 + sign * (c2 @ U[None] @ c2)).reshape(sh)
         if channel == "spin":
-            a = self._veff(third, c0, U, self.Z, kernel)
-            b = self._veff(c0, c0, U, self.Z, kernel)
+            a = self._veff(third, c0, U, self.Z)
+            b = self._veff(c0, c0, U, self.Z)
         else:
-            a = self._veff(c0, third, self.Z, U, kernel)
-            b = self._veff(c0, c0, self.Z, U, kernel)
+            a = self._veff(c0, third, self.Z, U)
+            b = self._veff(c0, c0, self.Z, U)
         return self.s._calc_self_energy_general(self.G, a - b, self.beta)
 
     def test_third_order_ring_is_phi_derivable(self):
-        # the default "local" kernel; the legacy "takimoto" kernel keeps the
-        # earlier orientation on purpose (it reproduces earlier releases)
         for channel, U in (("spin", self.Us), ("charge", self.Uc)):
             with self.subTest(channel=channel):
-                sigma = self._ring3(channel, "local", U)
+                sigma = self._ring3(channel, U)
                 self.assertGreater(float(np.abs(sigma).max()), 1e-6)
                 self.assertLess(self._ratio_spread(sigma, U, 3), 1e-7)
 
@@ -216,8 +213,7 @@ class TestBondRingOrientation(unittest.TestCase):
         from hwave.solver import flex_bond
         s = self.s
         dev = flex_bond.BondDeviceContext.for_view(
-            np, x * s._bond_S, x * s._bond_C, x * s._bond_S_on, x * s._bond_C_on,
-            s._bond_view, NORB, green0_tail=np.zeros_like(self.G))
+            np, x * s._bond_S, x * s._bond_C, s._bond_view, NORB, green0_tail=np.zeros_like(self.G))
         with self._store() as store, dev:
             return np.asarray(s._phase_b_bond_map(store, dev, self.G, self.G, self.beta, 1)[3])
 

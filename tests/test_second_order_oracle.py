@@ -381,11 +381,13 @@ def _bare_green(s, beta):
 
 def _general_path_second_order_sigma(s, G, beta):
     """The SECOND ORDER of today's general path on the same G, from
-    production pieces only: the Takimoto-Hotta-Ueda assembly
-    ``_calc_veff_general`` with the RPA channels replaced by the bare bubble
-    (chi_s = chi_c = chibar), i.e. 3/2 Us chibar Us + 1/2 Uc chibar Uc
-    - 1/4 (Us + Uc) chibar (Us + Uc) = U^2 chibar for the Hubbard tensor
-    (spec 2.3), pushed through the production transport.
+    production pieces only: ``_calc_veff_general`` with the RPA channels
+    replaced by the bare bubble (chi_s = chi_c = chibar), which removes the
+    ring and leaves the exact local second order W2(chibar) of the solver's
+    compiled factors -- U^2 chibar for the Hubbard tensor, the value of the
+    retired Takimoto-Hotta-Ueda assembly 3/2 Us chibar Us + 1/2 Uc chibar Uc
+    - 1/4 (Us + Uc) chibar (Us + Uc) there (spec 2.3) -- pushed through the
+    production transport.
 
     The full ``_flex_compute_veff_general`` cannot serve as the reference
     here: it resums the RPA ladders, so its self-energy also carries third
@@ -393,7 +395,7 @@ def _general_path_second_order_sigma(s, G, beta):
     fixture), which an exact second-order oracle must not reproduce."""
     chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), beta)[0]
     chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(chi0q_raw, s.ham_info.ham_inter_q)
-    v_eff2 = s._calc_veff_general(chi0q, chi0q, chi0q, Us, Uc)
+    v_eff2 = s._calc_veff_general(chi0q, chi0q, chi0q, Us, Uc, factors=s._second_order_factors)
     return s._calc_self_energy_general(G, v_eff2, beta)
 
 

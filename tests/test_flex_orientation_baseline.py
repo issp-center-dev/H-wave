@@ -18,8 +18,13 @@ disappearing into a develop comparison that stopped covering it.
 re-recorded once more for issue #251 (the default kernel's ring, third order
 and up, contracted in the conserving pair orientation), after
 ``tests/test_flex_ring_orientation.py`` -- the Phi-derivability gate of that
-change -- passed; the ``"takimoto"`` members, ``hf_map.npz`` and ``w2.npz``
-did not move.
+change -- passed; ``hf_map.npz`` and ``w2.npz`` did not move.
+
+``smoke.npz`` was regenerated once more for issue #253, which retired
+``flex_second_order = "takimoto"``: its ``"takimoto"`` members (and their
+iteration count and residual in the provenance stamp) were dropped. The
+``"local"`` members were verified bit-identical to the previous recording;
+``hf_map.npz``, ``w2.npz`` and ``mixed_w.npz`` were left as they were.
 
 These vectors are regression PINS, not oracles. They say "this is what the
 reviewed code produced", nothing more. Their CORRECTNESS is established
@@ -311,12 +316,11 @@ def _mixed_w(chibar=None):
     with flex_bond.BondBlockStore(s.nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
         s._phase_b_prepare_vertices()
         store.put_freq_batch("chibar", 0, s.nmat, chibar)
-        with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C, s._bond_S_on,
-                                                  s._bond_C_on, s._bond_view, s.norb) as dev:
+        with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C,
+                                                  s._bond_view, s.norb) as dev:
             flex_bond.dress_and_build_w(store, dev, nb=s.nmat, output_full=False,
                                         nmat=s.nmat, nvol=nvol, nd=nd, spatial_shape=_SHAPE,
-                                        factors=s._second_order_factors,
-                                        second_order="local")
+                                        factors=s._second_order_factors)
         W = store.get_freq_batch("W", 0, s.nmat)
         return chibar, np.array(W[:, :, :nd, nd:]), np.array(W[:, :, nd:, :nd])
 
@@ -326,9 +330,9 @@ def _smoke_state(second_order):
     CONVERGENCE (Anderson mixing, ``EPS = 1e-12``, reached in 16-17
     iterations and 0.4 s; ``IterationMax`` is a ceiling, not the recipe).
 
-    The end-to-end pin: the state the dropped develop identity case used to
-    cover (``"takimoto"`` with the bond gate), plus the production default
-    (``"local"``). A converged state is pinned rather than a fixed number of
+    The end-to-end pin of the bond gate under the production kernel
+    (``"local"``; the ``"takimoto"`` state it also used to pin was dropped
+    with that kernel's retirement, issue #253). A converged state is pinned rather than a fixed number of
     iterations because a fixed point is defined by the equations alone --
     the mid-trajectory state of a non-converged run carries the mixer's
     history as well, which makes it both noisier under re-association and
@@ -365,6 +369,10 @@ def _path(name):
     return os.path.join(_VECTORS, name + ".npz")
 
 
+#: the kernels whose converged gate-on state ``smoke.npz`` pins
+_SMOKE_KERNELS = ("local",)
+
+
 def regenerate():
     """Write every vector file from the CURRENT code. Deliberate only: run
     it when an intended change has already been re-gated by the ED/oracle
@@ -379,7 +387,7 @@ def regenerate():
     np.savez_compressed(_path("mixed_w"), chibar=cb, w_mixed_rows=rows, w_mixed_cols=cols,
                         metadata=_metadata())
     payload, run = {}, {}
-    for so in ("local", "takimoto"):
+    for so in _SMOKE_KERNELS:
         sigma, green, info = _smoke_state(so)
         payload["sigma_" + so], payload["green_" + so] = sigma, green
         run.update(info)
@@ -482,23 +490,24 @@ class TestOrientationVectors(unittest.TestCase):
                 # generator that could not read anything at all
                 self.assertNotEqual(stamp["numpy"], "absent", name)
                 if name == "smoke":
-                    for so in ("local", "takimoto"):
+                    for so in _SMOKE_KERNELS:
                         self.assertGreater(stamp["iterations_" + so], 0, so)
                         self.assertGreater(stamp["residual_" + so], 0.0, so)
                         self.assertLess(stamp["residual_" + so], 1e-11, so)
 
     def test_gate_on_smoke_matches_the_committed_vector(self):
-        """End to end: sigma and green of a CONVERGED gate-on run under both
-        kernels (0.8 s measured for the pair: below the 5 s opt-in rule of
-        ``tests/heavy_tests.py``, so it stays in the fast gate).
+        """End to end: sigma and green of a CONVERGED gate-on run under the
+        production kernel (well below the 5 s opt-in rule of
+        ``tests/heavy_tests.py``, so it stays in the fast gate). The bond
+        gate reads the off-site rows through the Hartree-Fock term, so it no
+        longer reproduces develop and is pinned here instead.
 
-        The ``"takimoto"`` half is the case that left
-        ``tests/test_flex_second_order_compat.py``'s develop identity list
-        (the bond gate reads the off-site rows through the Hartree-Fock
-        term, so it no longer reproduces develop); the ``"local"`` half is
-        the production default."""
+        The file carries no member of any other kernel: the ``"takimoto"``
+        members were dropped with that kernel (issue #253)."""
         d = self._load("smoke")
-        for so in ("local", "takimoto"):
+        self.assertEqual(sorted(k for k in d.files if k != "metadata"),
+                         sorted(p + so for so in _SMOKE_KERNELS for p in ("green_", "sigma_")))
+        for so in _SMOKE_KERNELS:
             with self.subTest(second_order=so):
                 sigma, green, _run = _smoke_state(so)
                 self._compare(sigma, d["sigma_" + so], _RTOL_SMOKE, "smoke/sigma_" + so, d)
