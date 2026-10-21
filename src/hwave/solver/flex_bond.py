@@ -449,15 +449,16 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     taken with the two orbitals of every pair swapped inside its channel
     block -- the conserving orientation under :func:`calc_self_energy_bond`'s
     contraction; the legacy ``"takimoto"`` kernel keeps the earlier one."""
-    # the legacy "takimoto" kernel keeps the earlier ring orientation as a
-    # whole (it reproduces earlier releases); read before bond_w2 below
-    # reuses the name
-    legacy = second_order == "takimoto"
-    if bond_w2 is not None:
-        second_order, factors = "takimoto", None
+    # validated BEFORE bond_w2 below reuses the name: the caller's value
+    # still selects the ring's orientation then
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
+    # the legacy "takimoto" kernel keeps the earlier ring orientation as a
+    # whole (it reproduces earlier releases)
+    legacy = second_order == "takimoto"
+    if bond_w2 is not None:
+        second_order, factors = "takimoto", None
     if second_order == "local" and factors is None:
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
     xp = dev.xp

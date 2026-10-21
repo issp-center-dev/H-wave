@@ -352,9 +352,6 @@ class TestDressBatchGuardModes(unittest.TestCase):
             self.assertAlmostEqual(min(conds), c_full, places=12)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TestRingOrientationUnderBondW2(unittest.TestCase):
     """Issue #251 with the exact bond-enlarged second order (``bond_w2``):
@@ -402,3 +399,24 @@ class TestRingOrientationUnderBondW2(unittest.TestCase):
         self.assertGreater(np.abs(want).max(), 1e-3 * np.abs(ring).max())   # the swap is visible
         np.testing.assert_allclose(W_loc - W_tak, want, rtol=0,
                                    atol=1e-12 * np.abs(W_tak).max())
+
+    def test_an_unknown_kernel_is_refused_with_bond_w2_too(self):
+        """``bond_w2`` replaces the second order but not the validation of
+        ``second_order``, which still selects the ring's orientation."""
+        from hwave.solver import flex_bond
+        nvol, nd, norb, B = 2, 4, 2, 2
+        ND = B * nd
+        zero = np.zeros((nvol, ND, ND), dtype=np.complex128)
+        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        view = types.SimpleNamespace(n_channels=B)
+        with flex_bond.BondDeviceContext.for_view(np, zero, zero, zero_on, zero_on,
+                                                  view, norb) as dev:
+            with self.assertRaisesRegex(ValueError, "second_order must be"):
+                flex_bond.dress_and_build_w(None, dev, nb=1, output_full=False, nmat=2,
+                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                            second_order="nonsense",
+                                            bond_w2=[((0, 0, 0), zero, zero)])
+
+
+if __name__ == "__main__":
+    unittest.main()
