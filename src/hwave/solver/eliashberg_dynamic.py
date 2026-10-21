@@ -492,7 +492,7 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
     rho = 1.0
     if k_pre >= 1:
         try:
-            pre_vals, _ = eigs(A0, k=k_pre, which='LM')
+            pre_vals, _ = eigs(A0, k=k_pre, which='LM', v0=sc._arpack_start(A0))
             rho = float(np.max(np.abs(pre_vals)))
         except Exception:
             rho = 1.0
