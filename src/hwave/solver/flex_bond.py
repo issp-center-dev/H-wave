@@ -441,13 +441,24 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     When given, the second order of every block is ``1/2 sum A chibar B``
     (exact in the bond-enlarged basis, off-site Exchange included) and the
     channel-0 kernel, the mixed-block rule and the zero bond-bond blocks
-    above are not used; ``second_order`` and ``factors`` are then ignored.
-    The ring part beyond second order is unchanged."""
-    if bond_w2 is not None:
-        second_order, factors = "takimoto", None
+    above are not used; ``factors`` is then ignored and ``second_order``
+    selects nothing but the ring's pair orientation below.
+
+    The ring's pair orientation (issue #251): under ``second_order =
+    "local"`` (with or without ``bond_w2``) the ring, third order and up, is
+    taken with the two orbitals of every pair swapped inside its channel
+    block -- the conserving orientation under :func:`calc_self_energy_bond`'s
+    contraction; the legacy ``"takimoto"`` kernel keeps the earlier one."""
+    # validated BEFORE bond_w2 below reuses the name: the caller's value
+    # still selects the ring's orientation then
     if second_order not in ("local", "takimoto"):
         raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
                          "got {!r}".format(second_order))
+    # the legacy "takimoto" kernel keeps the earlier ring orientation as a
+    # whole (it reproduces earlier releases)
+    legacy = second_order == "takimoto"
+    if bond_w2 is not None:
+        second_order, factors = "takimoto", None
     if second_order == "local" and factors is None:
         raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
     xp = dev.xp
@@ -469,6 +480,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     # the pair permutation and the block-weight mask, owned by the device
     # context (built once, ahead of every SCF iteration)
     perm, mask = dev.perm, dev.mask
+    # the ring's pair orientation (issue #251): the orbitals of every pair are
+    # swapped inside its channel block, (m, c, a) -> (m, a, c) -- the
+    # orientation in which the ring is the functional derivative of
+    # Tr (chibar U)^n under calc_self_energy_bond's contraction (pinned by
+    # tests/test_flex_ring_orientation.py). The identity at norb = 1.
+    pin = None
+    if norb > 1 and not legacy:
+        pin = xp.asarray(np.arange(ND).reshape(ND // nd, norb, norb).transpose(0, 2, 1).ravel())
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)      # HOST accumulators
     collapse_s = np.empty_like(collapse0)
     collapse_c = np.empty_like(collapse0)
@@ -507,6 +526,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         chi_c_b -= cb
         W_b += 0.5 * _sandwich(C, chi_c_b, C, workers)
         del chi_c_b
+        if pin is not None:
+            W_b = W_b[:, :, pin[:, None], pin[None, :]]
         if bond_w2 is not None:
             for _t, Af, Bf in bond_w2:
                 T = Af[None] @ cb

@@ -1760,6 +1760,10 @@ class TestGeneralPipelinePhysical(unittest.TestCase):
             V_q = (1.5 * Us_q @ chi_s_q @ Us_q
                    + 0.5 * Uc_q @ chi_c_q @ Uc_q
                    - 0.25 * (Us_q + Uc_q) @ M0 @ (Us_q + Uc_q))
+            # (_calc_veff_general's default is the legacy "takimoto" kernel,
+            # which keeps the earlier pair orientation; the conserving one of
+            # the default "local" kernel is pinned by
+            # tests/test_flex_ring_orientation.py, issue #251.)
             # V_q is the production V_eff at this q: its MYO flatten has
             # row=(mu,m), col=(nu,n) (the same flatten that
             # _sigma_orbital_contract reshapes back to axes (mu,m,nu,n)). That

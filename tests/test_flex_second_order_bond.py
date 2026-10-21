@@ -15,6 +15,16 @@ import numpy as np
 from tests.test_flex_bond_gate import _flex, _collect, _zeroed_offsite_copy
 
 
+
+def _ring_oriented(ring, norb):
+    """The ring in ``dress_and_build_w``'s pair orientation (issue #251):
+    the two orbitals of every pair swapped inside its channel block,
+    ``(m, a, b) -> (m, b, a)``, on both pair axes."""
+    ND = ring.shape[-1]
+    nd = norb * norb
+    pin = np.arange(ND).reshape(ND // nd, norb, norb).transpose(0, 2, 1).ravel()
+    return ring[..., pin[:, None], pin[None, :]]
+
 class TestBondGate(unittest.TestCase):
 
     def test_g0_under_both_kernels(self):
@@ -83,7 +93,8 @@ class TestBondGate(unittest.TestCase):
         S, C = s._bond_S, s._bond_C
         I = np.eye(ND)
         chi_s = np.linalg.solve(I - cb @ S, cb); chi_c = np.linalg.solve(I + cb @ C, cb)
-        ring = (1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C)[:, :, :nd, :nd]
+        ring = _ring_oriented(1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C,
+                              s.norb)[:, :, :nd, :nd]
         w2 = dense_w2(cb[:, :, :nd, :nd], s._second_order_factors)
         np.testing.assert_allclose(W00, ring + w2, rtol=1e-12, atol=1e-13)
 
@@ -155,18 +166,31 @@ class TestBondGate(unittest.TestCase):
         off-site resummation of the gate depends on which on-site
         second-order kernel the user picked, which is not the D4/D5 design.
 
+        Since issue #251 the ring that shares those strips is not the same
+        under the two kernels -- the default "local" one contracts it in the
+        conserving pair orientation, the legacy "takimoto" one in the earlier
+        one -- so the ring is removed from each side (re-derived from the
+        dressing, as in :meth:`test_channel0_block_equals_the_standalone_kernel`)
+        and the second-order correction left in the strips must agree.
+
         The last leg is the anti-vacuity one: the channel-0 blocks DO
         differ, so the equality above is not two identical ``W``s."""
-        W_local, _cb, solver = self._bond_w(second_order="local")
+        W_local, cb, solver = self._bond_w(second_order="local")
         W_tak = self._bond_w(second_order="takimoto")[0]
         nd = solver.norb ** 2
-        for name, a, b in (("W[:, :, :nd, nd:]", W_local[:, :, :nd, nd:], W_tak[:, :, :nd, nd:]),
-                           ("W[:, :, nd:, :nd]", W_local[:, :, nd:, :nd], W_tak[:, :, nd:, :nd])):
+        S, C = solver._bond_S, solver._bond_C
+        I = np.eye(cb.shape[-1])
+        chi_s = np.linalg.solve(I - cb @ S, cb); chi_c = np.linalg.solve(I + cb @ C, cb)
+        ring = 1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C
+        corr_local = W_local - _ring_oriented(ring, solver.norb)
+        corr_tak = W_tak - ring
+        for name, a, b in (("W[:, :, :nd, nd:]", corr_local[:, :, :nd, nd:], corr_tak[:, :, :nd, nd:]),
+                           ("W[:, :, nd:, :nd]", corr_local[:, :, nd:, :nd], corr_tak[:, :, nd:, :nd])):
             self.assertGreater(np.abs(a).max(), 1e-10,
                                "{} is empty on this fixture".format(name))
-            self.assertTrue(np.array_equal(a, b),
-                            "{} differs between the local and the takimoto kernel by "
-                            "{:.3e}".format(name, np.abs(a - b).max()))
+            np.testing.assert_allclose(a, b, rtol=0, atol=1e-12 * np.abs(W_local).max(),
+                                       err_msg="{}: the second-order correction differs between "
+                                               "the local and the takimoto kernel".format(name))
         w00 = np.abs(W_local[:, :, :nd, :nd] - W_tak[:, :, :nd, :nd]).max()
         self.assertGreater(
             w00, 1e-6 * np.abs(W_local[:, :, :nd, :nd]).max(),
@@ -242,6 +266,7 @@ class TestBondGate(unittest.TestCase):
         eye = np.eye(ND)
         chi_s = np.linalg.solve(eye - cb @ S[None], cb)
         chi_c = np.linalg.solve(eye + cb @ C[None], cb)
+        # the legacy "takimoto" kernel keeps the earlier ring orientation
         ring = (1.5 * (S[None] @ (chi_s - cb) @ S[None])
                 + 0.5 * (C[None] @ (chi_c - cb) @ C[None]))
         A = S[None] @ cb @ S[None] + C[None] @ cb @ C[None]

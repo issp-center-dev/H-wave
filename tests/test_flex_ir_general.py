@@ -819,7 +819,7 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
     from tests.test_flex_general import _write_2d_2orb_onsite_fixture
     from tests.test_flex_second_order_compat import (_members, moved_stamp,
                                                      own_tree_subprocess_env,
-                                                     reference_subprocess_env)
+                                                     reference_script, reference_subprocess_env)
     dev, why = _develop_checkout()
     if dev is None:
         pytest.skip(why)
@@ -837,9 +837,12 @@ def test_second_order_takimoto_ir_numerically_identical_to_develop():
             if checkout == here:
                 # this tree's own run: keep it measured
                 env = own_tree_subprocess_env(checkout)
+                script = _IR_ARCHIVE_RUN
             else:
                 env = reference_subprocess_env(checkout)
-            subprocess.run([sys.executable, "-B", "-c", _IR_ARCHIVE_RUN, fixture, out, so],
+                # issue #251's orientation change, and nothing else
+                script = reference_script(_IR_ARCHIVE_RUN)
+            subprocess.run([sys.executable, "-B", "-c", script, fixture, out, so],
                            env=env, check=True, capture_output=True, cwd=checkout)
         ma, mb = _members(a), _members(b)
         compared = 0

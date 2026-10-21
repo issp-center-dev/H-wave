@@ -695,7 +695,28 @@ where :math:`\bar\chi` is the bare bubble and :math:`\hat{U}^s`,
 this way the first two terms are the ring series from THIRD order on, and
 the whole second order of the theory sits in :math:`W^{(2)}`. Which
 expression is used for :math:`W^{(2)}` is selected by ``[mode.param]``
-``flex_second_order`` (see the configuration reference).
+``flex_second_order`` (see the configuration reference); the same key also
+selects the pair orientation in which the ring is contracted (next
+paragraph).
+
+The self-energy is :math:`\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
+\sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
+\mathbf{q}, i\omega - i\nu)`. The ring terms are matrix products in the
+pair layout of the bubble, and with the default ``flex_second_order =
+"local"`` they enter this sum with the two orbitals of **both** pairs
+swapped, :math:`(\mu m) \leftrightarrow (m \mu)`. In this
+orientation every order of the ring is the functional derivative of
+:math:`\mathrm{Tr}\,(\bar\chi \hat{U})^n`, so the self-energy is
+conserving (derivable from a Luttinger-Ward functional), and it is the
+orientation of the exact second order :math:`W^{(2)}`. Earlier versions
+contracted the ring from third order on without the swap (issue #251); the
+results of multi-orbital models with any inter-orbital interaction
+(CoulombInter, Hund, Exchange, Ising, PairHop) change, while an intra-orbital
+interaction alone (CoulombIntra) is unaffected. The bond-resolved channels
+(``longitudinal_bond_channels``) follow the same rule inside every channel
+block. The legacy ``flex_second_order = "takimoto"`` kernel keeps the earlier
+orientation, so that it still reproduces earlier releases; for inter-orbital
+interactions it is therefore not conserving.
 
 ``flex_second_order = "local"`` (the default)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

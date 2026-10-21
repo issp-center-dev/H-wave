@@ -214,6 +214,28 @@ def _scheme_stamp(solver):
     return stamp
 
 
+def _pair_transpose_into(out, v, no):
+    """``out[..., (m mu), (n nu)] = v[..., (mu m), (nu n)]``: ``v`` ``(...,
+    no^2, no^2)`` with the orbitals of BOTH pairs swapped, written into the
+    preallocated ``out`` (same shape, not aliasing ``v``; issue #251).
+
+    The general self-energy kernel contracts ``Sigma_mn = sum V_{(mu m),
+    (nu n)} G_{mu nu}`` (:meth:`FLEX._sigma_orbital_contract`). A ring term
+    ``U chi U`` built from the bubble and the vertex in their own pair
+    layout is the functional derivative of ``Tr (chi0 U)^n`` -- i.e. a
+    conserving (Phi-derivable) self-energy -- only after this transpose,
+    and the exact second order (:func:`hwave.solver.second_order.
+    accumulate_batch`) is already in this orientation; pinned by
+    tests/test_flex_ring_orientation.py. The legacy ``"takimoto"`` kernel
+    keeps the earlier orientation (it reproduces earlier releases)."""
+    lead = v.shape[:-2]
+    nl = len(lead)
+    xp = _bk.array_module_of(v)
+    xp.copyto(out.reshape(*lead, no, no, no, no),
+              v.reshape(*lead, no, no, no, no).transpose(
+                  *range(nl), nl + 1, nl, nl + 3, nl + 2))
+
+
 class FLEX(RPA):
     """FLEX solver that extends RPA with self-consistent Green's functions.
 
@@ -4211,6 +4233,7 @@ class FLEX(RPA):
                 raise ValueError('flex_second_order = "local" needs the compiled factors')
             xp = _bk.array_module_of(chi0q)
             nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+            no = chi0q.shape[2]
             ndx = chi0q.shape[2] * chi0q.shape[3]
             # Same flatten as the takimoto body below: row (l1 * norb + l2),
             # column (l3 * norb + l4) -- the pair convention accumulate_batch
@@ -4239,7 +4262,10 @@ class FLEX(RPA):
                     xp.matmul(UB, T1[:n], out=T2[:n])
                     xp.matmul(T2[:n], UB, out=T1[:n])
                     T1[:n] *= w
-                    out += T1[:n]
+                    # into the kernel's pair orientation (issue #251): the
+                    # transpose is copied into T2, which is free again here
+                    _pair_transpose_into(T2[:n], T1[:n], no)
+                    out += T2[:n]
                 # the exact local second order, added in place into the view.
                 # The kernel borrows the SAME two buffers (sliced to this
                 # batch's length, exactly like the ring products above), so

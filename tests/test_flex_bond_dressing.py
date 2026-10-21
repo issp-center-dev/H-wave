@@ -108,6 +108,13 @@ class TestDressAndBuildW(unittest.TestCase):
                     chi_c = np.linalg.solve(I + chi_bar @ C, chi_bar)
                     # spec 3.3 rev 19: ring beyond second order + the exact second order
                     W_ref = 1.5 * S @ (chi_s - chi_bar) @ S + 0.5 * C @ (chi_c - chi_bar) @ C
+                    if second_order == "local":
+                        # the ring's pair orientation (issue #251): the orbitals
+                        # of every pair swapped inside its channel block; the
+                        # legacy "takimoto" kernel keeps the earlier one
+                        no = int(round(nd ** 0.5))
+                        pin = np.arange(ND).reshape(ND // nd, no, no).transpose(0, 2, 1).ravel()
+                        W_ref = W_ref[..., pin[:, None], pin[None, :]]
                     A = S @ chi_bar @ S
                     Bc = C @ chi_bar @ C
                     W2 = np.zeros_like(W_ref)
@@ -343,6 +350,72 @@ class TestDressBatchGuardModes(unittest.TestCase):
                 parts.append(p); conds.append(c)
             np.testing.assert_allclose(np.concatenate(parts), full, rtol=1e-12, atol=1e-14)
             self.assertAlmostEqual(min(conds), c_full, places=12)
+
+
+
+class TestRingOrientationUnderBondW2(unittest.TestCase):
+    """Issue #251 with the exact bond-enlarged second order (``bond_w2``):
+    the caller's ``second_order`` still selects the ring's pair orientation
+    -- ``"local"`` the conserving one (the orbitals of every pair swapped
+    inside its channel block), the legacy ``"takimoto"`` the earlier one --
+    and nothing else differs between the two (the second order is the
+    ``bond_w2`` factors either way)."""
+
+    def test_only_the_ring_orientation_differs(self):
+        from hwave.solver import flex_bond
+        nmat, nvol, norb, B = 3, 2, 3, 3
+        nd = norb * norb
+        ND = B * nd
+        rng = np.random.default_rng(251)
+        cb = rng.normal(size=(nmat, nvol, ND, ND)) + 1j * rng.normal(size=(nmat, nvol, ND, ND))
+        cb = 0.5 * (cb + np.conjugate(np.swapaxes(cb, -1, -2)))
+        S = 0.01 * (rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND)))
+        S = 0.5 * (S + np.conjugate(np.swapaxes(S, -1, -2)))
+        C = 0.7 * np.conjugate(S)
+        A = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+        Bf = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        view = types.SimpleNamespace(n_channels=B)
+
+        def run(second_order):
+            with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
+                store.put_freq_batch("chibar", 0, nmat, cb)
+                with flex_bond.BondDeviceContext.for_view(np, S, C, zero_on, zero_on,
+                                                          view, norb) as dev:
+                    flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
+                                                nmat=nmat, nvol=nvol, nd=nd,
+                                                spatial_shape=(nvol, 1, 1), factors=None,
+                                                second_order=second_order,
+                                                bond_w2=[((0, 0, 0), A, Bf)])
+                return np.array(store.get_freq_batch("W", 0, nmat))
+
+        W_loc, W_tak = run("local"), run("takimoto")
+        eye = np.eye(ND)
+        chi_s = np.linalg.solve(eye - cb @ S[None], cb)
+        chi_c = np.linalg.solve(eye + cb @ C[None], cb)
+        ring = 1.5 * (S[None] @ (chi_s - cb) @ S[None]) + 0.5 * (C[None] @ (chi_c - cb) @ C[None])
+        pin = np.arange(ND).reshape(B, norb, norb).transpose(0, 2, 1).ravel()
+        want = ring[..., pin[:, None], pin[None, :]] - ring
+        self.assertGreater(np.abs(want).max(), 1e-3 * np.abs(ring).max())   # the swap is visible
+        np.testing.assert_allclose(W_loc - W_tak, want, rtol=0,
+                                   atol=1e-12 * np.abs(W_tak).max())
+
+    def test_an_unknown_kernel_is_refused_with_bond_w2_too(self):
+        """``bond_w2`` replaces the second order but not the validation of
+        ``second_order``, which still selects the ring's orientation."""
+        from hwave.solver import flex_bond
+        nvol, nd, norb, B = 2, 4, 2, 2
+        ND = B * nd
+        zero = np.zeros((nvol, ND, ND), dtype=np.complex128)
+        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
+        view = types.SimpleNamespace(n_channels=B)
+        with flex_bond.BondDeviceContext.for_view(np, zero, zero, zero_on, zero_on,
+                                                  view, norb) as dev:
+            with self.assertRaisesRegex(ValueError, "second_order must be"):
+                flex_bond.dress_and_build_w(None, dev, nb=1, output_full=False, nmat=2,
+                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                            second_order="nonsense",
+                                            bond_w2=[((0, 0, 0), zero, zero)])
 
 
 if __name__ == "__main__":

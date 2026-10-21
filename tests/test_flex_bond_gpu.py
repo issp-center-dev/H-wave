@@ -337,6 +337,37 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                 self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
 
+    def test_local_ring_orientation_matches_the_host(self):
+        """The conserving ring orientation of ``second_order = "local"``
+        (issue #251) is a device-side fancy index; with the exact
+        bond-enlarged second order (``bond_w2``) no factor pack is needed,
+        so a synthetic problem reaches it. Device equals host."""
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=7)
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        S_on = np.ascontiguousarray(S[:, :nd, :nd])
+        C_on = np.ascontiguousarray(C[:, :nd, :nd])
+        view = types.SimpleNamespace(n_channels=ND // nd)
+        rng = np.random.default_rng(251)
+        Af = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+        Bf = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+
+        def run(xp):
+            w2 = [((0, 0, 0), xp.asarray(Af), xp.asarray(Bf))]
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
+                                     nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                     second_order="local", bond_w2=w2)
+                return store.get_freq_batch("W", 0, nmat).copy()
+
+        W_ref = run(np)
+        W = run(self.cupy)
+        cm = _cond_max(np.eye(ND)[None, None] - chi_bar @ S[None])
+        _deviation("W local (bond_w2)", W, W_ref)
+        np.testing.assert_allclose(W, W_ref, rtol=1e-10 * cm, atol=1e-12 * np.max(np.abs(W_ref)))
+
     def test_output_full_susceptibilities_match(self):
         """``output_full=True`` (issue #198 item 3): the batched dressed
         susceptibilities ``chi_s_w`` / ``chi_c_w`` the store writes alongside
