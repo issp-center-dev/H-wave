@@ -80,8 +80,9 @@ archives, and from any archive written before this key was introduced
 (H-wave 2.0.0 and earlier). A missing field is
 never an error: every H-wave reader accepts such a file. When the initial
 self-energy given by ``sigma_init`` (the seed) records the retired
-``takimoto`` kernel, the seed is still used, as the initial value only (the
-result is determined by the ``local`` self-consistency), and the solver
+``takimoto`` kernel, the seed is still accepted (if it passes the usual
+seed checks it is the initial value only, and every iteration uses
+``local``), and the solver
 logs one warning at WARNING level saying so (and one message at INFO level
 when the seed carries no record at all); scripts
 that compare the member list of an archive strictly (the ``files``

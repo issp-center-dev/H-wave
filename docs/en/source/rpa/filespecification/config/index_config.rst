@@ -600,9 +600,10 @@ that has no effect under the current settings.
     :ref:`flex_second_order_kernel`). It was the kernel of H-wave 2.0.0 and
     earlier, so the results of those releases can no longer be reproduced
     by a setting; use an earlier release for that. A ``sigma_init`` seed
-    recorded with ``"takimoto"`` is still accepted, with a warning: it is
-    only the initial value, and the result is determined by the
-    ``"local"`` self-consistency.
+    recorded with ``"takimoto"`` is still accepted, with a warning: if it
+    passes the usual seed checks it is only the initial value, and every
+    iteration uses ``"local"`` (a run that does not converge can still
+    depend on the seed).
 
   **Applicability:** The key is meaningful for ``mode = "FLEX"`` with
   ``calc_scheme = "general"`` only. The default is applied AFTER FLEX

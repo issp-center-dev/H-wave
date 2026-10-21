@@ -33,8 +33,8 @@ def _retired_seed(out, name="seed_takimoto.npz"):
 
 #: the start of the seed reader's warning on a seed of the retired kernel
 _RETIRED_SEED_WARNING = ("seed computed with the retired flex_second_order = takimoto kernel; "
-                         "it is used only as the initial value and the result is determined by "
-                         "the self-consistency of flex_second_order = local")
+                         "if it passes the remaining checks it serves only as the initial value, "
+                         "and every iteration uses flex_second_order = local")
 
 
 class TestProvenance(unittest.TestCase):

@@ -1086,9 +1086,10 @@ class FLEX(RPA):
                                 "was introduced -- H-wave 2.0.0 and earlier)".format(file_name))
                 elif seed_so == self._RETIRED_SECOND_ORDER:
                     logger.warning("sigma_init '{}': seed computed with the retired flex_second_order "
-                                   "= {} kernel; it is used only as the initial value and the result "
-                                   "is determined by the self-consistency of flex_second_order = {} "
-                                   "-- if the SCF stalls, restart from Sigma = 0".format(
+                                   "= {} kernel; if it passes the remaining checks it serves only as "
+                                   "the initial value, and every iteration uses flex_second_order = {} "
+                                   "(an unconverged run can still depend on the seed) -- if the SCF "
+                                   "stalls, restart from Sigma = 0".format(
                                        file_name, seed_so, self.flex_second_order))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
