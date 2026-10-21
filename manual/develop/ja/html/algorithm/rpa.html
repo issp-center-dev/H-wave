@@ -607,7 +607,21 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
 <span class="math notranslate nohighlight">\(W^{(2)}\)</span>に含まれます。<span class="math notranslate nohighlight">\(W^{(2)}\)</span>にどの式を使うかは
 <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>の<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>で選択します（設定ファイルの
-説明を参照）。</p>
+説明を参照）。同じキーで ring を縮約する対の向きも決まります（次の段落）。</p>
+<p>自己エネルギーは<span class="math notranslate nohighlight">\(\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
+\sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
+\mathbf{q}, i\omega - i\nu)\)</span>です。ring の項はバブルの対の並びでの行列積であり、
+デフォルトの<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>では、この和に<strong>両方の</strong>対の2つの軌道を入れ替えた向き
+<span class="math notranslate nohighlight">\((\mu m) \leftrightarrow (m \mu)\)</span>で入ります。この向きでは ring の
+各次数が<span class="math notranslate nohighlight">\(\mathrm{Tr}\,(\bar\chi \hat{U})^n\)</span>の汎関数微分になり、
+自己エネルギーは保存近似（Luttinger-Ward 汎関数から導かれる）になります。
+厳密な2次<span class="math notranslate nohighlight">\(W^{(2)}\)</span>もこの向きです。以前のバージョンでは3次以上の
+ring を入れ替えずに縮約していました（issue #251）。軌道間の相互作用
+（CoulombInter、Hund、Exchange、Ising、PairHop）を含む多軌道模型では結果が変わり、
+軌道内の相互作用（CoulombIntra）のみの場合は変わりません。ボンド分解チャネル
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>）も各チャネルブロックの中で同じ規則に従います。
+従来の<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code>カーネルは、以前のリリースの結果を
+再現できるよう以前の向きのままであり、軌道間の相互作用に対しては保存近似になりません。</p>
 <section id="flex-second-order-local">
 <h4><code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;local&quot;</span></code>（デフォルト）<a class="headerlink" href="#flex-second-order-local" title="Link to this heading">¶</a></h4>
 <p>一般化した添字<span class="math notranslate nohighlight">\(p = (\text{サイト}, \text{軌道}, \text{スピン})\)</span>

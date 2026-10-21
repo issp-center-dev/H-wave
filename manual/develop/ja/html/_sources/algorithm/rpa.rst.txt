@@ -659,7 +659,22 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
 :math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ にどの式を使うかは
 ``[mode.param]``\ の\ ``flex_second_order``\ で選択します（設定ファイルの
-説明を参照）。
+説明を参照）。同じキーで ring を縮約する対の向きも決まります（次の段落）。
+
+自己エネルギーは\ :math:`\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
+\sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
+\mathbf{q}, i\omega - i\nu)`\ です。ring の項はバブルの対の並びでの行列積であり、
+デフォルトの\ ``flex_second_order = "local"``\ では、この和に\ **両方の**\ 対の2つの軌道を入れ替えた向き
+:math:`(\mu m) \leftrightarrow (m \mu)`\ で入ります。この向きでは ring の
+各次数が\ :math:`\mathrm{Tr}\,(\bar\chi \hat{U})^n`\ の汎関数微分になり、
+自己エネルギーは保存近似（Luttinger-Ward 汎関数から導かれる）になります。
+厳密な2次\ :math:`W^{(2)}`\ もこの向きです。以前のバージョンでは3次以上の
+ring を入れ替えずに縮約していました（issue #251）。軌道間の相互作用
+（CoulombInter、Hund、Exchange、Ising、PairHop）を含む多軌道模型では結果が変わり、
+軌道内の相互作用（CoulombIntra）のみの場合は変わりません。ボンド分解チャネル
+（\ ``longitudinal_bond_channels``\ ）も各チャネルブロックの中で同じ規則に従います。
+従来の\ ``flex_second_order = "takimoto"``\ カーネルは、以前のリリースの結果を
+再現できるよう以前の向きのままであり、軌道間の相互作用に対しては保存近似になりません。
 
 ``flex_second_order = "local"``\ （デフォルト）
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
