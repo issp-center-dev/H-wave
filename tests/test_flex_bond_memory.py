@@ -49,7 +49,7 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(pr["flex_arrays"], 5 * G)
         self.assertEqual(pr["hf_tables"], 2 * H)
         # the second-order factor pack: this call passes no factor bytes
-        # (the default, i.e. flex_second_order = "takimoto", which compiles none)
+        # (the default of the estimator's factor_bytes argument)
         self.assertEqual(pr["second_order_factors"], 0)
         self.assertEqual(est["persistent"], sum(pr.values()))
         ph = est["phase_rows"]

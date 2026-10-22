@@ -126,8 +126,7 @@ class BondBlockStore:
 
 class BondDeviceContext:
     """Owner of the IMMUTABLE bond inputs for one ``_solve_phase_b`` call
-    (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``, the on-site
-    ``S_on``, ``C_on``, their sum ``SpC_on`` (formed on the host here, once),
+    (spec 2026-09-17 section 4.2): the vertices ``S``, ``C``,
     the mixed-block pair permutation ``perm``, the block-weight ``mask``
     and the bubble's tau-space tail ``green0_tail`` (issue #196: the
     bubble computes on the module of the Green function, which the SCF
@@ -141,27 +140,17 @@ class BondDeviceContext:
     it AFTER the memory preflight (its allocation is part of the predicted
     device need) and nothing else creates device copies of the vertices."""
 
-    _NAMES = ("S", "C", "S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail")
+    _NAMES = ("S", "C", "perm", "mask", "green0_tail")
 
-    def __init__(self, xp, S, C, S_on=None, C_on=None, perm=None, mask=None,
-                 green0_tail=None):
+    def __init__(self, xp, S, C, perm=None, mask=None, green0_tail=None):
         self.xp = xp
-        # SpC_on exists only when BOTH are present, so one of them alone would
-        # be silently dropped into a context whose SpC_on is None
-        if (S_on is None) != (C_on is None):
-            raise ValueError("BondDeviceContext: S_on and C_on must be given together "
-                             "(both None or both arrays); got S_on {}, C_on {}"
-                             .format("None" if S_on is None else "an array",
-                                     "None" if C_on is None else "an array"))
-        SpC_on = None if (S_on is None or C_on is None) else np.asarray(S_on) + np.asarray(C_on)
-        host = dict(S=S, C=C, S_on=S_on, C_on=C_on, SpC_on=SpC_on, perm=perm, mask=mask,
-                    green0_tail=green0_tail)
+        host = dict(S=S, C=C, perm=perm, mask=mask, green0_tail=green0_tail)
         self._arrays = {k: (None if host[k] is None else _bk.to_device(host[k], xp))
                         for k in self._NAMES}
         self._released = False
 
     @classmethod
-    def for_view(cls, xp, S, C, S_on, C_on, view, norb, green0_tail=None, *, perm=None):
+    def for_view(cls, xp, S, C, view, norb, green0_tail=None, *, perm=None):
         """The context for the bond view ``view`` (issue #198): derives the
         pair permutation from :func:`_mixed_pair_permutation` (looked up on
         the module, so a test may still replace it) and the block-weight
@@ -182,7 +171,7 @@ class BondDeviceContext:
                                  "* norb**2 = {} * {}".format(label, shape[-2:], ND, ND, B, nd))
         if perm is None:
             perm = _mixed_pair_permutation(B, nd, norb)
-        return cls(xp, S, C, S_on, C_on, perm, mixed_block_mask(B, nd),
+        return cls(xp, S, C, perm, mixed_block_mask(B, nd),
                    green0_tail=green0_tail)
 
     def __enter__(self):
@@ -365,7 +354,7 @@ class DressResult:
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
-                      second_order="takimoto", guard_freqs="all", guard_policy="refuse",
+                      guard_freqs="all", guard_policy="refuse",
                       guard_method="auto", workers=1, bond_w2=None):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
@@ -374,12 +363,16 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         W = 3/2 S (chi_s - chibar) S + 1/2 C (chi_c - chibar) C + W2
 
     whose second-order part ``W2`` is exact for the off-site content and
-    reduces to the general path's for the on-site content:
-    channel-0 block ``[3/2 S chibar S + 1/2 C chibar C]_00 - 1/4 (S_on +
-    C_on) chibar_00 (S_on + C_on)`` (the general path's subtraction
-    restricted to the ON-SITE vertices ``S_on``, ``C_on``: a spin-
-    independent density interaction is counted once by the ring),
-    mixed channel-0/bond blocks ``1/4 (S chibar S + C chibar C)`` read at
+    reduces to the general path's for the on-site content (spec 2026-09-08
+    D5): the channel-0 block is the ring restricted to channel 0 (already
+    in ``W_b``, the bare bubble subtracted from both channels) plus the
+    exact local kernel ``W2(chibar_00)`` of
+    :func:`hwave.solver.second_order.accumulate_batch`, which needs the
+    compiled ``factors`` pack (of the array module ``dev.xp``: the caller
+    passes the device mirror on the GPU). Since the general path's
+    channel-0 flattening is the bond store's, the two agree wherever the
+    off-site content is declared zero -- that is gate G0. The
+    mixed channel-0/bond blocks are ``1/4 (S chibar S + C chibar C)`` read at
     the PERMUTED pair index on both axes (the exchange skeleton, once:
     :func:`_mixed_pair_permutation` -- identity on channel 0, the
     orbital-pair transpose inside every bond block, so that the bond-side
@@ -390,26 +383,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     slices (slice assignment into preallocated buffers) and, with
     ``output_full``, the store's ``chi_s_w``/``chi_c_w``.
 
-    ``second_order`` selects the CHANNEL-0 second order only (spec
-    2026-09-08 D5), exactly as ``flex_second_order`` does for the
-    standalone general path:
-
-    ``"takimoto"``
-        the rev-19 expression quoted above -- unchanged, byte for byte.
-    ``"local"``
-        the exact local kernel of :mod:`hwave.solver.second_order`
-        instead: the channel-0 block is the ring restricted to channel 0
-        (already in ``W_b``, the bare bubble subtracted from both
-        channels) plus ``W2(chibar_00)`` from
-        :func:`~hwave.solver.second_order.accumulate_batch`, which needs
-        the compiled ``factors`` pack (host-backed: this whole module is
-        host-side). Since the general path's channel-0 flattening is the
-        bond store's, the two agree wherever the off-site content is
-        declared zero -- that is gate G0 under BOTH kernels.
-
-    The mixed and bond-bond blocks are the same under both values: the
-    gate resums the off/off exchange topology the local kernel does not
-    carry, and that is the D4/D5 design.
+    The mixed and bond-bond blocks resum the off/off exchange topology the
+    local kernel does not carry (the D4/D5 design).
 
     ``dev`` is the :class:`BondDeviceContext` owning the vertices (spec
     2026-09-17 section 4.2): each frequency batch is moved from the store
@@ -441,28 +416,19 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     When given, the second order of every block is ``1/2 sum A chibar B``
     (exact in the bond-enlarged basis, off-site Exchange included) and the
     channel-0 kernel, the mixed-block rule and the zero bond-bond blocks
-    above are not used; ``factors`` is then ignored and ``second_order``
-    selects nothing but the ring's pair orientation below.
+    above are not used; ``factors`` is then ignored.
 
-    The ring's pair orientation (issue #251): under ``second_order =
-    "local"`` (with or without ``bond_w2``) the ring, third order and up, is
-    taken with the two orbitals of every pair swapped inside its channel
-    block -- the conserving orientation under :func:`calc_self_energy_bond`'s
-    contraction; the legacy ``"takimoto"`` kernel keeps the earlier one."""
-    # validated BEFORE bond_w2 below reuses the name: the caller's value
-    # still selects the ring's orientation then
-    if second_order not in ("local", "takimoto"):
-        raise ValueError("dress_and_build_w: second_order must be \"local\" or \"takimoto\", "
-                         "got {!r}".format(second_order))
-    # the legacy "takimoto" kernel keeps the earlier ring orientation as a
-    # whole (it reproduces earlier releases)
-    legacy = second_order == "takimoto"
+    The ring's pair orientation (issue #251): with or without ``bond_w2``,
+    the ring, third order and up, is taken with the two orbitals of every
+    pair swapped inside its channel block -- the conserving orientation
+    under :func:`calc_self_energy_bond`'s contraction."""
     if bond_w2 is not None:
-        second_order, factors = "takimoto", None
-    if second_order == "local" and factors is None:
-        raise ValueError("dress_and_build_w: flex_second_order = \"local\" needs the factors")
+        factors = None
+    elif factors is None:
+        raise ValueError("dress_and_build_w: the second-order kernel needs the factors "
+                         "(or bond_w2)")
     xp = dev.xp
-    S, C, SpC_on = dev.S, dev.C, dev.SpC_on
+    S, C = dev.S, dev.C
     ND = S.shape[-1]
     norb = int(round(nd ** 0.5))
     if norb * norb != nd:
@@ -486,7 +452,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     # Tr (chibar U)^n under calc_self_energy_bond's contraction (pinned by
     # tests/test_flex_ring_orientation.py). The identity at norb = 1.
     pin = None
-    if norb > 1 and not legacy:
+    if norb > 1:
         pin = xp.asarray(np.arange(ND).reshape(ND // nd, norb, norb).transpose(0, 2, 1).ravel())
     collapse0 = np.empty((nmat, nvol, nd, nd), dtype=np.complex128)      # HOST accumulators
     collapse_s = np.empty_like(collapse0)
@@ -541,18 +507,12 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
             store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
             del W_b, cb
             continue
-        # second-order term. A / Bc carry BOTH the channel-0 block of the
-        # legacy kernel and the mixed blocks of either kernel, so they are
-        # built once, before the channel-0 branch.
+        # second-order term: A / Bc carry the mixed blocks
         A = _sandwich(S, cb, S, workers)
         Bc = _sandwich(C, cb, C, workers)
-        if second_order == "local":
-            # accumulate_batch is array-module generic; `factors` must carry arrays
-            # of xp's module (the caller passes the device pack on the GPU)
-            _so.accumulate_batch(W_b[:, :, :nd, :nd], cb[:, :, :nd, :nd], l0, factors)
-        else:
-            W_b[:, :, :nd, :nd] += 1.5 * A[:, :, :nd, :nd] + 0.5 * Bc[:, :, :nd, :nd]
-            W_b[:, :, :nd, :nd] -= 0.25 * (SpC_on[None] @ cb[:, :, :nd, :nd] @ SpC_on[None])
+        # accumulate_batch is array-module generic; `factors` must carry arrays
+        # of xp's module (the caller passes the device pack on the GPU)
+        _so.accumulate_batch(W_b[:, :, :nd, :nd], cb[:, :, :nd, :nd], l0, factors)
         A += Bc
         del Bc
         A *= 0.5 * mask
@@ -718,8 +678,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     (the pairing reads the last map's ``chibar`` back).
 
     ``factor_bytes`` is the compiled second-order factor pack's
-    ``SecondOrderFactors.nbytes`` (0 with the legacy
-    ``flex_second_order = takimoto``, which compiles none): the pack is
+    ``SecondOrderFactors.nbytes`` (0 when none is compiled): the pack is
     built once per solver and lives for the whole solve, so it is a PERSISTENT row
     (``second_order_factors``). Its batch temporaries are not a row of
     their own -- they are two ``(nb, nvol, nd, nd)`` arrays, i.e. 2/B^2
@@ -735,7 +694,17 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     the whole Phase B solve --
 
     * ``vertices_static = 5 * S``: the static vertex stack of the device
-      context, allocated right after the measurement;
+      context, allocated right after the measurement. This is a
+      CONSERVATIVE charge, not exact accounting: the resident vertex set is
+      now ``S``, ``C`` (``S`` bytes each), the float64 block-weight
+      ``mask`` (``ND x ND``) and the int64 pair permutation (``ND``) --
+      the on-site vertices it was originally sized for were dropped with
+      the retired ``"takimoto"`` kernel (issue #253) -- and on the host
+      the same charge also covers the dressing's static slices
+      (``static_s`` / ``static_c``, ``2 S``) and the Green-function and
+      self-energy copies that the per-phase tracemalloc check of
+      ``tests/test_flex_bond_memory.py`` measures. Re-deriving the table
+      row by row is a follow-up;
     * ``flex_arrays = 5 * G``: the SCF loop's device Green functions and
       self-energies, allocated per iteration INSIDE the loop and so not
       yet part of the measured reading;
@@ -799,10 +768,14 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     C = nmat * nvol * P * P * it
     S = nvol * ND * ND * it
     H = nvol * P * it
+    # the static vertex stack: a conservative 5 S, see the docstring (the
+    # resident set is S, C, mask and perm; the margin also covers the static
+    # slices and the Green-function copies; re-deriving it is a follow-up)
+    V = 5 * S
     persistent_rows = {
         "chibar_W": (1 if w_in_place else 2) * U,
         "chi_sc_w": 2 * U if output_full else 0,
-        "vertices_static": 5 * S,
+        "vertices_static": V,
         "state": G + H,
         "seed_envelope": (2 * G + H) if split_seed else 0,
         "anderson_history": 2 * depth * 2 * G,
@@ -885,7 +858,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
 
     device = {}
     if device_available is not None:
-        vertices = 5 * S
+        vertices = V
         transport = 6 * C
         dev_persistent = {"vertices_static": vertices, "flex_arrays": 5 * G,
                           "green0_tail": G,

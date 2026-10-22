@@ -30,11 +30,29 @@ from unittest import mock
 import numpy as np
 
 from tests.heavy_tests import heavy
-from tests.test_flex_bond_dressing import _problem
+from tests.test_flex_bond_dressing import _onsite_factors, _problem
 
 #: Print the measured deviations. Opt-in so the normal run is quiet.
 _REPORT = os.environ.get("HWAVE_GPU_EQUIV_REPORT", "").strip().lower() \
     not in ("", "0", "false", "no", "off")
+
+
+def _onsite_factors_on(xp):
+    """The on-site factor pack of :func:`tests.test_flex_bond_dressing.
+    _onsite_factors` (``nd = 4``), mirrored onto the array module ``xp``
+    the way ``FLEX.solve`` mirrors the solver's pack onto the device."""
+    from hwave.solver.second_order import SecondOrderFactors
+    f = _onsite_factors()
+    if xp is np:
+        return f
+    return SecondOrderFactors(
+        norb=f.norb, nd=f.nd, nvol=f.nvol, triples=f.triples,
+        A_on=tuple(xp.asarray(a) for a in f.A_on),
+        B_on=tuple(xp.asarray(b) for b in f.B_on),
+        vpair=None if f.vpair is None else xp.asarray(f.vpair),
+        nbytes=f.nbytes, off_triples=f.off_triples,
+        A_off=None if f.A_off is None else tuple(xp.asarray(a) for a in f.A_off),
+        B_off=None if f.B_off is None else tuple(xp.asarray(b) for b in f.B_off))
 
 
 def _cond_max(mat):
@@ -302,17 +320,15 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd])
-        C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(xp, nb):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto")
+                                           factors=_onsite_factors_on(xp))
                 return store.get_freq_batch("W", 0, nmat).copy(), res
 
         W_ref, r_ref = run(np, nmat)
@@ -338,15 +354,13 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
 
     def test_local_ring_orientation_matches_the_host(self):
-        """The conserving ring orientation of ``second_order = "local"``
-        (issue #251) is a device-side fancy index; with the exact
+        """The conserving ring orientation (issue #251) is a device-side
+        fancy index; with the exact
         bond-enlarged second order (``bond_w2``) no factor pack is needed,
         so a synthetic problem reaches it. Device equals host."""
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=7)
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd])
-        C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
         rng = np.random.default_rng(251)
         Af = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
@@ -355,11 +369,11 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         def run(xp):
             w2 = [((0, 0, 0), xp.asarray(Af), xp.asarray(Bf))]
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
                                      nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                     second_order="local", bond_w2=w2)
+                                     bond_w2=w2)
                 return store.get_freq_batch("W", 0, nmat).copy()
 
         W_ref = run(np)
@@ -377,18 +391,16 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd])
-        C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(xp, nb):
             with fb.BondBlockStore(nmat, nvol, ND, nd,
                                    ("chibar", "W", "chi_s_w", "chi_c_w")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=True, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto")
+                                           factors=_onsite_factors_on(xp))
                 return (store.get_freq_batch("W", 0, nmat).copy(),
                         store.get_freq_batch("chi_s_w", 0, nmat).copy(),
                         store.get_freq_batch("chi_c_w", 0, nmat).copy(), res)
@@ -434,15 +446,15 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         # vacuous (interval decomposes the same 64 of 64 blocks as svd).
         chi_bar[0, 0] *= 100.0
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
         def run(xp, method):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto", guard_method=method)
+                                           factors=_onsite_factors_on(xp),
+                                           guard_method=method)
                 return store.get_freq_batch("W", 0, nmat).copy(), res
         W_ref, r_ref = run(self.cupy, "svd")
         W, r = run(self.cupy, "interval")

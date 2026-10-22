@@ -12,9 +12,6 @@
    "1.20": 0.20422236555203177
   }
  },
- "lambda_t_takimoto": {
-  "0.80": 0.09940861974554759
- },
  "records": [
   {
    "V": 0.0,
@@ -174,31 +171,6 @@
    "sha256": "6478eb2a568497b080d0a5ac051791a0ae0f1cd1c5071984b29255cc3419a4e5",
    "symmetrization_residual": 2.2895041392697236e-11,
    "wall_s": 111.05818223953247
-  }
- ],
- "records_takimoto": [
-  {
-   "V": 0.8,
-   "cond_min_c": 0.32373304999828284,
-   "cond_min_s": 0.2119861741940967,
-   "green": "green_flexbond_L16_V0.80_cold_takimoto.npz",
-   "hf_density_error": 0.0,
-   "legacy_seed_iterations": 17,
-   "maxrss_mb": 3485.140625,
-   "mu": 8.82852480381652,
-   "qlms_result": {
-    "scf_converged": true,
-    "scf_iterations": 25
-   },
-   "scf_component_residual": 2.0336343381080736e-12,
-   "scf_converged": true,
-   "scf_green_residual": 2.7640704712582804e-09,
-   "scf_iterations": 25,
-   "scf_sigma_residual": 2.0115060704774336e-12,
-   "seed": "cold",
-   "sha256": "387e733a47b649aa63bc9b27d105e8958296bca8d0df9a1c9fa070a3690cbfa6",
-   "symmetrization_residual": 1.8447384683473294e-11,
-   "wall_s": 114.36483836174011
   }
  ],
  "settings": {

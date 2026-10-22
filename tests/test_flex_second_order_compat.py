@@ -1,12 +1,13 @@
 """Compatibility contract (spec 2026-09-08 section 3, extended by spec
-2026-09-16 section 2.4): 'takimoto' without the Hartree-Fock term keeps
-every numerical archive member of the general path np.array_equal to the
-reference revision's, and so does 'local' on an input with no off-site
-two-body row; the Hartree-Fock map on a declaration F reproduces the
-reference revision's map on the REVERSED declaration F^rev exactly; 'local'
-on CoulombIntra-only input agrees with 'takimoto' to 1e-14 with the
-archive-scale floor; the factors are built at construction under 'local'
-only; the D7 refusal fires at construction.
+2026-09-16 section 2.4): 'local' on an input with no off-site two-body row
+keeps every numerical archive member of the general path np.array_equal to
+the reference revision's; the Hartree-Fock map on a declaration F
+reproduces the reference revision's map on the REVERSED declaration F^rev
+exactly; 'local' on a one-band Hubbard input agrees with the reference
+revision's retired 'takimoto' kernel to 1e-14 with the archive-scale floor,
+and so does the method-level assembly with the Takimoto-Hotta-Ueda formula;
+the factors are built at construction; the D7 refusal fires at
+construction, after the refusal of the retired kernel.
 
 What is NOT here: the paths the interaction-row orientation change moved
 (the Hartree-Fock term, the local kernel's off-site vertex, the bond gate).
@@ -14,6 +15,17 @@ They cannot be compared to the reference revision on the same declaration
 by construction; their numerical state is pinned as committed fixed state
 by tests/test_flex_orientation_baseline.py, and their CORRECTNESS by the
 ED/oracle modules that file names.
+
+Removed with the retirement of flex_second_order = "takimoto" (issue #253):
+the end-to-end identity of a 'takimoto' run with the reference revision's,
+on the same on-site declaration and on the REVERSED off-site declaration
+F^rev. This tree no longer runs that kernel, and the 'local' kernel cannot
+take its place in the off-site leg: its exact second order reads the
+off-site rows on the moved bond in a way no reversal of the declaration
+undoes (measured: up to 4e-3 in sigma on input_2orb's CoulombInter). The
+on-site leg is the 'local' identity that remains below; the bond placement
+of the q-space vertex is pinned by tests/test_sc_vertex_adjudicated.py and
+tests/test_flex_orientation_baseline.py.
 
 THE REFERENCE CHECKOUT IS PROVISIONED IN CI. Both test jobs of
 .github/workflows/ci-python39.yml materialise DEVELOP_COMMIT as a detached
@@ -105,7 +117,8 @@ def reference_subprocess_env(checkout):
 #: Issue #251 changed, on purpose, the pair orientation in which the default
 #: "local" kernel of the general FLEX path contracts its ring (third order
 #: and up): it is now the conserving one, that of the exact second order (the
-#: legacy "takimoto" kernel keeps the earlier one). The reference revision
+#: reference revision's "takimoto" kernel, retired since by issue #253, is
+#: left in the earlier one). The reference revision
 #: predates the change, so a comparison against it gets exactly that one
 #: change applied to the reference run before the run starts
 #: (:func:`reference_script` prefixes it to the script): the ring is
@@ -135,6 +148,9 @@ def _veff_issue_251(self, chi0q, chi_s, chi_c, Us, Uc, factors=None, second_orde
         # the legacy "takimoto" kernel keeps the earlier orientation
         return _reference_veff(self, chi0q, chi_s, chi_c, Us, Uc, factors=factors,
                                second_order=second_order)
+    # the reference method's own entry line, so that a log comparison sees
+    # the same stream
+    _F.logger.debug(">>> FLEX._calc_veff_general")
     from hwave.solver.second_order import accumulate_batch
     nmat, nvol = chi0q.shape[0], chi0q.shape[1]
     ndx = no * no
@@ -196,10 +212,11 @@ def _run(checkout, path, inter, out, so, extra=None):
 #: one into nothing at all.
 #:
 #: The reference revision already HAS ``flex_second_order`` (it is the merge
-#: that added it) and already defaults it to ``"local"``, so every harness
-#: below names the kernel on BOTH sides. Leaving the reference side to its
-#: default would compare ``"local"`` against ``"takimoto"`` and report the
-#: difference between two kernels as a compatibility break.
+#: that added it) and already defaults it to ``"local"``; every harness below
+#: names the kernel on both sides. This tree accepts ``"local"`` only (issue
+#: #253); the one harness that runs the reference revision's ``"takimoto"``
+#: compares it with this tree's ``"local"`` where the two kernels are the
+#: same (a one-band Hubbard model).
 DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 
 
@@ -328,58 +345,6 @@ class TestCompatibility(unittest.TestCase):
             self.skipTest(why)
         return dev
 
-    def test_takimoto_numerical_members_equal_develop(self):
-        """Every numerical archive member of a ``"takimoto"`` run without the
-        Hartree-Fock term is ``np.array_equal`` to the reference revision's:
-        on an ON-SITE fixture for the same declaration, and on a fixture with
-        INTER-ORBITAL off-site rows for the REVERSED declaration ``F^rev``.
-
-        The reference revision's q-space vertex put an off-site row
-        ``(r, a, b)`` on the bond opposite its Transfer row (issue #232); this
-        tree puts it on the Transfer row's bond, i.e. where the reference
-        revision puts the row ``(-r, a, b)``. Reversing every off-site
-        displacement is therefore the exact recipe for the old numbers on
-        this path -- which is what the off-site case asserts -- and the
-        on-site case pins that nothing else moved. The Hartree-Fock map,
-        whose reading did not change, is pinned on the SAME declaration by
-        :meth:`test_hf_map_reads_the_declaration_as_develop_did` and by
-        ``tests/test_flex_hf_scf.py::TestG0Off::
-        test_first_map_static_equals_develop_on_the_same_declaration``.
-        """
-        dev = self._develop()
-        here = os.getcwd()
-        compared = 0
-        from tests.test_flex_hf_scf import _reversed_interaction_dir
-        for path, inter, extra, files, reverse in (
-                (_IN2, {"CoulombInter": "coulombinter.dat"}, None, _FILES, True),
-                (_IN2, {"CoulombInter": "onsite_inter.dat",
-                        "CoulombIntra": "coulombintra.dat"}, None, _FILES, False)):
-            ref_path = (_reversed_interaction_dir(path, tuple(inter.values()))
-                        if reverse else os.path.abspath(path))
-            with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-                # "takimoto" on BOTH sides: the reference revision defaults
-                # the key to "local" (see DEVELOP_COMMIT)
-                try:
-                    _run(dev, ref_path, inter, a, "takimoto", extra)
-                finally:
-                    if reverse:
-                        shutil.rmtree(ref_path, ignore_errors=True)
-                _run(here, os.path.abspath(path), inter, b, "takimoto", extra)
-                ma, mb = _members(a, files), _members(b, files)
-                for f in ma:
-                    for k, v in ma[f].items():
-                        self.assertIn(k, mb[f], (f, k))
-                        # "b" too: boolean members such as density_target_enforced
-                        # are part of the archive and must not drift either
-                        if moved_stamp(k, v, mb[f][k]):
-                            continue
-                        if np.asarray(v).dtype.kind in "fciub":
-                            np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
-                                                          err_msg=str((f, k)))
-                            compared += 1
-        # anti-vacuity: the member list must not be empty
-        self.assertGreater(compared, 10)
-
     def test_local_on_onsite_only_input_equals_develop(self):
         """The other unmoved path: ``flex_second_order = "local"`` on an
         input with NO off-site two-body row is byte-identical to the
@@ -389,7 +354,7 @@ class TestCompatibility(unittest.TestCase):
         (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
         on-site fixture the exact local kernel must be untouched. Without
         this case the identity above would leave the impression that only
-        the legacy kernel is unchanged."""
+        the Hartree-Fock map is unchanged."""
         dev = self._develop()
         here = os.getcwd()
         inter = {"CoulombInter": "onsite_inter.dat", "CoulombIntra": "coulombintra.dat"}
@@ -411,10 +376,16 @@ class TestCompatibility(unittest.TestCase):
             # anti-vacuity: the kernel really ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
-    def test_local_equals_takimoto_on_hubbard_only(self):
+    def test_local_equals_the_retired_takimoto_on_hubbard_only(self):
+        """On a one-band Hubbard model the exact local second order IS the
+        Takimoto-Hotta-Ueda one, so this tree's ``"local"`` run reproduces
+        the reference revision's ``"takimoto"`` run (the kernel of H-wave
+        2.0.0 and earlier, retired by issue #253) to round-off. One orbital:
+        the ring's pair orientation (issue #251) is the identity there."""
+        dev = self._develop()
         here = os.getcwd()
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-            _run(here, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, a, "takimoto")
+            _run(dev, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, a, "takimoto")
             _run(here, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, b, "local")
             ma, mb = _members(a), _members(b)
             compared = 0
@@ -422,6 +393,8 @@ class TestCompatibility(unittest.TestCase):
                 scale = max([1.0] + [np.abs(np.asarray(v)).max() for v in ma[f].values()
                                      if np.asarray(v).dtype.kind in "fc"])
                 for k, v in ma[f].items():
+                    if moved_stamp(k, v, mb[f][k]):
+                        continue
                     if np.asarray(v).dtype.kind in "fc":
                         np.testing.assert_allclose(np.asarray(mb[f][k]), np.asarray(v), rtol=1e-14,
                                                    atol=1e-14 * scale, err_msg=str((f, k)))
@@ -430,14 +403,13 @@ class TestCompatibility(unittest.TestCase):
             # anti-vacuity: the kernel actually ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
-    def test_calc_veff_general_local_equals_takimoto_on_hubbard(self):
+    def test_calc_veff_general_equals_takimoto_formula_on_hubbard(self):
         """The Hubbard-only identity of spec section 3 at the METHOD level:
         with CoulombIntra as the only interaction the local kernel's
         3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc + W2 equals the
-        legacy assembly element-wise. In-process, no subprocess, and it is the
-        only direct exercise of _calc_veff_general(second_order="local") --
-        every other caller in the suite omits the keyword and takes
-        "takimoto"."""
+        Takimoto-Hotta-Ueda assembly 3/2 Us chi_s Us + 1/2 Uc chi_c Uc
+        - 1/4 (Us + Uc) chibar (Us + Uc) (the retired kernel, formed here)
+        element-wise. In-process, no subprocess."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as flex_mod
         beta = 0.5
@@ -461,20 +433,22 @@ class TestCompatibility(unittest.TestCase):
                 chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
                     chi0q_raw, s.ham_info.ham_inter_q)
                 chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
-                v_thu = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
-                                             second_order="takimoto")
+                ndx = norb * norb
+                shape = (s.nmat, s.lattice.nvol, ndx, ndx)
+                c0 = chi0q.reshape(shape)
+                UsB, UcB, UpB = Us[np.newaxis], Uc[np.newaxis], (Us + Uc)[np.newaxis]
+                v_thu = (1.5 * (UsB @ chi_s.reshape(shape) @ UsB)
+                         + 0.5 * (UcB @ chi_c.reshape(shape) @ UcB)
+                         - 0.25 * (UpB @ c0 @ UpB))
                 v_loc = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
-                                             factors=s._second_order_factors,
-                                             second_order="local")
+                                             factors=s._second_order_factors)
                 scale = np.abs(v_thu).max()
                 self.assertGreater(scale, 1e-6)        # anti-vacuity
                 self.assertEqual(v_loc.shape, v_thu.shape)
                 np.testing.assert_allclose(v_loc, v_thu, rtol=1e-14, atol=1e-14 * scale)
-                # the two branches really are different code paths
+                # the kernel needs its compiled factors
                 with self.assertRaises(ValueError):
-                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="local")
-                with self.assertRaises(ValueError):
-                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="nonsense")
+                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
 
     def test_calc_veff_general_batch_path_equals_the_dense_assembly(self):
         """The local branch's frequency batching (spec 2.3): whatever nb the
@@ -514,8 +488,7 @@ class TestCompatibility(unittest.TestCase):
                     chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
                         s._calc_chi0q(G, np.zeros_like(G), beta)[0], s.ham_info.ham_inter_q)
                     chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
-                    v = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=f,
-                                             second_order="local")
+                    v = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=f)
                     ndx = s.norb ** 2
                     shape = (s.nmat, s.lattice.nvol, ndx, ndx)
                     c0 = chi0q.reshape(shape)
@@ -580,13 +553,9 @@ class TestCompatibility(unittest.TestCase):
                            "({:.3e} relative); the check above would be vacuous".format(gap))
 
     def test_factors_lifecycle_and_d7_at_construction(self):
-        from tests.test_second_order_factors import _split_for
         import hwave.solver.flex as flex_mod
         import hwave.qlmsio.read_input_k as read_input_k
         from hwave.solver.second_order import DegenerateRowError
-        s, _ = _split_for({"CoulombIntra": [(0, 0, 0, 1, 1, 1.0, 0.0)]})   # takimoto in the helper
-        self.assertIsNone(s._second_order_factors)
-        self.assertIsNone(s._second_order_device)
         idict = {"path_to_input": _IN2, "Geometry": "geom.dat", "Transfer": "transfer.dat",
                  "CoulombInter": "coulombinter.dat"}
         r = read_input_k.QLMSkInput({"path_to_input": _IN2, "interaction": idict})
@@ -596,8 +565,9 @@ class TestCompatibility(unittest.TestCase):
                                                     "enable_spin_orbital": False,
                                                     "calc_scheme": "general"})
         self.assertIsNotNone(s._second_order_factors)
+        self.assertIsNone(s._second_order_device)       # mirrored per solve only
         self.assertFalse(s._second_order_factors.A_on[0].flags.writeable)
-        # D7 at construction, 'local' only
+        # D7 at construction
         with tempfile.TemporaryDirectory() as d:
             for f in ("geom.dat", "transfer.dat", "coulombintra.dat"):
                 shutil.copy(os.path.join(_IN2, f), d)
@@ -611,11 +581,13 @@ class TestCompatibility(unittest.TestCase):
                 flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
                                                         "enable_spin_orbital": False,
                                                         "calc_scheme": "general"})
+            # the retired kernel (issue #253), which used to skip the
+            # factors, is refused before them
             par2 = dict(par, flex_second_order="takimoto")
-            s2 = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par2,
-                                                         "enable_spin_orbital": False,
-                                                         "calc_scheme": "general"})
-            self.assertIsNone(s2._second_order_factors)
+            with self.assertRaisesRegex(ValueError, "was retired"):
+                flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par2,
+                                                        "enable_spin_orbital": False,
+                                                        "calc_scheme": "general"})
 
 
 

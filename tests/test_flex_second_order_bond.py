@@ -1,6 +1,5 @@
-"""D5: the bond gate's channel-0 second order is the local kernel under
-'local' (the rev-19 expression under 'takimoto'); G0 (declared-zero
-off-site = standalone Hartree-Fock FLEX) holds under both values; the
+"""D5: the bond gate's channel-0 second order is the local kernel; G0
+(declared-zero off-site = standalone Hartree-Fock FLEX) holds; the
 effective interaction keeps the frequency-reflection Hermiticity D-7 once
 the mixed second-order blocks carry the pair permutation of spec
 2026-09-16 R3 (issue #192); those mixed strips equal the index-loop
@@ -27,8 +26,8 @@ def _ring_oriented(ring, norb):
 
 class TestBondGate(unittest.TestCase):
 
-    def test_g0_under_both_kernels(self):
-        for so in ("local", "takimoto"):
+    def test_g0(self):
+        for so in ("local",):
             with self.subTest(so=so), tempfile.TemporaryDirectory() as inp, tempfile.TemporaryDirectory() as out:
                 _zeroed_offsite_copy(inp)
                 recs = {}
@@ -41,7 +40,7 @@ class TestBondGate(unittest.TestCase):
                     for k in ("static_new", "fluct_new", "chi0q", "chiq_s", "chiq_c"):
                         np.testing.assert_allclose(a[k], b[k], rtol=0, atol=1e-12, err_msg=(so, k))
 
-    def _bond_w(self, identity_permutation=False, second_order="local"):
+    def _bond_w(self, identity_permutation=False):
         """``(W, chibar, solver)``: the FULL bond-resolved ``W`` (every block,
         ``(nmat, nvol, ND, ND)``) of the module's fixture, the bare bond
         bubble it was built from, and the solver that owns the vertices --
@@ -56,11 +55,8 @@ class TestBondGate(unittest.TestCase):
 
         With ``identity_permutation`` the permutation is replaced by the
         identity -- the pre-R3 behaviour -- so the caller can see whether it
-        is load-bearing. ``second_order`` selects the CHANNEL-0 kernel of
-        ``dress_and_build_w`` only; the solver is configured with the
-        ``"local"`` factor pack either way, so the two values differ in
-        nothing but that branch. Both returned arrays are copies: the store
-        is released on the way out."""
+        is load-bearing. Both returned arrays are copies: the store is
+        released on the way out."""
         from hwave.solver import flex_bond
         s, r = _flex({"flex_second_order": "local", "IterationMax": 1})
         gi = r.get_param("green")
@@ -76,12 +72,11 @@ class TestBondGate(unittest.TestCase):
             flex_bond.assemble_bubble(store, G, None, beta, s._bond_view, (4, 4, 1), 1)
             cb = np.array(store.get_freq_batch("chibar", 0, nmat))
             with flex_bond.BondDeviceContext.for_view(
-                    np, s._bond_S, s._bond_C, s._bond_S_on, s._bond_C_on, s._bond_view, norb,
+                    np, s._bond_S, s._bond_C, s._bond_view, norb,
                     perm=np.arange(ND) if identity_permutation else None) as dev:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                             nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(4, 4, 1),
-                                            factors=s._second_order_factors,
-                                            second_order=second_order)
+                                            factors=s._second_order_factors)
             return np.array(store.get_freq_batch("W", 0, nmat)), cb, s
 
     def test_channel0_block_equals_the_standalone_kernel(self):
@@ -155,48 +150,6 @@ class TestBondGate(unittest.TestCase):
                         "the pair permutation changed W outside the mixed (channel-0 x bond) "
                         "blocks by {:.3e} of max|W|".format(outside.max() / scale))
 
-    def test_mixed_blocks_are_the_same_under_both_kernels(self):
-        """The bond correction is kernel-INDEPENDENT.
-
-        ``dress_and_build_w`` assembles the mixed (channel-0 x bond) strips
-        from the masked half-sum before it branches on ``second_order``,
-        which only ever rewrites the channel-0 block. So the two kernels
-        must agree on those strips EXACTLY -- not to a tolerance: the same
-        arrays go through the same arithmetic. Anything else would mean the
-        off-site resummation of the gate depends on which on-site
-        second-order kernel the user picked, which is not the D4/D5 design.
-
-        Since issue #251 the ring that shares those strips is not the same
-        under the two kernels -- the default "local" one contracts it in the
-        conserving pair orientation, the legacy "takimoto" one in the earlier
-        one -- so the ring is removed from each side (re-derived from the
-        dressing, as in :meth:`test_channel0_block_equals_the_standalone_kernel`)
-        and the second-order correction left in the strips must agree.
-
-        The last leg is the anti-vacuity one: the channel-0 blocks DO
-        differ, so the equality above is not two identical ``W``s."""
-        W_local, cb, solver = self._bond_w(second_order="local")
-        W_tak = self._bond_w(second_order="takimoto")[0]
-        nd = solver.norb ** 2
-        S, C = solver._bond_S, solver._bond_C
-        I = np.eye(cb.shape[-1])
-        chi_s = np.linalg.solve(I - cb @ S, cb); chi_c = np.linalg.solve(I + cb @ C, cb)
-        ring = 1.5 * S @ (chi_s - cb) @ S + 0.5 * C @ (chi_c - cb) @ C
-        corr_local = W_local - _ring_oriented(ring, solver.norb)
-        corr_tak = W_tak - ring
-        for name, a, b in (("W[:, :, :nd, nd:]", corr_local[:, :, :nd, nd:], corr_tak[:, :, :nd, nd:]),
-                           ("W[:, :, nd:, :nd]", corr_local[:, :, nd:, :nd], corr_tak[:, :, nd:, :nd])):
-            self.assertGreater(np.abs(a).max(), 1e-10,
-                               "{} is empty on this fixture".format(name))
-            np.testing.assert_allclose(a, b, rtol=0, atol=1e-12 * np.abs(W_local).max(),
-                                       err_msg="{}: the second-order correction differs between "
-                                               "the local and the takimoto kernel".format(name))
-        w00 = np.abs(W_local[:, :, :nd, :nd] - W_tak[:, :, :nd, :nd]).max()
-        self.assertGreater(
-            w00, 1e-6 * np.abs(W_local[:, :, :nd, :nd]).max(),
-            "the two kernels give the same channel-0 block on this fixture "
-            "({:.3e}), so the equality of the mixed strips says nothing".format(w00))
-
     def test_mixed_strips_equal_the_index_loop_formula_at_norb_3(self):
         """The two mixed strips of ``W`` against the DEFINITION, written out
         index by index, on a synthetic ``norb = 3`` problem.
@@ -206,15 +159,17 @@ class TestBondGate(unittest.TestCase):
         are 2x2 and the swap has one off-diagonal pair to act on) or reads
         the result through a physical quantity. This one is algebraic and
         cheap: random Hermitian ``chibar`` at ``nmat = 3``, ``nvol = 2``,
-        three orbitals and three bond channels, diagonal bond vertices, and
-        the legacy channel-0 kernel (``"takimoto"``, so no factor pack is
-        needed -- the channel-0 block is not what is compared).
+        three orbitals and three bond channels, and diagonal bond vertices.
+        The channel-0 second-order kernel is stubbed out (it needs a factor
+        pack of this synthetic interaction, and the channel-0 block is not
+        what is compared).
 
         The expected strip is assembled from the two terms
         ``dress_and_build_w`` adds there:
 
         * the RPA ring ``3/2 S (chi_s - chibar) S + 1/2 C (chi_c - chibar)
-          C`` at the SAME pair index, with ``chi_s = (1 - chibar S)^-1
+          C`` in the conserving pair orientation (issue #251,
+          :func:`_ring_oriented`), with ``chi_s = (1 - chibar S)^-1
           chibar`` and ``chi_c = (1 + chibar C)^-1 chibar`` -- the dressing
           this module already re-derives in
           :meth:`test_channel0_block_equals_the_standalone_kernel`;
@@ -235,6 +190,7 @@ class TestBondGate(unittest.TestCase):
         axis alone fails it on the cols strip. It is also the shape of
         problem that discriminates at all -- an orbital-diagonal bond or
         ``norb = 1`` makes the permutation the identity."""
+        from unittest import mock
         from hwave.solver import flex_bond
         nmat, nvol, norb, B = 3, 2, 3, 3
         nd, shape = norb * norb, (2, 1, 1)
@@ -253,22 +209,21 @@ class TestBondGate(unittest.TestCase):
         diag = 0.002 * (1.0 + np.arange(ND, dtype=float))
         S = np.broadcast_to(np.diag(diag), (nvol, ND, ND)).copy()
         C = np.broadcast_to(np.diag(0.7 * diag[::-1]), (nvol, ND, ND)).copy()
-        zero_on = np.zeros((nvol, nd, nd), dtype=np.complex128)
         view = types.SimpleNamespace(n_channels=B)
         with flex_bond.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store:
             store.put_freq_batch("chibar", 0, nmat, cb)
-            with flex_bond.BondDeviceContext.for_view(np, S, C, zero_on, zero_on, view, norb) as dev:
+            with flex_bond.BondDeviceContext.for_view(np, S, C, view, norb) as dev, \
+                    mock.patch.object(flex_bond._so, "accumulate_batch") as kernel:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat,
                                             output_full=False, nmat=nmat, nvol=nvol, nd=nd,
-                                            spatial_shape=shape, factors=None,
-                                            second_order="takimoto")
+                                            spatial_shape=shape, factors=object())
+            self.assertEqual(kernel.call_count, 1)        # channel 0 only, one batch
             W = np.array(store.get_freq_batch("W", 0, nmat))
         eye = np.eye(ND)
         chi_s = np.linalg.solve(eye - cb @ S[None], cb)
         chi_c = np.linalg.solve(eye + cb @ C[None], cb)
-        # the legacy "takimoto" kernel keeps the earlier ring orientation
-        ring = (1.5 * (S[None] @ (chi_s - cb) @ S[None])
-                + 0.5 * (C[None] @ (chi_c - cb) @ C[None]))
+        ring = _ring_oriented(1.5 * (S[None] @ (chi_s - cb) @ S[None])
+                              + 0.5 * (C[None] @ (chi_c - cb) @ C[None]), norb)
         A = S[None] @ cb @ S[None] + C[None] @ cb @ C[None]
         want_rows = np.zeros((nmat, nvol, nd, ND - nd), dtype=np.complex128)
         want_cols = np.zeros((nmat, nvol, ND - nd, nd), dtype=np.complex128)
@@ -308,15 +263,15 @@ class TestBondGate(unittest.TestCase):
         norb = int(round(nd ** 0.5))
         perm = _mixed_pair_permutation(ND // nd, nd, norb)
         mask = mixed_block_mask(ND // nd, nd)
-        with BondDeviceContext(np, S, S, S, S, perm, mask) as dev:
+        with BondDeviceContext(np, S, S, perm, mask) as dev:
             with self.assertRaises(ValueError) as cm:
                 dress_and_build_w(None, dev, nb=2, output_full=False,
                                   nmat=2, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),
-                                  factors=None, second_order="takimoto")
+                                  factors=object())
         self.assertIn("ND = 6", str(cm.exception))
         self.assertIn("nd = 4", str(cm.exception))
 
-    def test_local_without_factors_is_refused(self):
+    def test_without_factors_is_refused(self):
         from hwave.solver.flex_bond import BondBlockStore, BondDeviceContext, dress_and_build_w
         nmat, nvol, nd, B = 2, 2, 1, 1
         ND = B * nd
@@ -324,12 +279,12 @@ class TestBondGate(unittest.TestCase):
         norb = int(round(nd ** 0.5))
         view = types.SimpleNamespace(n_channels=B)
         with BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                BondDeviceContext.for_view(np, S, S, S, S, view, norb) as dev:
+                BondDeviceContext.for_view(np, S, S, view, norb) as dev:
             with self.assertRaises(ValueError) as cm:
                 dress_and_build_w(store, dev, nb=nmat, output_full=False,
                                   nmat=nmat, nvol=nvol, nd=nd, spatial_shape=(2, 1, 1),
-                                  factors=None, second_order="local")
-        self.assertIn("flex_second_order", str(cm.exception))
+                                  factors=None)
+        self.assertIn("needs the factors", str(cm.exception))
 
     def test_memory_row(self):
         from hwave.solver.flex_bond import estimate_bond_memory

@@ -734,14 +734,15 @@ class TestVeffGeneral(unittest.TestCase):
     """Task 6: MYO fluctuation effective interaction V_eff."""
 
     def test_single_orbital_matches_reduced_kernel(self):
-        U = 3.0
+        U = 4.0                                 # tests/rpa/input/coulombintra.dat
         flex = _make_general_flex(norb=1)
         chi0 = _fake_general_chi0q(flex)        # (nmat, nvol, 1,1,1,1)
         nvol = flex.lattice.nvol
         Us = U * np.ones((nvol, 1, 1), dtype=complex)
         Uc = U * np.ones((nvol, 1, 1), dtype=complex)
         chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
-        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc,
+                                    factors=flex._second_order_factors)
         # reduced fluctuation kernel sandwiched by U: U*(1.5 chi_s + 0.5 chi_c - chi0)*U
         kernel = 1.5 * chi_s + 0.5 * chi_c - chi0          # (nmat,nvol,1,1,1,1)
         Vref = (U * U) * kernel.reshape(V.shape)
@@ -752,10 +753,15 @@ class TestVeffGeneral(unittest.TestCase):
         chi0, Us, Uc = flex._inflate_chi0q_and_ham_general(
             _fake_general_chi0q(flex), None)
         chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
-        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc,
+                                    factors=flex._second_order_factors)
         self.assertEqual(V.shape, (flex.nmat, flex.lattice.nvol, 4, 4))
 
     def test_values_two_orbital_vs_elementwise(self):
+        """The ring from third order on, in the conserving pair orientation
+        (issue #251), plus the exact local second order of the solver's own
+        interaction, element by element."""
+        from hwave.solver.second_order import dense_w2
         rng = np.random.default_rng(99)
         flex = _make_general_flex(norb=2)
         chi0 = _fake_general_chi0q(flex)
@@ -766,16 +772,19 @@ class TestVeffGeneral(unittest.TestCase):
         Uc = (rng.standard_normal((nvol, ndx, ndx))
               + 1j * rng.standard_normal((nvol, ndx, ndx)))
         chi_s, chi_c = flex._solve_channels_general(chi0, Us, Uc)
-        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        factors = flex._second_order_factors
+        V = flex._calc_veff_general(chi0, chi_s, chi_c, Us, Uc, factors=factors)
         chi0_2d = chi0.reshape(flex.nmat, nvol, ndx, ndx)
         chis_2d = chi_s.reshape(flex.nmat, nvol, ndx, ndx)
         chic_2d = chi_c.reshape(flex.nmat, nvol, ndx, ndx)
-        Vref = np.zeros_like(V)
+        Vref = dense_w2(chi0_2d, factors)
+        self.assertGreater(np.abs(Vref).max(), 1e-6)      # anti-vacuity
         for f in range(flex.nmat):
             for r in range(nvol):
-                Vref[f, r] = (1.5 * Us[r] @ chis_2d[f, r] @ Us[r]
-                              + 0.5 * Uc[r] @ chic_2d[f, r] @ Uc[r]
-                              - 0.25 * (Us[r] + Uc[r]) @ chi0_2d[f, r] @ (Us[r] + Uc[r]))
+                ring = (1.5 * Us[r] @ (chis_2d[f, r] - chi0_2d[f, r]) @ Us[r]
+                        + 0.5 * Uc[r] @ (chic_2d[f, r] - chi0_2d[f, r]) @ Uc[r])
+                Vref[f, r] += ring.reshape(no, no, no, no).transpose(
+                    1, 0, 3, 2).reshape(ndx, ndx)
         np.testing.assert_allclose(V, Vref, atol=1e-10)
 
 
@@ -1732,7 +1741,8 @@ class TestGeneralPipelinePhysical(unittest.TestCase):
             green_kw, np.zeros_like(green_kw), beta)[0]   # (1,nk,no,no,no,no)
         chi0, Us, Uc = solver._inflate_chi0q_and_ham_general(chi0_raw, None)
         chi_s, chi_c = solver._solve_channels_general(chi0, Us, Uc)
-        v_eff = solver._calc_veff_general(chi0, chi_s, chi_c, Us, Uc)
+        v_eff = solver._calc_veff_general(chi0, chi_s, chi_c, Us, Uc,
+                                          factors=solver._second_order_factors)
         sigma_opt = solver._calc_self_energy_general(green_kw, v_eff, beta)
         self.assertEqual(sigma_opt.shape, (1, 1, nk, no, no))
 
@@ -1744,6 +1754,12 @@ class TestGeneralPipelinePhysical(unittest.TestCase):
         chi0_phys = chi0_bruteforce(G_bf, solver.T, nk)
 
         ndx = no * no
+        # the exact local second order on the PHYSICAL bubble, in the same
+        # row=(m,n), col=(mu,nu) flatten
+        from hwave.solver.second_order import dense_w2
+        M0_all = np.stack([chi0_phys[:, :, :, :, q, 0].reshape(ndx, ndx)
+                           for q in range(nk)])[np.newaxis]
+        W2_phys = dense_w2(M0_all, solver._second_order_factors)[0]
         V_phys = np.zeros((no, no, no, no, nk, 1), dtype=np.complex128)
         eye = np.eye(ndx, dtype=np.complex128)
         # The physical reference reuses the production Us/Uc; this is intentional.
@@ -1757,13 +1773,13 @@ class TestGeneralPipelinePhysical(unittest.TestCase):
             Uc_q = Uc[q]
             chi_s_q = np.linalg.inv(eye - M0 @ Us_q) @ M0
             chi_c_q = np.linalg.inv(eye + M0 @ Uc_q) @ M0
-            V_q = (1.5 * Us_q @ chi_s_q @ Us_q
-                   + 0.5 * Uc_q @ chi_c_q @ Uc_q
-                   - 0.25 * (Us_q + Uc_q) @ M0 @ (Us_q + Uc_q))
-            # (_calc_veff_general's default is the legacy "takimoto" kernel,
-            # which keeps the earlier pair orientation; the conserving one of
-            # the default "local" kernel is pinned by
-            # tests/test_flex_ring_orientation.py, issue #251.)
+            ring_q = (1.5 * Us_q @ (chi_s_q - M0) @ Us_q
+                      + 0.5 * Uc_q @ (chi_c_q - M0) @ Uc_q)
+            # the ring in the conserving pair orientation (issue #251,
+            # pinned by tests/test_flex_ring_orientation.py) plus the exact
+            # local second order
+            V_q = ring_q.reshape(no, no, no, no).transpose(1, 0, 3, 2).reshape(
+                ndx, ndx) + W2_phys[q]
             # V_q is the production V_eff at this q: its MYO flatten has
             # row=(mu,m), col=(nu,n) (the same flatten that
             # _sigma_orbital_contract reshapes back to axes (mu,m,nu,n)). That

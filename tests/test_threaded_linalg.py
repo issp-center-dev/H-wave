@@ -254,10 +254,8 @@ class TestDressAndBuildWWorkers(unittest.TestCase):
         for workers in (1, 3):
             with BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W", "chi_s_w", "chi_c_w")) as store:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
-                S_on = np.ascontiguousarray(S[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.7
-                C_on = np.ascontiguousarray(C[:1, :nd, :nd]).repeat(nvol, axis=0) * 0.3
                 view = types.SimpleNamespace(n_channels=ND // nd)
-                with BondDeviceContext.for_view(np, S, C, S_on, C_on, view, 2) as dev:
+                with BondDeviceContext.for_view(np, S, C, view, 2) as dev:
                     res = dress_and_build_w(store, dev, nb=4, output_full=True, nmat=nmat,
                                             nvol=nvol, nd=nd, spatial_shape=(4, 1, 1),
                                             factors=_onsite_factors(), workers=workers)

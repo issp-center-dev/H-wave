@@ -124,9 +124,6 @@ class TestBitIdenticalState(unittest.TestCase):
     def test_output_full(self):
         self._compare({"longitudinal_bond_output_full": True})
 
-    def test_takimoto_second_order(self):
-        self._compare({"flex_second_order": "takimoto"})
-
 
 if __name__ == "__main__":
     unittest.main()

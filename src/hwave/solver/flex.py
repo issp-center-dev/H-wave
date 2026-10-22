@@ -205,8 +205,9 @@ def _scheme_stamp(solver):
         "scheme_resolution": str(res),
     }
     # #181 follow-up: which second-order kernel this general-scheme run
-    # used ("local" | "takimoto"). Reduced-scheme and RPA/UHF archives never
-    # carry this -- the kernel choice is meaningless outside FLEX general.
+    # used (always "local" since issue #253). Reduced-scheme and RPA/UHF
+    # archives never carry this -- the kernel choice is meaningless outside
+    # FLEX general.
     so = getattr(solver, "flex_second_order", None)
     if str(scheme).lower() == "general" and so is not None:
         stamp["flex_second_order"] = np.array(str(so), dtype="<U8")
@@ -226,8 +227,7 @@ def _pair_transpose_into(out, v, no):
     conserving (Phi-derivable) self-energy -- only after this transpose,
     and the exact second order (:func:`hwave.solver.second_order.
     accumulate_batch`) is already in this orientation; pinned by
-    tests/test_flex_ring_orientation.py. The legacy ``"takimoto"`` kernel
-    keeps the earlier orientation (it reproduces earlier releases)."""
+    tests/test_flex_ring_orientation.py."""
     lead = v.shape[:-2]
     nl = len(lead)
     xp = _bk.array_module_of(v)
@@ -311,7 +311,20 @@ class FLEX(RPA):
     _GUARD_BOND_COND_TOL = 1.0e-3
     _GUARD_POLICIES = ("refuse", "warn")
 
-    _SECOND_ORDER_VALUES = ("local", "takimoto")
+    #: the accepted ``flex_second_order`` values. ``"takimoto"`` (the
+    #: Takimoto-Hotta-Ueda effective interaction) was retired by issue #253
+    #: and is refused with :attr:`_RETIRED_SECOND_ORDER_MESSAGE`.
+    _SECOND_ORDER_VALUES = ("local",)
+    _RETIRED_SECOND_ORDER = "takimoto"
+    _RETIRED_SECOND_ORDER_MESSAGE = (
+        '[mode.param] flex_second_order = "takimoto" was retired (issue #253): the '
+        'Takimoto-Hotta-Ueda effective interaction 3/2 Us chi_s Us + 1/2 Uc chi_c Uc '
+        '- 1/4 (Us+Uc) chi0 (Us+Uc) is not exact at second order for multi-orbital '
+        'and off-site interactions, and its ring was contracted in a non-conserving '
+        'pair orientation. Use '
+        'flex_second_order = "local" (the default; the exact local second-order '
+        'kernel) or drop the key. Results of H-wave 2.0.0 and earlier, which used '
+        'this kernel, can be reproduced only with an earlier release.')
     #: the accepted ``longitudinal_bond_pairing`` values and the channel tuple
     #: each of them selects ("none" stays the string, so the absence of the
     #: step is not an empty tuple that reads as "every channel")
@@ -333,6 +346,8 @@ class FLEX(RPA):
         out = {"flex_second_order": "local", "flex_second_order_explicit": False}
         if "flex_second_order" in param:
             v = param["flex_second_order"]
+            if isinstance(v, str) and v.strip().lower() == FLEX._RETIRED_SECOND_ORDER:
+                raise ValueError(FLEX._RETIRED_SECOND_ORDER_MESSAGE)
             if not isinstance(v, str) or v.strip().lower() not in FLEX._SECOND_ORDER_VALUES:
                 raise ValueError(
                     "[mode.param] flex_second_order must be one of {} (case-insensitive), "
@@ -1038,9 +1053,10 @@ class FLEX(RPA):
                 # integer this version reads), or a schema from a later
                 # version whose members may mean something else. Nothing is
                 # coerced -- 1.5, True, "1" and a two-element member are all
-                # unreadable, not "schema 1". Only a MISMATCH between two
-                # kernel names this version knows is a warning (below): that
-                # seed is still usable.
+                # unreadable, not "schema 1". A seed of the retired
+                # "takimoto" kernel (issue #253) is a warning (below), not a
+                # refusal: a seed only starts the iteration, so it is still
+                # usable.
                 seed_so = None
                 raw = env.second_order
                 if raw is not None:
@@ -1048,11 +1064,13 @@ class FLEX(RPA):
                     unreadable = raw.size != 1 or raw.dtype.kind != "U"
                     if not unreadable:
                         seed_so = str(value)
-                        unreadable = seed_so not in ("local", "takimoto")
+                        unreadable = seed_so not in (self._SECOND_ORDER_VALUES
+                                                     + (self._RETIRED_SECOND_ORDER,))
                     if unreadable:
                         raise ValueError(
                             "sigma_init '{}': unknown flex_second_order {!r} (accepted: "
-                            "\"local\", \"takimoto\")".format(file_name, value))
+                            "\"local\", or the retired \"{}\")".format(
+                                file_name, value, self._RETIRED_SECOND_ORDER))
                 raw = env.second_order_schema
                 if raw is not None:
                     value = raw.item() if raw.size == 1 else raw
@@ -1066,9 +1084,12 @@ class FLEX(RPA):
                     logger.info("sigma_init '{}': flex_second_order not recorded in the seed "
                                 "(a reduced-scheme archive, or one written before this key "
                                 "was introduced -- H-wave 2.0.0 and earlier)".format(file_name))
-                elif seed_so != self.flex_second_order:
-                    logger.warning("sigma_init '{}': seed computed with flex_second_order = {}; this run "
-                                   "uses {} -- if the SCF stalls, restart from Sigma = 0".format(
+                elif seed_so == self._RETIRED_SECOND_ORDER:
+                    logger.warning("sigma_init '{}': seed computed with the retired flex_second_order "
+                                   "= {} kernel; if it passes the remaining checks it serves only as "
+                                   "the initial value, and every iteration uses flex_second_order = {} "
+                                   "(an unconverged run can still depend on the seed) -- if the SCF "
+                                   "stalls, restart from Sigma = 0".format(
                                        file_name, seed_so, self.flex_second_order))
             sigma, ir_meta = env.sigma, env.ir_meta
             if ir_meta is not None and not self.use_ir:
@@ -1632,7 +1653,7 @@ class FLEX(RPA):
                 green_info.pop(k, None)
         for attr in ("sigma", "green_kw", "chi_s", "chi_c", "physics", "sigma_static",
                      "sigma_fluct", "_bond_detached", "_bond_static_keys", "_bond_topo",
-                     "_bond_split", "_bond_view", "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on",
+                     "_bond_split", "_bond_view", "_bond_S", "_bond_C",
                      "_bond_types", "_bond_w2", "_bond_w2_xp", "_bond_w2_entries",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
                      "_bond_xp_name",
@@ -2122,16 +2143,13 @@ class FLEX(RPA):
     def _phase_b_prepare_vertices(self):
         """S, C on the bond basis, cached once per solve (spec 3.5)."""
         from hwave.solver import bond_channels, hartree_fock as _hf
-        from hwave.solver.offsite import sc_matrices_from_split, sc_matrices_onsite_from_split
+        from hwave.solver.offsite import sc_matrices_from_split
         nx, ny, nz = (int(x) for x in self.lattice.shape)
         nvol, nd = self.lattice.nvol, self.norb ** 2
         S0, C0 = sc_matrices_from_split(self._bond_split, bond_channels._LONGITUDINAL_ACTIVE_TYPES,
                                         self.norb, nx, ny, nz)
         S0 = S0.reshape(nvol, nd, nd)
         C0 = C0.reshape(nvol, nd, nd)
-        S_on, C_on = sc_matrices_onsite_from_split(self._bond_split, self.norb, nx, ny, nz)
-        self._bond_S_on = np.ascontiguousarray(S_on.reshape(nvol, nd, nd))
-        self._bond_C_on = np.ascontiguousarray(C_on.reshape(nvol, nd, nd))
         types = tuple(self._bond_topo.coeffs)
         self._bond_types = types
         self._bond_S = bond_channels.build_sc_bond_channel(self._bond_topo, S0, "S", types=types,
@@ -2194,8 +2212,7 @@ class FLEX(RPA):
                 # the factory (issue #198).
                 try:
                     dev = stack.enter_context(flex_bond.BondDeviceContext.for_view(
-                        xp, self._bond_S, self._bond_C, self._bond_S_on, self._bond_C_on,
-                        self._bond_view, norb,
+                        xp, self._bond_S, self._bond_C, self._bond_view, norb,
                         # the bubble's tail joins the solve-scoped device set
                         # (issue #196): the bubble computes on the module of the
                         # Green function, which the loop already keeps on the
@@ -2485,7 +2502,6 @@ class FLEX(RPA):
                     # the factor pack; the host pack stays authoritative.
                     factors=((self._second_order_device or self._second_order_factors)
                              if xp is not np else self._second_order_factors),
-                    second_order=self.flex_second_order,
                     guard_freqs=self.longitudinal_bond_guard_freqs,
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy,
@@ -3527,8 +3543,7 @@ class FLEX(RPA):
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         factors = self._second_order_device or self._second_order_factors
-        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors,
-                                        second_order=self.flex_second_order)
+        v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors)
         # chi0q / chi_s / chi_c are already in the native RPA [a,c,b,d]
         # orbital-pair convention (see _inflate_chi0q_and_ham_general), which is
         # what the public output and the Eliashberg loader expect: the loader
@@ -3904,29 +3919,13 @@ class FLEX(RPA):
                             if t in _OFFSITE_DENSITY_TYPES]
 
             if offsite_used:
-                if getattr(self, "flex_second_order", "takimoto") == "local":
-                    _msg = ("FLEX calc_scheme='general' (flex_second_order = local): the direct "
-                            "skeleton and every local mixed term of the off-site entries of {} are "
-                            "exact at second order; their exchange skeleton is included only with "
-                            "longitudinal_bond_channels = true.")
-                    if getattr(self, "flex_hartree_fock", False):
-                        _msg += (" Their first-order exchange is carried by the "
-                                 "Hartree-Fock self-energy.")
-                elif getattr(self, "flex_hartree_fock", False):
-                    _msg = ("FLEX calc_scheme='general' with flex_hartree_fock=true: the "
-                            "off-site entries of {} enter the fluctuation vertex through "
-                            "their Hartree (density-slot) part V(q); their first-order "
-                            "exchange is carried by the Hartree-Fock self-energy, and "
-                            "their exchange crossing beyond first order is resummed only "
-                            "with longitudinal_bond_channels=true.")
-                else:
-                    _msg = ("FLEX calc_scheme='general': proceeding with the "
-                            "Hartree (density-slot) vertex V(q) only for the "
-                            "off-site entries of {}; the exchange crossing of an "
-                            "off-site term is not representable by a q-only "
-                            "vertex and is omitted (the same approximation the "
-                            "RPA ring makes; a bond-resolved treatment is tracked "
-                            "in GitHub issue #181).")
+                _msg = ("FLEX calc_scheme='general' (flex_second_order = local): the direct "
+                        "skeleton and every local mixed term of the off-site entries of {} are "
+                        "exact at second order; their exchange skeleton is included only with "
+                        "longitudinal_bond_channels = true.")
+                if getattr(self, "flex_hartree_fock", False):
+                    _msg += (" Their first-order exchange is carried by the "
+                             "Hartree-Fock self-energy.")
                 logger.warning(_msg.format(", ".join(sorted(offsite_used))))
 
             no = self.norb
@@ -4140,22 +4139,29 @@ class FLEX(RPA):
         return v_eff
 
     @do_profile
-    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc, factors=None,
-                           second_order="takimoto"):
-        r"""Compute the MYO full-vertex effective interaction V_eff(q, ivn).
+    def _calc_veff_general(self, chi0q, chi_s, chi_c, Us, Uc, factors=None):
+        r"""Compute the full-vertex effective interaction V_eff(q, ivn) of
+        the general scheme.
 
-        Implements the fluctuation part of the paramagnetic full-vertex
-        interaction (Takimoto-Hotta-Ueda / MYO convention, cond-mat/0407094
-        Eq. 4)::
+        The ring of the paramagnetic full-vertex interaction (MYO
+        convention) is taken from THIRD order on and the exact local second
+        order is added instead (spec 2026-09-08 section 2.3)::
 
-            V(q) = 3/2 Us.chi_s.Us + 1/2 Uc.chi_c.Uc
-                   - 1/4 (Us+Uc).chi0.(Us+Uc)
+            V(q) = 3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+                   + W2(chibar)
 
-        The first-order constant terms (``+3/2 Us - 1/2 Uc``) are intentionally
-        EXCLUDED so that, like the reduced path :meth:`_calc_veff`, the
-        second-order (SOPT) limit is reproduced: at zeroth order
-        ``chi_s = chi_c = chi0`` and (with ``Us = Uc = U``) the kernel reduces
-        to ``U.chi0.U``, the leading second-order bubble.
+        Subtracting the bare bubble removes the whole second order from the
+        two RPA channels -- what is left of them starts at third order -- and
+        ``W2``, the exact local second-order kernel of
+        :func:`hwave.solver.second_order.accumulate_batch`, replaces it. The
+        first-order constant terms (``+3/2 Us - 1/2 Uc``) are intentionally
+        EXCLUDED, like on the reduced path :meth:`_calc_veff`. For a one-band
+        Hubbard interaction ``W2`` equals the second order of the
+        Takimoto-Hotta-Ueda effective interaction ``3/2 Us chi_s Us + 1/2 Uc
+        chi_c Uc - 1/4 (Us+Uc) chi0 (Us+Uc)`` (the kernel of H-wave 2.0.0 and
+        earlier, retired by issue #253); the two differ wherever the MYO S/C
+        reduction is not exact at second order (Hund/Exchange/PairHop/PairLift
+        and every off-site type).
 
         All three susceptibilities are six-dimensional orbital-space arrays of
         shape ``(nmat, nvol, norb, norb, norb, norb)`` (four orbital legs).
@@ -4165,7 +4171,8 @@ class FLEX(RPA):
         ``(l1 * norb + l2)`` (``idx12``) and the column index is
         ``(l3 * norb + l4)`` (``idx34``), matching ``Us`` / ``Uc`` / ``chi0q``.
         ``Us`` / ``Uc`` are ``(nvol, ndx, ndx)`` and are broadcast over the
-        frequency axis.
+        frequency axis. The ring is added in the conserving pair orientation
+        (:func:`_pair_transpose_into`, issue #251).
 
         Parameters
         ----------
@@ -4179,15 +4186,10 @@ class FLEX(RPA):
             MYO spin (S) interaction matrices ``(nvol, norb^2, norb^2)``.
         Uc : ndarray
             MYO charge (C) interaction matrices ``(nvol, norb^2, norb^2)``.
-        factors : SecondOrderFactors, optional
+        factors : SecondOrderFactors
             The compiled second-order factor pack
             (:func:`hwave.solver.second_order.build_factors`), host- or
-            device-backed. Required by ``second_order = "local"`` and ignored
-            by ``"takimoto"``.
-        second_order : str
-            ``"takimoto"`` (the legacy kernel above, unchanged) or ``"local"``
-            (spec 2026-09-08): the ring is taken from THIRD order on and the
-            exact local second order is added instead, see below.
+            device-backed. Required; ``None`` is refused.
 
         Returns
         -------
@@ -4197,20 +4199,7 @@ class FLEX(RPA):
 
         Notes
         -----
-        With ``second_order = "local"`` the assembly is
-
-            V(q) = 3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
-                   + W2(chibar)
-
-        (spec 2026-09-08 section 2.3): subtracting the bare bubble removes the
-        whole second order from the two RPA channels -- what is left of them
-        starts at third order -- and ``W2``, the exact local second-order
-        kernel of :func:`hwave.solver.second_order.accumulate_batch`, replaces
-        it. For a one-band Hubbard interaction the two agree identically; they
-        differ wherever the MYO S/C reduction is not exact at second order
-        (Hund/Exchange/PairHop/PairLift and every off-site type).
-
-        The local assembly runs in frequency batches of ``nb = max(1, nmat //
+        The assembly runs in frequency batches of ``nb = max(1, nmat //
         8)``, so besides ``v_eff`` itself no full-size ``(nmat, nvol, ndx,
         ndx)`` array is ever materialised -- neither ``W2`` nor any product.
         Exactly TWO ``(nb, nvol, ndx, ndx)`` temporaries are live at the peak
@@ -4227,74 +4216,50 @@ class FLEX(RPA):
         """
         logger.debug(">>> FLEX._calc_veff_general")
 
-        if second_order == "local":
-            from hwave.solver.second_order import accumulate_batch
-            if factors is None:
-                raise ValueError('flex_second_order = "local" needs the compiled factors')
-            xp = _bk.array_module_of(chi0q)
-            nmat, nvol = chi0q.shape[0], chi0q.shape[1]
-            no = chi0q.shape[2]
-            ndx = chi0q.shape[2] * chi0q.shape[3]
-            # Same flatten as the takimoto body below: row (l1 * norb + l2),
-            # column (l3 * norb + l4) -- the pair convention accumulate_batch
-            # reads its chibar in (pinned by tests/test_second_order_oracle.py,
-            # which feeds it this very array).
-            chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
-            chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
-            chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
-            UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
-            UcB = Uc[np.newaxis]
-            v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
-            # batch length: the peak above v_eff is T_bytes = 2 * nb * nvol *
-            # ndx^2 * 16 bytes (T1, T2), plus accumulate_batch's finiteness
-            # mask (T_bytes / 32) and constant buffering -- see its docstring.
-            nb = max(1, nmat // 8)
-            T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
-            T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
-            for l0 in range(0, nmat, nb):
-                l1 = min(nmat, l0 + nb)
-                n = l1 - l0
-                out = v_eff[l0:l1]
-                # the ring from third order on:
-                #   3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
-                for chi_2d, UB, w in ((chis_2d, UsB, 1.5), (chic_2d, UcB, 0.5)):
-                    xp.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
-                    xp.matmul(UB, T1[:n], out=T2[:n])
-                    xp.matmul(T2[:n], UB, out=T1[:n])
-                    T1[:n] *= w
-                    # into the kernel's pair orientation (issue #251): the
-                    # transpose is copied into T2, which is free again here
-                    _pair_transpose_into(T2[:n], T1[:n], no)
-                    out += T2[:n]
-                # the exact local second order, added in place into the view.
-                # The kernel borrows the SAME two buffers (sliced to this
-                # batch's length, exactly like the ring products above), so
-                # the whole assembly peaks at two temporaries, not four.
-                accumulate_batch(out, chi0_2d[l0:l1], l0, factors,
-                                 work=(T1[:n], T2[:n]))
-            return v_eff
-        if second_order != "takimoto":
-            raise ValueError("unknown second_order {!r}".format(second_order))
-
+        from hwave.solver.second_order import accumulate_batch
+        if factors is None:
+            raise ValueError('flex_second_order = "local" needs the compiled factors')
+        xp = _bk.array_module_of(chi0q)
         nmat, nvol = chi0q.shape[0], chi0q.shape[1]
         no = chi0q.shape[2]
-        ndx = no * no
-
-        # Flatten the four orbital legs to (row, col) matrices BEFORE matmul.
+        ndx = chi0q.shape[2] * chi0q.shape[3]
+        # Flatten the four orbital legs to (row, col) matrices: row
+        # (l1 * norb + l2), column (l3 * norb + l4) -- the pair convention
+        # accumulate_batch reads its chibar in (pinned by
+        # tests/test_second_order_oracle.py, which feeds it this very array).
         chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
         chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
         chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
-
-        # Broadcast the (nvol, ndx, ndx) interaction matrices over frequency.
         UsB = Us[np.newaxis]            # (1, nvol, ndx, ndx)
         UcB = Uc[np.newaxis]
-        Uspc = (Us + Uc)[np.newaxis]
-
-        term_s = 1.5 * (UsB @ chis_2d @ UsB)
-        term_c = 0.5 * (UcB @ chic_2d @ UcB)
-        term_0 = 0.25 * (Uspc @ chi0_2d @ Uspc)
-
-        v_eff = term_s + term_c - term_0    # (nmat, nvol, ndx, ndx)
+        v_eff = xp.zeros((nmat, nvol, ndx, ndx), dtype=np.complex128)
+        # batch length: the peak above v_eff is T_bytes = 2 * nb * nvol *
+        # ndx^2 * 16 bytes (T1, T2), plus accumulate_batch's finiteness
+        # mask (T_bytes / 32) and constant buffering -- see its docstring.
+        nb = max(1, nmat // 8)
+        T1 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+        T2 = xp.empty((nb, nvol, ndx, ndx), dtype=np.complex128)
+        for l0 in range(0, nmat, nb):
+            l1 = min(nmat, l0 + nb)
+            n = l1 - l0
+            out = v_eff[l0:l1]
+            # the ring from third order on:
+            #   3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc
+            for chi_2d, UB, w in ((chis_2d, UsB, 1.5), (chic_2d, UcB, 0.5)):
+                xp.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+                xp.matmul(UB, T1[:n], out=T2[:n])
+                xp.matmul(T2[:n], UB, out=T1[:n])
+                T1[:n] *= w
+                # into the kernel's pair orientation (issue #251): the
+                # transpose is copied into T2, which is free again here
+                _pair_transpose_into(T2[:n], T1[:n], no)
+                out += T2[:n]
+            # the exact local second order, added in place into the view.
+            # The kernel borrows the SAME two buffers (sliced to this
+            # batch's length, exactly like the ring products above), so
+            # the whole assembly peaks at two temporaries, not four.
+            accumulate_batch(out, chi0_2d[l0:l1], l0, factors,
+                             work=(T1[:n], T2[:n]))
         return v_eff
 
     @do_profile

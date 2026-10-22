@@ -840,7 +840,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory() as out:
             _run(os.getcwd(), os.path.abspath(_IN2),
                  {"CoulombInter": "onsite_inter.dat",
-                  "CoulombIntra": "coulombintra.dat"}, out, "takimoto")
+                  "CoulombIntra": "coulombintra.dat"}, out, "local")
             for name in ("chiq_s.npz", "chiq_c.npz"):
                 with np.load(os.path.join(out, name)) as data:
                     self.assertEqual(int(data["sc_vertex_version"]), 3, name)
