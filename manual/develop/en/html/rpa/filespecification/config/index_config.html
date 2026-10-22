@@ -573,12 +573,12 @@ either. Ignored with a warning unless
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p>
 <p><strong>Type :</strong>
-String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>; FLEX mode with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
-<span class="pre">&quot;general&quot;</span></code> only)</p>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>, which is also the only accepted
+value; FLEX mode with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only)</p>
 <p><strong>Description :</strong>
-Selects the second-order part of the FLEX effective interaction on the
-general (full-vertex) path; see
-<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a> for the formulas.</p>
+The second-order part of the FLEX effective interaction on the general
+(full-vertex) path; see <a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a> for the
+formulas.</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> (default) builds the exact LOCAL second order: the
 complete second order of the on-site interaction (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>,
@@ -592,14 +592,20 @@ second-order class it does not carry is the exchange skeleton of TWO
 off-site vertices, which is not representable by a
 <span class="math notranslate nohighlight">\(q\)</span>-only vertex: full second-order accuracy for an off-site
 interaction additionally needs <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> keeps the legacy Takimoto-Hotta-Ueda expression
-verbatim; its second-order (double-counting subtraction) term is
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> is <strong>retired</strong> and refused at start-up with a
+message that names <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code>. It selected the Takimoto-Hotta-Ueda
+expression, whose second-order (double-counting subtraction) term
 <span class="math notranslate nohighlight">\(-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
-(\hat{U}^s + \hat{U}^c)\)</span>, with <span class="math notranslate nohighlight">\(\bar\chi\)</span> the bare bubble
-(the full expression is given in
-<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a>). It is the reproduction path for
-results produced with H-wave 2.0.0 and remains available throughout
-the 2.x series.</p></li>
+(\hat{U}^s + \hat{U}^c)\)</span> is not exact at second order for
+multi-orbital and off-site interactions, and whose ring was contracted
+in a non-conserving pair orientation (see
+<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a>). It was the kernel of H-wave 2.0.0 and
+earlier, so the results of those releases can no longer be reproduced
+by a setting; use an earlier release for that. A <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed
+recorded with <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> is still accepted, with a warning: if it
+passes the usual seed checks it is only the initial value, and every
+iteration uses <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> (a run that does not converge can still
+depend on the seed).</p></li>
 </ul>
 <p><strong>Applicability:</strong> The key is meaningful for <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only. The default is applied AFTER FLEX
@@ -622,32 +628,22 @@ indices <span class="math notranslate nohighlight">\(\alpha = \beta\)</span>. Su
 reduces to a one-body level shift, to an effective <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, or
 to identically zero. The error
 message names the row and gives the equivalent declaration for that
-type. Rewrite the interaction file as the message says, or set
-<code class="docutils literal notranslate"><span class="pre">flex_second_order</span> <span class="pre">=</span> <span class="pre">&quot;takimoto&quot;</span></code> as an immediate workaround (the
-legacy expression accepts every row the general path accepted before).</p>
-<p><strong>Cost and memory:</strong> Measured with <code class="docutils literal notranslate"><span class="pre">tests/sc/second_order_cost.py</span></code> (run
-from the repository root; the 2-orbital <code class="docutils literal notranslate"><span class="pre">tests/rpa/input_2orb</span></code> geometry
-and transfer, and the synthetic 3-orbital square lattice the script writes,
-<span class="math notranslate nohighlight">\(L = 8\)</span>, <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">128</span></code>, minimum over repeated runs, 2026-09):
-assembling <span class="math notranslate nohighlight">\(V_{\rm eff}\)</span> under <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> costs about 1.3x to 1.6x
-the legacy expression (2- and 3-orbital inputs; the ratio varies from run
-to run within that band) and a full FLEX iteration about 1.1x to 1.25x.
-Memory goes the other way: <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> accumulates the second order in
-frequency batches, while the legacy expression materialises three
-full-size terms, so under <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> the peak of this step is about
-three times that of <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> (<span class="math notranslate nohighlight">\(V_{\rm eff} + 3\,C\)</span> versus
-<span class="math notranslate nohighlight">\(V_{\rm eff} + C/4 + F\)</span>, with <span class="math notranslate nohighlight">\(C\)</span> the size of
-<span class="math notranslate nohighlight">\(V_{\rm eff}\)</span> and <span class="math notranslate nohighlight">\(F\)</span> the small compiled interaction
-factors); its transient buffers alone are twelve times larger, so a
-large reproduction run may need more RAM than the same run under the
-default.</p>
-<p><strong>Convergence:</strong> The SCF trajectory can change with the kernel. On the
-2-orbital self-consistency fixture (on-site <span class="math notranslate nohighlight">\(U\)</span>, <span class="math notranslate nohighlight">\(U'\)</span>,
-<code class="docutils literal notranslate"><span class="pre">Hund</span></code> plus off-site <span class="math notranslate nohighlight">\(V\)</span>, Anderson mixing) both values needed
-the same number of iterations (9 without and 11 with
-<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>), but that is one observation, not a
-guarantee; see the <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-second-order-tutorial"><span class="std std-ref">FLEX tutorial</span></a>
-for what to do when a run that converged before does not.</p>
+type; rewrite the interaction file as the message says.</p>
+<p><strong>Cost and memory:</strong> <code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code> accumulates the second order in
+frequency batches, so the peak of this step is <span class="math notranslate nohighlight">\(V_{\rm eff} +
+C/4 + F\)</span>, with <span class="math notranslate nohighlight">\(C\)</span> the size of <span class="math notranslate nohighlight">\(V_{\rm eff}\)</span> and <span class="math notranslate nohighlight">\(F\)</span>
+the small compiled interaction factors. <code class="docutils literal notranslate"><span class="pre">tests/sc/second_order_cost.py</span></code>
+(run from the repository root) times one assembly of
+<span class="math notranslate nohighlight">\(V_{\rm eff}\)</span> and one FLEX iteration on a 2-orbital and a
+3-orbital input.</p>
+<p><strong>Convergence:</strong> Compared with H-wave 2.0.0 and earlier (the retired
+<code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> kernel) the SCF trajectory can change. On the 2-orbital
+self-consistency fixture (on-site <span class="math notranslate nohighlight">\(U\)</span>, <span class="math notranslate nohighlight">\(U'\)</span>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> plus
+off-site <span class="math notranslate nohighlight">\(V\)</span>, Anderson mixing) both kernels needed the same
+number of iterations (9 without and 11 with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span>
+<span class="pre">true</span></code>), but that is one observation, not a guarantee; see the
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-second-order-tutorial"><span class="std std-ref">FLEX tutorial</span></a> for what to do when a
+run that converged before does not.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_frequency</span></code></p>
 <p><strong>Type :</strong>

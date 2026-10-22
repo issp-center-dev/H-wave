@@ -657,14 +657,15 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 から構築されます。ここで\ :math:`\bar\chi`\ は裸のバブル、
 :math:`\hat{U}^s`\ ・\ :math:`\hat{U}^c`\ は ring のスピン・電荷頂点です。
 この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
-:math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ にどの式を使うかは
-``[mode.param]``\ の\ ``flex_second_order``\ で選択します（設定ファイルの
-説明を参照）。同じキーで ring を縮約する対の向きも決まります（次の段落）。
+:math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ は以下で説明する厳密な
+局所2次です（\ ``[mode.param]``\ の\ ``flex_second_order = "local"``\ 。
+デフォルトであり、受け付けられる唯一の値です。設定ファイルの説明を参照）。
+ring は次の段落の対の向きで縮約されます。
 
 自己エネルギーは\ :math:`\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
 \sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
 \mathbf{q}, i\omega - i\nu)`\ です。ring の項はバブルの対の並びでの行列積であり、
-デフォルトの\ ``flex_second_order = "local"``\ では、この和に\ **両方の**\ 対の2つの軌道を入れ替えた向き
+この和に\ **両方の**\ 対の2つの軌道を入れ替えた向き
 :math:`(\mu m) \leftrightarrow (m \mu)`\ で入ります。この向きでは ring の
 各次数が\ :math:`\mathrm{Tr}\,(\bar\chi \hat{U})^n`\ の汎関数微分になり、
 自己エネルギーは保存近似（Luttinger-Ward 汎関数から導かれる）になります。
@@ -673,11 +674,11 @@ ring を入れ替えずに縮約していました（issue #251）。軌道間�
 （CoulombInter、Hund、Exchange、Ising、PairHop）を含む多軌道模型では結果が変わり、
 軌道内の相互作用（CoulombIntra）のみの場合は変わりません。ボンド分解チャネル
 （\ ``longitudinal_bond_channels``\ ）も各チャネルブロックの中で同じ規則に従います。
-従来の\ ``flex_second_order = "takimoto"``\ カーネルは、以前のリリースの結果を
-再現できるよう以前の向きのままであり、軌道間の相互作用に対しては保存近似になりません。
+（廃止された Takimoto-Hotta-Ueda カーネル（この節の末尾を参照）は以前の向きのまま
+であったため、軌道間の相互作用に対しては保存近似ではありませんでした。）
 
-``flex_second_order = "local"``\ （デフォルト）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``flex_second_order = "local"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 一般化した添字\ :math:`p = (\text{サイト}, \text{軌道}, \text{スピン})`
 を用いて相互作用を\ :math:`{\cal H}_{\rm int} = \tfrac{1}{2}\sum
@@ -792,10 +793,10 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 :math:`2 U V(\mathbf{q}) \bar\chi`\ が生じますが、これは Hartree 部分のみから
 作った\ :math:`q`\ 依存頂点には含まれません。
 
-``flex_second_order = "takimoto"``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+廃止：\ ``flex_second_order = "takimoto"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-この値では、従来の Takimoto-Hotta-Ueda の形の有効相互作用
+H-wave 2.0.0 以前は、一般経路を Takimoto-Hotta-Ueda の形の有効相互作用
 
 .. math::
 
@@ -804,14 +805,17 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
    - \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
      \left(\hat{U}^s + \hat{U}^c\right)
 
-をそのまま使います。すなわち\ :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s
+から構築していました。すなわち\ :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s
 \bar\chi \hat{U}^s + \tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c -
-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`\ です。
-これは単一バンドの Hubbard 相互作用については2次で厳密ですが、その他の項に
-ついては近似であり、H-wave 2.0.0 以前のリリースで得られた結果を再現するために
-残されています。
+\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`\ で、
+ring は以前の対の向きで縮約されていました。これは単一バンドの Hubbard
+相互作用については2次で厳密ですが、その他の項については近似です。この式は
+``flex_second_order = "takimoto"``\ として選択できましたが、廃止されました
+（issue #253）。現在この値は起動時に拒否され、エラーメッセージは\ ``"local"``\ を
+案内します。したがって H-wave 2.0.0 以前の結果を設定で再現することはもはや
+できません。再現が必要な場合は以前のリリースを使ってください。
 
-したがって、\ ``CoulombIntra``\ のみの単一バンド入力では両方の値が丸め誤差の
+``CoulombIntra``\ のみの単一バンド入力では、それらのリリースと丸め誤差の
 範囲で一致し、多軌道のオンサイト相互作用（:math:`U'`\ ・\ ``Hund``\ ・
 ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と
 オフサイト相互作用では一般経路の結果が変わります。
@@ -819,8 +823,8 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 .. note::
 
    ``longitudinal_bond_channels = true``\ では、ボンド分解した有効相互作用の
-   チャネル0ブロックも同じカーネルで構築されるため、単一バンドの
-   :math:`U + V`\ 入力でも2つの値は一致します（ボンド分解チャネルは
+   チャネル0ブロックも同じカーネルで構築され、単一バンドの
+   :math:`U + V`\ 入力では廃止された式とも一致します（ボンド分解チャネルは
    もともと直接\ :math:`V`\ の2次を厳密に含んでいました）。ボンド分解ブロックは、
    軌道間のものも含め全てのボンドで2次まで厳密です（オンサイトとボンドの
    混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
@@ -927,13 +931,10 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
    W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}
 
 すなわち3次以上の ring 級数と厳密な2次項\ :math:`W^{(2)}`\ の和です。\ :math:`W^{(2)}`\ は、
-チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されるため
-同じ\ ``flex_second_order``\ キーで選択されます（:ref:`flex_second_order_kernel`\ を参照）。
+チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されます
+（:ref:`flex_second_order_kernel`\ を参照）。
 これによりオフサイト係数が全てゼロなら計算は標準の Hartree-Fock FLEX と同一になります。
-``flex_second_order = "takimoto"``\ では、このブロックは従来の
-:math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
-- \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})`
-になります。チャネル0とボンドの混合ブロックでは
+チャネル0とボンドの混合ブロックでは
 :math:`\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)`\ （オフサイト相互作用の交換スケルトンを
 1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
 自己エネルギーは
@@ -948,10 +949,10 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 :math:`(m, m')`\ はバブルのブロック\ :math:`(m', m)`\ の位相と対になります）、実空間では
 :math:`G`\ の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
 スケルトンを\ :math:`UV`\ 交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
-標準の一般経路も\ ``flex_second_order = "local"``\ では直接スケルトンと
-:math:`UV`\ 交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです。
-従来の\ ``"takimoto"``\ の式では、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
-:math:`UV`\ 交差項を持ちません。（``longitudinal_bond_channels = true``\ では、
+標準の一般経路も直接スケルトンと
+:math:`UV`\ 交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです
+（廃止された Takimoto-Hotta-Ueda の式は、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
+:math:`UV`\ 交差項を持ちませんでした）。（``longitudinal_bond_channels = true``\ では、
 ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
 ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
 

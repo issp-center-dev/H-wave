@@ -81,7 +81,8 @@
 densified 出力の双方）にさらに2つのフィールドが書き出されます。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>: その計算が用いた有効相互作用の2次カーネル
-（<code class="docutils literal notranslate"><span class="pre">local</span></code> | <code class="docutils literal notranslate"><span class="pre">takimoto</span></code>）。0 次元の<code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code>文字列配列として格納されます
+（常に<code class="docutils literal notranslate"><span class="pre">local</span></code>。以前の開発版のアーカイブには廃止された<code class="docutils literal notranslate"><span class="pre">takimoto</span></code>が
+記録されていることがあります）。0 次元の<code class="docutils literal notranslate"><span class="pre">&lt;U8</span></code>文字列配列として格納されます
 （読み込みには<code class="docutils literal notranslate"><span class="pre">str(...)</span></code>または<code class="docutils literal notranslate"><span class="pre">.item()</span></code>を使用してください）。
 設定ファイルの<code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>セクションの<code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code>、
 および<a class="reference internal" href="../../../algorithm/rpa.html#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>を参照してください。</p></li>
@@ -92,9 +93,12 @@ densified 出力の双方）にさらに2つのフィールドが書き出され
 導入前（H-wave 2.0.0 以前）に出力されたアーカイブには、これらのフィールドは
 <strong>ありません</strong> 。フィールドが
 無いことがエラーになることはなく、H-wave の読み込み側はそのようなファイルも受理
-します。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>に指定された初期自己エネルギー（シード）が現在の計算と
-異なるカーネルで作られている場合は WARNING レベルの警告が1度出力されます
-（記録自体が無い場合は INFO レベルの情報メッセージが1度出力されます）。
+します。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>に指定された初期自己エネルギー（シード）が廃止された
+<code class="docutils literal notranslate"><span class="pre">takimoto</span></code>カーネルで作られている場合も、そのシードは受け付けられ（通常の
+シードの検査を通れば初期値としてのみ使われ、各反復は<code class="docutils literal notranslate"><span class="pre">local</span></code>で計算されます）、
+その旨の WARNING レベルの
+警告が1度出力されます（記録自体が無い場合は INFO レベルの情報メッセージが1度
+出力されます）。
 アーカイブのメンバー一覧（<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>が返すオブジェクトの<code class="docutils literal notranslate"><span class="pre">files</span></code>属性）を
 厳密に比較するスクリプトでは、この2つの名前が増えることを許容してください。</p>
 </section>
