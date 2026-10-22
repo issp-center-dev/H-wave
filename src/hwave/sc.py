@@ -5349,6 +5349,37 @@ def _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz):
     return A, vec_size
 
 
+#: Seed of the deterministic ARPACK start vector (GitHub issue #255).
+_ARPACK_START_SEED = 255
+
+
+def _arpack_start(A, v0=None):
+    """The start vector of an ARPACK (``scipy.sparse.linalg.eigs``) call on
+    the operator ``A``: ``v0`` when the caller has one (an
+    eigenvector-continuation seed), else a FIXED-seed pseudo-random vector
+    of ``A``'s dtype (GitHub issue #255).
+
+    Without a start vector ARPACK draws a random one on every call, so the
+    converged eigenvalue moved by ~1e-9 relative from run to run on the
+    same input. A constant vector would be reproducible too, but it carries
+    the full lattice symmetry, and the Krylov space it starts stays in that
+    sector -- it could miss, e.g., a d-wave leading eigenvalue -- so the
+    vector is generic, only its seed is fixed."""
+    if v0 is not None:
+        return v0
+    n = int(A.shape[0])
+    dtype = np.dtype(A.dtype)
+    rng = np.random.default_rng(_ARPACK_START_SEED)
+    if np.issubdtype(dtype, np.complexfloating):
+        v = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+    else:
+        v = rng.standard_normal(n)
+    if np.issubdtype(dtype, np.inexact):
+        v = v.astype(dtype)
+    # (an integer operator keeps the float64 vector: eigs promotes it to double)
+    return v / np.linalg.norm(v)
+
+
 def _order_by_seed_overlap(vals, vecs, seed_vec):
     """Order eigenpairs by descending overlap ``|<seed, vec>|`` with a seed
     eigenvector (columns already L2-normalized by ARPACK).
@@ -6126,7 +6157,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             if isinstance(spectral_shift, str):  # "auto"
                 k_pre = min(6, vec_size - 2)
                 if k_pre >= 1:
-                    vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
                     sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
                 else:
                     sig = 1.0
@@ -6139,11 +6170,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
             A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
                           dtype=A.dtype)
-            vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=seed_vec)
+            vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=_arpack_start(A_sh, seed_vec))
             vals = vals - sig
             selection_label = "LR"
         else:
-            vals, vecs = eigs(A, k=max_ev, which='LM', v0=seed_vec)
+            vals, vecs = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A, seed_vec))
             selection_label = "LM"
 
     elif solver_mode.startswith("shift-invert"):
@@ -6159,7 +6190,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = 0.0
             else:
                 logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM')
+                vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
                 sigma_shift = _shift_from_eigenvalues(vals_pre)
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
         vals, vecs = _eigs_shift_invert(
@@ -6388,7 +6419,7 @@ def _eigs_shift_invert(A, vec_size, num_ev, method, sigma=0.0, rtol_linear=1e-8,
     # eigs on (A - sigma*I)^{-1} finds eigenvalues nu = 1/(lambda - sigma)
     # largest |nu| correspond to lambda closest to sigma. A seed vector (v0)
     # biases the Arnoldi start toward the physical branch being tracked.
-    nus, vecs = eigs(A_inv, k=num_ev, which='LM', v0=seed_vec)
+    nus, vecs = eigs(A_inv, k=num_ev, which='LM', v0=_arpack_start(A_inv, seed_vec))
 
     logger.info("Shift-invert: {} linear solves, {} failures".format(
         solve_count[0], fail_count[0]))
@@ -6584,7 +6615,7 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
         )
 
         try:
-            nus, vecs = eigs(A_inv, k=max_ev, which='LM')
+            nus, vecs = eigs(A_inv, k=max_ev, which='LM', v0=_arpack_start(A_inv))
             eigenvalues = 1.0 / nus + sigma
             # Eigenvalues found near this shift; report by magnitude.
             idx = np.argsort(-np.abs(eigenvalues))
