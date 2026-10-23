@@ -1518,10 +1518,10 @@ class RPA:
                     "of {} has no density-diagonal content: the interaction "
                     "would have exactly zero effect (not an approximation). "
                     "Use calc_scheme='general', which carries the full "
-                    "vertex. (Note: FLEX's general scheme is spin-free "
-                    "only; with enable_spin_orbital or a spin-polarized "
-                    "setup no current FLEX scheme supports these "
-                    "interactions.)".format(
+                    "vertex. (Note: under enable_spin_orbital, FLEX's "
+                    "general scheme requires flex_hartree_fock = true; "
+                    "with a spin-polarized setup no current FLEX scheme "
+                    "supports these interactions.)".format(
                         raw, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
                 logger.warning(PAIRLIFT_INERT_WARNING)
@@ -3744,7 +3744,14 @@ class RPA:
             norb = self.norb
 
             Htmp = H0.reshape(nvol,ns,norb,ns,norb)
-            if np.allclose(Htmp[:,0,:,1,:], 0) and np.allclose(Htmp[:,1,:,0,:], 0):
+            # a solver whose spin-orbital path is the spinful one throughout
+            # (FLEX, #83) keeps the full nd x nd form even when H0 happens to
+            # be spin-diagonal
+            if getattr(self, "_keep_spinful", False):
+                logger.debug("H is treated as spinful")
+                H0 = H0.reshape(1,*H0.shape)
+                self.spin_mode = "spinful"
+            elif np.allclose(Htmp[:,0,:,1,:], 0) and np.allclose(Htmp[:,1,:,0,:], 0):
                 if np.allclose(Htmp[:,0,:,0,:], Htmp[:,1,:,1,:]):
                     logger.info("H is spin-free")
                     H0 = Htmp[:,0,:,0,:].reshape(1,nvol,norb,norb)

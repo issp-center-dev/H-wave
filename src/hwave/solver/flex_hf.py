@@ -67,6 +67,34 @@ def hf_map(rho_r, tables, shape, norb, *, block_tol=1e-12, herm_tol=1e-10):
     return sigma
 
 
+def hf_map_spin_orbital(rho_r, tables, shape, norb, *, herm_tol=1e-10):
+    """``Sigma_HF(k)`` `(nvol, 2 norb, 2 norb)` of the spin-orbital FLEX
+    (#83) from the full spin-orbital density ``rho_r`` `(nvol, 2 norb,
+    2 norb)` in the spin-block order ``s * norb + a`` of
+    :mod:`hwave.solver.spin_orbital`: no embedding, the density IS the
+    kernel's ``(nvol, 2, norb, 2, norb)`` layout (the frame UHFk's
+    spin-orbital mode runs the same kernel in), and the result comes back
+    in that order. The Fock term is included and the k-space Hermiticity
+    check (``herm_tol``) applies. Returns an OWNING copy."""
+    rho_r = np.asarray(rho_r)
+    nvol = rho_r.shape[0]
+    if rho_r.shape[1:] != (2 * norb, 2 * norb):
+        raise ValueError("hf_map_spin_orbital: expected a (nvol, {0}, {0}) density, got {1}"
+                         .format(2 * norb, rho_r.shape))
+    rho_so = np.ascontiguousarray(rho_r, dtype=np.complex128).reshape(nvol, 2, norb, 2, norb)
+    out = np.zeros((nvol, 2 * norb, 2 * norb), dtype=np.complex128)
+    _hf.accumulate_hf(out, rho_so, tables.inter_table, tables.spin_table,
+                      tuple(shape), include_fock=True)
+    if not np.all(np.isfinite(out)):
+        raise _hf.NonFiniteError("hf_map_spin_orbital: non-finite Hartree-Fock term")
+    ok, err = _hf.is_hermitian_batch(out, herm_tol)
+    if not ok:
+        raise ValueError(
+            "hf_map_spin_orbital: Sigma_HF(k) is not Hermitian (relative deviation "
+            "{:.3e}); the density matrix violates rho_ab(r) = conj(rho_ba(-r))".format(err))
+    return out
+
+
 # =============================================================================
 # Self-energy seeds (spec section 2.3)
 # =============================================================================

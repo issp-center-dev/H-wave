@@ -663,7 +663,9 @@ in the input TOML file. In this mode:
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
   ``Ising``, ``PairLift``, ``PairHop``) are supported.
 - The block decomposition is applied automatically when possible.
-- Both the ``reduced`` and ``general`` calculation schemes are supported for spin-orbital systems.
+- Both the ``reduced`` and ``general`` calculation schemes are supported for spin-orbital systems
+  in RPA. FLEX supports the spin-orbital mode on the ``general`` scheme with
+  ``flex_hartree_fock = true`` only; see :ref:`flex_spin_orbital`.
 - The ``Norbit`` value in the geometry file (``geom.dat``) is the **spin-orbital
   count** (= 2 × the number of physical orbitals = Wannier90 ``num_wann``), the same
   convention as UHFk.
@@ -955,7 +957,8 @@ Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)
 --------------------------------------------------------------------
 
 With ``flex_hartree_fock = true`` (``mode = "FLEX"``, ``calc_scheme =
-"general"``, spin-free system) the FLEX self-energy is the sum of two
+"general"``, spin-free system; for spin-orbital input see
+:ref:`flex_spin_orbital`) the FLEX self-energy is the sum of two
 components that are iterated together,
 
 .. math::
@@ -1072,5 +1075,94 @@ coefficients, off-site ``Exchange`` and ``PairHop`` only with
 memory of the whole solve is checked against
 ``longitudinal_bond_memory_cap_gb`` and the frequency batch is chosen to fit
 it.
+
+.. _flex_spin_orbital:
+
+Spin-orbital FLEX (experimental)
+--------------------------------
+
+With ``enable_spin_orbital = true``, ``mode = "FLEX"``, ``calc_scheme =
+"general"`` and ``flex_hartree_fock = true``, FLEX runs in the full
+spin-orbital space. The Green function, the self-energy and the
+susceptibilities carry the generalized index :math:`p = s\, n_{\rm orb} + a`
+of dimension :math:`n_d = 2 n_{\rm orb}` (spin-block order, marked
+``index_convention = "spin_block"``), and the one-body Hamiltonian is kept
+in this :math:`n_d \times n_d` form even when it happens to be
+spin-diagonal. The self-energy is again :math:`\Sigma = \Sigma_{\rm HF}[G]
++ \Sigma_{\rm fluct}[G]` (see :ref:`flex_bond_hf`). Here
+:math:`\Sigma_{\rm HF}` is the Hartree-Fock term of every interaction, Fock
+term included, evaluated on the full spin-orbital equal-time density with
+its spin-off-diagonal blocks; it is built by the same kernel as UHFk's
+spin-orbital mode.
+
+The fluctuation part is a single particle-hole channel. Let
+:math:`\Gamma` be the antisymmetrized spinful vertex: the direct
+interaction plus its on-site exchange crossing, which is the vertex the
+spinful RPA resums (``spinful_vertex_exchange``). Let :math:`\bar\chi` be the
+bare bubble on the spin-orbital pair basis. Then
+
+.. math::
+
+   \chi = \left[\hat{I} + \bar\chi\,\Gamma\right]^{-1} \bar\chi, \qquad
+   V = P\left[\Gamma\left(\chi - \tfrac{1}{2}\bar\chi\right)\Gamma\right]
+     = P\left[\Gamma\left(\chi - \bar\chi\right)\Gamma
+       + \tfrac{1}{2}\,\Gamma\bar\chi\Gamma\right].
+
+The first term is the ring series from third order on. The second is the
+exact second order: the antisymmetrized vertex produces the direct and the
+exchange second-order diagrams alike, hence the factor :math:`\tfrac{1}{2}`.
+No separate second-order kernel is needed. :math:`P` swaps the two orbitals
+of both pairs, :math:`(\mu m) \leftrightarrow (m \mu)`. This is the
+orientation of :ref:`flex_second_order_kernel`, in which the order-:math:`n`
+term is the functional derivative of :math:`\mathrm{Tr}\,(\bar\chi
+\Gamma)^n`, so the approximation is conserving. The single channel carries
+every spin structure at once: charge, longitudinal and transverse spin, and
+their mixing under spin-orbit coupling. There is no spin/charge split, so
+:math:`\chi` is written to ``chiq.npz`` as ``chiq`` with
+``chi_convention = "spin_orbital"``.
+
+The implementation is validated in two ways:
+
+- *Second order against exact diagonalization.* On a single site with
+  three orbitals and a random spin-mixing one-body term, the :math:`O(x^2)`
+  coefficient of the fluctuation self-energy equals that of the exact
+  remainder :math:`\Sigma_{\rm ED} - \Sigma_{\rm HF}[\rho_{\rm ED}]` for
+  every interaction type (``CoulombIntra``, ``CoulombInter``, ``Hund``,
+  ``Ising``, ``Exchange``, ``PairHop``, ``PairLift``), within a relative
+  :math:`2 \times 10^{-3}`, spin-off-diagonal blocks included.
+- *The spin-conserving limit.* Take a spin-diagonal model written in the
+  spin-orbital encoding, with a spin-rotation invariant on-site interaction
+  (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``, ``Ising``,
+  ``PairHop``, with :math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm
+  Ising}`). Its self-consistent solution equals that of the spin-free
+  Hartree-Fock FLEX to round-off: both self-energy components,
+  :math:`\mu` and :math:`N`.
+
+Without spin-rotation invariance the two FLEX forms agree at second order
+but differ beyond it. The spin-free form :math:`\tfrac{3}{2}\hat{U}^s
+\chi_s \hat{U}^s` counts the two transverse spin fluctuations as copies of
+the longitudinal one. That is exact only for an SU(2)-symmetric
+interaction. :math:`\Gamma`, by contrast, resums the transverse channel with
+its actual vertex. So ``Hund``, ``Ising`` or ``Exchange`` declared on its
+own, or any set with :math:`J_{\rm Exchange} \neq J_{\rm Hund} - 2 J_{\rm
+Ising}`, gives a different result from third order on. ``PairLift``
+(:math:`\Delta S_z = 2`) is not spin conserving at all. The spin-free
+general path keeps its exact second order but has no channel for its
+transverse content beyond that; the spin-orbital FLEX carries it.
+
+Domain of this version:
+
+- the general scheme with ``flex_hartree_fock = true`` and the other
+  conditions of that switch;
+- on-site interactions only (the exchange crossing of an off-site
+  interaction is not a :math:`\mathbf{q}`-only vertex);
+- ``spinful_vertex_exchange = true``, and no ``longitudinal_bond_channels``;
+- no ``sigma_init`` / ``trans_mod`` / ``green_init``: the run starts from
+  the bare Hartree-Fock state.
+
+The reduced scheme refuses spin-orbital input, and the Eliashberg solver
+(``hwave_sc``, and ``hwave_tsweep`` with ``run_eliashberg = true``) still
+refuses ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
+``warm_start = false`` (the spin-orbital FLEX takes no seed).
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

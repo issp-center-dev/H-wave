@@ -259,6 +259,13 @@ HEAVY_TESTS = (
      "test_c_gate_on_reproduces_the_full_oracle",
      "G2 (c): with the bond gate on the second order is the FULL oracle for "
      "off-site CoulombInter; the off-site Hund/Ising outcome is recorded"),
+    # --- tests/test_flex_spin_orbital_ed.py -- #83 spin-orbital FLEX --
+    ("test_flex_spin_orbital_ed", "TestSecondOrderWithSOC",
+     "test_every_type",
+     "exact diagonalisation of the single-site three-orbital model with a "
+     "spin-mixing one-body block pins the second order of the spin-orbital "
+     "FLEX for all seven interaction types (28 production maps at "
+     "Nmat = 4096, ~20 s)"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",
