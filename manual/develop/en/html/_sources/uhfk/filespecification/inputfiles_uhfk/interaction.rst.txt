@@ -242,6 +242,12 @@ Usage rules
    each entry :math:`X_{ab}(R)` must be accompanied by its partner
    :math:`X_{ba}(-R) = X_{ab}(R)^{*}`. A missing or disagreeing partner
    is rejected at read time. CoulombIntra additionally requires on-site
-   same-orbital entries with finite real values. (This applies to the wannier90-like
+   same-orbital entries with finite real values, and CoulombInter refuses
+   a nonzero on-site row of an orbital with itself (:math:`R = 0`,
+   :math:`a = b`). Each declared row carries half of :math:`V n n`, so such
+   a row is the Hubbard term :math:`U = V` plus a one-body level shift
+   :math:`V/2`: declare :math:`U = V` in CoulombIntra and add :math:`V/2` to
+   the orbital's on-site energy in the Transfer file (or absorb it in the
+   chemical potential). (This applies to the wannier90-like
    k-space format read here; the separate UHFr real-space reader keeps
    its own conventions.)

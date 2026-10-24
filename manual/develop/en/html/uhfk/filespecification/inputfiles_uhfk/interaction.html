@@ -256,7 +256,13 @@ Hermitian-closed:
 each entry <span class="math notranslate nohighlight">\(X_{ab}(R)\)</span> must be accompanied by its partner
 <span class="math notranslate nohighlight">\(X_{ba}(-R) = X_{ab}(R)^{*}\)</span>. A missing or disagreeing partner
 is rejected at read time. CoulombIntra additionally requires on-site
-same-orbital entries with finite real values. (This applies to the wannier90-like
+same-orbital entries with finite real values, and CoulombInter refuses
+a nonzero on-site row of an orbital with itself (<span class="math notranslate nohighlight">\(R = 0\)</span>,
+<span class="math notranslate nohighlight">\(a = b\)</span>). Each declared row carries half of <span class="math notranslate nohighlight">\(V n n\)</span>, so such
+a row is the Hubbard term <span class="math notranslate nohighlight">\(U = V\)</span> plus a one-body level shift
+<span class="math notranslate nohighlight">\(V/2\)</span>: declare <span class="math notranslate nohighlight">\(U = V\)</span> in CoulombIntra and add <span class="math notranslate nohighlight">\(V/2\)</span> to
+the orbital’s on-site energy in the Transfer file (or absorb it in the
+chemical potential). (This applies to the wannier90-like
 k-space format read here; the separate UHFr real-space reader keeps
 its own conventions.)</p>
 </div>

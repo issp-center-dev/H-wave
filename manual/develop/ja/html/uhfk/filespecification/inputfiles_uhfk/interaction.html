@@ -226,7 +226,11 @@ Hund, Exchange, Ising, PairLift, PairHop）はエルミート共役で閉じて
 各エントリ<span class="math notranslate nohighlight">\(X_{ab}(R)\)</span>には相手<span class="math notranslate nohighlight">\(X_{ba}(-R) = X_{ab}(R)^{*}\)</span>
 が伴わなければなりません。相手が欠けている、または値が一致しない場合
 は読み込み時に拒否されます。 CoulombIntra はさらにオンサイト同一軌道・有限実数値の
-エントリのみを受け付けます。（これはここで読む wannier90 形式の
+エントリのみを受け付け、CoulombInter は軌道が自分自身と結ぶオンサイトの非ゼロの行
+（<span class="math notranslate nohighlight">\(R = 0\)</span>、<span class="math notranslate nohighlight">\(a = b\)</span>）を拒否します。宣言した各行は<span class="math notranslate nohighlight">\(V n n\)</span>の
+半分を担うので、この行は Hubbard 項<span class="math notranslate nohighlight">\(U = V\)</span>と1体の準位シフト<span class="math notranslate nohighlight">\(V/2\)</span>に
+なります。CoulombIntra に<span class="math notranslate nohighlight">\(U = V\)</span>を書き、<span class="math notranslate nohighlight">\(V/2\)</span>は Transfer ファイルの
+その軌道のオンサイトエネルギーに加えてください（化学ポテンシャルに吸収しても構いません）。（これはここで読む wannier90 形式の
 k 空間ファイルに適用されます。別系統の UHFr 実空間リーダーは独自の
 規約を保持します。）</p>
 </div>
