@@ -687,6 +687,15 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 ソルバーと同じファイル名（<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>）で書き出します。</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p>ボンド分解した対形成は、単一軌道模型についてのみ端から端まで検証されて
+います。<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>では、どちらの経路も計算はそのまま実行されますが、
+多軌道の結果はまだ検証されていない旨の WARNING をログに出力します
+（issue #239）。静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド経路
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>、<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>）は
+<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>を拒否します。</p>
+</div>
 <p>完全なキー集合は<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">出力リファレンス</span></a>を、ボンド固有のキーは
 <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">設定ファイルリファレンスの eliashberg 節</span></a>を、ソルバー全般の設定は
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照してください。</p>
@@ -1883,7 +1892,7 @@ FLEX converged after 62 iterations
 ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
 渡す場合は、FLEX を収束まで実行し、その<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>出力を
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>に指定してください。詳細は
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>の<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>の説明を参照してください。</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>を参照してください。</p>
 </div>
 </li>
 </ul>

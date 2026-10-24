@@ -730,6 +730,14 @@ grid. Solves ONE channel per run (<code class="docutils literal notranslate"><sp
 writes the same file names as the on-site dynamic solver
 (<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>).</p></li>
 </ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The bond-resolved pairing is validated end to end for single-orbital
+models only. For <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> both entries run unchanged but log a
+WARNING that the multi-orbital results are not yet validated (issue
+#239); the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>,
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>) refuses <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>.</p>
+</div>
 <p>See <a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">the output reference</span></a> for the
 complete key sets, <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">the configuration reference’s eliashberg section</span></a> for the bond-specific keys and
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a> for the general
@@ -1950,7 +1958,7 @@ own bond-resolved <span class="math notranslate nohighlight">\(\bar\chi\)</span>
 function, so it never reads a <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> file. To feed a
 FLEX-dressed Green function into the bond path, run FLEX to convergence
 and point <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> at its <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> output; see
-the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> parameter in <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a>.</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>.</p>
 </div>
 </li>
 </ul>

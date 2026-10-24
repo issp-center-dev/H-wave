@@ -1469,8 +1469,91 @@ with a warning. Unlike the legacy-layout case above, this is an
 spin-resolved content, and the responsibility is the user’s.</p>
 </div>
 </section>
+<section id="bond-resolved-static-pairing-bond-channels">
+<span id="sc-bond-channels-static"></span><h2><span class="section-number">5.2.12. </span>Bond-resolved static pairing (<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>)<a class="headerlink" href="#bond-resolved-static-pairing-bond-channels" title="Link to this heading">¶</a></h2>
+<p>The pairing vertex of the default path depends on the momentum transfer
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span> only. The exchange (Fock) crossing of an off-site
+interaction pairs a particle-hole pair on the bond <span class="math notranslate nohighlight">\((i, i+R)\)</span>, which
+has no exact place in such a vertex. <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(with the default <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>) gives every off-site bond its own
+channel instead: the pairing vertex is built on the enlarged
+(orbital-pair) <span class="math notranslate nohighlight">\(\times\)</span> (bond) basis, and the exchange crossing of
+each off-site row acts on the bond it was declared on.</p>
+<ul class="simple">
+<li><p><strong>Which interactions are bond-resolved.</strong> Every off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> row: its exchange
+crossing (for <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>, its pair-hopping entry) sits on its bond
+channel, while the Hartree part of the density types <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> stays in the momentum-dependent on-site block. An
+off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> carries no spin/charge content and is not part of
+the bond channels. A nonzero <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row of an orbital
+with itself is refused: declare an on-site same-orbital interaction as
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>. The topology, the bond-resolved spin/charge vertices
+and the pairing kernel are the ones of the FLEX bond gate
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>) and of the dynamic bond pairing, so the
+static path is their zero-bosonic-frequency member.</p></li>
+<li><p><strong>The bubble.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> builds the bond-resolved bubble itself from a
+Green function: the bare one built from the transfer integrals, or the
+file named by <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> (for example a FLEX <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>).
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code> are not used, and
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> is refused. <code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code> (default <code class="docutils literal notranslate"><span class="pre">1.0</span></code>)
+is the Matsubara tail coefficient of that bubble.</p></li>
+<li><p><strong>Keys.</strong> <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> keeps that many off-site shells (ordered by
+bond length; shell 0 is the on-site point) and refuses a cutoff that would
+drop a declared nonzero coefficient (declared-zero shells may be cut).
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> (default 8 GB on this path) caps the estimated
+peak memory.
+<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span> <span class="pre">=</span> <span class="pre">true</span></code> adds the character analysis of the leading
+state to <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. <code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code> /
+<code class="docutils literal notranslate"><span class="pre">bond_precondition_rtol</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_precondition_dense_limit</span></code> tune the
+Hermiticity check of the kernel.</p></li>
+<li><p><strong>Outputs.</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> carries the bond provenance (number of
+channels, displacements, the Green function used) and the split
+<span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span> of the leading eigenvalue
+into its bare and its fluctuation part.</p></li>
+<li><p><strong>Scope.</strong> The static bond path is restricted to single-orbital models
+(<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>) in this version; a multi-orbital model is refused. The
+dynamic bond pairing (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>, and the in-process
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> of FLEX) runs for <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> but logs a
+WARNING that multi-orbital results are not yet validated (issue #239).</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Limitations of the bond pairing kernel</strong> (static and dynamic alike).
+Its bare (first-order) pairing vertex is built from the density content
+of the off-site rows: it is exact for <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> in both channels
+and for <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> in the singlet channel, and its triplet
+channel is the equal-spin component. The first-order singlet pairing of
+an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (spin flip) or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (pair transfer) is
+not included yet; their fluctuation (second- and higher-order)
+contributions are. The three bond pairing paths log a WARNING when such
+a row is present (to be completed, issue #239). The spin and charge fluctuations are combined with the coefficients
+of a spin-rotation-invariant interaction, so for a coupling that breaks
+that symmetry on its own (an off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code> without the
+matching <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>) the fluctuation part is an approximation. The
+static bond path, the dynamic bond path and the in-process
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> of FLEX log a WARNING reporting the bonds
+(the first four by name) where <code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code> (each row taken with its
+partner); the run is not refused and no number changes. The
+spin-resolved treatment is tracked in issue #88. These
+statements are pinned against an independent spin-orbital construction
+in <code class="docutils literal notranslate"><span class="pre">tests/test_sc_bond_pairing_oracle.py</span></code>.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Migration.</strong> Before this version the static bond path resolved only
+off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>; the other off-site types entered the on-site
+block in the momentum-only form, which for a single-orbital model left
+them out entirely. Results for input with off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> therefore change; results for
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>-only input are unchanged (they agree to round-off). A
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> cutoff that drops a declared nonzero shell, which was
+silently applied before, is now refused, and so is a nonzero <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row of an orbital with itself.</p>
+</div>
+</section>
 <section id="what-each-mode-accepts">
-<h2><span class="section-number">5.2.12. </span>What each mode accepts<a class="headerlink" href="#what-each-mode-accepts" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.13. </span>What each mode accepts<a class="headerlink" href="#what-each-mode-accepts" title="Link to this heading">¶</a></h2>
 <p>Consolidated from the constraints the solvers actually enforce. Every cell below
 was checked by running the combination.</p>
 <p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code> (FLEX)</p>
@@ -1577,7 +1660,7 @@ susceptibility to dress them. <code class="docutils literal notranslate"><span c
 on every route (ignored with a warning).</p>
 </section>
 <section id="spin-structure">
-<h2><span class="section-number">5.2.13. </span>Spin structure<a class="headerlink" href="#spin-structure" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.14. </span>Spin structure<a class="headerlink" href="#spin-structure" title="Link to this heading">¶</a></h2>
 <p>The Eliashberg pairing vertex is <strong>paramagnetic</strong>: the Kuroki <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>
 matrices are <span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>-sized and carry no spin index, and the
 singlet/triplet decomposition assumes spin-rotational symmetry. What happens for
@@ -1627,7 +1710,7 @@ gap function), together with the transverse susceptibility
 addition rather than a configuration change.</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.14. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.15. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>For large systems, set <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> to compute
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> internally and avoid loading
@@ -1685,9 +1768,10 @@ pairing instabilities using the appropriate vertex.</p></li>
 <li class="toctree-l3"><a class="reference internal" href="#physical-interpretation">5.2.9. Physical interpretation</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#dynamic-frequency-dependent-eliashberg-equation">5.2.10. Dynamic (frequency-dependent) Eliashberg equation</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#supported-interactions">5.2.11. Supported interactions</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#what-each-mode-accepts">5.2.12. What each mode accepts</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#spin-structure">5.2.13. Spin structure</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.14. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#bond-resolved-static-pairing-bond-channels">5.2.12. Bond-resolved static pairing (<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#what-each-mode-accepts">5.2.13. What each mode accepts</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spin-structure">5.2.14. Spin structure</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.15. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. File specifications</a></li>

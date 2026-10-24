@@ -1395,8 +1395,92 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 責任はユーザーにあります。</p>
 </div>
 </section>
+<section id="bond-channels">
+<span id="sc-bond-channels-static"></span><h2><span class="section-number">5.2.12. </span>ボンド分解した静的対形成（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）<a class="headerlink" href="#bond-channels" title="Link to this heading">¶</a></h2>
+<p>デフォルトの経路の対形成バーテックスは運動量移行 <span class="math notranslate nohighlight">\(\mathbf{q}\)</span> のみに
+依存します。オフサイト相互作用の交換（Fock）交差はボンド <span class="math notranslate nohighlight">\((i, i+R)\)</span>
+上の粒子-正孔対を結びつけるため、このようなバーテックスには厳密な居場所が
+ありません。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（デフォルトの
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>）を指定すると、オフサイトのボンドごとに独立した
+チャネルを与えます。対形成バーテックスは拡大した（軌道対）
+<span class="math notranslate nohighlight">\(\times\)</span>（ボンド）基底の上で構築され、各オフサイト行の交換交差は
+その行が宣言されたボンドに作用します。</p>
+<ul class="simple">
+<li><p><strong>ボンド分解される相互作用。</strong> オフサイトの<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の
+すべての行です。交換交差（<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>ではペアホッピングの要素）は
+そのボンドのチャネルに置かれ、密度型の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>の Hartree 部分は運動量に依存するオンサイト
+ブロックに残ります。オフサイトの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はスピン/電荷の成分を
+持たず、ボンドチャネルには含まれません。軌道とそれ自身の間の
+<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>の行（非ゼロ）は拒否されます。
+オンサイトの同一軌道の相互作用は<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>として宣言して
+ください。トポロジー・ボンド分解した
+スピン/電荷バーテックス・対形成カーネルは、FLEX のボンドゲート
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>）および動的なボンド分解対形成と
+同じものであり、静的経路はそのボソン振動数ゼロの場合にあたります。</p></li>
+<li><p><strong>バブル。</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はボンド分解したバブルを Green 関数から
+自ら構築します。Green 関数は、トランスファー積分から作る裸の Green 関数、
+または<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>で指定したファイル（たとえば FLEX の
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>）です。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>と<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>は
+使われず、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>は拒否されます。
+<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code>（デフォルト<code class="docutils literal notranslate"><span class="pre">1.0</span></code>）はこのバブルの
+松原テール補正の係数です。</p></li>
+<li><p><strong>キー。</strong> <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>はオフサイトのシェルを（ボンド長の
+順に。シェル0はオンサイトの点）その数だけ残し、宣言された非ゼロの係数を
+落とすことになるカットオフは拒否します（宣言値がゼロのシェルは切れます）。
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>（この経路ではデフォルト 8 GB）はピークメモリの
+見積もりの上限です。<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span> <span class="pre">=</span> <span class="pre">true</span></code>は主要な状態の性格解析を
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に追加します。<code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code> /
+<code class="docutils literal notranslate"><span class="pre">bond_precondition_rtol</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_precondition_dense_limit</span></code>は
+カーネルのエルミート性検査を調整します。</p></li>
+<li><p><strong>出力。</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にはボンドの来歴（チャネル数・変位・
+用いた Green 関数）と、主要固有値の裸の部分と揺らぎの部分への分解
+<span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span>が記録されます。</p></li>
+<li><p><strong>適用範囲。</strong> このバージョンでは静的なボンド経路は単一軌道模型
+（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に限られ、多軌道模型は拒否されます。動的な
+ボンド分解対形成（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、および FLEX の
+インプロセスの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）は<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>でも
+実行されますが、多軌道の結果はまだ検証されていない旨の WARNING を
+ログに出力します（issue #239）。</p></li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>ボンド分解対形成カーネルの制約</strong>（静的・動的とも共通）。
+裸の（1次の）対形成バーテックスはオフサイト行の密度成分から構築されます。
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>では両チャネルで、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>と<code class="docutils literal notranslate"><span class="pre">Ising</span></code>では
+一重項チャネルで厳密であり、三重項チャネルは同スピン成分です。オフサイトの
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>（スピン反転）と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>（対の移動）の1次の一重項
+対形成はまだ含まれません（揺らぎによる2次以上の寄与は含まれます）。
+このような行があると、3つのボンド対形成経路はいずれも WARNING を
+ログに出力します（今後対応予定、issue #239）。スピンと
+電荷の揺らぎはスピン回転不変な相互作用の係数で組み合わされるため、単独で
+その対称性を破る結合（対応する<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>を伴わないオフサイトの
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>や<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）では揺らぎの部分は近似になります。静的な
+ボンド経路・動的なボンド経路・FLEX のインプロセスの
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>は、<code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code>
+となるボンド（各行はその相手の行と合わせて扱います。名前を挙げるのは最初の4つまで）を
+報告する WARNING をログに出力します。計算は拒否されず、数値も変わりません。
+スピン分解した扱いは issue #88 で検討されています。これらは
+<code class="docutils literal notranslate"><span class="pre">tests/test_sc_bond_pairing_oracle.py</span></code>で独立なスピン軌道の構成と
+比較して固定されています。</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>移行について。</strong> このバージョンより前の静的なボンド経路はオフサイトの
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>のみをボンド分解しており、それ以外のオフサイトの型は
+運動量のみの形でオンサイトブロックに入っていました（単一軌道模型では
+まったく含まれていませんでした）。そのため、オフサイトの<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>を含む入力の結果は
+変わります。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>のみの入力の結果は変わりません
+（丸め誤差の範囲で一致します）。また、宣言された非ゼロのシェルを落とす
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>のカットオフは、以前は黙って適用されていましたが、
+今後は拒否されます。軌道とそれ自身の間の<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>の行（非ゼロ）も同様に拒否されます。</p>
+</div>
+</section>
 <section id="id34">
-<h2><span class="section-number">5.2.12. </span>各モードが受け付けるもの<a class="headerlink" href="#id34" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.13. </span>各モードが受け付けるもの<a class="headerlink" href="#id34" title="Link to this heading">¶</a></h2>
 <p>ソルバーが実際に課している制約をまとめたものです。以下の各項目は、その組み合わせを
 実行して確認しています。</p>
 <p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>（FLEX）</p>
@@ -1500,7 +1584,7 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 無効です（警告のうえ無視されます）。</p>
 </section>
 <section id="id35">
-<h2><span class="section-number">5.2.13. </span>スピン構造の取り扱い<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.14. </span>スピン構造の取り扱い<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h2>
 <p>Eliashberg の pairing vertex は<strong>常磁性を前提</strong>としています。Kuroki の
 <span class="math notranslate nohighlight">\(S\)</span>/<span class="math notranslate nohighlight">\(C\)</span>行列は<span class="math notranslate nohighlight">\(n_\text{orb}^2\)</span>サイズでスピン添字を持たず、
 一重項/三重項への分解自体がスピン回転対称性を仮定しています。したがって
@@ -1544,7 +1628,7 @@ reduced スキームが保存していない横成分感受率<span class="math 
 設定変更ではなく機能追加の範疇です。</p>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.14. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.15. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>大規模系では<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と設定すると、
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を内部計算し、
@@ -1601,9 +1685,10 @@ reduced スキームが保存していない横成分感受率<span class="math 
 <li class="toctree-l3"><a class="reference internal" href="#id18">5.2.9. 物理的解釈</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#sc-dynamic-frequency">5.2.10. 動的（振動数依存）Eliashberg方程式</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#sc-supported-inter">5.2.11. 対応する相互作用</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id34">5.2.12. 各モードが受け付けるもの</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id35">5.2.13. スピン構造の取り扱い</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.14. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#bond-channels">5.2.12. ボンド分解した静的対形成（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id34">5.2.13. 各モードが受け付けるもの</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id35">5.2.14. スピン構造の取り扱い</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.15. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. ファイルフォーマット</a></li>

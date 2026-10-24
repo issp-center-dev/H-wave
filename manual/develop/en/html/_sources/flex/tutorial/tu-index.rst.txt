@@ -713,6 +713,14 @@ uniform Matsubara grid:
   writes the same file names as the on-site dynamic solver
   (``gap_dynamic.npz``, ``gap.dat``, ``eigenvalue.dat``).
 
+.. note::
+
+   The bond-resolved pairing is validated end to end for single-orbital
+   models only. For ``norb > 1`` both entries run unchanged but log a
+   WARNING that the multi-orbital results are not yet validated (issue
+   #239); the static ``hwave_sc`` bond path (``frequency = "static"``,
+   :ref:`sc_bond_channels_static`) refuses ``norb > 1``.
+
 See :ref:`the output reference <subsec:eliashberg_bond_outputs>` for the
 complete key sets, :ref:`the configuration reference's eliashberg section
 <eliashberg_bond_dynamic_config>` for the bond-specific keys and
@@ -1777,7 +1785,7 @@ Tips
      function, so it never reads a ``chi0q``/``chiq`` file. To feed a
      FLEX-dressed Green function into the bond path, run FLEX to convergence
      and point ``[eliashberg] bond_green`` at its ``green.npz`` output; see
-     the ``bond_green`` parameter in :doc:`/rpa/tutorial/sc-index`.
+     :ref:`sc_bond_channels_static`.
 
 
 Implementation details and limitations
