@@ -162,6 +162,39 @@ REVERSE_ATOL = 1e-10
 REVERSE_RTOL = 1e-8
 
 
+def validate_no_onsite_same_orbital_inter(itype, table, source=""):
+    """Reject a nonzero on-site (``R = 0``) ``CoulombInter`` row of an orbital
+    with itself.
+
+    ``CoulombInter`` is the density interaction between two different
+    orbitals or sites. Each declared row carries half of its operator
+    ``V n n`` (the row and its partner together make one bond), so a row
+    ``V_aa(0)`` of an orbital with itself is
+    ``(V/2) n_a n_a = V n_{a up} n_{a dn} + (V/2) n_a``: a Hubbard term
+    ``U = V`` plus a one-body level shift ``V/2``. The solvers do not read
+    it that way -- the RPA/FLEX spin/charge vertex gives a ``CoulombInter``
+    density row charge content only, and the Hartree-Fock decoupling of
+    the same-spin part drops the level shift -- so it is refused; declare
+    ``U = V`` in ``CoulombIntra`` and add ``V/2`` to the orbital's on-site
+    energy in the Transfer file (or absorb it in the chemical potential).
+    A row declared at zero is accepted (it carries no interaction).
+    """
+    if str(itype).lower() != "coulombinter":
+        return
+    for (irvec, orbvec), v in table.items():
+        if (tuple(int(x) for x in irvec) == (0, 0, 0)
+                and int(orbvec[0]) == int(orbvec[1]) and complex(v) != 0):
+            raise ValueError(
+                "CoulombInter{}: the on-site row of orbital {} with itself (R = (0, 0, 0), "
+                "value V = {}) is the Hubbard term U = V plus a one-body level shift V/2 "
+                "(each row carries half of V n n), which the solvers do not read as a "
+                "CoulombInter density interaction. Declare U = V in CoulombIntra and add V/2 "
+                "to the orbital's on-site energy in the Transfer file (or absorb it in the "
+                "chemical potential); an on-site interaction between DIFFERENT orbitals "
+                "stays in CoulombInter.".format(
+                    " in {}".format(source) if source else "", int(orbvec[0]) + 1, v))
+
+
 def validate_hermitian_closure(itype, table, source=""):
     """Reject a declaration table that is not Hermitian-closed (#93).
 
