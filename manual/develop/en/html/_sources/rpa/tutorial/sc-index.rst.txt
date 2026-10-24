@@ -1575,7 +1575,9 @@ transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
 from whether an external field is present. It is also **independent of**
 ``calc_scheme``, which selects the orbital tensor rank rather than the spin
 structure; the one link between them is that ``calc_scheme = "general"`` FLEX
-accepts ``spin-free`` only and rejects the other two outright.
+accepts ``spin-free`` only without ``enable_spin_orbital`` (with it, the
+spin-orbital FLEX of ``flex_hartree_fock = true`` keeps every model in the
+full ``spinful`` form; see :ref:`flex_spin_orbital`).
 
 
 - **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
@@ -1597,8 +1599,9 @@ accepts ``spin-free`` only and rejects the other two outright.
   or even spin-free model can be written in this representation) --
   **not supported.** ``hwave_sc`` rejects the configuration up front with
   an explicit error, on both the static and the dynamic entry, and
-  ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
-  (as of version 2.0): before this guard, the internally computed :math:`\chi_0`
+  ``hwave_tsweep`` with ``run_eliashberg = true`` rejects it in preflight
+  before any FLEX rung runs (as of version 2.0; a FLEX-only sweep runs it,
+  with ``warm_start = false``): before this guard, the internally computed :math:`\chi_0`
   path ran to completion and printed eigenvalues built on inconsistent
   index/orbital-count conventions -- a silently wrong result, not an
   approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX

@@ -584,7 +584,9 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 <li><p>全ての相互作用型（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、
 <code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>）がサポートされます。</p></li>
 <li><p>可能な場合、ブロック分解が自動的に適用されます。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">reduced</span></code>と<code class="docutils literal notranslate"><span class="pre">general</span></code>の両計算スキームがスピン軌道系で利用可能です。</p></li>
+<li><p>RPA では<code class="docutils literal notranslate"><span class="pre">reduced</span></code>と<code class="docutils literal notranslate"><span class="pre">general</span></code>の両計算スキームがスピン軌道系で利用可能です。
+FLEX がスピン軌道モードに対応するのは<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+<code class="docutils literal notranslate"><span class="pre">general</span></code>スキームのみです。<a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照してください。</p></li>
 <li><p>幾何情報ファイル（<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>）の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>はスピン軌道の総数
 （= 物理軌道数 × 2 = Wannier90 の<code class="docutils literal notranslate"><span class="pre">num_wann</span></code>）を表し、UHFk と同じ規約です。</p></li>
 </ul>
@@ -825,7 +827,7 @@ Hartree-Fock FLEX 版を選択します。各 RPA 分母は全ての<span class=
 <section id="hartree-fock-flex">
 <span id="flex-bond-hf"></span><h3>Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）<a class="headerlink" href="#hartree-fock-flex" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、
-スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和</p>
+スピンフリー系。スピン軌道入力については<a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）では、FLEX の自己エネルギーは同時に反復される2つの成分の和</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-27">
 <span class="eqno">(7.38)<a class="headerlink" href="#equation-algorithm-rpa-27" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n)\]</div>
 <p>になります。ここで<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>は、受理された <strong>全て</strong> の相互作用項
@@ -908,6 +910,76 @@ G_{cd}(k - q, i\omega_n - i\nu)\]</div>
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合のみ。解法全体の推定ピーク
 メモリは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>と照合され、振動数バッチはそれに収まる
 ように選ばれます。</p>
+</section>
+<section id="flex">
+<span id="flex-spin-orbital"></span><h3>スピン軌道 FLEX（実験的機能）<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
+<span class="pre">&quot;general&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>のとき、FLEX は全スピン軌道空間で
+動作します。グリーン関数・自己エネルギー・感受率は次元
+<span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>の一般化インデックス<span class="math notranslate nohighlight">\(p = s\, n_{\rm orb} + a\)</span>（スピンブロック順。<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_block&quot;</span></code>で表示）を持ち、
+一体ハミルトニアンはたまたまスピン対角であってもこの<span class="math notranslate nohighlight">\(n_d \times n_d\)</span>の
+形のまま保持されます。自己エネルギーはここでも
+<span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF}[G] + \Sigma_{\rm fluct}[G]\)</span>です
+（<a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}\)</span>は全ての相互作用の
+Hartree-Fock 項（Fock 項を含む）で、スピン非対角ブロックを含む全スピン軌道の
+同時刻密度で評価されます。UHFk のスピン軌道モードと同じカーネルで構築されます。</p>
+<p>ゆらぎ部分は1つの粒子-正孔チャネルです。<span class="math notranslate nohighlight">\(\Gamma\)</span>を反対称化した
+スピンフル頂点（直接相互作用にそのオンサイト交換交差を加えたもの。スピンフル
+RPA が総和する頂点。<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code>）、<span class="math notranslate nohighlight">\(\bar\chi\)</span>を
+スピン軌道の対基底上の裸のバブルとすると、</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-30">
+<span class="eqno">(7.41)<a class="headerlink" href="#equation-algorithm-rpa-30" title="Link to this equation">¶</a></span>\[\chi = \left[\hat{I} + \bar\chi\,\Gamma\right]^{-1} \bar\chi, \qquad
+V = P\left[\Gamma\left(\chi - \tfrac{1}{2}\bar\chi\right)\Gamma\right]
+  = P\left[\Gamma\left(\chi - \bar\chi\right)\Gamma
+    + \tfrac{1}{2}\,\Gamma\bar\chi\Gamma\right]\]</div>
+<p>です。第1項は3次以上の ring 級数です。第2項は厳密な2次です。反対称化した頂点は
+2次の直接ダイアグラムと交換ダイアグラムを同じように生成するため、係数
+<span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span>が付きます。別個の2次カーネルは必要ありません。
+<span class="math notranslate nohighlight">\(P\)</span>は両方の対の2つの軌道を入れ替えます
+（<span class="math notranslate nohighlight">\((\mu m) \leftrightarrow (m \mu)\)</span>）。これは
+<a class="reference internal" href="#flex-second-order-kernel"><span class="std std-ref">一般 FLEX 経路の2次</span></a>の向きであり、この向きでは<span class="math notranslate nohighlight">\(n\)</span>次の項が
+<span class="math notranslate nohighlight">\(\mathrm{Tr}\,(\bar\chi \Gamma)^n\)</span>の汎関数微分になるため、近似は保存近似
+です。この1つのチャネルが、電荷・縦スピン・横スピンと、スピン軌道相互作用による
+それらの混成という全てのスピン構造を同時に担います。スピン・電荷の分離はないため、
+<span class="math notranslate nohighlight">\(\chi\)</span>は<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>に<code class="docutils literal notranslate"><span class="pre">chiq</span></code>として、
+<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>とともに書き出されます。</p>
+<p>実装は次の2つの方法で検証されています。</p>
+<ul class="simple">
+<li><p><em>厳密対角化との2次の比較。</em> 3軌道の1サイト模型にランダムなスピン混成一体項を
+加えた系で、ゆらぎ自己エネルギーの<span class="math notranslate nohighlight">\(O(x^2)\)</span>係数が厳密な残差
+<span class="math notranslate nohighlight">\(\Sigma_{\rm ED} - \Sigma_{\rm HF}[\rho_{\rm ED}]\)</span>の係数と、全ての
+相互作用型（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>、<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）について相対
+<span class="math notranslate nohighlight">\(2 \times 10^{-3}\)</span>以内で一致します（スピン非対角ブロックを含む）。</p></li>
+<li><p><em>スピン保存極限。</em> スピン対角な模型をスピン軌道の表記で書き、スピン回転不変な
+オンサイト相互作用（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>。
+<span class="math notranslate nohighlight">\(J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}\)</span>）を与えると、その
+自己無撞着解はスピンフリーの Hartree-Fock FLEX の解と丸め誤差の範囲で一致します
+（自己エネルギーの両成分、<span class="math notranslate nohighlight">\(\mu\)</span>、<span class="math notranslate nohighlight">\(N\)</span>）。</p></li>
+</ul>
+<p>スピン回転不変性がない場合、2つの FLEX の形は2次では一致しますが、それより高次で
+異なります。スピンフリーの形<span class="math notranslate nohighlight">\(\tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s\)</span>は
+2つの横スピンゆらぎを縦スピンゆらぎの複製として数えます。これが厳密なのは
+SU(2) 対称な相互作用の場合だけです。一方<span class="math notranslate nohighlight">\(\Gamma\)</span>は横チャネルを実際の
+頂点で総和します。そのため<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>を単独で
+宣言した場合や、<span class="math notranslate nohighlight">\(J_{\rm Exchange} \neq J_{\rm Hund} - 2 J_{\rm Ising}\)</span>と
+なる組では、3次以降で結果が異なります。<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>（<span class="math notranslate nohighlight">\(\Delta S_z = 2\)</span>）はそもそもスピンを保存しません。スピンフリーの一般経路は
+その厳密な2次を保持しますが、それより高次の横成分を担うチャネルを持ちません。
+スピン軌道 FLEX はこれを含みます。</p>
+<p>この版の適用範囲:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の一般スキーム（このスイッチのその他の条件も適用）</p></li>
+<li><p>オンサイト相互作用のみ（オフサイト相互作用の交換交差は<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの
+頂点では表せないため）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>はなし</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・<code class="docutils literal notranslate"><span class="pre">green_init</span></code>はなし（計算は裸の
+Hartree-Fock 状態から始まります）</p></li>
+</ul>
+<p>reduced スキームはスピン軌道入力を拒否し、Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、
+および<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>）は引き続き
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id8" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>

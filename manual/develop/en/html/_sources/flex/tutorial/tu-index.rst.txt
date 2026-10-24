@@ -1226,8 +1226,31 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 - ``sc_vertex_version``: as for ``sigma.npz`` above; ``hwave_sc`` refuses an
   older ``green.npz`` under the same condition.
 
-These output files can also be used as input for the
-Eliashberg equation solver (``hwave_sc``) to analyze
+Spin-orbital runs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A run with ``enable_spin_orbital = true`` (see :ref:`flex_spin_orbital`)
+writes its archives on the spin-orbital index of dimension
+:math:`n_d = 2 n_{\rm orb}`, in spin-block order ``s * norb + a``:
+
+- ``sigma.npz``, ``green.npz`` and ``chi0q.npz`` carry ``index_convention =
+  "spin_block"``. ``sigma`` and ``green`` have shape ``(1, nmat, nvol, nd,
+  nd)``, and ``sigma.npz`` is a ``"split"`` archive (``sigma_static``,
+  ``sigma_fluct``).
+- The susceptibility is a single spinful channel, written to ``chiq.npz`` as
+  ``chiq`` with shape ``(nmat, nvol, nd, nd, nd, nd)``, ``chi_convention =
+  "spin_orbital"``, ``chi_orbital_layout = "acbd"`` and ``index_convention =
+  "spin_block"``. No ``chiq_s`` / ``chiq_c`` is written: there is no
+  spin/charge split.
+- ``Sx``, ``Sy`` and ``Sz`` in ``energy.dat`` are computed from the full
+  spin-orbital density (``Sx`` and ``Sy`` are written only in spin-orbital
+  runs, as in UHFk).
+
+``hwave_sc`` does not accept these archives (it refuses
+``enable_spin_orbital``).
+
+The output files of a run without ``enable_spin_orbital`` can also be used
+as input for the Eliashberg equation solver (``hwave_sc``) to analyze
 superconducting instabilities. See :doc:`/rpa/tutorial/sc-index` for details.
 
 
@@ -1430,8 +1453,12 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    zero effect). The ``"general"`` scheme is the paramagnetic
    full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
    :ref:`above <flex_scope>`), but it is **spin-free only** — it raises a
-   ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"`` and
-   rejects ``enable_spin_orbital``. Off-site input is accepted for
+   ``ValueError`` for ``spin_mode = "spin-diag"`` or ``"spinful"``. The
+   one exception is ``enable_spin_orbital = true`` together with
+   ``flex_hartree_fock = true``: the spin-orbital FLEX of
+   :ref:`flex_spin_orbital` (on-site interactions only); without
+   ``flex_hartree_fock`` the general scheme refuses ``enable_spin_orbital``,
+   and the reduced scheme always does. Off-site input is accepted for
    ``CoulombInter``, ``Hund`` and ``Ising`` (same-orbital or inter-orbital,
    with or without sublattice folding): each enters the RING vertex as its
    Hartree (density) part :math:`V(q)` only — the exchange crossing of an
@@ -1680,8 +1707,9 @@ This variant is appropriate for multi-orbital models in which the
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
 pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
 ``"general"`` scheme is **spin-free only** (it raises a ``ValueError`` for
-``spin_mode = "spin-diag"``/``"spinful"`` and does not support
-``enable_spin_orbital``) and does not support ``calc_type = "ring+ladder"``.
+``spin_mode = "spin-diag"``/``"spinful"``, and supports
+``enable_spin_orbital`` only together with ``flex_hartree_fock = true``; see
+:ref:`flex_spin_orbital`) and does not support ``calc_type = "ring+ladder"``.
 
 The sample files are in
 ``docs/en/source/flex/sample/iron_2orb_general/``.

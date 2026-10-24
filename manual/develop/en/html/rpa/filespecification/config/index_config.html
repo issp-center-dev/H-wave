@@ -125,6 +125,26 @@ the <strong>spin-orbital count</strong> (= 2 × the number of physical orbitals 
 spin-orbital count; double any pre-existing RPA spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
+<p><strong>FLEX (experimental).</strong> In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> the spin-orbital mode runs on
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only and requires <code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>: the first order is the self-consistent
+Hartree-Fock term of the full spin-orbital density, and the fluctuation
+part is resummed in one channel with the antisymmetrized spinful vertex
+(see <a class="reference internal" href="../../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>). Requirements and limitations of this
+version:</p>
+<ul class="simple">
+<li><p>on-site interactions only (an off-site declaration is refused);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code> must stay <code class="docutils literal notranslate"><span class="pre">true</span></code> (the default);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> is not supported;</p></li>
+<li><p>no seed: <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> are refused,
+and the run starts from the bare Hartree-Fock state;</p></li>
+<li><p>the other conditions of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> apply (uniform Matsubara
+grid, no sublattice, no external field, even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> refuses spin-orbital input;</p></li>
+<li><p>the Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with
+<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>) still refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a
+FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
+</ul>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -464,7 +484,9 @@ Boolean (default value is <code class="docutils literal notranslate"><span class
 and off-site) to the FLEX self-energy, <span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF}
 + \Sigma_{\rm fluct}\)</span>, recomputed from the dressed Green function every
 iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Requires <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
-<span class="pre">&quot;general&quot;</span></code> on a spin-free system, the uniform Matsubara grid
+<span class="pre">&quot;general&quot;</span></code> on a spin-free system (or, with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span>
+<span class="pre">true</span></code>, the spin-orbital FLEX described under that key), the uniform
+Matsubara grid
 (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), no sublattice, no external
 field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is refused on its
 own (it has no Hartree content, so its first order would enter without

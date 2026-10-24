@@ -621,7 +621,9 @@ without assuming spin conservation.</p></li>
 <li><p>All interaction types (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>,
 <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>) are supported.</p></li>
 <li><p>The block decomposition is applied automatically when possible.</p></li>
-<li><p>Both the <code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation schemes are supported for spin-orbital systems.</p></li>
+<li><p>Both the <code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation schemes are supported for spin-orbital systems
+in RPA. FLEX supports the spin-orbital mode on the <code class="docutils literal notranslate"><span class="pre">general</span></code> scheme with
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> only; see <a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>.</p></li>
 <li><p>The <code class="docutils literal notranslate"><span class="pre">Norbit</span></code> value in the geometry file (<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>) is the <strong>spin-orbital
 count</strong> (= 2 × the number of physical orbitals = Wannier90 <code class="docutils literal notranslate"><span class="pre">num_wann</span></code>), the same
 convention as UHFk.</p></li>
@@ -887,7 +889,8 @@ before any expensive step.</p>
 <section id="bond-resolved-flex-with-hartree-fock-renormalisation-experimental">
 <span id="flex-bond-hf"></span><h3>Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)<a class="headerlink" href="#bond-resolved-flex-with-hartree-fock-renormalisation-experimental" title="Link to this heading">¶</a></h3>
 <p>With <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
-<span class="pre">&quot;general&quot;</span></code>, spin-free system) the FLEX self-energy is the sum of two
+<span class="pre">&quot;general&quot;</span></code>, spin-free system; for spin-orbital input see
+<a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>) the FLEX self-energy is the sum of two
 components that are iterated together,</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-rpa-26">
 <span class="eqno">(7.37)<a class="headerlink" href="#equation-algorithm-rpa-26" title="Link to this equation">¶</a></span>\[\Sigma(k, i\omega_n) = \Sigma_{\rm HF}[G](k) + \Sigma_{\rm fluct}[G](k, i\omega_n),\]</div>
@@ -993,6 +996,86 @@ coefficients, off-site <code class="docutils literal notranslate"><span class="p
 memory of the whole solve is checked against
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> and the frequency batch is chosen to fit
 it.</p>
+</section>
+<section id="spin-orbital-flex-experimental">
+<span id="flex-spin-orbital"></span><h3>Spin-orbital FLEX (experimental)<a class="headerlink" href="#spin-orbital-flex-experimental" title="Link to this heading">¶</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span>
+<span class="pre">&quot;general&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>, FLEX runs in the full
+spin-orbital space. The Green function, the self-energy and the
+susceptibilities carry the generalized index <span class="math notranslate nohighlight">\(p = s\, n_{\rm orb} + a\)</span>
+of dimension <span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span> (spin-block order, marked
+<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_block&quot;</span></code>), and the one-body Hamiltonian is kept
+in this <span class="math notranslate nohighlight">\(n_d \times n_d\)</span> form even when it happens to be
+spin-diagonal. The self-energy is again <span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF}[G]
++ \Sigma_{\rm fluct}[G]\)</span> (see <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). Here
+<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}\)</span> is the Hartree-Fock term of every interaction, Fock
+term included, evaluated on the full spin-orbital equal-time density with
+its spin-off-diagonal blocks; it is built by the same kernel as UHFk’s
+spin-orbital mode.</p>
+<p>The fluctuation part is a single particle-hole channel. Let
+<span class="math notranslate nohighlight">\(\Gamma\)</span> be the antisymmetrized spinful vertex: the direct
+interaction plus its on-site exchange crossing, which is the vertex the
+spinful RPA resums (<code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code>). Let <span class="math notranslate nohighlight">\(\bar\chi\)</span> be the
+bare bubble on the spin-orbital pair basis. Then</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-29">
+<span class="eqno">(7.40)<a class="headerlink" href="#equation-algorithm-rpa-29" title="Link to this equation">¶</a></span>\[\chi = \left[\hat{I} + \bar\chi\,\Gamma\right]^{-1} \bar\chi, \qquad
+V = P\left[\Gamma\left(\chi - \tfrac{1}{2}\bar\chi\right)\Gamma\right]
+  = P\left[\Gamma\left(\chi - \bar\chi\right)\Gamma
+    + \tfrac{1}{2}\,\Gamma\bar\chi\Gamma\right].\]</div>
+<p>The first term is the ring series from third order on. The second is the
+exact second order: the antisymmetrized vertex produces the direct and the
+exchange second-order diagrams alike, hence the factor <span class="math notranslate nohighlight">\(\tfrac{1}{2}\)</span>.
+No separate second-order kernel is needed. <span class="math notranslate nohighlight">\(P\)</span> swaps the two orbitals
+of both pairs, <span class="math notranslate nohighlight">\((\mu m) \leftrightarrow (m \mu)\)</span>. This is the
+orientation of <a class="reference internal" href="#flex-second-order-kernel"><span class="std std-ref">Second order of the general FLEX path</span></a>, in which the order-<span class="math notranslate nohighlight">\(n\)</span>
+term is the functional derivative of <span class="math notranslate nohighlight">\(\mathrm{Tr}\,(\bar\chi
+\Gamma)^n\)</span>, so the approximation is conserving. The single channel carries
+every spin structure at once: charge, longitudinal and transverse spin, and
+their mixing under spin-orbit coupling. There is no spin/charge split, so
+<span class="math notranslate nohighlight">\(\chi\)</span> is written to <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> as <code class="docutils literal notranslate"><span class="pre">chiq</span></code> with
+<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>.</p>
+<p>The implementation is validated in two ways:</p>
+<ul class="simple">
+<li><p><em>Second order against exact diagonalization.</em> On a single site with
+three orbitals and a random spin-mixing one-body term, the <span class="math notranslate nohighlight">\(O(x^2)\)</span>
+coefficient of the fluctuation self-energy equals that of the exact
+remainder <span class="math notranslate nohighlight">\(\Sigma_{\rm ED} - \Sigma_{\rm HF}[\rho_{\rm ED}]\)</span> for
+every interaction type (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>), within a relative
+<span class="math notranslate nohighlight">\(2 \times 10^{-3}\)</span>, spin-off-diagonal blocks included.</p></li>
+<li><p><em>The spin-conserving limit.</em> Take a spin-diagonal model written in the
+spin-orbital encoding, with a spin-rotation invariant on-site interaction
+(<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>, with <span class="math notranslate nohighlight">\(J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm
+Ising}\)</span>). Its self-consistent solution equals that of the spin-free
+Hartree-Fock FLEX to round-off: both self-energy components,
+<span class="math notranslate nohighlight">\(\mu\)</span> and <span class="math notranslate nohighlight">\(N\)</span>.</p></li>
+</ul>
+<p>Without spin-rotation invariance the two FLEX forms agree at second order
+but differ beyond it. The spin-free form <span class="math notranslate nohighlight">\(\tfrac{3}{2}\hat{U}^s
+\chi_s \hat{U}^s\)</span> counts the two transverse spin fluctuations as copies of
+the longitudinal one. That is exact only for an SU(2)-symmetric
+interaction. <span class="math notranslate nohighlight">\(\Gamma\)</span>, by contrast, resums the transverse channel with
+its actual vertex. So <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> or <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> declared on its
+own, or any set with <span class="math notranslate nohighlight">\(J_{\rm Exchange} \neq J_{\rm Hund} - 2 J_{\rm
+Ising}\)</span>, gives a different result from third order on. <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>
+(<span class="math notranslate nohighlight">\(\Delta S_z = 2\)</span>) is not spin conserving at all. The spin-free
+general path keeps its exact second order but has no channel for its
+transverse content beyond that; the spin-orbital FLEX carries it.</p>
+<p>Domain of this version:</p>
+<ul class="simple">
+<li><p>the general scheme with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> and the other
+conditions of that switch;</p></li>
+<li><p>on-site interactions only (the exchange crossing of an off-site
+interaction is not a <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>, and no <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>;</p></li>
+<li><p>no <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> / <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the run starts from
+the bare Hartree-Fock state.</p></li>
+</ul>
+<p>The reduced scheme refuses spin-orbital input, and the Eliashberg solver
+(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>) still
+refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code> (the spin-orbital FLEX takes no seed).</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>

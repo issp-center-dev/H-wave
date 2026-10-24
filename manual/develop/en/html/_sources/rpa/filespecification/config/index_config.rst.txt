@@ -73,6 +73,26 @@ that has no effect under the current settings.
      spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
      ``Norbit``.
 
+  **FLEX (experimental).** In ``mode = "FLEX"`` the spin-orbital mode runs on
+  ``calc_scheme = "general"`` only and requires ``[mode.param]
+  flex_hartree_fock = true``: the first order is the self-consistent
+  Hartree-Fock term of the full spin-orbital density, and the fluctuation
+  part is resummed in one channel with the antisymmetrized spinful vertex
+  (see :ref:`flex_spin_orbital`). Requirements and limitations of this
+  version:
+
+  - on-site interactions only (an off-site declaration is refused);
+  - ``spinful_vertex_exchange`` must stay ``true`` (the default);
+  - ``longitudinal_bond_channels`` is not supported;
+  - no seed: ``sigma_init``, ``trans_mod`` and ``green_init`` are refused,
+    and the run starts from the bare Hartree-Fock state;
+  - the other conditions of ``flex_hartree_fock`` apply (uniform Matsubara
+    grid, no sublattice, no external field, even ``Nmat``);
+  - ``calc_scheme = "reduced"`` refuses spin-orbital input;
+  - the Eliashberg solver (``hwave_sc``, and ``hwave_tsweep`` with
+    ``run_eliashberg = true``) still refuses ``enable_spin_orbital``; a
+    FLEX-only ``hwave_tsweep`` runs it with ``warm_start = false``.
+
 .. _rpa_calc_scheme_auto:
 
 - ``calc_scheme`` (default value is ``"auto"``)
@@ -450,7 +470,9 @@ that has no effect under the current settings.
   and off-site) to the FLEX self-energy, :math:`\Sigma = \Sigma_{\rm HF}
   + \Sigma_{\rm fluct}`, recomputed from the dressed Green function every
   iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
-  "general"`` on a spin-free system, the uniform Matsubara grid
+  "general"`` on a spin-free system (or, with ``enable_spin_orbital =
+  true``, the spin-orbital FLEX described under that key), the uniform
+  Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
   field and an even ``Nmat``. An off-site ``Exchange`` or ``PairHop`` is refused on its
   own (it has no Hartree content, so its first order would enter without

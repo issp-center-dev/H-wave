@@ -116,6 +116,24 @@ UHFk と同じ規約です。</p>
 <p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>はスピン軌道数になりました。
 既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
+<p><strong>FLEX（実験的機能）。</strong> <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>では、スピン軌道モードは
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>でのみ動作し、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が必要です。1次は全スピン軌道密度の自己無撞着な
+Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点による1つのチャネルで
+総和されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。この版での要件と制限:</p>
+<ul class="simple">
+<li><p>オンサイト相互作用のみ（オフサイトの宣言は拒否されます）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code>は<code class="docutils literal notranslate"><span class="pre">true</span></code>（デフォルト）のままにする必要があります</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>には対応していません</p></li>
+<li><p>初期値の指定はできません。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>は拒否され、計算は裸の Hartree-Fock 状態から始まります</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>のその他の条件（一様松原格子、副格子なし、外場なし、
+偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>）も適用されます</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>はスピン軌道入力を拒否します</p></li>
+<li><p>Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、および<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>）は引き続き<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます</p></li>
+</ul>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -404,7 +422,8 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 <span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>を FLEX の自己エネルギーに加えます
 （<span class="math notranslate nohighlight">\(\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}\)</span>。毎反復
 ドレスドグリーン関数から再計算。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。
-スピンフリー系での<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、一様松原格子
+スピンフリー系での<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span>
+<span class="pre">true</span></code>の場合は、そのキーの項で説明するスピン軌道 FLEX）、一様松原格子
 （<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>は拒否）、副格子なし、外場なし、
 偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要です。オフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>や<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は単独では拒否されます
 （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。

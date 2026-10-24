@@ -1589,7 +1589,9 @@ transfer term has spin-off-diagonal blocks (in <code class="docutils literal not
 from whether an external field is present. It is also <strong>independent of</strong>
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>, which selects the orbital tensor rank rather than the spin
 structure; the one link between them is that <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> FLEX
-accepts <code class="docutils literal notranslate"><span class="pre">spin-free</span></code> only and rejects the other two outright.</p>
+accepts <code class="docutils literal notranslate"><span class="pre">spin-free</span></code> only without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> (with it, the
+spin-orbital FLEX of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> keeps every model in the
+full <code class="docutils literal notranslate"><span class="pre">spinful</span></code> form; see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>).</p>
 <ul class="simple">
 <li><p><strong>Paramagnetic</strong> (<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-free&quot;</span></code>) – fully supported. A reduced
 FLEX susceptibility stores its two spin blocks bit-identically with zero
@@ -1608,8 +1610,9 @@ whatever spin mode the Hamiltonian then classifies as – a spin-diagonal
 or even spin-free model can be written in this representation) –
 <strong>not supported.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> rejects the configuration up front with
 an explicit error, on both the static and the dynamic entry, and
-<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> rejects it in preflight before any FLEX rung runs
-(as of version 2.0): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> rejects it in preflight
+before any FLEX rung runs (as of version 2.0; a FLEX-only sweep runs it,
+with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
 path ran to completion and printed eigenvalues built on inconsistent
 index/orbital-count conventions – a silently wrong result, not an
 approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX

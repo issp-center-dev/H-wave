@@ -1193,8 +1193,29 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``sc_vertex_version``: 上の\ ``sigma.npz``\ と同じです。同じ条件のもとで、
   ``hwave_sc``\ はより古い\ ``green.npz``\ を拒否します。
 
-これらの出力ファイルはEliashberg方程式ソルバー (``hwave_sc``) の
-入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
+スピン軌道計算
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``enable_spin_orbital = true``\ の計算（:ref:`flex_spin_orbital`\ を参照）は、
+次元\ :math:`n_d = 2 n_{\rm orb}`\ のスピン軌道インデックス（スピンブロック順
+``s * norb + a``\ ）でアーカイブを書き出します。
+
+- ``sigma.npz``\ ・\ ``green.npz``\ ・\ ``chi0q.npz``\ は
+  ``index_convention = "spin_block"``\ を持ちます。\ ``sigma``\ と\ ``green``\ の
+  形状は\ ``(1, nmat, nvol, nd, nd)``\ で、\ ``sigma.npz``\ は\ ``"split"``\ 形式の
+  アーカイブ（``sigma_static``\ 、\ ``sigma_fluct``\ ）です。
+- 感受率は1つのスピンフルなチャネルで、\ ``chiq.npz``\ に\ ``chiq``\ として書き出されます。
+  形状は\ ``(nmat, nvol, nd, nd, nd, nd)``\ で、\ ``chi_convention = "spin_orbital"``\ 、
+  ``chi_orbital_layout = "acbd"``\ 、\ ``index_convention = "spin_block"``\ を伴います。
+  スピン・電荷の分離がないため、\ ``chiq_s``\ ・\ ``chiq_c``\ は書き出されません。
+- ``energy.dat``\ の\ ``Sx``\ ・\ ``Sy``\ ・\ ``Sz``\ は全スピン軌道密度から計算されます
+  （UHFk と同様、\ ``Sx``\ と\ ``Sy``\ はスピン軌道計算でのみ書き出されます）。
+
+``hwave_sc``\ はこれらのアーカイブを受け付けません（\ ``enable_spin_orbital``\ を
+拒否します）。
+
+``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
+(``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
 
 
 .. _flex_params:
@@ -1377,7 +1398,11 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    完全なKanamori頂点（MYOの式。:ref:`上記 <flex_scope>`\ を参照）を保持
    します。ただし **spin-freeモード専用** であり、
    ``spin_mode = "spin-diag"``\ や\ ``"spinful"``\ に対しては\ ``ValueError``\ を
-   送出し、``enable_spin_orbital``\ にも対応していません。オフサイト項は
+   送出します。唯一の例外は\ ``enable_spin_orbital = true``\ と
+   ``flex_hartree_fock = true``\ の併用で、\ :ref:`flex_spin_orbital`\ の
+   スピン軌道 FLEX（オンサイト相互作用のみ）になります。\ ``flex_hartree_fock``\ が
+   なければ一般スキームは\ ``enable_spin_orbital``\ を拒否し、reduced スキームは常に
+   拒否します。オフサイト項は
    ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ について受理されます
    （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
    **ring の頂点には** Hartree（密度）部分 :math:`V(q)`\ としてのみ入り、
@@ -1626,7 +1651,8 @@ Fe-As面を正方格子（1-Fe単位胞）上の\ :math:`d_{xz}`\ と
 多軌道モデル（ここでの鉄系超伝導体モデルなど）で、かつ常磁性のFLEXで
 十分な場合に適しています。なお\ ``"general"``\ スキームは
 **spin-freeモード専用** であり（``spin_mode = "spin-diag"``/``"spinful"``
-に対しては\ ``ValueError``\ を送出し、``enable_spin_orbital``\ には対応しません）、
+に対しては\ ``ValueError``\ を送出し、``enable_spin_orbital``\ には
+``flex_hartree_fock = true``\ との併用時のみ対応します。\ :ref:`flex_spin_orbital`\ を参照）、
 ``calc_type = "ring+ladder"``\ にも対応していません。
 
 サンプルファイルは

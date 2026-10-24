@@ -1499,8 +1499,10 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
 モードでは transfer 項がスピン非対角ブロックを持つかどうか、それ以外では外場の
 有無から判定されます）。また\ ``calc_scheme``\ とは\ **独立**\ です---``calc_scheme``
 が選ぶのは軌道テンソルの階数であってスピン構造ではありません。両者の唯一の関係は、
-``calc_scheme = "general"``\ の FLEX が\ ``spin-free``\ のみを受け付け、他の2つを
-明示的に拒否する、という制約です。
+``enable_spin_orbital``\ を使わない場合、\ ``calc_scheme = "general"``\ の FLEX が
+``spin-free``\ のみを受け付ける、という制約です（使う場合は\ ``flex_hartree_fock = true``\ の
+スピン軌道 FLEX が全ての模型を\ ``spinful``\ の形のまま扱います。
+:ref:`flex_spin_orbital`\ を参照）。
 
 
 - **常磁性**\ （``spin_mode = "spin-free"``\ ）--- 完全にサポートされます。
@@ -1519,8 +1521,9 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
   ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
   スピン自由な模型もこの表現で書けます）--- \ **サポートされていません。**
   ``hwave_sc``\ は静的・動的の両エントリで設定を明示的なエラーとして即座に
-  拒否し、``hwave_tsweep``\ は FLEX rung の実行前に preflight で拒否します
-  （バージョン 2.0 以降）。このガード導入前は、内部で\ :math:`\chi_0`\ を
+  拒否し、\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は FLEX rung の実行前に
+  preflight で拒否します（バージョン 2.0 以降。FLEX のみの掃引は
+  ``warm_start = false``\ で実行できます）。このガード導入前は、内部で\ :math:`\chi_0`\ を
   計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
   出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
   FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の

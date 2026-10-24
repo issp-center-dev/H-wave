@@ -1293,8 +1293,30 @@ same shape as <code class="docutils literal notranslate"><span class="pre">sigma
 <li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: as for <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> above; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses an
 older <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> under the same condition.</p></li>
 </ul>
-<p>These output files can also be used as input for the
-Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
+</section>
+<section id="spin-orbital-runs">
+<h3>Spin-orbital runs<a class="headerlink" href="#spin-orbital-runs" title="Link to this heading">¶</a></h3>
+<p>A run with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> (see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>)
+writes its archives on the spin-orbital index of dimension
+<span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>, in spin-block order <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">*</span> <span class="pre">norb</span> <span class="pre">+</span> <span class="pre">a</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> carry <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
+<span class="pre">&quot;spin_block&quot;</span></code>. <code class="docutils literal notranslate"><span class="pre">sigma</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> have shape <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span>
+<span class="pre">nd)</span></code>, and <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> is a <code class="docutils literal notranslate"><span class="pre">&quot;split&quot;</span></code> archive (<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>).</p></li>
+<li><p>The susceptibility is a single spinful channel, written to <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> as
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code> with shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span>
+<span class="pre">&quot;spin_orbital&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span> <span class="pre">=</span> <span class="pre">&quot;acbd&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
+<span class="pre">&quot;spin_block&quot;</span></code>. No <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> is written: there is no
+spin/charge split.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Sx</span></code>, <code class="docutils literal notranslate"><span class="pre">Sy</span></code> and <code class="docutils literal notranslate"><span class="pre">Sz</span></code> in <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> are computed from the full
+spin-orbital density (<code class="docutils literal notranslate"><span class="pre">Sx</span></code> and <code class="docutils literal notranslate"><span class="pre">Sy</span></code> are written only in spin-orbital
+runs, as in UHFk).</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not accept these archives (it refuses
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>).</p>
+<p>The output files of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> can also be used
+as input for the Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
 superconducting instabilities. See <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a> for details.</p>
 </section>
 </section>
@@ -1511,8 +1533,12 @@ vertex has no density-density content — the input would silently have
 zero effect). The <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme is the paramagnetic
 full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
 <a class="reference internal" href="#flex-scope"><span class="std std-ref">above</span></a>), but it is <strong>spin-free only</strong> — it raises a
-<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and
-rejects <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. Off-site input is accepted for
+<code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>. The
+one exception is <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> together with
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>: the spin-orbital FLEX of
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> (on-site interactions only); without
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> the general scheme refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>,
+and the reduced scheme always does. Off-site input is accepted for
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital or inter-orbital,
 with or without sublattice folding): each enters the RING vertex as its
 Hartree (density) part <span class="math notranslate nohighlight">\(V(q)\)</span> only — the exchange crossing of an
@@ -1827,8 +1853,9 @@ formulation <a class="footnote-reference brackets" href="#id8" id="id21" role="d
 Hund/exchange/pair-hopping off-diagonal vertices matter — such as the iron
 pnictide model here — and a paramagnetic FLEX is sufficient. Note that the
 <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> scheme is <strong>spin-free only</strong> (it raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for
-<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code> and does not support
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>) and does not support <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>, and supports
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> only together with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>; see
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>) and does not support <code class="docutils literal notranslate"><span class="pre">calc_type</span> <span class="pre">=</span> <span class="pre">&quot;ring+ladder&quot;</span></code>.</p>
 <p>The sample files are in
 <code class="docutils literal notranslate"><span class="pre">docs/en/source/flex/sample/iron_2orb_general/</span></code>.</p>
 <p><strong>Parameter file</strong> (<code class="docutils literal notranslate"><span class="pre">input.toml</span></code>):</p>

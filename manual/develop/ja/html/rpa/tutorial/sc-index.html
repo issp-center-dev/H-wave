@@ -1510,8 +1510,10 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 モードでは transfer 項がスピン非対角ブロックを持つかどうか、それ以外では外場の
 有無から判定されます）。また<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>とは<strong>独立</strong>です---<code class="docutils literal notranslate"><span class="pre">calc_scheme</span></code>
 が選ぶのは軌道テンソルの階数であってスピン構造ではありません。両者の唯一の関係は、
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の FLEX が<code class="docutils literal notranslate"><span class="pre">spin-free</span></code>のみを受け付け、他の2つを
-明示的に拒否する、という制約です。</p>
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>の FLEX が
+<code class="docutils literal notranslate"><span class="pre">spin-free</span></code>のみを受け付ける、という制約です（使う場合は<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+スピン軌道 FLEX が全ての模型を<code class="docutils literal notranslate"><span class="pre">spinful</span></code>の形のまま扱います。
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。</p>
 <ul class="simple">
 <li><p><strong>常磁性</strong>（<code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-free&quot;</span></code>）--- 完全にサポートされます。
 reduced の FLEX 感受率は2つのスピンブロックをビット単位で同一に保存し、
@@ -1527,8 +1529,9 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
 スピン自由な模型もこの表現で書けます）--- <strong>サポートされていません。</strong>
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は静的・動的の両エントリで設定を明示的なエラーとして即座に
-拒否し、<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に preflight で拒否します
-（バージョン 2.0 以降）。このガード導入前は、内部で<span class="math notranslate nohighlight">\(\chi_0\)</span>を
+拒否し、<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に
+preflight で拒否します（バージョン 2.0 以降。FLEX のみの掃引は
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます）。このガード導入前は、内部で<span class="math notranslate nohighlight">\(\chi_0\)</span>を
 計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
 出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
 FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
