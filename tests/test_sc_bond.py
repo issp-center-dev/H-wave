@@ -350,11 +350,13 @@ class TestS5Guards(_ApproxTestCase):
     def test_guard_onsite_same_orbital_coulomb_inter(self):
         """A nonzero R = 0 CoulombInter row of an orbital with itself is
         refused (it belongs in CoulombIntra); a declared-zero one is not
-        (``test_collapsed_to_pure_hubbard_flag``)."""
+        (``test_collapsed_to_pure_hubbard_flag``). The interaction reader
+        refuses it first, for every solver
+        (``tests/test_onsite_same_orbital_inter.py``)."""
         ci = os.path.join(self.tmp_path, "ci_onsite.dat")
         _write_w90(ci, 1, _nn_entries(0.5) + [((0, 0, 0), (0, 0), 1.0)])
         inp = _base_input(self.tmp_path, coulomb_inter=ci, bond_channels=True)
-        with self.assertRaisesRegex(ValueError, r"same-orbital CoulombInter.*CoulombIntra"):
+        with self.assertRaisesRegex(ValueError, r"orbital 1 with itself.*CoulombIntra"):
             sc.calc_eliashberg(inp)
 
     def test_guard_no_coulomb_inter(self):

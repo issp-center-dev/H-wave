@@ -122,10 +122,12 @@ class QLMSkInput():
                               "pairhop")
                 if k.lower() in _VALIDATED:
                     from hwave.solver.declarations import (
-                        validate_hermitian_closure)
+                        validate_hermitian_closure,
+                        validate_no_onsite_same_orbital_inter)
                     canonical = ("CoulombIntra" if k.lower() == "coulombintra"
                                  else k)
                     validate_hermitian_closure(canonical, tbl, source=f)
+                    validate_no_onsite_same_orbital_inter(k, tbl, source=f)
                 self.ham_param[k] = tbl
 
         # file.input
