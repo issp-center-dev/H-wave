@@ -17,23 +17,39 @@ in the random phase approximation,
     **CoulombIntra**:
       :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}, \quad n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}}`
     **CoulombInter**:
-      :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.} \right]`
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.} \right]`
 
 .. note::
 
-   Two of the expressions above were corrected to match what the solvers
+   Some of the expressions above were corrected to match what the solvers
    have always implemented; **no input file needs to be changed**, and no
    numerical result changes.
+
+   - **Factor 1/2** (CoulombInter, Hund, Ising, PairHop, PairLift): the
+     sums run over every ordered pair, i.e. over every declared row. Each
+     row :math:`(R, \alpha, \beta)` with value :math:`X` must be
+     accompanied by its partner :math:`(-R, \beta, \alpha)` with value
+     :math:`X^{*}` (see below), and the two describe the same bond. For
+     these types the partner row gives the same term as the row itself
+     (for PairHop and PairLift, the same Hermitian-completed bracket), so
+     each row carries half of it: a bond declared as a CoulombInter pair
+     with value :math:`V` contributes :math:`V n_{i\alpha} n_{j\beta}`
+     once. This is the convention of RESPACK ``zvo_ur.dat``, which lists
+     both orientations of every bond. The factor was missing from earlier
+     editions of this page. **Exchange** needs no factor: its summand has
+     no explicit ``h.c.``, and the partner row supplies the Hermitian
+     conjugate of the row's term, so the sum as written gives the bond
+     term once.
 
    - **Hund**: the implemented convention carries a MINUS sign, as written
      above. A ferromagnetic (same-spin attractive) Hund coupling is
