@@ -397,11 +397,12 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
                            imag_tol=_BOND_IMAG_TOL):
     """Top-level guards for ``bond_channels=true`` (spec S5).
 
-    Every one of these is a "no silent wrong result" refusal: the internal
-    physics functions (``bond_channels.bond_bubble`` / ``bare_bond_vertices``
-    / ``make_bond_kernel``) stay general so the unit and reduction tests can
-    exercise multi-orbital and complex-bond physics directly; only this
-    top-level entry point restricts what a production run may request.
+    Every one of these is a "no silent wrong result" refusal: the shared
+    bond modules (``bubble.bond_bubble_static``,
+    ``bond_channels.build_sc_bond_channel``, ``eliashberg_bond``) stay
+    general so the unit and reduction tests can exercise multi-orbital
+    physics directly; only this top-level entry point restricts what a
+    production run may request.
     """
     if chi0q_mode == "flex":
         raise ValueError(
@@ -417,47 +418,86 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
             "with chi0q_mode='calc' or 'load' (which are then unused anyway) "
             "to feed an external/FLEX green.")
 
-    # "Truly absent from the config" is the documented trigger (spec S5): a
-    # DECLARED term whose values are all zero is explicitly allowed, so that a
-    # V sweep keeps a constant channel topology (B does not jump 1 <-> 5) at
-    # its V=0 point.
-    if "CoulombInter" not in interactions:
-        raise ValueError(
-            "[eliashberg] bond_channels=true requires a CoulombInter term: "
-            "bond channels carry the inter-site Fock/Cooper structure of "
-            "V_ab(R), so asking for them with no inter-site interaction "
-            "declared is a configuration mistake. Declare the CoulombInter "
-            "file (or a combined `Coulomb` file containing R!=0 entries) -- "
-            "a declared-but-zero V is allowed and keeps the channel "
-            "topology fixed across a V sweep -- or use bond_channels=false.")
+    # The bond channels are the off-site shells of every bond-resolved type
+    # (CoulombInter, Hund, Ising, Exchange, PairHop). "Truly absent from the
+    # config" is the documented trigger (spec S5): a DECLARED off-site row
+    # whose value is zero is explicitly allowed, so that a V sweep keeps a
+    # constant channel topology (B does not jump 1 <-> 5) at its V=0 point.
+    def _rows(itype, offsite_only):
+        return [(irvec, orbvec, value)
+                for (irvec, orbvec), value in interactions.get(itype, {}).items()
+                if not offsite_only or tuple(int(x) for x in irvec) != (0, 0, 0)]
 
-    nonfinite = [(irvec, orbvec, value)
-                 for (irvec, orbvec), value in interactions["CoulombInter"].items()
-                 if not np.isfinite(complex(value).real)
-                 or not np.isfinite(complex(value).imag)]
-    if nonfinite:
-        irvec, orbvec, value = nonfinite[0]
+    declared = [t for t in bond_channels._BOND_RESOLVABLE_TYPES
+                if _rows(t, offsite_only=(t != "CoulombInter"))]
+    if "CoulombInter" not in interactions and not declared:
         raise ValueError(
-            "[eliashberg] bond_channels=true requires every CoulombInter "
-            "value to be finite, but V_{}{}({}) = {} is not (real or "
-            "imaginary part is NaN/inf; {} such entries). A NaN/inf "
-            "interaction value is a data/configuration error, not a "
-            "physical model, and must not silently reach the bond "
-            "machinery.".format(
-                orbvec[0], orbvec[1], tuple(irvec), value, len(nonfinite)))
+            "[eliashberg] bond_channels=true requires an off-site interaction "
+            "(a CoulombInter term, or an off-site Hund, Ising, Exchange or "
+            "PairHop row): bond channels carry the inter-site Fock/Cooper "
+            "structure of the off-site interaction, so asking for them with "
+            "no inter-site interaction declared is a configuration mistake. "
+            "Declare the CoulombInter file (or a combined `Coulomb` file "
+            "containing R!=0 entries) -- a declared-but-zero V is allowed "
+            "and keeps the channel topology fixed across a V sweep -- or use "
+            "bond_channels=false.")
 
-    bad = [(irvec, orbvec, value)
-           for (irvec, orbvec), value in interactions["CoulombInter"].items()
-           if abs(complex(value).imag) > imag_tol]
-    if bad:
-        irvec, orbvec, value = bad[0]
+    # CoulombInter is checked on every row (its R = 0 rows feed the on-site
+    # block); the other bond-resolved types on their off-site rows, which are
+    # the ones the bond channels carry.
+    checked = [(t, _rows(t, offsite_only=(t != "CoulombInter")))
+               for t in bond_channels._BOND_RESOLVABLE_TYPES]
+    for itype, rows in checked:
+        nonfinite = [(irvec, orbvec, value) for irvec, orbvec, value in rows
+                     if not np.isfinite(complex(value).real)
+                     or not np.isfinite(complex(value).imag)]
+        if nonfinite:
+            irvec, orbvec, value = nonfinite[0]
+            raise ValueError(
+                "[eliashberg] bond_channels=true requires every {} "
+                "value to be finite, but V_{}{}({}) = {} is not (real or "
+                "imaginary part is NaN/inf; {} such entries). A NaN/inf "
+                "interaction value is a data/configuration error, not a "
+                "physical model, and must not silently reach the bond "
+                "machinery.".format(
+                    itype, orbvec[0], orbvec[1], tuple(irvec), value,
+                    len(nonfinite)))
+    # An R = 0 CoulombInter row between an orbital and itself is a
+    # same-orbital on-site density-density term. The bond-resolved vertex
+    # (the locality-split channel-0 block shared with the FLEX bond gate)
+    # carries such a row through its density (Hartree) slot only, while
+    # exact diagonalization of the term also gives it the exchange crossing
+    # of a Hubbard U (tests/test_bond_vs_ed_oracle.py, the "U" direction).
+    # Refused rather than run with one of the two treatments: the on-site
+    # same-orbital interaction belongs in CoulombIntra, where every path
+    # treats it the same way.
+    same_orbital = [(irvec, orbvec, value)
+                    for irvec, orbvec, value in _rows("CoulombInter", False)
+                    if tuple(int(x) for x in irvec) == (0, 0, 0)
+                    and int(orbvec[0]) == int(orbvec[1]) and complex(value) != 0]
+    if same_orbital:
+        irvec, orbvec, value = same_orbital[0]
         raise ValueError(
-            "[eliashberg] bond_channels=true supports only REAL inversion-"
-            "symmetric CoulombInter in v1, but V_{}{}({}) = {} has a nonzero "
-            "imaginary part ({} such entries). Complex bonds need the "
-            "Hermitian Q(D+D^dag)Q particle-particle form, whose end-to-end "
-            "validation is a deferred follow-up.".format(
-                orbvec[0], orbvec[1], tuple(irvec), value, len(bad)))
+            "[eliashberg] bond_channels=true does not accept an on-site "
+            "same-orbital CoulombInter row, but V_{}{}({}) = {} is declared "
+            "({} such entries). Declare an on-site interaction of an orbital "
+            "with itself as CoulombIntra (a declared-zero row is "
+            "accepted).".format(orbvec[0], orbvec[1], tuple(irvec), value,
+                                len(same_orbital)))
+
+    for itype, rows in checked:
+        bad = [(irvec, orbvec, value) for irvec, orbvec, value in rows
+               if abs(complex(value).imag) > imag_tol]
+        if bad:
+            irvec, orbvec, value = bad[0]
+            raise ValueError(
+                "[eliashberg] bond_channels=true supports only REAL "
+                "inversion-symmetric {} in v1, but V_{}{}({}) = {} has a "
+                "nonzero imaginary part ({} such entries). The bond-resolved "
+                "vertex represents real off-site coefficients only; complex "
+                "bonds are a deferred follow-up.".format(
+                    itype, orbvec[0], orbvec[1], tuple(irvec), value,
+                    len(bad)))
 
     if norb > 1:
         raise ValueError(
@@ -472,12 +512,16 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
 
 
 # Number of (N_q, ND, ND)-shaped complex128 arrays that the bond-channel
-# resource preflight (below) assumes are alive simultaneously: chi_bar,
-# S_bond, C_bond, chi_s, chi_c, the fluctuation vertex F_q, its two
-# matrix-product temporaries (chi_bar@S_bond, chi_bar@C_bond, or equivalent),
-# and the real-space vertex Gamma_hat = ifftn(F_q). Named so the preflight's
-# byte estimate and this list can never silently drift apart.
-_BOND_N_Q_ARRAYS = 9
+# resource preflight (below) assumes are alive simultaneously. The high-water
+# mark of ``_build_bond_operator`` is the moment a dressed channel is added
+# to the pairing vertex: chi_bar, S, C, the pairing vertex Gamma, the dressed
+# channel chi, the sandwich product V chi V and its coefficient-scaled copy
+# (``PairVertexAccumulator``), plus one transient (the dressing denominator,
+# the matrix-product intermediate V chi, or the kernel's transformed blocks).
+# Measured at 7.1 arrays (``tests/test_sc_bond.py::TestPreflightOperatorBudget``).
+# Named so the preflight's byte estimate and this list can never silently
+# drift apart.
+_BOND_N_Q_ARRAYS = 8
 
 
 def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
@@ -498,11 +542,9 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
 
     ``q_bytes``
         ``_BOND_N_Q_ARRAYS`` q-resolved ``(N_q, ND, ND)`` arrays alive
-        simultaneously in the vertex assembly -- ``chi_bar``, ``S_bond``,
-        ``C_bond``, ``chi_s``, ``chi_c``, the fluctuation vertex ``F_q``, its
-        two matrix-product temporaries, and ``Gamma_hat = ifftn(F_q)``.
-        ``bond_bubble``'s output ``chi_bar`` is the first of these, so it is
-        NOT counted again in ``bubble_bytes``.
+        simultaneously in the operator assembly (see the list beside that
+        constant). ``bond_bubble_static``'s output ``chi_bar`` is the first of
+        these, so it is NOT counted again in ``bubble_bytes``.
     ``bubble_bytes``
         ``bond_bubble``'s simultaneous working set at its high-water mark, the
         Green carrier excluded (that is ``carrier_bytes``):
@@ -564,20 +606,8 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
         ``q_bytes``) because it is the one q-resolved array ``bond_bubble``
         itself allocates, so ``bubble_bytes + chi_bar_bytes`` is the budget a
         measurement of ``bond_bubble`` alone must fit into.
-    ``vertex_bytes``
-        ``bare_bond_vertices``'s non-q-resolved ``ND x ND`` working set --
-        ``BARE_VERTEX_ND2_BUFFERS`` buffers (``P``, ``D``, ``Dh``, ``Id``,
-        ``Q_s``, ``Q_t``, ``B_s``, ``B_t``, ``Vpp_s``, ``Vpp_t``), NOT
-        multiplied by ``N_q`` since none of them carry a q-axis (unlike
-        ``S_bond``/``C_bond``, which are already inside ``q_bytes``). This is
-        alive concurrently with ``q_bytes`` (``chi_bar`` from ``bond_bubble``
-        is still held) and ``carrier_bytes`` (``full_sc`` is still held), so
-        it is additive in ``peak``. The buffer-by-buffer list is documented
-        beside the constant in ``hwave.solver.bond_channels``; imported from
-        there so the two sides cannot silently desync.
     ``peak``
-        ``q_bytes + bubble_bytes + vertex_bytes + carrier_bytes`` -- the SUM
-        combine rule preserved unchanged from before the tail correction;
+        ``q_bytes + bubble_bytes + carrier_bytes`` -- the SUM combine rule;
         what the cap is applied to.
 
     Parameters
@@ -599,15 +629,13 @@ def _bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat, tail_on):
     q_bytes = _BOND_N_Q_ARRAYS * chi_bar_bytes
     bubble_bytes = (bond_channels.BOND_BUBBLE_N4_BUFFERS * norb ** 4
                     + bond_channels.BOND_BUBBLE_N2_BUFFERS * norb ** 2) * unit
-    vertex_bytes = bond_channels.BARE_VERTEX_ND2_BUFFERS * ND * ND * itemsize
     carrier_bytes = (4 if tail_on else 2) * (norb ** 2) * unit
     return {"nd": nd, "B": B, "ND": ND, "Nq": Nq,
             "chi_bar_bytes": chi_bar_bytes,
             "q_bytes": q_bytes,
             "bubble_bytes": bubble_bytes,
-            "vertex_bytes": vertex_bytes,
             "carrier_bytes": carrier_bytes,
-            "peak": q_bytes + bubble_bytes + vertex_bytes + carrier_bytes}
+            "peak": q_bytes + bubble_bytes + carrier_bytes}
 
 
 def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
@@ -636,7 +664,6 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
     B, ND, Nq = est["B"], est["ND"], est["Nq"]
     q_bytes = est["q_bytes"]
     bubble_bytes = est["bubble_bytes"]
-    vertex_bytes = est["vertex_bytes"]
     carrier_bytes = est["carrier_bytes"]
     peak = est["peak"]
 
@@ -651,199 +678,254 @@ def _bond_resource_preflight(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
             "exceeds bond_memory_cap_gb = {:.3f} GB. The cost is driven by "
             "B = {} bond channels (Delta r = {}) giving ND = nd*B = {} on "
             "N_q = {} q-points ({:.3f} GB of q-resolved ND x ND arrays) plus "
-            "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB of bare-"
-            "vertex ND x ND temporaries plus {:.3f} GB for the Green "
-            "carrier (tail_on={}). Reduce bond_max_shells (fewer channels), "
-            "reduce the k-grid/Nmat, or raise bond_memory_cap_gb.".format(
+            "{:.3f} GB of bond-bubble work buffers plus {:.3f} GB for the "
+            "Green carrier (tail_on={}). Use fewer bond channels (declare "
+            "fewer off-site shells, or cut declared-zero shells with "
+            "bond_max_shells), reduce the k-grid/Nmat, or raise "
+            "bond_memory_cap_gb.".format(
                 peak / 1.0e9, cap_gb, B, list(bond_set.delta_r), ND, Nq,
-                q_bytes / 1.0e9, bubble_bytes / 1.0e9, vertex_bytes / 1.0e9,
+                q_bytes / 1.0e9, bubble_bytes / 1.0e9,
                 carrier_bytes / 1.0e9, tail_on))
     return peak
 
 
-def _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
-                          kx_array, ky_array, kz_array):
-    """Build the Case-2-CORRECTED ``m=0`` spin/charge blocks (spec S4.3 star).
+def _bond_locality_split(interactions):
+    """The pre-fold locality split of the static bond path's interactions.
 
-    The existing ``_build_sc_matrices_all_q`` places the FULL Fourier sum
-    ``V_ab(q)`` into the Fock ``(ab,ab)`` element of the local block -- a
-    collapsed-bond approximation that assigns the whole Fock sum to the local
-    orbital-coherence operator. The bond path corrects this: only the on-site
-    ``R=0`` component ``V_ab(R=0)`` stays in the ``m=0`` Fock element, while
-    every ``R!=0`` component moves to its own bond channel
-    (``bond_set.v_bond[m]``, consumed by ``bare_bond_vertices``). The Hartree
-    ``(aa,bb) += 2 V_ab(q)`` stays in the ``m=0`` charge block (correct as is)
-    and is built from the SAME filtered interaction as the bond blocks -- the
-    ``ResolvedInteractionSet`` is the single source of truth (spec S3.0), so a
-    ``bond_max_shells`` cutoff filters Hartree, Fock and Cooper consistently.
+    ``hwave_sc`` refuses sublattice folding (``SubShape`` must be
+    ``[1, 1, 1]``), so the table read from the files is already the pre-fold
+    one and :func:`hwave.solver.offsite.split_locality` runs on it directly.
+    No ``orbital_site`` labels are passed: the bond channels treat the
+    exchange of every bond exactly, so -- as on the FLEX bond gate -- only
+    ``R = 0`` rows are on-site.
+    """
+    from types import SimpleNamespace
+    from hwave.solver.offsite import split_locality
+    return split_locality(SimpleNamespace(param_ham=interactions),
+                          SimpleNamespace(subshape=(1, 1, 1)))
 
-    The on-site ``R=0`` Fock component is read from ``bond_set.v_onsite``,
-    NOT from the raw ``interactions["CoulombInter"]`` dict (review fix I-1):
-    ``v_onsite`` is Hermiticity-closed by ``resolve_interactions`` the same
-    way the ``m != 0`` bond channels are, so a user declaring only
-    ``V_01(0)`` (not ``V_10(0)``) still gets a reversal-closed on-site Fock
-    block instead of a silently asymmetric one.
 
-    All other interaction types (CoulombIntra, Hund, Exchange, Ising, PairHop)
-    ride in the ``m=0`` block exactly as today.
+def _resolve_bond_topology(interactions, geom_info, norb, bond_max_shells):
+    """Resolve the bond topology of the static bond path.
 
-    Parameters
-    ----------
-    bond_set : bond_channels.ResolvedInteractionSet
-        The resolved (reversal-closed, shell-filtered) bond topology; its
-        ``v_onsite`` field supplies the ``R=0`` Fock component.
-    interactions : dict
-        Real-space interaction dicts (``_read_interaction_files``); no longer
-        read for ``CoulombInter`` here (kept in the signature for backward
-        compatibility with existing call sites/tests) -- the ``R=0`` value
-        comes from ``bond_set.v_onsite`` instead.
-    inter_k : dict
-        k-space interactions (``_build_interaction_k``); the CoulombInter
-        entry is NOT used -- ``V(q)`` is rebuilt from the filtered bond set.
-    norb : int
-    kx_array, ky_array, kz_array : ndarray
-        k-point arrays (the q-grid of the S/C blocks).
+    The same resolver as the FLEX bond gate and the dynamic bond pairing
+    (``bond_channels.resolve_bond_topology``) over every off-site type the
+    bond channels carry (``bond_channels.longitudinal_bond_types``:
+    CoulombInter, Hund and Ising, plus Exchange and PairHop when declared
+    off-site). Channel 0 is the on-site ``R = 0`` point; the off-site shells
+    follow by bond length (measured with the lattice vectors of the
+    geometry file), then lexicographically. ``bond_max_shells`` is the
+    resolver's ``max_shells``: it keeps that many off-site shells and
+    refuses a cutoff that would drop a declared nonzero coefficient.
 
     Returns
     -------
-    S0_q, C0_q : ndarray, shape (Nx, Ny, Nz, norb**2, norb**2)
-        The Case-2-corrected local blocks, ready for
-        ``bond_channels.bare_bond_vertices``.
+    (topo, view, split)
+        The :class:`~hwave.solver.bond_channels.BondTopology`, its
+        :class:`~hwave.solver.bond_channels.BondSetView` and the locality
+        split (:func:`_bond_locality_split`) the channel-0 block is built
+        from.
     """
-    Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
-
-    # Everything EXCEPT CoulombInter through the existing builder; the
-    # CoulombInter Hartree/Fock placement is redone below from the resolved
-    # (filtered) interaction so the two can never disagree.
-    inter_k_local = {k: v for k, v in inter_k.items() if k != "CoulombInter"}
-    S0, C0 = _build_sc_matrices_all_q(inter_k_local, norb, Nx, Ny, Nz)
-
-    # On-site (R=0) CoulombInter: the only Fock component that stays local.
-    # Sourced from bond_set.v_onsite -- Hermiticity-closed by
-    # resolve_interactions the same way the bond (R!=0) channels are (review
-    # fix I-1) -- instead of reading interactions["CoulombInter"] raw, which
-    # bypassed that closure and consistency check.
-    V_r0 = np.array(bond_set.v_onsite, dtype=complex, copy=True)
-
-    # Filtered V_ab(q) = V_ab(R=0) + sum_{m>=1} v_bond[m]_ab e^{-i q.Delta r_m},
-    # where channel m carries the rows declared at -Delta r_m (issue #232):
-    # per declared row (R, a, b, v) that is v e^{+iqR} untransposed, which on
-    # a Hermitian-closed table equals _build_interaction_k._to_k's
-    # pair-transposed e^{-iqR}, so the m=0 block is element-wise consistent
-    # with the rest of sc.py. (For the real inversion-symmetric interactions
-    # v1 accepts, V(q) is real and the phase sign is immaterial.)
-    kx_mesh, ky_mesh, kz_mesh = np.meshgrid(
-        kx_array, ky_array, kz_array, indexing='ij')
-    V_q = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
-    V_q += V_r0[:, :, np.newaxis, np.newaxis, np.newaxis]
-    for m in range(1, bond_set.n_channels):
-        Rx, Ry, Rz = bond_set.delta_r[m]
-        phase = np.exp(-1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz))
-        # Hermitize PER SHELL, BEFORE the q-phase multiply (Finding 1, #151
-        # ED-adjudication campaign; tests/test_bond_vs_ed_oracle.py::
-        # TestNullDirectionSolverSide). resolve_interactions guarantees,
-        # EXACTLY, that bond_set.v_bond[reverse[m]][b, a] ==
-        # conj(bond_set.v_bond[m][a, b]): channel m holds the row V_ab declared
-        # at -R_m and channel reverse[m] its partner V_ba declared at +R_m;
-        # both multiply the SAME physical operator sum_j n_{j,a} n_{j-R_m,b}
-        # (site relabeling turns the partner's sum_j n_{j,b} n_{j+R_m,a} into
-        # the identical sum), so
-        # Hermiticity forces their combined Hamiltonian coefficient
-        # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b]) ==
-        # 2*Re(v_bond[m][a,b]) -- real, and INDEPENDENT of q (this is the full
-        # per-shell coefficient the Hartree term wants, unlike the ph Fock
-        # slot in bare_bond_vertices which only wants HALF of it; see that
-        # function's comment for why the two channels differ). This holds
-        # identically for a genuinely complex, phase-carrying single-sided
-        # declaration (not just a synthetic null-direction probe): a complex
-        # CoulombInter value always collapses to twice its real part in this
-        # density-density Hartree term.
-        #
-        # Before this fix, V_q summed the RAW (possibly complex) per-shell
-        # value: the null-direction pair V_ab(+R)=V+i*eps / V_ba(-R)=V-i*eps
-        # left a 2*eps-responsive residual in this Hartree block feeding
-        # bare_bond_vertices' C_bond (that function's m!=0 Fock diagonal
-        # carries the other, eps-magnitude half of the same finding).
-        # Hermitizing per shell HERE, before multiplying by the complex
-        # q-phase, keeps V_q genuinely q-dispersive/complex at q!=0 --
-        # collapsing to .real only AFTER the phase sum (or on the full V_q)
-        # would wrongly discard the physical q-dependent phase.
-        # bond_channels.bare_bond_vertices' local-block hartree_rneq0
-        # subtraction mirrors this exact Hermitization so the R!=0 Hartree it
-        # removes from C0_loc still matches what is added here (keeps
-        # Vpp_s/Vpp_t null-invariant).
-        #
-        # .real is bit-identical to the raw value whenever it is already real
-        # (every direction adjudicated by this campaign, and every #82
-        # golden-test coupling), so this is a provable no-op there.
-        V_q += bond_set.v_bond[m][:, :, np.newaxis, np.newaxis, np.newaxis].real \
-            * phase
-
-    for a in range(norb):
-        for b in range(norb):
-            # Hartree (aa,bb): the FULL q-dependent 2 V_ab(q) (spec S4.3).
-            C0[:, :, :, a * norb + a, b * norb + b] += 2.0 * V_q[a, b]
-            # Fock (ab,ab): ONLY the R=0 component (the Case-2 correction).
-            iab = a * norb + b
-            S0[:, :, :, iab, iab] += V_r0[a, b]
-            C0[:, :, :, iab, iab] -= V_r0[a, b]
-
-    return S0, C0
+    split = _bond_locality_split(interactions)
+    if "PairLift" in split.offsite_types:
+        logger.info(
+            "[eliashberg] bond_channels=true: off-site PairLift declarations "
+            "carry no longitudinal (spin/charge) content and are not part of "
+            "the bond channels.")
+    topo = bond_channels.resolve_bond_topology(
+        split.whole_tbl, geom_info["rvec"], norb, max_shells=bond_max_shells,
+        active_types=bond_channels.longitudinal_bond_types(split.offsite_types))
+    return topo, bond_channels.BondSetView(topo), split
 
 
-def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
-                         geom_info, norb, kx_array, ky_array, kz_array, beta,
-                         pairing_type, *, bond_max_shells, bond_memory_cap_gb,
-                         precondition_opts=None, green_source=None,
-                         g2_tail=False, bond_coeff_tail_source="default"):
-    """Run the bond-resolved physics chain and return the Eliashberg operator.
+def _build_bond_vertices(topo, split, norb, spatial_shape):
+    """The enlarged spin/charge vertices ``S``, ``C`` on the bond basis.
 
-    bond_bubble -> Case-2 corrected m=0 blocks -> bare_bond_vertices ->
-    dress_bond -> make_bond_kernel (spec S4.2-S4.5).
+    Built exactly as the FLEX bond gate builds them: the channel-0 block is
+    the locality-split pair-space matrix
+    (:func:`hwave.solver.offsite.sc_matrices_from_split`; the off-site
+    Hartree ``V(q)`` of CoulombInter / Hund / Ising sits in its density
+    slots, the Fock crossing of an ``R = 0`` row in its cross slots), and
+    every off-site row of every type the topology carries enters through
+    ``bond_channels.build_sc_bond_channel`` (the bond-diagonal Fock
+    crossing; the PairHop bond entries).
 
-    ``bond_set`` must already be resolved (``bond_channels.
-    resolve_interactions``) and pre-flighted (``_bond_resource_preflight``) by
-    the caller BEFORE ``green_carrier`` was built (review fix I-2: the
-    preflight must run before the potentially-large Green-function
-    allocation, not after -- see ``calc_eliashberg``'s bond-channel dispatch
-    branch). This function therefore no longer resolves the interaction or
-    runs the preflight itself.
+    Returns
+    -------
+    S, C : ndarray, shape (nvol, ND, ND), complex
+        ``ND = B * norb**2``, bond-major index ``m * norb**2 + a * norb + b``.
+    """
+    from hwave.solver.offsite import sc_matrices_from_split
+    Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    nvol, nd = Nx * Ny * Nz, norb * norb
+    S0, C0 = sc_matrices_from_split(
+        split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, norb, Nx, Ny, Nz)
+    S0 = S0.reshape(nvol, nd, nd)
+    C0 = C0.reshape(nvol, nd, nd)
+    types = tuple(topo.coeffs)
+    S = bond_channels.build_sc_bond_channel(
+        topo, S0, "S", types=types, spatial_shape=(Nx, Ny, Nz))
+    C = bond_channels.build_sc_bond_channel(
+        topo, C0, "C", types=types, spatial_shape=(Nx, Ny, Nz))
+    return S, C
+
+
+def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
+                       beta, pairing_type, *, g2_tail=False):
+    """The static bond Eliashberg operator and its two parts, built from the
+    bond pairing pieces of ``hwave.solver.eliashberg_bond``.
+
+    Parameters
+    ----------
+    S, C : ndarray, shape (nvol, ND, ND) or (Nx, Ny, Nz, ND, ND)
+        The enlarged bare spin/charge vertices (:func:`_build_bond_vertices`).
+    dressed : iterable of (channel, chi)
+        ``("spin", chi_s)`` and ``("charge", chi_c)``, each ``chi`` of the
+        shape of ``S``: the dressed susceptibilities on the bond basis. Each
+        is added to the pairing vertex as it arrives, so a generator keeps
+        one channel resident at a time.
+    green_kw : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat)
+        The full Green function (``sc.py`` layout) of the pair bubble.
+    view : BondSetView
+        The bond topology.
+    pairing_type : {"singlet", "triplet"}
+
+    The fluctuation vertex ``Gamma = c_s S chi_s S + c_c C chi_c C``
+    (``PairVertexAccumulator``) and the bare vertex on the channel-0 block
+    (``instantaneous_vertex``) are applied by ``BondPairKernel`` on a
+    one-point frequency axis, where its Matsubara transforms are the
+    identity: one matvec is ``-(1/N) sum e^{-ik.R_b} Gamma_ab(k - k')
+    e^{-ik'.R_a} X(k')`` with the static pair bubble ``X = G2 phi``,
+    ``G2 = T sum_n G(k, iw_n) G(-k, -iw_n)``.
+
+    The instantaneous part acts on the gap projected onto the parity sector
+    of the pairing channel (``_project_gap_parity``): the bare Cooper vertex
+    acts on the pair amplitude, which is even (singlet) or odd (triplet)
+    under ``Delta_ab(k) -> Delta_ba(-k)``. On that sector the projection is
+    the identity; on the opposite sector it keeps the bare vertex from
+    acting on a pair amplitude the channel cannot carry. The fluctuation
+    part is applied unprojected, as on the non-bond static path.
+
+    Returns
+    -------
+    A, A_fl, A_pp : scipy.sparse.linalg.LinearOperator
+        The full kernel ``K = K^fl + K^pp``, its fluctuation part and its
+        instantaneous (bare) part, acting on a gap ``(norb, norb, Nx, Ny,
+        Nz)`` raveled.
+    vec_size : int
+        ``norb**2 * Nx * Ny * Nz``.
+    """
+    from types import SimpleNamespace
+    from hwave.solver import eliashberg_bond as _eb
+    from hwave.solver import flex_bond as _fb
+
+    Nx, Ny, Nz = (int(x) for x in spatial_shape)
+    shape = (Nx, Ny, Nz)
+    nvol, nd = Nx * Ny * Nz, norb * norb
+    S = np.asarray(S)
+    C = np.asarray(C)
+    ND = S.shape[-1]
+    S = S.reshape(nvol, ND, ND)
+    C = C.reshape(nvol, ND, ND)
+    if pairing_type not in _eb.COEFF:
+        raise ValueError(
+            "unknown pairing_type '{}'. Use 'singlet' or 'triplet'.".format(
+                pairing_type))
+
+    with _fb.BondDeviceContext(np, S, C) as dev:
+        acc = _eb.PairVertexAccumulator(
+            dev, pairing_types=(pairing_type,), nb=1, nmat=1, nvol=nvol,
+            nd=nd, spatial_shape=shape)
+        for channel, chi in dressed:
+            chi = np.asarray(chi).reshape(1, nvol, ND, ND)
+            acc.add_channel(channel, _eb.ArrayBlockSource({"chi": chi}, nd),
+                            "chi")
+            del chi
+        vertex = acc.finish()[pairing_type]
+        del acc
+    V_inst = _eb.instantaneous_vertex(S, C, nd, pairing_type, shape)
+
+    # the static pair bubble on a one-point frequency axis
+    G2 = bond_channels._g2_from_green(green_kw, beta, tail=g2_tail)[..., None]
+    # The static path has its own resource preflight (bond_memory_cap_gb),
+    # run before the Green function was built; the kernel's admission is
+    # therefore not capped a second time.
+    common = dict(xp=np, spatial_shape=shape, norb=norb, beta=beta, nfreq=1,
+                  residency="host", host_cap=np.inf)
+    kernel_fl = _eb.BondPairKernel(vertex, G2, view, **common)
+    # The bare vertex lives on channel 0 alone, so its kernel needs only the
+    # on-site channel and a zero fluctuation block.
+    view0 = SimpleNamespace(n_channels=1, delta_r=((0, 0, 0),), reverse=(0,))
+    zero = _eb.PairVertexUniform(
+        source=_eb.ArrayBlockSource(
+            {"zero": np.zeros((1, nvol, nd, nd), dtype=np.complex128)}, nd),
+        slot="zero", B=1, nd=nd, nmat=1, nvol=nvol)
+    kernel_pp = _eb.BondPairKernel(zero, G2, view0, V_inst=V_inst, **common)
+    del G2
+
+    gap_shape = (norb, norb, Nx, Ny, Nz)
+    vec_size = nd * nvol
+
+    def _fl(v):
+        return kernel_fl.matvec(v)
+
+    def _pp(v):
+        phi = np.asarray(v).reshape(gap_shape)
+        return kernel_pp.matvec(_project_gap_parity(phi, pairing_type).ravel())
+
+    def _full(v):
+        return _fl(v) + _pp(v)
+
+    A, A_fl, A_pp = (LinearOperator((vec_size, vec_size), matvec=f,
+                                    dtype=complex)
+                     for f in (_full, _fl, _pp))
+    return A, A_fl, A_pp, vec_size
+
+
+def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
+                         kz_array, beta, pairing_type, *, bond_max_shells,
+                         bond_memory_cap_gb, precondition_opts=None,
+                         green_source=None, g2_tail=False,
+                         bond_coeff_tail_source="default"):
+    """Build the static bond-resolved Eliashberg operator.
+
+    The static path is the zero-bosonic-frequency member of the bond-resolved
+    pairing family the FLEX bond gate and the dynamic bond pairing share, and
+    it is built from the same modules:
+
+    1. the bond bubble ``chibar(q)``: ``bubble.bond_bubble_static`` -- the
+       ``Omega = 0`` slice of the per-pair pipeline that
+       ``flex_bond.assemble_bubble`` streams over every bosonic frequency;
+    2. the vertices ``S``, ``C`` (:func:`_build_bond_vertices`);
+    3. the RPA dressing ``chi = [1 -/+ chibar W]^{-1} chibar``:
+       ``bond_channels.dress_batch`` on a one-slice batch, one channel at a
+       time (its conditioning guard names the channel and the q-point of a
+       singular denominator);
+    4. the fluctuation vertex ``Gamma = c_s S chi_s S + c_c C chi_c C``:
+       ``eliashberg_bond.PairVertexAccumulator``;
+    5. the bare (instantaneous) vertex: ``eliashberg_bond.instantaneous_
+       vertex`` on the channel-0 block;
+    6. the kernel: ``eliashberg_bond.BondPairKernel`` on a one-point
+       frequency axis (:func:`_bond_kernel_parts`).
+
+    ``topo``/``split`` come from :func:`_resolve_bond_topology` and must have
+    been pre-flighted (``_bond_resource_preflight``) by the caller BEFORE
+    ``green_carrier`` was built (review fix I-2: the preflight runs before the
+    potentially large Green-function allocation).
 
     ``green_carrier`` : :class:`_BondGreen`
-        The bubble reads ONLY ``deflated_kw``/``green0_tail`` (unified-
-        bubble-kernel spec: "the bubble receives (deflated_kw, green0_tail);
-        EVERY downstream consumer receives full_kw" -- here ``full_sc``, the
-        sc-layout equivalent); every other consumer in this function
-        (``make_bond_kernel_parts``, ``pair_weight``) reads
-        ``green_carrier.full_sc`` -- the bare Green function on the same
-        inputs, independent of the tail coefficient.
+        The bubble reads ONLY ``deflated_kw``/``green0_tail``; the pair
+        bubble ``G2`` and the pair weight read ``full_sc``.
 
     ``precondition_opts`` (from ``_read_bond_config``) is forwarded verbatim
-    to ``bond_channels.check_hermitian_preconditions`` -- the
-    ``bond_precondition_atol/rtol/dense_limit`` knobs of ``[eliashberg]``
-    (review fix M7).
+    to ``bond_channels.check_hermitian_preconditions``.
 
     ``green_source`` is provenance only: the path the Green function was
     loaded from (``[eliashberg] bond_green``), or ``None`` when the caller
-    built the bare Green function from the transfer Hamiltonian. It selects
-    the wording of the recorded approximation level -- the two are
-    physically different approximations and the record must say which one
-    ran.
+    built the bare Green function from the transfer Hamiltonian.
 
     ``bond_max_shells`` and ``bond_memory_cap_gb`` are likewise PROVENANCE
-    ONLY here: the resource preflight and the shell cutoff itself already
-    happened in the caller (``resolve_interactions``/
-    ``_bond_resource_preflight``, before ``bond_set``/``green_carrier`` were
-    built), so by the time this function runs, neither value feeds into the
-    computed operator -- they are only echoed into the returned
-    ``provenance`` dict. They are keyword-only (review fix: honest
-    signature) precisely so a call site cannot mistake them for
-    physics-affecting positional arguments. (Past review fix: an earlier
-    ``nmat`` parameter was dropped from this signature for the same reason --
-    it was never read in the body, since ``green_carrier.full_sc.shape[-1]``
-    already fixes the Matsubara grid the bond bubble is built on, and
-    ``bond_green`` can make that grid differ from the ``nmat`` the caller
-    resolved the preflight with.)
+    ONLY here: the cutoff and the preflight already happened in the caller.
 
     Returns
     -------
@@ -851,42 +933,39 @@ def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
         The ``scipy.sparse.linalg.LinearOperator`` kernel and its vector size,
         in the same convention as ``_make_kernel_operator``.
     provenance : dict
-        Additive output-provenance record (spec S5; unified-bubble-kernel
-        spec's "Tail default for the bond path" adds the
-        ``bond_coeff_tail_*``/``bond_endpoint_convention``/
-        ``bond_green_source``/``external_full_green_assumed`` keys).
+        Additive output-provenance record (spec S5).
     attribution : dict
-        Context for the ``lambda = lambda^pp + lambda^fl`` decomposition of
-        spec S4.5: the two kernel parts (``pp``/``fl``), the full kernel and
-        the ``sqrt(GG)`` metric (``weight``), consumed by
-        ``bond_channels.attribute_lambda`` once a gap has converged.
+        Context for the ``lambda = lambda^pp + lambda^fl`` decomposition: the
+        two kernel parts (``pp``/``fl``), the full kernel and the pair weight
+        (``weight``), consumed by ``bond_channels.attribute_lambda``.
     """
     Nx, Ny, Nz = len(kx_array), len(ky_array), len(kz_array)
+    shape = (Nx, Ny, Nz)
+    view = bond_channels.BondSetView(topo)
     green_kw = green_carrier.full_sc
 
     logger.info("Computing the bond-resolved bubble chi-bar...")
     chi_bar = bubble.bond_bubble_static(
-        green_carrier.deflated_kw, green_carrier.green0_tail, beta, bond_set,
-        spatial_shape=(Nx, Ny, Nz))
-    # bond_bubble_static returns the flattened-spatial (nvol, ND, ND)
-    # canonical shape; every downstream consumer here (dress_bond,
-    # bare_bond_vertices' S/C blocks, ...) still expects the unflattened
-    # sc.py spatial layout (Nx, Ny, Nz, ND, ND) -- the same reshape
-    # bond_channels.bond_bubble's compatibility wrapper applies.
-    nD = chi_bar.shape[-1]
-    chi_bar = chi_bar.reshape(Nx, Ny, Nz, nD, nD)
+        green_carrier.deflated_kw, green_carrier.green0_tail, beta, view,
+        spatial_shape=shape)
 
-    S0_q, C0_q = _build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
-                                       kx_array, ky_array, kz_array)
-    S_bond, C_bond, Vpp_s, Vpp_t = bond_channels.bare_bond_vertices(
-        bond_set, S0_q, C0_q, norb)
-    chi_s, chi_c = bond_channels.dress_bond(chi_bar, S_bond, C_bond)
+    S, C = _build_bond_vertices(topo, split, norb, shape)
+
+    def _dressed(chi_bar, S, C):
+        # one dressed channel at a time, on a one-slice batch at the zero
+        # bosonic frequency (l0 = nmat = 0, so a refusal names index 0)
+        for channel, W in (("spin", S), ("charge", C)):
+            chi, _ = bond_channels.dress_batch(
+                chi_bar[None], W, channel, l0=0, nmat=0, spatial_shape=shape)
+            yield channel, chi[0]
+            del chi
 
     logger.info("Building the bond-resolved Eliashberg operator "
                 "(pairing_type=%s)...", pairing_type)
-    A, A_fl, A_pp, vec_size = bond_channels.make_bond_kernel_parts(
-        chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green_kw, bond_set,
-        pairing_type, beta, g2_tail=g2_tail)
+    A, A_fl, A_pp, vec_size = _bond_kernel_parts(
+        S, C, _dressed(chi_bar, S, C), green_kw, view, norb, shape, beta,
+        pairing_type, g2_tail=g2_tail)
+    del chi_bar, S, C
 
     # v1 runtime preconditions of the Hermitian static path (spec S4.5): the
     # pair weight w = GG must be real (Hermitian) and >= 0 and the symmetrized
@@ -918,8 +997,8 @@ def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
 
     provenance = {
         "bond_channels": True,
-        "bond_n_channels": int(bond_set.n_channels),
-        "bond_delta_r": [list(dr) for dr in bond_set.delta_r],
+        "bond_n_channels": int(view.n_channels),
+        "bond_delta_r": [list(dr) for dr in view.delta_r],
         "bond_max_shells": ("all" if bond_max_shells is None
                             else int(bond_max_shells)),
         "bond_memory_cap_gb": float(bond_memory_cap_gb),
@@ -945,7 +1024,7 @@ def _build_bond_operator(bond_set, green_carrier, interactions, inter_k,
     }
     if green_source:
         provenance["bond_green"] = str(green_source)
-    if bond_set.n_channels == 1:
+    if view.n_channels == 1:
         provenance["collapsed_to_pure_hubbard"] = True
     provenance["kernel_hermiticity_residual"] = "{:.3e}".format(
         diagnostics["kernel_hermiticity_residual"])
@@ -1952,8 +2031,8 @@ def _green_canonical_to_sc(g, spatial_shape):
 
 class _BondGreen(NamedTuple):
     """Carrier separating the FULL Green function -- fed, unchanged, to
-    EVERY downstream consumer of the bond path (``pair_weight``,
-    ``make_bond_kernel_parts``, the Eliashberg convolutions) -- from the
+    EVERY downstream consumer of the bond path (``pair_weight``, the pair
+    bubble ``G2`` of the bond kernel) -- from the
     DEFLATED Green/tail pair, fed ONLY to the bubble
     (``bubble.bond_bubble_static``). See the unified-bubble-kernel spec's
     "Green data flow in sc.py's bond branch".
@@ -5093,7 +5172,7 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         Pre-built ``(A, vec_size)`` kernel to iterate with, bypassing
         ``_make_kernel_operator(Vs_q, G2, ...)`` (``Vs_q``/``G2`` may then be
         None). Used by the bond-channel path, whose operator is built by
-        ``bond_channels.make_bond_kernel``. When None (the default) the
+        ``_build_bond_operator``. When None (the default) the
         historical operator is built exactly as before.
     spectral_shift : float or "auto", optional
         Positive spectral shift sigma; the power iteration then runs on
@@ -6290,7 +6369,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
     # handed the LOCALLY recomputed ``norb*norb*Nx*Ny*Nz`` instead. The two
     # agree today for both callers of this path (the standard
     # ``_make_kernel_operator`` result and the bond-channel
-    # ``bond_channels.make_bond_kernel*`` result both use the plain
+    # ``_build_bond_operator`` result both use the plain
     # orbital-pair x spatial vec_size), but nothing enforces that; a future
     # dynamic/enlarged bond operator with a DIFFERENT internal size would
     # silently reshape eigenvectors into the wrong shape instead of failing
@@ -7089,7 +7168,7 @@ def calc_eliashberg(input_dict):
 
     elif use_bond_channels:
         # --- Bond-resolved mode: the enlarged (orbital-pair)x(bond) ladder ---
-        # This path builds its own bubble (bond_bubble) directly from the
+        # This path builds its own bubble (bond_bubble_static) directly from the
         # Green function, so no chi0q file/tensor is read: the m=m'=0 block of
         # chi-bar IS the ordinary chi0q, and the m!=0 blocks (which no chi0q
         # file carries) are what the bond channels add.
@@ -7101,14 +7180,13 @@ def calc_eliashberg(input_dict):
         # large) Green-function allocation has already happened --
         # unified-bubble-kernel spec/test_sc_bond.py:382-399 pin this
         # ordering across the carrier switch too).
-        bond_set = bond_channels.resolve_interactions(
-            interactions["CoulombInter"], geom_info["rvec"], norb,
-            bond_max_shells=bond_max_shells)
-        logger.info("Bond channels: B = %d, Delta r = %s",
-                    bond_set.n_channels, list(bond_set.delta_r))
-        if bond_set.dropped:
-            logger.info("Bond channel provenance (dropped): %s",
-                        list(bond_set.dropped))
+        bond_topo, bond_set, bond_split = _resolve_bond_topology(
+            interactions, geom_info, norb, bond_max_shells)
+        logger.info("Bond channels: B = %d, Delta r = %s, types = %s",
+                    bond_set.n_channels, list(bond_set.delta_r),
+                    list(bond_topo.coeffs))
+        bond_channels.warn_pairing_approximations(
+            bond_topo, "[eliashberg] bond_channels=true", log=logger)
 
         bond_coeff_tail_requested, bond_coeff_tail_source = (
             _resolve_bond_coeff_tail(eli_param))
@@ -7181,7 +7259,7 @@ def calc_eliashberg(input_dict):
         if g2_tail:
             _warn_if_g2_tail_outside_asymptotic_regime(green_kw, beta)
         bond_operator, bond_provenance, bond_attribution = _build_bond_operator(
-            bond_set, green_carrier, interactions, inter_k, geom_info, norb,
+            bond_topo, bond_split, green_carrier, norb,
             kx_array, ky_array, kz_array, beta, pairing_type,
             bond_max_shells=bond_max_shells,
             bond_memory_cap_gb=bond_memory_cap_gb,
@@ -7238,8 +7316,8 @@ def calc_eliashberg(input_dict):
 
     # --- Step 10: Compute G2 ---
     # The bond operator carries its own pair bubble (the same construction as
-    # the finite-window part of _calc_g2, applied inside
-    # bond_channels.make_bond_kernel), so G2 is not
+    # _calc_g2, ``bond_channels._g2_from_green`` inside
+    # _build_bond_operator), so G2 is not
     # needed -- and must not be built -- on that path.
     if use_bond_channels:
         G2 = None

@@ -10,6 +10,23 @@ from numpy.lib import format as _npfmt
 
 logger = logging.getLogger("qlms").getChild("solver").getChild("eliashberg_bond")
 
+
+def warn_multi_orbital(norb, where):
+    """WARN that a bond-resolved pairing run has ``norb > 1``.
+
+    The bond-resolved pairing is validated end to end for single-orbital
+    models only; the multi-orbital validation is pending (issue #239). The
+    run is NOT refused and no number changes: this is a notice to read the
+    results with that in mind. A no-op for ``norb == 1``. Returns whether
+    the warning was emitted."""
+    if int(norb) <= 1:
+        return False
+    logger.warning(
+        "%s: this model has norb = %d. The bond-resolved pairing is validated "
+        "end to end for single-orbital models only; multi-orbital results are "
+        "not yet validated (issue #239).", where, int(norb))
+    return True
+
 _INDEX_ORDER = "I = m*norb**2 + l1*norb + l2"
 _FREQ_AXIS = "bosonic l -> 2l - nmat"
 _SOLVER_MODES = ("iteration", "eigenvalue", "both")
@@ -480,6 +497,7 @@ def solve_dynamic_bond(input_dict):
     """
     import hwave.sc as sc
     from . import backend as _bk
+    from . import bond_channels as _bc
     from . import eliashberg_bond as _eb
     from . import eliashberg_dynamic as _ed
     from . import flex_bond as _fb
@@ -514,6 +532,13 @@ def solve_dynamic_bond(input_dict):
     geom_info, hr, interactions = sc._read_interaction_files(input_dict)
     norb = int(geom_info["norb"])
     nd = norb * norb
+    warn_multi_orbital(norb, "[eliashberg] bond_channels=true (frequency='dynamic')")
+    # the archive carries the topology but not the per-type coefficients, so
+    # the notices read the declared interactions
+    topo_decl, _, _ = sc._resolve_bond_topology(interactions, geom_info, norb, None)
+    _bc.warn_pairing_approximations(
+        topo_decl, "[eliashberg] bond_channels=true (frequency='dynamic')", log=logger)
+    del topo_decl
 
     # --- the archive (validated before any large member is touched) --------
     flex_dir = sc._resolve_flex_dir(input_dict)
@@ -774,6 +799,9 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     xp = dev.xp
     nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
     nd = norb * norb
+    warn_multi_orbital(norb, "[mode.param] longitudinal_bond_pairing")
+    _bc.warn_pairing_approximations(solver._bond_topo, "[mode.param] longitudinal_bond_pairing",
+                                    log=logger)
     shape = tuple(int(x) for x in solver.lattice.shape)
     Nx, Ny, Nz = shape
     view = solver._bond_view

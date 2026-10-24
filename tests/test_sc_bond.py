@@ -347,6 +347,16 @@ class TestS5Guards(_ApproxTestCase):
         with self.assertRaisesRegex(ValueError, r"(?i)complex|real"):
             sc.calc_eliashberg(inp)
 
+    def test_guard_onsite_same_orbital_coulomb_inter(self):
+        """A nonzero R = 0 CoulombInter row of an orbital with itself is
+        refused (it belongs in CoulombIntra); a declared-zero one is not
+        (``test_collapsed_to_pure_hubbard_flag``)."""
+        ci = os.path.join(self.tmp_path, "ci_onsite.dat")
+        _write_w90(ci, 1, _nn_entries(0.5) + [((0, 0, 0), (0, 0), 1.0)])
+        inp = _base_input(self.tmp_path, coulomb_inter=ci, bond_channels=True)
+        with self.assertRaisesRegex(ValueError, r"same-orbital CoulombInter.*CoulombIntra"):
+            sc.calc_eliashberg(inp)
+
     def test_guard_no_coulomb_inter(self):
         """(d) bond_channels=true with no CoulombInter term at all -> error."""
         inp = _base_input(self.tmp_path, bond_channels=True)
@@ -430,6 +440,17 @@ def _measure_peak_bytes(fn):
     return peak
 
 
+def _nn_x_bond_set(norb):
+    """The three-channel (on-site, +x, -x) bond topology of an x-bond
+    CoulombInter, as the static bond path resolves it."""
+    interactions = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.25,
+                                     ((-1, 0, 0), (0, 0)): 0.25}}
+    _, view, _ = sc._resolve_bond_topology(interactions, {"rvec": np.eye(3)},
+                                           norb, 1)
+    assert view.n_channels == 3
+    return view
+
+
 class TestPreflightMemoryBudget(_ApproxTestCase):
 
     def test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak(self):
@@ -453,9 +474,7 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         from hwave.solver import bubble as bm
 
         norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
-        bond_set = bc.resolve_interactions(
-            {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
-            [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+        bond_set = _nn_x_bond_set(norb)
 
         rng = np.random.default_rng(0)
         shape = (norb, norb, Nx, Ny, Nz, nmat)
@@ -507,14 +526,11 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         fixture recipe) fed to ``bond_bubble_static``, checked against
         ``_bond_memory_estimate(..., tail_on=True)``.
         """
-        from hwave.solver import bond_channels as bc
         from hwave.solver import bubble as bm
         from hwave.solver import green as green_mod
 
         norb, Nx, Ny, Nz, nmat, beta = 2, 4, 4, 4, 32, 10.0
-        bond_set = bc.resolve_interactions(
-            {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
-            [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+        bond_set = _nn_x_bond_set(norb)
 
         nvol = Nx * Ny * Nz
         rng = np.random.default_rng(1)
@@ -599,7 +615,6 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         ``carrier_bytes``); this test's own slack lives here, in the
         MEASUREMENT comparison, not in production's estimate.
         """
-        from hwave.solver import bond_channels as bc
 
         # A LARGER fixture than round 1's (Nx=Ny=Nz=4) so the small FIXED
         # (non-S_in-scaled) buffer overhead is negligible relative to S_in
@@ -627,9 +642,7 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         if peak is None:
             self.skipTest("tracemalloc does not track numpy array data here")
 
-        bond_set = bc.resolve_interactions(
-            {((1, 0, 0), (0, 0)): 0.25, ((-1, 0, 0), (0, 0)): 0.25},
-            [(0, 0, 0), (1, 0, 0), (-1, 0, 0)], norb, bond_max_shells=1)
+        bond_set = _nn_x_bond_set(norb)
         est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
                                        tail_on=True)
         budget = est["carrier_bytes"]
@@ -665,103 +678,62 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         self.assertLessEqual(budget, 2.0 * peak)
 
 
-def _large_B_bond_set(norb, B):
-    """A reversal-closed ``ResolvedInteractionSet`` with ``B`` channels.
+class TestPreflightOperatorBudget(_ApproxTestCase):
 
-    Built directly (bypassing ``resolve_interactions``' shell-cutoff/topology
-    logic) purely to exercise ``bare_bond_vertices`` at a large ``ND = nd*B``
-    -- the function only reads ``delta_r``/``v_bond``/``reverse``/
-    ``n_channels``, so a synthetic 1-D chain of channel pairs ``(+i,0,0)``/
-    ``(-i,0,0)`` satisfies its reversal-closure guard without needing a real
-    interaction fixture.
-    """
-    from hwave.solver import bond_channels as bc
+    def test_preflight_q_budget_covers_the_measured_operator_peak(self):
+        """The preflight must not UNDERCOUNT the q-resolved working set of the
+        operator assembly either (``_BOND_N_Q_ARRAYS`` ``(N_q, ND, ND)``
+        arrays: the bubble, the two vertices, the pairing vertex, one dressed
+        channel and the transients of adding it to the pairing vertex).
 
-    rng = np.random.default_rng(1)
-    delta_r = [(0, 0, 0)]
-    v_bond = [np.zeros((norb, norb), dtype=complex)]
-    reverse = [0]
-    n_pairs = (B - 1) // 2
-    for i in range(1, n_pairs + 1):
-        v = (rng.normal(size=(norb, norb))
-             + 1j * rng.normal(size=(norb, norb)))
-        pos = len(delta_r)
-        delta_r.append((i, 0, 0))
-        v_bond.append(v)
-        neg = len(delta_r)
-        delta_r.append((-i, 0, 0))
-        v_bond.append(v.conj().T)
-        reverse.append(neg)
-        reverse.append(pos)
-    return bc.ResolvedInteractionSet(
-        delta_r=tuple(delta_r), v_bond=tuple(v_bond),
-        reverse=tuple(reverse), n_channels=len(delta_r))
-
-
-class TestPreflightVertexBudget(_ApproxTestCase):
-
-    def test_preflight_vertex_budget_covers_the_measured_bare_bond_vertices_peak(self):
-        """The preflight must not UNDERCOUNT ``bare_bond_vertices``'s real
-        high-water mark either: the non-q-resolved ``ND x ND`` temporaries it
-        keeps alive (``P``, ``D``, ``Dh``, ``Id``, ``Q_s``, ``Q_t``, ``B_s``,
-        ``B_t``, ``Vpp_s``, ``Vpp_t``) were previously omitted from
-        ``_bond_memory_estimate`` entirely, so at ``N_q = 1`` with a large ``B``
-        a run the preflight waved through could still OOM building the vertices.
-
-        ``bare_bond_vertices`` itself also allocates the q-resolved ``S_bond``/
-        ``C_bond`` outputs (at ``N_q = 1`` the same per-array size as an ``ND x
-        ND`` temporary); those two are already budgeted elsewhere as 2 of the 9
-        ``sc._BOND_N_Q_ARRAYS`` (``est["chi_bar_bytes"]`` is the per-array size),
-        so the budget a measurement of THIS call alone must fit into is
-        ``vertex_bytes + 2 * chi_bar_bytes`` -- mirroring how the ``bond_bubble``
-        peak test above adds ``chi_bar_bytes`` to ``bubble_bytes`` for the same
-        reason.
-
-        Mirrors ``test_preflight_bubble_budget_covers_the_measured_bond_bubble_peak``
-        for the vertex-construction half of the pipeline.
+        Measures the whole ``sc._build_bond_operator`` on a chain of ``B = 81``
+        channels (40 shells along x) on a 4x4 mesh with a tiny frequency grid,
+        so that the q-resolved ``ND x ND`` arrays dominate every other buffer;
+        the Green carrier is built outside the measured region and budgeted
+        separately (``carrier_bytes``).
         """
-        from hwave.solver import bond_channels as bc
+        norb, Nx, Ny, Nz, nmat, beta = 1, 4, 4, 1, 4, 2.0
+        n_shells = 40
+        interactions = {
+            "CoulombIntra": {((0, 0, 0), (0, 0)): 1.0},
+            "CoulombInter": {((s * i, 0, 0), (0, 0)): 0.01 / i
+                             for i in range(1, n_shells + 1) for s in (1, -1)}}
+        topo, view, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, norb, None)
+        self.assertEqual(view.n_channels, 2 * n_shells + 1)
+        kx = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
+        ky = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
+        kz = np.zeros(1)
+        hr = {((1, 0, 0), (0, 0)): -1.0, ((-1, 0, 0), (0, 0)): -1.0,
+              ((0, 1, 0), (0, 0)): -1.0, ((0, -1, 0), (0, 0)): -1.0}
+        ev, evec = sc._calc_eigenvalues(
+            sc._build_hamiltonian_k(kx, ky, kz, hr, norb))
+        carrier = sc._build_bond_green(ev, evec, 0.0, beta, nmat, 0.0, None)
 
-        norb = 1
-        Nx, Ny, Nz = 1, 1, 1
-        nmat = 4  # unused by bare_bond_vertices; only shapes _bond_memory_estimate
-        B = 1001  # large enough that fixed per-array overhead is negligible
+        def _run():
+            return sc._build_bond_operator(
+                topo, split, carrier, norb, kx, ky, kz, beta, "singlet",
+                bond_max_shells=None, bond_memory_cap_gb=8.0, g2_tail=False,
+                precondition_opts={"dense_limit": 0})
 
-        bond_set = _large_B_bond_set(norb, B)
-        nd = norb * norb
-        S0_q = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-        C0_q = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-        S0_q[0, 0, 0] = 1.0
-        C0_q[0, 0, 0] = 0.5
-
-        bc.bare_bond_vertices(bond_set, S0_q, C0_q, norb)  # warm up
-
-        peak = _measure_peak_bytes(
-            lambda: bc.bare_bond_vertices(bond_set, S0_q, C0_q, norb))
+        _run()     # warm up numpy's FFT caches
+        peak = _measure_peak_bytes(_run)
         if peak is None:
             self.skipTest("tracemalloc does not track numpy array data here")
 
-        # tail_on is irrelevant here (bare_bond_vertices never touches the
-        # Green carrier); False keeps the estimate call deterministic.
-        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+        est = sc._bond_memory_estimate(norb, view, Nx, Ny, Nz, nmat,
                                        tail_on=False)
-        budget = est["vertex_bytes"] + 2 * est["chi_bar_bytes"]
-        # tracemalloc/numpy also attribute a small, ND-independent amount of
-        # measurement-harness bookkeeping (observed up to ~70 KB here, e.g. from
-        # ``_measure_peak_bytes``'s own probe allocation and numpy's internal
-        # ufunc buffer cache) that is not one of the counted ND x ND buffers; a
-        # fixed 1 MB slack comfortably absorbs that noise without masking an
-        # actual missing multi-MB buffer.
-        overhead_slack = 1 << 20  # 1 MB
+        budget = est["q_bytes"] + est["bubble_bytes"]
+        # a small, ND-independent amount of harness / ufunc bookkeeping (see
+        # the bubble tests above) is not one of the counted arrays
+        overhead_slack = 1 << 18  # 256 KB, against a ~13 MB budget
         self.assertGreaterEqual(budget + overhead_slack, peak, (
-            "the preflight budgets {:.3f} MB for bare_bond_vertices's non-q-"
-            "resolved ND x ND temporaries (plus its S_bond/C_bond outputs) but "
-            "the measured peak is {:.3f} MB -- _bond_memory_estimate has "
-            "desynced from bare_bond_vertices".format(
+            "the preflight budgets {:.3f} MB for the q-resolved arrays of the "
+            "operator assembly but the measured peak is {:.3f} MB -- "
+            "_BOND_N_Q_ARRAYS has desynced from _build_bond_operator".format(
                 budget / 1e6, peak / 1e6)))
-        # ... and it must not be wildly conservative either, or the cap becomes
-        # useless in the other direction.
-        self.assertLessEqual(budget, 3.0 * peak)
+        # ... and it must not be wildly conservative either
+        self.assertLessEqual(budget, 2.0 * peak)
 
 
 # ---------------------------------------------------------------------------
@@ -775,11 +747,10 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
 
     def test_m0_blocks_single_band_match_simple_path(self):
-        """Single band: the Case-2-corrected m=0 blocks must be S=U and
-        C=U+2V(q) -- exactly the ``_compute_vertices_simple`` Ws=-U/Wc=U+2V pair
-        (spec S4.5 "Concretely, from the derivation")."""
-        from hwave.solver.bond_channels import resolve_interactions
-
+        """Single band: the channel-0 block of the bond vertices must be S=U
+        and C=U+2V(q) -- exactly the ``_compute_vertices_simple`` Ws=-U/Wc=U+2V
+        pair (spec S4.5 "Concretely, from the derivation") -- and every bond
+        channel carries the Fock crossing +V (S) / -V (C) on its diagonal."""
         norb, Nx, Ny, Nz = 1, 4, 4, 1
         U, V = 4.0, 0.7
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
@@ -792,20 +763,22 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
                               ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
         }
         inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
-        bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
-        S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
-                                          kx, ky, kz)
-        self.assertEqual(S0.shape, (Nx, Ny, Nz, 1, 1))
-        Vq = inter_k["CoulombInter"][0, 0]
-        np.testing.assert_allclose(S0[:, :, :, 0, 0], U, atol=1e-13)
-        np.testing.assert_allclose(C0[:, :, :, 0, 0], U + 2.0 * Vq, atol=1e-13)
+        topo, view, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, norb, None)
+        S, C = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+        self.assertEqual(S.shape, (Nx * Ny * Nz, 5, 5))
+        Vq = inter_k["CoulombInter"][0, 0].reshape(-1)
+        np.testing.assert_allclose(S[:, 0, 0], U, atol=1e-13)
+        np.testing.assert_allclose(C[:, 0, 0], U + 2.0 * Vq, atol=1e-13)
+        for m in range(1, view.n_channels):
+            np.testing.assert_allclose(S[:, m, m], V, atol=1e-13)
+            np.testing.assert_allclose(C[:, m, m], -V, atol=1e-13)
 
     def test_case2_correction_keeps_only_rzero_fock(self):
         """S4.3 star (multi-orbital, exercised below the top-level norb guard):
-        the m=0 Fock (ab,ab) element carries ONLY V_ab(R=0), while the charge
-        (aa,bb) Hartree keeps the full 2 V_ab(q)."""
-        from hwave.solver.bond_channels import resolve_interactions
-
+        the channel-0 Fock (ab,ab) element carries ONLY V_ab(R=0), while the
+        charge (aa,bb) Hartree keeps the full 2 V_ab(q); the R != 0 Fock sits
+        on the bond diagonal."""
         norb, Nx, Ny, Nz = 2, 4, 1, 1
         Uprime, Vbond = 1.0, 0.25
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
@@ -820,28 +793,31 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
             },
         }
         inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
-        bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
-        S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
-                                          kx, ky, kz)
+        topo, view, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, norb, None)
+        S, C = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+        nd = norb * norb
 
         i01 = 0 * norb + 1                     # (l1,l2) = (0,1)
         # Fock: ONLY the R=0 component (U'), NOT the full V_01(q).
-        np.testing.assert_allclose(S0[:, :, :, i01, i01], Uprime, atol=1e-13)
-        np.testing.assert_allclose(C0[:, :, :, i01, i01], -Uprime, atol=1e-13)
+        np.testing.assert_allclose(S[:, i01, i01], Uprime, atol=1e-13)
+        np.testing.assert_allclose(C[:, i01, i01], -Uprime, atol=1e-13)
         # and it is genuinely a correction: the un-corrected value is q-dependent
-        V01_q = inter_k["CoulombInter"][0, 1]
+        V01_q = inter_k["CoulombInter"][0, 1].reshape(-1)
         self.assertFalse(np.allclose(V01_q, Uprime))
         # Hartree (aa,bb) keeps the full q-dependent 2 V_ab(q).
         i00, i11 = 0, norb + 1
-        np.testing.assert_allclose(C0[:, :, :, i00, i11], 2.0 * V01_q, atol=1e-13)
+        np.testing.assert_allclose(C[:, i00, i11], 2.0 * V01_q, atol=1e-13)
+        # the R != 0 Fock: +V (S) on the two mirrored bond slots of the bond
+        diag = np.array([S[0, I, I].real for I in range(nd, view.n_channels * nd)])
+        self.assertEqual(sorted(np.round(diag, 13))[-2:], [Vbond, Vbond])
+        self.assertAlmostEqual(diag.sum(), 2 * Vbond, places=13)
 
     def test_bond_kernel_reduces_to_standard_kernel_when_V_is_zero(self):
         """S7.4: with a DECLARED but zero NN topology (B=5) the whole bond path
-        (m=0 blocks -> dressing -> two-part operator) must reproduce the standard
+        (vertices -> dressing -> two-part operator) must reproduce the standard
         single-band kernel exactly, when both are fed the SAME bubble."""
-        from hwave.solver.bond_channels import (resolve_interactions, bond_bubble,
-                                                bare_bond_vertices, dress_bond,
-                                                make_bond_kernel)
+        from hwave.solver.bond_channels import bond_bubble, dress_bond
 
         norb, Nx, Ny, Nz, nmat = 1, 4, 4, 1, 64
         beta = 2.0
@@ -863,17 +839,18 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         green = sc._build_bond_green(
             evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
 
-        bond_set = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
+        topo, bond_set, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, norb, None)
         self.assertEqual(bond_set.n_channels, 5)  # declared topology survives V=0
 
         chi_bar = bond_bubble(green, bond_set, beta)
-        S0, C0 = sc._build_bond_m0_blocks(bond_set, interactions, inter_k, norb,
-                                          kx, ky, kz)
-        S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0, C0, norb)
+        S_bond, C_bond = (W.reshape(chi_bar.shape) for W in
+                          sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
         chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
-        A_bond, n_bond = make_bond_kernel(chi_s, chi_c, S_bond, C_bond,
-                                          Vpp_s, Vpp_t, green, bond_set,
-                                          "singlet", beta, g2_tail=True)
+        A_bond = sc._bond_kernel_parts(
+            S_bond, C_bond, [("spin", chi_s), ("charge", chi_c)], green,
+            bond_set, norb, (Nx, Ny, Nz), beta, "singlet", g2_tail=True)[0]
+        n_bond = A_bond.shape[0]
 
         # standard path fed the SAME bubble (the m=m'=0 block of chi_bar)
         chi0q = chi_bar[:, :, :, 0, 0].transpose(0, 1, 2).reshape(
@@ -985,6 +962,187 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
 
 
 # ---------------------------------------------------------------------------
+# every off-site type the bond channels carry is bond-resolved (issue #239)
+# ---------------------------------------------------------------------------
+
+class TestOffsiteTypesAreBondResolved(_ApproxTestCase):
+    """The static bond path resolves its topology and vertices with the same
+    modules as the FLEX bond gate, so an off-site Hund, Ising, Exchange or
+    PairHop row is a bond channel too (its Fock crossing on the bond
+    diagonal, its Hartree -- for the density types -- in the channel-0
+    density slot), not collapsed into the local block."""
+
+    def setUp(self):
+        self.tmp_path = tempfile.mkdtemp(prefix="hwave_sc_bond_")
+        self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
+
+    def _input(self, outdir, V, extra):
+        ci = os.path.join(self.tmp_path, "ci.dat")
+        _write_w90(ci, 1, _nn_entries(V))
+        inp = _base_input(outdir, coulomb_inter=ci, bond_channels=True,
+                          solver_mode="eigenvalue", num_eigenvalues=4)
+        for itype, value in extra.items():
+            path = os.path.join(self.tmp_path, itype + ".dat")
+            _write_w90(path, 1, _nn_entries(value))
+            inp["file"]["input"]["interaction"][itype] = path
+        return inp
+
+    def test_vertices_equal_the_flex_gate_construction(self):
+        from hwave.solver import bond_channels as bc
+        from hwave.solver.offsite import sc_matrices_from_split
+        interactions = {
+            "CoulombIntra": {((0, 0, 0), (0, 0)): 2.0},
+            "CoulombInter": {(ir, (0, 0)): 0.5 for ir, _, _ in _nn_entries(0.0)},
+            "Exchange": {(ir, (0, 0)): 0.3 for ir, _, _ in _nn_entries(0.0)},
+            "Ising": {(ir, (0, 0)): 0.2 for ir, _, _ in _nn_entries(0.0)},
+        }
+        topo, view, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, 1, None)
+        self.assertEqual(list(topo.coeffs),
+                         ["CoulombInter", "Hund", "Ising", "Exchange"])
+        self.assertEqual(view.n_channels, 5)
+        S, C = sc._build_bond_vertices(topo, split, 1, (4, 4, 1))
+        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                        1, 4, 4, 1)
+        np.testing.assert_array_equal(
+            S, bc.build_sc_bond_channel(topo, S0.reshape(16, 1, 1), "S",
+                                        spatial_shape=(4, 4, 1)))
+        np.testing.assert_array_equal(
+            C, bc.build_sc_bond_channel(topo, C0.reshape(16, 1, 1), "C",
+                                        spatial_shape=(4, 4, 1)))
+        # the off-site Exchange and Ising reach the bond diagonal: it differs
+        # from the CoulombInter-only one
+        topo_v, _, split_v = sc._resolve_bond_topology(
+            {k: interactions[k] for k in ("CoulombIntra", "CoulombInter")},
+            {"rvec": np.eye(3)}, 1, None)
+        S_v, C_v = sc._build_bond_vertices(topo_v, split_v, 1, (4, 4, 1))
+        self.assertGreater(np.abs(S[:, 1:, 1:] - S_v[:, 1:, 1:]).max(), 0.1)
+        self.assertGreater(np.abs(C - C_v).max(), 0.1)
+
+    def test_offsite_types_change_the_result_and_zero_values_do_not(self):
+        lam = {}
+        for label, extra in (("none", {}),
+                             ("zero", {"Exchange": 0.0, "Hund": 0.0}),
+                             ("exchange", {"Exchange": 0.3}),
+                             ("hund", {"Hund": 0.3})):
+            out = os.path.join(self.tmp_path, label)
+            sc.calc_eliashberg(self._input(out, 0.5, extra))
+            lam[label] = _leading_eigenvalue(out)
+        # declared-zero rows add channels of no content: same eigenvalue
+        self.assertApprox(lam["zero"], lam["none"], rel=1e-10)
+        self.assertGreater(abs(lam["exchange"] - lam["none"]), 1e-3)
+        self.assertGreater(abs(lam["hund"] - lam["none"]), 1e-3)
+
+    def test_non_su2_bonds_are_warned_about_and_nothing_changes(self):
+        """A bond whose spin part breaks spin-rotation symmetry
+        (``J_Exchange != J_Hund - 2 J_Ising``) is named in ONE warning: the
+        kernel's fluctuation part assumes spin-rotation invariance. The run
+        is not refused and its number does not depend on the warning; an
+        SU(2)-invariant combination and CoulombInter alone are silent."""
+        def su2_warnings(extra, label):
+            out = os.path.join(self.tmp_path, label)
+            with _caplog(logging.WARNING, "hwave_sc") as records:
+                sc.calc_eliashberg(self._input(out, 0.5, extra))
+            return ([r.message for r in records if "SU(2)" in r.message],
+                    _leading_eigenvalue(out))
+
+        for label, extra in (("ising", {"Ising": 0.2}), ("hund", {"Hund": 0.2})):
+            msgs, lam = su2_warnings(extra, label)
+            self.assertEqual(len(msgs), 1, (label, msgs))
+            self.assertIn("bond_channels=true", msgs[0])
+            # the full expected set: both members of the x and of the y
+            # bond-reversal orbit
+            self.assertIn("on 4 bond row(s)", msgs[0])
+            for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+                self.assertIn("R={} orbitals=(1, 1)".format(R), msgs[0])
+            self.assertIn("#88", msgs[0])
+            self.assertTrue(np.isfinite(lam))
+        for label, extra in (("su2", {"Hund": 0.3, "Exchange": 0.1, "Ising": 0.1}),
+                             ("v_only", {})):
+            msgs, _ = su2_warnings(extra, label)
+            self.assertEqual(msgs, [], label)
+
+    def test_exchange_and_pairhop_bare_pairing_gap_is_warned_about(self):
+        """An off-site Exchange or PairHop row: ONE warning that its first-order
+        (bare) singlet pairing is not yet included (only its fluctuation
+        contribution enters). The run completes; CoulombInter alone is
+        silent."""
+        def gap_warnings(extra, label):
+            out = os.path.join(self.tmp_path, label)
+            with _caplog(logging.WARNING, "hwave_sc") as records:
+                sc.calc_eliashberg(self._input(out, 0.5, extra))
+            self.assertTrue(np.isfinite(_leading_eigenvalue(out)))
+            return [r.message for r in records if "first-order (bare) singlet" in r.message]
+
+        for itype in ("Exchange", "PairHop"):
+            msgs = gap_warnings({itype: 0.2}, itype)
+            self.assertEqual(len(msgs), 1, (itype, msgs))
+            self.assertIn("off-site {} declared".format(itype), msgs[0])
+            self.assertIn("#239", msgs[0])
+        self.assertEqual(gap_warnings({}, "v_only"), [])
+
+    def test_complex_offsite_pairhop_is_refused_before_any_dressing(self):
+        from unittest import mock
+        from hwave.solver import bond_channels as bc
+        ph = os.path.join(self.tmp_path, "ph.dat")
+        _write_w90(ph, 1, [((1, 0, 0), (0, 0), 0.3 + 0.1j),
+                           ((-1, 0, 0), (0, 0), 0.3 - 0.1j)])
+        out = os.path.join(self.tmp_path, "out")
+        inp = self._input(out, 0.5, {})
+        inp["file"]["input"]["interaction"]["PairHop"] = ph
+        with mock.patch.object(bc, "dress_batch", side_effect=AssertionError("dressed")):
+            with self.assertRaisesRegex(ValueError, r"REAL.*PairHop"):
+                sc.calc_eliashberg(inp)
+
+    def test_offsite_hund_alone_selects_the_bond_path(self):
+        """An off-site Hund row without any CoulombInter declaration is a bond
+        channel of its own: the run is accepted."""
+        hund = os.path.join(self.tmp_path, "hund.dat")
+        _write_w90(hund, 1, _nn_entries(0.2))
+        out = os.path.join(self.tmp_path, "out")
+        inp = _base_input(out, bond_channels=True, solver_mode="eigenvalue",
+                          num_eigenvalues=2)
+        inp["file"]["input"]["interaction"]["Hund"] = hund
+        sc.calc_eliashberg(inp)
+        text = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("bond_n_channels=5", text.replace(" ", ""))
+
+    def test_complex_offsite_coefficient_of_another_type_is_refused(self):
+        ex = os.path.join(self.tmp_path, "ex.dat")
+        _write_w90(ex, 1, [((1, 0, 0), (0, 0), 0.3 + 0.1j),
+                           ((-1, 0, 0), (0, 0), 0.3 - 0.1j)])
+        out = os.path.join(self.tmp_path, "out")
+        inp = self._input(out, 0.5, {})
+        inp["file"]["input"]["interaction"]["Exchange"] = ex
+        with self.assertRaisesRegex(ValueError, r"REAL.*Exchange"):
+            sc.calc_eliashberg(inp)
+
+    def test_bond_max_shells_refuses_to_drop_a_declared_nonzero_shell(self):
+        """``bond_max_shells`` keeps that many off-site shells; a cutoff that
+        would drop a declared NONZERO coefficient is refused (it may only cut
+        shells whose declared coefficients are all zero)."""
+        ci = os.path.join(self.tmp_path, "ci2.dat")
+        _write_w90(ci, 1, _nn_entries(0.5) + [
+            ((1, 1, 0), (0, 0), 0.1), ((-1, -1, 0), (0, 0), 0.1),
+            ((1, -1, 0), (0, 0), 0.1), ((-1, 1, 0), (0, 0), 0.1)])
+        out = os.path.join(self.tmp_path, "out")
+        with self.assertRaisesRegex(ValueError, r"max_shells=1"):
+            sc.calc_eliashberg(_base_input(out, coulomb_inter=ci,
+                                           bond_channels=True, bond_max_shells=1))
+        # a declared-zero second shell may be cut
+        ci0 = os.path.join(self.tmp_path, "ci3.dat")
+        _write_w90(ci0, 1, _nn_entries(0.5) + [
+            ((1, 1, 0), (0, 0), 0.0), ((-1, -1, 0), (0, 0), 0.0),
+            ((1, -1, 0), (0, 0), 0.0), ((-1, 1, 0), (0, 0), 0.0)])
+        sc.calc_eliashberg(_base_input(out, coulomb_inter=ci0,
+                                       bond_channels=True, bond_max_shells=1,
+                                       solver_mode="eigenvalue",
+                                       num_eigenvalues=2))
+        text = open(os.path.join(out, "eigenvalue.dat")).read().replace(" ", "")
+        self.assertIn("bond_n_channels=5", text)
+
+
+# ---------------------------------------------------------------------------
 # Task 7 -- S4.5 lambda attribution on the symmetrized kernel, the runtime
 # Hermiticity/positivity preconditions, the odd f-wave seed, and the S7.7
 # invariant-subspace tracker.
@@ -994,34 +1152,31 @@ def _analytic_pp_fixture():
     """Spec S7.9: single-band 1D 4-point grid, U=4, V(R)=1, chi_s=chi_c=0.
 
     green == 1 with nmat=1 and beta=1 gives G2(k) = 1 for every k, so the pair
-    weight is w = 1 and the (T/N) G G fold is 1/4.  Returns everything
-    make_bond_kernel_parts needs plus the odd gap Delta = sin k.
+    weight is w = 1 and the (T/N) G G fold is 1/4.  Returns the bond vertices
+    and topology the static path builds for this model (see ``_parts``), plus
+    the odd gap Delta = sin k.
     """
-    from hwave.solver.bond_channels import (resolve_interactions,
-                                            bare_bond_vertices)
     norb, Nx, Ny, Nz, nmat = 1, 4, 1, 1, 1
     beta = 1.0
     green = np.ones((norb, norb, Nx, Ny, Nz, nmat), dtype=complex)
-    ci = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}
-    bset = resolve_interactions(ci, np.eye(3), norb=norb)
-    U = 4.0
-    S0 = np.full((1, 1, 1, 1, 1), U, dtype=complex)
-    C0 = np.full((1, 1, 1, 1, 1), 8.0, dtype=complex)     # U + 2 V(q=0)
-    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bset, S0, C0, norb)
-    ND = S_bond.shape[-1]
-    chi_zero = np.zeros((Nx, Ny, Nz, ND, ND), dtype=complex)
+    interactions = {"CoulombIntra": {((0, 0, 0), (0, 0)): 4.0},
+                    "CoulombInter": {((1, 0, 0), (0, 0)): 1.0,
+                                     ((-1, 0, 0), (0, 0)): 1.0}}
+    topo, view, split = sc._resolve_bond_topology(
+        interactions, {"rvec": np.eye(3)}, norb, None)
+    S_bond, C_bond = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+    chi_zero = np.zeros_like(S_bond)
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     phi = np.sin(kx).reshape(norb, norb, Nx, Ny, Nz).astype(complex)
-    return dict(green=green, beta=beta, bond_set=bset, S_bond=S_bond,
-                C_bond=C_bond, Vpp_s=Vpp_s, Vpp_t=Vpp_t, chi=chi_zero,
+    return dict(green=green, beta=beta, bond_set=view, S_bond=S_bond,
+                C_bond=C_bond, chi_s=chi_zero, chi_c=chi_zero,
                 phi=phi, norb=norb, shape=(Nx, Ny, Nz))
 
 
 def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
     """A physical (centrosymmetric, spin-degenerate) single-band bond setup:
     real >= 0 pair weight and a Hermitian symmetrized kernel."""
-    from hwave.solver.bond_channels import (resolve_interactions, bond_bubble,
-                                            bare_bond_vertices, dress_bond)
+    from hwave.solver.bond_channels import bond_bubble, dress_bond
     norb = 1
     kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
     ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
@@ -1032,23 +1187,32 @@ def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
                          [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
                           ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
     }
-    inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
     hr = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
           ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
     eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
     evals, evecs = sc._calc_eigenvalues(eps)
     green = sc._build_bond_green(
         evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
-    bset = resolve_interactions(interactions["CoulombInter"], np.eye(3), norb)
-    chi_bar = bond_bubble(green, bset, beta)
-    S0, C0 = sc._build_bond_m0_blocks(bset, interactions, inter_k, norb,
-                                      kx, ky, kz)
-    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bset, S0, C0, norb)
+    topo, view, split = sc._resolve_bond_topology(
+        interactions, {"rvec": np.eye(3)}, norb, None)
+    chi_bar = bond_bubble(green, view, beta)
+    S_bond, C_bond = (W.reshape(chi_bar.shape) for W in
+                      sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
     chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
-    return dict(green=green, beta=beta, bond_set=bset, S_bond=S_bond,
-                C_bond=C_bond, Vpp_s=Vpp_s, Vpp_t=Vpp_t, chi_s=chi_s,
-                chi_c=chi_c, norb=norb, shape=(Nx, Ny, Nz),
-                kgrid=(kx, ky, kz))
+    return dict(green=green, beta=beta, bond_set=view, S_bond=S_bond,
+                C_bond=C_bond, chi_s=chi_s, chi_c=chi_c, norb=norb,
+                shape=(Nx, Ny, Nz), kgrid=(kx, ky, kz))
+
+
+def _parts(f, pairing_type, chi_s=None, chi_c=None):
+    """``(A, A_fl, A_pp, vec_size)`` of the static bond kernel
+    (``sc._bond_kernel_parts``) on a fixture of this module."""
+    return sc._bond_kernel_parts(
+        f["S_bond"], f["C_bond"],
+        [("spin", f["chi_s"] if chi_s is None else chi_s),
+         ("charge", f["chi_c"] if chi_c is None else chi_c)],
+        f["green"], f["bond_set"], f["norb"], f["shape"], f["beta"],
+        pairing_type)
 
 
 def _gap_parity_residual(sigma):
@@ -1076,9 +1240,7 @@ class TestLambdaAttributionAndOddSeed(_ApproxTestCase):
         from hwave.solver import bond_channels as bc
 
         f = _analytic_pp_fixture()
-        A, A_fl, A_pp, vec_size = bc.make_bond_kernel_parts(
-            f["chi"], f["chi"], f["S_bond"], f["C_bond"], f["Vpp_s"], f["Vpp_t"],
-            f["green"], f["bond_set"], "triplet", f["beta"])
+        A, A_fl, A_pp, vec_size = _parts(f, "triplet")
         W = bc.pair_weight(f["green"], f["beta"])
 
         v = f["phi"].ravel()
@@ -1104,9 +1266,7 @@ class TestLambdaAttributionAndOddSeed(_ApproxTestCase):
         from scipy.sparse.linalg import eigs
 
         f = _physical_single_band(V=1.0)
-        A, A_fl, A_pp, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+        A, A_fl, A_pp, n = _parts(f, "singlet")
         W = bc.pair_weight(f["green"], f["beta"])
 
         vals, vecs = eigs(A, k=1, which="LR", maxiter=5000, tol=1e-12)
@@ -1207,9 +1367,7 @@ class TestHermitianPreconditions(_ApproxTestCase):
         from hwave.solver import bond_channels as bc
 
         f = _physical_single_band(V=1.0)
-        A, _, _, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+        A, _, _, n = _parts(f, "singlet")
         W = bc.pair_weight(f["green"], f["beta"])
         diag = bc.check_hermitian_preconditions(A, W)
         self.assertGreater(diag["weight_min_eigenvalue"], 0.0)
@@ -1260,9 +1418,7 @@ class TestHermitianPreconditions(_ApproxTestCase):
         from hwave.solver import bond_channels as bc
 
         f = _physical_single_band(V=1.0)
-        A, _, _, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "singlet", f["beta"])
+        A, _, _, n = _parts(f, "singlet")
         W = bc.pair_weight(f["green"], f["beta"])
         diag = bc.check_hermitian_preconditions(A, W, dense_limit=0)
         self.assertEqual(diag["method"], "probe")
@@ -1293,7 +1449,7 @@ class TestHermitianPreconditions(_ApproxTestCase):
         w[n - 1] = 1.0e-6                     # the badly-conditioned index
         gamma = np.eye(n, dtype=complex)
         gamma[n - 1, 0] += 1.0j               # a NON-Hermitian vertex entry
-        # the kernel always factorizes as K = -Gamma W (make_bond_kernel_parts)
+        # the kernel always factorizes as K = -Gamma W (sc._bond_kernel_parts)
         K = -gamma * w[np.newaxis, :]
         op = LinearOperator((n, n), matvec=lambda v: K @ v, dtype=complex)
 
@@ -1371,9 +1527,7 @@ class TestHermitianPreconditions(_ApproxTestCase):
         from hwave.solver import bond_channels as bc
 
         f = _physical_single_band(V=1.0)
-        A, _, _, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+        A, _, _, n = _parts(f, "triplet")
         W = bc.pair_weight(f["green"], f["beta"])
         diag = bc.check_hermitian_preconditions(A, W)
         self.assertGreater(diag["weight_min_eigenvalue"], 0.0)
@@ -1386,9 +1540,7 @@ class TestHermitianPreconditions(_ApproxTestCase):
         from hwave.solver import bond_channels as bc
 
         f = _physical_single_band(V=1.0)
-        A, A_fl, A_pp, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+        A, A_fl, A_pp, n = _parts(f, "triplet")
         W = bc.pair_weight(f["green"], f["beta"])
 
         diag = bc.check_hermitian_preconditions(A, W,
@@ -1614,31 +1766,26 @@ class TestTrackSubspace(_ApproxTestCase):
 class TestKernelPartsAndMetricGuards(_ApproxTestCase):
 
     def test_kernel_parts_sum_to_the_full_operator(self):
-        """K = K^fl + K^pp as an OPERATOR identity (not just on the eigenvector),
-        and ``make_bond_kernel(part=...)`` selects the same pieces."""
-        from hwave.solver import bond_channels as bc
-
+        """K = K^fl + K^pp as an OPERATOR identity (not just on the
+        eigenvector), on vectors of no definite parity; the bare part vanishes
+        on the opposite parity sector (it acts on the channel's pair
+        amplitude), the fluctuation part does not."""
         f = _physical_single_band(V=0.7)
-        args = (f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-                f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
-        A, A_fl, A_pp, n = bc.make_bond_kernel_parts(*args)
-        A_only, n2 = bc.make_bond_kernel(*args)
-        A_fl2, _ = bc.make_bond_kernel(*args, part="fluctuation")
-        A_pp2, _ = bc.make_bond_kernel(*args, part="instantaneous")
-        self.assertEqual(n, n2)
+        A, A_fl, A_pp, n = _parts(f, "triplet")
 
         rng = np.random.default_rng(19)
         for _ in range(3):
             v = rng.normal(size=n) + 1j * rng.normal(size=n)
             full = A.matvec(v)
-            np.testing.assert_allclose(full, A_only.matvec(v), atol=1e-12)
             np.testing.assert_allclose(A_fl.matvec(v) + A_pp.matvec(v), full,
                                        atol=1e-12)
-            np.testing.assert_allclose(A_fl2.matvec(v), A_fl.matvec(v), atol=1e-12)
-            np.testing.assert_allclose(A_pp2.matvec(v), A_pp.matvec(v), atol=1e-12)
+            even = sc._project_gap_parity(v.reshape(1, 1, *f["shape"]),
+                                          "singlet").ravel()
+            np.testing.assert_allclose(A_pp.matvec(even), 0.0, atol=1e-12)
+            self.assertGreater(np.linalg.norm(A_fl.matvec(even)), 1e-6)
 
-        with self.assertRaisesRegex(ValueError, r"(?i)unknown part"):
-            bc.make_bond_kernel(*args, part="nonsense")
+        with self.assertRaisesRegex(ValueError, r"(?i)pairing_type"):
+            _parts(f, "nonsense")
 
     def test_attribute_lambda_rejects_a_null_metric_vector(self):
         from hwave.solver import bond_channels as bc
@@ -1947,9 +2094,7 @@ def _physical_tracked_records():
     weight = seed = basis = None
     for V in (0.0, 0.5):
         f = _physical_single_band(V=V)
-        A, _, _, n = bc.make_bond_kernel_parts(
-            f["chi_s"], f["chi_c"], f["S_bond"], f["C_bond"], f["Vpp_s"],
-            f["Vpp_t"], f["green"], f["bond_set"], "triplet", f["beta"])
+        A, _, _, n = _parts(f, "triplet")
         v0 = np.random.default_rng(_PHYS_TRACK_V0_SEED).standard_normal(n)
         vals, vecs = eigs(A, k=_PHYS_TRACK_NEV, which="LR", maxiter=20000,
                           tol=0, v0=v0)

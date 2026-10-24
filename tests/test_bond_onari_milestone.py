@@ -398,9 +398,8 @@ def _bond_point(L, V, declare_inter=True):
         return _POINT_CACHE[key]
     kx, ky, kz = _kgrid(L)
     it = _interactions(V, declare_inter)
-    inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-    bond_set = bc.resolve_interactions(it.get("CoulombInter", {}),
-                                       np.eye(3), 1)
+    topo, bond_set, split = sc._resolve_bond_topology(
+        it, {"rvec": np.eye(3)}, 1, None)
     green = _load_green(L, V)
 
     # This fixture green is an externally supplied, self-consistent FLEX
@@ -416,15 +415,14 @@ def _bond_point(L, V, declare_inter=True):
         source="external_npz")
 
     (A, vec_size), provenance, attribution = sc._build_bond_operator(
-        bond_set, green_carrier, it, inter_k, {"norb": 1, "rvec": np.eye(3)}, 1,
-        kx, ky, kz, BETA, "triplet",
+        topo, split, green_carrier, 1, kx, ky, kz, BETA, "triplet",
         bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
 
     # the guard quantities (chi_bar / S / C) are diagnostics, rebuilt from the
-    # same public chain the operator used
+    # same chain the operator used
     chi_bar = bc.bond_bubble(green, bond_set, BETA)
-    S0, C0 = sc._build_bond_m0_blocks(bond_set, it, inter_k, 1, kx, ky, kz)
-    S_bond, C_bond, _, _ = bc.bare_bond_vertices(bond_set, S0, C0, 1)
+    S_bond, C_bond = (W.reshape(chi_bar.shape)
+                      for W in sc._build_bond_vertices(topo, split, 1, (L, L, 1)))
 
     evals, vecs = _odd_spectrum(A, vec_size, attribution["weight"], L)
     out = {"evals": evals, "vecs": vecs, "weight": attribution["weight"],
@@ -449,7 +447,7 @@ def _baseline_point(L, V):
     kx, ky, kz = _kgrid(L)
     it = _interactions(V)
     inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-    bond_set = bc.resolve_interactions(it["CoulombInter"], np.eye(3), 1)
+    _, bond_set, _ = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
     green = _load_green(L, V)
     chi_bar = bc.bond_bubble(green, bond_set, BETA)
     chi0q = chi_bar[:, :, :, 0, 0].reshape(1, 1, L, L, 1, 1).copy()
@@ -624,20 +622,22 @@ class TestBondOnariMilestone(ApproxTestCase):
         spin_part, charge_part = [], []
         for V, rec in zip(V_GRID, records):
             it = _interactions(V)
-            inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-            bond_set = bc.resolve_interactions(it["CoulombInter"], np.eye(3), 1)
+            topo, bond_set, split = sc._resolve_bond_topology(
+                it, {"rvec": np.eye(3)}, 1, None)
             green = _load_green(16, V)
             chi_bar = bc.bond_bubble(green, bond_set, BETA)
-            S0, C0 = sc._build_bond_m0_blocks(bond_set, it, inter_k, 1,
-                                              kx, ky, kz)
-            S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0, C0, 1)
+            S_b, C_b = (W.reshape(chi_bar.shape)
+                        for W in sc._build_bond_vertices(topo, split, 1, (16, 16, 1)))
             chi_s, chi_c = bc.dress_bond(chi_bar, S_b, C_b)
             zero = np.zeros_like(chi_s)
-            args = (S_b, C_b, Vpp_s, Vpp_t, green, bond_set, "triplet", BETA)
-            _, fl_all, _, _ = bc.make_bond_kernel_parts(chi_s, chi_c, *args)
-            _, fl_spin, _, _ = bc.make_bond_kernel_parts(chi_s, zero, *args)
-            _, fl_chg, _, _ = bc.make_bond_kernel_parts(zero, chi_c, *args)
-            _, fl_none, _, _ = bc.make_bond_kernel_parts(zero, zero, *args)
+
+            def fl(cs, cc):
+                return sc._bond_kernel_parts(
+                    S_b, C_b, [("spin", cs), ("charge", cc)], green, bond_set, 1,
+                    (16, 16, 1), BETA, "triplet")[1]
+
+            fl_all, fl_spin = fl(chi_s, chi_c), fl(chi_s, zero)
+            fl_chg, fl_none = fl(zero, chi_c), fl(zero, zero)
 
             point = _bond_point(16, V)
             lead = rec["cluster"][int(np.argmax(np.real(rec["eigenvalues"])))]

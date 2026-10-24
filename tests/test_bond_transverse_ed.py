@@ -1027,11 +1027,11 @@ def _w0_q_mesh_flat(q_mesh):
     """``(nvol, 3)`` flattened q array, ``q_d = 2*pi*n_d/N_d`` with
     C-order flattening -- the SAME convention the spec's "Gate W0"
     section fixes ("q runs on the reciprocal mesh... the SAME
-    convention sc._build_bond_m0_blocks' phase uses") and
-    ``bond_channels.make_bond_kernel_parts``'s own bond-phase
-    construction (``PH[m] = exp(1j*(KX*dm[0]+KY*dm[1]+KZ*dm[2]))`` on
-    ``meshgrid(kx, ky, kz, indexing='ij')``, reshaped C-order)
-    already uses."""
+    convention the k-grid of hwave.sc uses") and the bond-phase
+    construction of the bond vertex builders
+    (``exp(1j*(KX*dm[0]+KY*dm[1]+KZ*dm[2]))`` on
+    ``meshgrid(kx, ky, kz, indexing='ij')``, reshaped C-order) already
+    uses."""
     Nx, Ny, Nz = q_mesh
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     ky = 2.0 * np.pi * np.arange(Ny) / Ny
@@ -1115,9 +1115,9 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
        it) FAILED the swapped placement at O(1) (measured 0.12 against
        ``tol=5.6e-4``) and PASSES, at 5.6e-5, the DIRECT placement above
        -- the SAME rule the ALREADY ED-validated longitudinal
-       ``bare_bond_vertices`` Fock-diagonal insertion uses
+       Fock-diagonal insertion of ``build_sc_bond_channel`` uses
        (``bond_channels.py``, ``I = m*nd + l1*norb + l2`` gets
-       ``Re(v_bond[m][l1,l2])`` directly, no channel swap; #151 Finding
+       ``Re(coeffs[m][l1,l2])`` directly, no channel swap; #151 Finding
        1). See ``docs/superpowers/specs/2026-08-15-bond-transverse-
        design.md``, "Cross family", the 2026-08-16 amendment, for the
        full derivation and the coordinator ruling.
@@ -1759,7 +1759,7 @@ class TestW0Granules(unittest.TestCase):
         re-declare the mirror as a second physical Hamiltonian term on
         the ED side -- exactly mirroring how off-site Ising already
         works below (single R declaration, no explicit mirror) and
-        `resolve_interactions` (bond_channels.py) itself: when only ONE
+        `resolve_bond_topology` (bond_channels.py) itself: when only ONE
         direction is declared in a real file, the STORED value at that
         channel is the RAW declared value (unaveraged), never doubled.
         A genuinely complex C has ZERO net physical effect here in
@@ -1872,8 +1872,8 @@ class TestW0Granules(unittest.TestCase):
 # .superpowers/sdd/2026-08-16-bond-transverse-phase-w/task-6-report.md) was
 # adjudicated CONFIRMED: the spec's "Cross family" step 2 is AMENDED (see
 # docs/superpowers/specs/2026-08-15-bond-transverse-design.md) to DIRECT
-# placement (no channel swap, matching the longitudinal bare_bond_vertices
-# rule exactly), and BOTH `bond_channels.W_pm_bond` and this module's own
+# placement (no channel swap, matching the longitudinal Fock-diagonal
+# rule of build_sc_bond_channel exactly), and BOTH `bond_channels.W_pm_bond` and this module's own
 # oracle `w_expected_from_records` (Task 1) were corrected identically. The
 # granule below is the PERMANENT regression pin for that fix.
 #
@@ -2452,8 +2452,9 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
         SAME physical bond, confirming the vertex's target cells were
         placed at the WRONG channel/orbital pair, not that the ED-side
         term builder was wrong. Cross-checked against the ALREADY
-        ED-validated longitudinal ``bare_bond_vertices`` Fock-diagonal rule
-        (``I=(m,l1,l2)`` gets ``Re(v_bond[m][l1,l2])`` DIRECTLY, no
+        ED-validated longitudinal Fock-diagonal rule of
+        ``build_sc_bond_channel`` (``I=(m,l1,l2)`` gets
+        ``Re(coeffs[m][l1,l2])`` DIRECTLY, no
         ``reverse[]`` swap) -- the "direct placement" hypothesis reproduced
         ED to 5.6e-05 (inside tol), confirming the diagnosis. The
         coordinator CONFIRMED this finding and AMENDED the spec (see the
