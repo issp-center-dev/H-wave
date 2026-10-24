@@ -675,6 +675,15 @@ bond 分解頂点によるペアリング固有値
   ソルバーと同じファイル名（``gap_dynamic.npz``\ ・\ ``gap.dat``\ ・
   ``eigenvalue.dat``\ ）で書き出します。
 
+.. note::
+
+   ボンド分解した対形成は、単一軌道模型についてのみ端から端まで検証されて
+   います。\ ``norb > 1``\ では、どちらの経路も計算はそのまま実行されますが、
+   多軌道の結果はまだ検証されていない旨の WARNING をログに出力します
+   （issue #239）。静的な\ ``hwave_sc``\ のボンド経路
+   （\ ``frequency = "static"``\ 、\ :ref:`sc_bond_channels_static`\ ）は
+   ``norb > 1``\ を拒否します。
+
 完全なキー集合は\ :ref:`出力リファレンス
 <subsec:eliashberg_bond_outputs>`\ を、ボンド固有のキーは
 :ref:`設定ファイルリファレンスの eliashberg 節
@@ -1719,7 +1728,7 @@ Tips
      ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
      渡す場合は、FLEX を収束まで実行し、その\ ``green.npz``\ 出力を
      ``[eliashberg] bond_green``\ に指定してください。詳細は
-     :doc:`/rpa/tutorial/sc-index`\ の\ ``bond_green``\ の説明を参照してください。
+     :ref:`sc_bond_channels_static`\ を参照してください。
 
 
 実装の詳細と制限事項

@@ -5,9 +5,9 @@ dressing helper (GitHub issue #181, Tier 3 Phase A).
 matrix verbatim as the channel-0 block and adds, for every off-site
 reversal orbit, the bond-DIAGONAL Fock entries ``w_t * Re v`` at
 ``(m, a, b)`` and ``(reverse[m], b, a)``, ``w_t`` the type's adjudicated
-``cross`` coefficient from ``vertex_table`` (S or C column). Gate G1:
-for CoulombInter it must equal the Eliashberg module's
-``bare_bond_vertices`` to round-off (pinned at 1e-13).
+``cross`` coefficient from ``vertex_table`` (S or C column). For
+CoulombInter the result is pinned against an independent hand-built
+Hartree-plus-bond-Fock reference to round-off (1e-13).
 """
 import unittest
 
@@ -76,6 +76,41 @@ class TestBuildScBondChannel(unittest.TestCase):
         self.assertEqual(np.abs(S[:, mask]).max(), 0.0)
         self.assertEqual(np.abs(C[:, mask]).max(), 0.0)
 
+    def test_pairhop_branch(self):
+        """The PairHop rule: every filed entry ``(m, a, b)`` adds
+        ``J e^{-i q.delta_r[m]}`` at ``(m, a, b) -> (reverse[m], b, a)``, in
+        both channels, and nothing else off channel 0; the result is
+        Hermitian at every q. It is q-dependent, so ``spatial_shape`` is
+        required, and a complex coefficient is refused."""
+        L, norb, J = 5, 2, 0.3
+        nd = norb * norb
+        topo = _topo(_two_sided("PairHop", 1, 0, 1, J), norb,
+                     types=bc._LONGITUDINAL_ACTIVE_TYPES + ("PairHop",))
+        B = topo.delta_r.shape[0]
+        W0 = np.zeros((L, nd, nd), complex)
+        q = 2 * np.pi * np.arange(L) / L
+        expected = np.zeros((L, B * nd, B * nd), complex)
+        arr = np.asarray(topo.coeffs["PairHop"])
+        for m in range(1, B):
+            for a in range(norb):
+                for b in range(norb):
+                    if arr[m, a, b] != 0:
+                        R = int(topo.delta_r[m][0])
+                        expected[:, m * nd + a * norb + b,
+                                 int(topo.reverse[m]) * nd + b * norb + a] += \
+                            arr[m, a, b].real * np.exp(-1j * q * R)
+        self.assertGreater(np.abs(expected).max(), 0.1)          # not vacuous
+        for ch in ("S", "C"):
+            W = bc.build_sc_bond_channel(topo, W0, ch, spatial_shape=(L, 1, 1))
+            np.testing.assert_allclose(W, expected, rtol=0, atol=1e-14, err_msg=ch)
+            np.testing.assert_allclose(W, np.conj(np.swapaxes(W, 1, 2)), atol=1e-14)
+        with self.assertRaisesRegex(ValueError, "spatial_shape"):
+            bc.build_sc_bond_channel(topo, W0, "S")
+        cplx = _topo(_two_sided("PairHop", 1, 0, 1, 0.3 + 0.1j), norb,
+                     types=bc._LONGITUDINAL_ACTIVE_TYPES + ("PairHop",))
+        with self.assertRaisesRegex(ValueError, "PairHop.*complex"):
+            bc.build_sc_bond_channel(cplx, W0, "S", spatial_shape=(L, 1, 1))
+
     def test_same_orbital_bond_writes_two_slots(self):
         topo = _topo(_two_sided("Ising", 1, 0, 0, 0.5), 1)
         S = bc.build_sc_bond_channel(topo, np.zeros((3, 1, 1), complex), "S")
@@ -102,17 +137,19 @@ class TestBuildScBondChannel(unittest.TestCase):
         empty = bc.build_sc_bond_channel(topo, W0, "S", types=())
         self.assertEqual(np.abs(empty).max(), 0.0)         # channel 0 only
 
-    def test_matches_bare_bond_vertices_for_coulombinter(self):
-        """G1: CoulombInter through the new builder equals the Eliashberg
-        objects to round-off (pinned at atol 1e-13) on a norb=1 two-shell
-        topology, on the case-M inter-orbital bond (norb=2) and on a
-        mixed same/inter-orbital declaration. Both channel-0 builders
-        (``_build_bond_m0_blocks`` and the Tier-1 locality split) and
-        both bubbles (``bond_bubble``/``bubble.bond_bubble_static``,
-        whose channel-0 block equals the solver's static ``chi0q`` slice
-        to round-off) share one pair frame."""
-        from hwave.sc import _build_bond_m0_blocks
+    def test_coulombinter_matches_hartree_plus_bond_fock_reference(self):
+        """CoulombInter through the shared builder equals an independent
+        hand-built reference to round-off (atol 1e-13) on a norb=1
+        two-shell topology, on the case-M inter-orbital bond (norb=2) and
+        on a mixed same/inter-orbital declaration: channel 0 carries only
+        the Hartree ``2 V_ab(q)`` in the charge density slot ``(aa, bb)``
+        (``V_ab(q) = sum_R V_ab(R) e^{iq.R}`` over the declared rows; no
+        ``R = 0`` row, so no on-site Fock), and every off-site row
+        ``(R, a, b, v)`` adds ``+Re v`` (S) / ``-Re v`` (C) on the bond
+        diagonal at ``(m, a, b)``, ``m`` the channel of ``-R`` (issue
+        #232)."""
         L = 5
+        q = 2.0 * np.pi * np.arange(L) / L
         for norb, entries in ((1, [(1, 0, 0, 0.7), (2, 0, 0, 0.2)]),
                               (2, [(1, 0, 1, 0.4)]),
                               (2, [(1, 0, 0, 0.3), (1, 0, 1, 0.4), (1, 1, 1, 0.1)])):
@@ -121,17 +158,18 @@ class TestBuildScBondChannel(unittest.TestCase):
                 for (R, a, b, v) in entries:
                     decl[((R, 0, 0), (a, b))] = v
                     decl[((-R, 0, 0), (b, a))] = np.conj(v)
-                bond_set = bc.resolve_interactions(decl, np.eye(3), norb=norb)
-                kx = 2.0 * np.pi * np.arange(L) / L
-                S0q, C0q = _build_bond_m0_blocks(
-                    bond_set, {}, {}, norb, kx, np.array([0.0]), np.array([0.0]))
-                S_ref, C_ref, _, _ = bc.bare_bond_vertices(bond_set, S0q, C0q, norb)
-                S_ref = S_ref[:, 0, 0]
-                C_ref = C_ref[:, 0, 0]
                 S0, C0 = _sc0({"CoulombInter": decl}, norb, L)
                 topo = _topo({"CoulombInter": decl}, norb)
-                self.assertEqual([tuple(r) for r in topo.delta_r],
-                                 [tuple(r) for r in bond_set.delta_r])
+                dr = [tuple(int(x) for x in r) for r in topo.delta_r]
+                nd = norb * norb
+                ND = len(dr) * nd
+                S_ref = np.zeros((L, ND, ND), complex)
+                C_ref = np.zeros((L, ND, ND), complex)
+                for ((R, _, _), (a, b)), v in decl.items():
+                    C_ref[:, a * norb + a, b * norb + b] += 2.0 * v * np.exp(1j * q * R)
+                    I = dr.index((-R, 0, 0)) * nd + a * norb + b
+                    S_ref[:, I, I] += np.real(v)
+                    C_ref[:, I, I] -= np.real(v)
                 S_new, C_new = bc.W_sc_bond(topo, S0, C0)
                 np.testing.assert_allclose(S_new, S_ref, rtol=0, atol=1e-13)
                 np.testing.assert_allclose(C_new, C_ref, rtol=0, atol=1e-13)

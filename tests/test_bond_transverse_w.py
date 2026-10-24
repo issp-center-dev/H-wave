@@ -53,7 +53,6 @@ from hwave.solver import rpa as rpa_mod
 from hwave.solver.bond_channels import (
     TransverseTopology,
     resolve_transverse_topology,
-    resolve_interactions,
     iter_reversal_orbits,
     validate_topology_against_mesh,
     transverse_effective_activity,
@@ -283,7 +282,7 @@ class TestResolveTransverseTopology(ApproxTestCase):
         drs = [tuple(int(x) for x in r) for r in topo.delta_r]
         self.assertEqual(drs[0], (0, 0, 0))
         # shell 1 (length 1) before shell 2 (length 2); within a shell,
-        # lexicographic irvec order (matching resolve_interactions).
+        # lexicographic irvec order (matching resolve_bond_topology).
         self.assertEqual(drs, [(0, 0, 0), (-1, 0, 0), (1, 0, 0),
                                 (-2, 0, 0), (2, 0, 0)])
 
@@ -305,8 +304,7 @@ class TestResolveTransverseTopology(ApproxTestCase):
 
     def test_max_shells_dropping_a_declared_nonzero_shell_raises(self):
         # max_shells=1 dropping a declared |R|=2 shell -> ValueError (the
-        # ambiguity guard, generalizing resolve_interactions's
-        # bond_max_shells=0 case to every truncation depth: dropping
+        # ambiguity guard, applied at every truncation depth: dropping
         # declared content is never silent).
         interactions = {
             "CoulombInter": {
@@ -823,10 +821,10 @@ def _h_from_topology(fx, topo, type_name):
     via `iter_reversal_orbits` (restricted to the off-site domain, per the
     spec's "Construction domain") and `canonical_density_terms`. Every
     off-site orbit contributes `2*Re(coeffs[m][a,b])` on its single
-    Hermitian operator class, matching `bare_bond_vertices`'s own
-    documented "V_ab(R_m) + V_ba(-R_m) == 2*Re(v_bond[m][a,b])" derivation
-    (this module's Finding-1 comment, reproduced structurally for the
-    transverse coeffs)."""
+    Hermitian operator class, matching the documented
+    "V_ab(R_m) + V_ba(-R_m) == 2*Re(coeffs[m][a,b])" derivation of
+    ``bond_channels._close_offsite_hermitian`` (Finding 1, reproduced
+    structurally for the transverse coeffs)."""
     pairs = []
     for (m, a, b) in iter_reversal_orbits(topo):
         if m == 0:
@@ -915,9 +913,9 @@ class TestHamiltonianLevelNormalizationPin(ApproxTestCase):
         self.assertApproxArray(H_topo, H_raw, rel=0, abs=1e-13)
         # The stored per-channel coeff need not itself be real (it equals
         # the exactly-self-consistent declared value V+i*eps here, same as
-        # resolve_interactions' v_bond) -- what must hold is that its
-        # DOWNSTREAM physical reconstruction (2*Re(.), what
-        # bare_bond_vertices/_h_from_topology actually use) is the real
+        # the longitudinal resolve_bond_topology coeffs) -- what must hold
+        # is that its DOWNSTREAM physical reconstruction (2*Re(.), what
+        # build_sc_bond_channel/_h_from_topology actually use) is the real
         # 2V, with eps never leaking into it.
         m1 = [i for i, r in enumerate(topo.delta_r)
               if tuple(int(x) for x in r) == (1, 0, 0)][0]
@@ -1181,43 +1179,39 @@ class TestWPmBondStructural(ApproxTestCase):
 
 
 class TestWPmBondQPhaseCrossPin(ApproxTestCase):
-    """Pins ``W_pm_bond``'s q-phase convention against
-    ``sc._build_bond_m0_blocks``'s own phase composition (spec: "the SAME
-    convention sc._build_bond_m0_blocks' phase uses") on a SHARED fixture:
-    a single-direction off-site declaration at R=(1,0,0), (a,b)=(0,1),
-    norb=2. Fed to ``_build_bond_m0_blocks`` as a real CoulombInter
-    coefficient (whose Hartree ``(00,11)`` matrix element is driven by
-    that builder's OWN ``exp(-i q.R)`` phase, extracted directly from its
-    real numeric output -- not assumed) and to ``W_pm_bond`` as an
-    Exchange coefficient at the SAME R (whose flip-family record carries
-    ``exp(-i q.R)`` on the ``(0,0,0),(0,1,1)`` element, spec step 3). Both
-    consumers see the IDENTICAL ``kx_array``/``ky_array``/``kz_array``
-    mesh (``np.linspace(0, 2*pi, N, endpoint=False)`` -- the same
-    construction ``hwave/sc.py``'s own q-grid setup uses ahead of calling
-    ``_build_bond_m0_blocks``, e.g. around its ``calc_eliashberg`` driver),
-    so this comparison genuinely exercises the SAME q.R value on both
-    sides via a REAL call to the shared builder, not two independently
-    assumed formulas."""
+    """Pins ``W_pm_bond``'s q-phase convention against the longitudinal
+    bond vertex builder of the static Eliashberg path
+    (``sc._resolve_bond_topology`` + ``sc._build_bond_vertices``, the
+    locality-split channel-0 block the FLEX bond gate also uses) on a
+    SHARED fixture: an off-site declaration at R=(1,0,0), (a,b)=(0,1),
+    norb=2, declared together with its Hermitian partner at R=(-1,0,0),
+    (b,a)=(1,0) as the file reader requires. Fed to the longitudinal
+    builder as a real CoulombInter coefficient (whose Hartree ``(00,11)``
+    matrix element is driven by that builder's OWN ``exp(i q.R)`` phase,
+    extracted directly from its real numeric output -- not assumed) and
+    to ``W_pm_bond`` as an Exchange coefficient at the SAME R (whose
+    flip-family record carries the phase on the ``(0,0,0),(0,1,1)``
+    element, spec step 3). Both consumers see the IDENTICAL q mesh
+    (``np.linspace(0, 2*pi, N, endpoint=False)`` -- the construction
+    ``hwave/sc.py``'s own q-grid setup uses), so this comparison
+    genuinely exercises the SAME q.R value on both sides via a REAL call
+    to the shared builder, not two independently assumed formulas."""
 
-    def test_qr_matches_build_bond_m0_blocks_phase(self):
+    def test_qr_matches_longitudinal_bond_vertex_phase(self):
         norb = 2
         Nx, Ny, Nz = 5, 1, 1
-        kx_array = np.linspace(0.0, 2.0 * np.pi, Nx, endpoint=False)
-        ky_array = np.linspace(0.0, 2.0 * np.pi, Ny, endpoint=False)
-        kz_array = np.linspace(0.0, 2.0 * np.pi, Nz, endpoint=False)
 
         C = 0.6 + 0.0j
-        bond_set = resolve_interactions(
-            {((1, 0, 0), (0, 1)): C}, np.eye(3), norb)
-        _S0, C0 = _sc._build_bond_m0_blocks(
-            bond_set, {}, {}, norb, kx_array, ky_array, kz_array)
-        # Hartree (aa,bb) = (00,11) slot: C0[..., 0, 3] == 2*V_q[0, 1], and
-        # V_q[0, 1] is driven ONLY by the [0, 1] entry of the declared row
-        # (1,0,0), which the resolver files on the channel at -R (channel m
-        # carries the rows declared at -delta_r[m], issue #232) -- the
-        # synthesized reverse partner only populates [1, 0], never [0, 1].
+        interactions = {"CoulombInter": {((1, 0, 0), (0, 1)): C,
+                                         ((-1, 0, 0), (1, 0)): np.conj(C)}}
+        topo_l, _view, split = _sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, norb, None)
+        _S, C_bond = _sc._build_bond_vertices(topo_l, split, norb, (Nx, Ny, Nz))
+        # Hartree (aa,bb) = (00,11) slot of the channel-0 block: 2*V_01(q),
+        # V_01(q) carrying the phase of the declared row (1, 0, 0), (0, 1)
+        # (the bond of the Transfer row with the same (R, a, b), issue #232).
         q_idx = 1
-        phase_from_builder = C0[q_idx, 0, 0, 0, 3] / (2.0 * C)
+        phase_from_builder = C_bond[q_idx, 0, 3] / (2.0 * C)
 
         J = 0.35 - 0.2j
         reverse = np.array([0, 2, 1])

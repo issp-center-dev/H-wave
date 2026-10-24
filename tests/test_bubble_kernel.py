@@ -19,7 +19,7 @@ import numpy as np
 from tests.approx_util import assert_approx_array
 from hwave.solver import green as green_mod
 from hwave.solver import bubble as bubble_mod
-from hwave.solver.bond_channels import resolve_interactions
+from tests.test_bond_channels import _bond_view
 from tests.heavy_tests import heavy
 
 
@@ -301,8 +301,8 @@ class TestBuildGreen(unittest.TestCase):
 
 
 class _FakeBondSet:
-    """Minimal duck-typed stand-in for ``ResolvedInteractionSet``, carrying
-    only what ``bubble._validate_bond_set`` reads."""
+    """Minimal duck-typed stand-in for ``bond_channels.BondSetView``,
+    carrying only what ``bubble._validate_bond_set`` reads."""
 
     def __init__(self, n_channels, delta_r):
         self.n_channels = n_channels
@@ -882,12 +882,12 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         which compares against the plain nested-loop Eq.14 oracle instead of
         against either adapter path.
         """
-        from hwave.solver.bond_channels import bond_bubble, resolve_interactions
+        from hwave.solver.bond_channels import bond_bubble
         from tests.test_bond_channels import _nn_square_2orb, _toy_green_4x4_2orb
 
         green_sc, T, N = _toy_green_4x4_2orb(Nx=4, Ny=4, Nz=1, Nmat=8)
         beta = 1.0 / T
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         self.assertEqual(bond_set.n_channels, 5)
 
         old = bond_bubble(green_sc, bond_set, beta=beta)  # (Nx,Ny,Nz,ND,ND)
@@ -911,13 +911,12 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         legacy wrapper -- unlike ``test_layout_adapter_consistency_2orb_nn``
         above, a bug inside ``bond_bubble_static``'s FFT/einsum machinery
         itself (not just a layout-adapter mismatch) will be caught here."""
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import (
             _direct_bond_bubble, _nn_square_2orb, _toy_green_4x4_2orb)
 
         green_sc, T, N = _toy_green_4x4_2orb(Nx=4, Ny=4, Nz=1, Nmat=8)
         beta = 1.0 / T
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         self.assertEqual(bond_set.n_channels, 5)
 
         ref = _direct_bond_bubble(green_sc, bond_set, T, N)  # (Nx,Ny,Nz,ND,ND)
@@ -933,7 +932,6 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         assert_approx_array(new, ref_reshaped, rel=1e-6, abs=1e-8)
 
     def test_shared_primitive_pin_m0_block(self):
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.0, hz=0.0, norb=2,
@@ -950,7 +948,7 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         npair = 2 * 2
         old_m0 = old_general[0, solver.nmat // 2].reshape(nvol, npair, npair)
 
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         new_static = bubble_mod.bond_bubble_static(
             green, None, beta, bond_set, spatial_shape=spatial_shape)
         new_m0 = new_static[:, :npair, :npair]
@@ -965,7 +963,6 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         differs from the tail-off path fed the SAME (deflated) Green
         function -- isolating whether the endpoint-correction machinery
         actually executes."""
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.5, hz=0.0, norb=2,
@@ -977,7 +974,7 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         spatial_shape = tuple(solver.lattice.shape)
         self.assertTrue(bool(np.any(tail != 0)))
 
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         tail_on = bubble_mod.bond_bubble_static(
             green_deflated, tail, beta, bond_set, spatial_shape=spatial_shape)
         tail_off = bubble_mod.bond_bubble_static(
@@ -988,7 +985,6 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         self.assertGreater(max_abs_diff, 0.0)
 
     def test_nblock_2_raises_value_error(self):
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.0, hz=0.3, norb=2,
@@ -1000,13 +996,12 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         self.assertEqual(green.shape[0], 2)
         spatial_shape = tuple(solver.lattice.shape)
 
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         with self.assertRaises(ValueError):
             bubble_mod.bond_bubble_static(
                 green, tail, beta, bond_set, spatial_shape=spatial_shape)
 
     def test_rejects_spatial_shape_mismatch(self):
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.0, hz=0.0, norb=2,
@@ -1018,7 +1013,7 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         spatial_shape = tuple(solver.lattice.shape)
         bad_shape = (spatial_shape[0] + 1,) + spatial_shape[1:]
 
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         with self.assertRaises(ValueError):
             bubble_mod.bond_bubble_static(
                 green, tail, beta, bond_set, spatial_shape=bad_shape)
@@ -1033,7 +1028,6 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         centered Matsubara grid. Both ``bond_bubble_static`` and
         ``_iter_bond_dynamic`` share this guard
         (``bubble._validate_even_nmat_for_bond``)."""
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.0, hz=0.0, norb=2,
@@ -1047,7 +1041,7 @@ class TestBubbleOldVsNewBondStatic(unittest.TestCase):
         bad_tail = tail[:, :-1]
         self.assertEqual(bad_green.shape[1] % 2, 1)
 
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
         with self.assertRaises(ValueError):
             bubble_mod.bond_bubble_static(
                 bad_green, bad_tail, beta, bond_set,
@@ -1174,7 +1168,7 @@ class TestBondDynamicOracle(unittest.TestCase):
         green, T, N = _toy_green_4x4(Nx=self.Nx, Ny=self.Ny, Nz=self.Nz,
                                      Nmat=self.Nmat)
         beta = 1.0 / T
-        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+        bond_set = _bond_view(_nn_square(0.25), np.eye(3), norb=1)
 
         g_canon = np.ascontiguousarray(
             np.transpose(green[0, 0], (3, 0, 1, 2))
@@ -1206,7 +1200,7 @@ class TestBondDynamicOracle(unittest.TestCase):
         green, T, N = _toy_green_4x4(Nx=self.Nx, Ny=self.Ny, Nz=self.Nz,
                                      Nmat=self.Nmat)
         beta = 1.0 / T
-        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+        bond_set = _bond_view(_nn_square(0.25), np.eye(3), norb=1)
         spatial_shape = (self.Nx, self.Ny, self.Nz)
 
         g_canon = np.ascontiguousarray(
@@ -1223,7 +1217,7 @@ class TestBondDynamicOracle(unittest.TestCase):
 
     def test_rejects_nblock_2(self):
         from tests.test_bond_channels import _nn_square
-        bond_set = resolve_interactions(_nn_square(0.25), np.eye(3), norb=1)
+        bond_set = _bond_view(_nn_square(0.25), np.eye(3), norb=1)
         green = np.zeros((2, self.Nmat, self.Nx * self.Ny * self.Nz, 1, 1),
                          dtype=complex)
         with self.assertRaises(ValueError):
@@ -1279,7 +1273,7 @@ class TestBondEndpointShift(unittest.TestCase):
 
     The channel pair compared is ``(m, mp) = (1, 4)``, i.e.
     ``Delta r_m=(-1,0,0)``, ``Delta r_mp=(1,0,0)`` (from
-    ``_nn_square_2orb``'s ``resolve_interactions`` topology) -- shift
+    ``_nn_square_2orb``'s resolved bond topology) -- shift
     ``(-2, 0, 0)``, the LARGEST-magnitude nonzero shift available on this
     topology (now non-self-inverse at ``Nx=5``), chosen because a dropped
     roll on the endpoint jump term is most visible where the phase/shift
@@ -1383,7 +1377,7 @@ class TestBondEndpointShift(unittest.TestCase):
 
         full, defl, tail = self._build_fixture()
         spatial_shape = (self.Nx, self.Ny, self.Nz)
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3),
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3),
                                          norb=2)
         self.assertEqual(bond_set.delta_r[1], (-1, 0, 0))
         self.assertEqual(bond_set.delta_r[4], (1, 0, 0))
@@ -1555,7 +1549,7 @@ class TestBondGreenFlow(unittest.TestCase):
         w_oracle = bc.pair_weight(oracle, beta, g2_tail=False)
         assert_approx_array(w_new, w_oracle, rel=0, abs=1e-13)
 
-        bond_set = resolve_interactions(
+        bond_set = _bond_view(
             {((1, 0, 0), (0, 0)): 0.3}, np.eye(3), norb)
         tail_on = bubble_mod.bond_bubble_static(
             carrier.deflated_kw, carrier.green0_tail, beta, bond_set,
@@ -1624,15 +1618,11 @@ class TestBondTailConvergence(unittest.TestCase):
         return ev, V
 
     def _measure(self, coeff_tail):
-        from hwave.solver.bond_channels import ResolvedInteractionSet
 
         Nx = 4
         ev, V = self._ring_eig(Nx)
         beta, mu = 8.0, 0.3
-        bond_set = ResolvedInteractionSet(
-            delta_r=((0, 0, 0),),
-            v_bond=(np.zeros((1, 1), dtype=complex),),
-            reverse=(0,), n_channels=1)
+        bond_set = _FakeBondSet(1, ((0, 0, 0),))
 
         chis = {}
         for nmat in (256, 512, 1024):
@@ -1995,7 +1985,6 @@ class TestIrBondOracle(unittest.TestCase):
     @heavy
     def test_matches_direct_lehmann_sum(self):
         from hwave.solver import bubble as bubble_mod
-        from hwave.solver.bond_channels import ResolvedInteractionSet
         from hwave.solver.ir_axis import IRAxis
 
         Nx, t, mu, beta, phi = self.Nx, self.t, self.mu, self.beta, self.phi
@@ -2038,11 +2027,7 @@ class TestIrBondOracle(unittest.TestCase):
         ekmu = (ev - mu).reshape(1, 1, Nx, 1, 1)
         green_ir = (1.0 / (iw - ekmu)).astype(np.complex128)
 
-        bond_set = ResolvedInteractionSet(
-            delta_r=self.delta_r,
-            v_bond=tuple(np.zeros((1, 1), dtype=complex)
-                        for _ in self.delta_r),
-            reverse=tuple(range(n_ch)), n_channels=n_ch)
+        bond_set = _FakeBondSet(n_ch, self.delta_r)
         ir_static = bubble_mod._ir_bond_static(
             green_ir, axF, axB, bond_set, spatial_shape=(Nx, 1, 1))
 
@@ -2091,16 +2076,12 @@ class TestIrBondVsDense(unittest.TestCase):
             raise unittest.SkipTest("sparse-ir not installed")
 
     def _measure(self, coeff_tail):
-        from hwave.solver.bond_channels import ResolvedInteractionSet
         from hwave.solver.ir_axis import IRAxis
 
         Nx = 4
         ev, V = self._ring_eig(Nx)
         beta, mu = 8.0, 0.3
-        bond_set = ResolvedInteractionSet(
-            delta_r=((0, 0, 0),),
-            v_bond=(np.zeros((1, 1), dtype=complex),),
-            reverse=(0,), n_channels=1)
+        bond_set = _FakeBondSet(1, ((0, 0, 0),))
         spatial_shape = (Nx, 1, 1)
 
         # ONE fixed IR result: the full Green function at the fermionic IR
@@ -2628,7 +2609,6 @@ class TestBubbleGpuParity(unittest.TestCase):
 
     def test_bond_bubble_static(self):
         from hwave.solver import backend as bk
-        from hwave.solver.bond_channels import resolve_interactions
         from tests.test_bond_channels import _nn_square_2orb
 
         solver = _make_rpa_solver(coeff_tail=0.5, hz=0.0, norb=2,
@@ -2638,7 +2618,7 @@ class TestBubbleGpuParity(unittest.TestCase):
         mu = solver.mu_value
         green, tail = solver._calc_green(beta, mu)
         spatial_shape = tuple(solver.lattice.shape)
-        bond_set = resolve_interactions(_nn_square_2orb(), np.eye(3), norb=2)
+        bond_set = _bond_view(_nn_square_2orb(), np.eye(3), norb=2)
 
         green_gpu = self._to_device(green)
         tail_gpu = self._to_device(tail)

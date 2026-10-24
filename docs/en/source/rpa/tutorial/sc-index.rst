@@ -1476,6 +1476,92 @@ with four-index vertex structure.
    spin-resolved content, and the responsibility is the user's.
 
 
+.. _sc_bond_channels_static:
+
+Bond-resolved static pairing (``bond_channels``)
+--------------------------------------------------
+
+The pairing vertex of the default path depends on the momentum transfer
+:math:`\mathbf{q}` only. The exchange (Fock) crossing of an off-site
+interaction pairs a particle-hole pair on the bond :math:`(i, i+R)`, which
+has no exact place in such a vertex. ``[eliashberg] bond_channels = true``
+(with the default ``frequency = "static"``) gives every off-site bond its own
+channel instead: the pairing vertex is built on the enlarged
+(orbital-pair) :math:`\times` (bond) basis, and the exchange crossing of
+each off-site row acts on the bond it was declared on.
+
+- **Which interactions are bond-resolved.** Every off-site ``CoulombInter``,
+  ``Hund``, ``Ising``, ``Exchange`` and ``PairHop`` row: its exchange
+  crossing (for ``PairHop``, its pair-hopping entry) sits on its bond
+  channel, while the Hartree part of the density types ``CoulombInter``,
+  ``Hund`` and ``Ising`` stays in the momentum-dependent on-site block. An
+  off-site ``PairLift`` carries no spin/charge content and is not part of
+  the bond channels. A nonzero ``R = 0`` ``CoulombInter`` row of an orbital
+  with itself is refused: declare an on-site same-orbital interaction as
+  ``CoulombIntra``. The topology, the bond-resolved spin/charge vertices
+  and the pairing kernel are the ones of the FLEX bond gate
+  (``longitudinal_bond_channels``) and of the dynamic bond pairing, so the
+  static path is their zero-bosonic-frequency member.
+- **The bubble.** ``hwave_sc`` builds the bond-resolved bubble itself from a
+  Green function: the bare one built from the transfer integrals, or the
+  file named by ``bond_green`` (for example a FLEX ``green.npz``).
+  ``chi0q_mode`` and ``chi0q_tensor`` are not used, and
+  ``chi0q_mode = "flex"`` is refused. ``bond_coeff_tail`` (default ``1.0``)
+  is the Matsubara tail coefficient of that bubble.
+- **Keys.** ``bond_max_shells`` keeps that many off-site shells (ordered by
+  bond length; shell 0 is the on-site point) and refuses a cutoff that would
+  drop a declared nonzero coefficient (declared-zero shells may be cut).
+  ``bond_memory_cap_gb`` (default 8 GB on this path) caps the estimated
+  peak memory.
+  ``bond_diagnostics = true`` adds the character analysis of the leading
+  state to ``eigenvalue.dat``. ``bond_precondition_atol`` /
+  ``bond_precondition_rtol`` / ``bond_precondition_dense_limit`` tune the
+  Hermiticity check of the kernel.
+- **Outputs.** ``eigenvalue.dat`` carries the bond provenance (number of
+  channels, displacements, the Green function used) and the split
+  :math:`\lambda = \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue
+  into its bare and its fluctuation part.
+- **Scope.** The static bond path is restricted to single-orbital models
+  (``norb = 1``) in this version; a multi-orbital model is refused. The
+  dynamic bond pairing (``frequency = "dynamic"``, and the in-process
+  ``longitudinal_bond_pairing`` of FLEX) runs for ``norb > 1`` but logs a
+  WARNING that multi-orbital results are not yet validated (issue #239).
+
+.. note::
+
+   **Limitations of the bond pairing kernel** (static and dynamic alike).
+   Its bare (first-order) pairing vertex is built from the density content
+   of the off-site rows: it is exact for ``CoulombInter`` in both channels
+   and for ``Hund`` and ``Ising`` in the singlet channel, and its triplet
+   channel is the equal-spin component. The first-order singlet pairing of
+   an off-site ``Exchange`` (spin flip) or ``PairHop`` (pair transfer) is
+   not included yet; their fluctuation (second- and higher-order)
+   contributions are. The three bond pairing paths log a WARNING when such
+   a row is present (to be completed, issue #239). The spin and charge fluctuations are combined with the coefficients
+   of a spin-rotation-invariant interaction, so for a coupling that breaks
+   that symmetry on its own (an off-site ``Hund`` or ``Ising`` without the
+   matching ``Exchange``) the fluctuation part is an approximation. The
+   static bond path, the dynamic bond path and the in-process
+   ``longitudinal_bond_pairing`` of FLEX log a WARNING reporting the bonds
+   (the first four by name) where ``J_Exchange != J_Hund - 2 J_Ising`` (each row taken with its
+   partner); the run is not refused and no number changes. The
+   spin-resolved treatment is tracked in issue #88. These
+   statements are pinned against an independent spin-orbital construction
+   in ``tests/test_sc_bond_pairing_oracle.py``.
+
+.. note::
+
+   **Migration.** Before this version the static bond path resolved only
+   off-site ``CoulombInter``; the other off-site types entered the on-site
+   block in the momentum-only form, which for a single-orbital model left
+   them out entirely. Results for input with off-site ``Hund``, ``Ising``,
+   ``Exchange`` or ``PairHop`` therefore change; results for
+   ``CoulombInter``-only input are unchanged (they agree to round-off). A
+   ``bond_max_shells`` cutoff that drops a declared nonzero shell, which was
+   silently applied before, is now refused, and so is a nonzero ``R = 0``
+   ``CoulombInter`` row of an orbital with itself.
+
+
 What each mode accepts
 ----------------------------
 

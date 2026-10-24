@@ -1,25 +1,22 @@
-"""Bond-channel topology resolution for the bond-resolved Eliashberg extension.
+"""Bond-resolved interaction channels shared by RPA, FLEX and the Eliashberg
+solver.
 
-This module builds the single source-of-truth ``ResolvedInteractionSet`` from
-the raw R-resolved ``CoulombInter`` dict (as returned by
-``hwave.qlmsio.wan90.read_w90``). See
-``docs/superpowers/specs/2026-07-25-bond-channels-eliashberg-design.md``
-sections 3.0-3.2 for the authoritative algorithm this implements.
-
-Only channel-topology bookkeeping lives here: reversal/Hermiticity closure,
-declared-topology inclusion (a channel that appears in the input dict is kept
-even at V=0), shell sorting/cutoff, and the immutable ``v_bond`` carrier.
-Vertex/bubble construction and any complex-input rejection live elsewhere
-(later tasks / ``sc.py`` top level) -- this module stays general.
+The bond topology (:func:`resolve_bond_topology`,
+:func:`resolve_transverse_topology`: reversal/Hermiticity closure of every
+declared off-site shell, declared-topology inclusion -- a channel that appears
+in the input is kept even at zero coupling --, shell sorting/cutoff), the
+bond-resolved spin/charge vertices (:func:`build_sc_bond_channel`), the RPA
+dressing on the bond basis with its conditioning guard (:func:`dress_batch`,
+:func:`dress_channel`), the static pair weight and the Hermiticity /
+attribution helpers of the static Eliashberg operator.
 """
 
 import contextlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import logging
 
 import numbers
 import numpy as np
-from scipy.sparse.linalg import LinearOperator
 
 from . import backend as _bk
 from . import bubble as _bubble
@@ -28,664 +25,9 @@ from . import threaded as _threaded
 logger = logging.getLogger("qlms.solver.bond_channels")
 
 
-@dataclass(frozen=True)
-class ResolvedInteractionSet:
-    """Reversal-closed, shell-sorted, declared-topology bond channel set.
-
-    Attributes
-    ----------
-    delta_r : tuple[tuple[int, int, int], ...]
-        Bravais-cell displacement per channel. ``delta_r[0] == (0, 0, 0)``.
-    v_bond : tuple[np.ndarray, ...]
-        ``v_bond[m]`` is a ``(norb, norb)`` complex array holding the block
-        DECLARED at ``-delta_r[m]``, ``V_ab(-delta_r[m])``: channel ``m`` is
-        the one whose kernels act on the bond of a Transfer row
-        ``(-delta_r[m], a, b)`` (issue #232). ``v_bond[0]`` is all-zeros (the on-site Fock
-        value is not carried as a bond channel; see spec S3.2 "Delta r=0
-        handling"). Every array is marked read-only.
-    v_onsite : np.ndarray, shape (norb, norb), complex
-        The on-site (``Delta r = 0``) ``V_ab(0)`` block, Hermiticity-closed
-        by the SAME reverse/consistency synthesis ``resolve_interactions``
-        applies to the ``m != 0`` bond channels: ``V_ab(0) = conj(V_ba(0))``
-        when only one orientation is declared; a ``ValueError`` when both are
-        declared and disagree beyond ``reverse_atol``/``reverse_rtol``. This
-        is the single source of truth for the on-site Fock block consumed by
-        ``sc.py._build_bond_m0_blocks`` (review fix I-1: previously ``sc.py``
-        read the raw ``CoulombInter`` dict directly for ``R=0``, bypassing
-        this closure). Marked read-only. Separate array from ``v_bond[0]``,
-        which stays all-zeros per its existing contract.
-    reverse : tuple[int, ...]
-        ``reverse[m]`` is the channel index of ``-delta_r[m]``.
-    n_channels : int
-        ``len(delta_r)`` (``B = Z + 1`` in the spec's notation).
-    dropped : tuple
-        Provenance records (see module docstring) of shells/entries removed
-        by ``bond_max_shells`` or synthesized-but-negligible reverse partners.
-    """
-
-    delta_r: tuple
-    v_bond: tuple
-    reverse: tuple
-    n_channels: int
-    v_onsite: np.ndarray = None
-    dropped: tuple = field(default_factory=tuple)
-
-
 def _shell_length(irvec, lattice_vectors):
     disp = np.asarray(irvec, dtype=float) @ np.asarray(lattice_vectors, dtype=float)
     return float(np.linalg.norm(disp))
-
-
-def _complete_onsite_hermitian(onsite, norb, reverse_atol, reverse_rtol):
-    """Hermiticity-close the on-site (``Delta r = 0``) block.
-
-    Applies the SAME synthesis/consistency rule ``resolve_interactions`` uses
-    for the ``m != 0`` bond channels (``V_ab(R) = conj(V_ba(-R))``), specialized
-    to ``R = -R = 0``: ``V_ab(0) = conj(V_ba(0))``. If only one orientation is
-    declared, the other is synthesized; if both are declared and disagree
-    beyond the scale-aware tolerance, raise (spec S3.2 "Reverse closure /
-    Hermiticity", review fix I-1).
-
-    Parameters
-    ----------
-    onsite : dict
-        ``{(a, b): value}`` -- the raw ``Delta r = 0`` ``CoulombInter``
-        entries (already summed if duplicate keys collapsed upstream).
-    norb : int
-    reverse_atol, reverse_rtol : float
-
-    Returns
-    -------
-    np.ndarray, shape (norb, norb), complex
-    """
-    mat = np.zeros((norb, norb), dtype=complex)
-    keys = set(onsite.keys()) | {(b, a) for (a, b) in onsite.keys()}
-    for (a, b) in keys:
-        if a == b:
-            v = onsite.get((a, b))
-            if v is not None:
-                # R = -R = 0 makes the Hermiticity rule V_ab(0) = conj(V_ba(0))
-                # read V_aa(0) = conj(V_aa(0)) on the diagonal, i.e. REAL. An
-                # imaginary diagonal cannot be closed -- storing it verbatim
-                # would return a non-Hermitian block from a function that
-                # promises a Hermiticity-closed one -- so anything beyond the
-                # same scale-aware reversal tolerance used for the off-diagonal
-                # pairs is refused, and round-off below it is projected away so
-                # the result is EXACTLY real.
-                tol = reverse_atol + reverse_rtol * abs(v)
-                if abs(np.imag(v)) > tol:
-                    raise ValueError(
-                        "resolve_interactions: on-site V_{}{}(0) = {} has a "
-                        "nonzero imaginary part ({}); Hermiticity requires "
-                        "V_aa(0) = conj(V_aa(0)), i.e. a REAL diagonal "
-                        "(tolerance atol={}, rtol={})".format(
-                            a, a, v, np.imag(v), reverse_atol, reverse_rtol,
-                        )
-                    )
-                mat[a, b] = complex(np.real(v), 0.0)
-            continue
-        v_ab = onsite.get((a, b))
-        v_ba = onsite.get((b, a))
-        if v_ab is not None and v_ba is not None:
-            v_synth = np.conj(v_ba)
-            tol = reverse_atol + reverse_rtol * abs(v_ab)
-            if abs(v_ab - v_synth) > tol:
-                raise ValueError(
-                    "resolve_interactions: on-site V_{}{}(0) = {} disagrees "
-                    "with conj(V_{}{}(0)) = {} beyond tolerance "
-                    "(atol={}, rtol={})".format(
-                        a, b, v_ab, b, a, v_synth, reverse_atol, reverse_rtol,
-                    )
-                )
-            # Accepted within tolerance: PROJECT onto the exactly conjugate
-            # pair instead of storing both declared values verbatim, which
-            # would leave an O(tol) asymmetry in a block this function promises
-            # is Hermiticity-closed (review fix R2-2). The symmetric average is
-            # taken independently for (a,b) and (b,a); IEEE addition is
-            # commutative and negation exact, so the two results are EXACT
-            # conjugates of one another.
-            mat[a, b] = 0.5 * (v_ab + v_synth)
-        elif v_ab is not None:
-            mat[a, b] = v_ab
-        else:
-            mat[a, b] = np.conj(v_ba)
-    return mat
-
-
-def resolve_interactions(
-    coulomb_inter,
-    lattice_vectors,
-    norb,
-    *,
-    bond_max_shells=None,
-    tol_incl=1e-12,
-    reverse_atol=1e-10,
-    reverse_rtol=1e-8,
-):
-    """Resolve the raw R-resolved ``CoulombInter`` dict into a
-    ``ResolvedInteractionSet``.
-
-    Parameters
-    ----------
-    coulomb_inter : dict
-        ``{(irvec, orbvec): value}`` as returned by
-        ``hwave.qlmsio.wan90.read_w90`` (``irvec`` a length-3 int tuple,
-        ``orbvec = (a, b)`` 0-based orbital indices, ``value`` complex).
-    lattice_vectors : array_like, shape (3, 3)
-        Real-space lattice vectors (rows). Used only for Euclidean bond
-        length (shell sorting / ``bond_max_shells`` cutoff).
-    norb : int
-        Number of orbitals; each ``v_bond[m]`` is ``(norb, norb)``.
-    bond_max_shells : int or None, optional
-        Keep shells ``0..bond_max_shells`` (shell 0 = Delta r = (0,0,0)).
-        ``None`` keeps all declared shells. ``bond_max_shells=0`` while any
-        *declared* nonzero inter-site ``V`` is present raises ``ValueError``
-        (see spec S3.2 "Cutoff") -- "nonzero" here means literally ``!= 0``,
-        independent of ``tol_incl``. A negative, non-integral or non-finite
-        value also raises ``ValueError`` rather than being clamped/truncated.
-    tol_incl : float, optional
-        Magnitude tolerance below which a *synthesized* reverse partner is
-        treated as negligible for provenance purposes. Declared entries are
-        always kept regardless of magnitude (declared topology, not
-        magnitude-derived; see spec S3.0/S3.2).
-    reverse_atol, reverse_rtol : float, optional
-        Scale-aware tolerance for consistency of an explicitly-declared pair
-        ``V_ab(R)`` and ``V_ba(-R)`` (Hermiticity check); disagreement beyond
-        ``atol + rtol * |value|`` raises ``ValueError``. A pair that passes is
-        then PROJECTED onto its symmetric average, so the returned
-        ``v_bond``/``v_onsite`` satisfy the reversal/Hermiticity closure
-        ``v_bond[m] == v_bond[reverse[m]].conj().T`` and
-        ``v_onsite == v_onsite.conj().T`` EXACTLY (to the last bit), not merely
-        within the tolerance (review fix R2-2).
-
-    Returns
-    -------
-    ResolvedInteractionSet
-    """
-    norb = int(norb)
-    dropped = []
-
-    # --- Step 1: group entries by irvec (declared topology, not magnitude) ---
-    # A duplicate (irvec, orbvec) key cannot appear here since a Python dict
-    # has already deduplicated -- that check lives at the wan90.read_w90
-    # parser (spec S3.2 "Duplicates").
-    by_irvec = {}
-    onsite = {}
-    for (irvec, orbvec), value in coulomb_inter.items():
-        irvec = tuple(int(x) for x in irvec)
-        a, b = int(orbvec[0]), int(orbvec[1])
-        if irvec == (0, 0, 0):
-            # Delta r=0 entries route to the Hartree/on-site block only, never
-            # a Fock bond channel (spec S3.2 "Delta r=0 handling"). Collected
-            # here and Hermiticity-closed below (review fix I-1) rather than
-            # discarded -- the closure is this module's single source of
-            # truth, consumed by sc.py._build_bond_m0_blocks.
-            onsite[(a, b)] = complex(value)
-            continue
-        by_irvec.setdefault(irvec, {})[(a, b)] = complex(value)
-
-    # --- Step 2: reverse closure / Hermiticity synthesis ---
-    # For every declared R, ensure -R is present. If both are present,
-    # validate consistency V_ab(R) == conj(V_ba(-R)); if only one is present,
-    # synthesize the other.
-    declared_irvecs = set(by_irvec.keys())
-    all_irvecs = set(declared_irvecs)
-    for irvec in declared_irvecs:
-        neg = tuple(-x for x in irvec)
-        all_irvecs.add(neg)
-
-    completed = {}
-    visited = set()
-    for irvec in all_irvecs:
-        if irvec in visited:
-            continue
-        neg = tuple(-x for x in irvec)
-        visited.add(irvec)
-        visited.add(neg)
-
-        fwd = by_irvec.get(irvec, {})
-        bwd = by_irvec.get(neg, {})
-
-        fwd_mat = np.zeros((norb, norb), dtype=complex)
-        bwd_mat = np.zeros((norb, norb), dtype=complex)
-
-        # Build a synthesized version of each direction from the other:
-        # V_ab(R) = conj(V_ba(-R))
-        synth_fwd_from_bwd = {(a, b): np.conj(v) for (b, a), v in bwd.items()}
-        synth_bwd_from_fwd = {(b, a): np.conj(v) for (a, b), v in fwd.items()}
-
-        keys_fwd = set(fwd.keys()) | set(synth_fwd_from_bwd.keys())
-        for (a, b) in keys_fwd:
-            v_declared = fwd.get((a, b))
-            v_synth = synth_fwd_from_bwd.get((a, b))
-            if v_declared is not None and v_synth is not None:
-                tol = reverse_atol + reverse_rtol * abs(v_declared)
-                if abs(v_declared - v_synth) > tol:
-                    raise ValueError(
-                        "resolve_interactions: V_{}{}({}) = {} disagrees with "
-                        "conj(V_{}{}({})) = {} beyond tolerance "
-                        "(atol={}, rtol={})".format(
-                            a, b, irvec, v_declared,
-                            b, a, neg, v_synth,
-                            reverse_atol, reverse_rtol,
-                        )
-                    )
-                # Accepted within tolerance -> project onto the exactly
-                # conjugate pair (review fix R2-2); see the same step in
-                # _complete_onsite_hermitian. The (a,b)-of-R and (b,a)-of-(-R)
-                # averages below are exact conjugates of one another, so the
-                # returned set satisfies v_bond[m] == v_bond[reverse[m]].conj().T
-                # to the last bit rather than only within tolerance.
-                fwd_mat[a, b] = 0.5 * (v_declared + v_synth)
-            elif v_declared is not None:
-                fwd_mat[a, b] = v_declared
-            else:
-                fwd_mat[a, b] = v_synth
-                if abs(v_synth) <= tol_incl:
-                    dropped.append(
-                        ("synthesized_negligible", irvec, (a, b), v_synth)
-                    )
-
-        keys_bwd = set(bwd.keys()) | set(synth_bwd_from_fwd.keys())
-        for (a, b) in keys_bwd:
-            v_declared = bwd.get((a, b))
-            v_synth = synth_bwd_from_fwd.get((a, b))
-            if v_declared is not None and v_synth is not None:
-                tol = reverse_atol + reverse_rtol * abs(v_declared)
-                if abs(v_declared - v_synth) > tol:
-                    raise ValueError(
-                        "resolve_interactions: V_{}{}({}) = {} disagrees with "
-                        "conj(V_{}{}({})) = {} beyond tolerance "
-                        "(atol={}, rtol={})".format(
-                            a, b, neg, v_declared,
-                            b, a, irvec, v_synth,
-                            reverse_atol, reverse_rtol,
-                        )
-                    )
-                bwd_mat[a, b] = 0.5 * (v_declared + v_synth)
-            elif v_declared is not None:
-                bwd_mat[a, b] = v_declared
-            else:
-                bwd_mat[a, b] = v_synth
-                if abs(v_synth) <= tol_incl:
-                    dropped.append(
-                        ("synthesized_negligible", neg, (a, b), v_synth)
-                    )
-
-        completed[irvec] = fwd_mat
-        if neg != irvec:
-            completed[neg] = bwd_mat
-        # if irvec == neg (only possible for (0,0,0), already excluded above)
-        # no special handling needed.
-
-    # --- Step 3: sort non-zero-shell channels by (length, lexicographic irvec) ---
-    def sort_key(irvec):
-        return (_shell_length(irvec, lattice_vectors), irvec)
-
-    nonzero_irvecs = sorted(completed.keys(), key=sort_key)
-
-    # Group into shells: irvecs whose bond length agrees within relative 1e-6.
-    shells = []  # list of (length, [irvecs...])
-    for irvec in nonzero_irvecs:
-        length = _shell_length(irvec, lattice_vectors)
-        if shells and abs(length - shells[-1][0]) <= 1e-6 * max(length, shells[-1][0], 1.0):
-            shells[-1][1].append(irvec)
-        else:
-            shells.append((length, [irvec]))
-
-    # --- Step 4: apply bond_max_shells cutoff ---
-    # Shell 0 = Delta r = (0,0,0); shell n (n>=1) = nth nearest distinct
-    # nonzero-shell length.
-    # The ambiguity guard keys on values that are ACTUALLY DECLARED nonzero,
-    # not on the tol_incl inclusion threshold (review fix R2-3): tol_incl only
-    # governs provenance bookkeeping for SYNTHESIZED partners, so using it here
-    # silently discarded a declared-but-tiny inter-site V that the documented
-    # rule ("any declared nonzero inter-site V") says is ambiguous.
-    has_nonzero_inter_site_v = any(
-        value != 0 for entries in by_irvec.values() for value in entries.values()
-    )
-    if bond_max_shells is not None:
-        # Validate BEFORE use (review fix R2-3): a negative value used to be
-        # clamped to zero -- silently dropping every inter-site bond AND
-        # bypassing the ambiguity guard below -- and a non-integral one used to
-        # be truncated by int() without a word.
-        try:
-            shells_f = float(bond_max_shells)
-        except (TypeError, ValueError):
-            raise ValueError(
-                "resolve_interactions: bond_max_shells must be a non-negative "
-                "integer or None, got {!r}".format(bond_max_shells))
-        if (not np.isfinite(shells_f) or shells_f < 0
-                or shells_f != np.floor(shells_f)):
-            raise ValueError(
-                "resolve_interactions: bond_max_shells must be a non-negative "
-                "integral value (shell 0 = the on-site Delta r = 0 point) or "
-                "None, got {!r}".format(bond_max_shells))
-        if shells_f == 0 and has_nonzero_inter_site_v:
-            raise ValueError(
-                "resolve_interactions: bond_max_shells=0 requested but nonzero "
-                "inter-site V is declared; this is ambiguous (asks for B=1 "
-                "while inter-site V is present). Use bond_channels=false for "
-                "the genuinely local model instead."
-            )
-        # shells 1..bond_max_shells are kept (shell 0 is Delta r=0, always kept
-        # separately below); bond_max_shells counts inter-site shells beyond
-        # the on-site point, matching "shell 1 = 1st NN".
-        n_keep = int(shells_f)
-        kept_shells = shells[:n_keep]
-        dropped_shells = shells[n_keep:]
-        for length, irvecs in dropped_shells:
-            for irvec in irvecs:
-                dropped.append(("shell_cutoff", irvec, length))
-        shells = kept_shells
-
-    ordered_irvecs = [irvec for _, irvecs in shells for irvec in irvecs]
-
-    # --- Step 5: build delta_r / v_bond / reverse ---
-    delta_r = [(0, 0, 0)] + ordered_irvecs
-    index_of = {dr: i for i, dr in enumerate(delta_r)}
-
-    v_bond_list = [np.zeros((norb, norb), dtype=complex)]
-    for irvec in ordered_irvecs:
-        arr = np.array(completed[irvec], dtype=complex, copy=True)
-        v_bond_list.append(arr)
-
-    reverse = []
-    for dr in delta_r:
-        neg = tuple(-x for x in dr)
-        if neg not in index_of:
-            raise ValueError(
-                "resolve_interactions: internal error -- channel {} has no "
-                "reverse partner {} in the resolved set (reversal closure "
-                "invariant violated)".format(dr, neg)
-            )
-        reverse.append(index_of[neg])
-
-    for arr in v_bond_list:
-        arr.flags.writeable = False
-
-    v_onsite = _complete_onsite_hermitian(onsite, norb, reverse_atol, reverse_rtol)
-    v_onsite.flags.writeable = False
-
-    # A declared row (R, a, b) is the bond of a Transfer row (R, a, b): a in
-    # the original cell, b at R (Wannier90 / RESPACK, issue #232). Channel m
-    # of the bond kernels carries that operator when it holds the block
-    # declared at -delta_r[m]; the closed set makes this a permutation.
-    v_bond_list = [v_bond_list[m] for m in reverse]
-
-    return ResolvedInteractionSet(
-        delta_r=tuple(delta_r),
-        v_bond=tuple(v_bond_list),
-        reverse=tuple(reverse),
-        n_channels=len(delta_r),
-        v_onsite=v_onsite,
-        dropped=tuple(dropped),
-    )
-
-
-# ---------------------------------------------------------------------------
-# bare_bond_vertices's memory contract  --  read together with
-# sc._bond_memory_estimate
-# ---------------------------------------------------------------------------
-#
-# ``bare_bond_vertices`` allocates ``ND x ND`` (NOT q-resolved -- ``S_bond``/
-# ``C_bond`` are the q-resolved arrays and are already counted among
-# ``sc._BOND_N_Q_ARRAYS``) working buffers while assembling the Cooper
-# vertices ``Vpp_s``/``Vpp_t`` (spec S4.5). None of them are ``del``-ed or
-# reused today, so all ``BARE_VERTEX_ND2_BUFFERS`` of them are alive
-# simultaneously at the function's high-water mark (its very end, just before
-# it returns):
-#
-#   1. ``P``     -- the reversal+orbital-swap permutation matrix
-#   2. ``D``     -- diagonal bond-channel interaction (m != 0 only)
-#   3. ``Dh``    -- ``D + D^dag``
-#   4. ``Id``    -- the ``ND x ND`` identity
-#   5. ``Q_s``   -- ``(Id + P)/2`` singlet projector
-#   6. ``Q_t``   -- ``(Id - P)/2`` triplet projector
-#   7. ``B_s``   -- ``Q_s Dh Q_s``, the bond Cooper block (singlet)
-#   8. ``B_t``   -- ``Q_t Dh Q_t``, the bond Cooper block (triplet)
-#   9. ``Vpp_s`` -- the returned singlet Cooper vertex (local L_s + B_s)
-#   10. ``Vpp_t``-- the returned triplet Cooper vertex (local L_t + B_t)
-#
-# (The local block temporaries -- ``S0_loc``, ``C0_loc``, ``L_s``, ``L_t``
-# and ``_crossing``'s reshape views -- are ``nd x nd = norb**4``-sized, i.e.
-# a factor ``B**2`` smaller than ``ND x ND`` for ``B > 1``, so they are not
-# separately budgeted.) Imported by ``sc._bond_memory_estimate`` so the two
-# sides cannot silently desync; a new persistent ``ND x ND`` buffer here must
-# bump this count (and ``tests/test_sc_bond.py`` measures the real peak
-# against the budget).
-BARE_VERTEX_ND2_BUFFERS = 10
-
-
-def bare_bond_vertices(bond_set, S0_q, C0_q, norb):
-    """Build the bare enlarged vertices ``S_bond``, ``C_bond`` and the bare
-    particle-particle (Cooper) vertices ``Vpp_s``, ``Vpp_t``.
-
-    Implements spec S4.3 (fully-indexed S_bond/C_bond element equations) and
-    S4.5 (the complete Cooper vertex ``V^pp_eta = Q_eta L_eta Q_eta +
-    Q_eta(D+D^dag)Q_eta``). See
-    ``docs/superpowers/specs/2026-07-25-bond-channels-eliashberg-design.md``.
-
-    Enlarged bond-major index ``I = m*nd + idx`` with ``nd = norb**2`` and
-    ``idx = l1*norb + l2``; ``ND = nd*B`` where ``B = bond_set.n_channels``.
-
-    Parameters
-    ----------
-    bond_set : ResolvedInteractionSet
-        Reversal-closed bond-channel topology (``delta_r``, ``v_bond``,
-        ``reverse``, ``n_channels``) from :func:`resolve_interactions`.
-    S0_q, C0_q : ndarray, shape (Nx, Ny, Nz, nd, nd)
-        The ``m=0`` ph blocks -- the existing Kuroki spin/charge matrices
-        (intra ``U``, inter-orbital ``U'``, Hund, Exchange, PairHop) PLUS the
-        inter-site Hartree ``2 V_ab(q)`` in the charge ``(aa,bb)`` element.
-        Assumed already **Case-2-corrected**: only the on-site ``V_ab(R=0)``
-        component stays in the ``m=0`` Fock ``(ab,ab)`` element; the ``R!=0``
-        Fock lives in ``bond_set.v_bond`` (spec S4.3 star).
-    norb : int
-        Number of orbitals.
-
-    Returns
-    -------
-    S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
-        The ``m=0`` sub-block equals ``S0_q``/``C0_q``; the bond-diagonal
-        ``m!=0`` Fock element ``(I,I)`` with ``I=m*nd+(l1*norb+l2)`` equals
-        ``+Re(V_{l1 l2}(Delta r_m))`` (S) / ``-Re(V_{l1 l2}(Delta r_m))`` (C)
-        (spec S4.3, Hermitized per Finding 1 of the #151 ED-adjudication
-        campaign -- see the inline comment at the assignment site below for
-        the derivation; bit-identical to the un-Hermitized value whenever
-        ``V_{l1 l2}(Delta r_m)`` is already real). q-dependent (the Hartree
-        lives in the ``m=0`` block).
-    Vpp_s, Vpp_t : ndarray, shape (ND, ND), complex
-        q-**independent** bare Cooper vertices. The local ``m=0`` block is the
-        pair matrix ``L^{s/t}`` obtained from ``(S0 +- C0_local)`` under the
-        ``(ac,db)->(ab,cd)`` pair<->ph crossing, with the **inter-site**
-        (``R!=0``) Hartree excluded so ``V^pp`` carries only local
-        interactions. The ``m!=0`` block is ``Q_eta (D_off + D_off^dag) Q_eta``
-        (``= D_off (1 +- P)`` for real inversion-symmetric bonds), with
-        ``D_off`` diagonal ``V_ab(Delta r_m)`` (``m!=0`` only; the stored
-        ``v_bond[m][a, b]``, i.e. the rows declared at ``-Delta r_m``, which
-        act on the bond with ``a`` in the origin cell and ``b`` at
-        ``-Delta r_m`` -- the pair :func:`make_bond_kernel` contracts slot
-        ``(m, ab)`` with, issue #232) and
-        ``P:(m,ab)->(m_bar,ba)`` the reversal+orbital-swap involution. Since
-        ``D_off`` is diagonal, ``D_off + D_off^dag`` already reduces
-        elementwise to ``2*Re(D_off)`` before the ``Q_eta`` projection below
-        -- the SAME Hermitization the ph sector's ``m!=0`` diagonal applies
-        explicitly above -- so this pp block is Hermitization-invariant BY
-        CONSTRUCTION and is intentionally left untouched by the Finding 1 fix
-        (do not also apply ``.real`` to ``D_off`` -- it is already redundant
-        and would not change ``Dh``'s value).
-    """
-    norb = int(norb)
-    nd = norb * norb
-    B = int(bond_set.n_channels)
-    ND = nd * B
-    delta_r = bond_set.delta_r
-    v_bond = bond_set.v_bond
-    reverse = bond_set.reverse
-
-    S0_q = np.asarray(S0_q)
-    C0_q = np.asarray(C0_q)
-    if S0_q.ndim != 5 or S0_q.shape[3:] != (nd, nd):
-        raise ValueError(
-            "bare_bond_vertices: S0_q must have shape (Nx, Ny, Nz, nd, nd) "
-            "with nd=norb**2={}; got {}".format(nd, S0_q.shape))
-    if C0_q.shape != S0_q.shape:
-        raise ValueError(
-            "bare_bond_vertices: C0_q shape {} must match S0_q shape {}".format(
-                C0_q.shape, S0_q.shape))
-    Nx, Ny, Nz = S0_q.shape[:3]
-
-    # --- internal-interface guard: bond_set MUST be reversal-closed ---
-    # (a hand-built non-closed set is a programming error; fail fast rather
-    # than silently produce a non-Hermitian Cooper vertex; spec test 10a).
-    for m in range(B):
-        mr = reverse[m]
-        if not (0 <= mr < B) or reverse[mr] != m:
-            raise ValueError(
-                "bare_bond_vertices: bond_set.reverse is not an involution at "
-                "channel {} (reverse={}); the set is not reversal-closed".format(
-                    m, reverse))
-        neg = tuple(-x for x in delta_r[m])
-        if tuple(delta_r[mr]) != neg:
-            raise ValueError(
-                "bare_bond_vertices: bond_set is not reversal-closed -- "
-                "delta_r[reverse[{0}]]={1} != -delta_r[{0}]={2}".format(
-                    m, tuple(delta_r[mr]), neg))
-
-    # === S_bond / C_bond (spec S4.3) =======================================
-    S_bond = np.zeros((Nx, Ny, Nz, ND, ND), dtype=complex)
-    C_bond = np.zeros((Nx, Ny, Nz, ND, ND), dtype=complex)
-    # m=0 sub-block = existing Kuroki matrices (Hartree included)
-    S_bond[:, :, :, 0:nd, 0:nd] = S0_q
-    C_bond[:, :, :, 0:nd, 0:nd] = C0_q
-    # m!=0 bond-diagonal Fock: +Re(V_ab(R_m)) (S) / -Re(V_ab(R_m)) (C)
-    #
-    # Hermitization derivation (Finding 1, #151 ED-adjudication campaign;
-    # tests/test_bond_vs_ed_oracle.py::TestNullDirectionSolverSide). A declared
-    # channel V_ab(R_m) = v_bond[m][a,b] and its resolve_interactions reversal
-    # partner V_ba(-R_m) = v_bond[reverse[m]][b,a] multiply the SAME physical
-    # operator sum_j n_{j,a} n_{j+R_m,b}: substituting j' = j+R_m in the
-    # partner's sum sum_j n_{j,b} n_{j-R_m,a} reproduces the ORIGINAL sum
-    # verbatim (density operators commute), so the two declarations are not
-    # independent physical terms but two Fourier-index views of one term whose
-    # Hamiltonian coefficient is their SUM, V_ab(R_m) + V_ba(-R_m).
-    # resolve_interactions guarantees, EXACTLY (to the last bit, by
-    # construction -- see its docstring's "returned set satisfies
-    # v_bond[m] == v_bond[reverse[m]].conj().T"), that
-    # v_bond[reverse[m]][b,a] == conj(v_bond[m][a,b]); substituting,
-    # V_ab(R_m) + V_ba(-R_m) == v_bond[m][a,b] + conj(v_bond[m][a,b])
-    # == 2*Re(v_bond[m][a,b]). This is a Hermiticity consequence of the
-    # operator algebra, not a special case for a "null" pair: it holds
-    # identically whether the closed pair is a synthetic +/-i*eps probe or a
-    # genuinely complex, phase-carrying single-sided declaration (whose
-    # reverse partner resolve_interactions synthesizes as the exact
-    # conjugate) -- a complex CoulombInter value ALWAYS collapses to twice its
-    # real part in this density-density Hamiltonian term.
-    #
-    # This enlarged-index slot I=(m,l1,l2) is never summed with its mirror
-    # slot (reverse[m],l2,l1) anywhere downstream (S_bond/C_bond only ever set
-    # the (I,I) diagonal, independently per slot) -- unlike the pp sector's
-    # D+D^dagger construction below, which projects Q_eta (I +/- P) Q_eta
-    # across BOTH mirror slots together and is untouched here. So each ph
-    # slot must carry HALF of the physical total, Re(v_bond[m][a,b]), not the
-    # full 2*Re(v_bond[m][a,b]) -- using the full sum here would double every
-    # already-validated real-coupling S_bond/C_bond entry pinned by this
-    # campaign's granules and the #82 golden tests.
-    #
-    # Before this fix, S_bond/C_bond took vb[l1, l2] RAW (no Hermitization):
-    # V_01(+1)=V+i*eps and V_10(-1)=V-i*eps live at DIFFERENT slots and were
-    # never combined the way the ED oracle's canonical_density_terms combines
-    # them, so S_bond leaked the null direction at magnitude eps. C_bond
-    # picked up this SAME Fock effect (HALF its total response) PLUS a
-    # separate eps response of equal magnitude from the sc.py Hartree BUG,
-    # fixed below (sc._build_bond_m0_blocks summed the raw, un-Hermitized
-    # per-shell value into V_ab(q) before this fix).
-    #
-    # Re(vb[l1, l2]) is bit-identical to vb[l1, l2] whenever the stored value
-    # is already real (every direction adjudicated by this campaign, and
-    # every #82 golden-test coupling), so this is a provable no-op there.
-    for m in range(1, B):
-        vb = v_bond[m]
-        for l1 in range(norb):
-            for l2 in range(norb):
-                I = m * nd + l1 * norb + l2
-                S_bond[:, :, :, I, I] = vb[l1, l2].real
-                C_bond[:, :, :, I, I] = -vb[l1, l2].real
-
-    # === Local Cooper block L^{s/t} (spec S4.5, crossing) ==================
-    # The local interactions are q-independent; only the inter-site Hartree is
-    # q-dependent. Evaluate at q0=(0,0,0), where every bond phase is 1, and
-    # remove the R!=0 Hartree (2 * sum_{m>=1} V_ab(R_m)) from the (aa,bb)
-    # charge elements. The on-site R=0 Hartree (= 2 U'_ab) stays: it is a
-    # local interaction and yields L^s(ab,ab)=2U' (spec S4.5 table).
-    S0_loc = S0_q[0, 0, 0].copy()
-    C0_loc = C0_q[0, 0, 0].copy()
-    for a in range(norb):
-        for b in range(norb):
-            hartree_rneq0 = 0.0 + 0.0j
-            for m in range(1, B):
-                # Same Hermitization as the m!=0 Fock diagonal above (see its
-                # comment for the derivation), and for the same reason: this
-                # subtraction must exactly cancel the R!=0 Hartree
-                # sc._build_bond_m0_blocks adds into C0_q's (aa,bb) element at
-                # q=0, which Hermitizes each shell's contribution the
-                # identical way (per-shell .real BEFORE the q-phase multiply).
-                # Leaving this raw while that Hartree builder is fixed would
-                # reintroduce an eps-dependent residual into
-                # C0_loc -> L_s/L_t -> Vpp_s/Vpp_t, breaking the pp sector's
-                # currently-exact null invariance (Finding 1's report: "Vpp_s/
-                # Vpp_t ... holds exactly").
-                hartree_rneq0 += v_bond[m][a, b].real
-            C0_loc[a * norb + a, b * norb + b] -= 2.0 * hartree_rneq0
-
-    def _crossing(M):
-        # L_{(ab),(cd)} = M_{(ac),(db)}: reshape to (l1,l2,l3,l4) and permute
-        # so L4[a,b,c,d] = M4[a,c,d,b].
-        M4 = M.reshape(norb, norb, norb, norb)
-        L4 = M4.transpose(0, 3, 1, 2)
-        return L4.reshape(nd, nd).copy()
-
-    L_s = _crossing(S0_loc + C0_loc)   # singlet: (S+C)
-    L_t = _crossing(C0_loc - S0_loc)   # triplet: (C-S)
-
-    # === Bond Cooper block Q_eta (D_off + D_off^dag) Q_eta (spec S4.5) =====
-    # P:(m,l1,l2) -> (reverse[m], l2, l1). As a permutation matrix,
-    # P[I,J]=1 iff state I = P(state J).
-    P = np.zeros((ND, ND), dtype=complex)
-    for m in range(B):
-        mr = reverse[m]
-        for l1 in range(norb):
-            for l2 in range(norb):
-                J = m * nd + l1 * norb + l2
-                I = mr * nd + l2 * norb + l1
-                P[I, J] = 1.0
-    # D_off: diagonal V_ab(R_m), m != 0 only.
-    D = np.zeros((ND, ND), dtype=complex)
-    for m in range(1, B):
-        vb = v_bond[m]
-        for l1 in range(norb):
-            for l2 in range(norb):
-                I = m * nd + l1 * norb + l2
-                D[I, I] = vb[l1, l2]
-    Dh = D + D.conj().T
-    Id = np.eye(ND, dtype=complex)
-    Q_s = 0.5 * (Id + P)
-    Q_t = 0.5 * (Id - P)
-    B_s = Q_s @ Dh @ Q_s
-    B_t = Q_t @ Dh @ Q_t
-
-    Vpp_s = np.zeros((ND, ND), dtype=complex)
-    Vpp_t = np.zeros((ND, ND), dtype=complex)
-    Vpp_s[0:nd, 0:nd] = L_s
-    Vpp_t[0:nd, 0:nd] = L_t
-    # The bond block is supported purely on the m!=0 sector (D vanishes on
-    # m=0 and P does not couple m=0 to m!=0), so this add does not disturb the
-    # local L block.
-    Vpp_s += B_s
-    Vpp_t += B_t
-
-    return S_bond, C_bond, Vpp_s, Vpp_t
 
 
 # Conditioning floor of the enlarged RPA denominators, applied by dress_bond to
@@ -1092,17 +434,17 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
         chi_s = solve(I_ND - chi_bar @ S_bond, chi_bar)
         chi_c = solve(I_ND + chi_bar @ C_bond, chi_bar)
 
-    ``S_bond``/``C_bond`` are block-diagonal in the bond index ``m`` (see
-    :func:`bare_bond_vertices`), but ``chi_bar`` (from :func:`bond_bubble`) is
-    not, so the solve mixes bond sectors -- ``chi_s``/``chi_c`` are full
-    ``ND x ND`` matrices, not block-diagonal.
+    The non-bond static Eliashberg path calls this at ``ND = nd`` with
+    ``cond_tol = None`` (``sc._compute_vertices_general``). On the bond basis
+    ``chi_bar`` is not block-diagonal in the bond index, so the solve mixes
+    bond sectors -- ``chi_s``/``chi_c`` are full ``ND x ND`` matrices.
 
     Parameters
     ----------
     chi_bar : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
-        The enlarged bond bubble (:func:`bond_bubble`).
+        The (enlarged) bubble.
     S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
-        The enlarged bare vertices (:func:`bare_bond_vertices`).
+        The (enlarged) bare spin/charge vertices.
     cond_tol : float or None, optional
         Conditioning floor of the two solve matrices, applied per q-point to
         BOTH the relative ratio ``sigma_min/sigma_max`` and the absolute pole
@@ -1241,10 +583,9 @@ def _validate_green_beta(green, beta, label):
 
     ``green`` must have the 6-D ``sc.py`` layout ``(norb, norb, Nx, Ny, Nz,
     nmat)`` with equal orbital axes, and ``beta`` must be positive and finite.
-    :func:`bond_bubble` already checked this; :func:`make_bond_kernel`,
-    :func:`make_bond_kernel_parts` and :func:`pair_weight` used to index
-    ``green.shape`` blind, turning a mis-shaped input into an ``IndexError``,
-    an opaque einsum/reshape failure, or (for ``beta = 0``) a silent array of
+    Without this check :func:`pair_weight` would index ``green.shape``
+    blind, turning a mis-shaped input into an ``IndexError``, an opaque
+    einsum/reshape failure, or (for ``beta = 0``) a silent array of
     ``inf``/``nan`` (review fix R2-4).
 
     Returns the array form of ``green``.
@@ -1305,252 +646,6 @@ def _g2_from_green(green, beta, tail=False):
         di = np.arange(norb)
         G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
     return G2
-
-
-def make_bond_kernel(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                     green, bond_set, pairing_type, beta, part="full",
-                     g2_tail=False):
-    """Build the two-part bond-resolved linearized Eliashberg operator (spec
-    S4.5) as a scipy :class:`~scipy.sparse.linalg.LinearOperator`.
-
-    The operator acts on a flattened pairing gap ``phi`` of shape
-    ``(norb, norb, Nx, Ny, Nz)`` (the bond channel index is **internal** -- it
-    is summed over and never appears in ``phi``).  It has two pieces with
-    **different** phase structure (spec S4.5, "Eliashberg operator -- two
-    separable-phase parts"):
-
-    Pair-leg geometry (issue #232): channel ``m``'s slot ``(a, b)`` is the
-    bond with orbital ``a`` in the origin cell and ``b`` in the cell at
-    ``-dr_m`` -- the bond of the rows ``resolve_interactions`` stores there
-    (declared at ``-dr_m``), i.e. a declared two-body row acts on the bond of
-    the Transfer row with the same ``(R, a, b)``. Every pair leg therefore
-    carries ``e^{-ik.dr_m}``. Both parts below equal an independent
-    spin-orbital first- and second-order calculation of an inter-orbital,
-    mirror-asymmetric CoulombInter model to round-off, while the opposite
-    placement misses by O(1) (``tests/test_bond_pairing_placement.py``).
-
-    Fluctuation part ``K^fl`` (particle-hole ladder, convolution in
-    ``q = k - k'``; the ROW channel ``m`` of a ph block carries the input
-    leg, the COLUMN channel ``m'`` the output leg, and the orbitals are
-    crossed as in the on-site kernel)::
-
-        Y^fl_{ad}(k) = -(1/N) sum_{m,m'} e^{-i k.dr_m'}
-            [ F_eta[(m,ab),(m',cd)] *_q ( e^{-i k'.dr_m} X_{bc}(k') ) ](k)
-
-    with the fluctuation vertex (matrix products in the enlarged ``ND`` space at
-    each ``q``)::
-
-        F_s(q) = +1.5 S_bond chi_s S_bond - 0.5 C_bond chi_c C_bond
-        F_t(q) = -0.5 S_bond chi_s S_bond - 0.5 C_bond chi_c C_bond
-
-    Realized by the **O(B) FFT factorization** (spec S4.5): form ``B`` input
-    fields ``e^{-i k'.dr_m} X`` -> IFFT -> real-space MAC with ``F_hat`` -> FFT
-    -> ``x e^{-i k.dr_m'}``; ``2B`` spatial transforms, ``B^2`` real-space
-    multiply-accumulates, preserving ``O(N_k log N_k)``.
-
-    Instantaneous / bare particle-particle part ``K^pp`` (Cooper, low-rank, NO
-    convolution; a plain matrix-vector product with ``V^pp``)::
-
-        A_{m; l3l4}    = (1/N) sum_{k'} e^{+i k'.dr_m} X_{l3l4}(k')
-        Y^pp_{l1l2}(k) = -1/2 sum_{m,m'} e^{-i k.dr_m}
-                              [V^pp_eta]_{(m,l1l2),(m',l3l4)} A_{m'; l3l4}
-
-    ``A_{m; l3l4}`` is the real-space pair amplitude of the bond (``l3`` at
-    the origin, ``l4`` at ``-dr_m``) that slot ``(m, l3l4)`` of ``V^pp``
-    names.
-
-    In both parts the ``GG phi`` pair bubble is
-    ``X_{l3l4}(k') = sum_{l5,l6} G2_{l3,l5,l4,l6}(k') phi_{l5l6}(k')`` with
-    ``G2 = (T) sum_n G(k',w_n) G(-k',-w_n)`` (:func:`_g2_from_green`), carrying
-    the single factor of ``T = 1/beta``; the single factor of ``1/N`` comes from
-    the spatial fold (the FFT convolution for ``K^fl``, the explicit reduction
-    for ``K^pp``).  This mirrors the ``-(T/N)`` normalization of the existing
-    static solver ``sc._make_kernel_operator`` (which applies the full ``G2``,
-    i.e. the ``sqrt(GG)``-symmetrizable pair weight, without an extra ``T`` or
-    ``1/N``).
-
-    Parameters
-    ----------
-    chi_s, chi_c : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
-        Dressed spin/charge susceptibilities at the enlarged bond-major index
-        (:func:`dress_bond`).  ``ND = norb**2 * B``.
-    S_bond, C_bond : ndarray, shape (Nx, Ny, Nz, ND, ND), complex
-        Bare enlarged spin/charge vertices (:func:`bare_bond_vertices`).
-    Vpp_s, Vpp_t : ndarray, shape (ND, ND), complex
-        q-independent bare Cooper vertices (:func:`bare_bond_vertices`).
-    green : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat), complex
-        k-space Matsubara Green function in the ``sc.py`` layout.
-    bond_set : ResolvedInteractionSet
-        Bond-channel topology (``delta_r``, ``n_channels``).
-    pairing_type : {"singlet", "triplet"}
-        Selects ``F_s``/``Vpp_s`` (singlet) or ``F_t``/``Vpp_t`` (triplet).
-    beta : float
-        Inverse temperature (the ``T = 1/beta`` factor in ``G2``).
-    g2_tail : bool, optional
-        Apply the analytic high-frequency Matsubara correction to ``G2``.
-        Direct library calls default to the historical raw-window sum; the
-        top-level solver passes its configured value explicitly.
-
-    part : {"full", "fluctuation", "instantaneous"}, optional
-        Which piece of ``K = K^fl + K^pp`` the returned operator applies.
-        ``"full"`` (the default) is the physical kernel; the two pieces exist
-        for the ``lambda = lambda^pp + lambda^fl`` attribution of spec S4.5
-        (see :func:`make_bond_kernel_parts` and :func:`attribute_lambda`).
-
-    Returns
-    -------
-    A : scipy.sparse.linalg.LinearOperator
-        The Eliashberg kernel ``K``; ``A.matvec(phi.ravel())`` returns
-        ``(K phi).ravel()`` with ``phi`` shaped ``(norb, norb, Nx, Ny, Nz)``.
-    vec_size : int
-        ``norb**2 * Nx * Ny * Nz``.
-    """
-    ops, vec_size = _bond_kernel_operators(
-        chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green, bond_set,
-        pairing_type, beta, g2_tail=g2_tail)
-    if part not in ops:
-        raise ValueError(
-            "make_bond_kernel: unknown part '{}'. Use one of {}.".format(
-                part, sorted(ops)))
-    return ops[part], vec_size
-
-
-def make_bond_kernel_parts(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                           green, bond_set, pairing_type, beta, *,
-                           g2_tail=False):
-    """Build the bond Eliashberg operator together with its two parts.
-
-    Same arguments as :func:`make_bond_kernel`. The three operators share one
-    set of precomputed invariants (the pair bubble ``G2``, the real-space
-    fluctuation vertex, the bond phases), so this is cheaper than three
-    separate :func:`make_bond_kernel` calls and guarantees the identity
-    ``K = K^fl + K^pp`` holds operator-wise (spec S4.5).
-
-    Returns
-    -------
-    A_full, A_fl, A_pp : scipy.sparse.linalg.LinearOperator
-        The full kernel, its fluctuation (particle-hole ladder ``F_eta``) part
-        and its instantaneous (bare particle-particle ``1/2 V^pp``) part.
-    vec_size : int
-    """
-    ops, vec_size = _bond_kernel_operators(
-        chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t, green, bond_set,
-        pairing_type, beta, g2_tail=g2_tail)
-    return ops["full"], ops["fluctuation"], ops["instantaneous"], vec_size
-
-
-def _bond_kernel_operators(chi_s, chi_c, S_bond, C_bond, Vpp_s, Vpp_t,
-                           green, bond_set, pairing_type, beta, *,
-                           g2_tail=False):
-    """Shared builder behind :func:`make_bond_kernel` /
-    :func:`make_bond_kernel_parts`; returns ``({part: LinearOperator},
-    vec_size)`` with parts ``"full"``, ``"fluctuation"``, ``"instantaneous"``.
-    """
-    if pairing_type == "singlet":
-        F_q = 1.5 * (S_bond @ chi_s @ S_bond) - 0.5 * (C_bond @ chi_c @ C_bond)
-        Vpp = np.asarray(Vpp_s)
-    elif pairing_type == "triplet":
-        F_q = -0.5 * (S_bond @ chi_s @ S_bond) - 0.5 * (C_bond @ chi_c @ C_bond)
-        Vpp = np.asarray(Vpp_t)
-    else:
-        raise ValueError(
-            "make_bond_kernel: unknown pairing_type '{}'. Use 'singlet' or "
-            "'triplet'.".format(pairing_type))
-
-    green = _validate_green_beta(green, beta, "make_bond_kernel")
-    norb = green.shape[0]
-    nd = norb * norb
-    B = int(bond_set.n_channels)
-    ND = nd * B
-    Nx, Ny, Nz, nmat = green.shape[2], green.shape[3], green.shape[4], green.shape[5]
-    N = Nx * Ny * Nz
-    delta_r = bond_set.delta_r
-
-    F_q = np.asarray(F_q)
-    if F_q.shape != (Nx, Ny, Nz, ND, ND):
-        raise ValueError(
-            "make_bond_kernel: fluctuation vertex has shape {} but expected "
-            "(Nx, Ny, Nz, ND, ND) = {} (ND = norb**2 * n_channels).".format(
-                F_q.shape, (Nx, Ny, Nz, ND, ND)))
-    if Vpp.shape != (ND, ND):
-        raise ValueError(
-            "make_bond_kernel: Vpp has shape {} but expected (ND, ND) = "
-            "{}.".format(Vpp.shape, (ND, ND)))
-
-    vec_size = nd * N
-
-    # --- invariants (hoisted out of the per-matvec closure) ---------------
-    # X_{cd}(k) = sum_{ef} G2p[(cd),(ef),k] phi_{ef}(k), cd = c*norb+d.
-    G2 = _g2_from_green(green, beta, tail=g2_tail)       # (i,j,l,m,Nx,Ny,Nz)
-    G2p = G2.transpose(0, 2, 1, 3, 4, 5, 6).reshape(nd, nd, N)  # [(c,d),(e,f),k]
-
-    # Real-space fluctuation vertex F_hat[r, m, ab, m', cd] = IFFT_q F_q.
-    F_r6 = _bk.spatial_ifftn(F_q, axes=(0, 1, 2)).reshape(
-        Nx, Ny, Nz, B, nd, B, nd)
-
-    # Bond phases PH[m](k) = e^{i k.dr_m} on the k-grid.
-    kx = 2.0 * np.pi * np.arange(Nx) / Nx
-    ky = 2.0 * np.pi * np.arange(Ny) / Ny
-    kz = 2.0 * np.pi * np.arange(Nz) / Nz
-    KX, KY, KZ = np.meshgrid(kx, ky, kz, indexing='ij')
-    PH = np.empty((B, Nx, Ny, Nz), dtype=complex)
-    for m in range(B):
-        dm = delta_r[m]
-        PH[m] = np.exp(1j * (KX * dm[0] + KY * dm[1] + KZ * dm[2]))
-    PH_k = np.moveaxis(PH, 0, 3)                          # (Nx,Ny,Nz,B)
-    PHc = np.conj(PH)                                     # e^{-i k.dr_m}
-
-    # Pair legs (issue #232): channel m's slot (a, b) is the bond with orbital
-    # a in the origin cell and b at -dr_m (where resolve_interactions stores
-    # the rows declared at -dr_m), so every pair leg carries e^{-ik.dr_m}.
-    F_r7 = F_r6.reshape(Nx, Ny, Nz, B, norb, norb, B, norb, norb)
-
-    def _fluctuation(X_grid):
-        """Y^fl: FFT convolution, O(B) factorized (spec S4.5). The ROW channel
-        of a ph block carries the input leg, the COLUMN channel the output leg,
-        and the orbitals are crossed as in the on-site kernel
-        (``Y_{ad} <- F_{(ab),(cd)} X_{bc}``)."""
-        Z = PHc[:, None, :, :, :] * X_grid[None, :, :, :, :]  # (B,nd,Nx,Ny,Nz)
-        Z_r = _bk.spatial_ifftn(Z, axes=(2, 3, 4))
-        Z_r_m = np.moveaxis(Z_r, (0, 1), (3, 4)).reshape(
-            Nx, Ny, Nz, B, norb, norb)                          # [x,alpha,b,c]
-        # W_r[x, beta, a, d] = sum_{alpha,b,c} F[x, alpha,a,b, beta,c,d] Z_r[x, alpha,b,c]
-        W_r = np.einsum('xyzAabBcd,xyzAbc->xyzBad', F_r7, Z_r_m)
-        W_k = _bk.spatial_fftn(W_r.reshape(Nx, Ny, Nz, B, nd), axes=(0, 1, 2))
-        return -np.einsum('xyzm,xyzma->xyza', np.conj(PH_k), W_k)  # (Nx,Ny,Nz,nd)
-
-    def _instantaneous(X_grid):
-        """Y^pp: low-rank bare particle-particle part, no convolution."""
-        # A[m, cd] = (1/N) sum_k' e^{+ik'.dr_m} X_cd(k') is the pair amplitude
-        # of the bond (c at the origin, d at -dr_m) that slot (m, cd) of Vpp
-        # names; the output is resummed with e^{-ik.dr_m}.
-        A_coef = (1.0 / N) * np.einsum('mxyz,cxyz->mc', PH, X_grid)  # (B,nd)
-        Bcoef = (Vpp @ A_coef.reshape(ND)).reshape(B, nd)             # (B,nd)
-        return -0.5 * np.einsum('mxyz,ma->xyza', PHc, Bcoef)   # (Nx,Ny,Nz,nd)
-
-    def _make_matvec(part):
-        def matvec(v):
-            phi = np.asarray(v).reshape(norb, norb, Nx, Ny, Nz)
-            phi_flat = phi.reshape(nd, N)                # [(e,f),k]
-            X = np.einsum('adk,dk->ak', G2p, phi_flat)   # (nd, N)  a=(c,d)
-            X_grid = X.reshape(nd, Nx, Ny, Nz)
-
-            if part == "fluctuation":
-                Y = _fluctuation(X_grid)
-            elif part == "instantaneous":
-                Y = _instantaneous(X_grid)
-            else:
-                Y = _fluctuation(X_grid) + _instantaneous(X_grid)
-
-            Y = Y.reshape(Nx, Ny, Nz, norb, norb)
-            Y = np.moveaxis(Y, (3, 4), (0, 1))           # (norb,norb,Nx,Ny,Nz)
-            return Y.ravel()
-        return matvec
-
-    ops = {part: LinearOperator((vec_size, vec_size),
-                                matvec=_make_matvec(part), dtype=complex)
-           for part in ("full", "fluctuation", "instantaneous")}
-    return ops, vec_size
 
 
 # ---------------------------------------------------------------------------
@@ -1649,9 +744,9 @@ def bond_bubble(green, bond_set, beta):
         k-space, Matsubara-frequency Green's function in the ``sc.py``
         layout/normalization (see ``hwave.sc._build_bond_green`` /
         ``hwave.sc._load_flex_green``): ``iomega_n = (2n+1-nmat)*pi/beta``.
-    bond_set : ResolvedInteractionSet
-        Bond-channel topology (``delta_r``, ``n_channels``) as returned by
-        :func:`resolve_interactions`.
+    bond_set : BondSetView or compatible
+        Bond-channel topology (``delta_r``, ``n_channels``), e.g. a
+        :class:`BondSetView` of :func:`resolve_bond_topology`.
     beta : float
         Inverse temperature.
 
@@ -1723,8 +818,8 @@ def pair_weight(green, beta, *, g2_tail=False):
     """Static pair weight ``w = GG`` as the Hermitian metric of the kernel.
 
     This is the SAME object the Eliashberg operator applies to the gap before
-    the vertex convolution (``X = G2 phi`` in :func:`make_bond_kernel` and in
-    ``sc._make_kernel_operator``), written as a matrix in the orbital-pair
+    the vertex convolution (``X = G2 phi`` in the static bond operator,
+    ``sc._build_bond_operator``, and in ``sc._make_kernel_operator``), written as a matrix in the orbital-pair
     index so it can be used as an inner-product metric:
 
         ``W[k][(c,d),(e,f)] = G2_{c,e,d,f}(k)``,  ``G2 = T sum_n G(k,w_n)
@@ -1849,7 +944,7 @@ def check_hermitian_preconditions(operator, weight, *, atol=1.0e-8,
         (``vec_size = norb**2 * Nx * Ny * Nz = 1 * 32 * 32 * 1 = 1024``) sits
         EXACTLY at the limit, so this precondition check alone costs ~3072
         bond-kernel matvecs -- each itself an ``O(B)`` FFT-factorized
-        operation (:func:`_bond_kernel_operators`), not a cheap dense
+        operation (``eliashberg_bond.BondPairKernel``), not a cheap dense
         matrix-vector product. This is a one-time up-front cost per
         Eliashberg solve (not per SCF/eigensolver iteration), but it is not
         negligible at this grid size; ``bond_precondition_dense_limit`` is
@@ -2156,8 +1251,8 @@ def attribute_lambda(vec, weight, op_pp, op_fl, op_full=None,
     weight : ndarray or None
         The pair weight metric (:func:`pair_weight`).
     op_pp, op_fl : LinearOperator
-        The instantaneous and fluctuation parts
-        (:func:`make_bond_kernel_parts`).
+        The instantaneous and fluctuation parts of the static bond operator
+        (``sc._build_bond_operator``).
     op_full : LinearOperator, optional
         The full kernel. When given, ``lambda`` is its own Rayleigh quotient
         and ``sum_residual`` reports ``|lambda - (lambda^pp + lambda^fl)|``
@@ -2528,14 +1623,6 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
 # Phase W, Task 2 -- the master transverse bond topology
 # =============================================================================
 #
-# APPEND-ONLY REGION. Nothing above this banner is touched by this task (or
-# any later Phase W task): `resolve_interactions` and every pre-existing
-# function/class in this module stay byte-for-byte identical (the
-# append-only contract of
-# docs/superpowers/plans/2026-08-16-bond-transverse-phase-w.md, "Global
-# Constraints" -- `bare_bond_vertices`/`resolve_interactions` are templates,
-# never edited).
-#
 # Implements the "master transverse topology" of
 # docs/superpowers/specs/2026-08-15-bond-transverse-design.md ("The
 # enlarged transverse objects (contracts)" -> "The master transverse
@@ -2591,8 +1678,7 @@ def _as_readonly_int_array(value, name, *, ndim, last_dim=None):
     :class:`TransverseTopology`'s ``delta_r``/``reverse`` fields.
 
     Rejects (``ValueError``, never silently clamps/truncates -- the same
-    philosophy ``resolve_interactions``'s ``bond_max_shells`` validation
-    uses): wrong ``ndim``, a wrong trailing axis length (when ``last_dim``
+    philosophy the resolver's ``max_shells`` validation uses): wrong ``ndim``, a wrong trailing axis length (when ``last_dim``
     is given), a complex dtype, a non-finite value, or a genuinely
     fractional value. A float array whose entries are all exact integers
     (e.g. ``np.array([[0, 0, 0]], dtype=float)``) is accepted and cast.
@@ -2715,10 +1801,7 @@ class BondTopology(_TransverseTopologyBase):
         # constructor-time checks, but reverse's whole MEANING depends on
         # it, and every downstream consumer (the closure check right below,
         # iter_reversal_orbits, W_pm_bond's orbit iteration) silently
-        # produces wrong results if it is violated -- the same
-        # internal-interface guard bare_bond_vertices applies to
-        # ResolvedInteractionSet.reverse (see its "bond_set is not
-        # reversal-closed" ValueError above).
+        # produces wrong results if it is violated.
         neg = -delta_r
         if not np.array_equal(delta_r[reverse], neg):
             mism = np.any(delta_r[reverse] != neg, axis=1)
@@ -3019,9 +2102,9 @@ class BondSetView:
     duck-typed bond-set contract (``bubble._validate_bond_set``:
     ``n_channels`` a positive int, ``delta_r`` a sequence of integer
     3-tuples, plus ``reverse``): the longitudinal bond bubble
-    (``bubble.bond_bubble_static``) and the test-side ED map consume a
-    topology through this view instead of a ``ResolvedInteractionSet``
-    (#181 Tier 3 Phase A). The topology is re-validated on construction
+    (``bubble.bond_bubble_static``), the bond pairing kernel
+    (``eliashberg_bond.BondPairKernel``) and the test-side ED map consume a
+    topology through this view (#181 Tier 3 Phase A). The topology is re-validated on construction
     (alias-safe, like ``validate_topology_against_mesh``)."""
 
     def __init__(self, topo):
@@ -3037,19 +2120,15 @@ class BondSetView:
 def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
                               type_name, diag="resolve_transverse_topology"):
     """Off-site (``R != 0``) reverse-closure / Hermitian-projection for
-    ONE interaction type, per the SAME algorithm ``resolve_interactions``
-    (its "Step 2: reverse closure / Hermiticity synthesis", above in this
-    module) applies to its ``CoulombInter``-shaped input.
+    ONE interaction type.
 
-    Deliberately RE-IMPLEMENTED here rather than shared with
-    ``resolve_interactions`` -- this task's append-only contract forbids
-    editing that function (or extracting a common helper out of it) -- but
-    the algorithm itself is the SAME normalization
-    :func:`resolve_transverse_topology` must reproduce (carried Task-1
-    review finding): for a density-density (commuting-operator) type,
-    declaring BOTH ``C`` at ``R`` and ``conj(C)`` at ``-R`` describes the
-    SAME physical operator sum TWICE (``bare_bond_vertices``'s Finding-1
-    derivation, above, reproduces the argument in full) -- so a
+    For a density-density (commuting-operator) type, declaring BOTH ``C``
+    at ``R`` and ``conj(C)`` at ``-R`` describes the SAME physical operator
+    sum TWICE: substituting ``j' = j + R`` in the partner's sum
+    ``sum_j n_{j,b} n_{j-R,a}`` reproduces ``sum_j n_{j,a} n_{j+R,b}``
+    verbatim, so the two declarations are two Fourier-index views of one
+    term whose Hamiltonian coefficient is their sum ``C + conj(C) =
+    2 Re C`` (Finding 1 of the #151 exact-diagonalization campaign) -- so a
     consistent mirrored pair is Hermitian-PROJECTED onto its exact
     conjugate average (``0.5 * (declared + conj(synthesized))``), never
     stored as either raw declared value, and an INCONSISTENT mirrored pair
@@ -3057,8 +2136,8 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
     one side. A single-direction declaration is stored as declared, with
     its reverse partner synthesized as the exact conjugate. Duplicate
     declarations at the identical ``(type, R, a, b)`` key cannot occur
-    here (a plain Python dict already deduplicates that -- same note
-    ``resolve_interactions``'s own "Step 1" docstring makes); a caller
+    here (a plain Python dict already deduplicates that; the duplicate check
+    lives in the ``wan90.read_w90`` parser); a caller
     that pre-sums two logical contributions into one dict entry gets that
     pre-summed value carried through this same closure unchanged.
 
@@ -3069,7 +2148,9 @@ def _close_offsite_hermitian(by_irvec, norb, reverse_atol, reverse_rtol,
         entries only (the caller filters out the on-site point).
     norb : int
     reverse_atol, reverse_rtol : float
-        Same scale-aware tolerance semantics as ``resolve_interactions``.
+        Scale-aware tolerance of the consistency check of a declared
+        mirrored pair: disagreement beyond ``atol + rtol * |value|``
+        raises ``ValueError``.
     type_name : str
         Only used to make a ``ValueError`` message actionable.
 
@@ -3282,8 +2363,8 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
         per_type_completed[type_name] = completed
         union_irvecs.update(completed.keys())
 
-    # --- shell sort: SAME ordering resolve_interactions uses (m=0 first,
-    # then shells by (Euclidean length, lexicographic irvec)) ---
+    # --- shell sort: m=0 first, then shells by (Euclidean length,
+    # lexicographic irvec) ---
     def sort_key(irvec):
         return (_shell_length(irvec, cell), irvec)
 
@@ -3315,16 +2396,13 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
         n_keep = int(shells_f)
         dropped_shells = shells[n_keep:]
 
-        # Ambiguity guard (review fix, generalizing resolve_interactions's
-        # "Step 4" bond_max_shells=0 guard, bond_channels.py above, to
-        # every truncation depth): dropping a shell that carries any
+        # Ambiguity guard (applies at every truncation depth): dropping a shell that carries any
         # exactly-nonzero DECLARED coefficient (from CoulombInter, Ising
         # or Exchange) is ALWAYS an error, never silent -- the docstring's
         # "max_shells truncates the UNION of off-site shells" promise
         # would otherwise silently discard content the caller explicitly
         # asked for. Checked against per_type_by_irvec (the RAW declared
-        # entries, pre-closure), matching resolve_interactions's own
-        # has_nonzero_inter_site_v -- a synthesized-but-negligible
+        # entries, pre-closure) -- a synthesized-but-negligible
         # reverse partner never triggers this on its own (it is not
         # itself a declared entry), but its declared mirror at the SAME
         # shell (same |R|, since |R| == |-R| always) does.
@@ -3384,6 +2462,89 @@ def _resolve_bond_topology_impl(interactions, cell, norb, *, max_shells,
     return BondTopology(delta_r=delta_r, reverse=reverse, coeffs=coeffs)
 
 
+def non_su2_bonds(topo, rel_tol=1e-10):
+    """Bond entries ``(delta_r[m], (a, b))`` of the resolved topology
+    (reversal-closed, after max-shell selection) whose spin part is not
+    rotation invariant: a bond is SU(2) symmetric exactly when
+    ``J_Exchange = J_Hund - 2 J_Ising`` on it (the file convention, each
+    row with its partner; pinned by exact diagonalization in
+    ``tests/test_flex_bond_exchange.py``). Shared by every bond-resolved
+    path (the FLEX bond gate and the static and dynamic bond pairing)."""
+    zero = None
+    arrs = {}
+    for t in ("Ising", "Hund", "Exchange"):
+        if t in topo.coeffs:
+            arrs[t] = np.asarray(topo.coeffs[t]).real
+            zero = np.zeros_like(arrs[t])
+    if zero is None:
+        return []
+    jI, jH, jE = (arrs.get(t, zero) for t in ("Ising", "Hund", "Exchange"))
+    scale = np.maximum(np.maximum(np.abs(jI), np.abs(jH)), np.abs(jE))
+    dev = np.abs(jE - (jH - 2.0 * jI))
+    bad = np.argwhere((scale > 0) & (dev > rel_tol * scale))
+    delta = np.asarray(topo.delta_r)
+    return [(tuple(int(c) for c in delta[m]), (int(a), int(b))) for m, a, b in bad]
+
+
+#: what the bond PAIRING kernels (static and dynamic) do with a bond that
+#: breaks spin-rotation symmetry, for :func:`warn_non_su2_bonds`
+PAIRING_NON_SU2_CONSEQUENCE = (
+    "The fluctuation part of the bond pairing kernel assumes spin-rotation "
+    "invariance (it counts the transverse spin fluctuations as copies of the "
+    "longitudinal one), so this coupling is treated approximately; the "
+    "spin-resolved treatment is tracked in issue #88.")
+
+
+def warn_non_su2_bonds(topo, where, consequence, *, log=None):
+    """Log ONE warning naming the bonds of ``topo`` that break spin-rotation
+    symmetry (:func:`non_su2_bonds`), prefixed by ``where`` and followed by
+    ``consequence`` (what the calling path does with them). Nothing is
+    refused and nothing changes. Returns the list of offending bonds."""
+    bad = non_su2_bonds(topo)
+    if bad:
+        shown = ", ".join("R={} orbitals={}".format(tuple(k[0]), tuple(o + 1 for o in k[1]))
+                          for k in bad[:4])
+        (log or logger).warning(
+            "%s: the off-site spin interaction is not spin-rotation (SU(2)) symmetric "
+            "on %d bond row(s) (%s%s): SU(2) needs J_Exchange = J_Hund - 2 J_Ising on "
+            "every bond. %s",
+            where, len(bad), shown, ", ..." if len(bad) > 4 else "", consequence)
+    return bad
+
+
+#: the off-site types whose first-order (bare) singlet pairing the bond
+#: pairing kernel does not carry yet (tests/test_sc_bond_pairing_oracle.py)
+BARE_PAIRING_GAP_TYPES = ("Exchange", "PairHop")
+
+
+def warn_bare_pairing_gap(topo, where, *, log=None):
+    """Log ONE warning when ``topo`` carries a nonzero off-site Exchange or
+    PairHop coefficient: the bare (instantaneous) vertex of the bond pairing
+    kernel is built from the density content of the off-site rows, so the
+    first-order singlet pairing of these couplings is not included and only
+    their fluctuation (second- and higher-order) contribution enters. Nothing
+    is refused and nothing changes. Returns the offending types."""
+    present = [t for t in BARE_PAIRING_GAP_TYPES
+               if t in topo.coeffs and np.any(np.asarray(topo.coeffs[t]) != 0)]
+    if present:
+        (log or logger).warning(
+            "%s: off-site %s declared. The first-order (bare) singlet pairing of "
+            "an off-site Exchange or PairHop is not yet included in the bond "
+            "pairing kernel, so only its fluctuation (second- and higher-order) "
+            "contribution enters; this is to be completed (issue #239).",
+            where, " and ".join(present))
+    return present
+
+
+def warn_pairing_approximations(topo, where, *, log=None):
+    """The notices every bond PAIRING path (the static ``hwave_sc`` bond path,
+    the dynamic post-processing entry and the FLEX in-process pairing) logs
+    for its topology: :func:`warn_non_su2_bonds` with
+    :data:`PAIRING_NON_SU2_CONSEQUENCE`, and :func:`warn_bare_pairing_gap`."""
+    warn_non_su2_bonds(topo, where, PAIRING_NON_SU2_CONSEQUENCE, log=log)
+    warn_bare_pairing_gap(topo, where, log=log)
+
+
 def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
                           active_types):
     """Resolve the master bond topology over an explicit ``active_types``
@@ -3405,8 +2566,8 @@ def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
 
 def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
     """Resolve the master transverse bond topology (spec, "The master
-    transverse topology") from the SAME raw, PRE-FOLD interaction
-    declarations ``resolve_interactions`` consumes -- the pre-fold
+    transverse topology") from the raw, PRE-FOLD interaction
+    declarations -- the pre-fold
     locality rule (judge locality on the ORIGINAL declarations, never a
     folded table; ``rpa.py``'s own ``param_ham_orig``-reading builders,
     e.g. ``_append_inter_cross``/``_append_onsite_direct`` above this
@@ -3420,10 +2581,9 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
     ``Exchange``; ``Hund``/``PairLift`` and anything else in
     ``interactions`` contribute NO shells and are simply never read --
     "tolerated" per the spec), closes each type's own declarations under
-    ``R -> -R`` with the SAME sum-then-Hermitian-project normalization
-    ``resolve_interactions`` uses (see :func:`_close_offsite_hermitian`),
-    orders channels the SAME way ``resolve_interactions`` does (``m=0``
-    first, then shells by ``(Euclidean length, lexicographic irvec)``),
+    ``R -> -R`` with the sum-then-Hermitian-project normalization of
+    :func:`_close_offsite_hermitian`, orders channels ``m=0`` first, then
+    shells by ``(Euclidean length, lexicographic irvec)``,
     and returns a :class:`TransverseTopology` whose ``coeffs`` are
     zero-filled, per type, at every channel that type does not declare.
 
@@ -3432,9 +2592,9 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
     interactions : dict
         A dict-of-dicts container in the SAME shape as
         ``self.param_ham_orig``/``self.param_ham``: keys are interaction
-        type names; each sub-dict has the SAME ``{(irvec, orbvec): value}``
-        shape ``resolve_interactions``'s own ``coulomb_inter`` parameter
-        documents (``irvec`` a length-3 int tuple, ``orbvec = (a, b)``
+        type names; each sub-dict has the ``{(irvec, orbvec): value}``
+        shape ``hwave.qlmsio.wan90.read_w90`` returns (``irvec`` a length-3
+        int tuple, ``orbvec = (a, b)``
         0-based orbital indices, ``value`` complex). A missing type key is
         treated exactly like an empty sub-dict; on-site (``irvec ==
         (0, 0, 0)``) entries of every type are ignored here -- on-site
@@ -3442,27 +2602,22 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         ``ham_pm_onsite`` (Phase W Task 3's ``W_pm_bond``, spec step 1),
         never through a topology ``coeffs`` channel.
     cell : array_like, shape (3, 3)
-        Real-space lattice vectors (rows) -- the SAME quantity
-        ``resolve_interactions`` calls ``lattice_vectors``; used
-        identically, only for Euclidean shell length / ``max_shells``
-        ordering.
+        Real-space lattice vectors (rows); used only for Euclidean shell
+        length / ``max_shells`` ordering.
     norb : int
         Number of orbitals; every ``coeffs`` array is
         ``(B, norb, norb)``.
     max_shells : int or None, optional
-        Truncates the UNION of off-site shells (the ``bond_max_shells``
-        semantics ``resolve_interactions`` documents) by WHOLE ``|R|``-
-        shells; ``None`` (the default) keeps every declared off-site
+        Truncates the UNION of off-site shells by WHOLE ``|R|``-shells
+        (shell 1 is the nearest off-site shell); ``None`` (the default) keeps every declared off-site
         shell. A negative, non-integral or non-finite value raises
         ``ValueError`` (never clamped/truncated). Dropping declared
         content is ALWAYS an error, never silent: if the truncation would
         remove a shell that carries any exactly-nonzero DECLARED
         coefficient (from ``CoulombInter``, ``Ising`` or ``Exchange``),
-        this raises ``ValueError`` -- the same ambiguity guard
-        ``resolve_interactions``'s ``bond_max_shells=0`` case applies
-        (bond_channels.py's "Step 4" above), generalized here to any
-        truncation depth: ``max_shells=0`` with declared off-site content
-        is simply the ``n_keep=0`` instance of the same rule. A
+        this raises ``ValueError`` at any truncation depth:
+        ``max_shells=0`` with declared off-site content is simply the
+        ``n_keep=0`` instance of the rule. A
         truncation that only drops shells with no declared nonzero
         coefficient (e.g. purely synthesized-negligible partners, or
         shells nothing ever declared) remains fine.
@@ -3474,7 +2629,7 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
         ``"CoulombInter"``, ``"Ising"`` and ``"Exchange"`` keys ALWAYS
         (zero-filled at every channel for a type that declares nothing at
         all off-site), each ``(B, norb, norb)`` complex, Hermitian-closed
-        exactly like ``resolve_interactions``'s ``v_bond``.
+        exactly (``coeffs[t][reverse[m]] == conj(coeffs[t][m]).T``).
 
     Raises
     ------
@@ -3494,12 +2649,6 @@ def resolve_transverse_topology(interactions, cell, norb, *, max_shells=None):
 # =============================================================================
 # Phase W, Task 3 -- the production bond-resolved transverse vertex W_pm_bond
 # =============================================================================
-#
-# APPEND-ONLY REGION (continued): nothing above this banner is touched by
-# this task -- `resolve_interactions`/`bare_bond_vertices` (templates) and
-# every Task-2 name (`TransverseTopology`, `resolve_transverse_topology`,
-# `iter_reversal_orbits`, `validate_topology_against_mesh`,
-# `transverse_effective_activity`) stay byte-for-byte identical.
 #
 # Implements docs/superpowers/specs/2026-08-15-bond-transverse-design.md,
 # "The vertex -- element equations" (steps 1-3, the AMENDED 2026-08-16 flip-
@@ -3546,7 +2695,7 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
        BOTH mirrored diagonal target cells, DIRECT placement (AMENDED
        2026-08-16, Task-6 granule adjudication -- the channel carrying
        the declared coefficient is the target, matching the longitudinal
-       ``bare_bond_vertices`` Fock-diagonal rule exactly; the PREVIOUS
+       Fock-diagonal rule of :func:`build_sc_bond_channel` exactly; the PREVIOUS
        ``m <-> reverse[m]`` swap FAILED the multi-orbital off-site
        CoulombInter granule at O(1), invisible at ``a == b`` which is why
        Gate W0's norb=1 fixtures never caught it -- see the spec's "Cross
@@ -3571,9 +2720,8 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
        assignment.
 
     The q mesh is ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z)`` (``spatial_shape
-    = (N_x, N_y, N_z)``), C-order flattened -- the SAME convention
-    ``sc._build_bond_m0_blocks``'s own phase composition uses (cross-pinned
-    by a dedicated test on a shared fixture); ``q.R = 2*pi*sum_d
+    = (N_x, N_y, N_z)``), C-order flattened -- the convention of the
+    k-grid of ``hwave.sc``; ``q.R = 2*pi*sum_d
     n_d*R_d/N_d``. The ``(Nx, Ny, Nz, ...)`` frame used to build this mesh
     is private to this function; the returned array is the canonical
     flattened ``(nvol, ND, ND)`` shape every numerical object in the spec
@@ -3665,7 +2813,7 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
     W[:, 0:nd, 0:nd] = ham_pm_onsite.reshape(nvol, nd, nd)
 
     # q mesh (private (Nx, Ny, Nz) frame, C-order flattened), spec's fixed
-    # convention -- the same one sc._build_bond_m0_blocks' phase uses.
+    # convention -- the k-grid of hwave.sc.
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     ky = 2.0 * np.pi * np.arange(Ny) / Ny
     kz = 2.0 * np.pi * np.arange(Nz) / Nz
@@ -3685,7 +2833,7 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
     # -- content lands at I=(m,a,b), the channel m carrying the coefficient
     # (since issue #232 the resolvers file the row declared at -delta_r[m]
     # on channel m), matching the longitudinal
-    # bare_bond_vertices Fock-diagonal rule exactly (#151-validated
+    # Fock-diagonal rule of build_sc_bond_channel exactly (#151-validated
     # precedent). The mirrored partner emits the same Re value at
     # (reverse[m], b, a). The PREVIOUS m<->reverse[m] swap (target at
     # reverse[m] with (a,b) unchanged, target at m with (b,a) swapped)
@@ -3737,11 +2885,14 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
 # .sc_matrices_from_split: on-site Kanamori slots + the off-site Hartree
 # vertex V(q) in the density slots) placed VERBATIM; the off-site Fock
 # (exchange) crossing that no q-only matrix can carry lives on the
-# bond-DIAGONAL of the enlarged index, exactly where the Eliashberg module's
-# bare_bond_vertices puts CoulombInter's (+Re v, -Re v) -- generalized here
-# to every type through vertex_table's adjudicated ``cross`` row (Gate G1:
-# equality with bare_bond_vertices for CoulombInter; Gate G2: exact
-# diagonalization for Hund/Ising, tests/test_bond_longitudinal_ed.py).
+# bond-DIAGONAL of the enlarged index: CoulombInter's (+Re v, -Re v), and
+# every other type through vertex_table's adjudicated ``cross`` row (exact
+# diagonalization: tests/test_bond_vs_ed_oracle.py for CoulombInter,
+# tests/test_bond_longitudinal_ed.py for Hund/Ising/Exchange/PairHop).
+# Each ph slot carries Re v, i.e. HALF of the Hamiltonian coefficient
+# v + conj(v) of the operator its two mirrored slots (m, a, b) and
+# (reverse[m], b, a) share (see _close_offsite_hermitian); the dressing
+# never sums the two slots, so each carries its own half.
 
 def is_real_coefficient(v, imag_tol=1e-12):
     """True when the interaction coefficient ``v`` is real to ``imag_tol``
@@ -3786,10 +2937,9 @@ def build_sc_bond_channel(topo, W0, channel, *, imag_tol=1e-12, types=None,
     ``bubble.bond_bubble_static`` produces (its channel-0 block equals
     the solver's static ``chi0q`` slice to round-off -- measured
     difference 0.0 on the 2-orbital fixture, pinned at 1e-13), the one
-    the Tier-1 ``W0`` is built in, and the one the Eliashberg module's
-    ``bare_bond_vertices`` uses -- for CoulombInter the two vertex
-    builders agree to round-off (Gate G1, pinned at 1e-13 in
-    tests/test_bond_longitudinal_vertex.py). Structure: Hermitian at
+    the Tier-1 ``W0`` is built in, and the one the bond pairing kernel
+    (``eliashberg_bond``; the static and the dynamic Eliashberg paths)
+    contracts with. Structure: Hermitian at
     every q, and ``W(-q) == W(q)^T`` for real coefficients (NOT
     ``W(q)^dagger == W(-q)``: the density slot (aa,bb) carries
     ``V_ab(q) = V_ab(-q)^*``).

@@ -3,9 +3,10 @@ of the Transfer row with the same ``(R, a, b)`` (issue #232).
 
 ``tests/test_two_body_placement.py`` pins this for the particle-hole paths.
 Here the same question is asked of the particle-particle (Eliashberg) use of
-the bond channels: the bare Cooper block and the fluctuation term of the
-static kernel (``bond_channels.make_bond_kernel_parts``) and the dynamic
-kernel (``eliashberg_bond.BondPairKernel``, with its bare term
+the bond channels: the bare term and the fluctuation term of the static
+kernel (``hwave.sc._bond_kernel_parts``, built by the static ``hwave_sc`` bond
+path from its own topology and vertices) and of the dynamic kernel
+(``eliashberg_bond.BondPairKernel``, with its bare term
 ``instantaneous_vertex``).
 
 The reference contains no H-wave code. The ``NX``-site chain with ``NORB``
@@ -31,6 +32,7 @@ import unittest
 
 import numpy as np
 
+import hwave.sc as sc
 from hwave.solver import bond_channels as bc
 from tests.eliashberg_bond_fixtures import _channel0_from_gate, _tables_from_pairs
 
@@ -160,12 +162,10 @@ def _production_inputs():
         inter.setdefault(("CoulombInter", (r, 0, 0)), np.zeros((NORB, NORB)))[a, b] = v
     whole, onsite, offsite = _tables_from_pairs(inter, 0.0, NORB)
     S0, C0 = _channel0_from_gate(whole, onsite, offsite, NORB, (NX, 1, 1))
-    bond_set = bc.resolve_interactions(
-        {((r, 0, 0), (a, b)): v for (r, a, b), v in ROWS.items()}, np.eye(3), NORB)
     topo = bc.resolve_bond_topology(
         {"CoulombInter": {((r, 0, 0), (a, b)): complex(v) for (r, a, b), v in ROWS.items()}},
         np.eye(3), NORB, active_types=bc._LONGITUDINAL_ACTIVE_TYPES)
-    return bond_set, topo, S0, C0
+    return topo, S0, C0
 
 
 def _pair_field(rng, eta, nfreq=None):
@@ -198,7 +198,7 @@ class _PlacementCase(object):
     def setUpClass(cls):
         cls.g = _green_sc()
         cls.ref = {s: _reference_vertices(s) for s in (+1, -1)}
-        cls.bond_set, cls.topo, cls.S0, cls.C0 = _production_inputs()
+        cls.topo, cls.S0, cls.C0 = _production_inputs()
 
     def _assert_two_sided(self, got, X, order, label):
         def deviation(sign):
@@ -231,29 +231,38 @@ class TestReferenceSeesThePlacement(_PlacementCase, unittest.TestCase):
 
 
 class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
-    """``make_bond_kernel_parts``: the bare Cooper block (``V^pp`` from
-    ``bare_bond_vertices``) and the fluctuation term with the bare bubble."""
+    """The static ``hwave_sc`` bond kernel (``sc._bond_kernel_parts``) on the
+    topology and the vertices the static path resolves from the declared
+    rows (``sc._resolve_bond_topology`` / ``sc._build_bond_vertices``): the
+    bare term and the fluctuation term with the bare bubble."""
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        nq = (NX, 1, 1, ND, ND)
-        cls.S_b, cls.C_b, cls.Vs, cls.Vt = bc.bare_bond_vertices(
-            cls.bond_set, cls.S0.reshape(nq), cls.C0.reshape(nq), NORB)
-        cls.chib = bc.bond_bubble(cls.g, cls.bond_set, BETA)
+        interactions = {"CoulombInter": {((r, 0, 0), (a, b)): complex(v)
+                                         for (r, a, b), v in ROWS.items()}}
+        topo, cls.view, split = sc._resolve_bond_topology(
+            interactions, {"rvec": np.eye(3)}, NORB, None)
+        cls.S_b, cls.C_b = sc._build_bond_vertices(topo, split, NORB, (NX, 1, 1))
+        # the static path's vertices are the FLEX gate's own
+        np.testing.assert_allclose(cls.S_b, bc.build_sc_bond_channel(cls.topo, cls.S0, "S"),
+                                   rtol=0, atol=1e-13)
+        np.testing.assert_allclose(cls.C_b, bc.build_sc_bond_channel(cls.topo, cls.C0, "C"),
+                                   rtol=0, atol=1e-13)
+        cls.chib = bc.bond_bubble(cls.g, cls.view, BETA).reshape(cls.S_b.shape)
 
     def _parts(self, eta):
-        _, A_fl, A_pp, _ = bc.make_bond_kernel_parts(
-            self.chib, self.chib, self.S_b, self.C_b, self.Vs, self.Vt, self.g,
-            self.bond_set, eta, BETA)
+        _, A_fl, A_pp, _ = sc._bond_kernel_parts(
+            self.S_b, self.C_b, [("spin", self.chib), ("charge", self.chib)], self.g,
+            self.view, NORB, (NX, 1, 1), BETA, eta)
         return A_fl, A_pp
 
-    def test_bare_cooper_block(self):
+    def test_bare_term(self):
         for i, eta in enumerate(("singlet", "triplet")):
             phi = _pair_field(np.random.default_rng(10 + i), eta)
             _, A_pp = self._parts(eta)
             got = A_pp.matvec(phi.ravel()).reshape(NORB, NORB, NX)
-            self._assert_two_sided(got, _static_x(self.g, phi), 1, "V^pp " + eta)
+            self._assert_two_sided(got, _static_x(self.g, phi), 1, "bare " + eta)
 
     def test_fluctuation_term(self):
         for i, eta in enumerate(("singlet", "triplet")):
@@ -274,7 +283,7 @@ class TestDynamicBondKernelPlacement(_PlacementCase, unittest.TestCase):
         super().setUpClass()
         cls.S = bc.build_sc_bond_channel(cls.topo, cls.S0, "S")
         cls.C = bc.build_sc_bond_channel(cls.topo, cls.C0, "C")
-        cls.chib = bc.bond_bubble(cls.g, cls.bond_set, BETA).reshape(
+        cls.chib = bc.bond_bubble(cls.g, bc.BondSetView(cls.topo), BETA).reshape(
             NX, cls.S.shape[-1], cls.S.shape[-1])
 
     def _kernel(self, gam, V_inst):

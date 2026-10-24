@@ -481,21 +481,15 @@ class TestKernelUniform(unittest.TestCase):
                                                                               residency))
 
     def test_flat_frequency_matches_static_bond_kernel(self):     # 10.1.2
-        from hwave.solver import bond_channels as bc
+        import hwave.sc as sc
         from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, COEFF)
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0,
                               delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
         nx, ny, nz = fx["spatial_shape"]
         nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
-        # static side: the ED-adjudicated bond kernel on the SAME topology and vertices
-        coul = {(tuple(R), (0, 0)): 0.5 for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))}
-        bond_set = bc.resolve_interactions(coul, np.eye(3), 1)
-        S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-        C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-        S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 1)
-        np.testing.assert_allclose(S_b.reshape(nvol, ND, ND), fx["S"], atol=1e-13)
-        np.testing.assert_allclose(C_b.reshape(nvol, ND, ND), fx["C"], atol=1e-13)
+        # static side: the static bond kernel (one-point frequency axis) on the
+        # SAME topology and vertices
         l0 = nmat // 2
         chi_s_st = fx["chi_s"][l0].reshape(nx, ny, nz, ND, ND)
         chi_c_st = fx["chi_c"][l0].reshape(nx, ny, nz, ND, ND)
@@ -503,9 +497,9 @@ class TestKernelUniform(unittest.TestCase):
         phi_k = rng.standard_normal((1, 1, nx, ny, nz)) + 1j * rng.standard_normal(
             (1, 1, nx, ny, nz))
         for eta in ("singlet", "triplet"):
-            A_st, _ = bc.make_bond_kernel(chi_s_st, chi_c_st, S_b, C_b, Vpp_s, Vpp_t,
-                                          fx["green_sc"], bond_set, eta, fx["beta"],
-                                          part="fluctuation")
+            _, A_st, _, _ = sc._bond_kernel_parts(
+                fx["S"], fx["C"], [("spin", chi_s_st), ("charge", chi_c_st)],
+                fx["green_sc"], fx["view"], 1, fx["spatial_shape"], fx["beta"], eta)
             ref = A_st.matvec(phi_k.ravel()).reshape(phi_k.shape)
             cs, cc = COEFF[eta]
             Gam_flat = np.broadcast_to(
@@ -755,7 +749,14 @@ class TestKernelUniform(unittest.TestCase):
         allowed[0, 1, 0, 1] = allowed[1, 0, 1, 0] = True
         self.assertFalse(np.any(diff & ~allowed))
 
-    def test_instantaneous_operator_matches_static_bond_kernel(self):   # 10.1.13 (ARBITER)
+    def test_instantaneous_operator_matches_direct_sum_oracle(self):   # 10.1.13
+        """The flat-frequency output of the instantaneous term equals a literal
+        O(N_k^2) convolution of the channel-0 bare vertex ``0.5 (S_0 +/- C_0)``
+        with the frequency-summed pair amplitude
+        (``tests.test_bond_channels._direct_bond_kernel``, which shares no code
+        with the kernel), on the static gap whose bubble equals the dynamic
+        frequency-summed ``F``."""
+        from tests.test_bond_channels import _bare_channel0, _direct_bond_kernel
         from hwave.solver import bond_channels as bc
         from hwave.solver.eliashberg_dynamic import _project_parity_dynamic
         from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
@@ -764,17 +765,12 @@ class TestKernelUniform(unittest.TestCase):
                               delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
         nx, ny, nz = fx["spatial_shape"]
         nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
-        coul = {(tuple(R), (0, 0)): 0.5 for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))}
-        bond_set = bc.resolve_interactions(coul, np.eye(3), 1)
-        S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-        C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-        S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 1)
         zero = np.zeros((nx, ny, nz, ND, ND), complex)
         G2 = _g2(fx)
         rng = np.random.default_rng(11)
         for eta in ("singlet", "triplet"):
-            A_st, _ = bc.make_bond_kernel(zero, zero, S_b, C_b, Vpp_s, Vpp_t, fx["green_sc"],
-                                          bond_set, eta, fx["beta"], part="instantaneous")
+            W0 = _bare_channel0(eta, fx["S"].reshape(nx, ny, nz, ND, ND),
+                                fx["C"].reshape(nx, ny, nz, ND, ND), nd)
             V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
             Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
             vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
@@ -800,34 +796,28 @@ class TestKernelUniform(unittest.TestCase):
                 F_dyn = np.einsum("iljmxyzn,lmxyzn->ijxyzn", G2, phi).sum(-1)
                 G2_st = bc._g2_from_green(fx["green_sc"], fx["beta"])
                 phi_s = F_dyn / G2_st[0, 0, 0, 0]          # norb = 1: scalar per k
-                ref = A_st.matvec(phi_s.ravel()).reshape(phi.shape[:-1])
+                _, ref = _direct_bond_kernel(zero, W0, fx["green_sc"], fx["view"],
+                                             fx["beta"], phi_s, eta)
                 np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10, err_msg=eta)
 
-    def test_instantaneous_operator_matches_static_bond_kernel_norb2(self):  # 10.1.13 (norb 2)
-        """The norb = 1 arbiter above, carried to two orbitals -- where a
-        review claimed the bond instantaneous term and the static bond kernel
-        disagree. They agree to machine precision once the SAME interaction is
-        fed to both sides, for a diagonal V, a purely inter-orbital V and a
-        full 2x2 V, in both pairing channels.
+    def test_instantaneous_operator_matches_direct_sum_oracle_norb2(self):  # 10.1.13 (norb 2)
+        """The norb = 1 check above, carried to two orbitals: a diagonal V, a
+        purely inter-orbital V and a full 2x2 V, in both pairing channels.
 
         The static side needs the gap whose static bubble equals the dynamic
         frequency-summed ``F``; for norb = 2 that is a per-k 4x4 solve rather
         than the norb = 1 scalar division."""
+        from tests.test_bond_channels import _bare_channel0, _direct_bond_kernel
         from hwave.solver import bond_channels as bc
         from hwave.solver.eliashberg_dynamic import _project_parity_dynamic, calc_g2_dynamic
         from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, instantaneous_vertex)
 
-        def check(coeffs, coul):
+        def check(coeffs):
             fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=8, beta=2.0, U=2.0,
                                   delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0)), coeffs=coeffs)
             nx, ny, nz = fx["spatial_shape"]
             nmat, nvol, nd, ND = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"]
-            bond_set = bc.resolve_interactions(coul, np.eye(3), 2)
-            self.assertEqual(bond_set.n_channels, fx["B"])
-            S0q = fx["S"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-            C0q = fx["C"][:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-            S_b, C_b, Vpp_s, Vpp_t = bc.bare_bond_vertices(bond_set, S0q, C0q, 2)
             zero = np.zeros((nx, ny, nz, ND, ND), complex)
             G2 = calc_g2_dynamic(fx["green_sc"], fx["beta"])
             G2_st = bc._g2_from_green(fx["green_sc"], fx["beta"])   # (i,j,l,m,x,y,z)
@@ -838,9 +828,8 @@ class TestKernelUniform(unittest.TestCase):
             Minv = np.linalg.inv(M)
             rng = np.random.default_rng(11)
             for eta in ("singlet", "triplet"):
-                A_st, _ = bc.make_bond_kernel(zero, zero, S_b, C_b, Vpp_s, Vpp_t,
-                                              fx["green_sc"], bond_set, eta, fx["beta"],
-                                              part="instantaneous")
+                W0 = _bare_channel0(eta, fx["S"].reshape(nx, ny, nz, ND, ND),
+                                    fx["C"].reshape(nx, ny, nz, ND, ND), nd)
                 V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
                 Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
                 vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
@@ -862,24 +851,17 @@ class TestKernelUniform(unittest.TestCase):
                     phi_s = phi_s.transpose(3, 4, 0, 1, 2)
                     np.testing.assert_allclose(
                         np.einsum("iljmxyz,lmxyz->ijxyz", G2_st, phi_s), F_dyn, atol=1e-10)
-                    ref = A_st.matvec(phi_s.ravel()).reshape(phi.shape[:-1])
+                    _, ref = _direct_bond_kernel(zero, W0, fx["green_sc"], fx["view"],
+                                                 fx["beta"], phi_s, eta)
                     np.testing.assert_allclose(out[..., 0], ref, rtol=0, atol=1e-10,
                                                err_msg=eta)
 
         check({("CoulombInter", (1, 0, 0)): np.diag([0.5, 0.5]),
-               ("CoulombInter", (-1, 0, 0)): np.diag([0.5, 0.5])},
-              {(tuple(R), (a, a)): 0.5
-               for R in ((1, 0, 0), (-1, 0, 0)) for a in range(2)})
+               ("CoulombInter", (-1, 0, 0)): np.diag([0.5, 0.5])})
         check({("CoulombInter", (1, 0, 0)): np.array([[0.0, 0.4], [0.4, 0.0]]),
-               ("CoulombInter", (-1, 0, 0)): np.array([[0.0, 0.4], [0.4, 0.0]])},
-              {((1, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4,
-               ((-1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4})
+               ("CoulombInter", (-1, 0, 0)): np.array([[0.0, 0.4], [0.4, 0.0]])})
         check({("CoulombInter", (1, 0, 0)): np.array([[0.5, 0.3], [0.3, 0.7]]),
-               ("CoulombInter", (-1, 0, 0)): np.array([[0.5, 0.3], [0.3, 0.7]])},
-              {((1, 0, 0), (0, 0)): 0.5, ((1, 0, 0), (0, 1)): 0.3, ((1, 0, 0), (1, 0)): 0.3,
-               ((1, 0, 0), (1, 1)): 0.7,
-               ((-1, 0, 0), (0, 0)): 0.5, ((-1, 0, 0), (0, 1)): 0.3,
-               ((-1, 0, 0), (1, 0)): 0.3, ((-1, 0, 0), (1, 1)): 0.7})
+               ("CoulombInter", (-1, 0, 0)): np.array([[0.5, 0.3], [0.3, 0.7]])})
 
 
 

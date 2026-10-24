@@ -74,13 +74,12 @@ def _point_from_green(green_path, V):
     green = raw[0].reshape(nmat, Lg, Lg, 1, 1, 1).transpose(4, 5, 1, 2, 3, 0).copy()
     kx, ky, kz = _kgrid(Lg)
     it = _interactions(V, True)
-    inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-    bond_set = bc.resolve_interactions(it.get("CoulombInter", {}), np.eye(3), 1)
+    topo, _, split = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
     carrier = sc._BondGreen(full_sc=green, deflated_kw=sc._green_sc_to_canonical(green),
                             green0_tail=None, coeff_tail_requested=0.0, coeff_tail_applied=0.0,
                             source="external_npz")
     (A, vec_size), provenance, attribution = sc._build_bond_operator(
-        bond_set, carrier, it, inter_k, {"norb": 1, "rvec": np.eye(3)}, 1, kx, ky, kz, BETA,
+        topo, split, carrier, 1, kx, ky, kz, BETA,
         "triplet", bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
     evals, vecs = _odd_spectrum(A, vec_size, attribution["weight"], Lg)
     return {"evals": evals, "vecs": vecs, "weight": attribution["weight"], "L": Lg}

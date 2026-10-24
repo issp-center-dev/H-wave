@@ -1082,6 +1082,223 @@ class TestInProcessHookBoundary(unittest.TestCase):
         self.assertIn("probe boom", gi["pairing_singlet_error"])
 
 
+class _Capture(object):
+    """Collects the records of one logger (any level) without asserting that
+    something was logged, so a test can pin the ABSENCE of a message on every
+    supported Python version."""
+
+    def __init__(self, name):
+        import logging
+        self.logger = logging.getLogger(name)
+        self.records = []
+        outer = self
+
+        class _H(logging.Handler):
+            def emit(self, record):
+                outer.records.append(record)
+
+        self.handler = _H(level=logging.DEBUG)
+
+    def __enter__(self):
+        import logging
+        self._level = self.logger.level
+        self.logger.addHandler(self.handler)
+        self.logger.setLevel(logging.DEBUG)
+        return self
+
+    def __exit__(self, *exc):
+        self.logger.removeHandler(self.handler)
+        self.logger.setLevel(self._level)
+        return False
+
+    def messages(self, levelno):
+        return [r.getMessage() for r in self.records if r.levelno >= levelno]
+
+
+def _multi_orbital_warnings(cap):
+    import logging
+    return [m for m in cap.messages(logging.WARNING)
+            if "validated end to end for single-orbital models only" in m]
+
+
+class TestMultiOrbitalWarning(unittest.TestCase):
+    """Until the multi-orbital validation of the bond-resolved pairing lands
+    (issue #239), both dynamic entries WARN once for ``norb > 1``; they run
+    on, and nothing changes for ``norb = 1``."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _post_processing(self, path, files):
+        import hwave.sc as sc
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        inter = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        inter.update(files)
+        inp["file"]["input"]["interaction"] = inter
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            # no archive in tmp: the entry stops at the archive, AFTER the
+            # point where norb is known and the notice is due
+            with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
+                sc.calc_eliashberg(inp)
+        return _multi_orbital_warnings(cap)
+
+    def test_post_processing_entry(self):
+        two = self._post_processing(_IN2, {"CoulombIntra": "coulombintra.dat",
+                                           "CoulombInter": "coulombinter.dat"})
+        self.assertEqual(len(two), 1, two)
+        self.assertIn("norb = 2", two[0])
+        self.assertIn("not yet validated", two[0])
+        self.assertIn("#239", two[0])
+        one = self._post_processing(_IN1, {"CoulombIntra": "coulombintra.dat",
+                                           "CoulombInter": "coulombinter.dat"})
+        self.assertEqual(one, [])
+
+    def _in_process(self, **kw):
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3}, **kw)
+        gi = r.get_param("green")
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            s.solve(gi, self.tmp)
+        # the run is not refused: the pairing result is there
+        self.assertIn("pairing_singlet_eigenvalue", gi)
+        self.assertNotIn("pairing_singlet_error", gi)
+        return s.norb, _multi_orbital_warnings(cap)
+
+    def test_in_process_entry(self):
+        norb, two = self._in_process()
+        self.assertEqual(norb, 2)
+        self.assertEqual(len(two), 1, two)
+        self.assertIn("norb = 2", two[0])
+        self.assertIn("longitudinal_bond_pairing", two[0])
+        norb, one = self._in_process(
+            path=_IN1, inter={"CoulombIntra": "coulombintra.dat",
+                              "CoulombInter": "coulombinter.dat"})
+        self.assertEqual(norb, 1)
+        self.assertEqual(one, [])
+
+
+def _write_nn_rows(path, value):
+    """A single-band interaction file with the four nearest-neighbour rows."""
+    rows = [((1, 0, 0)), ((-1, 0, 0)), ((0, 1, 0)), ((0, -1, 0))]
+    with open(path, "w") as fw:
+        fw.write("generated for test\n1\n{}\n{}\n".format(len(rows), " ".join(["1"] * len(rows))))
+        for r in rows:
+            fw.write("{:4d} {:4d} {:4d}    1    1 {:.12f} 0.0\n".format(r[0], r[1], r[2], value))
+
+
+def _su2_warnings(cap, where):
+    import logging
+    return [m for m in cap.messages(logging.WARNING) if "SU(2)" in m and m.startswith(where)]
+
+
+def _gap_warnings(cap, where):
+    import logging
+    return [m for m in cap.messages(logging.WARNING)
+            if "first-order (bare) singlet" in m and m.startswith(where)]
+
+
+class _EntryNoticeCase(object):
+    """Runs both dynamic bond pairing entries far enough to collect their
+    notices: the post-processing entry up to the (absent) archive, the
+    in-process one through a short FLEX solve."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _post_processing(self, extra, keep=_su2_warnings):
+        import hwave.sc as sc
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        inter = inp["file"]["input"]["interaction"]
+        for itype, value in extra.items():
+            path = os.path.join(self.tmp, itype + ".dat")
+            _write_nn_rows(path, value)
+            inter[itype] = os.path.abspath(path)
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            # no archive in tmp: the entry stops there, AFTER the notices
+            with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
+                sc.calc_eliashberg(inp)
+        return keep(cap, "[eliashberg] bond_channels=true (frequency='dynamic')")
+
+    def _in_process(self, inter, path=None, keep=_su2_warnings):
+        kw = {} if path is None else {"path": path}
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3}, inter=inter,
+                     **kw)
+        gi = r.get_param("green")
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            s.solve(gi, self.tmp)
+        # the run is not refused: the pairing result is there
+        self.assertIn("pairing_singlet_eigenvalue", gi)
+        return keep(cap, "[mode.param] longitudinal_bond_pairing")
+
+
+class TestNonSU2BondWarning(_EntryNoticeCase, unittest.TestCase):
+    """Both dynamic bond pairing entries name, in ONE warning, the bonds whose
+    spin part breaks spin-rotation symmetry (``J_Exchange != J_Hund - 2
+    J_Ising``): the fluctuation part of the pairing kernel assumes
+    spin-rotation invariance. Nothing is refused and nothing changes."""
+
+    def test_post_processing_entry(self):
+        for label, extra in (("ising", {"Ising": 0.2}), ("hund", {"Hund": 0.2})):
+            msgs = self._post_processing(extra)
+            self.assertEqual(len(msgs), 1, (label, msgs))
+            # the full expected set: both members of the x and of the y
+            # bond-reversal orbit
+            self.assertIn("on 4 bond row(s)", msgs[0])
+            for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+                self.assertIn("R={} orbitals=(1, 1)".format(R), msgs[0])
+            self.assertIn("#88", msgs[0])
+        self.assertEqual(self._post_processing({"Hund": 0.3, "Exchange": 0.1, "Ising": 0.1}), [])
+        self.assertEqual(self._post_processing({}), [])
+
+    def test_in_process_entry(self):
+        msgs = self._in_process({"CoulombInter": "coulombinter.dat", "Hund": "offsite_hund.dat"})
+        self.assertEqual(len(msgs), 1, msgs)
+        # the x bond of offsite_hund.dat: both members of its reversal orbit
+        self.assertIn("on 2 bond row(s)", msgs[0])
+        self.assertIn("R=(-1, 0, 0) orbitals=(1, 2)", msgs[0])
+        self.assertIn("R=(1, 0, 0) orbitals=(2, 1)", msgs[0])
+        self.assertEqual(self._in_process(None), [])
+
+
+class TestBarePairingGapWarning(_EntryNoticeCase, unittest.TestCase):
+    """Both dynamic bond pairing entries warn, once, that the first-order
+    (bare) singlet pairing of an off-site Exchange or PairHop is not yet
+    included (``tests/test_sc_bond_pairing_oracle.py``). Nothing is refused
+    and nothing changes; CoulombInter alone is silent."""
+
+    def test_post_processing_entry(self):
+        for itype in ("Exchange", "PairHop"):
+            msgs = self._post_processing({itype: 0.2}, keep=_gap_warnings)
+            self.assertEqual(len(msgs), 1, (itype, msgs))
+            self.assertIn("off-site {} declared".format(itype), msgs[0])
+            self.assertIn("#239", msgs[0])
+        self.assertEqual(self._post_processing({}, keep=_gap_warnings), [])
+
+    def test_in_process_entry(self):
+        for itype in ("Exchange", "PairHop"):
+            d = tempfile.mkdtemp()
+            try:
+                for f in ("geom.dat", "transfer.dat", "coulombinter.dat"):
+                    shutil.copy(os.path.join(_IN2, f), d)
+                with open(os.path.join(d, "offsite.dat"), "w") as fw:
+                    fw.write("off-site {} on the x bond\n2\n2\n 1 1\n".format(itype))
+                    fw.write("   1    0    0    1    2   0.200000000000   0.000000000000\n")
+                    fw.write("  -1    0    0    2    1   0.200000000000   0.000000000000\n")
+                msgs = self._in_process({"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
+                                        path=d, keep=_gap_warnings)
+            finally:
+                shutil.rmtree(d, ignore_errors=True)
+            self.assertEqual(len(msgs), 1, (itype, msgs))
+            self.assertIn("off-site {} declared".format(itype), msgs[0])
+            self.assertIn("#239", msgs[0])
+        self.assertEqual(self._in_process(None, keep=_gap_warnings), [])
+
+
 class TestTemporaryNames(unittest.TestCase):
     """A fixed ``x.tmp.npz`` collides between two runs writing the same
     directory (a parameter sweep, a restarted job): one run's rename can

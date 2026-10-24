@@ -17,9 +17,9 @@ never be confused (design doc, "Declaration counting"): the ED side
 (Hamiltonian and Hartree-Fock) takes a CANONICAL list -- one entry per
 unordered displaced-density-pair class, via
 ``ed_oracle_util.canonical_density_terms`` -- while the SOLVER side takes
-the CLOSED TWO-SIDED declaration dict production's own
-``resolve_interactions`` expects (both ``V_ab(R)`` and ``V_ba(-R)``
-declared explicitly). Feeding the closed two-sided list, undeduplicated,
+the CLOSED TWO-SIDED declaration dict production's bond resolver
+(``hwave.sc._resolve_bond_topology``) expects (both ``V_ab(R)`` and
+``V_ba(-R)`` declared explicitly). Feeding the closed two-sided list, undeduplicated,
 to the ED side double-counts the Hamiltonian; this module's first test
 pins that factor of 2 so the convention cannot silently drift (see the
 class docstring below).
@@ -29,10 +29,15 @@ a real density-density interaction, ``V_ab(R) = v + i*eps`` declared
 alongside its Hermitian-closed partner ``V_ba(-R) = v - i*eps`` is, after
 site relabeling, one operator weighted by ``(v+i*eps)+(v-i*eps) = 2v`` --
 independent of ``eps``. The design claims this holds "ED and solver
-alike". The ED half holds at machine precision (verified below). The
-solver half does NOT survive contact with ``bare_bond_vertices`` -- see
-``TestNullDirectionSolverSide`` and this task's report for the measured
-finding.
+alike". The ED half holds at machine precision (verified below); the
+solver half is pinned by ``TestNullDirectionSolverSide``.
+
+The solver side is production's static bond chain: the topology
+(``hwave.sc._resolve_bond_topology``), the enlarged spin/charge vertices
+(``hwave.sc._build_bond_vertices``), the bond bubble (``bond_bubble``) and
+the bare (instantaneous) part of the pairing kernel
+(``hwave.sc._bond_kernel_parts``), whose Cooper vertex in the ordered-pair
+basis is read off the operator itself (``solver_vpp``).
 """
 
 import collections
@@ -45,11 +50,9 @@ import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
-from hwave.sc import _build_bond_m0_blocks
-from hwave.solver.bond_channels import (
-    _g2_from_green, bare_bond_vertices, bond_bubble, dress_bond,
-    resolve_interactions,
-)
+import hwave.sc as sc
+from hwave.solver import bond_channels
+from hwave.solver.bond_channels import _g2_from_green, bond_bubble, dress_bond
 from tests import ed_oracle_util
 from tests.approx_util import ApproxTestCase, assert_approx_array
 from tests.heavy_tests import heavy
@@ -175,24 +178,64 @@ class TestCanonicalListCounting(ApproxTestCase):
 # Solver-side null-direction pin
 # ---------------------------------------------------------------------------
 
-_Fx3Resolved = collections.namedtuple(
-    "_Fx3Resolved", ["bond_set", "S_bond", "C_bond", "Vpp_s", "Vpp_t"])
+_SolverBonds = collections.namedtuple(
+    "_SolverBonds", ["delta_r", "reverse", "n_channels", "norb", "topo", "split"])
+
+
+def resolve_solver_bonds(closed_decls, norb, bond_max_shells=None):
+    """The bond topology production's static bond path resolves for a
+    ``CoulombInter`` declaration (``hwave.sc._resolve_bond_topology``, the
+    shared ``bond_channels.resolve_bond_topology`` over the locality split).
+
+    Returns a ``_SolverBonds`` record: ``delta_r``/``reverse``/``n_channels``
+    of the topology's ``BondSetView`` (channel 0 is ``R = 0``; channel ``m``
+    carries the rows declared at ``-delta_r[m]``), plus ``norb``, the
+    topology itself and the locality split the channel-0 block is built
+    from. The record satisfies the bubble kernel's duck-typed bond-set
+    contract, so ``bond_bubble`` takes it directly. ``lattice vectors =
+    np.eye(3)`` -- used only for shell-length sorting, not for the
+    fixture's ring geometry.
+
+    An ``R = 0`` row of an orbital with itself is that orbital's on-site
+    density-density term -- in the ED Hamiltonian the same operator as a
+    Hubbard ``U`` of that value -- and production takes it as
+    ``CoulombIntra`` (the static bond path refuses it in a CoulombInter
+    file), so it is filed there.
+    """
+    inter, intra = {}, {}
+    for (irvec, orbvec), value in closed_decls.items():
+        onsite_same = (tuple(int(x) for x in irvec) == (0, 0, 0)
+                       and int(orbvec[0]) == int(orbvec[1]))
+        (intra if onsite_same else inter)[(irvec, orbvec)] = value
+    interactions = {"CoulombInter": inter}
+    if intra:
+        interactions["CoulombIntra"] = intra
+    topo, view, split = sc._resolve_bond_topology(
+        interactions, {"rvec": np.eye(3)}, norb, bond_max_shells)
+    return _SolverBonds(view.delta_r, view.reverse, view.n_channels,
+                        int(norb), topo, split)
+
+
+def solver_vertices(bond_set, spatial_shape):
+    """``(S, C)``, each ``(nvol, ND, ND)``: production's enlarged spin/charge
+    vertices (``hwave.sc._build_bond_vertices``) for ``bond_set``."""
+    return sc._build_bond_vertices(bond_set.topo, bond_set.split,
+                                   bond_set.norb, spatial_shape)
 
 
 def _two_sided_decl(entries):
     """The CLOSED TWO-SIDED ``CoulombInter`` declaration dict
-    ``resolve_interactions`` expects (Global Constraints: solver
+    production's file reader produces (Global Constraints: solver
     representation), built from a list of ONE-SIDED physical directions
     ``[(R, a, b, value), ...]`` -- ``R`` a single-axis ring displacement
     (the fixtures in this module are 1-D rings, so only the x-component of
     the Bravais-cell displacement is ever nonzero), ``a``, ``b`` PHYSICAL
     orbital indices. Declares both ``V_ab(R) = value`` and its Hermitian-
     closed partner ``V_ba(-R) = conj(value)`` explicitly -- the only pairing
-    ``resolve_interactions`` accepts without raising, since it enforces
+    the bond resolver accepts without raising, since it enforces
     ``V_ab(R) == conj(V_ba(-R))``. Shared by every closed two-sided
-    declaration this module builds (Task 3's ``_resolve_fx3`` and Task 5's
-    ``dW_matrices``/frame-map fixtures), so the convention cannot drift
-    between them.
+    declaration this module builds, so the convention cannot drift between
+    them.
     """
     decl = {}
     for (R, a, b, v) in entries:
@@ -202,8 +245,7 @@ def _two_sided_decl(entries):
 
 
 def _resolve_fx3(perturbation):
-    """Resolve fx3's ring interaction through the SOLVER's own builders
-    (``resolve_interactions`` then ``bare_bond_vertices``), for the
+    """Resolve fx3's ring interaction through production's resolver for the
     (a=0, b=1, R=+1) bond direction the design's null-direction example
     uses (spec, "direction g+/g-").
 
@@ -212,169 +254,82 @@ def _resolve_fx3(perturbation):
     Hermitian-closed null perturbation ``V_01(+1) += +i*eps``,
     ``V_10(-1) += -i*eps`` -- the SAME sign convention pinned by
     ``test_imaginary_closed_pair_direction_is_null`` above (opposite signs
-    are the only choice ``resolve_interactions`` accepts without raising:
-    same-sign eps on both entries would violate the V_ab(R) ==
-    conj(V_ba(-R)) Hermiticity check it enforces).
-
-    ``lattice_vectors=np.eye(3)`` matches every ``resolve_interactions``
-    caller in ``tests/test_bond_channels.py`` -- it is used only for
-    Euclidean shell-length sorting, not for the fixture's actual ring
-    geometry, and no ``bond_max_shells`` cutoff is in play here.
-
-    ``bare_bond_vertices`` assumes ``C0_q`` already carries the FULL q=0
-    Hartree ``2*V_ab(q=0)`` -- its Case-2-correction step subtracts the
-    R!=0 part back out to isolate the local Cooper block (see its
-    docstring / spec S4.3 star, and
-    ``tests/test_bond_channels.py``'s ``_build_complex_two_orbital_bond``,
-    which documents and exercises the identical precondition). Passing a
-    bare zero ``C0_q`` would violate that precondition and inject a
-    spurious residual into the local block unrelated to the null-
-    direction question under test, so ``C0_q``'s (aa,bb) Hartree entries
-    are filled from ``bond_set.v_bond`` exactly as
-    ``sc._build_bond_m0_blocks`` does (Finding 1 fix, #151 ED-adjudication
-    campaign): ``2 * sum_{m>=1} Re(V_ab(R_m))``, Hermitizing PER SHELL
-    before the sum -- see that function's inline comment for the
-    derivation (the same one that applies to ``bare_bond_vertices``' own
-    m!=0 Fock diagonal below).
-
-    Returns the resolved topology plus the ``bare_bond_vertices`` outputs.
+    are the only choice the resolver accepts without raising).
     """
     eps = perturbation.get("im_eps", 0.0)
     coulomb_inter = _two_sided_decl([(1, 0, 1, V1 + 1j * eps)])
-    norb = fx3().norb
-    bond_set = resolve_interactions(coulomb_inter, np.eye(3), norb=norb)
-    nd = norb * norb
-    S0_q = np.zeros((1, 1, 1, nd, nd), dtype=complex)
-    C0_q = np.zeros((1, 1, 1, nd, nd), dtype=complex)
-    for a in range(norb):
-        for b in range(norb):
-            total_ab = sum(
-                bond_set.v_bond[m][a, b].real
-                for m in range(1, bond_set.n_channels))
-            C0_q[0, 0, 0, a * norb + a, b * norb + b] = 2.0 * total_ab
-    S_bond, C_bond, Vpp_s, Vpp_t = bare_bond_vertices(bond_set, S0_q, C0_q, norb)
-    return _Fx3Resolved(bond_set, S_bond, C_bond, Vpp_s, Vpp_t)
+    return resolve_solver_bonds(coulomb_inter, norb=fx3().norb)
 
 
 class TestNullDirectionSolverSide(ApproxTestCase):
-    """Solver-side half of the null-direction pin (review round 2): the ph
-    matrices ``S_bond``/``C_bond`` AND the pp vertices ``Vpp_s``/``Vpp_t``
-    from ``bare_bond_vertices`` must be unchanged (abs=1e-15) under the
-    imaginary null perturbation -- mirroring
+    """Solver-side half of the null-direction pin: for the imaginary null
+    perturbation ``V_01(+1) = V1 + i*eps`` / ``V_10(-1) = V1 - i*eps`` the
+    two declarations multiply the SAME physical density operator after site
+    relabeling (their Hamiltonian coefficient is ``2 V1``), so nothing the
+    solver builds from the pair may move with ``eps`` -- mirroring
     ``test_imaginary_closed_pair_direction_is_null``'s ED-side result.
-    Each of the four matrices is checked in its own ``subTest`` so a
-    failure on one does not hide the others' pass/fail status.
 
-    HISTORY (Finding 1, #151 ED-adjudication campaign). This pin was
-    deliberately kept RED (Task 3, discrepancy protocol -- ``bond_channels.py``
-    not touched at the time): the PP sector held exactly (``Vpp_s``/``Vpp_t``
-    null-invariant, diff 0.0) because the ``D + D^dagger`` construction
-    feeding the bond Cooper block already took ``2*Re(.)`` of each
-    bond-diagonal entry, and the local block's R!=0 Hartree subtraction
-    canceled against a correctly-filled ``C0_q`` exactly. The PH sector did
-    NOT hold: ``S_bond``/``C_bond``'s m!=0 bond-diagonal Fock element was set
-    directly from ``v_bond[m][l1, l2]`` (S) / ``-v_bond[m][l1, l2]`` (C) with
-    no Hermitizing combination -- ``V_01(+1)`` and ``V_10(-1)`` live at
-    DIFFERENT enlarged indices ``(m, l1, l2)`` and were never combined the
-    way the ED canonical list combines them onto one physical operator --
-    so the imaginary offset survived: ``S_bond`` at magnitude ``eps``,
-    ``C_bond`` at magnitude ``2*eps`` (that same Fock effect PLUS the m=0
-    Hartree sub-block's own eps-response).
-
-    FIX (this pin's own follow-up cycle): both sites Hermitize per slot/
-    per shell -- ``bare_bond_vertices``' m!=0 Fock diagonal takes
-    ``Re(v_bond[m][l1, l2])`` instead of the raw value (see its inline
-    comment for the operator-algebra derivation: the declared channel and
-    its ``resolve_interactions`` reversal partner multiply the SAME
-    physical density operator after site relabeling, so Hermiticity forces
-    their combined coefficient to be real), and ``sc._build_bond_m0_blocks``
-    Hermitizes each R!=0 shell's contribution to the Hartree sum the same
-    way, before the q-phase multiply. Both changes are provable no-ops on
-    every already-real declaration (``.real`` of an already-real complex
-    value is bit-identical), so this pin turning GREEN does not move any
-    other adjudicated granule. No custom ``msg`` is passed to
-    ``assert_approx_array`` below -- its default failure message already
-    carries the mismatch count, first bad index, actual/expected values,
-    diff and tolerance, useful if this pin ever regresses.
+    The bond-resolved chain represents real off-site coefficients only and
+    REFUSES a complex one (``build_sc_bond_channel``'s ``imag_tol``), so the
+    null direction cannot reach a production run at all; that refusal is
+    pinned first. The two halves of the vertex that DO take the pair are
+    then pinned eps-invariant directly: the bond-diagonal Fock rule (each
+    slot carries ``Re v``, the guard relaxed to let the complex pair in) and
+    the channel-0 block of the locality split (Hartree, density slots), on a
+    multi-q grid. (History, #151 Finding 1: before the per-slot ``Re v`` and
+    the per-shell Hermitization of the Hartree sum, ``S``/``C`` leaked the
+    null direction at magnitude ``eps``/``2 eps``.)
     """
 
-    def test_null_direction_moves_nothing_solver_side(self):
+    def test_complex_bond_is_refused(self):
+        pert = _resolve_fx3({"im_eps": 1e-3})
+        with self.assertRaisesRegex(ValueError, "complex"):
+            solver_vertices(pert, (fx3().L, 1, 1))
+
+    def test_bond_diagonal_rule_is_null_invariant(self):
         base = _resolve_fx3({})
         pert = _resolve_fx3({"im_eps": 1e-3})
-        for name in ("S_bond", "C_bond", "Vpp_s", "Vpp_t"):
-            with self.subTest(matrix=name):
-                assert_approx_array(
-                    getattr(pert, name), getattr(base, name), rel=0, abs=1e-15)
+        nd = fx3().norb ** 2
+        W0 = np.zeros((1, nd, nd), dtype=complex)
+        for ch in ("S", "C"):
+            with self.subTest(channel=ch):
+                w_base = bond_channels.build_sc_bond_channel(
+                    base.topo, W0, ch, imag_tol=1.0)
+                w_pert = bond_channels.build_sc_bond_channel(
+                    pert.topo, W0, ch, imag_tol=1.0)
+                assert_approx_array(w_pert, w_base, rel=0, abs=1e-15)
+
+    def test_channel_zero_block_is_null_invariant_on_a_multi_q_grid(self):
+        from hwave.solver.offsite import sc_matrices_from_split
+        norb = fx3().norb
+        base = _resolve_fx3({})
+        pert = _resolve_fx3({"im_eps": 1e-3})
+        # a multi-q grid, deliberately not tied to any ED fixture's ring
+        S0_b, C0_b = sc_matrices_from_split(
+            base.split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, norb, 7, 1, 1)
+        S0_p, C0_p = sc_matrices_from_split(
+            pert.split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, norb, 7, 1, 1)
+        assert_approx_array(S0_p, S0_b, rel=0, abs=1e-15)
+        assert_approx_array(C0_p, C0_b, rel=0, abs=1e-15)
 
 
-class TestBondM0BlockHermitizationDirect(ApproxTestCase):
-    """Direct regression pins on ``sc._build_bond_m0_blocks`` itself (#151
-    Finding 1 fix, review round 2). ``TestNullDirectionSolverSide`` above
-    (and every other caller of ``bare_bond_vertices`` in this module) only
-    exercises the Finding 1 fix's ``sc.py`` site INDIRECTLY, through a
-    hand-built ``C0_q`` (``_resolve_fx3``) that separately replicates the
-    fixed convention -- it never calls ``_build_bond_m0_blocks`` itself with
-    a null-direction or asymmetric-orbital-order declaration. Every OTHER
-    test in the suite that DOES call ``_build_bond_m0_blocks`` directly
-    (``_bare_vertices_at`` and friends) only ever declares REAL couplings,
-    which is exactly the no-op territory the Finding 1 fix's derivation
-    guarantees -- so a mutation deleting ``sc.py``'s ``.real`` at the ``V_q``
-    accumulation would pass the entire test suite silently. That is the
-    identical silent-desync failure mode the fix's own report documented one
-    review cycle earlier for the TEST harness's hand-rolled ``C0_q``
-    (finding1-fix-report.md, "Fix iteration"). These two tests close that
-    gap by calling ``_build_bond_m0_blocks`` directly.
+class TestChannelZeroHartreeOrbitalOrder(ApproxTestCase):
+    """The Hartree orbital order of the channel-0 block at ``q != 0``. At
+    ``q=0`` the Hermitized totals ``Re(V_01(+R))+Re(V_01(-R))`` and
+    ``Re(V_10(+R))+Re(V_10(-R))`` are ALWAYS equal (both reduce to
+    ``Re(VAB)+Re(VBA)``), so a ``q=0``-only check cannot catch an
+    orbital-order swap in the Hartree slot. At ``q!=0`` the two orbital
+    orders pick up DIFFERENT phases -- pinned here directly against the
+    closed form ``V_ab(q) = Re(V_ab(+R)) e^{+iq} + Re(V_ab(-R)) e^{-iq}``,
+    ``V_ab(R)`` the DECLARED row ``(R, a, b)``, i.e. the row ``(R, a, b)`` is
+    the bond of the Transfer row ``(R, a, b)`` (issue #232; the case-M ED
+    granules of this module adjudicate that placement through this very
+    Hartree slot). The complex values reach the channel-0 builder (the
+    locality split) directly; production refuses them in the bond channels.
     """
 
-    def test_closed_pair_eps_invariant_on_a_multi_q_grid(self):
-        """(a) The null-direction closed pair ``V_01(+1)=V1+i*eps``,
-        ``V_10(-1)=V1-i*eps`` must leave ``_build_bond_m0_blocks``' own
-        ``S0_q``/``C0_q`` output eps-invariant at EVERY q on a multi-point
-        grid, not just the single ``q=0`` point ``_resolve_fx3`` exercises
-        indirectly.
-        """
-        norb = 2
-        eps = 1e-3
-        base_decl = _two_sided_decl([(1, 0, 1, V1)])
-        pert_decl = _two_sided_decl([(1, 0, 1, V1 + 1j * eps)])
-        bond_set_base = resolve_interactions(base_decl, np.eye(3), norb=norb)
-        bond_set_pert = resolve_interactions(pert_decl, np.eye(3), norb=norb)
-        # A multi-q grid, deliberately not tied to any ED fixture's ring
-        # length -- _build_bond_m0_blocks takes raw k-arrays.
-        kx = 2.0 * np.pi * np.arange(7) / 7.0
-        ky = np.array([0.0])
-        kz = np.array([0.0])
-        S0_base, C0_base = _build_bond_m0_blocks(
-            bond_set_base, {}, {}, norb, kx, ky, kz)
-        S0_pert, C0_pert = _build_bond_m0_blocks(
-            bond_set_pert, {}, {}, norb, kx, ky, kz)
-        assert_approx_array(S0_pert, S0_base, rel=0, abs=1e-15)
-        assert_approx_array(C0_pert, C0_base, rel=0, abs=1e-15)
-
     def test_asymmetric_real_parts_hartree_orbital_order_at_nonzero_q(self):
-        """(b) Restores the Hartree orbital-order transposition coverage
-        that ``q=0`` symmetry made vacuous (review round 2 minor 2; see
-        finding1-fix-report.md Section 5 / ``test_bond_channels.py``'s
-        ``_build_asymmetric_two_orbital_bond`` docstring): at ``q=0`` the
-        Hermitized totals ``Re(V_01(+R))+Re(V_01(-R))`` and
-        ``Re(V_10(+R))+Re(V_10(-R))`` are ALWAYS equal (a structural fact,
-        not a fixture coincidence -- both reduce to ``Re(VAB)+Re(VBA)``), so
-        a ``q=0``-only check cannot catch an orbital-order swap in the
-        Hartree slot. At ``q!=0`` the two orbital orders pick up DIFFERENT
-        phases and so give DIFFERENT complex values -- pinned here directly
-        against the closed form ``V_ab(q) = Re(V_ab(+R)) e^{+iq} +
-        Re(V_ab(-R)) e^{-iq}``, ``V_ab(R)`` the DECLARED row ``(R, a, b)``:
-        ``_build_bond_m0_blocks`` applies ``e^{-iq.dr_m}`` to channel ``m``,
-        and channel ``m`` carries the row declared at ``-dr_m`` (a row
-        ``(R, a, b)`` is the bond of the Transfer row ``(R, a, b)``, issue
-        #232; the case-M ED granules of this module adjudicate that
-        placement through this very Hartree slot).
-
-        Same ``VAB``/``VBA`` values as
-        ``test_bond_channels._build_asymmetric_two_orbital_bond`` (not
-        imported from there to keep this module's only production import
-        surface -- ``hwave.sc``/``hwave.solver.bond_channels`` -- unchanged).
-        """
+        from hwave.solver.offsite import sc_matrices_from_split
         norb = 2
         VAB = 0.4 + 0.3j
         VBA = 0.1 - 0.2j
@@ -384,26 +339,24 @@ class TestBondM0BlockHermitizationDirect(ApproxTestCase):
             ((-1, 0, 0), (0, 1)): np.conj(VBA),
             ((-1, 0, 0), (1, 0)): np.conj(VAB),
         }
-        bond_set = resolve_interactions(ci, np.eye(3), norb=norb)
+        bond_set = resolve_solver_bonds(ci, norb=norb)
+        # q = pi/2 is the iq = 1 point of a 4-point ring
+        _S0, C0 = sc_matrices_from_split(
+            bond_set.split, bond_channels._LONGITUDINAL_ACTIVE_TYPES, norb,
+            4, 1, 1)
         q = np.pi / 2.0
-        kx = np.array([q])
-        ky = np.array([0.0])
-        kz = np.array([0.0])
-        _S0_q, C0_q = _build_bond_m0_blocks(bond_set, {}, {}, norb, kx, ky, kz)
 
         def i(a, b):
             return a * norb + b
 
-        # V_01(+R)=VAB, V_01(-R)=conj(VBA) (declared/synthesized above);
-        # V_10(+R)=VBA, V_10(-R)=conj(VAB). Re(conj(z)) == Re(z).
         V_q_01 = VAB.real * np.exp(1j * q) + VBA.real * np.exp(-1j * q)
         V_q_10 = VBA.real * np.exp(1j * q) + VAB.real * np.exp(-1j * q)
         assert abs(V_q_01 - V_q_10) > 1e-3  # genuinely order-sensitive at this q
 
         assert_approx_array(
-            C0_q[0, 0, 0, i(0, 0), i(1, 1)], 2.0 * V_q_01, rel=0, abs=1e-14)
+            C0[1, 0, 0, i(0, 0), i(1, 1)], 2.0 * V_q_01, rel=0, abs=1e-14)
         assert_approx_array(
-            C0_q[0, 0, 0, i(1, 1), i(0, 0)], 2.0 * V_q_10, rel=0, abs=1e-14)
+            C0[1, 0, 0, i(1, 1), i(0, 0)], 2.0 * V_q_10, rel=0, abs=1e-14)
 
 
 # ---------------------------------------------------------------------------
@@ -545,10 +498,10 @@ class TestBondPairCorrelatorApi(ApproxTestCase):
 #   free_green            -- the free k-space Matsubara Green function, in
 #                             sc.py's (norb, norb, Nx, Ny, Nz, nmat) layout.
 #   bond_setup             -- (bond_set, chi_bar) from a closed two-sided
-#                             declaration, via resolve_interactions +
+#                             declaration, via resolve_solver_bonds +
 #                             free_green + bond_bubble.
 #   dW_matrices            -- (dS, dC), the bare-vertex response to a closed
-#                             two-sided declaration (bare_bond_vertices at
+#                             two-sided declaration (solver_vertices at
 #                             the declaration minus at zero).
 #   ed_to_solver_bond_map   -- the DERIVED index/conjugation map between
 #                             SectorED.bond_correlator's (q, I, J) and
@@ -613,35 +566,30 @@ def bond_setup(fx, closed_decls, **kw):
     Global Constraints (never fed a canonical/ED-side list here).
     ``**kw`` splits into ``nmat`` (default the module ``NMAT`` constant,
     the solver-side Matsubara count) and any remaining keyword arguments
-    forwarded verbatim to ``resolve_interactions`` (e.g. ``bond_max_shells``).
+    forwarded verbatim to ``resolve_solver_bonds`` (e.g. ``bond_max_shells``).
     """
     nmat = kw.pop("nmat", NMAT)
-    bond_set = resolve_interactions(closed_decls, np.eye(3), norb=fx.norb, **kw)
+    bond_set = resolve_solver_bonds(closed_decls, norb=fx.norb, **kw)
     green = free_green(fx, nmat)
     chi_bar = bond_bubble(green, bond_set, beta=fx.beta)
     return bond_set, chi_bar
 
 
 def _bare_vertices_at(fx, closed_decls):
-    """``(S_bond, C_bond)`` at ``q=(kx, 0, 0)`` for every ``kx`` on
-    ``fx``'s ring, from ``closed_decls`` through the SAME q-dependent
-    Case-2-corrected ``m=0`` block production itself uses
-    (``hwave.sc._build_bond_m0_blocks``) -- not a local reimplementation,
-    so ``dW_matrices`` can never silently drift from the production
-    Hartree convention (``V_ab(q) = V_ab(0) + sum_{m>=1} V_ab(Delta r_m)
-    e^{-i q.Delta r_m}``, spec S4.3/S4.3-star).
+    """``(S_bond, C_bond)``, each ``(L, ND, ND)``, at ``q=(kx, 0, 0)`` for
+    every ``kx`` on ``fx``'s ring, from ``closed_decls`` through production's
+    own vertex builder (``hwave.sc._build_bond_vertices``: the locality-split
+    channel-0 block carrying the off-site Hartree ``2 V_ab(q)``, plus the
+    bond-diagonal Fock rule) -- not a local reimplementation, so
+    ``dW_matrices`` can never silently drift from the production
+    convention.
     """
-    bond_set = resolve_interactions(closed_decls, np.eye(3), norb=fx.norb)
-    kx = 2.0 * np.pi * np.arange(fx.L) / fx.L
-    ky = np.array([0.0])
-    kz = np.array([0.0])
-    S0_q, C0_q = _build_bond_m0_blocks(bond_set, {}, {}, fx.norb, kx, ky, kz)
-    S_bond, C_bond, _Vpp_s, _Vpp_t = bare_bond_vertices(bond_set, S0_q, C0_q, fx.norb)
-    return S_bond[:, 0, 0], C_bond[:, 0, 0]
+    bond_set = resolve_solver_bonds(closed_decls, norb=fx.norb)
+    return solver_vertices(bond_set, (fx.L, 1, 1))
 
 
 def dW_matrices(fx, closed_decls):
-    """``(dS, dC)`` per physical direction: ``bare_bond_vertices`` at the
+    """``(dS, dC)`` per physical direction: ``solver_vertices`` at the
     (two-sided, closed) ``closed_decls`` declaration minus at the SAME
     declared topology scaled to zero (so the declared-but-zero shells stay
     part of ``ND`` on both sides -- a same-shape subtraction, not a
@@ -651,13 +599,12 @@ def dW_matrices(fx, closed_decls):
     the C0 m=0 Hartree slot (aa),(bb) carries ``dC0/dg = 2*(e^{+iq} +
     e^{-iq}) = 4*cos(q)``; the m=+1 and m=-1 diagonal blocks carry
     ``dS/dg = +1`` and ``dC/dg = -1`` each; all other entries zero (signs
-    and the ``2*V(q)`` convention from ``bare_bond_vertices``' documented
-    C0 Hartree ``+2 V_ab(q)``). Two-shell direction g2 (m=+-2) carries the
+    and the ``2*V(q)`` convention of the channel-0 Hartree ``+2 V_ab(q)``). Two-shell direction g2 (m=+-2) carries the
     same pattern with ``C0 = 4*cos(2q)``. Case-M's g+/g- (inter-orbital,
     a!=b) directions carry the SAME m!=0 diagonal pattern at the
     (a,b)/(b,a) orbital-pair slot, plus a q-dependent CROSS Hartree entry
-    at the (aa),(bb) slot with a!=b (``_build_bond_m0_blocks`` sums over
-    ALL orbital pairs, not just the diagonal ones) -- these are the
+    at the (aa),(bb) slot with a!=b (the Hartree sums over ALL orbital
+    pairs, not just the diagonal ones) -- these are the
     "(m, orbital-pair) blocks" later tasks consume.
 
     Linearity, asserted by the caller (not here): ``W(0.5)`` elementwise
@@ -714,7 +661,9 @@ def ed_to_solver_bond_map(channels, bond_set):
         ``(bond_set.delta_r[m][0], l2, l1)`` (typically the caller
         enumerates ALL ``(m, l1, l2)`` combinations, which contains both
         orbital orders automatically).
-    bond_set : ResolvedInteractionSet
+    bond_set : _SolverBonds (or any bond set exposing ``delta_r``,
+        ``n_channels`` and ``norb`` -- or ``v_bond`` blocks of shape
+        ``(norb, norb)``)
 
     Returns
     -------
@@ -723,7 +672,10 @@ def ed_to_solver_bond_map(channels, bond_set):
         ``channels`` (hence into ``bond_correlator``'s I/J axis) of the
         matching ED channel.
     """
-    norb = bond_set.v_bond[0].shape[0]
+    # ``norb`` from a ``_SolverBonds`` record, or from the per-channel
+    # ``(norb, norb)`` blocks of a bond set that carries them instead
+    norb = (bond_set.norb if hasattr(bond_set, "norb")
+            else bond_set.v_bond[0].shape[0])
     nd = norb * norb
     B = int(bond_set.n_channels)
     index_of = {ch: i for i, ch in enumerate(channels)}
@@ -757,7 +709,7 @@ def ed_to_solver_bond_map(channels, bond_set):
 def pred_first_order(chibar, dS, dC):
     """``(+chibar @ dS @ chibar, -chibar @ dC @ chibar)`` per q -- the
     first-order sandwich prediction, EXACT in the coupling (linear, since
-    ``bare_bond_vertices`` is linear in the declared interaction); no
+    the vertex builder is linear in the declared interaction); no
     Richardson stencil on this side (design doc, "the particle-particle
     identity", and ``ed_oracle_util.richardson``'s own docstring: "the
     solver-side prediction is exactly linear ... and has no Richardson
@@ -978,13 +930,13 @@ class TestEdToSolverBondMapGuard(unittest.TestCase):
 
     def test_nonzero_z_displacement_raises(self):
         decls = {((1, 0, 1), (0, 0)): 0.1, ((-1, 0, -1), (0, 0)): 0.1}
-        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(decls, norb=1)
         with self.assertRaises(ValueError):
             ed_to_solver_bond_map([(0,)], bond_set)
 
     def test_nonzero_y_displacement_raises(self):
         decls = {((0, 1, 0), (0, 0)): 0.1, ((0, -1, 0), (0, 0)): 0.1}
-        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(decls, norb=1)
         with self.assertRaises(ValueError):
             ed_to_solver_bond_map([(0,)], bond_set)
 
@@ -1033,7 +985,7 @@ class TestPin2bFrameMap(ApproxTestCase):
     """
 
     def _check(self, fx, decls, n1, raw_nmat=NMAT):
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
         norb = fx.norb
         nd = norb * norb
         channels = []
@@ -1108,7 +1060,7 @@ class TestRichardsonNmatConvergenceOrder(ApproxTestCase):
     def test_pin2b_raw_bond_bubble_order1_stable_on_fx3(self):
         fx = fx3()
         decls = _two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)])
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
 
         def _chibar(nmat):
             green = free_green(fx, nmat)
@@ -1185,7 +1137,7 @@ class TestDwMatrices(ApproxTestCase):
         fx = fx5()
         decls = _two_sided_decl([(1, 0, 0, 1.0)])
         dS, dC = dW_matrices(fx, decls)
-        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(decls, norb=1)
         m_plus1 = bond_set.delta_r.index((1, 0, 0))
         m_minus1 = bond_set.delta_r.index((-1, 0, 0))
         for q in range(fx.L):
@@ -1216,7 +1168,7 @@ class TestDwMatrices(ApproxTestCase):
         fx = fx5()
         decls = _two_sided_decl([(2, 0, 0, 1.0)])
         dS, dC = dW_matrices(fx, decls)
-        bond_set = resolve_interactions(decls, np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(decls, norb=1)
         m_plus2 = bond_set.delta_r.index((2, 0, 0))
         m_minus2 = bond_set.delta_r.index((-2, 0, 0))
         for q in range(fx.L):
@@ -1234,7 +1186,7 @@ class TestDwMatrices(ApproxTestCase):
 
     def test_two_shell_joint_ray_dw(self):
         """Coordinator review (Important 2): no other dW test declares TWO
-        shells at once, so ``v_bond[m]``-to-``delta_r[m]`` pairing across
+        shells at once, so coefficient-to-``delta_r[m]`` pairing across
         ``B=5`` (m=0, +-1, +-2 all present together) is unexercised -- equal
         amplitudes or single-shell declarations cannot see a channel-
         ordering bug (e.g. the g1/g2 shells silently swapped). Declares
@@ -1244,12 +1196,12 @@ class TestDwMatrices(ApproxTestCase):
         ``B=5`` matrices throughout: the g1-only/g2-only declarations below
         also declare the OTHER shell at amplitude 0 so all three share the
         SAME B=5 topology/index ordering -- "declared topology, not
-        magnitude" per ``resolve_interactions``, matching the linearity
+        magnitude" per the bond resolver, matching the linearity
         pin's convention above)."""
         fx = fx5()
         decls_joint = _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 0.6)])
         dS, dC = dW_matrices(fx, decls_joint)
-        bond_set = resolve_interactions(decls_joint, np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(decls_joint, norb=1)
         m_plus1 = bond_set.delta_r.index((1, 0, 0))
         m_minus1 = bond_set.delta_r.index((-1, 0, 0))
         m_plus2 = bond_set.delta_r.index((2, 0, 0))
@@ -1285,17 +1237,17 @@ class TestDwMatrices(ApproxTestCase):
         """Shared support-pattern check for case-M's g+/g- directions.
         The declared row (R_decl, a, b) is the bond of the Transfer row
         (R_decl, a, b) (issue #232), which the bond channels carry at the
-        channel -R_decl (``resolve_interactions``: channel m holds the
+        channel -R_decl (the bond resolver: channel m holds the
         block declared at -dr_m): the bond-diagonal Fock slot at
         (-R_decl, a, b) and its Hermitian-closed partner (R_decl, b, a)
         each carry dS=+1/dC=-1, and the (aa),(bb) Hartree cross slot
-        carries dC0 = 2*e^{+i*q*R_decl} (``_build_bond_m0_blocks``'
-        ``V_ab(q) = sum_{m>=1} v_bond[m]_ab e^{-i q.dr_m}``, here only the
-        channel -R_decl nonzero at (a,b))."""
+        carries dC0 = 2*e^{+i*q*R_decl} (the channel-0 Hartree
+        ``V_ab(q) = sum_R V_ab(R) e^{+i q.R}`` over the declared rows, here
+        only the row R_decl nonzero at (a,b))."""
         fx = fx3()
         decls = _two_sided_decl([(R_decl, a, b, 1.0)])
         dS, dC = dW_matrices(fx, decls)
-        bond_set = resolve_interactions(decls, np.eye(3), norb=2)
+        bond_set = resolve_solver_bonds(decls, norb=2)
         m_fwd = bond_set.delta_r.index((-R_decl, 0, 0))
         m_bwd = bond_set.delta_r.index((R_decl, 0, 0))
         nd = 4
@@ -1336,8 +1288,7 @@ class TestDwMatrices(ApproxTestCase):
         shared B=5 grid, with both V shells declared at zero -- see that
         task's module note). Confirms the module note's code-derivation
         (S0 = U, C0 = U, touching ONLY the m=0 sub-block) against the real
-        ``bare_bond_vertices`` output directly, not just the reading of
-        ``_build_bond_m0_blocks`` the note describes. ``_decls_U`` is
+        production vertex builder's output directly (``solver_vertices``). ``_decls_U`` is
         defined later in this module (Task 6's section) but resolved at
         call time, after the whole module has been imported."""
         fx = fx5()
@@ -1546,15 +1497,12 @@ class TestProjectedStructuralZeroMask(unittest.TestCase):
 # all three directions, which is what later alignment (Task 9's
 # sensitivity_rank) needs.
 #
-# Verified directly against ``_build_bond_m0_blocks``/``bare_bond_vertices``
-# (not guessed): for norb=1, an on-site CoulombInter declaration V_00(0)=U
-# routes through ``bond_set.v_onsite`` into ``_build_bond_m0_blocks``'s
-# ``V_r0``, giving Hartree ``C0 += 2*V_r0`` and Fock ``S0 += V_r0``,
-# ``C0 -= V_r0`` on the SAME (aa,bb)=(0,0) slot -- i.e. S0 = U, C0 = 2U-U
-# = U (the Kuroki S/C matrices), and ``bare_bond_vertices`` places this
-# ENTIRELY in the m=0 sub-block (``S_bond[...,0:nd,0:nd] = S0_q``); no other
-# ND slot is touched, so U's dW support is EXACTLY (m=0, m=0)-only for both
-# S and C.
+# The U direction is the on-site same-orbital density-density term
+# V_00(0)=U, which ``resolve_solver_bonds`` files as CoulombIntra (see its
+# docstring). It gives S0 = U, C0 = U (the Kuroki S/C matrices) ENTIRELY in
+# the m=0 sub-block; no other ND slot is touched, so U's dW support is
+# EXACTLY (m=0, m=0)-only for both S and C. The ED granules below
+# adjudicate this element pattern.
 # ---------------------------------------------------------------------------
 
 def _decls_U(fx, v):
@@ -1605,7 +1553,7 @@ def _bond_topology_and_map(fx):
     ``ed_to_solver_bond_map`` are identical across U/g1/g2 and can be built
     once."""
     decls = _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 1.0)])
-    bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+    bond_set = resolve_solver_bonds(decls, norb=fx.norb)
     norb = fx.norb
     channels = []
     for m in range(bond_set.n_channels):
@@ -1635,8 +1583,8 @@ def _dw_support_masks(direction, bond_set):
     U touches ONLY the (m=0, m=0) slot (see the module note above, verified
     against the builder). g1/g2 touch the m=+-R bond-diagonal Fock slots
     (S and C) PLUS the (m=0, m=0) Hartree slot (C only -- S carries no
-    Hartree term, per ``bare_bond_vertices``' documented m=0 sub-block =
-    S0_q/C0_q, m!=0 diagonal = +-V_ab(R))."""
+    Hartree term: the m=0 sub-block is the channel-0 S0/C0, the m!=0
+    diagonal +-V_ab(R))."""
     B = bond_set.n_channels
     S_supp = np.zeros((B, B), dtype=bool)
     C_supp = np.zeros((B, B), dtype=bool)
@@ -1910,8 +1858,9 @@ class TestJointRaySuperposition(unittest.TestCase):
 #
 # in the ORDERED-PAIR matrix basis {Delta_i} = {Delta_{R,a,b}(q=0)} (the
 # total Cooper-pair momentum is fixed at zero -- Vpp is q-independent, and
-# the identity carries no q at all). production Vpp from
-# bare_bond_vertices; X0_pp = production_pair_bubble; the ED side is
+# the identity carries no q at all). production Vpp read off the
+# instantaneous part of the production kernel (solver_vpp); X0_pp =
+# production_pair_bubble; the ED side is
 # richardson() of SectorED.pair_correlator with the pp HF insertion (free
 # pair matrix derivative with hf_h1_from_terms on both legs), projected on
 # BOTH sides with exchange_projector's Q (never bond_channels' internal
@@ -1925,11 +1874,10 @@ class TestJointRaySuperposition(unittest.TestCase):
 #     X0_pp[(R,a,b),(R',c,d)] = (1/L) sum_k e^{ik(R'-R)} G2[a,c,b,d](k)
 #
 # with G2 = _g2_from_green(free_green(fx, nmat), fx.beta, tail=False) --
-# mirroring bare_bond_vertices' A_coef/Bcoef contraction structure inside
-# make_bond_kernel's instantaneous part (spec S4.5): A_coef[m,cd] =
-# sum_{m',ef} X0_pp[(m,cd),(m',ef)] phi^{(m')}_{ef} is exactly the same
-# object as bond_channels._bond_kernel_operators builds by hand for a
-# specific phi. Both this formula and an INDEPENDENTLY derived one (direct
+# mirroring the low-rank Cooper form of the instantaneous part of the
+# pairing kernel (spec S4.5; see solver_vpp): A_coef[m,cd] =
+# sum_{m',ef} X0_pp[(m,cd),(m',ef)] phi^{(m')}_{ef} is the pair amplitude
+# that form contracts for a specific phi. Both this formula and an INDEPENDENTLY derived one (direct
 # Wick contraction of Delta_{R,a,b}(0) against Delta_{R',c,d}(0)^dagger,
 # Fourier-transformed with free_green's OWN k-convention) agree exactly,
 # and both match SectorED.pair_correlator at V=0 to the expected O(1/Nmat)
@@ -1939,7 +1887,7 @@ class TestJointRaySuperposition(unittest.TestCase):
 def production_pair_bubble(fx, channels, nmat):
     """X0_pp assembled per the PRODUCTION conventions: from ``free_green``
     via the SAME finite-Nmat pp bubble ``_g2_from_green`` builds for
-    ``make_bond_kernel``'s instantaneous part (``g2_tail=False``, matching
+    the pairing kernel's instantaneous part (``g2_tail=False``, matching
     the raw/no-tail convention ``bond_bubble`` itself uses for the ph
     channel), reconstructed into the ordered-pair basis via the phase
     ``e^{ik(R'-R)}`` (see the module note above for the derivation and its
@@ -2006,15 +1954,67 @@ def _to_sector_channels(fx, channels):
     return list(channels)
 
 
+_SOLVER_VPP_NMAT = 64
+
+
+def solver_vpp(fx, closed_decls):
+    """``(Vpp_s, Vpp_t)``, each ``(ND, ND)``: the bare Cooper vertex the
+    PRODUCTION pairing kernel applies, read off the operator itself.
+
+    The instantaneous part of ``hwave.sc._bond_kernel_parts`` (the bare
+    vertex on the channel-0 block, convolved in ``k - k'`` and applied to
+    the parity-projected gap) has the low-rank Cooper form
+
+        Y_{l1 l2}(k) = -1/2 sum_m e^{-ik.dr_m} [Vpp A]_{(m, l1 l2)},
+        A_{(n, cd)} = (1/N) sum_k' e^{+ik'.dr_n} X_cd(k'),   X = G2 phi,
+
+    on the enlarged slot ``I = m*nd + l1*norb + l2`` (the slot convention of
+    the ph vertices, see ``dVpp_matrices``). Column ``(n, cd)`` is read by
+    feeding the gap whose pair bubble is ``X_cd(k') = e^{-ik'.dr_n}`` (so
+    ``A`` is that unit vector -- the channels are distinct on the ring) and
+    projecting the output on ``e^{-ik.dr_m}``. The Green function only
+    enters through ``X = G2 phi`` and cancels; ``free_green`` at a small
+    ``nmat`` merely supplies an invertible ``G2``.
+    """
+    bond_set = resolve_solver_bonds(closed_decls, norb=fx.norb)
+    norb, L = fx.norb, fx.L
+    nd = norb * norb
+    B = bond_set.n_channels
+    ND = B * nd
+    shape = (L, 1, 1)
+    S, C = solver_vertices(bond_set, shape)
+    zero = np.zeros_like(S)
+    green = free_green(fx, _SOLVER_VPP_NMAT)
+    G2 = _g2_from_green(green, fx.beta)[..., 0, 0]          # (a,c,b,d,L)
+    # X_cd(k) = sum_ef G2[c,e,d,f](k) phi_ef(k): the per-k (cd),(ef) matrix
+    M_inv = np.linalg.inv(G2.transpose(4, 0, 2, 1, 3).reshape(L, nd, nd))
+    kx = 2.0 * np.pi * np.arange(L) / L
+    drx = [dr[0] for dr in bond_set.delta_r]
+    out = []
+    for eta in ("singlet", "triplet"):
+        _A, _A_fl, A_pp, _n = sc._bond_kernel_parts(
+            S, C, [("spin", zero), ("charge", zero)], green, bond_set, norb,
+            shape, fx.beta, eta)
+        V = np.zeros((ND, ND), dtype=complex)
+        for n in range(B):
+            for cd in range(nd):
+                X = np.zeros((L, nd), dtype=complex)
+                X[:, cd] = np.exp(-1j * kx * drx[n])
+                phi = np.einsum("kab,kb->ka", M_inv, X).T.reshape(norb, norb, L, 1, 1)
+                Y = A_pp.matvec(phi.ravel()).reshape(nd, L)
+                for m in range(B):
+                    V[m * nd:(m + 1) * nd, n * nd + cd] = (
+                        -2.0 * (Y @ np.exp(1j * kx * drx[m])) / L)
+        out.append(V)
+    return out[0], out[1]
+
+
 def dVpp_matrices(fx, closed_decls, channels):
-    """``(dVpp_s, dVpp_t)``: ``bare_bond_vertices``' bare Cooper vertices at
-    the (two-sided, closed) ``closed_decls`` declaration minus at the SAME
-    declared topology scaled to zero (mirrors ``dW_matrices``' same-shape
-    subtraction pattern, but for ``Vpp_s``/``Vpp_t`` -- both are
-    q-INDEPENDENT, built from the ``q=0`` slice only, per
-    ``bare_bond_vertices``' own local-block construction, so ``S0_q``/``C0_q``
-    here are evaluated at a single ``q=(0,0,0)`` point via
-    ``_build_bond_m0_blocks``, not the full ring grid), REINDEXED into the
+    """``(dVpp_s, dVpp_t)``: the production bare Cooper vertices
+    (``solver_vpp``) at the (two-sided, closed) ``closed_decls`` declaration
+    minus at the SAME declared topology scaled to zero (mirrors
+    ``dW_matrices``' same-shape subtraction pattern, but for
+    ``Vpp_s``/``Vpp_t`` -- both are q-INDEPENDENT), REINDEXED into the
     DIRECT ordered-pair basis ``channels`` -- the SAME literal ``(R,a,b)``
     basis ``production_pair_bubble``/``exchange_projector``/ED all share
     (design doc: "``dV^pp/dV`` is the production tensor's derivative in
@@ -2022,7 +2022,7 @@ def dVpp_matrices(fx, closed_decls, channels):
 
     Why the reindex is needed (round-2 finding, verified independently of
     this task's own ``dVpp_matrices``/``production_pair_bubble`` code):
-    ``bare_bond_vertices``' enlarged slot ``I = m*nd + l1*norb+l2`` reuses
+    ``solver_vpp``'s enlarged slot ``I = m*nd + l1*norb+l2`` reuses
     ``S_bond``/``C_bond``'s SAME enlarged-index convention, and Task 5's
     ``ed_to_solver_bond_map`` (reviewed, load-bearing) established that
     THAT slot corresponds, when compared against an ED channel list, to the
@@ -2040,7 +2040,7 @@ def dVpp_matrices(fx, closed_decls, channels):
     ``canonical_density_terms`` writes it as ``Sigma_j n_{j+R,a} n_{j,b}``
     in the fixture's frame -- the bond of the Transfer row ``(R, a, b)``
     -- and the unswapped argument is still the one that matches), and it is
-    ``bare_bond_vertices``' Vpp slot -- reusing the ph enlarged-index
+    the solver's Vpp slot -- reusing the ph enlarged-index
     convention for a DIFFERENT physical operator (a pair, not a bond
     bilinear) -- that needs reindexing to align with it, not the ED term.
     (An earlier draft of this task instead swapped the ED-side term to
@@ -2057,7 +2057,7 @@ def dVpp_matrices(fx, closed_decls, channels):
     is REQUIRED.
     """
     channels = list(channels)
-    bond_set = resolve_interactions(closed_decls, np.eye(3), norb=fx.norb)
+    bond_set = resolve_solver_bonds(closed_decls, norb=fx.norb)
     # Review round 3 (should_fix): dVpp's raw slot I = m*nd + l1*norb+l2 is
     # POSITIONAL, built from bond_set's own (m, l1, l2) nested-loop order --
     # a caller-supplied channels list in ANY other order would silently
@@ -2081,17 +2081,8 @@ def dVpp_matrices(fx, closed_decls, channels):
 
     zero_decls = {k: 0.0 * v for k, v in closed_decls.items()}
 
-    def _vpp_at(decls):
-        bs = resolve_interactions(decls, np.eye(3), norb=fx.norb)
-        kx = np.array([0.0])
-        ky = np.array([0.0])
-        kz = np.array([0.0])
-        S0_q, C0_q = _build_bond_m0_blocks(bs, {}, {}, fx.norb, kx, ky, kz)
-        _S, _C, Vpp_s, Vpp_t = bare_bond_vertices(bs, S0_q, C0_q, fx.norb)
-        return Vpp_s, Vpp_t
-
-    Vpp_s1, Vpp_t1 = _vpp_at(closed_decls)
-    Vpp_s0, Vpp_t0 = _vpp_at(zero_decls)
+    Vpp_s1, Vpp_t1 = solver_vpp(fx, closed_decls)
+    Vpp_s0, Vpp_t0 = solver_vpp(fx, zero_decls)
     dVpp_s = (Vpp_s1 - Vpp_s0)[np.ix_(perm, perm)]
     dVpp_t = (Vpp_t1 - Vpp_t0)[np.ix_(perm, perm)]
     return dVpp_s, dVpp_t
@@ -2120,13 +2111,11 @@ class TestExchangeProjector(ApproxTestCase):
         assert_approx_array(Q_s @ Q_t, np.zeros((n, n)), rel=0, abs=1e-14)
 
     def test_fx5_pp_channels(self):
-        bond_set = resolve_interactions(
-            _two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 1.0)]), np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(_two_sided_decl([(1, 0, 0, 1.0), (2, 0, 0, 1.0)]), norb=1)
         self._check(_ordered_pair_channels(bond_set, 1))
 
     def test_fx3_pp_channels(self):
-        bond_set = resolve_interactions(
-            _two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)]), np.eye(3), norb=2)
+        bond_set = resolve_solver_bonds(_two_sided_decl([(1, 0, 0, V1), (1, 0, 1, V1)]), norb=2)
         self._check(_ordered_pair_channels(bond_set, 2))
 
     def test_fixed_point_channel_is_singlet_only(self):
@@ -2156,7 +2145,7 @@ class TestPin3aProductionVsEigenbasisPairBubble(ApproxTestCase):
     must agree at round-off (``abs=1e-12``), both fixtures."""
 
     def _check(self, fx, decls):
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
         channels = _ordered_pair_channels(bond_set, fx.norb)
         Xp = production_pair_bubble(fx, channels, NMAT)
         Xe = ed_oracle_util.eigenbasis_pair_bubble(fx, channels, NMAT)
@@ -2187,7 +2176,7 @@ class TestPin3bEigenbasisPairBubbleVsEd(ApproxTestCase):
     """
 
     def _check(self, fx, decls, n1):
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
         channels = _ordered_pair_channels(bond_set, fx.norb)
         channels_ed = _to_sector_channels(fx, channels)
         exact = ed_oracle_util.SectorED(fx).pair_correlator(channels_ed)[0]
@@ -2218,8 +2207,7 @@ class TestPairBubbleNmatGuard(unittest.TestCase):
     caught the two sides silently agreeing on the wrong quantity)."""
 
     def _channels(self):
-        bond_set = resolve_interactions(
-            _two_sided_decl([(1, 0, 0, 1.0)]), np.eye(3), norb=1)
+        bond_set = resolve_solver_bonds(_two_sided_decl([(1, 0, 0, 1.0)]), norb=1)
         return _ordered_pair_channels(bond_set, 1)
 
     def test_odd_nmat_raises(self):
@@ -2293,7 +2281,7 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
     "Sigma_j n_{j,a} n_{j+R,b}"; since issue #232 the ED term reads
     ``Sigma_j n_{j+R,a} n_{j,b}`` in the fixture's frame, the bond of the
     Transfer row ``(R, a, b)``, and still takes the unswapped argument). The real defect was in
-    ``dVpp_matrices``: ``bare_bond_vertices``' enlarged Vpp slot reuses
+    ``dVpp_matrices``: the solver's enlarged Vpp slot reuses
     ``S_bond``/``C_bond``'s SAME index convention, and Task 5's
     ``ed_to_solver_bond_map`` already established (reviewed, load-bearing)
     that THAT slot needs an orbital-swap reindex to align with a direct
@@ -2319,14 +2307,14 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
     5, 6 and this task's own granules uses a=b=0, where the reindex is a
     no-op. LOAD-BEARING for Task 8: its pp case-M granules must build
     ``dVpp`` via ``dVpp_matrices`` (which now carries the reindex), not a
-    raw ``bare_bond_vertices`` call, for any inter-orbital direction.
+    raw ``solver_vpp`` call, for any inter-orbital direction.
     """
 
     def _check(self, R_decl):
         fx = fx3()
         # solver: V_01(R_decl) = V_10(-R_decl) (Task 5's g+/g- naming)
         decls = _two_sided_decl([(R_decl, 0, 1, 1.0)])
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
         channels = _ordered_pair_channels(bond_set, fx.norb)
         _P, Q_s, Q_t = ed_oracle_util.exchange_projector(channels)
 
@@ -2342,7 +2330,7 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
 
         # NEGATIVE CONTROL (review round 3, should_fix -- make this an
         # executable assertion, not prose only): the RAW (unreindexed)
-        # dVpp -- bare_bond_vertices' Vpp taken at its own positional
+        # dVpp -- solver_vpp's Vpp taken at its own positional
         # (m, l1, l2) slot with NO orbital-swap correction -- must FAIL
         # against the same ED target by a large margin, confirming the
         # reindex in dVpp_matrices is load-bearing here and not a no-op
@@ -2350,15 +2338,8 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
         def _raw_dvpp():
             zero_decls = {k: 0.0 * v for k, v in decls.items()}
 
-            def _vpp_at(dd):
-                bs = resolve_interactions(dd, np.eye(3), norb=fx.norb)
-                kx = np.array([0.0]); ky = np.array([0.0]); kz = np.array([0.0])
-                s0, c0 = _build_bond_m0_blocks(bs, {}, {}, fx.norb, kx, ky, kz)
-                _s, _c, vs, vt = bare_bond_vertices(bs, s0, c0, fx.norb)
-                return vs, vt
-
-            vs1, vt1 = _vpp_at(decls)
-            vs0, vt0 = _vpp_at(zero_decls)
+            vs1, vt1 = solver_vpp(fx, decls)
+            vs0, vt0 = solver_vpp(fx, zero_decls)
             return vs1 - vs0, vt1 - vt0
 
         raw_s, raw_t = _raw_dvpp()
@@ -2428,7 +2409,7 @@ def _dvpp_support_masks(direction, channels):
     mask``'s docstring: boolean ``I OR P`` propagation cannot represent
     this -- the caller must supply the analytic support directly).
 
-    Verified against the builder (not guessed): ``bare_bond_vertices``' RAW
+    Verified against the builder (not guessed): the solver's RAW
     (pre-projection) ``dVpp`` is DIAGONAL in the channel-orbital-pair basis
     for every fx5 unit direction (norb=1, so the local crossing of a scalar
     is trivially diagonal; the bond Cooper block ``D`` is diagonal by
@@ -2440,7 +2421,7 @@ def _dvpp_support_masks(direction, channels):
     ``{(+R,0,0),(-R,0,0)}``; ``Q_eta (D+D^dagger) Q_eta`` spreads this into
     the FULL 2x2 block spanning both channels for BOTH S and T (no
     cancellation -- confirmed numerically against the real
-    ``bare_bond_vertices``/``dVpp_matrices`` output during this task's
+    ``solver_vpp``/``dVpp_matrices`` output during this task's
     derivation).
     """
     channels = list(channels)
@@ -2477,7 +2458,7 @@ class TestDvppMatricesChannelOrderGuard(unittest.TestCase):
     def test_reordered_channels_raises(self):
         fx = fx3()
         decls = _two_sided_decl([(1, 0, 1, 1.0)])
-        bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+        bond_set = resolve_solver_bonds(decls, norb=fx.norb)
         canonical = _ordered_pair_channels(bond_set, fx.norb)
         reordered = canonical[::-1]
         self.assertNotEqual(canonical, reordered)
@@ -2770,7 +2751,7 @@ def _case_m_topology_and_map():
     shorthand) -- the orbital-resolved rows the brief requires."""
     fx = fx3()
     decls = _two_sided_decl([(1, 0, 1, 1.0)])
-    bond_set = resolve_interactions(decls, np.eye(3), norb=fx.norb)
+    bond_set = resolve_solver_bonds(decls, norb=fx.norb)
     norb = fx.norb
     channels = []
     for m in range(bond_set.n_channels):
@@ -2794,7 +2775,7 @@ def _case_m_chibar(nmat):
 
 def _dw_support_masks_case_m(direction, bond_set):
     """ANALYTIC support of dS/dC for one case-M direction, derived directly
-    from ``bare_bond_vertices``' documented element equations (``dW_matrices``'
+    from the vertex builder's element equations (``dW_matrices``'
     module note: "Case-M's g+/g- ... carry the SAME m!=0 diagonal pattern at
     the (a,b)/(b,a) orbital-pair slot, plus a q-dependent CROSS Hartree entry
     at the (aa),(bb) slot with a!=b").
@@ -2803,17 +2784,17 @@ def _dw_support_masks_case_m(direction, bond_set):
     (R, a, b) is carried by the bond channel at -R (it is the bond of the
     Transfer row (R, a, b), issue #232), so the m!=0 Fock
     diagonal touches I=(m_{-1}, idx=(0,1)) and I=(m_{+1}, idx=(1,0)) in BOTH
-    S and C (``bare_bond_vertices``: ``S_bond[I,I]=+V``, ``C_bond[I,I]=-V``);
-    since ``v_onsite`` is untouched (zero) here, the m=0 Fock sub-block is
+    S and C (``S_bond[I,I]=+V``, ``C_bond[I,I]=-V``);
+    since no on-site row is declared here, the m=0 Fock sub-block is
     exactly zero in S -- S carries NO Hartree term, matching the fx5
     pattern. The R!=0 Hartree DOES reach the m=0 charge block, but at the
     CROSS (aa,bb)=(0,0),(1,1) slot (idx 0, 3) -- not the diagonal (0,0)/
-    (3,3) slot fx5's a=b case used -- since ``_build_bond_m0_blocks``'s
+    (3,3) slot fx5's a=b case used -- since the channel-0 builder's
     ``C0[...,a*norb+a,b*norb+b] += 2*V_ab(q)`` is keyed by (a,b)=(0,1) here,
     off-diagonal in the ``idx=a*norb+a`` labeling. g- carries the SAME
     pattern with the m_{+1}/m_{-1} roles of the two orbital pairs swapped.
     """
-    norb = bond_set.v_bond[0].shape[0]
+    norb = bond_set.norb
     nd = norb * norb
     B = int(bond_set.n_channels)
     ND = nd * B
@@ -2838,7 +2819,7 @@ class TestDwSupportMasksMatchNumericDwCaseM(unittest.TestCase):
     """Cross-checks ``_dw_support_masks_case_m`` against the actual numeric
     ``dW_matrices`` output (mirrors ``TestDwSupportMasksMatchNumericDw``,
     Task 6's should-fix precedent) -- catches a mismatch between the
-    hand-derived case-M pattern above and what ``bare_bond_vertices``
+    hand-derived case-M pattern above and what ``solver_vertices``
     actually emits."""
 
     def _check(self, direction):
@@ -2959,7 +2940,7 @@ def _dvpp_support_masks_case_m(direction, channels):
     cancellation).
 
     NOTE the channel pairing here is the MIRROR IMAGE of the raw
-    (pre-reindex) ``bare_bond_vertices`` diagonal touched by each direction
+    (pre-reindex) ``solver_vpp`` diagonal touched by each direction
     (g+'s raw D touches ``(-1,0,1)``/``(1,1,0)``; g-'s touches
     ``(1,0,1)``/``(-1,1,0)`` -- a declared row (R, a, b) is carried by the
     bond channel at -R, issue #232) -- ``dVpp_matrices``' own orbital-swap
@@ -3028,7 +3009,7 @@ def _case_m_pp_unit_direction_raw(direction):
     direction, pp_s/pp_t. Mirrors ``_pp_unit_direction_raw`` (Task 7), on
     fx3. ``dVpp`` is built via Task 7's ``dVpp_matrices`` -- the
     orbital-swap reindex is LOAD-BEARING here (Task 7's finding), not a raw
-    ``bare_bond_vertices`` call."""
+    ``solver_vpp`` call."""
     fx = fx3()
     decls_at, terms_at = _CASE_M_DIRECTIONS[direction]
     channels = _case_m_pp_channels()

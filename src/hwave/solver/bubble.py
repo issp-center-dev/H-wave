@@ -237,7 +237,7 @@ def _validate_even_nmat_for_bond(nmat):
 
 def _validate_bond_set(bond_set):
     """Structural guard on ``bond_set`` (a
-    ``bond_channels.ResolvedInteractionSet``, duck-typed here -- this
+    ``bond_channels.BondSetView``, duck-typed here -- this
     module never imports ``bond_channels``): ``n_channels``/``delta_r``
     present, ``len(delta_r) == n_channels``, and every displacement an
     integer 3-tuple (spec: "Kernel input validation"). Returns
@@ -249,7 +249,7 @@ def _validate_bond_set(bond_set):
         raise ValueError(
             "bubble kernel: bond_set must provide 'n_channels' and "
             "'delta_r' attributes (see "
-            "bond_channels.resolve_interactions)")
+            "bond_channels.BondSetView)")
     if isinstance(n_channels, bool) or not isinstance(
             n_channels, (int, np.integer)) or n_channels <= 0:
         raise ValueError(
@@ -1090,9 +1090,10 @@ def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
         correction. Same pairing-provenance caveat as :func:`dense_bubble`.
     beta : float
         Inverse temperature; must be > 0.
-    bond_set : ResolvedInteractionSet-like
-        Bond-channel topology (``delta_r``, ``n_channels``), e.g. from
-        ``bond_channels.resolve_interactions``.
+    bond_set : BondSetView-like
+        Bond-channel topology (``delta_r``, ``n_channels``), e.g. a
+        ``bond_channels.BondSetView`` of
+        ``bond_channels.resolve_bond_topology``.
     spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
         The lattice shape; ``prod(spatial_shape)`` must equal
         ``green_kw.shape[2]`` (``nvol``).
@@ -1290,7 +1291,7 @@ def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
     ax_fermi, ax_bose : IRAxis-like
         Already-constructed fermionic/bosonic IR axis objects; must be
         parameter-compatible (see :func:`_validate_ir_axes`).
-    bond_set : ResolvedInteractionSet-like
+    bond_set : BondSetView-like
         Bond-channel topology (``delta_r``, ``n_channels``).
     spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
         The lattice shape; ``prod(spatial_shape)`` must equal

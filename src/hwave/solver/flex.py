@@ -1949,26 +1949,10 @@ class FLEX(RPA):
 
     @staticmethod
     def _non_su2_bonds(topo, rel_tol=1e-10):
-        """Bond entries ``(delta_r[m], (a, b))`` of the resolved topology
-        (reversal-closed, after max-shell selection) whose spin part is not
-        rotation invariant: a bond is SU(2) symmetric exactly when
-        ``J_Exchange = J_Hund - 2 J_Ising`` on it (the file convention, each
-        row with its partner; pinned by exact diagonalization in
-        ``tests/test_flex_bond_exchange.py``)."""
-        zero = None
-        arrs = {}
-        for t in ("Ising", "Hund", "Exchange"):
-            if t in topo.coeffs:
-                arrs[t] = np.asarray(topo.coeffs[t]).real
-                zero = np.zeros_like(arrs[t])
-        if zero is None:
-            return []
-        jI, jH, jE = (arrs.get(t, zero) for t in ("Ising", "Hund", "Exchange"))
-        scale = np.maximum(np.maximum(np.abs(jI), np.abs(jH)), np.abs(jE))
-        dev = np.abs(jE - (jH - 2.0 * jI))
-        bad = np.argwhere((scale > 0) & (dev > rel_tol * scale))
-        delta = np.asarray(topo.delta_r)
-        return [(tuple(int(c) for c in delta[m]), (int(a), int(b))) for m, a, b in bad]
+        """See :func:`hwave.solver.bond_channels.non_su2_bonds` (the shared
+        check of every bond-resolved path)."""
+        from hwave.solver import bond_channels
+        return bond_channels.non_su2_bonds(topo, rel_tol=rel_tol)
 
     def _warn_non_su2_bonds(self, topo):
         """One warning when a declared bond's spin part breaks spin-rotation
@@ -1977,18 +1961,12 @@ class FLEX(RPA):
         only for an SU(2)-symmetric interaction; the second order stays exact
         (it is built from every term explicitly), the resummation beyond it
         does not."""
-        bad = self._non_su2_bonds(topo)
-        if bad:
-            shown = ", ".join("R={} orbitals={}".format(tuple(k[0]), tuple(o + 1 for o in k[1]))
-                              for k in bad[:4])
-            logger.warning(
-                "[mode.param] longitudinal_bond_channels=true (FLEX): the off-site spin "
-                "interaction is not spin-rotation (SU(2)) symmetric on %d bond row(s) "
-                "(%s%s): SU(2) needs J_Exchange = J_Hund - 2 J_Ising on every bond. The "
-                "self-energy is exact to second order, but beyond it FLEX counts the "
-                "transverse spin fluctuations as copies of the longitudinal one, which "
-                "this interaction does not satisfy.",
-                len(bad), shown, ", ..." if len(bad) > 4 else "")
+        from hwave.solver import bond_channels
+        bond_channels.warn_non_su2_bonds(
+            topo, "[mode.param] longitudinal_bond_channels=true (FLEX)",
+            "The self-energy is exact to second order, but beyond it FLEX counts the "
+            "transverse spin fluctuations as copies of the longitudinal one, which "
+            "this interaction does not satisfy.", log=logger)
 
     def _bond_memory_preflight(self, topo, split_seed):
         """The spec 3.6 admission estimate (absolute, ordinary FLEX arrays
