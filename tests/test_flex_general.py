@@ -4,8 +4,10 @@
 
 These tests cover Task 1: ``calc_scheme="general"`` must be accepted for
 paramagnetic (spin-free) FLEX and rejected (fail-fast ValueError) for
-``enable_spin_orbital`` (at construction) and for non-spin-free spin modes
-(spin-diag / spinful, checked inside ``solve()``).
+non-spin-free spin modes (spin-diag / spinful, checked inside ``solve()``).
+``enable_spin_orbital`` is admitted only together with
+``flex_hartree_fock = true`` (issue #83; covered by
+``tests/test_flex_spin_orbital.py``) and refused at construction otherwise.
 
 Tests must be run from the repository root (they use relative paths like
 ``tests/rpa/input``).
@@ -798,10 +800,24 @@ class TestFLEXGeneralGuards(unittest.TestCase):
         self.assertTrue(solver._flex_general)
 
     def test_general_rejected_for_enable_spin_orbital(self):
-        """calc_scheme='general' + enable_spin_orbital must raise at construct."""
-        with self.assertRaises(ValueError):
-            _make_solver("FLEX", calc_scheme="general",
-                         extra_mode={'enable_spin_orbital': True})
+        """calc_scheme='general' + enable_spin_orbital without
+        flex_hartree_fock must raise at construct, naming the switch that
+        admits it (issue #83)."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_mod
+        # a genuine spin-orbital fixture (two spin-orbitals per physical
+        # orbital), so the refusal is the FLEX one, not a geometry error
+        d = "tests/equivalence_input/spin"
+        io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": {
+            "path_to_input": d, "Geometry": "geom_so.dat",
+            "Transfer": "transfer_spinful.dat", "CoulombIntra": "coulombintra_so.dat"}})
+        par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+               "Nmat": 32}
+        with self.assertRaisesRegex(ValueError, r"requires \[mode\.param\] "
+                                    r"flex_hartree_fock = true"):
+            flex_mod.FLEX(io.get_param("ham"), {}, {
+                "mode": "FLEX", "param": par, "enable_spin_orbital": True,
+                "calc_scheme": "general"})
 
     def test_spin_mode_guard_in_solve(self):
         """The general + non-spin-free guard in solve() must raise.

@@ -948,7 +948,8 @@ _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT = Cell(
             ExecuteReject(
                 site=Site.CONSTRUCTOR,
                 exc_type="ValueError",
-                fragment="enable_spin_orbital",
+                fragment="enable_spin_orbital = true (FLEX) requires "
+                "[mode.param] flex_hartree_fock = true",
             ),
         ),
     ),
@@ -962,13 +963,18 @@ _CELL_35_SO_GENERAL_CONSTRUCTION_REJECT = Cell(
         "conjugate) + coulombintra_so.dat (U=4.0), enable_spin_orbital="
         "True. RPA supports SO end to end (verified: constructs and "
         "solves calc_scheme='general', spin_mode resolves to 'spinful'). "
-        "FLEX general REJECTS at CONSTRUCTOR -- verified site: "
-        "src/hwave/solver/flex.py:220-224 "
-        "(FLEX._init_flex_param, scheme=='general' branch), "
-        "'calc_scheme=\\'general\\' FLEX (v1) does not support "
-        "enable_spin_orbital; deferred to the generalized FLEX solver.' "
-        "-- matches the recorded expectation (CONSTRUCTOR, ValueError); "
-        "no STOP-and-amend needed."
+        "FLEX general REJECTS this fixture at CONSTRUCTOR because it "
+        "does not set flex_hartree_fock: since #83 the spin-orbital FLEX "
+        "is admitted only on the general scheme WITH [mode.param] "
+        "flex_hartree_fock = true (FLEX._init_spin_orbital, called from "
+        "FLEX._init_flex_param's scheme=='general' branch), and refused "
+        "otherwise with '[mode] enable_spin_orbital = true (FLEX) "
+        "requires [mode.param] flex_hartree_fock = true: ...'. The "
+        "admitted path is not an equivalence row (FLEX is a different "
+        "approximation from RPA there); it is validated in "
+        "tests/test_flex_spin_orbital.py and "
+        "tests/test_flex_spin_orbital_ed.py. The cell id keeps its "
+        "original name so the guard-site obligation still names it."
     ),
 )
 
@@ -984,7 +990,8 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
             ExecuteReject(
                 site=Site.CONSTRUCTOR,
                 exc_type="ValueError",
-                fragment="enable_spin_orbital",
+                fragment="calc_scheme='reduced' FLEX does not support "
+                "enable_spin_orbital",
             ),
         ),
     ),
@@ -999,11 +1006,12 @@ _CELL_36_SO_REDUCED_CONSTRUCTION_REJECT = Cell(
         "branch -- src/hwave/solver/rpa.py:1945-2006 -- runs regardless "
         "of how spin_mode was determined). FLEX reduced REJECTS at "
         "CONSTRUCTOR via the guard added alongside this cell: "
-        "src/hwave/solver/flex.py:227-231 "
-        "(FLEX._init_flex_param, scheme=='reduced' branch, mirroring "
-        "the general-scheme guard at lines 220-224), "
+        "FLEX._init_flex_param's scheme=='reduced' branch "
+        "(the reduced scheme still refuses spin-orbital input after "
+        "#83 admitted it on the general scheme), "
         "'calc_scheme=\\'reduced\\' FLEX does not support "
-        "enable_spin_orbital; deferred to the generalized FLEX solver.' "
+        "enable_spin_orbital; use calc_scheme=\\'general\\' with "
+        "[mode.param] flex_hartree_fock = true.' "
         "-- before that guard, calc_scheme='reduced' had NO "
         "enable_spin_orbital guard at all, while the general scheme "
         "had had one since #83: the asymmetry is the silent gap the "

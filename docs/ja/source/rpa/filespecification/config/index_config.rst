@@ -63,6 +63,24 @@ TOML形式
      **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数になりました。
      既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
+  **FLEX（実験的機能）。** ``mode = "FLEX"``\ では、スピン軌道モードは
+  ``calc_scheme = "general"``\ でのみ動作し、\ ``[mode.param]
+  flex_hartree_fock = true``\ が必要です。1次は全スピン軌道密度の自己無撞着な
+  Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点による1つのチャネルで
+  総和されます（:ref:`flex_spin_orbital`\ を参照）。この版での要件と制限:
+
+  - オンサイト相互作用のみ（オフサイトの宣言は拒否されます）
+  - ``spinful_vertex_exchange``\ は\ ``true``\ （デフォルト）のままにする必要があります
+  - ``longitudinal_bond_channels``\ には対応していません
+  - 初期値の指定はできません。\ ``sigma_init``\ ・\ ``trans_mod``\ ・
+    ``green_init``\ は拒否され、計算は裸の Hartree-Fock 状態から始まります
+  - ``flex_hartree_fock``\ のその他の条件（一様松原格子、副格子なし、外場なし、
+    偶数の\ ``Nmat``\ ）も適用されます
+  - ``calc_scheme = "reduced"``\ はスピン軌道入力を拒否します
+  - Eliashberg ソルバー（``hwave_sc``\ 、および\ ``run_eliashberg = true``\ の
+    ``hwave_tsweep``\ ）は引き続き\ ``enable_spin_orbital``\ を拒否します。FLEX のみの
+    ``hwave_tsweep``\ は\ ``warm_start = false``\ で実行できます
+
 .. _rpa_calc_scheme_auto:
 
 - ``calc_scheme``
@@ -393,7 +411,8 @@ TOML形式
   :math:`\Sigma_{\rm HF}[G]`\ を FLEX の自己エネルギーに加えます
   （:math:`\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}`\ 。毎反復
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
-  スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
+  スピンフリー系での\ ``calc_scheme = "general"``\ （\ ``enable_spin_orbital =
+  true``\ の場合は、そのキーの項で説明するスピン軌道 FLEX）、一様松原格子
   （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
   偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ や\ ``PairHop``\ は単独では拒否されます
   （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。

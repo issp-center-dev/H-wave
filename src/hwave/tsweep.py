@@ -113,6 +113,16 @@ def preflight(base, cont):
         # FLEX-only sweeps (run_eliashberg = false) stay allowed.
         from hwave.sc import reject_spin_orbital_mode
         reject_spin_orbital_mode(base)
+    # A FLEX-only spin-orbital sweep runs every rung from the bare state: the
+    # spin-orbital FLEX accepts no sigma_init seed (#83), so the warm start
+    # that chains each rung's self-energy into the next would refuse rung 1
+    # after rung 0 has run. Fail here instead, naming the setting.
+    from hwave.sc import _resolve_spin_orbital_flag
+    if _resolve_spin_orbital_flag(base) and cont.get("warm_start", True):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the spin-orbital FLEX accepts no "
+            "sigma_init seed, so a temperature sweep cannot warm-start one rung from "
+            "the previous one; set [continuation] warm_start = false.")
 
 
 def make_rung_dicts(base, T, rung_out, run_eliashberg,

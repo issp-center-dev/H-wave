@@ -629,7 +629,9 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 - 全ての相互作用型（\ ``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、\ ``Exchange``\ 、
   ``Ising``\ 、\ ``PairLift``\ 、\ ``PairHop``\ ）がサポートされます。
 - 可能な場合、ブロック分解が自動的に適用されます。
-- ``reduced``\ と\ ``general``\ の両計算スキームがスピン軌道系で利用可能です。
+- RPA では\ ``reduced``\ と\ ``general``\ の両計算スキームがスピン軌道系で利用可能です。
+  FLEX がスピン軌道モードに対応するのは\ ``flex_hartree_fock = true``\ の
+  ``general``\ スキームのみです。\ :ref:`flex_spin_orbital`\ を参照してください。
 - 幾何情報ファイル（``geom.dat``\ ）の\ ``Norbit``\ はスピン軌道の総数
   （= 物理軌道数 × 2 = Wannier90 の\ ``num_wann``\ ）を表し、UHFk と同じ規約です。
 
@@ -896,7 +898,7 @@ Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）
 ----------------------------------------------------------
 
 ``flex_hartree_fock = true``\ （``mode = "FLEX"``\ 、\ ``calc_scheme = "general"``\ 、
-スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和
+スピンフリー系。スピン軌道入力については\ :ref:`flex_spin_orbital`\ を参照）では、FLEX の自己エネルギーは同時に反復される2つの成分の和
 
 .. math::
 
@@ -993,5 +995,86 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 ``longitudinal_bond_channels = true``\ の場合のみ。解法全体の推定ピーク
 メモリは\ ``longitudinal_bond_memory_cap_gb``\ と照合され、振動数バッチはそれに収まる
 ように選ばれます。
+
+.. _flex_spin_orbital:
+
+スピン軌道 FLEX（実験的機能）
+--------------------------------
+
+``enable_spin_orbital = true``\ 、\ ``mode = "FLEX"``\ 、\ ``calc_scheme =
+"general"``\ 、\ ``flex_hartree_fock = true``\ のとき、FLEX は全スピン軌道空間で
+動作します。グリーン関数・自己エネルギー・感受率は次元
+:math:`n_d = 2 n_{\rm orb}`\ の一般化インデックス\ :math:`p = s\, n_{\rm orb} + a`\
+（スピンブロック順。\ ``index_convention = "spin_block"``\ で表示）を持ち、
+一体ハミルトニアンはたまたまスピン対角であってもこの\ :math:`n_d \times n_d`\ の
+形のまま保持されます。自己エネルギーはここでも
+:math:`\Sigma = \Sigma_{\rm HF}[G] + \Sigma_{\rm fluct}[G]`\ です
+（:ref:`flex_bond_hf`\ を参照）。\ :math:`\Sigma_{\rm HF}`\ は全ての相互作用の
+Hartree-Fock 項（Fock 項を含む）で、スピン非対角ブロックを含む全スピン軌道の
+同時刻密度で評価されます。UHFk のスピン軌道モードと同じカーネルで構築されます。
+
+ゆらぎ部分は1つの粒子-正孔チャネルです。\ :math:`\Gamma`\ を反対称化した
+スピンフル頂点（直接相互作用にそのオンサイト交換交差を加えたもの。スピンフル
+RPA が総和する頂点。\ ``spinful_vertex_exchange``\ ）、\ :math:`\bar\chi`\ を
+スピン軌道の対基底上の裸のバブルとすると、
+
+.. math::
+
+   \chi = \left[\hat{I} + \bar\chi\,\Gamma\right]^{-1} \bar\chi, \qquad
+   V = P\left[\Gamma\left(\chi - \tfrac{1}{2}\bar\chi\right)\Gamma\right]
+     = P\left[\Gamma\left(\chi - \bar\chi\right)\Gamma
+       + \tfrac{1}{2}\,\Gamma\bar\chi\Gamma\right]
+
+です。第1項は3次以上の ring 級数です。第2項は厳密な2次です。反対称化した頂点は
+2次の直接ダイアグラムと交換ダイアグラムを同じように生成するため、係数
+:math:`\tfrac{1}{2}`\ が付きます。別個の2次カーネルは必要ありません。
+:math:`P`\ は両方の対の2つの軌道を入れ替えます
+（:math:`(\mu m) \leftrightarrow (m \mu)`\ ）。これは
+:ref:`flex_second_order_kernel`\ の向きであり、この向きでは\ :math:`n`\ 次の項が
+:math:`\mathrm{Tr}\,(\bar\chi \Gamma)^n`\ の汎関数微分になるため、近似は保存近似
+です。この1つのチャネルが、電荷・縦スピン・横スピンと、スピン軌道相互作用による
+それらの混成という全てのスピン構造を同時に担います。スピン・電荷の分離はないため、
+:math:`\chi`\ は\ ``chiq.npz``\ に\ ``chiq``\ として、
+``chi_convention = "spin_orbital"``\ とともに書き出されます。
+
+実装は次の2つの方法で検証されています。
+
+- *厳密対角化との2次の比較。* 3軌道の1サイト模型にランダムなスピン混成一体項を
+  加えた系で、ゆらぎ自己エネルギーの\ :math:`O(x^2)`\ 係数が厳密な残差
+  :math:`\Sigma_{\rm ED} - \Sigma_{\rm HF}[\rho_{\rm ED}]`\ の係数と、全ての
+  相互作用型（``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、\ ``Ising``\ 、
+  ``Exchange``\ 、\ ``PairHop``\ 、\ ``PairLift``\ ）について相対
+  :math:`2 \times 10^{-3}`\ 以内で一致します（スピン非対角ブロックを含む）。
+- *スピン保存極限。* スピン対角な模型をスピン軌道の表記で書き、スピン回転不変な
+  オンサイト相互作用（``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、
+  ``Exchange``\ 、\ ``Ising``\ 、\ ``PairHop``\ 。
+  :math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}`\ ）を与えると、その
+  自己無撞着解はスピンフリーの Hartree-Fock FLEX の解と丸め誤差の範囲で一致します
+  （自己エネルギーの両成分、\ :math:`\mu`\ 、\ :math:`N`\ ）。
+
+スピン回転不変性がない場合、2つの FLEX の形は2次では一致しますが、それより高次で
+異なります。スピンフリーの形\ :math:`\tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s`\ は
+2つの横スピンゆらぎを縦スピンゆらぎの複製として数えます。これが厳密なのは
+SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は横チャネルを実際の
+頂点で総和します。そのため\ ``Hund``\ 、\ ``Ising``\ 、\ ``Exchange``\ を単独で
+宣言した場合や、\ :math:`J_{\rm Exchange} \neq J_{\rm Hund} - 2 J_{\rm Ising}`\ と
+なる組では、3次以降で結果が異なります。\ ``PairLift``\
+（:math:`\Delta S_z = 2`\ ）はそもそもスピンを保存しません。スピンフリーの一般経路は
+その厳密な2次を保持しますが、それより高次の横成分を担うチャネルを持ちません。
+スピン軌道 FLEX はこれを含みます。
+
+この版の適用範囲:
+
+- ``flex_hartree_fock = true``\ の一般スキーム（このスイッチのその他の条件も適用）
+- オンサイト相互作用のみ（オフサイト相互作用の交換交差は\ :math:`\mathbf{q}`\ のみの
+  頂点では表せないため）
+- ``spinful_vertex_exchange = true``\ で、\ ``longitudinal_bond_channels``\ はなし
+- ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
+  Hartree-Fock 状態から始まります）
+
+reduced スキームはスピン軌道入力を拒否し、Eliashberg ソルバー（``hwave_sc``\ 、
+および\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ ）は引き続き
+``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
+``warm_start = false``\ で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

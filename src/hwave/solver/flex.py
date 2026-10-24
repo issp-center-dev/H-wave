@@ -287,6 +287,10 @@ class FLEX(RPA):
     # Phase B (#181): configuration surface -- spec 2026-09-06 section 4.1
     # ------------------------------------------------------------------
     _accepts_flex_keys = True
+    #: the spin-orbital (spinful) Hartree-Fock FLEX of #83; set by _init_spin_orbital
+    _so_spinful = False
+    _keep_spinful = False
+    _so_vertex = None
     _PHASE_B_SWITCHES = ("flex_hartree_fock", "longitudinal_bond_channels")
     _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
                           "longitudinal_bond_output_layout",
@@ -633,6 +637,24 @@ class FLEX(RPA):
                 table.pop(k)
         self._pairing_controls = PairingControls.from_param(table, pairing_types=types)
 
+    def _spin_orbital_seed(self, green_info, expected_shape):
+        """The zero seed of the spin-orbital Hartree-Fock FLEX (#83).
+
+        A seed (sigma_init) and a user mean field (trans_mod / green_init)
+        are spin-free objects in the Hartree-Fock FLEX seed semantics; their
+        spin-orbital counterparts are not defined in this version, so they
+        are refused rather than reinterpreted."""
+        for key in ("sigma_init_envelope", "sigma_init", "trans_mod", "green_init"):
+            if green_info.get(key) is not None:
+                name = "sigma_init" if key == "sigma_init_envelope" else key
+                raise ValueError(
+                    "[mode] enable_spin_orbital = true (FLEX) does not accept {} in this "
+                    "version: the spin-orbital run starts from the bare Hartree-Fock "
+                    "state.".format(name))
+        nb, nmat, nvol, no, _ = (int(x) for x in expected_shape)
+        return (np.zeros((nb, 1, nvol, no, no), dtype=np.complex128),
+                np.zeros(tuple(expected_shape), dtype=np.complex128))
+
     def _assemble_static_seed(self, green_info, expected_shape):
         """Refusal precedence steps 4-5 and the seed matrix (spec 2.3, D7,
         D10, D15) under flex_hartree_fock=true. Returns
@@ -709,6 +731,38 @@ class FLEX(RPA):
                              "(relative deviation {:.3e})".format(err))
         return static, fluct
 
+    def _init_spin_orbital(self):
+        """Admit ``[mode] enable_spin_orbital = true`` (#83): the spinful
+        general FLEX of Hartree-Fock FLEX.
+
+        The spin is folded into the orbital index, so H0 is kept in its full
+        ``nd x nd`` spin-orbital form (``nd = 2 norb``, spin-block order of
+        :mod:`hwave.solver.spin_orbital`) even when it is spin-diagonal, and
+        the fluctuation part is built from the antisymmetrized spinful
+        vertex (see :meth:`_flex_compute_veff_spinful`). This version takes
+        the Hartree-Fock FLEX route only (``flex_hartree_fock = true``,
+        whose first order is the self-consistent Hartree-Fock of every
+        term), without the bond channels, with the exact second order
+        (``flex_second_order = "local"``) and on-site interactions only
+        (checked in :meth:`_validate_phase_b_interactions`)."""
+        g = "[mode] enable_spin_orbital = true (FLEX)"
+        raw = self._phase_b_raw     # installed as attributes only after this init
+        if not raw["flex_hartree_fock"]:
+            raise ValueError(
+                g + " requires [mode.param] flex_hartree_fock = true: the spin-orbital "
+                "FLEX takes its first order from the self-consistent Hartree-Fock of "
+                "every interaction term.")
+        if raw["longitudinal_bond_channels"]:
+            raise ValueError(
+                g + " does not support longitudinal_bond_channels (the bond channels "
+                "are spin/charge resolved).")
+        if not self.spinful_vertex_exchange:
+            raise ValueError(
+                g + " requires spinful_vertex_exchange = true (the antisymmetrized "
+                "vertex is what makes the second order exact).")
+        self._so_spinful = True
+        self._keep_spinful = True
+
     def _init_flex_param(self):
         """Initialize FLEX-specific parameters."""
         logger.debug(">>> FLEX._init_flex_param")
@@ -775,17 +829,14 @@ class FLEX(RPA):
             # FLEX general is the paramagnetic full-vertex path: it sums the
             # RPA *ring* (bubble) series with the full rank-4 vertex.
             if getattr(self.ham_info, "enable_spin_orbital", False):
-                raise ValueError(
-                    "calc_scheme='general' FLEX (v1) does not support "
-                    "enable_spin_orbital; deferred to the generalized FLEX "
-                    "solver.")
+                self._init_spin_orbital()
             self._flex_general = True
         elif scheme == "reduced":
             if getattr(self.ham_info, "enable_spin_orbital", False):
                 raise ValueError(
                     "calc_scheme='reduced' FLEX does not support "
-                    "enable_spin_orbital; deferred to the generalized FLEX "
-                    "solver.")
+                    "enable_spin_orbital; use calc_scheme='general' with "
+                    "[mode.param] flex_hartree_fock = true.")
             self._flex_general = False
         else:
             # ring+ladder was already rejected as step 0 above, and 'auto'
@@ -817,7 +868,10 @@ class FLEX(RPA):
         # an obscure shape error -- keeps its precedence (#83).
         self._second_order_factors = None
         self._second_order_device = None
-        if scheme == "general" and self.flex_second_order == "local":
+        # the spin-orbital path builds its exact second order from the
+        # antisymmetrized spinful vertex instead (#83)
+        if (scheme == "general" and self.flex_second_order == "local"
+                and not self._so_spinful):
             from hwave.solver.offsite import split_locality
             from hwave.solver.second_order import build_factors
             # the q-only second order follows orbital_site (#234); under the
@@ -1208,6 +1262,9 @@ class FLEX(RPA):
             return self._solve_restoring_host_attrs(green_info, path_to_output)
         finally:
             self._second_order_device = None
+            # the spin-orbital vertex is solve-scoped too (it may be a device
+            # array of Nvol (2 norb)^4 entries)
+            self._so_vertex = None
 
     def _solve_impl(self, green_info, path_to_output):
         """Solve the FLEX equations self-consistently.
@@ -1260,7 +1317,9 @@ class FLEX(RPA):
         else:
             self._calc_epsilon_k(green_info)
 
-        if self._flex_general and self.spin_mode != "spin-free":
+        if self._so_spinful:
+            assert self.spin_mode == "spinful", self.spin_mode   # _keep_spinful
+        elif self._flex_general and self.spin_mode != "spin-free":
             raise ValueError(
                 "calc_scheme='general' FLEX (v1) supports spin_mode='spin-free' "
                 "only, got '{}'. spin-diag/spinful are deferred to the "
@@ -1642,7 +1701,7 @@ class FLEX(RPA):
         in-process pairing results, so dropping the whole prefix here cannot
         discard anything a reader owns."""
         produced = ("sigma", "sigma_static", "sigma_fluct", "green", "physics",
-                    "chi0q", "chiq_s", "chiq_c")
+                    "chi0q", "chiq_s", "chiq_c", "chiq")
         prov = ("map_iteration", "state_iteration", "payload_kind", "hf_density_error",
                 "hf_density_source", "density_target_enforced")
         for k in list(green_info):
@@ -1730,15 +1789,22 @@ class FLEX(RPA):
                 "continues", iteration, dens.hermitian_deviation, self.flex_hf_density_tol)
             self.flex_guard_violations += 1
         if self.calc_mu:
+            # spin-free: one spin's count against N/2; spin-orbital: the trace
+            # runs over both spins, so the total against N
             dev = abs(dens.n_per_spin - Ncond_target)
             if dev > 1e-10 * max(1.0, abs(Ncond_target)):
                 raise ValueError(
                     "flex_hartree_fock: the chemical potential search closed on "
-                    "N/2 = {:.12g} but the equal-time density gives {:.12g} "
+                    "{} = {:.12g} but the equal-time density gives {:.12g} "
                     "(residual {:.3e} > tolerance {:.3e})".format(
+                        "N" if self._so_spinful else "N/2",
                         Ncond_target, dens.n_per_spin, dev,
                         1e-10 * max(1.0, abs(Ncond_target))))
-        sigma_hf = flex_hf.hf_map(dens.rho_r, self._hf_tables, shape, self.norb)
+        if self._so_spinful:
+            sigma_hf = flex_hf.hf_map_spin_orbital(dens.rho_r, self._hf_tables, shape,
+                                                   self.norb)
+        else:
+            sigma_hf = flex_hf.hf_map(dens.rho_r, self._hf_tables, shape, self.norb)
         return dens, sigma_hf[None, None], heff
 
     def _phase_b_preflight(self, green_info):
@@ -1750,11 +1816,15 @@ class FLEX(RPA):
         from hwave.solver import flex_hf, bond_channels
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         shape = tuple(int(x) for x in self.lattice.shape)
-        expected = (1, nmat, nvol, norb, norb)
+        no = 2 * norb if self._so_spinful else norb      # Green-function dimension
+        expected = (1, nmat, nvol, no, no)
         if self.ham_info.ham_extern_q is not None:
             raise ValueError("flex_hartree_fock=true does not support an external field "
                              "(spin-diagonal H0)")
-        self._phase_b_seed = self._assemble_static_seed(green_info, expected)
+        if self._so_spinful:
+            self._phase_b_seed = self._spin_orbital_seed(green_info, expected)
+        else:
+            self._phase_b_seed = self._assemble_static_seed(green_info, expected)
         split = self._validate_phase_b_interactions()
         self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
         if self.longitudinal_bond_channels:
@@ -1790,9 +1860,17 @@ class FLEX(RPA):
         from hwave.solver.offsite import split_locality
         g = ("[mode.param] longitudinal_bond_channels=true (FLEX)"
              if self.longitudinal_bond_channels else "[mode.param] flex_hartree_fock=true")
-        if getattr(self.ham_info, "enable_spin_orbital", False):
+        if getattr(self.ham_info, "enable_spin_orbital", False) and not self._so_spinful:
             raise ValueError(g + " does not support enable_spin_orbital.")
         split = split_locality(self.ham_info, self.lattice)
+        if self._so_spinful and split.offsite_types:
+            itype = sorted(split.offsite_types)[0]
+            (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+            raise ValueError(
+                "[mode] enable_spin_orbital = true (FLEX) supports on-site interactions "
+                "only in this version (the antisymmetrized spinful vertex carries the "
+                "on-site exchange crossing only); the off-site '{}' declaration at "
+                "irvec={}, orbvec={} is refused.".format(itype, tuple(irvec), tuple(orbvec)))
         refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
         for itype in refused:
             if itype in split.offsite_types:
@@ -2073,7 +2151,10 @@ class FLEX(RPA):
     def _phase_b_active_outputs(self, info_outputfile):
         active = [k for k in ("energy", "sigma", "green") if k in info_outputfile]
         if self.max_iter > 0:
-            active += ["chiq_s", "chiq_c"]
+            # the spin-orbital run publishes the single spinful channel chiq
+            # only (#83); the spin/charge archives exist only without it
+            if not self._so_spinful:
+                active += ["chiq_s", "chiq_c"]
             active += [k for k in ("chi0q", "chiq") if k in info_outputfile]
             if self.longitudinal_bond_channels and self.longitudinal_bond_output_full:
                 active.append("longitudinal_bond")
@@ -2168,6 +2249,8 @@ class FLEX(RPA):
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         nd = norb * norb
         shape = tuple(int(x) for x in self.lattice.shape)
+        # the density trace counts one spin (spin-free) or both (spin-orbital)
+        nspin_count = 1.0 if self._so_spinful else 2.0
         static0, fluct0 = self._phase_b_seed
         state = SplitState(static=np.array(static0, copy=True), fluct=np.array(fluct0, copy=True))
         del static0, fluct0
@@ -2252,7 +2335,7 @@ class FLEX(RPA):
                     dens, sigma_hf, _ = self._phase_b_density_and_hf(
                         green_kw, state.static, mu, beta, Ncond_target, iteration=iteration + 1)
                     self.hf_density_error_map = abs(
-                        2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                        nspin_count * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
                     # kept for the per-iteration guard line below (the arrays
                     # of the density result are released with it)
                     dens_hermitian = float(dens.hermitian_deviation)
@@ -2265,8 +2348,12 @@ class FLEX(RPA):
                     chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
                     assert chi0q_raw.shape[0] == 1
                     chi0q_raw = chi0q_raw[0]
-                    chi0q_out, v_eff, chi_s, chi_c = \
-                        self._flex_compute_veff_general(chi0q_raw, ham_orig)
+                    if self._so_spinful:
+                        chi0q_out, v_eff, chi_s = self._flex_compute_veff_spinful(chi0q_raw)
+                        chi_c = None
+                    else:
+                        chi0q_out, v_eff, chi_s, chi_c = \
+                            self._flex_compute_veff_general(chi0q_raw, ham_orig)
                     sigma_fluct = self._calc_self_energy_general(green_kw, v_eff, beta)
                     del v_eff
                 del green_scf
@@ -2310,7 +2397,8 @@ class FLEX(RPA):
                         fluct_new=np.array(new_state.fluct, copy=True),
                         chi0q=np.array(_bk.to_host(chi0q_out), copy=True),
                         chiq_s=np.array(_bk.to_host(chi_s), copy=True),
-                        chiq_c=np.array(_bk.to_host(chi_c), copy=True))
+                        chiq_c=(None if chi_c is None
+                                else np.array(_bk.to_host(chi_c), copy=True)))
                     if gate:
                         payload["bond_static_s"] = np.array(self._bond_last.static_s, copy=True)
                         payload["bond_static_c"] = np.array(self._bond_last.static_c, copy=True)
@@ -2366,13 +2454,17 @@ class FLEX(RPA):
                     if dens_dev > 1e-10 * max(1.0, abs(Ncond_target)):
                         raise ValueError(
                             "flex_hartree_fock: the final-state chemical potential search closed "
-                            "on N/2 = {:.12g} but the equal-time density gives {:.12g} (residual "
+                            "on {} = {:.12g} but the equal-time density gives {:.12g} (residual "
                             "{:.3e} > tolerance {:.3e})".format(
+                                "N" if self._so_spinful else "N/2",
                                 Ncond_target, dens.n_per_spin, dens_dev,
                                 1e-10 * max(1.0, abs(Ncond_target))))
                 self.hf_density_error_state = abs(
-                    2.0 * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
-                physics = {"NCond": float(2.0 * dens.n_per_spin), "Sz": 0.0, "mu": float(mu)}
+                    nspin_count * dens.n_per_spin - getattr(self, "Ncond", float("nan"))) / nvol
+                physics = {"NCond": float(nspin_count * dens.n_per_spin), "Sz": 0.0,
+                           "mu": float(mu)}
+                if self._so_spinful:
+                    physics.update(self._spin_vector(dens.rho_r))
                 self.physics = physics
                 logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
                     physics["NCond"], physics["Sz"], physics["mu"]))
@@ -2385,7 +2477,13 @@ class FLEX(RPA):
                 green_info["sigma_fluct"] = self.sigma_fluct
                 green_info["green"] = self.green_kw
                 green_info["physics"] = physics
-                if self.max_iter > 0:
+                if self.max_iter > 0 and self._so_spinful:
+                    # one antisymmetrized spinful channel: there is no spin /
+                    # charge split, so the susceptibility is published as chiq
+                    self.chi_s = self.chi_c = None
+                    green_info["chi0q"] = _bk.to_host(chi0q_out)
+                    green_info["chiq"] = _bk.to_host(chi_s)
+                elif self.max_iter > 0:
                     self.chi_s = _bk.to_host(chi_s)
                     self.chi_c = _bk.to_host(chi_c)
                     green_info["chi0q"] = _bk.to_host(chi0q_out)
@@ -3586,6 +3684,80 @@ class FLEX(RPA):
         # Eliashberg loader's S @ chi @ S use.
         return chi0q, v_eff, chi_s, chi_c
 
+    def _spinful_vertex(self, xp):
+        """The antisymmetrized spinful vertex ``Gamma`` of the spin-orbital
+        FLEX (#83), ``(nvol, nd^2, nd^2)`` in the bubble's pair convention:
+        the direct (ring) tensor plus the on-site exchange crossing, the
+        vertex the spinful RPA resums (issue #137; validated against exact
+        diagonalization there). Cached per solve."""
+        from hwave.solver.rpa import _to_bubble_pair_convention
+        cached = getattr(self, "_so_vertex", None)
+        if cached is not None and _bk.array_module_of(cached) is xp:
+            return cached
+        nvol, nd = self.lattice.nvol, 2 * self.norb
+        ham = np.asarray(_bk.to_host(self.ham_info.ham_inter_q)).reshape(nvol, nd, nd, nd, nd)
+        exch = self.ham_info.spinful_exchange()
+        if exch is not None:
+            ham = ham + np.asarray(exch).reshape(nd, nd, nd, nd)[None, ...]
+        gam = np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
+            nvol, nd * nd, nd * nd)
+        self._so_vertex = xp.asarray(gam)
+        return self._so_vertex
+
+    def _flex_compute_veff_spinful(self, chi0q_raw):
+        r"""The fluctuation interaction of the spin-orbital FLEX (#83).
+
+        One particle-hole channel with the antisymmetrized spinful vertex
+        ``Gamma`` (:meth:`_spinful_vertex`) carries every spin structure
+        (charge, longitudinal and transverse spin, and their mixing under
+        spin-orbit coupling)::
+
+            chi = [1 + chi0 Gamma]^-1 chi0
+            V   = P[ Gamma (chi - chi0) Gamma + 1/2 Gamma chi0 Gamma ]
+
+        The first term is the ring from third order on; the second is the
+        exact second order (the antisymmetrized vertex generates the direct
+        and the exchange second-order diagram alike, hence the 1/2). ``P``
+        swaps the two orbitals of both pairs: the orientation in which every
+        order is the functional derivative of ``Tr (chi0 Gamma)^n`` under
+        the general self-energy kernel's contraction (issue #251). The
+        first order is the self-consistent Hartree-Fock term of the
+        Hartree-Fock FLEX and is not part of ``V``.
+
+        Returns ``(chi0q, V, chi)``: chi0q and chi rank-6 in the bubble's
+        ``[a, c, b, d]`` pair layout over spin-orbital indices (spin-block
+        order), V ``(nmat, nvol, nd^2, nd^2)``.
+        """
+        xp = _bk.array_module_of(chi0q_raw)
+        gam = self._spinful_vertex(xp)
+        chi = self._solve_rpa(chi0q_raw, gam)
+        nmat, nvol = chi0q_raw.shape[0], chi0q_raw.shape[1]
+        ndx = gam.shape[-1]
+        chi0_2d = chi0q_raw.reshape(nmat, nvol, ndx, ndx)
+        chi_2d = chi.reshape(nmat, nvol, ndx, ndx)
+        gB = gam[None]
+        ring = gB @ (chi_2d - 0.5 * chi0_2d) @ gB
+        # into the self-energy kernel's pair orientation, the conserving one
+        # (issue #251): both pairs of every product transposed
+        v_eff = xp.empty_like(ring)
+        _pair_transpose_into(v_eff, ring, 2 * self.norb)
+        return chi0q_raw, v_eff, chi
+
+    def _spin_vector(self, rho_r):
+        """Sx, Sy, Sz per cell sum from the spin-block equal-time density
+        ``rho_r[r, a, b] = <c^dag_a(r) c_b(0)>`` (#83), as UHFk reports
+        them: ``S_alpha = 1/2 sum_a Tr[sigma_alpha rho_a]``."""
+        nvol = rho_r.shape[0]
+        no = self.norb
+        m = np.asarray(rho_r)[0].reshape(2, no, 2, no)
+        uu = np.trace(m[0, :, 0, :])
+        dd = np.trace(m[1, :, 1, :])
+        sp = np.trace(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
+        sm = np.trace(m[1, :, 0, :])      # <S^->
+        return {"Sz": float(0.5 * (uu - dd).real * nvol),
+                "Sx": float(0.5 * (sp + sm).real * nvol),
+                "Sy": float((-0.5j * (sp - sm)).real * nvol)}
+
     @do_profile
     def _inflate_chi0q_and_ham(self, chi0q_raw, ham_orig):
         """Apply spin inflation to chi0q and ham, matching RPA.solve() logic.
@@ -4543,7 +4715,7 @@ class FLEX(RPA):
                             if str(k).startswith("longitudinal_bond_")
                             and not str(k).endswith("_w")
                             and k not in ("longitudinal_bond_S", "longitudinal_bond_C")}
-            if "chiq_s" not in green_info:
+            if "chiq_s" not in green_info and "chiq" not in green_info:
                 _last_map_omitted = True
                 logger.info("save_results: no map was executed (IterationMax=0); the last-map "
                             "archives chi0q, chiq_s, chiq_c, chiq and the bond archive are "
@@ -4597,6 +4769,11 @@ class FLEX(RPA):
                 with open(file_name, "w") as fw:
                     fw.write("NCond = {}\n".format(physics["NCond"]))
                     fw.write("Sz = {}\n".format(physics["Sz"]))
+                    # the transverse components exist only for the
+                    # spin-orbital run (#83), as in UHFk's energy file
+                    for key in ("Sx", "Sy"):
+                        if key in physics:
+                            fw.write("{} = {}\n".format(key, physics[key]))
                     fw.write("ChemicalPotential = {}\n".format(physics["mu"]))
                 logger.info("save_results: save energy in file {}".format(
                     file_name))
@@ -4657,7 +4834,8 @@ class FLEX(RPA):
         common_meta = dict(nmat=self.nmat,
                            wavevector_unit=self.kvec,
                            wavevector_index=self.wavenum_table,
-                           chi_convention=("myo" if self._flex_general
+                           chi_convention=("spin_orbital" if self._so_spinful
+                                           else "myo" if self._flex_general
                                            else "kuroki"),
                            sc_vertex_version=3,
                            # Fourier-sign provenance (issue #133): q labels
@@ -4715,6 +4893,10 @@ class FLEX(RPA):
                 save_dict["chiq_s"] = green_info["chiq_s"]
             if "chiq_c" in green_info:
                 save_dict["chiq_c"] = green_info["chiq_c"]
+            if self._so_spinful and "chiq" in green_info:
+                # the single antisymmetrized spinful channel (#83)
+                save_dict["chiq"] = green_info["chiq"]
+                save_dict["index_convention"] = spin_orbital.INDEX_CONVENTION
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
 
@@ -4732,6 +4914,8 @@ class FLEX(RPA):
                                    sigma_static=green_info.get("sigma_static"),
                                    sigma_fluct=green_info.get("sigma_fluct"),
                                    **self._provenance_block("final_state"))
+            if self._so_spinful:
+                sigma_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
                      **sigma_extra,
@@ -4760,6 +4944,8 @@ class FLEX(RPA):
                 green_extra["cell_shape"] = np.array(self.lattice.shape)
             if getattr(self, "_phase_b_active", False):
                 green_extra.update(self._provenance_block("final_state"))
+            if self._so_spinful:
+                green_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
             np.savez(file_name,
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,

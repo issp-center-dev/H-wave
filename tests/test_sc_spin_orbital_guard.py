@@ -191,10 +191,25 @@ class TestSpinOrbitalGuardTsweep(unittest.TestCase):
 
     def test_preflight_allows_flex_only_and_non_so_sweeps(self):
         import hwave.tsweep as ts
+        # a FLEX-only spin-orbital sweep runs every rung from the bare state
         base, cont = self._base({"enable_spin_orbital": True}, run_eli=False)
+        cont["warm_start"] = False
         ts.preflight(base, cont)
         base, cont = self._base({"enable_spin_orbital": "false"})
         ts.preflight(base, cont)
+
+    def test_preflight_rejects_a_warm_started_spin_orbital_sweep(self):
+        """The spin-orbital FLEX accepts no sigma_init seed (#83), so the
+        warm start (also the default) would refuse rung 1 after rung 0 had
+        run; the preflight names the setting instead."""
+        import hwave.tsweep as ts
+        for warm in (True, None):
+            with self.subTest(warm_start=warm):
+                base, cont = self._base({"enable_spin_orbital": True}, run_eli=False)
+                if warm is not None:
+                    cont["warm_start"] = warm
+                with self.assertRaisesRegex(ValueError, "warm_start = false"):
+                    ts.preflight(base, cont)
 
 
 if __name__ == "__main__":
