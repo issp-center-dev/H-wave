@@ -183,7 +183,8 @@ class TestContracts(unittest.TestCase):
             compile_onsite(_tbl("Exchange", [(0, 1, 1.0 + 0.5j), (1, 0, 1.0 + 0.5j)]), norb,
                            closed=True)   # bypass the closure: not Hermitian
         self.assertIn("Hermitian", str(cm.exception))
-        for itype, hint in (("CoulombInter", "CoulombIntra"), ("Hund", "one-body"),
+        # CoulombInter: the self row carries half of v n n, so U = v (not 2 v)
+        for itype, hint in (("CoulombInter", "CoulombIntra with U = v"), ("Hund", "one-body"),
                             ("Ising", "CoulombIntra"), ("Exchange", "CoulombIntra"),
                             ("PairHop", "2 Re"), ("PairLift", "identically zero")):
             with self.subTest(itype=itype):
@@ -191,6 +192,9 @@ class TestContracts(unittest.TestCase):
                     compile_onsite(_tbl(itype, [(0, 0, 0.5)]), norb)
                 self.assertIn(itype, str(cm.exception))
                 self.assertIn(hint, str(cm.exception))
+                if itype == "CoulombInter":
+                    # and the level shift is v/2, not v
+                    self.assertIn("+ (v/2) n_a", str(cm.exception))
 
 
 

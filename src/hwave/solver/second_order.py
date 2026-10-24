@@ -51,9 +51,10 @@ class DegenerateRowError(ValueError):
 
 
 _D7_REMEDY = {
-    "CoulombInter": "v n_a n_a = 2 v n_{a up} n_{a dn} + v n_a: declare CoulombIntra with 2 v "
-                    "(the one-body part v n_a is a level shift: add it to the Transfer file or "
-                    "absorb it in the chemical potential)",
+    "CoulombInter": "the row carries half of v n_a n_a, i.e. (v/2) n_a n_a = v n_{a up} n_{a dn} "
+                    "+ (v/2) n_a: declare CoulombIntra with U = v (the one-body part (v/2) n_a "
+                    "is a level shift: add it to the Transfer file or absorb it in the chemical "
+                    "potential)",
     "Hund": "-v (n_{a up}^2 + n_{a dn}^2) = -v n_a: a one-body level shift with no two-body "
             "content -- remove the row or add the shift to the Transfer file",
     "Ising": "v (n_{a up} - n_{a dn})^2 = v n_a - 2 v n_{a up} n_{a dn}: declare CoulombIntra "

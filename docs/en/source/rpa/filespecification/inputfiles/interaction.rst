@@ -211,7 +211,7 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared. A nonzero on-site CoulombInter row of an orbital with itself (:math:`R = 0`, :math:`\alpha = \beta`) is also rejected: each declared row carries half of :math:`V n n`, so such a row is the Hubbard term :math:`U = V` plus a one-body level shift :math:`V/2`; declare :math:`U = V` in CoulombIntra and add :math:`V/2` to the orbital's on-site energy in the Transfer file (or absorb it in the chemical potential).
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 

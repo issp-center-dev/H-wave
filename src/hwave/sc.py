@@ -1684,7 +1684,8 @@ def _read_interaction_files(input_dict):
     interaction_types = ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
                         "Ising", "PairLift", "PairHop"]
     interactions = {}
-    from hwave.solver.declarations import validate_hermitian_closure
+    from hwave.solver.declarations import (validate_hermitian_closure,
+                                           validate_no_onsite_same_orbital_inter)
 
     for itype in interaction_types:
         if itype in files:
@@ -1694,6 +1695,7 @@ def _read_interaction_files(input_dict):
             # issue #93: fail fast on non-Hermitian-closed declarations,
             # with the same rule and tolerance as the k-space reader
             validate_hermitian_closure(itype, tbl, source=f)
+            validate_no_onsite_same_orbital_inter(itype, tbl, source=f)
             interactions[itype] = tbl
 
     # combined 'Coulomb' input: same decomposition as UHFk/RPA
