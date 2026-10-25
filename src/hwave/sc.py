@@ -3017,6 +3017,8 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
 
     Uses the same formula as _compute_vertices_general but takes
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
+    The triplet bare term is ``1/2 (C - S)`` without its cross elements
+    ``(ab, ab)``, ``a != b`` (:func:`_triplet_bare_vertex`, issue #262).
     This allows using dressed susceptibilities from the FLEX solver.
 
     ``convention`` records which FLEX path produced the susceptibilities:

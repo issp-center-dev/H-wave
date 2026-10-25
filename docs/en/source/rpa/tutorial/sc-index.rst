@@ -930,7 +930,7 @@ fluctuations:
    is the exchange image of its density element :math:`(aa, bb)`, and on a gap
    of triplet parity the two would count it twice. Earlier versions kept those
    elements: the first-order triplet pairing of an on-site inter-orbital
-   :math:`U'`, ``Hund`` or ``Ising`` term was twice its value, and that of an
+   ``CoulombInter`` (:math:`U'`), ``Hund`` or ``Ising`` term was twice its value, and that of an
    off-site inter-orbital one on the non-bond path (``bond_channels = false``,
    which collapses its Fock content onto these elements) was off by up to a
    factor of three. Multi-orbital triplet results with such terms change (the
