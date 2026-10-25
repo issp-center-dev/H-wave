@@ -287,13 +287,13 @@ that has no effect under the current settings.
   inter-site interaction. With the key, such a row is treated like an
   off-site row: in the RPA ring, the FLEX general path (vertex and second
   order) and the non-bond ``hwave_sc`` vertex only its density (Hartree)
-  part enters, and its exchange crossing does not. (In the non-bond
-  ``hwave_sc`` vertex, ``R != 0`` rows still contribute an approximate,
-  collapsed exchange term; see GitHub issue #239.) Rows of types without a
+  part enters, and its exchange crossing does not, as for every ``R != 0``
+  row (issue #239). Rows of types without a
   density part follow the off-site rules: between different sites,
-  ``Exchange`` and ``PairHop`` are refused in FLEX general, ``PairHop`` is
-  dropped with a warning in RPA, and ``Exchange``, ``PairHop`` and
-  ``PairLift`` are dropped with a warning in ``hwave_sc``.
+  ``Exchange`` and ``PairHop`` are refused in FLEX general and in the
+  non-bond ``hwave_sc`` paths (``bond_channels = false``), ``PairHop`` is
+  dropped with a warning in RPA, and ``PairLift`` is dropped with a warning in
+  ``hwave_sc``.
 
   Without the key every orbital is taken to be on one site: every ``R = 0``
   row gets the on-site (Kanamori) treatment, exchange crossing included.
@@ -835,6 +835,15 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   coefficient; a nonzero ``R = 0`` ``CoulombInter`` row of an orbital with
   itself is refused (declare it as ``CoulombIntra``). The static path has no
   ``norb`` restriction (single-orbital only before issue #239).
+
+  With ``bond_channels = false`` (both frequencies) an off-site row keeps its
+  density (Hartree) part only, as in the RPA ring and the FLEX general path:
+  its exchange (Fock) crossing has no exact place in the q-only vertex and is
+  left out (earlier versions collapsed it into the vertex, an approximation;
+  issue #239). An off-site inter-orbital ``CoulombInter``, ``Hund`` or
+  ``Ising`` is named in one WARNING; an off-site ``Exchange`` or ``PairHop``,
+  which has no density part, is refused. ``bond_channels = true`` treats every
+  off-site row on its bond exactly.
 
 - ``flex_bond_archive``
 

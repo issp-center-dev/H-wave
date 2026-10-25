@@ -106,11 +106,13 @@ class TestTripletBareVertex(unittest.TestCase):
                     self._assert_matches(got, want, (t, eta))
 
     def test_offsite_rows_on_the_nonbond_routes(self):
-        """The non-bond routes collapse an off-site row onto the q-only vertex,
-        its Fock content into the cross slots: the triplet bare term of an
-        off-site density-type row is exact once those slots are left out (it
-        was off by up to 3x). The singlet of an off-site Exchange or PairHop
-        stays the collapsed approximation of issue #239 and is not checked."""
+        """Built from a plain table (no locality split), the vertex collapses
+        an off-site row onto the q-only vertex, its Fock content into the
+        cross slots -- what the non-bond path did before issue #239: the
+        triplet bare term of an off-site density-type row is exact once those
+        slots are left out (it was off by up to 3x). The singlet of an
+        off-site Exchange or PairHop is not representable there (the non-bond
+        entries refuse it since #239) and is not checked."""
         rng = np.random.default_rng(9)
         z = np.zeros((O.NX, 1, 1, NORB ** 2, NORB ** 2), complex)
         chi0q = np.zeros((NORB,) * 4 + (O.NX, 1, 1, 2), complex)
