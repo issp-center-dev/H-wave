@@ -89,14 +89,15 @@ BETA, NMAT, MU = 2.0, 64, 0.2
 NX1, NY = 8, 4
 
 
-def _green(norb, nx, tables):
+def _green(norb, nx, tables, nmat=None):
     kx = 2 * np.pi * np.arange(nx) / nx
     ky = 2 * np.pi * np.arange(NY) / NY
     h = np.zeros((nx, NY, norb, norb), complex)
     for (r0, r1, a, b), t in tables["Transfer"].items():
         h[:, :, a, b] += t * np.exp(1j * (kx[:, None] * r0 + ky[None, :] * r1))
-    wn = (2 * np.arange(NMAT) + 1 - NMAT) * np.pi / BETA
-    g = np.empty((norb, norb, nx, NY, 1, NMAT), complex)
+    nmat = NMAT if nmat is None else nmat
+    wn = (2 * np.arange(nmat) + 1 - nmat) * np.pi / BETA
+    g = np.empty((norb, norb, nx, NY, 1, nmat), complex)
     eye = np.eye(norb)
     for n, w in enumerate(wn):
         g[:, :, :, :, 0, n] = np.linalg.inv((1j * w + MU) * eye - h).transpose(2, 3, 0, 1)
@@ -169,14 +170,9 @@ def _dynamic_kernel(norb, eta):
     from hwave.solver.eliashberg_bond import (COEFF, ArrayBlockSource, BondPairKernel,
                                               PairVertexUniform, instantaneous_vertex)
     from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
-    global NMAT
-    nmat0, NMAT = NMAT, NMAT_DYN
-    try:
-        nx = NX1 // norb
-        tables = _model(norb)
-        g = _green(norb, nx, tables)
-    finally:
-        NMAT = nmat0
+    nx = NX1 // norb
+    tables = _model(norb)
+    g = _green(norb, nx, tables, nmat=NMAT_DYN)
     shape = (nx, NY, 1)
     nvol, nd = nx * NY, norb * norb
     topo, view, split = sc._resolve_bond_topology(_declarations(tables), {"rvec": np.eye(3)},
@@ -247,10 +243,12 @@ def _write_tables(d, norb, tables):
 
 
 def _eigenvalues(outdir):
-    """Re(eigenvalue) of the eigenvalue-analysis rows of the channel's parity."""
+    """The complex eigenvalues of the eigenvalue-analysis rows of the
+    channel's parity."""
     with open(os.path.join(outdir, "eigenvalue.dat")) as f:
         rows = [l.split() for l in f if l.strip() and not l.lstrip().startswith("#")]
-    return np.array([float(r[1]) for r in rows if len(r) == 5 and r[4] == "1"])
+    return np.array([float(r[1]) + 1j * float(r[2])
+                     for r in rows if len(r) == 5 and r[4] == "1"])
 
 
 class _Case(unittest.TestCase):
@@ -291,7 +289,11 @@ class TestStaticEntry(_Case):
     def test_single_band_eigenvalues_are_supercell_eigenvalues(self):
         for eta in ("singlet", "triplet"):
             with self.subTest(eta=eta):
-                self.assertContained(self._run(1, eta, 2), self._run(2, eta, 8))
+                # ask for enough eigenvalues that two lie in the channel's
+                # parity sector, and check both
+                single = self._run(1, eta, 6)
+                self.assertGreaterEqual(len(single), 2)
+                self.assertContained(single[:2], self._run(2, eta, 16))
 
 
 def _flex_input(d, norb, inter, pairing):
