@@ -2678,7 +2678,9 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         V^s = (3/2) S chi_s S - (1/2) C chi_c C + (1/2)(S + C)
 
     For triplet (Takimoto et al., PRB 69, 104504):
-        V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S)
+        V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S),
+    the bare term without its cross elements (ab, ab), a != b
+    (:func:`_triplet_bare_vertex`, issue #262).
 
     Supports both 2-index (reduced) and 4-index (general) chi0q:
     - 2-index: shape (norb, norb, Nx, Ny, Nz, nmat)
@@ -2771,7 +2773,7 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
     if pairing_type == "singlet":
         Vs_all = 1.5 * SChisS - 0.5 * CChicC + 0.5 * (S_all + C_all)
     elif pairing_type == "triplet":
-        Vs_all = -0.5 * SChisS - 0.5 * CChicC + 0.5 * (C_all - S_all)
+        Vs_all = -0.5 * SChisS - 0.5 * CChicC + _triplet_bare_vertex(S_all, C_all, norb)
     else:
         raise ValueError("Unknown pairing_type: '{}'. Use 'singlet' or 'triplet'.".format(
             pairing_type))
@@ -2989,6 +2991,31 @@ def _warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz,
         ", ".join(missing))
 
 
+def _triplet_bare_vertex(S_all, C_all, norb):
+    """The bare (first-order) TRIPLET term of the pair-space vertex,
+    ``1/2 (C - S)`` without its cross slots ``(ab, ab)``, ``a != b``.
+
+    An inter-orbital density-type term sits in the spin/charge matrices twice:
+    its Hartree content in the density slot ``(aa, bb)`` and its Fock content
+    in the cross slot ``(ab, ab)`` (the particle-hole fluctuations need both).
+    In the pairing channel the cross slot is the exchange image of the density
+    slot, and on a gap of triplet parity the two give the SAME contribution:
+    ``1/2 (C - S)`` over both slots counts an on-site ``U'``, Hund or Ising term
+    twice (issue #262); an off-site row collapsed onto the q-only vertex (the
+    non-bond path) puts its Fock content there too. The density slot alone is
+    exact. In the singlet channel
+    the cross slot of these types carries ``S + C = 0`` and the term is right
+    as it stands; the types whose pairing lives in the cross slot (Exchange)
+    have ``C - S = 0`` there, so nothing is lost by dropping it here. Validated
+    against an independent first-order spin-orbital construction for every
+    type, on-site and off-site (tests/test_triplet_bare_vertex.py)."""
+    bare = 0.5 * (C_all - S_all)
+    cross = [a * norb + b for a in range(norb) for b in range(norb) if a != b]
+    if cross:
+        bare[..., cross, cross] = 0.0
+    return bare
+
+
 def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
                            pairing_type="singlet", convention="kuroki",
                            sc_matrices=None):
@@ -2996,6 +3023,8 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
 
     Uses the same formula as _compute_vertices_general but takes
     chi_s and chi_c directly instead of computing them from chi0q via RPA.
+    The triplet bare term is ``1/2 (C - S)`` without its cross elements
+    ``(ab, ab)``, ``a != b`` (:func:`_triplet_bare_vertex`, issue #262).
     This allows using dressed susceptibilities from the FLEX solver.
 
     ``convention`` records which FLEX path produced the susceptibilities:
@@ -3070,7 +3099,7 @@ def _compute_vertices_flex(chis, chic, inter_k, norb, Nx, Ny, Nz,
     if pairing_type == "singlet":
         Vs_all = 1.5 * SChisS - 0.5 * CChicC + 0.5 * (S_all + C_all)
     elif pairing_type == "triplet":
-        Vs_all = -0.5 * SChisS - 0.5 * CChicC + 0.5 * (C_all - S_all)
+        Vs_all = -0.5 * SChisS - 0.5 * CChicC + _triplet_bare_vertex(S_all, C_all, norb)
     else:
         raise ValueError("Unknown pairing_type: '{}'".format(pairing_type))
 

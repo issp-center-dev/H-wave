@@ -493,12 +493,20 @@ def _fluctuation_vertex(pairing_type, S_bond, chi_s, C_bond, chi_c):
 
 
 def _bare_channel0(pairing_type, S_bond, C_bond, nd):
-    """The channel-0 bare pair matrix ``0.5 (S_0 +/- C_0)`` per q."""
+    """The channel-0 bare pair matrix ``0.5 (S_0 +/- C_0)`` per q; in the
+    triplet channel without the cross elements ``(ab, ab)``, ``a != b``
+    (issue #262: there they are the exchange image of the density elements)."""
     S0 = S_bond[..., :nd, :nd]
     C0 = C_bond[..., :nd, :nd]
     if pairing_type == "singlet":
         return 0.5 * (S0 + C0)
-    return 0.5 * (C0 - S0)
+    bare = 0.5 * (C0 - S0)
+    norb = int(round(nd ** 0.5))
+    for a in range(norb):
+        for b in range(norb):
+            if a != b:
+                bare[..., a * norb + b, a * norb + b] = 0.0
+    return bare
 
 
 class TestStaticBondKernel(unittest.TestCase):

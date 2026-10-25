@@ -922,6 +922,21 @@ fluctuations:
    constructing the kernel; setting one with ``frequency = "static"`` has no
    effect and logs a warning.
 
+.. note::
+
+   **Triplet bare term (issue #262).** In :math:`\tfrac{1}{2}(\hat C - \hat S)`
+   the cross elements :math:`(ab, ab)`, :math:`a \neq b`, are left out. There an
+   inter-orbital density-type term (``CoulombInter``, ``Hund`` or ``Ising``)
+   is the exchange image of its density element :math:`(aa, bb)`, and on a gap
+   of triplet parity the two would count it twice. Earlier versions kept those
+   elements: the first-order triplet pairing of an on-site inter-orbital
+   ``CoulombInter`` (:math:`U'`), ``Hund`` or ``Ising`` term was twice its value, and that of an
+   off-site inter-orbital one on the non-bond path (``bond_channels = false``,
+   which collapses its Fock content onto these elements) was off by up to a
+   factor of three. Multi-orbital triplet results with such terms change (the
+   singlet channel and single-orbital models are unaffected) and should be
+   recomputed.
+
 For example, a spin-channel diagnostic uses:
 
 .. code-block:: toml
