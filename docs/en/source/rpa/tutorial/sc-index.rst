@@ -380,12 +380,12 @@ The output log shows the iteration progress:
 .. code-block:: text
 
     hwave_sc: === Self-consistent iteration ===
-    hwave_sc: Iteration    0: eigenvalue = 0.909443, diff = 5.659296e-01
-    hwave_sc: Iteration    1: eigenvalue = 0.699373, diff = 8.679877e-02
+    hwave_sc: Iteration    0: eigenvalue = 0.925449, diff = 3.540384e-01
+    hwave_sc: Iteration    1: eigenvalue = 0.818387, diff = 7.885727e-02
     ...
-    hwave_sc: Iteration  132: eigenvalue = 0.942845, diff = 9.971819e-06
-    hwave_sc: Converged at iteration 133
-    hwave_sc: Iteration result: eigenvalue = 0.942845, converged = True, n_iter = 133
+    hwave_sc: Iteration  192: eigenvalue = 0.961078, diff = 9.752299e-06
+    hwave_sc: Converged at iteration 193
+    hwave_sc: Iteration result: eigenvalue = 0.961078, converged = True, n_iter = 193
 
 followed by the eigenvalue analysis:
 
@@ -393,14 +393,14 @@ followed by the eigenvalue analysis:
 
     hwave_sc: === Eigenvalue analysis ===
     hwave_sc: Leading eigenvalues:
-    hwave_sc:     0: 0.942845 (|ev| = 0.942845)
-    hwave_sc:     1: 0.790190 (|ev| = 0.790190)
-    hwave_sc:     2: -0.962522 (|ev| = 0.962522)
-    hwave_sc:     3: -1.120544 (|ev| = 1.120544)
-    hwave_sc:     4: -1.356804 (|ev| = 1.356804)
-    hwave_sc:     5: 0.953007 (|ev| = 0.953007)  [opposite-parity sector]
-    hwave_sc:     6: 0.794702 (|ev| = 0.794702)  [opposite-parity sector]
-    hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
+    hwave_sc:     0: 0.961079 (|ev| = 0.961079)
+    hwave_sc:     1: 0.837896 (|ev| = 0.837896)
+    hwave_sc:     2: 0.812195 (|ev| = 0.812195)
+    hwave_sc:     3: -0.889340 (|ev| = 0.889340)
+    hwave_sc:     4: -1.072771 (|ev| = 1.072771)
+    hwave_sc:     5: -1.351573 (|ev| = 1.351573)
+    hwave_sc:     6: 0.977706 (|ev| = 0.977706)  [opposite-parity sector]
+    hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
     ...
 
 An eigenvalue :math:`\lambda > 1` (positive) indicates a superconducting instability
@@ -426,7 +426,7 @@ Gap function
 The following figures show the gap function :math:`\Sigma_{\alpha\beta}(\mathbf{k})`
 in momentum space obtained from the self-consistent iteration.
 
-**Singlet channel** (:math:`\lambda \approx 0.94`):
+**Singlet channel** (:math:`\lambda \approx 0.96`):
 
 .. figure:: ../sample_sc/gap_singlet.png
    :width: 90%
@@ -435,10 +435,10 @@ in momentum space obtained from the self-consistent iteration.
    Singlet gap function in k-space. Left: intra-orbital component
    :math:`\mathrm{Re}\,\Sigma_{00}(\mathbf{k})`.
    Right: inter-orbital component :math:`\mathrm{Re}\,\Sigma_{01}(\mathbf{k})`.
-   The inter-orbital component is about 4 times larger than the intra-orbital one,
+   The inter-orbital component is about 5 times larger than the intra-orbital one,
    indicating that inter-orbital pairing is dominant.
 
-**Triplet channel** (:math:`\lambda \approx 1.00`):
+**Triplet channel** (:math:`\lambda \approx 0.97`):
 
 .. figure:: ../sample_sc/gap_triplet.png
    :width: 90%
@@ -465,8 +465,8 @@ for both singlet and triplet channels.
    The dashed red line indicates :math:`\lambda = 1` (SC instability criterion).
    Filled markers are the **physical** eigenvalues (the gap has the channel
    parity: even for singlet, odd for triplet); open markers are **spurious**
-   opposite-parity modes. All physical eigenvalues lie below 1 (the triplet one
-   only just). The two open markers above 1 are even-parity solutions of the
+   opposite-parity modes. All physical eigenvalues lie below 1. The two open
+   markers above 1 are even-parity solutions of the
    *triplet* kernel, which the Pauli principle forbids for spin-triplet pairing
    (see the parity note below).
 
@@ -474,15 +474,15 @@ The Arnoldi eigenvalue analysis finds multiple eigenvalues.
 The figure shows only positive eigenvalues, which are relevant for the
 SC instability criterion :math:`\lambda = 1`.
 For the singlet channel, the leading **physical** (even-parity) eigenvalue is
-:math:`\lambda_S \approx 0.94 < 1`, matching the self-consistent iteration
+:math:`\lambda_S \approx 0.96 < 1`, matching the self-consistent iteration
 result, so there is no singlet SC instability at this temperature.
 
 For the triplet channel, the leading **physical** (odd-parity) eigenvalue is
-:math:`\lambda_T \approx 0.999`, just below 1. The larger values near
-:math:`1.58` and :math:`1.09` that appear in the triplet calculation are
+:math:`\lambda_T \approx 0.97 < 1`. The larger values near
+:math:`1.58` and :math:`1.10` that appear in the triplet calculation are
 even-parity (spurious) modes and are **not** triplet instabilities. The triplet
-leads (:math:`\lambda_T > \lambda_S`) and is at the threshold, so this
-temperature lies close to the triplet transition.
+leads narrowly (:math:`\lambda_T > \lambda_S`); both channels lie somewhat
+below the threshold at this temperature.
 
 Plotting script
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -522,11 +522,11 @@ The eigenvalues of the linearized Eliashberg equation:
 .. code-block:: text
 
     # Iteration eigenvalue
-    9.42845268e-01
+    9.61078331e-01
     # Eigenvalue analysis
     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
-       0  9.42844825e-01 -3.65296976e-12  9.42844825e-01 1
-       1  7.90190294e-01 -3.37474212e-12  7.90190294e-01 1
+       0  9.61078596e-01 -3.64174908e-12  9.61078596e-01 1
+       1  8.37896272e-01 -3.65082177e-12  8.37896272e-01 1
        ...
 
 The trailing ``match`` column is ``1`` when the eigenvector has the channel's
@@ -557,9 +557,8 @@ positive eigenvalue reaches :math:`\lambda = 1`, one can determine
 the superconducting transition temperature :math:`T_c`.
 
 In this example, at :math:`T = 0.1` both physical channels are below the
-instability threshold, with :math:`\lambda_S \approx 0.94` (singlet, even) and
-:math:`\lambda_T \approx 1.00` (triplet, odd); the triplet leads and is at the
-threshold.
+instability threshold, with :math:`\lambda_S \approx 0.96` (singlet, even) and
+:math:`\lambda_T \approx 0.97` (triplet, odd); the triplet leads narrowly.
 
 .. note::
 
@@ -578,7 +577,7 @@ threshold.
    ``hwave_sc`` therefore projects each self-consistent iterate onto the
    channel's parity sector, and the eigenvalue analysis labels each mode as
    physical (``match = 1``) or spurious (``match = 0``). The large values
-   :math:`\lambda \approx 1.58,\ 1.09` seen in the triplet calculation are such
+   :math:`\lambda \approx 1.58,\ 1.10` seen in the triplet calculation are such
    spurious even-parity modes, **not** triplet instabilities.
 
 Singlet vs. triplet comparison
@@ -593,9 +592,9 @@ odd-parity (triplet) seed such as ``"p_x"`` (the ready-made
 error rather than converging to an unphysical sector. Equivalently, omit
 ``init_gap`` entirely to let the solver pick the channel's parity automatically.
 At :math:`T = 0.1` with the same parameters, the leading physical eigenvalues are
-:math:`\lambda_T \approx 1.00` (triplet) and :math:`\lambda_S \approx 0.94`
-(singlet): the triplet leads and sits at the threshold, in line with Ref. [1]_,
-where the triplet SC state competes with the singlet for :math:`T > 0.05`.
+:math:`\lambda_T \approx 0.97` (triplet) and :math:`\lambda_S \approx 0.96`
+(singlet): the triplet leads narrowly, in line with Ref. [1]_, where the
+triplet SC state competes with the singlet for :math:`T > 0.05`.
 
 The two molecules of the unit cell are different sites, which the input
 declares with ``orbital_site = [0, 1]``: their in-cell interaction (the
@@ -607,7 +606,8 @@ configuration reference). Since issue #239 the pairing vertex of
 ``hwave_sc`` (``bond_channels = false``) also keeps only the Hartree part of
 the inter-cell interactions, as Ref. [1]_ does; earlier versions added their
 exchange in an approximate, collapsed form. The numbers quoted in this section
-were computed before that change.
+are computed with the current treatment (earlier versions gave
+:math:`\lambda_S \approx 0.94` and :math:`\lambda_T \approx 1.00`).
 
 
 .. _sc_dynamic_frequency:
