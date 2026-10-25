@@ -732,11 +732,10 @@ writes the same file names as the on-site dynamic solver
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p>The bond-resolved pairing is validated end to end for single-orbital
-models only. For <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> both entries run unchanged but log a
-WARNING that the multi-orbital results are not yet validated (issue
-#239); the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>,
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>) refuses <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>.</p>
+<p>Neither entry, nor the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
+<span class="pre">&quot;static&quot;</span></code>, <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>), restricts <code class="docutils literal notranslate"><span class="pre">norb</span></code>; see the
+scope note there for how multi-orbital results are validated (issue
+#239).</p>
 </div>
 <p>See <a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">the output reference</span></a> for the
 complete key sets, <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">the configuration reference’s eliashberg section</span></a> for the bond-specific keys and

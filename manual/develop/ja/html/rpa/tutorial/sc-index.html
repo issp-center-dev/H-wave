@@ -1450,12 +1450,15 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <li><p><strong>出力。</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にはボンドの来歴（チャネル数・変位・
 用いた Green 関数）と、主要固有値の裸の部分と揺らぎの部分への分解
 <span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span>が記録されます。</p></li>
-<li><p><strong>適用範囲。</strong> このバージョンでは静的なボンド経路は単一軌道模型
-（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に限られ、多軌道模型は拒否されます。動的な
-ボンド分解対形成（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、および FLEX の
-インプロセスの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）は<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>でも
-実行されますが、多軌道の結果はまだ検証されていない旨の WARNING を
-ログに出力します（issue #239）。</p></li>
+<li><p><strong>適用範囲。</strong> 静的・動的なボンド分解対形成（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、
+および FLEX のインプロセスの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を
+制限しません（以前の版では静的経路は<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>を拒否し、動的経路は警告を
+出していました）。2軌道の結果は、スーパーセル等価性（2サイトの単位胞に書き直した
+単一軌道模型が、単一軌道の静的・動的カーネルを、ボンド分解されるすべての型と
+両チャネルについて機械精度で再現します。<code class="docutils literal notranslate"><span class="pre">tests/test_bond_supercell.py</span></code>、
+issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構成および厳密対角化に
+よって検証されています。どの模型にも、記載したトポロジー・メモリ・パリティ・
+エルミート性の検査が適用されます。</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>

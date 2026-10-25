@@ -413,10 +413,8 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 によるペアリングの節</span></a>を参照して
 ください。大規模な系では
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を設定してください。
-ボンド分解した対形成は、単一軌道模型についてのみ端から端まで検証
-されています。<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>では計算はそのまま実行されますが、
-多軌道の結果はまだ検証されていない旨の WARNING がログに出力されます
-（issue #239）。</p>
+ボンド分解した対形成は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません。多軌道の結果の検証方法は
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">適用範囲の記述</span></a>を参照してください（issue #239）。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
@@ -676,10 +674,8 @@ SCF の経路は変わり得ます。2軌道の自己無撞着
 それぞれ独自の<code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>を持つ別の実行になります。
 メモリモデル・sparse-ir 依存・具体例は<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">FLEX チュートリアルの
 ボンド分解バーテックスによるペアリングの節</span></a>を参照してください。ボンド分解した
-対形成は、単一軌道模型についてのみ端から端まで検証されています。
-<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>では動的経路の計算はそのまま実行されますが、多軌道の
-結果はまだ検証されていない旨の WARNING がログに出力されます
-（issue #239）。</p>
+対形成は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません。多軌道の結果の検証方法は
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">適用範囲の記述</span></a>を参照してください（issue #239）。</p>
 <p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（デフォルト）では、このキーは静的なボンド
 分解経路を選択します（<a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Eliashberg ソルバーのチュートリアル</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が Green 関数
 （裸の Green 関数、または<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>で指定したファイル）から
@@ -691,8 +687,7 @@ SCF の経路は変わり得ます。2軌道の自己無撞着
 その数だけ残し、宣言された非ゼロの係数を落とすことになるカットオフは
 拒否します。軌道とそれ自身の間の<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>の行
 （非ゼロ）は拒否されます（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>として宣言してください）。
-静的経路は単一軌道模型（<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>）に限られ、多軌道模型は
-拒否されます。</p>
+静的経路は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません（issue #239 以前は単一軌道のみ）。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;longitudinal_bond.npz&quot;</span></code>。

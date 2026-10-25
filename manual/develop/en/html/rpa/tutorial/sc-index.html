@@ -1526,11 +1526,17 @@ Hermiticity check of the kernel.</p></li>
 channels, displacements, the Green function used) and the split
 <span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span> of the leading eigenvalue
 into its bare and its fluctuation part.</p></li>
-<li><p><strong>Scope.</strong> The static bond path is restricted to single-orbital models
-(<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>) in this version; a multi-orbital model is refused. The
-dynamic bond pairing (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>, and the in-process
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> of FLEX) runs for <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> but logs a
-WARNING that multi-orbital results are not yet validated (issue #239).</p></li>
+<li><p><strong>Scope.</strong> The static and the dynamic bond pairing (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
+<span class="pre">&quot;dynamic&quot;</span></code>, and the in-process <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> of FLEX) no
+longer restrict <code class="docutils literal notranslate"><span class="pre">norb</span></code> (earlier versions refused <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> on the
+static path and warned on the dynamic one). Two-orbital results are
+validated by supercell equivalence – a single-band model written on a
+two-site cell reproduces the single-band static and dynamic kernels to
+machine precision for every bond-resolved type and both channels
+(<code class="docutils literal notranslate"><span class="pre">tests/test_bond_supercell.py</span></code>, issue #239) – and by the first-order and
+exact-diagonalization oracles of genuinely inequivalent two-orbital chains.
+Every model remains subject to the documented topology, memory, parity and
+Hermiticity checks.</p></li>
 </ul>
 <div class="admonition note">
 <p class="admonition-title">Note</p>

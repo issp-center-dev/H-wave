@@ -1536,11 +1536,17 @@ each off-site row acts on the bond it was declared on.
   channels, displacements, the Green function used) and the split
   :math:`\lambda = \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue
   into its bare and its fluctuation part.
-- **Scope.** The static bond path is restricted to single-orbital models
-  (``norb = 1``) in this version; a multi-orbital model is refused. The
-  dynamic bond pairing (``frequency = "dynamic"``, and the in-process
-  ``longitudinal_bond_pairing`` of FLEX) runs for ``norb > 1`` but logs a
-  WARNING that multi-orbital results are not yet validated (issue #239).
+- **Scope.** The static and the dynamic bond pairing (``frequency =
+  "dynamic"``, and the in-process ``longitudinal_bond_pairing`` of FLEX) no
+  longer restrict ``norb`` (earlier versions refused ``norb > 1`` on the
+  static path and warned on the dynamic one). Two-orbital results are
+  validated by supercell equivalence -- a single-band model written on a
+  two-site cell reproduces the single-band static and dynamic kernels to
+  machine precision for every bond-resolved type and both channels
+  (``tests/test_bond_supercell.py``, issue #239) -- and by the first-order and
+  exact-diagonalization oracles of genuinely inequivalent two-orbital chains.
+  Every model remains subject to the documented topology, memory, parity and
+  Hermiticity checks.
 
 .. note::
 

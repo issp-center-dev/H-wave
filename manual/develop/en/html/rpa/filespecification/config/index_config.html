@@ -473,10 +473,9 @@ of the pairing step is recorded in the log; that channel’s files are then
 simply not written (the FLEX outputs are written first and are never lost
 to it). Memory: see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">the FLEX tutorial section on pairing with the
 bond-resolved vertex</span></a>; for large models set
-<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>. The bond-resolved pairing is
-validated end to end for single-orbital models only: for <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> the
-run is carried out unchanged but logs a WARNING that the multi-orbital
-results are not yet validated (issue #239).</p>
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>. The bond-resolved pairing has no
+<code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction; see <a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">the scope note</span></a>
+for how multi-orbital results are validated (issue #239).</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>Type :</strong>
@@ -796,10 +795,9 @@ archive, not from these static-bond-path keys) and <code class="docutils literal
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> run, as on the on-site dynamic path; a second channel is a
 second run with its own <code class="docutils literal notranslate"><span class="pre">path_to_output</span></code>. See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-bond-pairing-tutorial"><span class="std std-ref">the FLEX tutorial
 section on pairing with the bond-resolved vertex</span></a> for the memory model, the sparse-ir
-dependency and worked examples. The bond-resolved pairing is validated
-end to end for single-orbital models only: for <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> the dynamic
-run is carried out unchanged but logs a WARNING that the multi-orbital
-results are not yet validated (issue #239).</p>
+dependency and worked examples. The bond-resolved pairing has no
+<code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction; see <a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">the scope note</span></a>
+for how multi-orbital results are validated (issue #239).</p>
 <p>With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (the default) the key selects the static
 bond-resolved path instead, described in <a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">the Eliashberg solver
 tutorial</span></a>: <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> builds the bond-resolved
@@ -810,9 +808,8 @@ above. Every off-site <code class="docutils literal notranslate"><span class="pr
 and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> row is bond-resolved; <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> keeps that many
 off-site shells and refuses a cutoff that would drop a declared nonzero
 coefficient; a nonzero <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row of an orbital with
-itself is refused (declare it as <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>). The static path is
-restricted to single-orbital models (<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">1</span></code>): a multi-orbital model
-is refused.</p>
+itself is refused (declare it as <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>). The static path has no
+<code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction (single-orbital only before issue #239).</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code></p>
 <p><strong>Type :</strong>

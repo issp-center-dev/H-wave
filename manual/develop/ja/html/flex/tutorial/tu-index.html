@@ -689,12 +689,10 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 </ul>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
-<p>ボンド分解した対形成は、単一軌道模型についてのみ端から端まで検証されて
-います。<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>では、どちらの経路も計算はそのまま実行されますが、
-多軌道の結果はまだ検証されていない旨の WARNING をログに出力します
-（issue #239）。静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド経路
-（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>、<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>）は
-<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>を拒否します。</p>
+<p>どちらの経路も、静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド経路
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>、<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>）も、
+<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません。多軌道の結果の検証方法はそこにある適用範囲の記述を
+参照してください（issue #239）。</p>
 </div>
 <p>完全なキー集合は<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-eliashberg-bond-outputs"><span class="std std-ref">出力リファレンス</span></a>を、ボンド固有のキーは
 <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#eliashberg-bond-dynamic-config"><span class="std std-ref">設定ファイルリファレンスの eliashberg 節</span></a>を、ソルバー全般の設定は
