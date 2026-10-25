@@ -854,7 +854,9 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   FLEX run that wrote the archive: the bond vertices they give on the
   archive's channels are checked against the archive's, and a difference is
   refused (the off-site Exchange/PairHop bare pairing term is read from the
-  files, the fluctuations from the archive).
+  files, the fluctuations from the archive). A ``longitudinal_bond_max_shells``
+  of the FLEX run needs no setting here: the shell count is taken from the
+  archive's channels.
 
 - ``ir_fit_tol``
 
