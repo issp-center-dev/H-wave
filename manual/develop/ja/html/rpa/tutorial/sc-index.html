@@ -636,9 +636,10 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>の行）は、他の分子間相互作用と同様に密度どうしの（Hartree）部分
 だけで入り、文献 <a class="footnote-reference brackets" href="#id7" id="id21" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> と同じ扱いになります。このキーがない場合は1つのサイト内の
 相互作用として交換の寄与も含めて扱われます（設定リファレンスの<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>を
-参照）。ただし<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の対形成バーテックスは、単位胞をまたぐ相互作用の交換を
-近似的に（つぶした形で）含めるため（GitHub issue #239）、これらの値は文献 <a class="footnote-reference brackets" href="#id7" id="id22" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> を
-定量的に再現するものではありません。</p>
+参照）。issue #239 以降、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の対形成バーテックス（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">false</span></code>）も、文献 <a class="footnote-reference brackets" href="#id7" id="id22" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> と同じく単位胞をまたぐ相互作用の Hartree 部分だけを含みます
+（以前の版ではその交換を近似的に、つぶした形で加えていました）。この節に示す数値は
+その変更より前に計算したものです。</p>
 </section>
 </section>
 <section id="sc-dynamic-frequency">

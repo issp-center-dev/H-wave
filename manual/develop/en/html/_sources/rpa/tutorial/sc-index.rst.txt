@@ -603,10 +603,11 @@ declares with ``orbital_site = [0, 1]``: their in-cell interaction (the
 inter-molecule interaction, through its density-density (Hartree) part only,
 as in Ref. [1]_. Without the key it would be treated as an interaction within
 one site, with its exchange crossing (see ``orbital_site`` in the
-configuration reference). The pairing vertex of ``hwave_sc`` still adds the
-exchange of the inter-cell interactions in an approximate, collapsed form
-(GitHub issue #239), so the numbers are not a quantitative reproduction of
-Ref. [1]_.
+configuration reference). Since issue #239 the pairing vertex of
+``hwave_sc`` (``bond_channels = false``) also keeps only the Hartree part of
+the inter-cell interactions, as Ref. [1]_ does; earlier versions added their
+exchange in an approximate, collapsed form. The numbers quoted in this section
+were computed before that change.
 
 
 .. _sc_dynamic_frequency:

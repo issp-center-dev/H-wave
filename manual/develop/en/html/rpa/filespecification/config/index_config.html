@@ -317,13 +317,13 @@ example the two molecules of a dimer that share a unit cell – is an
 inter-site interaction. With the key, such a row is treated like an
 off-site row: in the RPA ring, the FLEX general path (vertex and second
 order) and the non-bond <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> vertex only its density (Hartree)
-part enters, and its exchange crossing does not. (In the non-bond
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> vertex, <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">!=</span> <span class="pre">0</span></code> rows still contribute an approximate,
-collapsed exchange term; see GitHub issue #239.) Rows of types without a
+part enters, and its exchange crossing does not, as for every <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">!=</span> <span class="pre">0</span></code>
+row (issue #239). Rows of types without a
 density part follow the off-site rules: between different sites,
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are refused in FLEX general, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is
-dropped with a warning in RPA, and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> and
-<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> are dropped with a warning in <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> are refused in FLEX general and in the
+non-bond <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> paths (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>), <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is
+dropped with a warning in RPA, and <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is dropped with a warning in
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.</p>
 <p>Without the key every orbital is taken to be on one site: every <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>
 row gets the on-site (Kanamori) treatment, exchange crossing included.
 That is correct for orbitals of one atom (<code class="docutils literal notranslate"><span class="pre">U'</span></code>, <code class="docutils literal notranslate"><span class="pre">J</span></code>) but makes the
@@ -810,6 +810,14 @@ off-site shells and refuses a cutoff that would drop a declared nonzero
 coefficient; a nonzero <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row of an orbital with
 itself is refused (declare it as <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>). The static path has no
 <code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction (single-orbital only before issue #239).</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code> (both frequencies) an off-site row keeps its
+density (Hartree) part only, as in the RPA ring and the FLEX general path:
+its exchange (Fock) crossing has no exact place in the q-only vertex and is
+left out (earlier versions collapsed it into the vertex, an approximation;
+issue #239). An off-site inter-orbital <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> is named in one WARNING; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>,
+which has no density part, is refused. <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> treats every
+off-site row on its bond exactly.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code></p>
 <p><strong>Type :</strong>
