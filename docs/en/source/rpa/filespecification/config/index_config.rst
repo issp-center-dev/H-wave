@@ -457,10 +457,9 @@ that has no effect under the current settings.
   simply not written (the FLEX outputs are written first and are never lost
   to it). Memory: see :ref:`the FLEX tutorial section on pairing with the
   bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
-  ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing is
-  validated end to end for single-orbital models only: for ``norb > 1`` the
-  run is carried out unchanged but logs a WARNING that the multi-orbital
-  results are not yet validated (issue #239).
+  ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing has no
+  ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
+  for how multi-orbital results are validated (issue #239).
 
 - ``flex_hartree_fock``
 
@@ -820,10 +819,9 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   second run with its own ``path_to_output``. See :ref:`the FLEX tutorial
   section on pairing with the bond-resolved vertex
   <flex_bond_pairing_tutorial>` for the memory model, the sparse-ir
-  dependency and worked examples. The bond-resolved pairing is validated
-  end to end for single-orbital models only: for ``norb > 1`` the dynamic
-  run is carried out unchanged but logs a WARNING that the multi-orbital
-  results are not yet validated (issue #239).
+  dependency and worked examples. The bond-resolved pairing has no
+  ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
+  for how multi-orbital results are validated (issue #239).
 
   With ``frequency = "static"`` (the default) the key selects the static
   bond-resolved path instead, described in :ref:`the Eliashberg solver
@@ -835,9 +833,8 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   and ``PairHop`` row is bond-resolved; ``bond_max_shells`` keeps that many
   off-site shells and refuses a cutoff that would drop a declared nonzero
   coefficient; a nonzero ``R = 0`` ``CoulombInter`` row of an orbital with
-  itself is refused (declare it as ``CoulombIntra``). The static path is
-  restricted to single-orbital models (``norb = 1``): a multi-orbital model
-  is refused.
+  itself is refused (declare it as ``CoulombIntra``). The static path has no
+  ``norb`` restriction (single-orbital only before issue #239).
 
 - ``flex_bond_archive``
 

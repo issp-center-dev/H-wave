@@ -164,6 +164,10 @@ HEAVY_TESTS = (
     ("test_bond_pairing_ed", "TestPairingVertexAgainstED",
      "test_spin_coefficients_are_not_interchangeable",
      "interchanged singlet/triplet coefficients miss at O(lambda^2)"),
+    # --- tests/test_bond_supercell.py -- multi-orbital supercell equivalence (#239)
+    ("test_bond_supercell", "TestDynamicEntries",
+     "test_in_process_and_post_processing",
+     "two FLEX bond-gate runs plus the post-processing of the supercell archive"),
     # --- tests/test_bond_transverse_ed.py -- W_pm bond ED granules -------
     ("test_bond_transverse_ed", "TestTask6ProductionPipelineGranules",
      "test_granule_multiorbital_offsite_coulombinter_regression",

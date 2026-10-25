@@ -499,16 +499,6 @@ def _validate_bond_prereqs(chi0q_mode, norb, interactions,
                     itype, orbvec[0], orbvec[1], tuple(irvec), value,
                     len(bad)))
 
-    if norb > 1:
-        raise ValueError(
-            "[eliashberg] bond_channels=true is validated for single-orbital "
-            "models only (norb=1); this model has norb={}. The multi-orbital "
-            "equations are implemented and unit-tested, but their end-to-end "
-            "numerical validation is a deferred follow-up spec, so the "
-            "top-level solver refuses to emit unvalidated numbers. Note also "
-            "that the bond path CORRECTS the existing multi-orbital collapsed-"
-            "bond Fock approximation (spec S4.3), so its results would differ "
-            "from bond_channels=false by design.".format(norb))
 
 
 # Number of (N_q, ND, ND)-shaped complex128 arrays that the bond-channel
