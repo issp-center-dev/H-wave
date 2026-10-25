@@ -2520,6 +2520,32 @@ def warn_pairing_approximations(topo, where, *, log=None):
     warn_non_su2_bonds(topo, where, PAIRING_NON_SU2_CONSEQUENCE, log=log)
 
 
+def gate_bond_topology(split, norb, *, max_shells=None):
+    """The bond topology of the FLEX bond gate on a locality ``split``
+    (``offsite.split_locality``): :func:`resolve_bond_topology` over the
+    longitudinal bond types the split declares, shells measured in integer
+    cell coordinates (``np.eye(3)``). With an off-site Exchange or PairHop and
+    an off-site PairLift, every PairLift displacement is added as a
+    declared-zero CoulombInter shell: the exact second order of those types
+    carries the PairLift rows, so their displacements must be channels (the
+    zero rows give no vertex content of their own).
+
+    The one producer contract of the bond archive: the FLEX gate builds its
+    channels with it, and the dynamic post-processing rebuilds them with it
+    to check the interaction files against the archive."""
+    from requests.structures import CaseInsensitiveDict
+    interactions = CaseInsensitiveDict(split.whole_tbl)
+    if (any(t in split.offsite_types for t in ("Exchange", "PairHop"))
+            and "PairLift" in split.offsite_types):
+        ci = dict(interactions.get("CoulombInter") or {})
+        for key in split.offsite_tbl["PairLift"]:
+            ci.setdefault(key, 0.0)
+        interactions["CoulombInter"] = ci
+    return resolve_bond_topology(
+        interactions, np.eye(3), norb, max_shells=max_shells,
+        active_types=longitudinal_bond_types(split.offsite_types))
+
+
 def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
                           active_types):
     """Resolve the master bond topology over an explicit ``active_types``

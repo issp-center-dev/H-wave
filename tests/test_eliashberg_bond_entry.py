@@ -1321,6 +1321,53 @@ class TestOffsiteBareSingletWiring(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bond vertex S built from the interaction files"):
             sc.calc_eliashberg(inp)
 
+    def test_post_processing_refuses_a_tiny_change(self):
+        """The comparison has no absolute floor: an Exchange coefficient
+        changed by 5e-11 is refused too."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.2 + 5e-11)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+
+    def test_post_processing_accepts_the_producer_topology(self):
+        """The archive's channels are rebuilt with the FLEX gate's own contract:
+        shells ordered in integer cell coordinates even when the geometry's
+        lattice vectors order them otherwise, and the declared-zero shells the
+        gate adds for an off-site PairLift next to an off-site Exchange. The
+        files of the FLEX run are accepted."""
+        import hwave.sc as sc
+        d = self.tmp
+        geom = os.path.join(d, "geom_aniso.dat")
+        with open(geom, "w") as fw:
+            # a2 three times a1: |(0,1)| = 3 > |(2,0)| = 2 physically, the
+            # reverse of the integer-coordinate order
+            fw.write("1 0 0\n0 3 0\n0 0 1\n1\n0 0 0\n")
+        ex = os.path.join(d, "exchange_y.dat")
+        with open(ex, "w") as fw:
+            fw.write("Exchange on the y bond\n1\n2\n 1 1\n")
+            fw.write("   0    1    0    1    1   0.100000000000   0.000000000000\n")
+            fw.write("   0   -1    0    1    1   0.100000000000   0.000000000000\n")
+        pl = os.path.join(d, "pairlift_2x.dat")
+        with open(pl, "w") as fw:
+            fw.write("PairLift on the second x neighbour\n1\n2\n 1 1\n")
+            fw.write("   2    0    0    1    1   0.050000000000   0.000000000000\n")
+            fw.write("  -2    0    0    1    1   0.050000000000   0.000000000000\n")
+        extra = {"Geometry": geom, "Exchange": ex, "PairLift": pl}
+        # six cells along x: the +-2 x displacements must stay distinct
+        _run_gate_1orb(d, nmat=16, cell=(6, 4, 1), extra_inter=extra)
+        inp = _sc_input(d, d, 0.5, 16, (6, 4, 1))
+        inp["file"]["input"]["interaction"].update(extra)
+        with _bare_vertex_spy() as spy:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isfinite(lam))
+        self.assertAlmostEqual(_offsite_coefficients(spy, "Exchange"), 0.1, delta=1e-12)
+
     def test_in_process_entry(self):
         for itype in ("Exchange", "PairHop"):
             with self.subTest(itype=itype):

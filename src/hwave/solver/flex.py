@@ -1904,21 +1904,11 @@ class FLEX(RPA):
         split. Returns ``(topo, split)``."""
         from hwave.solver import bond_channels
         g = "[mode.param] longitudinal_bond_channels=true (FLEX)"
-        interactions = CaseInsensitiveDict(split.whole_tbl)
-        if (any(t in split.offsite_types for t in ("Exchange", "PairHop"))
-                and "PairLift" in split.offsite_types):
-            # the exact second order built with an off-site Exchange or PairHop carries the
-            # off-site PairLift rows too, so their displacements must be channels
-            # of the bond basis: declared-zero CoulombInter shells (no vertex
-            # content of their own)
-            ci = dict(interactions.get("CoulombInter") or {})
-            for key in split.offsite_tbl["PairLift"]:
-                ci.setdefault(key, 0.0)
-            interactions["CoulombInter"] = ci
-        topo = bond_channels.resolve_bond_topology(
-            interactions, np.eye(3), self.norb,
-            max_shells=self.longitudinal_bond_max_shells,
-            active_types=bond_channels.longitudinal_bond_types(split.offsite_types))
+        # the exact second order built with an off-site Exchange or PairHop
+        # carries the off-site PairLift rows too, so gate_bond_topology makes
+        # their displacements channels (declared-zero CoulombInter shells)
+        topo = bond_channels.gate_bond_topology(
+            split, self.norb, max_shells=self.longitudinal_bond_max_shells)
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
                 g + " requires at least one declared off-site CoulombInter, Hund, Ising, "

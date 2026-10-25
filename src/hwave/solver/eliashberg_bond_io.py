@@ -435,30 +435,33 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     return BondArchive(path, small, (nmat, nvol, ND, ND), sidecar=sidecar_paths)
 
 
-def _declared_topology_of_archive(arch, interactions, geom_info, norb, shape, path,
-                                  rtol=1e-10):
+def _declared_topology_of_archive(arch, interactions, norb, shape, path, rtol=1e-12):
     """The bond topology of the DECLARED interactions on the archive's channel
     set, after checking that its bond vertices are the archive's.
 
     The archive carries the bond vertices ``S``, ``C`` but not the per-type
     coefficients, which the off-site bare pairing term
     (``eliashberg_bond.offsite_singlet_bare_vertex``) needs; those are read
-    from the interaction files. The vertices those files give on the archive's
-    channels must therefore be the archive's (the FLEX gate builds them with
-    the same functions, so they agree to the last bit); otherwise the kernel
-    would mix two models, and the run is refused. A shell truncation
+    from the interaction files. The channels are rebuilt with the archive's
+    own producer contract (``bond_channels.gate_bond_topology``) and the
+    vertices with the builders the FLEX gate uses, so the files of the FLEX
+    run reproduce the archive to the last bit; files that give other vertices
+    are refused, or the kernel would mix two models. A shell truncation
     (``longitudinal_bond_max_shells``) only ever drops declared-zero shells
-    (the resolver refuses to drop a nonzero one), so the declared topology is
-    resolved with the smallest shell count that reproduces the archive's
-    channels."""
+    (the resolver refuses to drop a nonzero one), so the smallest shell count
+    that reproduces the archive's channels is used. The comparison is
+    relative to the largest archive entry, with no floor, so that a change of
+    any coefficient is caught."""
     import hwave.sc as sc
+    from hwave.solver import bond_channels as _bc
     want = np.asarray(arch.delta_r)
+    split = sc._bond_locality_split(interactions)
     for shells in list(range(want.shape[0])) + [None]:
         try:
-            topo, view, split = sc._resolve_bond_topology(interactions, geom_info, norb, shells)
+            topo = _bc.gate_bond_topology(split, norb, max_shells=shells)
         except ValueError:
             continue
-        if np.array_equal(np.asarray(view.delta_r), want):
+        if np.array_equal(np.asarray(topo.delta_r), want):
             break
     else:
         raise ValueError(
@@ -468,13 +471,12 @@ def _declared_topology_of_archive(arch, interactions, geom_info, norb, shape, pa
     S, C = sc._build_bond_vertices(topo, split, norb, shape)
     for name, mine, theirs in (("S", S, arch.S_bond), ("C", C, arch.C_bond)):
         mine = np.asarray(mine).reshape(np.shape(theirs))
-        scale = max(float(np.abs(theirs).max()), 1.0)
-        if float(np.abs(mine - theirs).max()) > rtol * scale:
+        dev = float(np.abs(mine - theirs).max())
+        if dev > rtol * float(np.abs(theirs).max()):
             raise ValueError(
                 "bond archive {}: the bond vertex {} built from the interaction files differs "
                 "from the archive's (max deviation {:.3e}); the post-processing must read the "
-                "interaction files of the FLEX run that wrote the archive".format(
-                    path, name, float(np.abs(mine - theirs).max())))
+                "interaction files of the FLEX run that wrote the archive".format(path, name, dev))
     return topo
 
 
@@ -594,8 +596,8 @@ def solve_dynamic_bond(input_dict):
                              interactions=interactions)
     logger.info("bond pairing: archive %s (B = %d, ND = %d, nmat = %d)",
                 arch_path, arch.B, arch.ND, arch.nmat)
-    topo_arch = _declared_topology_of_archive(arch, interactions, geom_info, norb,
-                                              (Nx, Ny, Nz), arch_path)
+    topo_arch = _declared_topology_of_archive(arch, interactions, norb, (Nx, Ny, Nz),
+                                              arch_path)
 
     green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                 interactions=interactions)
