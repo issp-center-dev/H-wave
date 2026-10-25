@@ -623,9 +623,11 @@ def _sc_input(flex_dir, out_dir, T, nmat, cell, **eli):
     return inp
 
 
-def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None):
+def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None,
+                   extra_inter=None):
     """A real single-band (U = 4, V = 1) bond-gate FLEX run through ``qlms.run``,
-    writing green.npz and the bond archive into ``tmp``."""
+    writing green.npz and the bond archive into ``tmp``. ``extra_inter`` adds
+    interaction files ``{type: absolute path}``."""
     import hwave.qlms as qlms
     par = {"T": T, "filling": 0.5, "CellShape": list(cell), "SubShape": [1, 1, 1], "Nmat": nmat,
            "IterationMax": 200, "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
@@ -643,6 +645,7 @@ def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairin
                                "green": "green", "longitudinal_bond": "longitudinal_bond"}}}
     if eli is not None:
         inp["eliashberg"] = eli
+    inp["file"]["input"]["interaction"].update(extra_inter or {})
     qlms.run(input_dict=inp)
     return inp
 
@@ -1179,24 +1182,18 @@ class TestMultiOrbitalWarning(unittest.TestCase):
         self.assertEqual(one, [])
 
 
-def _write_nn_rows(path, value):
+def _write_nn_rows(path, value, fmt="{:.12f}"):
     """A single-band interaction file with the four nearest-neighbour rows."""
     rows = [((1, 0, 0)), ((-1, 0, 0)), ((0, 1, 0)), ((0, -1, 0))]
     with open(path, "w") as fw:
         fw.write("generated for test\n1\n{}\n{}\n".format(len(rows), " ".join(["1"] * len(rows))))
         for r in rows:
-            fw.write("{:4d} {:4d} {:4d}    1    1 {:.12f} 0.0\n".format(r[0], r[1], r[2], value))
+            fw.write(("{:4d} {:4d} {:4d}    1    1 " + fmt + " 0.0\n").format(r[0], r[1], r[2], value))
 
 
 def _su2_warnings(cap, where):
     import logging
     return [m for m in cap.messages(logging.WARNING) if "SU(2)" in m and m.startswith(where)]
-
-
-def _gap_warnings(cap, where):
-    import logging
-    return [m for m in cap.messages(logging.WARNING)
-            if "first-order (bare) singlet" in m and m.startswith(where)]
 
 
 class _EntryNoticeCase(object):
@@ -1265,38 +1262,143 @@ class TestNonSU2BondWarning(_EntryNoticeCase, unittest.TestCase):
         self.assertEqual(self._in_process(None), [])
 
 
-class TestBarePairingGapWarning(_EntryNoticeCase, unittest.TestCase):
-    """Both dynamic bond pairing entries warn, once, that the first-order
-    (bare) singlet pairing of an off-site Exchange or PairHop is not yet
-    included (``tests/test_sc_bond_pairing_oracle.py``). Nothing is refused
-    and nothing changes; CoulombInter alone is silent."""
+def _bare_vertex_spy():
+    """A spy on ``eliashberg_bond.offsite_singlet_bare_vertex`` that records the
+    topology every call receives (and still computes the term)."""
+    from hwave.solver import eliashberg_bond as eb
+    return mock.patch.object(eb, "offsite_singlet_bare_vertex",
+                             wraps=eb.offsite_singlet_bare_vertex)
+
+
+def _offsite_coefficients(spy, itype):
+    """Largest off-site ``itype`` coefficient among the topologies ``spy`` saw."""
+    return max(float(np.abs(np.asarray(c.args[0].coeffs[itype])[1:]).max())
+               for c in spy.call_args_list)
+
+
+class TestOffsiteBareSingletWiring(unittest.TestCase):
+    """Both dynamic bond pairing entries hand the declared off-site Exchange and
+    PairHop rows to the singlet bare vertex
+    (``eliashberg_bond.offsite_singlet_bare_vertex``, validated against an
+    independent first-order construction in
+    ``tests/test_sc_bond_pairing_oracle.py``); before issue #239 it carried
+    only their density content, i.e. none."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_post_processing_entry(self):
+        import hwave.sc as sc
         for itype in ("Exchange", "PairHop"):
-            msgs = self._post_processing({itype: 0.2}, keep=_gap_warnings)
-            self.assertEqual(len(msgs), 1, (itype, msgs))
-            self.assertIn("off-site {} declared".format(itype), msgs[0])
-            self.assertIn("#239", msgs[0])
-        self.assertEqual(self._post_processing({}, keep=_gap_warnings), [])
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                path = os.path.join(d, itype + ".dat")
+                _write_nn_rows(path, 0.2)
+                _run_gate_1orb(d, nmat=32, extra_inter={itype: path})
+                inp = _sc_input(d, d, 0.5, 32, (4, 4, 1))
+                inp["file"]["input"]["interaction"][itype] = path
+                with _bare_vertex_spy() as spy:
+                    lam = sc.calc_eliashberg(inp)
+                self.assertTrue(np.isfinite(lam))
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
+
+    def test_post_processing_refuses_files_that_differ_from_the_archive(self):
+        """The bare term reads the interaction files, the fluctuations the
+        archive: files that give other bond vertices than the archive's (here
+        an Exchange value changed after the FLEX run) are refused."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.3)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "bond vertex S built from the interaction files"):
+            sc.calc_eliashberg(inp)
+
+    def test_post_processing_refuses_a_tiny_change(self):
+        """The comparison is exact: an Exchange coefficient changed by 5e-11 is
+        refused, and so is a doubled Exchange of 1e-13 next to the fixture's
+        U = 4 and V = 1 (below any relative tolerance of the vertex scale)."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.2 + 5e-11)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+        small = os.path.join(self.tmp, "small")
+        os.makedirs(small)
+        path = os.path.join(small, "Exchange.dat")
+        _write_nn_rows(path, 1e-13, fmt="{:.6e}")
+        _run_gate_1orb(small, nmat=16, extra_inter={"Exchange": path})
+        doubled = os.path.join(small, "Exchange_doubled.dat")
+        _write_nn_rows(doubled, 2e-13, fmt="{:.6e}")
+        inp = _sc_input(small, small, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = doubled
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+
+    def test_post_processing_accepts_the_producer_topology(self):
+        """The archive's channels are rebuilt with the FLEX gate's own contract:
+        shells ordered in integer cell coordinates even when the geometry's
+        lattice vectors order them otherwise, and the declared-zero shells the
+        gate adds for an off-site PairLift next to an off-site Exchange. The
+        files of the FLEX run are accepted."""
+        import hwave.sc as sc
+        d = self.tmp
+        geom = os.path.join(d, "geom_aniso.dat")
+        with open(geom, "w") as fw:
+            # a2 three times a1: |(0,1)| = 3 > |(2,0)| = 2 physically, the
+            # reverse of the integer-coordinate order
+            fw.write("1 0 0\n0 3 0\n0 0 1\n1\n0 0 0\n")
+        ex = os.path.join(d, "exchange_y.dat")
+        with open(ex, "w") as fw:
+            fw.write("Exchange on the y bond\n1\n2\n 1 1\n")
+            fw.write("   0    1    0    1    1   0.100000000000   0.000000000000\n")
+            fw.write("   0   -1    0    1    1   0.100000000000   0.000000000000\n")
+        pl = os.path.join(d, "pairlift_2x.dat")
+        with open(pl, "w") as fw:
+            fw.write("PairLift on the second x neighbour\n1\n2\n 1 1\n")
+            fw.write("   2    0    0    1    1   0.050000000000   0.000000000000\n")
+            fw.write("  -2    0    0    1    1   0.050000000000   0.000000000000\n")
+        extra = {"Geometry": geom, "Exchange": ex, "PairLift": pl}
+        # six cells along x: the +-2 x displacements must stay distinct
+        _run_gate_1orb(d, nmat=16, cell=(6, 4, 1), extra_inter=extra)
+        inp = _sc_input(d, d, 0.5, 16, (6, 4, 1))
+        inp["file"]["input"]["interaction"].update(extra)
+        with _bare_vertex_spy() as spy:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isfinite(lam))
+        self.assertAlmostEqual(_offsite_coefficients(spy, "Exchange"), 0.1, delta=1e-12)
 
     def test_in_process_entry(self):
         for itype in ("Exchange", "PairHop"):
-            d = tempfile.mkdtemp()
-            try:
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
                 for f in ("geom.dat", "transfer.dat", "coulombinter.dat"):
                     shutil.copy(os.path.join(_IN2, f), d)
                 with open(os.path.join(d, "offsite.dat"), "w") as fw:
                     fw.write("off-site {} on the x bond\n2\n2\n 1 1\n".format(itype))
                     fw.write("   1    0    0    1    2   0.200000000000   0.000000000000\n")
                     fw.write("  -1    0    0    2    1   0.200000000000   0.000000000000\n")
-                msgs = self._in_process({"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
-                                        path=d, keep=_gap_warnings)
-            finally:
-                shutil.rmtree(d, ignore_errors=True)
-            self.assertEqual(len(msgs), 1, (itype, msgs))
-            self.assertIn("off-site {} declared".format(itype), msgs[0])
-            self.assertIn("#239", msgs[0])
-        self.assertEqual(self._in_process(None, keep=_gap_warnings), [])
+                s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3},
+                             inter={"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
+                             path=d)
+                gi = r.get_param("green")
+                with _bare_vertex_spy() as spy:
+                    s.solve(gi, d)
+                self.assertIn("pairing_singlet_eigenvalue", gi)
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
 
 
 class TestTemporaryNames(unittest.TestCase):

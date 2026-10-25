@@ -522,7 +522,7 @@ class TestStaticBondKernel(unittest.TestCase):
             with self.subTest(pairing_type=pairing_type):
                 A, A_fl, A_pp, vec_size = sc._bond_kernel_parts(
                     S_bond, C_bond, [("spin", chi_s), ("charge", chi_c)],
-                    green, bset, norb, shape, beta, pairing_type)
+                    green, bset, norb, shape, beta, pairing_type, topo=None)
                 assert vec_size == norb * norb * Nx * Ny * Nz
                 F_q = _fluctuation_vertex(pairing_type, S_bond, chi_s, C_bond, chi_c)
                 W0_q = _bare_channel0(pairing_type, S_bond, C_bond, nd)
@@ -595,7 +595,7 @@ class TestStaticBondKernel(unittest.TestCase):
 
         A, A_fl, A_pp, vec_size = sc._bond_kernel_parts(
             S_bond, C_bond, [("spin", chi_zero), ("charge", chi_zero)],
-            green, view, norb, (Nx, Ny, Nz), beta, "triplet")
+            green, view, norb, (Nx, Ny, Nz), beta, "triplet", topo=None)
 
         # odd gap Delta = sin k on k in {0, pi/2, pi, -pi/2}
         kx = 2.0 * np.pi * np.arange(Nx) / Nx
@@ -624,7 +624,7 @@ class TestStaticBondKernel(unittest.TestCase):
         z = np.zeros((4, 4, 1, ND, ND), dtype=complex)
         with self.assertRaises(ValueError):
             sc._bond_kernel_parts(z, z, [("spin", z), ("charge", z)], green, bset,
-                                  norb, (4, 4, 1), beta, "nonsense")
+                                  norb, (4, 4, 1), beta, "nonsense", topo=None)
 
 
 # ---------------------------------------------------------------------------

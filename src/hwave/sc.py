@@ -771,7 +771,7 @@ def _build_bond_vertices(topo, split, norb, spatial_shape):
 
 
 def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
-                       beta, pairing_type, *, g2_tail=False):
+                       beta, pairing_type, *, topo, g2_tail=False):
     """The static bond Eliashberg operator and its two parts, built from the
     bond pairing pieces of ``hwave.solver.eliashberg_bond``.
 
@@ -789,10 +789,16 @@ def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
     view : BondSetView
         The bond topology.
     pairing_type : {"singlet", "triplet"}
+    topo : bond_channels.BondTopology or None
+        The topology ``S`` and ``C`` were built on, for the singlet bare
+        pairing of its off-site Exchange and PairHop rows
+        (``eliashberg_bond.instantaneous_vertex``); ``None`` states that
+        there are none.
 
     The fluctuation vertex ``Gamma = c_s S chi_s S + c_c C chi_c C``
-    (``PairVertexAccumulator``) and the bare vertex on the channel-0 block
-    (``instantaneous_vertex``) are applied by ``BondPairKernel`` on a
+    (``PairVertexAccumulator``) and the bare vertex (``instantaneous_vertex``:
+    the channel-0 block, plus the singlet pairing of the off-site Exchange
+    and PairHop rows of ``topo``) are applied by ``BondPairKernel`` on a
     one-point frequency axis, where its Matsubara transforms are the
     identity: one matvec is ``-(1/N) sum e^{-ik.R_b} Gamma_ab(k - k')
     e^{-ik'.R_a} X(k')`` with the static pair bubble ``X = G2 phi``,
@@ -843,7 +849,7 @@ def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
             del chi
         vertex = acc.finish()[pairing_type]
         del acc
-    V_inst = _eb.instantaneous_vertex(S, C, nd, pairing_type, shape)
+    V_inst = _eb.instantaneous_vertex(S, C, nd, pairing_type, shape, topo=topo)
 
     # the static pair bubble on a one-point frequency axis
     G2 = bond_channels._g2_from_green(green_kw, beta, tail=g2_tail)[..., None]
@@ -964,7 +970,7 @@ def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
                 "(pairing_type=%s)...", pairing_type)
     A, A_fl, A_pp, vec_size = _bond_kernel_parts(
         S, C, _dressed(chi_bar, S, C), green_kw, view, norb, shape, beta,
-        pairing_type, g2_tail=g2_tail)
+        pairing_type, topo=topo, g2_tail=g2_tail)
     del chi_bar, S, C
 
     # v1 runtime preconditions of the Hermitian static path (spec S4.5): the

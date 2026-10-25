@@ -457,7 +457,7 @@ class TestKernelUniform(unittest.TestCase):
             for eta in ("singlet", "triplet"):
                 cs, cc = COEFF[eta]
                 Gam = cs * (S0[None] @ chi_s @ S0[None]) + cc * (C0[None] @ chi_c @ C0[None])
-                V_inst = instantaneous_vertex(S0, C0, nd, eta, shape)
+                V_inst = instantaneous_vertex(S0, C0, nd, eta, shape, topo=None)
                 # on-site reference: V(q, l) in the sc.py layout, the
                 # instantaneous part added at every l
                 V_ref = np.empty((norb, norb, norb, norb, 2, 2, 1, nmat), complex)
@@ -499,7 +499,7 @@ class TestKernelUniform(unittest.TestCase):
         for eta in ("singlet", "triplet"):
             _, A_st, _, _ = sc._bond_kernel_parts(
                 fx["S"], fx["C"], [("spin", chi_s_st), ("charge", chi_c_st)],
-                fx["green_sc"], fx["view"], 1, fx["spatial_shape"], fx["beta"], eta)
+                fx["green_sc"], fx["view"], 1, fx["spatial_shape"], fx["beta"], eta, topo=None)
             ref = A_st.matvec(phi_k.ravel()).reshape(phi_k.shape)
             cs, cc = COEFF[eta]
             Gam_flat = np.broadcast_to(
@@ -729,7 +729,7 @@ class TestKernelUniform(unittest.TestCase):
         inter_k = sc._build_interaction_k(kx, ky, kz, interactions, 1)
         for eta in ("singlet", "triplet"):
             ref = ed._instantaneous_vertex(inter_k, 1, nx, ny, nz, eta, "myo")
-            got = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"])
+            got = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"], topo=None)
             np.testing.assert_allclose(got, ref, atol=1e-14, err_msg=eta)
         fx2 = physical_fixture(norb=2, shape=(4, 2, 1), nmat=2, U=2.0,
                                coeffs={("CoulombInter", (1, 0, 0)):
@@ -742,7 +742,7 @@ class TestKernelUniform(unittest.TestCase):
         inter_k2 = sc._build_interaction_k(kx, 2 * np.pi * np.arange(2) / 2, kz,
                                            interactions2, 2)
         ref2 = ed._instantaneous_vertex(inter_k2, 2, 4, 2, 1, "singlet", "myo")
-        got2 = instantaneous_vertex(fx2["S"], fx2["C"], 4, "singlet", (4, 2, 1))
+        got2 = instantaneous_vertex(fx2["S"], fx2["C"], 4, "singlet", (4, 2, 1), topo=None)
         diff = np.abs(got2 - ref2) > 1e-12
         # only the cross slots (ab,ab)/(ba,ba) may differ: V[a,b,c,d] with (a,b)=(c,d), a != b
         allowed = np.zeros(diff.shape, bool)
@@ -771,7 +771,7 @@ class TestKernelUniform(unittest.TestCase):
         for eta in ("singlet", "triplet"):
             W0 = _bare_channel0(eta, fx["S"].reshape(nx, ny, nz, ND, ND),
                                 fx["C"].reshape(nx, ny, nz, ND, ND), nd)
-            V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
+            V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"], topo=None)
             Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
             vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
                                      nmat, nvol)
@@ -830,7 +830,7 @@ class TestKernelUniform(unittest.TestCase):
             for eta in ("singlet", "triplet"):
                 W0 = _bare_channel0(eta, fx["S"].reshape(nx, ny, nz, ND, ND),
                                     fx["C"].reshape(nx, ny, nz, ND, ND), nd)
-                V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"])
+                V_inst = instantaneous_vertex(fx["S"], fx["C"], nd, eta, fx["spatial_shape"], topo=None)
                 Gam0 = np.zeros((nmat, nvol, ND, ND), complex)
                 vert = PairVertexUniform(ArrayBlockSource({"G": Gam0}, nd), "G", fx["B"], nd,
                                          nmat, nvol)
@@ -947,7 +947,7 @@ def _ir_vs_uniform_at_nodes(fx, axF, axB, eta, *, source, keep, with_vinst):
     # interpolant densified back onto the uniform grid
     green_ir = _ir_compress(fx["green_sc"], axF, nmat, "green")
     green_u = axF.eval_to_uniform(axF.fit_from_freq(green_ir), nmat)
-    V_inst = (instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"])
+    V_inst = (instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"], topo=None)
               if with_vinst else None)
     kx = 2 * np.pi * np.arange(nx) / nx
     ky = 2 * np.pi * np.arange(ny) / ny
@@ -1191,7 +1191,7 @@ class TestKernelIR(unittest.TestCase):
         G2 = calc_g2_dynamic(_ir_compress(fx["green_sc"], axF, fx["nmat"], "green"), beta)
         for eta in ("singlet", "triplet"):
             V_inst = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta,
-                                          fx["spatial_shape"])
+                                          fx["spatial_shape"], topo=None)
             self.assertGreater(float(np.abs(V_inst).max()), 0.0)
             K = BondPairKernel(vert, G2, fx["view"], xp=np,
                                spatial_shape=fx["spatial_shape"], norb=fx["norb"],
@@ -1223,7 +1223,7 @@ class TestKernelIR(unittest.TestCase):
             vert = acc.finish(ir_fit_tol=1e-3, stage_callable=stages)["singlet"]
         self.assertIsNotNone(vert.const)
         V_inst = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], "singlet",
-                                      fx["spatial_shape"])
+                                      fx["spatial_shape"], topo=None)
         G2 = calc_g2_dynamic(_ir_compress(fx["green_sc"], axF, fx["nmat"], "green"),
                              fx["beta"])
 

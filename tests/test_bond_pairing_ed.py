@@ -155,7 +155,7 @@ def _kernel(g, lam, eta, nmat, fluct=True, coeff=None):
                              B=view.n_channels, nd=ND, nmat=nmat, nvol=L)
     return BondPairKernel(vert, calc_g2_dynamic(g, BETA), view, xp=np,
                           spatial_shape=(L, 1, 1), norb=NORB, beta=BETA, nfreq=nmat,
-                          V_inst=instantaneous_vertex(S, C, ND, eta, (L, 1, 1)),
+                          V_inst=instantaneous_vertex(S, C, ND, eta, (L, 1, 1), topo=None),
                           residency="host", host_cap=10 ** 12, device_cap=10 ** 12)
 
 

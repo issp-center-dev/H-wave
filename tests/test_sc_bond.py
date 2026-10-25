@@ -851,7 +851,7 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
         A_bond = sc._bond_kernel_parts(
             S_bond, C_bond, [("spin", chi_s), ("charge", chi_c)], green,
-            bond_set, norb, (Nx, Ny, Nz), beta, "singlet", g2_tail=True)[0]
+            bond_set, norb, (Nx, Ny, Nz), beta, "singlet", g2_tail=True, topo=topo)[0]
         n_bond = A_bond.shape[0]
 
         # standard path fed the SAME bubble (the m=m'=0 block of chi_bar)
@@ -1064,24 +1064,40 @@ class TestOffsiteTypesAreBondResolved(_ApproxTestCase):
             msgs, _ = su2_warnings(extra, label)
             self.assertEqual(msgs, [], label)
 
-    def test_exchange_and_pairhop_bare_pairing_gap_is_warned_about(self):
-        """An off-site Exchange or PairHop row: ONE warning that its first-order
-        (bare) singlet pairing is not yet included (only its fluctuation
-        contribution enters). The run completes; CoulombInter alone is
-        silent."""
-        def gap_warnings(extra, label):
+    def test_exchange_and_pairhop_reach_the_bare_singlet_vertex(self):
+        """An off-site Exchange or PairHop row reaches the singlet bare vertex
+        (``eliashberg_bond.offsite_singlet_bare_vertex``; validated in
+        ``tests/test_sc_bond_pairing_oracle.py``) through the public entry,
+        and the Exchange term moves the leading eigenvalue (without it, patched
+        to zero, the result differs). The single-band PairHop term is a
+        constant that acts on on-site pairs only, so it leaves this fixture's
+        leading eigenvalue, whose gap has no on-site component, unchanged."""
+        from unittest import mock
+        from hwave.solver import eliashberg_bond as eb
+
+        def run(extra, label, patch=None):
             out = os.path.join(self.tmp_path, label)
-            with _caplog(logging.WARNING, "hwave_sc") as records:
+            with mock.patch.object(eb, "offsite_singlet_bare_vertex",
+                                   wraps=eb.offsite_singlet_bare_vertex) as spy:
+                if patch is not None:
+                    spy.side_effect = patch
                 sc.calc_eliashberg(self._input(out, 0.5, extra))
-            self.assertTrue(np.isfinite(_leading_eigenvalue(out)))
-            return [r.message for r in records if "first-order (bare) singlet" in r.message]
+            return _leading_eigenvalue(out), spy
 
         for itype in ("Exchange", "PairHop"):
-            msgs = gap_warnings({itype: 0.2}, itype)
-            self.assertEqual(len(msgs), 1, (itype, msgs))
-            self.assertIn("off-site {} declared".format(itype), msgs[0])
-            self.assertIn("#239", msgs[0])
-        self.assertEqual(gap_warnings({}, "v_only"), [])
+            with self.subTest(itype=itype):
+                lam, spy = run({itype: 0.2}, itype)
+                self.assertTrue(np.isfinite(lam))
+                self.assertGreater(spy.call_count, 0)
+                coeffs = [np.abs(np.asarray(c.args[0].coeffs[itype])[1:]).max()
+                          for c in spy.call_args_list]
+                self.assertAlmostEqual(max(coeffs), 0.2, delta=1e-12)
+
+        def zero(topo, norb, shape):
+            return np.zeros((norb,) * 4 + tuple(shape), complex)
+        lam, _ = run({"Exchange": 0.2}, "with")
+        lam0, _ = run({"Exchange": 0.2}, "without", patch=zero)
+        self.assertGreater(abs(lam - lam0), 1e-6 * abs(lam))
 
     def test_complex_offsite_pairhop_is_refused_before_any_dressing(self):
         from unittest import mock
@@ -1170,7 +1186,7 @@ def _analytic_pp_fixture():
     chi_zero = np.zeros_like(S_bond)
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     phi = np.sin(kx).reshape(norb, norb, Nx, Ny, Nz).astype(complex)
-    return dict(green=green, beta=beta, bond_set=view, S_bond=S_bond,
+    return dict(green=green, beta=beta, bond_set=view, topo=topo, S_bond=S_bond,
                 C_bond=C_bond, chi_s=chi_zero, chi_c=chi_zero,
                 phi=phi, norb=norb, shape=(Nx, Ny, Nz))
 
@@ -1201,7 +1217,7 @@ def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
     S_bond, C_bond = (W.reshape(chi_bar.shape) for W in
                       sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
     chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
-    return dict(green=green, beta=beta, bond_set=view, S_bond=S_bond,
+    return dict(green=green, beta=beta, bond_set=view, topo=topo, S_bond=S_bond,
                 C_bond=C_bond, chi_s=chi_s, chi_c=chi_c, norb=norb,
                 shape=(Nx, Ny, Nz), kgrid=(kx, ky, kz))
 
@@ -1214,7 +1230,7 @@ def _parts(f, pairing_type, chi_s=None, chi_c=None):
         [("spin", f["chi_s"] if chi_s is None else chi_s),
          ("charge", f["chi_c"] if chi_c is None else chi_c)],
         f["green"], f["bond_set"], f["norb"], f["shape"], f["beta"],
-        pairing_type)
+        pairing_type, topo=f["topo"])
 
 
 def _gap_parity_residual(sigma):

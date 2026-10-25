@@ -435,6 +435,54 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     return BondArchive(path, small, (nmat, nvol, ND, ND), sidecar=sidecar_paths)
 
 
+def _declared_topology_of_archive(arch, interactions, norb, shape, path):
+    """The bond topology of the DECLARED interactions on the archive's channel
+    set, after checking that its bond vertices are the archive's.
+
+    The archive carries the bond vertices ``S``, ``C`` but not the per-type
+    coefficients, which the off-site bare pairing term
+    (``eliashberg_bond.offsite_singlet_bare_vertex``) needs; those are read
+    from the interaction files. The channels are rebuilt with the archive's
+    own producer contract (``bond_channels.gate_bond_topology``) and the
+    vertices with the builders the FLEX gate uses, so the files of the FLEX
+    run reproduce the archive to the last bit; files that give other vertices
+    are refused, or the kernel would mix two models. A shell truncation
+    (``longitudinal_bond_max_shells``) only ever drops declared-zero shells
+    (the resolver refuses to drop a nonzero one), so the smallest shell count
+    that reproduces the archive's channels is used. The comparison is exact,
+    so that a change of any coefficient is caught, however small next to the
+    others."""
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as _bc
+    want = np.asarray(arch.delta_r)
+    split = sc._bond_locality_split(interactions)
+    for shells in list(range(want.shape[0])) + [None]:
+        try:
+            topo = _bc.gate_bond_topology(split, norb, max_shells=shells)
+        except ValueError:
+            continue
+        if np.array_equal(np.asarray(topo.delta_r), want):
+            break
+    else:
+        raise ValueError(
+            "bond archive {}: its bond channels {} are not the ones the interaction files "
+            "declare; the post-processing must read the interaction files of the FLEX run "
+            "that wrote the archive".format(path, [tuple(int(x) for x in r) for r in want]))
+    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    for name, mine, theirs in (("S", S, arch.S_bond), ("C", C, arch.C_bond)):
+        mine = np.asarray(mine).reshape(np.shape(theirs))
+        dev = float(np.abs(mine - theirs).max())
+        # EXACT: the same builders on the same files reproduce the archive to
+        # the last bit, and any tolerance would let a coupling small next to
+        # another one in the same slot change unnoticed
+        if not np.array_equal(mine, theirs):
+            raise ValueError(
+                "bond archive {}: the bond vertex {} built from the interaction files differs "
+                "from the archive's (max deviation {:.3e}); the post-processing must read the "
+                "interaction files of the FLEX run that wrote the archive".format(path, name, dev))
+    return topo
+
+
 class _ArchiveView:
     """The ``BondSetView`` contract (``delta_r``, ``reverse``, ``n_channels``)
     rebuilt from the archive arrays: the pairing kernel needs only the bond
@@ -534,7 +582,9 @@ def solve_dynamic_bond(input_dict):
     nd = norb * norb
     warn_multi_orbital(norb, "[eliashberg] bond_channels=true (frequency='dynamic')")
     # the archive carries the topology but not the per-type coefficients, so
-    # the notices read the declared interactions
+    # the notices read the declared interactions (and the off-site bare
+    # pairing terms read them too, once they are checked against the archive:
+    # _declared_topology_of_archive)
     topo_decl, _, _ = sc._resolve_bond_topology(interactions, geom_info, norb, None)
     _bc.warn_pairing_approximations(
         topo_decl, "[eliashberg] bond_channels=true (frequency='dynamic')", log=logger)
@@ -549,6 +599,8 @@ def solve_dynamic_bond(input_dict):
                              interactions=interactions)
     logger.info("bond pairing: archive %s (B = %d, ND = %d, nmat = %d)",
                 arch_path, arch.B, arch.ND, arch.nmat)
+    topo_arch = _declared_topology_of_archive(arch, interactions, norb, (Nx, Ny, Nz),
+                                              arch_path)
 
     green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
                                 interactions=interactions)
@@ -610,7 +662,7 @@ def solve_dynamic_bond(input_dict):
         vertex = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)[pairing_type]
         del acc
         V_inst = _eb.instantaneous_vertex(arch.S_bond, arch.C_bond, nd, pairing_type,
-                                          (Nx, Ny, Nz))
+                                          (Nx, Ny, Nz), topo=topo_arch)
         g = _ed._ir_compress(green, axF, nmat, "green") if use_ir else green
         G2 = xp.asarray(_ed.calc_g2_dynamic(g, beta))
         del g
@@ -883,7 +935,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                     residency="auto", ir=use_ir, L_B=(axB.L if use_ir else 0),
                     n_channels=1, in_process=True,
                     keep_const=ctl.ir_keep_static_chi and use_ir)
-                V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape)
+                V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape,
+                                                  topo=solver._bond_topo)
                 K = _eb.BondPairKernel(
                     vertices[eta], G2, view, xp=xp, spatial_shape=shape, norb=norb, beta=beta,
                     nfreq=nfreq, V_inst=V_inst, axF=axF, residency="auto", admission=table,

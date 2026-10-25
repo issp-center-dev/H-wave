@@ -1530,14 +1530,16 @@ each off-site row acts on the bond it was declared on.
 .. note::
 
    **Limitations of the bond pairing kernel** (static and dynamic alike).
-   Its bare (first-order) pairing vertex is built from the density content
-   of the off-site rows: it is exact for ``CoulombInter`` in both channels
-   and for ``Hund`` and ``Ising`` in the singlet channel, and its triplet
-   channel is the equal-spin component. The first-order singlet pairing of
-   an off-site ``Exchange`` (spin flip) or ``PairHop`` (pair transfer) is
-   not included yet; their fluctuation (second- and higher-order)
-   contributions are. The three bond pairing paths log a WARNING when such
-   a row is present (to be completed, issue #239). The spin and charge fluctuations are combined with the coefficients
+   Its bare (first-order) pairing vertex is exact for every bond-resolved
+   off-site type (``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``,
+   ``PairHop``; an off-site ``PairLift`` is not part of the bond channels):
+   the density content of the off-site rows (``CoulombInter``, ``Hund``,
+   ``Ising``), plus, in the singlet channel, the pairing of an off-site
+   ``Exchange`` (spin flip, on the bond of the row) and ``PairHop``
+   (transfer of an on-site pair along the bond), which have no density
+   content (included since issue #239; earlier versions left it out). Its
+   triplet channel is the equal-spin component, where ``Exchange`` and
+   ``PairHop`` have no first-order pairing. The spin and charge fluctuations are combined with the coefficients
    of a spin-rotation-invariant interaction, so for a coupling that breaks
    that symmetry on its own (an off-site ``Hund`` or ``Ising`` without the
    matching ``Exchange``) the fluctuation part is an approximation. The

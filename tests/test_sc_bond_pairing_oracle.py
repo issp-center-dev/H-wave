@@ -37,9 +37,7 @@ test. The bare part ``K^pp`` must equal the reference at every coupling, and
 the first-order coefficient of the FULL static kernel (bare plus dressed
 fluctuation part, by a Richardson-extrapolated central difference) must equal
 it too. Where the reference does not vanish identically it is asserted to be
-non-zero (the check is not vacuous). The first-order singlet pairing of an
-off-site Exchange or PairHop is not carried by the kernel yet; that gap is
-pinned as it is by ``TestFirstOrderKnownGaps``.
+non-zero (the check is not vacuous).
 """
 import unittest
 
@@ -173,15 +171,16 @@ def _production_parts(norb, interactions, eta, g):
     dressed = ((ch, bc.dress_batch(chi_bar[None], W, ch, l0=0, nmat=0,
                                    spatial_shape=shape)[0][0])
                for ch, W in (("spin", S), ("charge", C)))
-    A, A_fl, A_pp, _ = sc._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta)
+    A, A_fl, A_pp, _ = sc._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta,
+                                             topo=topo)
     return A, A_fl, A_pp
 
 
 #: (type, pairing channel) pairs whose first-order pairing the static bond
-#: kernel reproduces exactly: every triplet, and the singlet of the density
-#: types. See ``TestFirstOrderKnownGaps`` for the rest.
-EXACT = {(t, "triplet") for t in TYPES} | {
-    ("CoulombInter", "singlet"), ("Hund", "singlet"), ("Ising", "singlet")}
+#: kernel reproduces exactly: all of them. The singlet of an off-site Exchange
+#: or PairHop comes from ``eliashberg_bond.offsite_singlet_bare_vertex`` (it
+#: was missing before #239), every other one from the channel-0 blocks.
+EXACT = {(t, eta) for t in TYPES for eta in ("singlet", "triplet")}
 
 #: (type, channel) pairs whose first-order reference vanishes identically:
 #: a same-spin coupling has no (up, down) pairing, a spin-flip or pair
@@ -263,7 +262,8 @@ class TestLambdaPpDerivative(unittest.TestCase):
     """The derivative at ``J = 0`` of the bare-part attribution
     ``lambda_pp`` (``bond_channels.attribute_lambda``) of a single-band model
     with ``U`` and a nearest-neighbour ``V``, along the nearest-neighbour
-    form factor of the channel (``cos k`` singlet, ``sin k`` triplet; the
+    form factor of the channel (``cos k`` singlet, ``sin k`` triplet, and the
+    on-site constant for the singlet of a PairHop, which moves on-site pairs; the
     leading eigenvector of this short chain's triplet kernel is a higher
     harmonic with almost no nearest-neighbour weight), equals the Rayleigh
     quotient of the reference first-order vertex on that vector -- for every
@@ -280,10 +280,13 @@ class TestLambdaPpDerivative(unittest.TestCase):
         base["CoulombIntra"] = {((0, 0, 0), (0, 0)): 2.0}
         n = NX
         for eta in ("singlet", "triplet"):
-            v0 = (np.cos(_K) if eta == "singlet" else np.sin(_K)).astype(complex)
             for t in TYPES:
                 if (t, eta) not in EXACT:
                     continue
+                # an off-site PairHop moves ON-SITE pairs, so its singlet
+                # acts on the on-site (constant) form factor
+                v0 = (np.ones(NX) if (t, eta) == ("PairHop", "singlet") else
+                      np.cos(_K) if eta == "singlet" else np.sin(_K)).astype(complex)
                 A_ref = _antisymmetrized(_terms(t, fx, 0, 0, 1, 1.0), 2 * NX)
 
                 def ref_op(v, A_ref=A_ref, eta=eta):
@@ -311,49 +314,6 @@ class TestLambdaPpDerivative(unittest.TestCase):
                     if (t, eta) not in ZERO_REFERENCE:
                         self.assertGreater(abs(r1), 1e-3)
 
-
-class TestFirstOrderKnownGaps(_OracleCase, unittest.TestCase):
-    """First-order singlet pairing the bond pairing kernel does not carry yet.
-
-    The bare (instantaneous) pairing vertex of the bond kernel is built from
-    the channel-0 block of the bond vertices (``instantaneous_vertex``,
-    shared with the dynamic bond pairing): the density (Hartree) content of
-    the off-site rows, convolved in ``q = k - k'``. That reproduces the
-    first-order pairing of every type in the (equal-spin) triplet channel
-    and of the density types in the singlet channel
-    (``TestFirstOrderPairingOracle``), but the off-site ``Exchange`` (spin
-    flip) and ``PairHop`` (pair transfer) have first-order singlet pairing
-    that lives on the bond channels only. The test below pins that gap as it
-    is: the reference singlet is non-zero, the kernel's bare singlet part is
-    exactly zero, and the triplet still matches the reference. The bare-zero
-    assertion is the one that fails when the gap is closed; the case then
-    belongs in ``EXACT``. All three bond pairing paths warn about the gap at
-    run time (``bond_channels.warn_bare_pairing_gap``)."""
-
-    def test_exchange_and_pairhop_bare_singlet_is_missing(self):
-        for t in ("Exchange", "PairHop"):
-            for norb in (1, 2):
-                g = _green_sc(norb)
-                a, b = ROW[norb]
-                fx = EDFixture(NX, norb, {}, [0.0] * norb, 1.0, 0.0)
-                P2 = 2 * NX * norb
-                rng = np.random.default_rng(11)
-                for R in (+1, -1):
-                    with self.subTest(t=t, norb=norb, R=R):
-                        A_ref = _antisymmetrized(_terms(t, fx, a, b, R, 1.0), P2)
-                        phi = _pair_field(rng, norb, "singlet")
-                        X = _static_x(g, phi)
-                        want = _reference_gap(norb, A_ref, X, "singlet")
-                        # non-vacuous: there IS first-order singlet pairing
-                        self.assertGreater(np.linalg.norm(want), 1e-2 * np.linalg.norm(X))
-                        J = 1.0e-3
-                        _, _, A_pp = _production_parts(
-                            norb, _declaration(t, R, a, b, J), "singlet", g)
-                        pp = A_pp.matvec(phi.ravel())
-                        # the documented gap: the bare singlet part is zero
-                        self.assertEqual(np.abs(pp).max(), 0.0)
-                        # ... while the triplet still matches the reference
-                        self._check(norb, t, "triplet")
 
 if __name__ == "__main__":
     unittest.main()

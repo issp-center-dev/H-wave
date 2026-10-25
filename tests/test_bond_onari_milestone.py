@@ -634,7 +634,7 @@ class TestBondOnariMilestone(ApproxTestCase):
             def fl(cs, cc):
                 return sc._bond_kernel_parts(
                     S_b, C_b, [("spin", cs), ("charge", cc)], green, bond_set, 1,
-                    (16, 16, 1), BETA, "triplet")[1]
+                    (16, 16, 1), BETA, "triplet", topo=None)[1]
 
             fl_all, fl_spin = fl(chi_s, chi_c), fl(chi_s, zero)
             fl_chg, fl_none = fl(zero, chi_c), fl(zero, zero)

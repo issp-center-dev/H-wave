@@ -1994,7 +1994,7 @@ def solver_vpp(fx, closed_decls):
     for eta in ("singlet", "triplet"):
         _A, _A_fl, A_pp, _n = sc._bond_kernel_parts(
             S, C, [("spin", zero), ("charge", zero)], green, bond_set, norb,
-            shape, fx.beta, eta)
+            shape, fx.beta, eta, topo=None)
         V = np.zeros((ND, ND), dtype=complex)
         for n in range(B):
             for cd in range(nd):
