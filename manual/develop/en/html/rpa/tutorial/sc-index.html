@@ -951,6 +951,21 @@ from the RPA/FLEX static susceptibility and does not use them when
 constructing the kernel; setting one with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> has no
 effect and logs a warning.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Triplet bare term (issue #262).</strong> In <span class="math notranslate nohighlight">\(\tfrac{1}{2}(\hat C - \hat S)\)</span>
+the cross elements <span class="math notranslate nohighlight">\((ab, ab)\)</span>, <span class="math notranslate nohighlight">\(a \neq b\)</span>, are left out. There an
+inter-orbital density-type term (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code>)
+is the exchange image of its density element <span class="math notranslate nohighlight">\((aa, bb)\)</span>, and on a gap
+of triplet parity the two would count it twice. Earlier versions kept those
+elements: the first-order triplet pairing of an on-site inter-orbital
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> (<span class="math notranslate nohighlight">\(U'\)</span>), <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code> term was twice its value, and that of an
+off-site inter-orbital one on the non-bond path (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>,
+which collapses its Fock content onto these elements) was off by up to a
+factor of three. Multi-orbital triplet results with such terms change (the
+singlet channel and single-orbital models are unaffected) and should be
+recomputed.</p>
+</div>
 <p>For example, a spin-channel diagnostic uses:</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
 <span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>

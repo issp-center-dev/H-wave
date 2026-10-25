@@ -911,6 +911,19 @@ V^{\mathrm t} &amp;= -\tfrac{1}{2}\, \hat S\, \chi_{\mathrm s}\, \hat S
 静的感受率から構成し、カーネル構成時にこれらを使用しません。
 <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>で指定しても効果はなく、警告が出ます。</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>三重項の裸の項（issue #262）。</strong> <span class="math notranslate nohighlight">\(\tfrac{1}{2}(\hat C - \hat S)\)</span>では
+交差成分 <span class="math notranslate nohighlight">\((ab, ab)\)</span>（<span class="math notranslate nohighlight">\(a \neq b\)</span>）を除きます。そこでは軌道間の
+密度型の項（<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）が密度成分
+<span class="math notranslate nohighlight">\((aa, bb)\)</span>の交換像となり、三重項のパリティをもつギャップの上では両者が
+同じ項を2回数えるためです。以前の版ではこれらの成分を残していたため、オンサイトの
+軌道間の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>（<span class="math notranslate nohighlight">\(U'\)</span>）・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>の1次の三重項対形成は本来の2倍で、
+非ボンド経路（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>。Fock 成分をこれらの成分に
+畳み込みます）でのオフサイトの軌道間の項は最大で3倍ずれていました。そのような
+項を含む多軌道の三重項の結果は変わるため（一重項チャネルと単一軌道模型は
+影響を受けません）、再計算してください。</p>
+</div>
 <p>例えばスピンチャネルの診断は次のように指定します。</p>
 <div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[eliashberg]</span>
 <span class="n">zero_chi_c</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
