@@ -2672,7 +2672,9 @@ def _compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
         V^s = (3/2) S chi_s S - (1/2) C chi_c C + (1/2)(S + C)
 
     For triplet (Takimoto et al., PRB 69, 104504):
-        V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S)
+        V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S),
+    the bare term without its cross elements (ab, ab), a != b
+    (:func:`_triplet_bare_vertex`, issue #262).
 
     Supports both 2-index (reduced) and 4-index (general) chi0q:
     - 2-index: shape (norb, norb, Nx, Ny, Nz, nmat)
