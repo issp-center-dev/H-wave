@@ -623,9 +623,11 @@ def _sc_input(flex_dir, out_dir, T, nmat, cell, **eli):
     return inp
 
 
-def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None):
+def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None,
+                   extra_inter=None):
     """A real single-band (U = 4, V = 1) bond-gate FLEX run through ``qlms.run``,
-    writing green.npz and the bond archive into ``tmp``."""
+    writing green.npz and the bond archive into ``tmp``. ``extra_inter`` adds
+    interaction files ``{type: absolute path}``."""
     import hwave.qlms as qlms
     par = {"T": T, "filling": 0.5, "CellShape": list(cell), "SubShape": [1, 1, 1], "Nmat": nmat,
            "IterationMax": 200, "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
@@ -643,6 +645,7 @@ def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairin
                                "green": "green", "longitudinal_bond": "longitudinal_bond"}}}
     if eli is not None:
         inp["eliashberg"] = eli
+    inp["file"]["input"]["interaction"].update(extra_inter or {})
     qlms.run(input_dict=inp)
     return inp
 
@@ -1193,12 +1196,6 @@ def _su2_warnings(cap, where):
     return [m for m in cap.messages(logging.WARNING) if "SU(2)" in m and m.startswith(where)]
 
 
-def _gap_warnings(cap, where):
-    import logging
-    return [m for m in cap.messages(logging.WARNING)
-            if "first-order (bare) singlet" in m and m.startswith(where)]
-
-
 class _EntryNoticeCase(object):
     """Runs both dynamic bond pairing entries far enough to collect their
     notices: the post-processing entry up to the (absent) archive, the
@@ -1265,38 +1262,84 @@ class TestNonSU2BondWarning(_EntryNoticeCase, unittest.TestCase):
         self.assertEqual(self._in_process(None), [])
 
 
-class TestBarePairingGapWarning(_EntryNoticeCase, unittest.TestCase):
-    """Both dynamic bond pairing entries warn, once, that the first-order
-    (bare) singlet pairing of an off-site Exchange or PairHop is not yet
-    included (``tests/test_sc_bond_pairing_oracle.py``). Nothing is refused
-    and nothing changes; CoulombInter alone is silent."""
+def _bare_vertex_spy():
+    """A spy on ``eliashberg_bond.offsite_singlet_bare_vertex`` that records the
+    topology every call receives (and still computes the term)."""
+    from hwave.solver import eliashberg_bond as eb
+    return mock.patch.object(eb, "offsite_singlet_bare_vertex",
+                             wraps=eb.offsite_singlet_bare_vertex)
+
+
+def _offsite_coefficients(spy, itype):
+    """Largest off-site ``itype`` coefficient among the topologies ``spy`` saw."""
+    return max(float(np.abs(np.asarray(c.args[0].coeffs[itype])[1:]).max())
+               for c in spy.call_args_list)
+
+
+class TestOffsiteBareSingletWiring(unittest.TestCase):
+    """Both dynamic bond pairing entries hand the declared off-site Exchange and
+    PairHop rows to the singlet bare vertex
+    (``eliashberg_bond.offsite_singlet_bare_vertex``, validated against an
+    independent first-order construction in
+    ``tests/test_sc_bond_pairing_oracle.py``); before issue #239 it carried
+    only their density content, i.e. none."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_post_processing_entry(self):
+        import hwave.sc as sc
         for itype in ("Exchange", "PairHop"):
-            msgs = self._post_processing({itype: 0.2}, keep=_gap_warnings)
-            self.assertEqual(len(msgs), 1, (itype, msgs))
-            self.assertIn("off-site {} declared".format(itype), msgs[0])
-            self.assertIn("#239", msgs[0])
-        self.assertEqual(self._post_processing({}, keep=_gap_warnings), [])
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                path = os.path.join(d, itype + ".dat")
+                _write_nn_rows(path, 0.2)
+                _run_gate_1orb(d, nmat=32, extra_inter={itype: path})
+                inp = _sc_input(d, d, 0.5, 32, (4, 4, 1))
+                inp["file"]["input"]["interaction"][itype] = path
+                with _bare_vertex_spy() as spy:
+                    lam = sc.calc_eliashberg(inp)
+                self.assertTrue(np.isfinite(lam))
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
+
+    def test_post_processing_refuses_files_that_differ_from_the_archive(self):
+        """The bare term reads the interaction files, the fluctuations the
+        archive: files that give other bond vertices than the archive's (here
+        an Exchange value changed after the FLEX run) are refused."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.3)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "bond vertex S built from the interaction files"):
+            sc.calc_eliashberg(inp)
 
     def test_in_process_entry(self):
         for itype in ("Exchange", "PairHop"):
-            d = tempfile.mkdtemp()
-            try:
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
                 for f in ("geom.dat", "transfer.dat", "coulombinter.dat"):
                     shutil.copy(os.path.join(_IN2, f), d)
                 with open(os.path.join(d, "offsite.dat"), "w") as fw:
                     fw.write("off-site {} on the x bond\n2\n2\n 1 1\n".format(itype))
                     fw.write("   1    0    0    1    2   0.200000000000   0.000000000000\n")
                     fw.write("  -1    0    0    2    1   0.200000000000   0.000000000000\n")
-                msgs = self._in_process({"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
-                                        path=d, keep=_gap_warnings)
-            finally:
-                shutil.rmtree(d, ignore_errors=True)
-            self.assertEqual(len(msgs), 1, (itype, msgs))
-            self.assertIn("off-site {} declared".format(itype), msgs[0])
-            self.assertIn("#239", msgs[0])
-        self.assertEqual(self._in_process(None, keep=_gap_warnings), [])
+                s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3},
+                             inter={"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
+                             path=d)
+                gi = r.get_param("green")
+                with _bare_vertex_spy() as spy:
+                    s.solve(gi, d)
+                self.assertIn("pairing_singlet_eigenvalue", gi)
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
 
 
 class TestTemporaryNames(unittest.TestCase):

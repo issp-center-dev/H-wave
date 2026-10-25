@@ -453,7 +453,7 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
 # The pairing kernel on the uniform grid (spec 3, 4.1-4.4)
 # =============================================================================
 
-def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
+def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape, *, topo):
     """The frequency-INDEPENDENT pairing vertex of spec 4.2.
 
     ``0.5 (S_0 + C_0)`` (singlet) / ``0.5 (C_0 - S_0)`` (triplet) built from the
@@ -461,7 +461,10 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     ``(l1, l2, l3, l4)`` layout by the shared
     :func:`~hwave.solver.eliashberg_dynamic._instantaneous_vertex` (which
     evaluates ``sc._compute_vertices_flex`` at ``chi_s = chi_c = 0``), so the
-    bond path and the on-site path carry bit-identical bare terms.
+    bond path and the on-site path carry bit-identical bare terms; plus, in the
+    singlet channel, the bare pairing of the off-site ``Exchange`` and
+    ``PairHop`` rows of ``topo`` (:func:`offsite_singlet_bare_vertex`), which
+    the channel-0 blocks do not contain.
 
     Parameters
     ----------
@@ -473,6 +476,10 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     pairing_type : {"singlet", "triplet"}
     spatial_shape : tuple
         ``(Nx, Ny, Nz)``.
+    topo : bond_channels.BondTopology or None
+        The topology ``S`` and ``C`` were built on. Keyword-only and required,
+        so that no caller drops the off-site bare terms by omission; ``None``
+        states that there are no off-site Exchange or PairHop rows.
 
     Returns
     -------
@@ -483,8 +490,62 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     norb = int(round(nd ** 0.5))
     S0 = np.asarray(S)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
     C0 = np.asarray(C)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-    return _ed._instantaneous_vertex({}, norb, nx, ny, nz, pairing_type=pairing_type,
-                                     convention="myo", sc_matrices=(S0, C0))
+    V = _ed._instantaneous_vertex({}, norb, nx, ny, nz, pairing_type=pairing_type,
+                                  convention="myo", sc_matrices=(S0, C0))
+    if pairing_type == "singlet" and topo is not None:
+        V = V + offsite_singlet_bare_vertex(topo, norb, spatial_shape)
+    return V
+
+
+def offsite_singlet_bare_vertex(topo, norb, spatial_shape):
+    """The first-order SINGLET pairing vertex of the off-site ``Exchange`` and
+    ``PairHop`` rows of ``topo``, in the layout of :func:`instantaneous_vertex`
+    (``(a, b, c, d)`` with the gap ``Delta_ad(r) = -sum_bc V_abcd(r) F_bc(r)``,
+    momentum ``q`` on the spatial axes).
+
+    Neither type has density (Hartree) content, so the channel-0 blocks of the
+    bond vertices carry none of their pairing. Both act on a pair as a
+    displacement-diagonal (``q``-convolution) term:
+
+    * ``Exchange`` row ``(R, a, b)`` moves the pair ``(a up at 0, b down at R)``
+      out of ``(b up at R, a down at 0)``; on a singlet amplitude
+      (``F_ba(-R) = F_ab(R)``) that is the ``(aa, bb)`` element at the pair
+      displacement ``-R``, i.e. at ``delta_r[m]`` of the channel the row is
+      filed on;
+    * ``PairHop`` row ``(R, a, b)`` moves an on-site ``b`` pair into an on-site
+      ``a`` pair one bond away: the ``(ab, ba)`` element at zero displacement.
+
+    In the equal-spin triplet channel both vanish (a spin flip and a pair
+    transfer have no equal-spin pairing). Validated against an independent
+    spin-orbital first-order construction (tests/test_sc_bond_pairing_oracle.py)
+    at ``norb = 1`` and on an inter-orbital, mirror-asymmetric ``norb = 2``
+    chain, for both orientations of the declared row. The coefficients must be
+    real to the tolerance ``bond_channels.build_sc_bond_channel`` applies;
+    their real part is used, as there."""
+    nx, ny, nz = (int(x) for x in spatial_shape)
+    Vr = np.zeros((norb, norb, norb, norb, nx, ny, nz), dtype=complex)
+    delta_r = np.asarray(topo.delta_r)
+    ex = topo.coeffs.get("Exchange")
+    ph = topo.coeffs.get("PairHop")
+    if ex is None and ph is None:
+        return Vr
+    from .bond_channels import is_real_coefficient
+    for t, arr in (("Exchange", ex), ("PairHop", ph)):
+        if arr is not None:
+            bad = [v for v in np.asarray(arr).ravel() if not is_real_coefficient(v)]
+            if bad:
+                raise ValueError(
+                    "offsite_singlet_bare_vertex: the off-site {} coefficient {} is complex; only "
+                    "real off-site coefficients are supported".format(t, bad[0]))
+    a = np.arange(norb)[:, None]
+    b = np.arange(norb)[None, :]
+    for m in range(1, len(delta_r)):
+        if ex is not None:
+            x, y, z = (int(v) % n for v, n in zip(delta_r[m], (nx, ny, nz)))
+            Vr[a, a, b, b, x, y, z] += np.asarray(ex[m]).real
+        if ph is not None:
+            Vr[a, b, b, a, 0, 0, 0] += np.asarray(ph[m]).real
+    return np.fft.fftn(Vr, axes=(4, 5, 6))
 
 
 def _vinst_as_block(V_inst, nd, nvol):

@@ -254,7 +254,7 @@ class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
     def _parts(self, eta):
         _, A_fl, A_pp, _ = sc._bond_kernel_parts(
             self.S_b, self.C_b, [("spin", self.chib), ("charge", self.chib)], self.g,
-            self.view, NORB, (NX, 1, 1), BETA, eta)
+            self.view, NORB, (NX, 1, 1), BETA, eta, topo=None)
         return A_fl, A_pp
 
     def test_bare_term(self):
@@ -319,7 +319,7 @@ class TestDynamicBondKernelPlacement(_PlacementCase, unittest.TestCase):
         from hwave.solver.eliashberg_bond import instantaneous_vertex
         zero = np.zeros((NX,) + self.S.shape[1:], complex)
         for i, eta in enumerate(("singlet", "triplet")):
-            V_inst = instantaneous_vertex(self.S, self.C, ND, eta, (NX, 1, 1))
+            V_inst = instantaneous_vertex(self.S, self.C, ND, eta, (NX, 1, 1), topo=None)
             phi_w = _pair_field(np.random.default_rng(40 + i), eta, NMAT)
             got = self._apply(self._kernel(zero, V_inst), phi_w)
             self._assert_two_sided(got, _dynamic_x(self.g, phi_w), 1, "V_inst " + eta)

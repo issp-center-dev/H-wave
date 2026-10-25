@@ -850,6 +850,11 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   dynamic path. A relative name is joined to ``[file.input]
   path_to_flex_output``; an absolute path is used as given (the same rule
   ``bond_green`` follows).
+  The interaction files of ``[file.input.interaction]`` must be those of the
+  FLEX run that wrote the archive: the bond vertices they give on the
+  archive's channels are checked against the archive's, and a difference is
+  refused (the off-site Exchange/PairHop bare pairing term is read from the
+  files, the fluctuations from the archive).
 
 - ``ir_fit_tol``
 

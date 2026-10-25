@@ -2512,37 +2512,12 @@ def warn_non_su2_bonds(topo, where, consequence, *, log=None):
     return bad
 
 
-#: the off-site types whose first-order (bare) singlet pairing the bond
-#: pairing kernel does not carry yet (tests/test_sc_bond_pairing_oracle.py)
-BARE_PAIRING_GAP_TYPES = ("Exchange", "PairHop")
-
-
-def warn_bare_pairing_gap(topo, where, *, log=None):
-    """Log ONE warning when ``topo`` carries a nonzero off-site Exchange or
-    PairHop coefficient: the bare (instantaneous) vertex of the bond pairing
-    kernel is built from the density content of the off-site rows, so the
-    first-order singlet pairing of these couplings is not included and only
-    their fluctuation (second- and higher-order) contribution enters. Nothing
-    is refused and nothing changes. Returns the offending types."""
-    present = [t for t in BARE_PAIRING_GAP_TYPES
-               if t in topo.coeffs and np.any(np.asarray(topo.coeffs[t]) != 0)]
-    if present:
-        (log or logger).warning(
-            "%s: off-site %s declared. The first-order (bare) singlet pairing of "
-            "an off-site Exchange or PairHop is not yet included in the bond "
-            "pairing kernel, so only its fluctuation (second- and higher-order) "
-            "contribution enters; this is to be completed (issue #239).",
-            where, " and ".join(present))
-    return present
-
-
 def warn_pairing_approximations(topo, where, *, log=None):
-    """The notices every bond PAIRING path (the static ``hwave_sc`` bond path,
+    """The notice every bond PAIRING path (the static ``hwave_sc`` bond path,
     the dynamic post-processing entry and the FLEX in-process pairing) logs
     for its topology: :func:`warn_non_su2_bonds` with
-    :data:`PAIRING_NON_SU2_CONSEQUENCE`, and :func:`warn_bare_pairing_gap`."""
+    :data:`PAIRING_NON_SU2_CONSEQUENCE`."""
     warn_non_su2_bonds(topo, where, PAIRING_NON_SU2_CONSEQUENCE, log=log)
-    warn_bare_pairing_gap(topo, where, log=log)
 
 
 def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
