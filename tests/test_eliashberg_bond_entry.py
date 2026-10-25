@@ -1350,19 +1350,21 @@ class TestInProcess(unittest.TestCase):
                     self.assertIn(k, d.files, k)
                 self.assertEqual(str(d["pairing_type"]), eta)
                 # the in-process entry records the same two keys, under the
-                # same names, as the file entry; the projected iteration
-                # returns a gap in the channel's even-frequency sector
+                # same names, as the file entry
                 labels = [str(x) for x in d["gap_sector_labels"]]
                 self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
                                           "even_k_odd_w", "odd_k_odd_w"])
                 w = dict(zip(labels, np.asarray(d["gap_sector_weights"], dtype=float)))
                 self.assertAlmostEqual(sum(w.values()), 1.0, places=9)
-                own = "even_k_even_w" if eta == "singlet" else "odd_k_even_w"
-                self.assertGreater(w[own], 0.999, (eta, w))
                 # this two-orbital kernel conserves only the combined parity,
-                # so the iteration is NOT restricted to the channel sector --
-                # yet its leading eigenvector lands there anyway, which is
-                # exactly what the recorded weights are for
+                # so the iteration is NOT restricted to the channel's
+                # even-frequency sector: its leading eigenvector lies in the
+                # combined-parity sector of the channel (even-frequency or
+                # odd-frequency part of it), and the recorded weights say
+                # which.
+                own = (("even_k_even_w", "odd_k_odd_w") if eta == "singlet"
+                       else ("odd_k_even_w", "even_k_odd_w"))
+                self.assertGreater(w[own[0]] + w[own[1]], 0.999, (eta, w))
                 self.assertEqual(str(d["sector_selection"]),
                                  "combined_parity", eta)
             with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:

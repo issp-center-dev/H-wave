@@ -62,6 +62,14 @@ TRANSFER = {(0, 0, 0): -0.4, (0, 1, 1): 0.6, (0, 0, 1): -0.3, (0, 1, 0): -0.3,
             (1, 0, 1): -1.0, (-1, 1, 0): -1.0, (1, 0, 0): -0.5, (-1, 0, 0): -0.5}
 #: CoulombInter rows (r, a, b), each declared with its partner (-r, b, a).
 ROWS = {(1, 0, 1): 0.4, (-1, 1, 0): 0.4, (-1, 0, 1): 0.1, (1, 1, 0): 0.1}
+#: ROWS plus an ON-SITE inter-orbital row and its partner (issue #262)
+ROWS_ONSITE = tuple(sorted({**ROWS, (0, 0, 1): 0.3, (0, 1, 0): 0.3}.items()))
+
+
+def _rows(rows):
+    """The CoulombInter rows of a case: ``ROWS`` by default, else the
+    hashable ``((r, a, b), v)`` tuple a cached helper was called with."""
+    return ROWS if rows is None else dict(rows)
 
 H = 0.05
 LAMS = (-2 * H, -H, 0.0, H, 2 * H)
@@ -95,7 +103,7 @@ def _parity_projectors():
 # ---------------------------------------------------------------------------
 
 @functools.lru_cache(maxsize=None)
-def _ed(lam, sign=+1):
+def _ed(lam, sign=+1, rows=None):
     """``(chi, G)``: the pair susceptibility in the ``PAIRS`` basis and the
     up-spin Green function ``G[n, a, (j, b)]`` on the ``max(NMATS)`` grid.
     ``sign = +1`` places a row ``(r, a, b)`` on the bond of the Transfer row
@@ -110,7 +118,7 @@ def _ed(lam, sign=+1):
     # canonical_density_terms puts (a, b, R) on (a at j + R, b at j); a row and
     # its partner name the same density product, each carrying half of it
     pairs = [(a, a, 0, lam * U) for a in range(NORB)]
-    pairs += [(a, b, -sign * r, lam * v / 2) for (r, a, b), v in ROWS.items()]
+    pairs += [(a, b, -sign * r, lam * v / 2) for (r, a, b), v in _rows(rows).items()]
     ed = SectorED(fx, canonical_density_terms(fx, pairs), h1=h1)
     # Delta_{R,a,b} = sum_j c_{j+R,a,dn} c_{j,b,up}: the pair (c=b up at 0, d=a down at R)
     chi = ed.pair_correlator([(dp, d, c) for (c, d, dp) in PAIRS])[0]
@@ -133,9 +141,9 @@ def _green_sc(G, nmat):
 # production ladder
 # ---------------------------------------------------------------------------
 
-def _kernel(g, lam, eta, nmat, fluct=True, coeff=None):
+def _kernel(g, lam, eta, nmat, fluct=True, coeff=None, rows=None):
     inter = {}
-    for (r, a, b), v in ROWS.items():
+    for (r, a, b), v in _rows(rows).items():
         inter.setdefault(("CoulombInter", (r, 0, 0)), np.zeros((NORB, NORB)))[a, b] = lam * v
     whole, onsite, offsite = _tables_from_pairs(inter, lam * U, NORB)
     S0, C0 = _channel0_from_gate(whole, onsite, offsite, NORB, (L, 1, 1))
@@ -191,16 +199,16 @@ def _production_chi(g, lam, nmat, **kw):
 
 
 @functools.lru_cache(maxsize=None)
-def _production(nmat, sign=+1, fluct=True, swapped=False):
+def _production(nmat, sign=+1, fluct=True, swapped=False, rows=None):
     """The production ladder at every ``LAMS`` point, from the Green
     function of the ED with placement ``sign``."""
     coeff = {"singlet": COEFF["triplet"], "triplet": COEFF["singlet"]} if swapped else None
-    return tuple(_production_chi(_green_sc(_ed(lam, sign)[1], nmat), lam, nmat,
+    return tuple(_production_chi(_green_sc(_ed(lam, sign, rows)[1], nmat), lam, nmat, rows=rows,
                                  fluct=fluct, coeff=coeff) for lam in LAMS)
 
 
-def _richardson():
-    lo, hi = (_production(n) for n in NMATS)
+def _richardson(rows=None):
+    lo, hi = (_production(n, rows=rows) for n in NMATS)
     return tuple(2 * b - a for a, b in zip(lo, hi))
 
 
@@ -212,8 +220,8 @@ def _coefficients(f):
     return c1, c2
 
 
-def _ed_series(sign=+1):
-    return tuple(_ed(lam, sign)[0] for lam in LAMS)
+def _ed_series(sign=+1, rows=None):
+    return tuple(_ed(lam, sign, rows)[0] for lam in LAMS)
 
 
 def _sector_errors(want, got):
@@ -244,6 +252,17 @@ def _cross_parity_errors(want, got):
 
 
 class TestPairingVertexAgainstED(unittest.TestCase):
+
+    @heavy
+    def test_onsite_interorbital_row(self):
+        """With an ON-SITE inter-orbital CoulombInter row added (issue #262):
+        the first and second order still match. Before the fix the bare
+        triplet term counted that row twice (first order off by 1.7e-1 in the
+        triplet sector)."""
+        errs = _sector_errors(_ed_series(rows=ROWS_ONSITE), _richardson(rows=ROWS_ONSITE))
+        for (order, eta), dev in sorted(errs.items()):
+            tol = TOL_C1 if order == 1 else TOL_C2
+            self.assertLess(dev, tol, "order {} {}: {:.3e}".format(order, eta, dev))
 
     @heavy
     def test_free_pair_susceptibility(self):

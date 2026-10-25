@@ -3039,10 +3039,16 @@ class TestKanamoriInteraction(unittest.TestCase):
                       - 0.5 * C_all @ chi_c_manual @ C_all
                       + 0.5 * (S_all + C_all))
 
-        # Triplet vertex: V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S)
+        # Triplet vertex: V^t = -(1/2) S chi_s S - (1/2) C chi_c C + (1/2)(C - S),
+        # the bare term without its cross slots (ab, ab), a != b: there it is
+        # the exchange image of the density slot and would count U', J twice
+        # (issue #262; tests/test_triplet_bare_vertex.py)
+        bare_t = 0.5 * (C_all - S_all)
+        for i in (a * norb + b for a in range(norb) for b in range(norb) if a != b):
+            bare_t[i, i] = 0.0
         V_t_manual = (-0.5 * S_all @ chi_s_manual @ S_all
                       - 0.5 * C_all @ chi_c_manual @ C_all
-                      + 0.5 * (C_all - S_all))
+                      + bare_t)
 
         # Now compute via _compute_vertices_general with matching chi0q
         nmat = 8
