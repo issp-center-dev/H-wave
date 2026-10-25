@@ -435,7 +435,7 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     return BondArchive(path, small, (nmat, nvol, ND, ND), sidecar=sidecar_paths)
 
 
-def _declared_topology_of_archive(arch, interactions, norb, shape, path, rtol=1e-12):
+def _declared_topology_of_archive(arch, interactions, norb, shape, path):
     """The bond topology of the DECLARED interactions on the archive's channel
     set, after checking that its bond vertices are the archive's.
 
@@ -449,9 +449,9 @@ def _declared_topology_of_archive(arch, interactions, norb, shape, path, rtol=1e
     are refused, or the kernel would mix two models. A shell truncation
     (``longitudinal_bond_max_shells``) only ever drops declared-zero shells
     (the resolver refuses to drop a nonzero one), so the smallest shell count
-    that reproduces the archive's channels is used. The comparison is
-    relative to the largest archive entry, with no floor, so that a change of
-    any coefficient is caught."""
+    that reproduces the archive's channels is used. The comparison is exact,
+    so that a change of any coefficient is caught, however small next to the
+    others."""
     import hwave.sc as sc
     from hwave.solver import bond_channels as _bc
     want = np.asarray(arch.delta_r)
@@ -472,7 +472,10 @@ def _declared_topology_of_archive(arch, interactions, norb, shape, path, rtol=1e
     for name, mine, theirs in (("S", S, arch.S_bond), ("C", C, arch.C_bond)):
         mine = np.asarray(mine).reshape(np.shape(theirs))
         dev = float(np.abs(mine - theirs).max())
-        if dev > rtol * float(np.abs(theirs).max()):
+        # EXACT: the same builders on the same files reproduce the archive to
+        # the last bit, and any tolerance would let a coupling small next to
+        # another one in the same slot change unnoticed
+        if not np.array_equal(mine, theirs):
             raise ValueError(
                 "bond archive {}: the bond vertex {} built from the interaction files differs "
                 "from the archive's (max deviation {:.3e}); the post-processing must read the "

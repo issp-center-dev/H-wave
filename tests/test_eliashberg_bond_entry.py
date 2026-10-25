@@ -1182,13 +1182,13 @@ class TestMultiOrbitalWarning(unittest.TestCase):
         self.assertEqual(one, [])
 
 
-def _write_nn_rows(path, value):
+def _write_nn_rows(path, value, fmt="{:.12f}"):
     """A single-band interaction file with the four nearest-neighbour rows."""
     rows = [((1, 0, 0)), ((-1, 0, 0)), ((0, 1, 0)), ((0, -1, 0))]
     with open(path, "w") as fw:
         fw.write("generated for test\n1\n{}\n{}\n".format(len(rows), " ".join(["1"] * len(rows))))
         for r in rows:
-            fw.write("{:4d} {:4d} {:4d}    1    1 {:.12f} 0.0\n".format(r[0], r[1], r[2], value))
+            fw.write(("{:4d} {:4d} {:4d}    1    1 " + fmt + " 0.0\n").format(r[0], r[1], r[2], value))
 
 
 def _su2_warnings(cap, where):
@@ -1322,8 +1322,9 @@ class TestOffsiteBareSingletWiring(unittest.TestCase):
             sc.calc_eliashberg(inp)
 
     def test_post_processing_refuses_a_tiny_change(self):
-        """The comparison has no absolute floor: an Exchange coefficient
-        changed by 5e-11 is refused too."""
+        """The comparison is exact: an Exchange coefficient changed by 5e-11 is
+        refused, and so is a doubled Exchange of 1e-13 next to the fixture's
+        U = 4 and V = 1 (below any relative tolerance of the vertex scale)."""
         import hwave.sc as sc
         path = os.path.join(self.tmp, "Exchange.dat")
         _write_nn_rows(path, 0.2)
@@ -1332,6 +1333,17 @@ class TestOffsiteBareSingletWiring(unittest.TestCase):
         _write_nn_rows(changed, 0.2 + 5e-11)
         inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
         inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+        small = os.path.join(self.tmp, "small")
+        os.makedirs(small)
+        path = os.path.join(small, "Exchange.dat")
+        _write_nn_rows(path, 1e-13, fmt="{:.6e}")
+        _run_gate_1orb(small, nmat=16, extra_inter={"Exchange": path})
+        doubled = os.path.join(small, "Exchange_doubled.dat")
+        _write_nn_rows(doubled, 2e-13, fmt="{:.6e}")
+        inp = _sc_input(small, small, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = doubled
         with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
             sc.calc_eliashberg(inp)
 
