@@ -822,7 +822,14 @@ only)</p>
 Filename of the dynamic bond archive read by the <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 dynamic path. A relative name is joined to <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
 <span class="pre">path_to_flex_output</span></code>; an absolute path is used as given (the same rule
-<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> follows).</p>
+<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> follows).
+The interaction files of <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> must be those of the
+FLEX run that wrote the archive: the bond vertices they give on the
+archive’s channels are checked against the archive’s, and a difference is
+refused (the off-site Exchange/PairHop bare pairing term is read from the
+files, the fluctuations from the archive). A <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>
+of the FLEX run needs no setting here: the shell count is taken from the
+archive’s channels.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code></p>
 <p><strong>Type :</strong>

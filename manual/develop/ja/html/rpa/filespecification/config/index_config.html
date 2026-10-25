@@ -701,7 +701,13 @@ SCF の経路は変わり得ます。2軌道の自己無撞着
 <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の動的経路が読み込むボンドアーカイブの
 ファイル名です。相対パスは<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>
 と結合されます。絶対パスはそのまま使われます
-（<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と同じ規則です）。</p>
+（<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と同じ規則です）。
+<code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code>の相互作用ファイルは、アーカイブを書き出した
+FLEX 計算のものでなければなりません。それらがアーカイブのチャネル上で与える
+ボンドバーテックスをアーカイブのものと照合し、異なる場合は拒否します
+（オフサイトの Exchange/PairHop の裸の対形成項はファイルから、揺らぎは
+アーカイブから読むためです）。FLEX 計算の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>を
+ここで指定する必要はありません。シェル数はアーカイブのチャネルから決まります。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ir_fit_tol</span></code></p>
 <p><strong>形式 :</strong> float型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">0.5</span></code>。両方の経路)</p>

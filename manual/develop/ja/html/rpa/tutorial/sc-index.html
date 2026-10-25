@@ -1447,13 +1447,14 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>ボンド分解対形成カーネルの制約</strong>（静的・動的とも共通）。
-裸の（1次の）対形成バーテックスはオフサイト行の密度成分から構築されます。
-<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>では両チャネルで、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>と<code class="docutils literal notranslate"><span class="pre">Ising</span></code>では
-一重項チャネルで厳密であり、三重項チャネルは同スピン成分です。オフサイトの
-<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>（スピン反転）と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>（対の移動）の1次の一重項
-対形成はまだ含まれません（揺らぎによる2次以上の寄与は含まれます）。
-このような行があると、3つのボンド対形成経路はいずれも WARNING を
-ログに出力します（今後対応予定、issue #239）。スピンと
+裸の（1次の）対形成バーテックスは、ボンド分解されるすべてのオフサイトの型
+（<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>。
+オフサイトの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>はボンドチャネルに含まれません）について厳密です。
+オフサイト行の密度成分（<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）に
+加え、一重項チャネルでは、密度成分を持たないオフサイトの<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>（スピン反転。行のボンド上）と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>（オンサイト対のボンドに沿った
+移動）の対形成を含みます（issue #239 で追加。以前の版では含まれていません
+でした）。三重項チャネルは同スピン成分で、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>と<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は
+そこに1次の対形成を持ちません。スピンと
 電荷の揺らぎはスピン回転不変な相互作用の係数で組み合わされるため、単独で
 その対称性を破る結合（対応する<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>を伴わないオフサイトの
 <code class="docutils literal notranslate"><span class="pre">Hund</span></code>や<code class="docutils literal notranslate"><span class="pre">Ising</span></code>）では揺らぎの部分は近似になります。静的な

@@ -1520,14 +1520,16 @@ WARNING that multi-orbital results are not yet validated (issue #239).</p></li>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><strong>Limitations of the bond pairing kernel</strong> (static and dynamic alike).
-Its bare (first-order) pairing vertex is built from the density content
-of the off-site rows: it is exact for <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> in both channels
-and for <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> in the singlet channel, and its triplet
-channel is the equal-spin component. The first-order singlet pairing of
-an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (spin flip) or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> (pair transfer) is
-not included yet; their fluctuation (second- and higher-order)
-contributions are. The three bond pairing paths log a WARNING when such
-a row is present (to be completed, issue #239). The spin and charge fluctuations are combined with the coefficients
+Its bare (first-order) pairing vertex is exact for every bond-resolved
+off-site type (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>; an off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is not part of the bond channels):
+the density content of the off-site rows (<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>), plus, in the singlet channel, the pairing of an off-site
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> (spin flip, on the bond of the row) and <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+(transfer of an on-site pair along the bond), which have no density
+content (included since issue #239; earlier versions left it out). Its
+triplet channel is the equal-spin component, where <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> and
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> have no first-order pairing. The spin and charge fluctuations are combined with the coefficients
 of a spin-rotation-invariant interaction, so for a coupling that breaks
 that symmetry on its own (an off-site <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or <code class="docutils literal notranslate"><span class="pre">Ising</span></code> without the
 matching <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>) the fluctuation part is an approximation. The
