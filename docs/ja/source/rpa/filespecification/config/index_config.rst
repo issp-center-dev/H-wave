@@ -237,12 +237,11 @@ TOML形式
   このキーを指定すると、そのような行は off-site の行と同じに扱われます。RPA の
   ring、FLEX の general（バーテックスと2次）、ボンド分解しない\ ``hwave_sc``\ の
   バーテックスでは、その密度（Hartree）部分だけが入り、交換の寄与は入りません
-  （ボンド分解しない\ ``hwave_sc``\ のバーテックスでは、\ ``R != 0``\ の行は
-  近似的に、つぶした形の交換項を引き続き与えます。GitHub issue #239 を参照）。
+  （\ ``R != 0``\ のすべての行と同じです。issue #239）。
   密度部分を持たない種類の行は off-site の規則に従います。異なるサイト間の
-  ``Exchange``\ と\ ``PairHop``\ は FLEX の general では拒否され、\ ``PairHop``\ は
-  RPA で警告とともに除かれ、\ ``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ は
-  ``hwave_sc``\ で警告とともに除かれます。
+  ``Exchange``\ と\ ``PairHop``\ は FLEX の general とボンド分解しない\ ``hwave_sc``\ の
+  経路（\ ``bond_channels = false``\ ）では拒否され、\ ``PairHop``\ は RPA で警告と
+  ともに除かれ、\ ``PairLift``\ は\ ``hwave_sc``\ で警告とともに除かれます。
 
   キーを指定しない場合は全軌道が1つのサイトにあるとみなされ、\ ``R = 0``\ の
   行はすべてオンサイト（Kanamori）として交換の寄与も含めて扱われます。これは
@@ -719,6 +718,15 @@ TOML形式
   拒否します。軌道とそれ自身の間の\ ``R = 0``\ の\ ``CoulombInter``\ の行
   （非ゼロ）は拒否されます（\ ``CoulombIntra``\ として宣言してください）。
   静的経路は\ ``norb``\ を制限しません（issue #239 以前は単一軌道のみ）。
+
+  ``bond_channels = false``\ の場合（静的・動的とも）、オフサイトの行は RPA の
+  ring や FLEX の general と同じく密度（Hartree）部分だけを持ちます。その交換
+  （Fock）の寄与は q だけのバーテックスに厳密な置き場所がないため含まれません
+  （以前の版では近似的にバーテックスへつぶして含めていました。issue #239）。
+  オフサイトの軌道間の\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ は1回の
+  WARNING で示され、密度部分を持たないオフサイトの\ ``Exchange``\ ・\ ``PairHop``\
+  は拒否されます。\ ``bond_channels = true``\ はすべてのオフサイトの行をその
+  ボンド上で厳密に扱います。
 
 - ``flex_bond_archive``
 

@@ -235,9 +235,10 @@ class TestHwaveScVertex(unittest.TestCase):
         k_same, (S1, C1) = self._sc([0, 0])
         k_two, (S2, C2) = self._sc([0, 1])
         from hwave.sc import SiteSplitInteractionK
-        self.assertNotIsInstance(k_none, SiteSplitInteractionK)
-        self.assertNotIsInstance(k_same, SiteSplitInteractionK)
-        self.assertIsInstance(k_two, SiteSplitInteractionK)
+        # every table is split: the chain's inter-cell rows are off-site
+        # (issue #239); orbital_site adds the in-cell row between the sites
+        for k in (k_none, k_same, k_two):
+            self.assertIsInstance(k, SiteSplitInteractionK)
         np.testing.assert_array_equal(S0, S1)
         np.testing.assert_array_equal(C0, C1)
         density = np.zeros(4, dtype=bool)
@@ -275,8 +276,9 @@ class TestHwaveScVertex(unittest.TestCase):
 
     def test_reduced_flex_warning_names_only_types_that_keep_off_density_content(self):
         # Hund only on the in-cell bond (between the two sites): with the
-        # sites declared it has no exchange crossing left, so it must not be
-        # named; CoulombInter keeps one through its inter-cell rows (#239)
+        # sites declared it has no exchange crossing left; nor has
+        # CoulombInter, whose inter-cell rows keep their Hartree part only
+        # since issue #239 -- nothing is left for the warning to name
         from hwave import sc
         tables = self._tables()
         tables["Hund"] = {((0, 0, 0), (0, 1)): 0.2, ((0, 0, 0), (1, 0)): 0.2}
@@ -285,12 +287,8 @@ class TestHwaveScVertex(unittest.TestCase):
         inter_k = sc._build_interaction_k_for_sites(
             k, np.zeros(1), np.zeros(1), tables, 2,
             {"mode": {"param": {"orbital_site": [0, 1]}}})
-        with self.assertLogs("hwave_sc", level="WARNING") as logs:
+        with self.assertNoLogs("hwave_sc", level="WARNING"):
             sc._warn_reduced_flex_missing_components(inter_k, 2, n, 1, 1)
-        hit = [m for m in logs.output if "off-density components" in m]
-        self.assertEqual(len(hit), 1, logs.output)
-        self.assertIn("CoulombInter", hit[0])
-        self.assertNotIn("Hund", hit[0])
 
 
 class TestKeyHandling(unittest.TestCase):

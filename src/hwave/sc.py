@@ -2199,8 +2199,8 @@ def _accumulate_coeff(dst, coeff, value):
 class SiteSplitInteractionK(dict):
     """A k-space interaction table (as returned by
     :func:`_build_interaction_k`) that also carries the locality split
-    ``(inter_k_onsite, inter_k_offsite)`` implied by
-    ``[mode.param] orbital_site`` (#234): the ``R = 0`` rows between
+    ``(inter_k_onsite, inter_k_offsite)``: the ``R != 0`` rows (issue #239)
+    and, with ``[mode.param] orbital_site`` (#234), the ``R = 0`` rows between
     orbitals of different sites form the off-site part. The S/C builders
     pick the split up from the table itself, so every hwave_sc vertex path
     that receives the table honours the declaration."""
@@ -2210,18 +2210,88 @@ class SiteSplitInteractionK(dict):
         self.locality_split = locality_split
 
 
+#: the types whose cross / antidiag (exchange) content the q-only vertex of the
+#: non-bond paths cannot hold for a row with R != 0 (issue #239)
+_NONBOND_FOCK_TYPES = ("CoulombInter", "Hund", "Ising")
+_NONBOND_REFUSED_OFFSITE = ("Exchange", "PairHop")
+
+
+def _offsite_rows(interactions, types, site=None):
+    """``{type: [(irvec, orbvec, value), ...]}`` of the nonzero off-site rows:
+    ``R != 0``, and with ``orbital_site`` labels ``site`` also the ``R = 0``
+    rows between orbitals of different sites (``sites.is_onsite``)."""
+    from hwave.solver.sites import is_onsite
+    out = {}
+    for t in types:
+        tbl = interactions.get(t) if hasattr(interactions, "get") else None
+        rows = [(irvec, orbvec, v) for (irvec, orbvec), v in (tbl or {}).items()
+                if v != 0 and not is_onsite(irvec, orbvec, site)]
+        if rows:
+            out[t] = rows
+    return out
+
+
+def _nonbond_site(input_dict, norb):
+    """The ``[mode.param] orbital_site`` labels (or ``None``)."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver.sites import parse_orbital_site
+    param = CaseInsensitiveDict(input_dict.get("mode", {}).get("param", {}) or {})
+    return parse_orbital_site(param.get("orbital_site"), norb)
+
+
+def _check_nonbond_offsite(interactions, where, site=None):
+    """The off-site rows the non-bond (q-only) pairing vertex cannot represent.
+
+    The non-bond paths keep only the Hartree (density) part of an ``R != 0``
+    row (:func:`_build_interaction_k_for_sites`), as the RPA ring and the FLEX
+    general path do; its exchange (Fock) crossing pairs a particle-hole pair on
+    the bond and depends on two momenta, so it has no exact place in a vertex
+    of ``q`` alone, and since issue #239 it is no longer collapsed into one.
+
+    * An off-site ``Exchange`` or ``PairHop`` has no density part at all: it
+      would contribute nothing, so it is REFUSED (``bond_channels = true``
+      represents it exactly).
+    * An off-site inter-orbital ``CoulombInter``, ``Hund`` or ``Ising`` keeps
+      its Hartree part; ONE warning says that its Fock crossing is not
+      included and points to the bond path.
+
+    "Off-site" includes, with ``orbital_site`` labels ``site`` (#234), an
+    ``R = 0`` row between orbitals of different sites."""
+    refused = _offsite_rows(interactions, _NONBOND_REFUSED_OFFSITE, site)
+    if refused:
+        t = next(iter(refused))
+        irvec, orbvec, v = refused[t][0]
+        raise ValueError(
+            "{}: an off-site {} row (R = {}, orbitals {}, value {}) has no density part, so "
+            "the q-only pairing vertex of bond_channels = false cannot represent it (it would "
+            "contribute nothing). Set [eliashberg] bond_channels = true, which treats every "
+            "off-site row on its bond exactly, or remove the row.".format(
+                where, t, tuple(int(x) for x in irvec), tuple(o + 1 for o in orbvec), v))
+    fock = {t: [r for r in rows if r[1][0] != r[1][1]]
+            for t, rows in _offsite_rows(interactions, _NONBOND_FOCK_TYPES, site).items()}
+    fock = {t: rows for t, rows in fock.items() if rows}
+    if fock:
+        logger.warning(
+            "%s: off-site inter-orbital %s declared. With bond_channels = false the pairing "
+            "vertex keeps their Hartree (density) part only: their exchange (Fock) crossing "
+            "is not included (earlier versions collapsed it into the q-only vertex, an "
+            "approximation; issue #239). Set [eliashberg] bond_channels = true for the exact "
+            "bond-resolved treatment.", where,
+            ", ".join("{} ({} row(s))".format(t, len(r)) for t, r in fock.items()))
+    return fock
+
+
 def _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions, norb,
                                    input_dict):
-    """:func:`_build_interaction_k` for the hwave_sc entries, honouring
-    ``[mode.param] orbital_site`` (#234).
+    """:func:`_build_interaction_k` for the hwave_sc entries, with the
+    locality split of the FLEX general path.
 
-    Without the key, or when no ``R = 0`` row joins orbitals of different
-    sites, the plain table is returned (unchanged results). Otherwise the
-    table carries a locality split in which those rows are off-site: their
-    Hartree (density) part stays, their exchange crossing is left out, as
-    in the RPA ring and the FLEX general path. Every other row keeps
-    today's treatment (an ``R != 0`` row still enters the Fock slot through
-    the collapsed-bond approximation, see GitHub issue #239)."""
+    An ``R != 0`` row keeps its Hartree (density) part only: its exchange
+    crossing is left out, as in the RPA ring and the FLEX general path (issue
+    #239; it used to be collapsed into the Fock slot of the q-only vertex).
+    ``[mode.param] orbital_site`` (#234) makes an ``R = 0`` row between
+    orbitals of different sites off-site in the same sense. Without such
+    rows the plain table is returned (unchanged results)."""
     from requests.structures import CaseInsensitiveDict
     from hwave.solver.sites import (parse_orbital_site, warn_if_undeclared,
                                     cross_site_rows)
@@ -2230,25 +2300,40 @@ def _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions, n
     warn_if_undeclared(interactions, site, "hwave_sc")
     inter_k = _build_interaction_k(kx_array, ky_array, kz_array, interactions, norb)
     rows = cross_site_rows(interactions, site)
-    if not rows:
-        return inter_k
+    # (the non-bond entries refuse such Exchange / PairHop rows beforehand:
+    # _check_nonbond_offsite)
     for t in ("Exchange", "PairHop", "PairLift"):
         if t in rows:
             logger.warning(
                 "hwave_sc: %d R = 0 %s row(s) join orbitals of different sites "
                 "([mode.param] orbital_site); like off-site %s they have no "
                 "density part and are left out of the vertex.", len(rows[t]), t, t)
-    offsite = {t: {key: interactions[t][key] for key in keys} for t, keys in rows.items()}
+    # every R != 0 row is off-site: the density part of CoulombInter / Hund /
+    # Ising enters through the off-site table, nothing of it through the
+    # cross / antidiag slots (which read the on-site table)
+    offsite_keys = {t: [key for key in tbl if tuple(int(x) for x in key[0]) != (0, 0, 0)]
+                    for t, tbl in interactions.items()}
+    offsite_keys = {t: keys for t, keys in offsite_keys.items() if keys}
+    if not rows and not offsite_keys:
+        return inter_k
+    drop = {t: set(rows.get(t, ())) | set(offsite_keys.get(t, ()))
+            for t in set(rows) | set(offsite_keys)}
+    offsite = {}
+    for t, keys in drop.items():
+        if t in _NONBOND_FOCK_TYPES:
+            # in the source order, as offsite.split_locality builds it: the
+            # Fourier sums then accumulate in the same order
+            offsite[t] = {key: v for key, v in interactions[t].items() if key in keys}
     onsite = {}
     for t, tbl in interactions.items():
-        drop = set(rows.get(t, ()))
-        kept = {key: v for key, v in tbl.items() if key not in drop}
+        kept = {key: v for key, v in tbl.items() if key not in drop.get(t, ())}
         if kept:
             onsite[t] = kept
     split = (_build_interaction_k(kx_array, ky_array, kz_array, onsite, norb),
              _build_interaction_k(kx_array, ky_array, kz_array, offsite, norb))
-    logger.info("hwave_sc: orbital_site makes %s R = 0 row(s) inter-site (Hartree part "
-                "only).", ", ".join("{} {}".format(len(v), t) for t, v in rows.items()))
+    if rows:
+        logger.info("hwave_sc: orbital_site makes %s R = 0 row(s) inter-site (Hartree part "
+                    "only).", ", ".join("{} {}".format(len(v), t) for t, v in rows.items()))
     return SiteSplitInteractionK(inter_k, split)
 
 
@@ -2992,8 +3077,8 @@ def _triplet_bare_vertex(S_all, C_all, norb):
     slot, and on a gap of triplet parity the two give the SAME contribution:
     ``1/2 (C - S)`` over both slots counts an on-site ``U'``, Hund or Ising term
     twice (issue #262); an off-site row collapsed onto the q-only vertex (the
-    non-bond path) puts its Fock content there too. The density slot alone is
-    exact. In the singlet channel
+    non-bond path before issue #239, and a plain table without the locality
+    split) puts its Fock content there too. The density slot alone is exact. In the singlet channel
     the cross slot of these types carries ``S + C = 0`` and the term is right
     as it stands; the types whose pairing lives in the cross slot (Exchange)
     have ``C - S = 0`` there, so nothing is lost by dropping it here. Validated
@@ -7134,8 +7219,14 @@ def calc_eliashberg(input_dict):
 
     # --- Step 7: Build interaction in k-space ---
     logger.info("Building interactions in k-space...")
-    inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions,
-                                             norb, input_dict)
+    # only the non-bond paths read the k-space table; the bond path builds its
+    # vertices from the declarations themselves
+    inter_k = None
+    if not use_bond_channels:
+        _check_nonbond_offsite(interactions, "hwave_sc (bond_channels = false)",
+                               _nonbond_site(input_dict, norb))
+        inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions,
+                                                 norb, input_dict)
 
     # Pre-built Eliashberg operator + provenance record; only the bond path
     # sets them (every other path builds its operator from Vs_q/G2 as before).
