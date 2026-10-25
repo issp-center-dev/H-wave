@@ -330,13 +330,14 @@ class TestS5Guards(_ApproxTestCase):
         with self.assertRaisesRegex(ValueError, r"(?i)flex"):
             sc.calc_eliashberg(inp)
 
-    def test_guard_multi_orbital(self):
-        """(b) bond_channels=true + norb>1 -> error at the top level only."""
+    def test_multi_orbital_runs(self):
+        """(b) bond_channels=true + norb>1 runs (issue #239: the multi-orbital
+        bond path is validated end to end, tests/test_bond_supercell.py)."""
         ci = os.path.join(self.tmp_path, "ci2.dat")
         _write_w90(ci, 2, [((1, 0, 0), (0, 1), 0.25), ((-1, 0, 0), (1, 0), 0.25)])
         inp = _two_orbital_input(self.tmp_path, ci, bond_channels=True)
-        with self.assertRaisesRegex(ValueError, r"(?i)multi-orbital|norb"):
-            sc.calc_eliashberg(inp)
+        sc.calc_eliashberg(inp)
+        self.assertTrue(np.isfinite(_leading_eigenvalue(self.tmp_path)))
 
     def test_guard_complex_coulomb_inter(self):
         """(c) bond_channels=true + a non-real CoulombInter entry -> error."""
@@ -777,7 +778,7 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
             np.testing.assert_allclose(C[:, m, m], -V, atol=1e-13)
 
     def test_case2_correction_keeps_only_rzero_fock(self):
-        """S4.3 star (multi-orbital, exercised below the top-level norb guard):
+        """S4.3 star (multi-orbital, exercised below the entry):
         the channel-0 Fock (ab,ab) element carries ONLY V_ab(R=0), while the
         charge (aa,bb) Hartree keeps the full 2 V_ab(q); the R != 0 Fock sits
         on the bond diagonal."""

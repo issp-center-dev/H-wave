@@ -715,11 +715,10 @@ uniform Matsubara grid:
 
 .. note::
 
-   The bond-resolved pairing is validated end to end for single-orbital
-   models only. For ``norb > 1`` both entries run unchanged but log a
-   WARNING that the multi-orbital results are not yet validated (issue
-   #239); the static ``hwave_sc`` bond path (``frequency = "static"``,
-   :ref:`sc_bond_channels_static`) refuses ``norb > 1``.
+   Neither entry, nor the static ``hwave_sc`` bond path (``frequency =
+   "static"``, :ref:`sc_bond_channels_static`), restricts ``norb``; see the
+   scope note there for how multi-orbital results are validated (issue
+   #239).
 
 See :ref:`the output reference <subsec:eliashberg_bond_outputs>` for the
 complete key sets, :ref:`the configuration reference's eliashberg section
