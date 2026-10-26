@@ -1532,7 +1532,7 @@ def _auto_chi0q_tensor_scheme(files):
 
 
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
-                         precomputed_mu=None):
+                         precomputed_mu=None, prepared=None):
     """Compute chi0q internally using H-wave's RPA module.
 
     Instead of loading chi0q from a file, this function creates an RPA solver
@@ -1557,6 +1557,12 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         If provided, skip chemical potential determination and use this value
         directly. This avoids redundant eigenvalue decomposition and mu search
         when the caller has already computed mu (e.g. calc_eliashberg).
+    prepared : _MeanFieldBand, optional
+        A band already assembled by :func:`_mean_field_band` (issue #273).
+        Its RPA solver -- input read once, ``_calc_epsilon_k`` already run --
+        is reused, so chi0q is built on exactly the H0(k) the caller used
+        for mu and the kernel Green function. ``chi0q_tensor`` is then
+        ignored (the solver was constructed with the matching scheme).
 
     Returns
     -------
@@ -1565,6 +1571,13 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         - reduced: (nmat, nvol, norb, norb)
         - general: (nmat, nvol, norb, norb, norb, norb)
     """
+    if prepared is not None:
+        solver = prepared.solver
+        logger.info("Computing chi0q internally on the mean-field one-body "
+                    "band ({}; calc_scheme={})...".format(
+                        ", ".join(prepared.sources), solver.calc_scheme))
+        return _chi0q_from_prepared_solver(solver, precomputed_mu)
+
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.rpa as sol_rpa
 
@@ -1577,12 +1590,8 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
     info_log["print_step"] = info_log.get("print_step", 1)
 
     # Determine calc_scheme from chi0q_tensor option
-    if chi0q_tensor == "auto":
-        calc_scheme = _auto_chi0q_tensor_scheme(info_inputfile.get("interaction", {}))
-    elif chi0q_tensor == "general":
-        calc_scheme = "general"
-    else:
-        calc_scheme = "reduced"
+    calc_scheme = _chi0q_tensor_scheme(chi0q_tensor,
+                                       info_inputfile.get("interaction", {}))
 
     info_mode_rpa = dict(info_mode)
     info_mode_rpa["calc_scheme"] = calc_scheme
@@ -1641,6 +1650,198 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     logger.info("chi0q computed internally, shape: {}".format(chi0q.shape))
     return chi0q
+
+
+def _chi0q_tensor_scheme(chi0q_tensor, interaction_files):
+    """RPA ``calc_scheme`` for an ``[eliashberg] chi0q_tensor`` value:
+    ``"auto"`` follows :func:`_auto_chi0q_tensor_scheme`, ``"general"`` is
+    general, anything else is reduced (the historical rule)."""
+    if chi0q_tensor == "auto":
+        return _auto_chi0q_tensor_scheme(interaction_files)
+    if chi0q_tensor == "general":
+        return "general"
+    return "reduced"
+
+
+def _chi0q_from_prepared_solver(solver, precomputed_mu):
+    """chi0q of an RPA solver whose ``_calc_epsilon_k`` has already run.
+
+    Same arithmetic as the tail of :func:`_calc_chi0q_internal`; only the
+    spin-free layout reaches here (:func:`_mean_field_band` refuses the
+    others), so the block axis is always length 1.
+    """
+    beta = 1.0 / solver.T
+    if precomputed_mu is not None:
+        mu = precomputed_mu
+        logger.info("Using precomputed mu = {}".format(mu))
+    elif solver.calc_mu:
+        dist, mu = solver._find_mu(solver.Ncond / 2, solver.T)
+    else:
+        mu = solver.mu_value
+    green0, green0_tail = solver._calc_green(beta, mu)
+    chi0q = solver._calc_chi0q(green0, green0_tail, beta)
+    assert chi0q.shape[0] == 1
+    chi0q = chi0q[0]
+    logger.info("chi0q computed internally, shape: {}".format(chi0q.shape))
+    return chi0q
+
+
+# [file.input] keys that replace the bare Transfer band (RPA read_init).
+_ONE_BODY_FILE_KEYS = ("trans_mod", "green_init")
+
+
+class _MeanFieldBand(NamedTuple):
+    """The one-body band of an hwave_sc run whose input carries
+    ``trans_mod`` / ``green_init`` / an active ``Extern`` (issue #273).
+
+    Attributes
+    ----------
+    epsilon_k : ndarray, shape (norb, norb, Nx, Ny, Nz)
+        The RPA solver's assembled H0(k), in sc.py's layout.
+    solver : RPA or None
+        The RPA solver that assembled it (``_calc_epsilon_k`` already run),
+        reused for chi0q in ``chi0q_mode = "calc"``; ``None`` once released.
+    sources : tuple of str
+        Which inputs define the band (for messages).
+    same_as_bare : bool
+        True when the assembled H0(k) is bit-for-bit the RPA reader's bare
+        Transfer band (e.g. a trans_mod written for U = 0). The caller then
+        keeps its own Transfer construction, so such a run is bit-identical
+        to the run without the extra input.
+    """
+    epsilon_k: np.ndarray
+    solver: object
+    sources: tuple
+    same_as_bare: bool = False
+
+
+def _one_body_band_sources(input_dict):
+    """Inputs that make the one-body band differ from the bare Transfer.
+
+    ``trans_mod`` / ``green_init`` in ``[file.input]`` and an ``Extern``
+    table in ``[file.input.interaction]`` with a nonzero ``[mode.param]
+    coeff_extern`` (the RPA reader multiplies the field by that
+    coefficient, so a zero coefficient adds nothing). Keys are matched
+    case-insensitively.
+    """
+    from requests.structures import CaseInsensitiveDict
+    fin = (input_dict.get("file", {}) or {}).get("input", {}) or {}
+    lowered = {str(k).lower() for k in fin}
+    sources = [key for key in _ONE_BODY_FILE_KEYS if key in lowered]
+    inter = CaseInsensitiveDict(fin.get("interaction", {}) or {})
+    if "Extern" in inter:
+        param = CaseInsensitiveDict(
+            (input_dict.get("mode", {}) or {}).get("param", {}) or {})
+        coeff = param.get("coeff_extern", 0.0)
+        try:
+            active = float(np.asarray(coeff).ravel()[0]) != 0.0
+        except (TypeError, ValueError, IndexError):
+            active = True        # let the RPA reader report the bad value
+        if active:
+            sources.append("Extern")
+    return tuple(sources)
+
+
+def _warn_one_body_band_ignored(input_dict, where):
+    """WARNING for the paths that take chi and G from a FLEX run: the
+    one-body band of that run is already inside its outputs, so a
+    ``trans_mod`` / ``green_init`` / ``Extern`` in the hwave_sc input is not
+    applied again (issue #273)."""
+    sources = _one_body_band_sources(input_dict)
+    if sources:
+        logger.warning(
+            "%s is ignored by hwave_sc for %s: the susceptibilities and the "
+            "Green function are read from the FLEX output, which already "
+            "includes the one-body band of that run.",
+            " / ".join(sources), where)
+
+
+def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
+    """Assemble the one-body band through the RPA machinery (issue #273).
+
+    The band is built exactly as the internal chi0q builds it --
+    ``QLMSkInput`` + ``RPA.read_init`` + ``RPA._calc_epsilon_k`` -- so that
+    trans_mod (T + Sigma_HF written by UHFk), T + HF[green_init] and the
+    Extern field define the SAME H0(k) for chi0q, the chemical potential
+    and the kernel Green function.
+
+    Only a spin-independent band is accepted (RPA ``spin_mode ==
+    "spin-free"``): the singlet/triplet kernel carries no spin index, so a
+    spin-diagonal or spin-mixing mean field cannot be represented. Such a
+    band is refused with ``ValueError`` before chi0q is built or loaded.
+    """
+    from requests.structures import CaseInsensitiveDict
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.rpa as sol_rpa
+
+    fin = (input_dict.get("file", {}) or {}).get("input", {}) or {}
+    for key in _ONE_BODY_FILE_KEYS:
+        spellings = [k for k in fin if str(k).lower() == key]
+        if len(spellings) > 1:
+            raise ValueError(
+                "[file.input] {} is given more than once with different "
+                "spellings ({}); keys are case-insensitive.".format(
+                    key, ", ".join(repr(k) for k in spellings)))
+    ci = CaseInsensitiveDict(fin)
+    # Only the keys the band needs: chi0q_init / UHF initial files are not
+    # read here (an RPA read_init would otherwise load a chi0q_init array).
+    # The lower-case spelling is what RPA.read_init looks up.
+    info_inputfile = {"path_to_input": ci.get("path_to_input", ""),
+                      "interaction": ci.get("interaction", {})}
+    for key in _ONE_BODY_FILE_KEYS:
+        if key in ci:
+            info_inputfile[key] = ci[key]
+
+    info_log = dict(input_dict.get("log", {}) or {})
+    info_log.setdefault("print_level", 1)
+    info_log.setdefault("print_step", 1)
+    import copy
+    # deep copy: the RPA constructor normalizes [mode.param] in place, and
+    # the caller's dict has to stay as the user wrote it
+    info_mode_rpa = copy.deepcopy(dict(input_dict.get("mode", {}) or {}))
+    info_mode_rpa["calc_scheme"] = calc_scheme
+    info_mode_rpa["_orbital_site_reported"] = True
+    info_mode_rpa["enable_spin_orbital"] = _resolve_spin_orbital_flag(
+        input_dict)
+
+    logger.info("One-body band from {} (RPA H0 assembly; used for chi0q, "
+                "mu and the kernel Green function)".format(", ".join(sources)))
+    read_io = read_input_k.QLMSkInput(info_inputfile)
+    solver = sol_rpa.RPA(read_io.get_param("ham"), info_log, info_mode_rpa)
+    green_info = read_io.get_param("green")
+    green_info.update(solver.read_init(info_inputfile))
+    solver._calc_epsilon_k(green_info)
+
+    if solver.spin_mode != "spin-free":
+        raise ValueError(
+            "hwave_sc: the one-body band defined by {} is spin-dependent "
+            "(RPA classifies it as '{}'). The singlet/triplet pairing kernel "
+            "of hwave_sc carries no spin index, so a magnetic (spin-diagonal "
+            "with unequal spins, or spin-mixing) mean field or an active "
+            "Extern field cannot be represented; that needs the "
+            "spin-polarized treatment of issue #88. Only a spin-independent "
+            "trans_mod / green_init is supported.".format(
+                " / ".join(sources), solver.spin_mode))
+
+    Nx, Ny, Nz = spatial_shape
+    H0 = np.asarray(solver.H0_k)
+    if H0.shape != (1, Nx * Ny * Nz, norb, norb):
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} has shape {}, "
+            "expected {} for the {}x{}x{} grid with norb={}.".format(
+                " / ".join(sources), H0.shape,
+                (1, Nx * Ny * Nz, norb, norb), Nx, Ny, Nz, norb))
+    # RPA (1, nvol, a, b) with nvol in C order over (Nx, Ny, Nz) -- the same
+    # flattening as _green_sc_to_canonical -- to sc.py's (a, b, Nx, Ny, Nz).
+    epsilon_k = np.ascontiguousarray(
+        H0[0].reshape(Nx, Ny, Nz, norb, norb).transpose(3, 4, 0, 1, 2),
+        dtype=np.complex128)
+    bare_q = getattr(solver.ham_info, "ham_trans_q", None)
+    same_as_bare = (bare_q is not None
+                    and np.shape(bare_q) == H0[0].shape
+                    and np.array_equal(H0[0], bare_q))
+    return _MeanFieldBand(epsilon_k=epsilon_k, solver=solver,
+                          sources=tuple(sources), same_as_bare=same_as_bare)
 
 
 def _read_interaction_files(input_dict):
@@ -7108,6 +7309,7 @@ def calc_eliashberg(input_dict):
     # Dispatch to dynamic Eliashberg if requested
     if _eliashberg_frequency(input_dict) == "dynamic":
         _validate_dynamic_prereqs(input_dict)
+        _warn_one_body_band_ignored(input_dict, 'frequency = "dynamic"')
         if _bond_bool_option(eli_param, "bond_channels", False):
             # bond-resolved dynamic pairing kernel, fed by the FLEX run's
             # bond archive (the on-site solver below reads chiq_s/chiq_c)
@@ -7186,6 +7388,9 @@ def calc_eliashberg(input_dict):
             "references.",
             ("the EXTERNAL Green function '{}' ([eliashberg] bond_green)"
              .format(bond_green) if bond_green else
+             "the Green function of the mean-field one-body band ({})"
+             .format(" / ".join(_one_body_band_sources(input_dict)))
+             if _one_body_band_sources(input_dict) else
              "the BARE Green function built from the transfer Hamiltonian "
              "(set [eliashberg] bond_green to feed an external/FLEX green)"))
         logger.warning(
@@ -7200,14 +7405,49 @@ def calc_eliashberg(input_dict):
                 "bond-resolved kernel is CPU-only in v1 (GPU support is a "
                 "deferred follow-up).")
 
+    # --- One-body band (issue #273) ---
+    # trans_mod / green_init / an active Extern replace the bare Transfer
+    # band. The internal chi0q has always been built on that band; mu and
+    # every kernel Green function must come from the SAME band, or the run
+    # mixes two Hamiltonians. Built (and a spin-dependent band refused)
+    # before any chi0q is computed or loaded. The FLEX path takes chi and G
+    # from the FLEX run, whose outputs already include its one-body band.
+    band = None
+    if chi0q_mode == "flex":
+        _warn_one_body_band_ignored(input_dict, "chi0q_mode = 'flex'")
+    else:
+        band_sources = _one_body_band_sources(input_dict)
+        if band_sources:
+            if chi0q_mode == "calc" and not use_bond_channels:
+                # the same solver computes chi0q below
+                band_scheme = _chi0q_tensor_scheme(
+                    chi0q_tensor,
+                    input_dict["file"]["input"].get("interaction", {}))
+            else:
+                # band only; 'general' keeps the RPA reader from issuing its
+                # reduced-scheme advisory for a chi0q that is never built
+                band_scheme = "general"
+            band = _mean_field_band(input_dict, band_sources, band_scheme,
+                                    (Nx, Ny, Nz), norb)
+            if chi0q_mode != "calc" or use_bond_channels:
+                band = band._replace(solver=None)
+
     # --- Step 3: Setup k-mesh ---
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
     ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
 
     # --- Step 4: Build Hamiltonian and diagonalize ---
-    logger.info("Building Hamiltonian in k-space...")
-    epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+    if band is None or band.same_as_bare:
+        if band is not None:
+            logger.info("The one-body band from {} equals the Transfer band "
+                        "exactly".format(", ".join(band.sources)))
+        logger.info("Building Hamiltonian in k-space...")
+        epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+    else:
+        logger.info("Using the mean-field one-body band ({}) as the "
+                    "Hamiltonian in k-space".format(", ".join(band.sources)))
+        epsilon_k = band.epsilon_k
 
     logger.info("Diagonalizing Hamiltonian...")
     eigenvalues, eigenvectors = _calc_eigenvalues(epsilon_k)
@@ -7404,7 +7644,9 @@ def calc_eliashberg(input_dict):
         # Step 1: Load or compute chi0q
         if chi0q_mode == "calc":
             chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor,
-                                                precomputed_mu=mu)
+                                                precomputed_mu=mu,
+                                                prepared=band)
+            band = None
             # internally computed chi0q always carries the full frequency grid
             static_index = None
         else:

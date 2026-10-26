@@ -1,0 +1,607 @@
+"""hwave_sc on a mean-field one-body band (issue #273).
+
+``[file.input] trans_mod`` (the T + Sigma_HF that UHFk writes), ``green_init``
+(T + HF[G]) and an active ``Extern`` field replace the bare Transfer band in
+the RPA H0 assembly that the internal chi0q is built on. hwave_sc used to
+take the chemical potential and every kernel Green function from the BARE
+Transfer band anyway, so chi0q was evaluated at the wrong filling and the
+pairing bubble on the wrong band: silently wrong eigenvalues, or unrelated
+shape errors for spin-dependent fields.
+
+Oracle: the band a trans_mod defines is an ordinary one-body Hamiltonian, so
+a run whose Transfer file IS that band must give the same eigenvalues.
+
+Tests must be run from the repository root.
+"""
+
+import logging
+import os
+import tempfile
+import unittest
+
+import numpy as np
+
+import hwave.sc as sc
+
+NX, NY = 8, 8
+T_RUN = 0.1
+NMAT = 64
+FILLING = 0.4375
+
+
+# ---------------------------------------------------------------------------
+# model files
+# ---------------------------------------------------------------------------
+
+def _fold(i, n):
+    return i if i <= n // 2 - (1 if n % 2 == 0 else 0) else i - n
+
+
+def _bare_hr(norb):
+    """Real-space one-body table h[ix, iy, a, b] of the bare model."""
+    h = np.zeros((NX, NY, norb, norb), dtype=complex)
+    for a in range(norb):
+        for (rx, ry) in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            h[rx % NX, ry % NY, a, a] += -1.0
+        for (rx, ry) in ((1, 1), (-1, -1), (1, -1), (-1, 1)):
+            h[rx % NX, ry % NY, a, a] += 0.2
+    if norb == 2:
+        h[0, 0, 0, 1] += 0.3 + 0.2j
+        h[0, 0, 1, 0] += 0.3 - 0.2j
+        h[0, 0, 1, 1] += 0.4
+    return h
+
+
+def _nematic_hr(norb):
+    """Bare table plus a spin-free nematic mean field: x/y anisotropic
+    nearest-neighbour shift, an orbital-dependent on-site shift and (two
+    orbitals) a complex inter-orbital bond term -- complex so a transposed
+    orbital layout would change the band's eigenvectors and G."""
+    h = _bare_hr(norb).copy()
+    for a in range(norb):
+        for (rx, ry) in ((1, 0), (-1, 0)):
+            h[rx % NX, ry % NY, a, a] += -0.15
+        for (rx, ry) in ((0, 1), (0, -1)):
+            h[rx % NX, ry % NY, a, a] += 0.15
+        h[0, 0, a, a] += 0.1 * (1 - 1.5 * a)
+    if norb == 2:
+        v = 0.05 + 0.08j
+        h[1, 0, 0, 1] += v
+        h[NX - 1, 0, 1, 0] += np.conj(v)
+    # Hermiticity of the real-space table: h(R)_{ab} = conj(h(-R)_{ba})
+    hm = np.conj(np.transpose(h[(-np.arange(NX)) % NX][:, (-np.arange(NY)) % NY],
+                              (0, 1, 3, 2)))
+    assert np.allclose(h, hm)
+    return h
+
+
+def _trans_mod_from_hr(h_up, h_dn=None, mixing=None):
+    """UHFk's trans_mod layout: (cellvol, 2*norb, 2*norb), spin-block
+    orbital index s*norb + a, cell index C-ordered over (Nx, Ny, Nz)."""
+    norb = h_up.shape[-1]
+    if h_dn is None:
+        h_dn = h_up
+    tm = np.zeros((NX * NY, 2 * norb, 2 * norb), dtype=complex)
+    tm[:, :norb, :norb] = h_up.reshape(NX * NY, norb, norb)
+    tm[:, norb:, norb:] = h_dn.reshape(NX * NY, norb, norb)
+    if mixing is not None:
+        tm[0, :norb, norb:] += mixing
+        tm[0, norb:, :norb] += np.conj(mixing).T
+    return tm
+
+
+def _write_w90(path, title, h):
+    """Write a real-space table as an H-wave wannier90-like file."""
+    norb = h.shape[-1]
+    rows = []
+    for ix in range(NX):
+        for iy in range(NY):
+            for a in range(norb):
+                for b in range(norb):
+                    v = h[ix, iy, a, b]
+                    if v != 0:
+                        rows.append((_fold(ix, NX), _fold(iy, NY), 0, a + 1,
+                                     b + 1, float(v.real), float(v.imag)))
+    rvecs = sorted({r[:3] for r in rows})
+    with open(path, "w") as f:
+        f.write(title + "\n{}\n{}\n".format(norb, len(rvecs)))
+        for i in range(0, len(rvecs), 15):
+            f.write(" ".join("1" for _ in rvecs[i:i + 15]) + "\n")
+        for r in rows:
+            f.write("{} {} {} {} {} {!r} {!r}\n".format(*r))
+
+
+def _write_model(d, norb, transfer_hr=None, extern=False, inter=True):
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n{}\n".format(norb))
+        for a in range(norb):
+            f.write("0.0 0.0 0.0\n" if a == 0 else "0.5 0.5 0.0\n")
+    _write_w90(os.path.join(d, "transfer.dat"), "transfer",
+               _bare_hr(norb) if transfer_hr is None else transfer_hr)
+    u = np.zeros((NX, NY, norb, norb), dtype=complex)
+    for a in range(norb):
+        u[0, 0, a, a] = 1.4
+    _write_w90(os.path.join(d, "coulombintra.dat"), "CoulombIntra", u)
+    v = np.zeros((NX, NY, norb, norb), dtype=complex)
+    for a in range(norb):
+        for (rx, ry) in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            v[rx % NX, ry % NY, a, a] = 0.25
+    if inter:
+        _write_w90(os.path.join(d, "coulombinter.dat"), "CoulombInter", v)
+    if extern:
+        e = np.zeros((NX, NY, norb, norb), dtype=complex)
+        for a in range(norb):
+            e[0, 0, a, a] = 1.0
+        _write_w90(os.path.join(d, "extern.dat"), "Extern", e)
+
+
+def _input(d, out, *, chi0q_tensor="auto", chi0q_mode="calc", extern=False,
+           extra_file=None, extra_param=None, eliashberg=None,
+           coulomb_inter=True):
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+             "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+    if coulomb_inter:
+        inter["CoulombInter"] = "coulombinter.dat"
+    if extern:
+        inter["Extern"] = "extern.dat"
+    param = {"T": T_RUN, "CellShape": [NX, NY, 1], "SubShape": [1, 1, 1],
+             "Nmat": NMAT, "filling": FILLING, "coeff_tail": 1.0}
+    param.update(extra_param or {})
+    fin = {"path_to_input": d, "interaction": inter}
+    fin.update(extra_file or {})
+    eli = {"solver_mode": "eigenvalue", "chi0q_mode": chi0q_mode,
+           "chi0q_tensor": chi0q_tensor, "pairing_type": "singlet",
+           "init_gap": "d_x2y2", "num_eigenvalues": 4,
+           "eigenvalue_method": "arnoldi"}
+    eli.update(eliashberg or {})
+    return {"log": {"print_level": 0},
+            "mode": {"mode": "RPA", "param": param},
+            "file": {"input": fin,
+                     "output": {"path_to_output": out}},
+            "eliashberg": eli}
+
+
+class _Capture:
+    """Record lambda, the mu handed to chi0q, the kernel Green function and
+    the prepared band, by wrapping the module functions for one run."""
+
+    def __init__(self):
+        self.data = {}
+
+    def __enter__(self):
+        self._saved = {}
+
+        def wrap(name, hook):
+            orig = getattr(sc, name)
+            self._saved[name] = orig
+
+            def f(*a, **k):
+                return hook(orig, *a, **k)
+            setattr(sc, name, f)
+
+        def solve_eig(orig, *a, **k):
+            r = orig(*a, **k)
+            self.data["eig"] = np.array(r[0])
+            return r
+
+        def g2(orig, green_kw, *a, **k):
+            self.data["green"] = np.array(green_kw)
+            return orig(green_kw, *a, **k)
+
+        def chi0(orig, input_dict, chi0q_tensor="auto", precomputed_mu=None,
+                 prepared=None):
+            self.data["mu_chi0"] = precomputed_mu
+            self.data["prepared"] = prepared
+            return orig(input_dict, chi0q_tensor=chi0q_tensor,
+                        precomputed_mu=precomputed_mu, prepared=prepared)
+
+        wrap("_solve_eigenvalue", solve_eig)
+        wrap("_calc_g2", g2)
+        wrap("_calc_chi0q_internal", chi0)
+        return self
+
+    def __exit__(self, *exc):
+        for name, orig in self._saved.items():
+            setattr(sc, name, orig)
+        return False
+
+
+def _run(inp):
+    with _Capture() as cap:
+        sc.calc_eliashberg(inp)
+    return cap.data
+
+
+def _leading(data):
+    ev = data["eig"]
+    return ev[np.argmax(ev.real)].real
+
+
+def _band_k(h):
+    """eps_{ab}(k) = sum_R h_{ab}(R) e^{+ikR}, independent of both code
+    paths (direct sum, sc.py k mesh)."""
+    norb = h.shape[-1]
+    kx = 2 * np.pi * np.arange(NX) / NX
+    ky = 2 * np.pi * np.arange(NY) / NY
+    eps = np.zeros((NX, NY, norb, norb), dtype=complex)
+    for ix in range(NX):
+        for iy in range(NY):
+            ph = np.exp(1j * (kx[:, None] * _fold(ix, NX)
+                              + ky[None, :] * _fold(iy, NY)))
+            eps += ph[:, :, None, None] * h[ix, iy][None, None, :, :]
+    return eps
+
+
+# ---------------------------------------------------------------------------
+# tests
+# ---------------------------------------------------------------------------
+
+class TestTransModOracle(unittest.TestCase):
+    """A spin-free trans_mod run equals a run whose Transfer IS that band."""
+
+    def _oracle(self, norb, chi0q_tensor):
+        h = _nematic_hr(norb)
+        with tempfile.TemporaryDirectory() as d, \
+                tempfile.TemporaryDirectory() as d_or:
+            _write_model(d, norb)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(h))
+            res = _run(_input(d, os.path.join(d, "out"),
+                              chi0q_tensor=chi0q_tensor,
+                              extra_file={"trans_mod": "tm.npz"}))
+            _write_model(d_or, norb, transfer_hr=h)
+            ref = _run(_input(d_or, os.path.join(d_or, "out"),
+                              chi0q_tensor=chi0q_tensor))
+            bare = _run(_input(d, os.path.join(d, "out_b"),
+                               chi0q_tensor=chi0q_tensor))
+
+        lam, lam_ref, lam_bare = _leading(res), _leading(ref), _leading(bare)
+        self.assertAlmostEqual(lam, lam_ref, delta=1e-10)
+        # the field must matter, or the oracle proves nothing
+        self.assertGreater(abs(lam - lam_bare), 1e-2)
+
+        # mu handed to chi0q == RPA._find_mu on the trans_mod band
+        band = res["prepared"]
+        self.assertIsNotNone(band)
+        solver = band.solver
+        _dist, mu_rpa = solver._find_mu(solver.Ncond / 2, solver.T)
+        self.assertLessEqual(abs(res["mu_chi0"] - mu_rpa), 1e-12)
+
+        # kernel G == 1/(i w_n + mu - eps_tm(k)), eps_tm by direct sum
+        eps = _band_k(h)                               # (Nx, Ny, a, b)
+        g = res["green"]                               # (a, b, Nx, Ny, 1, nmat)
+        nmat = g.shape[-1]
+        mu = res["mu_chi0"]
+        for n in (nmat // 2, nmat // 2 + 3, 0):
+            wn = (2 * (n - nmat // 2) + 1) * np.pi * T_RUN
+            ginv = (1j * wn + mu) * np.eye(norb)[None, None] - eps
+            gref = np.linalg.inv(ginv)                 # (Nx, Ny, a, b)
+            gsc = np.transpose(g[:, :, :, :, 0, n], (2, 3, 0, 1))
+            self.assertLessEqual(np.abs(gsc - gref).max(), 1e-12,
+                                 "frequency index {}".format(n))
+        return lam, lam_ref, lam_bare
+
+    def test_one_orbital_reduced(self):
+        self._oracle(1, "reduced")
+
+    def test_one_orbital_general(self):
+        self._oracle(1, "general")
+
+    def test_two_orbital_reduced(self):
+        self._oracle(2, "reduced")
+
+    def test_two_orbital_general(self):
+        self._oracle(2, "general")
+
+
+class TestGreenInit(unittest.TestCase):
+    """A UHFk solution supplied as green_init defines the same band as the
+    trans_mod UHFk saved with it.
+
+    On-site interactions only: the RPA reader turns green_init into
+    T + HF[G] from the on-site (R = 0) Green function alone, so an off-site
+    Fock term of a CoulombInter run is present in UHFk's trans_mod but not
+    in the green_init band (the two inputs then define different bands, in
+    RPA as well). Two orbitals, so the orbital-dependent Hartree shift
+    changes the band beyond a constant that mu would absorb.
+    """
+
+    def test_green_init_matches_saved_trans_mod(self):
+        import hwave.qlms as qlms
+        norb = 2
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, norb, inter=False)
+            out = os.path.join(d, "uhfk")
+            qlms.run(input_dict={
+                "log": {"print_level": 0},
+                "mode": {"mode": "UHFk",
+                         "param": {"Ncond": int(round(FILLING * 2 * norb
+                                                      * NX * NY)),
+                                   "IterationMax": 3000, "EPS": 12,
+                                   "Mix": 0.5, "RndSeed": 1, "T": T_RUN,
+                                   "CellShape": [NX, NY, 1],
+                                   "SubShape": [1, 1, 1]}},
+                "file": {"input": {"path_to_input": "",
+                                   "interaction": {
+                                       "path_to_input": d,
+                                       "Geometry": "geom.dat",
+                                       "Transfer": "transfer.dat",
+                                       "CoulombIntra": "coulombintra.dat"}},
+                         "output": {"path_to_output": out, "green": "green",
+                                    "rpa": "trans_mod"}}})
+            tm = np.load(os.path.join(out, "trans_mod.npz"))["trans_mod"]
+            # paramagnetic solution (else both inputs would be refused)
+            self.assertLess(np.abs(tm[:, :norb, :norb]
+                                   - tm[:, norb:, norb:]).max(), 1e-10)
+
+            def lam(extra):
+                return _leading(_run(_input(
+                    d, os.path.join(d, "o"), coulomb_inter=False,
+                    extra_file=extra)))
+            lam_tm = lam({"trans_mod": os.path.join(out, "trans_mod.npz")})
+            lam_gi = lam({"green_init": os.path.join(out, "green.npz")})
+            lam_bare = lam(None)
+        self.assertAlmostEqual(lam_gi, lam_tm, delta=1e-8)
+        self.assertGreater(abs(lam_tm - lam_bare), 1e-3)
+
+
+class TestSpinDependentRefused(unittest.TestCase):
+    """A spin-dependent band cannot enter the spinless pairing kernel: it is
+    refused, naming issue #88, before any chi0q is computed or loaded."""
+
+    def _assert_refused(self, chi0q_mode, extra_file=None, extern=False,
+                        extra_param=None, tm=None):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, extern=extern)
+            if tm is not None:
+                np.savez(os.path.join(d, "tm.npz"), trans_mod=tm)
+            inp = _input(d, os.path.join(d, "out"), chi0q_mode=chi0q_mode,
+                         extern=extern, extra_file=extra_file,
+                         extra_param=extra_param)
+            saved = (sc._calc_chi0q_internal, sc._load_chi0q,
+                     sc._chi0q_from_prepared_solver)
+
+            def forbidden(*a, **k):
+                raise AssertionError("chi0q reached before the refusal")
+            sc._calc_chi0q_internal = forbidden
+            sc._load_chi0q = forbidden
+            sc._chi0q_from_prepared_solver = forbidden
+            try:
+                with self.assertRaises(ValueError) as cm:
+                    sc.calc_eliashberg(inp)
+            finally:
+                (sc._calc_chi0q_internal, sc._load_chi0q,
+                 sc._chi0q_from_prepared_solver) = saved
+        self.assertIn("#88", str(cm.exception))
+        return str(cm.exception)
+
+    def _ferro(self):
+        h = _bare_hr(1)
+        m = np.zeros_like(h)
+        m[0, 0, 0, 0] = 0.3
+        return _trans_mod_from_hr(h + m, h - m)
+
+    def _mixing(self):
+        return _trans_mod_from_hr(_bare_hr(1), mixing=np.array([[0.2]]))
+
+    def test_ferro_trans_mod(self):
+        for mode in ("calc", "load"):
+            with self.subTest(chi0q_mode=mode):
+                msg = self._assert_refused(
+                    mode, extra_file={"trans_mod": "tm.npz"}, tm=self._ferro())
+                self.assertIn("spin-diag", msg)
+
+    def test_spin_mixing_trans_mod(self):
+        for mode in ("calc", "load"):
+            with self.subTest(chi0q_mode=mode):
+                msg = self._assert_refused(
+                    mode, extra_file={"trans_mod": "tm.npz"},
+                    tm=self._mixing())
+                self.assertIn("spinful", msg)
+
+    def test_active_extern(self):
+        for mode in ("calc", "load"):
+            with self.subTest(chi0q_mode=mode):
+                msg = self._assert_refused(
+                    mode, extern=True, extra_param={"coeff_extern": 0.2})
+                self.assertIn("Extern", msg)
+
+    def test_mixed_case_key_is_honoured(self):
+        # 'Trans_Mod' must not be skipped: a ferro field is refused
+        self._assert_refused("calc", extra_file={"Trans_Mod": "tm.npz"},
+                             tm=self._ferro())
+
+    def test_bond_path_refuses_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"), trans_mod=self._ferro())
+            inp = _input(d, os.path.join(d, "out"),
+                         extra_file={"trans_mod": "tm.npz"},
+                         eliashberg={"bond_channels": True})
+            with self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("#88", str(cm.exception))
+
+
+class TestMixedCaseAndControl(unittest.TestCase):
+
+    def test_mixed_case_spelling_gives_same_lambda(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(_nematic_hr(1)))
+            a = _leading(_run(_input(d, os.path.join(d, "o1"),
+                                     extra_file={"trans_mod": "tm.npz"})))
+            b = _leading(_run(_input(d, os.path.join(d, "o2"),
+                                     extra_file={"Trans_Mod": "tm.npz"})))
+        self.assertEqual(a, b)
+
+    def test_duplicate_spellings_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(_bare_hr(1)))
+            inp = _input(d, os.path.join(d, "o"),
+                         extra_file={"trans_mod": "tm.npz",
+                                     "Trans_Mod": "tm.npz"})
+            with self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("more than once", str(cm.exception))
+
+    def test_bare_trans_mod_is_bit_identical(self):
+        for tensor in ("reduced", "general"):
+            with self.subTest(chi0q_tensor=tensor), \
+                    tempfile.TemporaryDirectory() as d:
+                _write_model(d, 1)
+                np.savez(os.path.join(d, "tm.npz"),
+                         trans_mod=_trans_mod_from_hr(_bare_hr(1)))
+                with_tm = _run(_input(d, os.path.join(d, "o1"),
+                                      chi0q_tensor=tensor,
+                                      extra_file={"trans_mod": "tm.npz"}))
+                without = _run(_input(d, os.path.join(d, "o2"),
+                                      chi0q_tensor=tensor))
+                self.assertTrue(np.array_equal(with_tm["eig"],
+                                               without["eig"]))
+                self.assertTrue(np.array_equal(with_tm["green"],
+                                               without["green"]))
+
+    def test_inactive_extern_keeps_bare_path(self):
+        # coeff_extern = 0 adds nothing to the band: no RPA band is built
+        self.assertEqual(sc._one_body_band_sources(
+            {"file": {"input": {"interaction": {"extern": "e.dat"}}},
+             "mode": {"param": {"coeff_extern": 0.0}}}), ())
+        self.assertEqual(sc._one_body_band_sources(
+            {"file": {"input": {"interaction": {"Extern": "e.dat"}}},
+             "mode": {"param": {"Coeff_Extern": 0.5}}}), ("Extern",))
+
+
+class TestLoadAndBond(unittest.TestCase):
+
+    def test_load_mode_uses_the_band(self):
+        """chi0q written by an RPA run on the trans_mod band, loaded by
+        hwave_sc with the same trans_mod: same lambda as the calc run."""
+        import hwave.qlms as qlms
+        h = _nematic_hr(1)
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(h))
+            out = os.path.join(d, "rpa")
+            rpa_in = _input(d, out, extra_file={"trans_mod": "tm.npz"})
+            rpa_in["mode"]["calc_scheme"] = "general"
+            rpa_in["file"]["output"]["chi0q"] = "chi0q"
+            del rpa_in["eliashberg"]
+            qlms.run(input_dict=rpa_in)
+            calc = _leading(_run(_input(d, os.path.join(d, "o_calc"),
+                                        chi0q_tensor="general",
+                                        extra_file={"trans_mod": "tm.npz"})))
+            load = _leading(_run(_input(d, out, chi0q_mode="load",
+                                        extra_file={"trans_mod": "tm.npz"})))
+            load_bare = _leading(_run(_input(d, out, chi0q_mode="load")))
+        self.assertAlmostEqual(load, calc, delta=1e-9)
+        self.assertGreater(abs(load - load_bare), 1e-3)
+
+    def test_bond_path_uses_the_band(self):
+        h = _nematic_hr(1)
+        bond = {"bond_channels": True, "bond_coeff_tail": 1.0}
+        with tempfile.TemporaryDirectory() as d, \
+                tempfile.TemporaryDirectory() as d_or:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(h))
+            lam = _leading(_run(_input(d, os.path.join(d, "o"),
+                                       extra_file={"trans_mod": "tm.npz"},
+                                       eliashberg=bond)))
+            _write_model(d_or, 1, transfer_hr=h)
+            lam_ref = _leading(_run(_input(d_or, os.path.join(d_or, "o"),
+                                           eliashberg=bond)))
+            lam_bare = _leading(_run(_input(d, os.path.join(d, "ob"),
+                                            eliashberg=bond)))
+        self.assertAlmostEqual(lam, lam_ref, delta=1e-10)
+        self.assertGreater(abs(lam - lam_bare), 1e-3)
+
+
+class TestFlexPathsUnchanged(unittest.TestCase):
+    """chi and G of the FLEX path come from the FLEX run: trans_mod in the
+    hwave_sc input changes nothing and is reported."""
+
+    def test_flex_lambda_unchanged_and_warned(self):
+        import hwave.qlms as qlms
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(_nematic_hr(1)))
+            out = os.path.join(d, "flex")
+            qlms.run(input_dict={
+                "log": {"print_level": 0},
+                "mode": {"mode": "FLEX", "calc_scheme": "reduced",
+                         "param": {"T": 0.25, "filling": FILLING,
+                                   "CellShape": [4, 4, 1],
+                                   "SubShape": [1, 1, 1], "Nmat": 32,
+                                   "IterationMax": 200, "Mix": 0.3,
+                                   "EPS": 8}},
+                "file": {"input": {"path_to_input": "",
+                                   "interaction": {
+                                       "path_to_input": d,
+                                       "Geometry": "geom.dat",
+                                       "Transfer": "transfer.dat",
+                                       "CoulombIntra": "coulombintra.dat"}},
+                         "output": {"path_to_output": out, "chiq_s": "chiq_s",
+                                    "chiq_c": "chiq_c", "green": "green"}}})
+
+            def eli(extra):
+                inp = {"log": {"print_level": 0},
+                       "mode": {"mode": "FLEX",
+                                "param": {"T": 0.25, "filling": FILLING,
+                                          "CellShape": [4, 4, 1],
+                                          "SubShape": [1, 1, 1],
+                                          "Nmat": 32}},
+                       "file": {"input": {"path_to_input": d,
+                                          "path_to_flex_output": out,
+                                          "interaction": {
+                                              "path_to_input": d,
+                                              "Geometry": "geom.dat",
+                                              "Transfer": "transfer.dat",
+                                              "CoulombIntra":
+                                                  "coulombintra.dat"}},
+                                "output": {"path_to_output":
+                                           os.path.join(d, "eli")}},
+                       "eliashberg": {"solver_mode": "eigenvalue",
+                                      "chi0q_mode": "flex",
+                                      "pairing_type": "singlet",
+                                      "num_eigenvalues": 4}}
+                inp["file"]["input"].update(extra)
+                return inp
+
+            plain = _run(eli({}))
+            with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                with_tm = _run(eli({"trans_mod": "tm.npz"}))
+        self.assertTrue(np.array_equal(plain["eig"], with_tm["eig"]))
+        self.assertTrue(any("trans_mod is ignored" in m for m in logs.output),
+                        logs.output)
+
+    def test_dynamic_warns(self):
+        from hwave.solver import eliashberg_dynamic
+        saved_solve = eliashberg_dynamic.solve_dynamic
+        saved_prereq = sc._validate_dynamic_prereqs
+        eliashberg_dynamic.solve_dynamic = lambda inp: "solved"
+        sc._validate_dynamic_prereqs = lambda inp: None
+        try:
+            inp = {"mode": {"param": {"T": 0.1, "CellShape": [4, 4, 1],
+                                      "SubShape": [1, 1, 1],
+                                      "filling": 0.5}},
+                   "file": {"input": {"green_init": "g.npz"},
+                            "output": {"path_to_output": "unused"}},
+                   "eliashberg": {"frequency": "dynamic",
+                                  "chi0q_mode": "flex"}}
+            with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                self.assertEqual(sc.calc_eliashberg(inp), "solved")
+        finally:
+            eliashberg_dynamic.solve_dynamic = saved_solve
+            sc._validate_dynamic_prereqs = saved_prereq
+        self.assertTrue(any("green_init is ignored" in m
+                            for m in logs.output), logs.output)
+
+
+if __name__ == "__main__":
+    unittest.main()

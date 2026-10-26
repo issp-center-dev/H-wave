@@ -166,6 +166,26 @@ This section controls the Eliashberg solver. Key parameters:
      ``coeff_tail = 1.0``. The chi0q file records the value it was produced
      with, and ``hwave_sc`` warns on a mismatch when loading.
 
+  .. note::
+
+     **Mean-field one-body band.** ``[file.input] trans_mod`` (the one-body
+     Hamiltonian written by UHFk), ``green_init`` and an ``Extern`` field
+     with a nonzero ``coeff_extern`` replace the ``Transfer`` band. With
+     ``chi0q_mode = "calc"`` or ``"load"``, and with
+     ``bond_channels = true``, ``hwave_sc`` uses that band for
+     :math:`\chi_0(\mathbf{q})`, for the chemical potential and for the Green
+     function of the pairing kernel, so all three describe the same
+     Hamiltonian. For ``"load"``, give the same ``trans_mod`` /
+     ``green_init`` as the RPA run that wrote the chi0q file. The keys are
+     case-insensitive. Only a spin-independent band is supported, because the
+     singlet/triplet pairing kernel has no spin index. A spin-dependent band
+     (a magnetic ``trans_mod`` or ``green_init``, or an active ``Extern``)
+     is refused with an error before :math:`\chi_0(\mathbf{q})` is computed or
+     loaded. The spin-polarized case is tracked in issue #88. With
+     ``chi0q_mode = "flex"`` and ``frequency = "dynamic"`` these keys are not
+     used, and a warning says so: the susceptibilities and the Green function
+     come from the FLEX run, which already includes its own one-body band.
+
   .. warning::
 
      **Inputs from a pre-fix** ``calc_scheme = "general"`` **FLEX run.** That
