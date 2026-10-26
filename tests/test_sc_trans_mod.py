@@ -722,7 +722,12 @@ class TestAssembledBandCheck(unittest.TestCase):
         # on-site Extern 1.0: H_up - H_down = 2 * coeff_extern
         rows = [(0, 0, 0, 1, 1, 1.0)]
         band = self._band(extern_rows=rows, coeff=0.4e-10)
-        self.assertTrue(band.same_as_bare)
+        # accepted, and the band used is the checked up-up block: Extern
+        # included (bare + coeff), not dropped
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        bare = _band_k(_bare_hr(1))
+        self.assertLess(np.abs(eps - (bare + 0.4e-10)).max(), 1e-13)
+        self.assertFalse(band.same_as_bare)
         with self.assertRaises(ValueError) as cm:
             self._band(extern_rows=rows, coeff=0.6e-10)
         self.assertIn("#88", str(cm.exception))
@@ -894,6 +899,130 @@ class TestExternalBondGreen(unittest.TestCase):
                         "{} is ignored".format(name) in msg
                         and "bond_green" in msg
                         for msg in logs.output), logs.output)
+
+
+class TestCheckedBandIsUsedBand(unittest.TestCase):
+    """The band that is used is exactly the band that was checked."""
+
+    def test_check_pass_restores_mutated_hamiltonian_arrays(self):
+        # a stand-in solver whose assembly modifies ham_trans_r in place,
+        # as RPA's spin-orbital green_init branch does
+        class _Ham:
+            pass
+
+        class _Solver:
+            norb = 1
+
+            def __init__(self):
+                self.ham_info = _Ham()
+                self.ham_info.ham_trans_r = np.ones((4, 2, 2), complex)
+                self.ham_info.ham_trans_q = np.ones((4, 2, 2), complex)
+                self.ham_info.ham_extern_r = None
+                self.ham_info.ham_extern_q = None
+
+            def _calc_epsilon_k(self, gi):
+                self.ham_info.ham_trans_r[0] += 7.0     # in-place, as RPA
+                self.H0_k = np.zeros((1, 4, 2, 2), complex)
+                self._find_block_diagonal(None)
+
+        solver = _Solver()
+        before = solver.ham_info.ham_trans_r.copy()
+        up = sc._checked_band(solver, {}, ("green_init",))
+        self.assertTrue(np.array_equal(solver.ham_info.ham_trans_r, before))
+        self.assertEqual(up.shape, (4, 1, 1))
+        self.assertFalse(hasattr(solver, "_find_block_diagonal"))
+
+    def test_green_init_band_equals_single_rpa_assembly(self):
+        import hwave.qlmsio.read_input_k as rik
+        import hwave.solver.rpa as rpa
+        norb = 2
+        g = np.zeros((NX * NY, 2, norb, 2, norb), dtype=complex)
+        for s_ in range(2):
+            g[0, s_, 0, s_, 0] = 0.6
+            g[0, s_, 1, s_, 1] = 0.3
+            g[0, s_, 0, s_, 1] = g[0, s_, 1, s_, 0] = 0.05
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, norb)
+            np.savez(os.path.join(d, "g.npz"), green=g)
+            inp = _input(d, os.path.join(d, "o"),
+                         extra_file={"green_init": "g.npz"})
+            band = sc._mean_field_band(inp, ("green_init",), "general",
+                                       (NX, NY, 1), norb)
+            # a fresh RPA solver, one assembly
+            info = {"path_to_input": d,
+                    "interaction": inp["file"]["input"]["interaction"],
+                    "green_init": "g.npz"}
+            rio = rik.QLMSkInput(info)
+            fresh = rpa.RPA(rio.get_param("ham"), {"print_level": 0},
+                            {"mode": "RPA", "calc_scheme": "general",
+                             "param": dict(inp["mode"]["param"])})
+            gi = rio.get_param("green")
+            gi.update(fresh.read_init(info))
+            fresh._calc_epsilon_k(gi)
+        self.assertTrue(np.array_equal(band.solver.ham_info.ham_trans_r,
+                                       fresh.ham_info.ham_trans_r))
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        ref = np.asarray(fresh.H0_k)[0].reshape(NX, NY, norb, norb)
+        self.assertLess(np.abs(eps - ref).max(), 1e-12)
+        # and the chi0q solver holds exactly that band
+        self.assertTrue(np.array_equal(
+            np.asarray(band.solver.H0_k)[0],
+            eps.reshape(NX * NY, norb, norb)))
+
+    def test_spin_orbital_green_init_is_refused_upstream(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            inp = _input(d, os.path.join(d, "o"),
+                         extra_file={"green_init": "g.npz"})
+            inp["mode"]["enable_spin_orbital"] = True
+            with self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("enable_spin_orbital", str(cm.exception))
+
+    def test_extern_cancelling_a_split_with_large_offset(self):
+        """trans_mod = h + 1e3 with a +-0.3 spin split, cancelled by an
+        on-site Extern with coeff_extern = -0.3: the COMBINED band is
+        spin-free and accepted, and the band used is that combined band."""
+        h = _nematic_hr(1)
+        off = np.zeros_like(h)
+        off[0, 0, 0, 0] = 1.0e3
+        sp = np.zeros_like(h)
+        sp[0, 0, 0, 0] = 0.3
+        tm = _trans_mod_from_hr(h + off + sp, h + off - sp)
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, extern=True)
+            np.savez(os.path.join(d, "tm.npz"), trans_mod=tm)
+            inp = _input(d, os.path.join(d, "o"), extern=True,
+                         extra_file={"trans_mod": "tm.npz"},
+                         extra_param={"coeff_extern": -0.3})
+            band = sc._mean_field_band(inp, sc._one_body_band_sources(inp),
+                                       "general", (NX, NY, 1), 1)
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        self.assertLess(np.abs(eps - (_band_k(h) + 1.0e3)).max(), 1e-10)
+
+
+class TestNonFiniteRefused(unittest.TestCase):
+
+    def _refused(self, mode, coeff, nan_row=False, bond=False):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, extern=True)
+            if nan_row:
+                with open(os.path.join(d, "extern.dat"), "w") as f:
+                    f.write("Extern\n1\n1\n1\n0 0 0 1 1 nan 0.0\n")
+            inp = _input(d, os.path.join(d, "o"), chi0q_mode=mode,
+                         extern=True, extra_param={"coeff_extern": coeff},
+                         eliashberg={"bond_channels": True} if bond else None)
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("non-finite", str(cm.exception))
+
+    def test_nan_inf_coeff_and_nan_table(self):
+        for mode, bond in (("calc", False), ("load", False), ("calc", True)):
+            for coeff, nan_row in ((float("nan"), False),
+                                   (float("inf"), False), (0.2, True)):
+                with self.subTest(mode=mode, bond=bond, coeff=coeff,
+                                  nan_row=nan_row):
+                    self._refused(mode, coeff, nan_row=nan_row, bond=bond)
 
 if __name__ == "__main__":
     unittest.main()

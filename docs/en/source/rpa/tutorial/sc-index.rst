@@ -186,8 +186,9 @@ This section controls the Eliashberg solver. Key parameters:
      or the ``Transfer`` band plus the Hartree-Fock term of ``green_init``,
      plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
      may differ, and its spin-mixing blocks may be nonzero, by at most an
-     absolute :math:`10^{-10}` in energy units. An ``Extern`` contribution
-     within that bound is dropped. The spin-polarized case is tracked in
+     absolute :math:`10^{-10}` in energy units, and all entries must be
+     finite. The checked band itself (its up-up block, ``Extern`` included)
+     is the band used. The spin-polarized case is tracked in
      issue #88. With ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``,
      and with an external ``bond_green``, these keys are not used and a
      warning says so: the susceptibilities and the Green function come from

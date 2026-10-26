@@ -1792,29 +1792,44 @@ def _refuse_spin_dependent(what, detail):
 
 
 class _AssembledH0Ready(Exception):
-    """Internal sentinel: stops the check pass of
-    :func:`_assembled_band_spin_dependence` once H0(k) is assembled, before
-    RPA diagonalizes it."""
+    """Internal sentinel: stops the check pass of :func:`_checked_band`
+    once H0(k) is assembled, before RPA diagonalizes it."""
 
 
-def _assembled_band_spin_dependence(solver, green_info):
-    """``(splitting, mixing)`` of the ASSEMBLED one-body H0(k) of ``solver``.
+# Interaction/Hamiltonian arrays of the RPA solver that _calc_epsilon_k can
+# modify in place (the spin-orbital green_init branch of _calc_trans_mod adds
+# the HF term into a view of ham_trans_r; the trans_mod branch adds Extern
+# into the green_info array). The check pass restores all of them.
+_EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
+                     "ham_extern_q")
 
-    RPA's ``_calc_epsilon_k`` collapses a spin-free H0 to one spin block
-    after a RELATIVE comparison (``np.allclose``), which would discard the
-    down block of a band with a large common offset. The check pass
-    therefore assembles H0 with the solver's ``_keep_spinful`` switch (the
-    uncollapsed ``2*norb`` form) and stops it before the
-    eigendecomposition. ``green_info`` is not modified (the trans_mod
-    branch adds the Extern term in place, so it gets a copy).
 
-    Returns the max |up-up - down-down| and the max |spin-mixing| entry.
-    An Extern on the bare Transfer band (no trans_mod / green_init) is
-    assembled by RPA directly as two spin-diagonal blocks.
+def _checked_band(solver, green_info, sources):
+    """Assemble the one-body H0(k) ONCE, check it, and return its spin-free
+    block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
+
+    The assembly is RPA's own ``_calc_epsilon_k`` (trans_mod, or T +
+    HF[green_init], plus coeff_extern * Extern), run with the solver's
+    ``_keep_spinful`` switch so the two spin blocks stay uncollapsed (RPA's
+    own collapse is a RELATIVE ``np.allclose`` test, which a large common
+    offset defeats), and stopped before the eigendecomposition. The pass is
+    transactional: ``green_info`` is copied and every Hamiltonian array the
+    assembly can modify is restored afterwards.
+
+    The checked H0 must be finite, its up-up and down-down blocks must agree
+    and its spin-mixing blocks vanish within the absolute
+    :data:`SPIN_FREE_ATOL`; otherwise ``ValueError``. The up-up block of the
+    checked H0 is returned (Extern included).
     """
+    ham = solver.ham_info
+    snapshot = {}
+    for name in _EPS_K_HAM_ARRAYS:
+        val = getattr(ham, name, None)
+        snapshot[name] = None if val is None else np.array(val, copy=True)
     gi = green_info.copy()
-    if "trans_mod" in gi:
-        gi["trans_mod"] = np.array(gi["trans_mod"], copy=True)
+    for key in ("trans_mod", "green_init"):
+        if key in gi:
+            gi[key] = np.array(gi[key], copy=True)
 
     def _stop(*args, **kwargs):
         raise _AssembledH0Ready()
@@ -1822,19 +1837,70 @@ def _assembled_band_spin_dependence(solver, green_info):
     solver._keep_spinful = True
     solver._find_block_diagonal = _stop      # instance override, removed below
     try:
-        solver._calc_epsilon_k(gi)
+        # non-finite inputs are reported explicitly below
+        with np.errstate(invalid="ignore", over="ignore"):
+            solver._calc_epsilon_k(gi)
     except _AssembledH0Ready:
         pass
     finally:
         del solver._find_block_diagonal
         solver._keep_spinful = False
-    H0 = np.asarray(solver.H0_k)
+        for name, val in snapshot.items():
+            setattr(ham, name, val)
+    H0 = np.array(solver.H0_k, dtype=np.complex128, copy=True)
     norb = solver.norb
-    if H0.shape[0] == 2:                       # (2, nvol, norb, norb)
-        return float(np.max(np.abs(H0[0] - H0[1]))), 0.0
-    if H0.shape[-1] == 2 * norb:               # (1, nvol, 2norb, 2norb)
-        return _spin_dependence(H0[0], norb)
-    return 0.0, 0.0                            # already spin-free form
+    what = " / ".join(sources)
+
+    if not np.all(np.isfinite(H0)):
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} has non-finite "
+            "(NaN or Inf) entries. Check [mode.param] coeff_extern, the "
+            "Extern file and the trans_mod / green_init file.".format(what))
+
+    if H0.shape[0] == 2:                       # Extern on the Transfer band
+        up = H0[0]
+        split, mix = float(np.max(np.abs(H0[0] - H0[1]))), 0.0
+    elif H0.shape[-1] == 2 * norb:             # (1, nvol, 2norb, 2norb)
+        split, mix = _spin_dependence(H0[0], norb)
+        up = H0[0].reshape(-1, 2, norb, 2, norb)[:, 0, :, 0, :]
+    else:                                      # already one spin-free block
+        up, split, mix = H0[0], 0.0, 0.0
+    if not (np.isfinite(split) and np.isfinite(mix)):
+        raise ValueError(
+            "hwave_sc: the spin comparison of the band assembled from {} is "
+            "not finite. Check [mode.param] coeff_extern, the Extern file "
+            "and the trans_mod / green_init file.".format(what))
+    if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
+        _refuse_spin_dependent(
+            what, "assembled H0(k): max |H_up - H_down| = {:.3e}, max "
+            "|spin-mixing| = {:.3e}".format(split, mix))
+    return np.ascontiguousarray(up)
+
+
+def _load_band_into_solver(solver, up):
+    """Make ``solver`` diagonalize exactly ``up`` (the checked band) for
+    chi0q: it is handed to RPA's own ``_calc_epsilon_k`` as an explicitly
+    spin-free trans_mod (both spin blocks equal to ``up``, no mixing), with
+    the Extern term switched off for that call because it is already inside
+    ``up``. RPA's H0_k must then equal ``up`` exactly."""
+    nvol, norb, _ = up.shape
+    tm = np.zeros((nvol, 2 * norb, 2 * norb), dtype=np.complex128)
+    tm[:, :norb, :norb] = up
+    tm[:, norb:, norb:] = up
+    ham = solver.ham_info
+    saved_extern = ham.ham_extern_q
+    ham.ham_extern_q = None
+    try:
+        solver._calc_epsilon_k({"trans_mod": tm})
+    finally:
+        ham.ham_extern_q = saved_extern
+    H0 = np.asarray(solver.H0_k)
+    if (solver.spin_mode != "spin-free" or H0.shape != (1,) + up.shape
+            or not np.array_equal(H0[0], up)):
+        raise RuntimeError(
+            "hwave_sc: the RPA solver did not reproduce the checked "
+            "one-body band (spin_mode={}, shape {}); refusing to compute "
+            "chi0q on a different band.".format(solver.spin_mode, H0.shape))
 
 
 def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
@@ -1848,15 +1914,15 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
 
     Only a spin-independent band is accepted: the singlet/triplet kernel
     carries no spin index, so a spin-diagonal or spin-mixing mean field
-    cannot be represented. The check is made on the band RPA assembles
-    (:func:`_assembled_band_spin_dependence`, absolute tolerance
+    cannot be represented. The band is assembled ONCE by RPA
+    (:func:`_checked_band`: finiteness, then the absolute tolerance
     :data:`SPIN_FREE_ATOL`), after the input files are read by the RPA
     readers and before H0 is diagonalized -- so before any chi0q, pair
-    bubble or kernel is built, and before a chi0q file is loaded. A band
-    that passes is assembled again for use; an Extern contribution within
-    the tolerance is dropped there (RPA would otherwise keep a two-block
-    spin-diagonal form). The RPA classification afterwards stays as a
-    backstop.
+    bubble or kernel is built, and before a chi0q file is loaded. The
+    checked band (its up-up block, Extern included) is the band used for
+    epsilon(k), mu, the kernel Green function and -- through
+    :func:`_load_band_into_solver`, which verifies RPA reproduces it
+    exactly -- chi0q.
     """
     from requests.structures import CaseInsensitiveDict
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1899,34 +1965,21 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
     green_info = read_io.get_param("green")
     green_info.update(solver.read_init(info_inputfile))
 
-    # Spin-independence of the assembled band, before H0 is diagonalized
-    # and before any chi0q / pair-bubble / kernel work.
-    split, mix = _assembled_band_spin_dependence(solver, green_info)
-    if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
-        _refuse_spin_dependent(
-            " / ".join(sources),
-            "assembled H0(k): max |H_up - H_down| = {:.3e}, max "
-            "|spin-mixing| = {:.3e}".format(split, mix))
-    if "Extern" in sources:
-        logger.info("Extern contribution is within SPIN_FREE_ATOL; dropped "
-                    "from the band")
-        solver.ham_info.ham_extern_q = None
-    solver._calc_epsilon_k(green_info)
-
-    if solver.spin_mode != "spin-free":
-        # backstop: the assembled-band check above should have refused
-        _refuse_spin_dependent(" / ".join(sources),
-                               "RPA classifies it as '{}'".format(
-                                   solver.spin_mode))
+    # Assemble the band ONCE, check it (spin independence, finiteness),
+    # before any diagonalization and before any chi0q / pair-bubble /
+    # kernel work; the checked band is the band that is used.
+    up = _checked_band(solver, green_info, sources)
 
     Nx, Ny, Nz = spatial_shape
-    H0 = np.asarray(solver.H0_k)
-    if H0.shape != (1, Nx * Ny * Nz, norb, norb):
+    if up.shape != (Nx * Ny * Nz, norb, norb):
         raise ValueError(
             "hwave_sc: the one-body band assembled from {} has shape {}, "
             "expected {} for the {}x{}x{} grid with norb={}.".format(
-                " / ".join(sources), H0.shape,
-                (1, Nx * Ny * Nz, norb, norb), Nx, Ny, Nz, norb))
+                " / ".join(sources), up.shape,
+                (Nx * Ny * Nz, norb, norb), Nx, Ny, Nz, norb))
+    # chi0q is computed by this solver on exactly the checked band
+    _load_band_into_solver(solver, up)
+    H0 = up[np.newaxis]
     # RPA (1, nvol, a, b) with nvol in C order over (Nx, Ny, Nz) -- the same
     # flattening as _green_sc_to_canonical -- to sc.py's (a, b, Nx, Ny, Nz).
     epsilon_k = np.ascontiguousarray(
