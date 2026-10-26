@@ -620,6 +620,48 @@ class TestFlexMode(unittest.TestCase):
         dense0 = self._dense_spectrum(inp, chi0, green)
         self.assertGreater(abs(dense0[np.argmax(dense0.real)] - lead), 1e-4 * abs(lead))
 
+    def test_requires_chi0q_archive(self):
+        """Without the run's chi0q the vertex cannot be checked: refused
+        before the green or any vertex is built."""
+        bad = os.path.join(self.d, "flex_no_chi0q")
+        self.addCleanup(shutil.rmtree, bad, True)
+        shutil.copytree(self.flex, bad)
+        os.remove(os.path.join(bad, "chi0q.npz"))
+        with mock.patch.object(
+                sc, "_load_flex_green",
+                side_effect=AssertionError("green read before the check")), \
+                mock.patch.object(
+                    sc, "_so_rpa_vertex",
+                    side_effect=AssertionError("vertex built before the check")):
+            self._refused(r"chi0q\.npz' not found.*\[file\.output\] chi0q.*"
+                          r"\[eliashberg\] flex_chi0q",
+                          _flex_input(self.d, self.files, bad,
+                                      out=self._out("out_no_chi0q")))
+
+    def test_file_keys_are_case_insensitive(self):
+        """``flex_chiq`` / ``flex_chi0q`` / ``flex_green`` under mixed-case
+        keys select renamed copies; the result equals the default names'."""
+        ren = os.path.join(self.d, "flex_renamed")
+        self.addCleanup(shutil.rmtree, ren, True)
+        os.makedirs(ren)
+        for src, dst in (("chiq.npz", "renamed.npz"), ("chi0q.npz", "bare.npz"),
+                         ("green.npz", "g2.npz")):
+            shutil.copy(os.path.join(self.flex, src), os.path.join(ren, dst))
+        ref = _run(_flex_input(self.d, self.files, self.flex,
+                               out=self._out("out_default")))
+        keys = {"Flex_ChiQ": "renamed.npz", "Flex_Chi0Q": "bare.npz",
+                "FLEX_GREEN": "g2.npz"}
+        with self.subTest(keys=keys):
+            got = _run(_flex_input(self.d, self.files, ren, keys,
+                                   out=self._out("out_renamed")))
+            np.testing.assert_array_equal(got["evs"], ref["evs"])
+        # a lower-cased name the files do not have is not silently defaulted
+        for k in keys:
+            with self.subTest(missing=k):
+                self._refused(r"not found", _flex_input(
+                    self.d, self.files, ren, dict(keys, **{k: "absent.npz"}),
+                    out=self._out("out_absent")))
+
     def test_vertex_mismatch_is_refused(self):
         """Interaction files that do not reproduce the FLEX run's vertex are
         refused through the stored chi0q."""
