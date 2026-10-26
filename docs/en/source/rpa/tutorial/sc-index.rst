@@ -276,7 +276,14 @@ This section controls the Eliashberg solver. Key parameters:
   ``chi0q_mode = "load"`` a band beyond ``1e-10`` is refused, because the
   loaded chi0q was computed by the RPA run on its own band (use
   ``"calc"``, or regenerate chi0q from a spin-symmetric band). A value
-  below ``1e-10`` (for example ``0``) tightens the default check.
+  below ``1e-10`` (for example ``0``) tightens this band check.
+  ``spin_free_tol`` has a second use with ``green_init``: the Green function
+  itself is checked on its dimensionless entries with the tolerance
+  :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`, so the G check is
+  floored at ``1e-10`` and is never tightened below it. A ``green_init``
+  within that tolerance can still give a band whose spin splitting exceeds
+  the band tolerance at large interaction strengths; such a band is refused
+  with the band-level message.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an

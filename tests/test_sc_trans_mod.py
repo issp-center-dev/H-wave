@@ -1526,22 +1526,71 @@ class TestGreenInitFockOmission(unittest.TestCase):
                 self.assertIn("green_init describes a spin-dependent state",
                               str(cm.exception))
 
-    def test_classification_uses_the_folded_grid(self):
-        # PairHop at R = (+-NX, 0, 0) folds onto R = 0: on-site, no warning
-        tbl = {((NX, 0, 0), (0, 1)): 0.3, ((-NX, 0, 0), (1, 0)): 0.3}
-        self.assertEqual(sc._green_init_fock_omissions(
-            {"PairHop": tbl}, shape=(NX, NY, 1)), [])
-        self.assertEqual(sc._green_init_fock_omissions({"PairHop": tbl}),
-                         ["off-site PairHop"])
-        # rows one cell length apart that cancel on the grid
+    @staticmethod
+    def _rpa_drops_offsite_pairhop(rows, site=None):
+        """Whether RPA itself reports (and drops) off-site PairHop rows for
+        this declaration (two orbitals)."""
+        from hwave.qlmsio import read_input_k
+        import hwave.solver.rpa as rpa
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 2, inter=False)
+            with open(os.path.join(d, "x.dat"), "w") as f:
+                f.write("PairHop\n2\n{}\n{}\n".format(
+                    len(rows), " ".join("1" for _ in rows)))
+                for (rx, ry, a, b, v) in rows:
+                    f.write("{} {} 0 {} {} {!r} 0.0\n".format(
+                        rx, ry, a + 1, b + 1, v))
+            fin = {"path_to_input": d,
+                   "interaction": {"path_to_input": d,
+                                   "Geometry": "geom.dat",
+                                   "Transfer": "transfer.dat",
+                                   "PairHop": "x.dat"}}
+            param = {"T": 0.1, "CellShape": [NX, NY, 1],
+                     "SubShape": [1, 1, 1], "Nmat": 8, "filling": 0.5}
+            if site is not None:
+                param["orbital_site"] = list(site)
+            records = []
+            handler = logging.Handler()
+            handler.emit = records.append
+            lg = logging.getLogger("hwave.solver.rpa")
+            lg.addHandler(handler)
+            try:
+                ham = read_input_k.QLMSkInput(fin).get_param("ham")
+                rpa.RPA(ham, {"print_level": 0},
+                        {"mode": "RPA", "calc_scheme": "general",
+                         "param": param})
+            finally:
+                lg.removeHandler(handler)
+        dropped = any("PairHop declares" in r.getMessage() for r in records)
+        return dropped, ham
+
+    def test_pairhop_locality_matches_rpa(self):
+        """PairHop locality is RPA's: the DECLARED R and orbital labels
+        (with orbital_site), not the folded grid."""
+        cases = [
+            # (rows, orbital_site, RPA drops, our warning)
+            ([(NX, 0, 0, 1, 0.3), (-NX, 0, 1, 0, 0.3)], None, True, True),
+            ([(1, 0, 0, 1, 0.3), (-1, 0, 1, 0, 0.3)], None, True, True),
+            ([(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], None, False, False),
+            ([(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], (0, 1), True, True),
+            # declared off-site rows that cancel once folded: RPA drops
+            # them, UHFk folds them to zero -- neither band has them, so
+            # there is nothing to warn about
+            ([(1, 0, 0, 1, 0.3), (1 - NX, 0, 0, 1, -0.3),
+              (-1, 0, 1, 0, 0.3), (NX - 1, 0, 1, 0, -0.3)],
+             None, True, False),
+        ]
+        for rows, site, rpa_drops, warns in cases:
+            with self.subTest(rows=rows, site=site):
+                dropped, ham = self._rpa_drops_offsite_pairhop(rows, site)
+                self.assertEqual(dropped, rpa_drops)
+                reasons = sc._green_init_fock_omissions(
+                    ham, site=site, shape=(NX, NY, 1))
+                self.assertEqual(bool(reasons), warns, reasons)
+        # rows of an any-row type one cell length apart that cancel
         tbl = {((1, 0, 0), (0, 0)): 0.3, ((1 - NX, 0, 0), (0, 0)): -0.3}
         self.assertEqual(sc._green_init_fock_omissions(
             {"CoulombInter": tbl}, shape=(NX, NY, 1)), [])
-        # R = 0 PairHop between orbitals on different sites is off-site
-        tbl = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
-        self.assertEqual(sc._green_init_fock_omissions({"PairHop": tbl}), [])
-        self.assertEqual(sc._green_init_fock_omissions(
-            {"PairHop": tbl}, site=(0, 1)), ["off-site PairHop"])
 
     def test_orbital_site_pairhop_warns_through_the_full_path(self):
         g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
@@ -1763,6 +1812,46 @@ class TestHermitianRtolPinned(unittest.TestCase):
                             self.assertRaises(ValueError) as cm:
                         sc.calc_eliashberg(inp)
                     self.assertIn("not Hermitian", str(cm.exception))
+
+
+class TestGreenInitGuardsPinned(unittest.TestCase):
+
+    def _call(self, g, tol=None):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, inter=False)
+            np.savez(os.path.join(d, "g.npz"), green=g)
+            inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
+                         extra_file={"green_init": "g.npz"})
+            kw = {} if tol is None else {"spin_free_tol": tol}
+            return sc._mean_field_band(inp, ("green_init",), "general",
+                                       (NX, NY, 1), 1, **kw)
+
+    @staticmethod
+    def _g():
+        g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
+        g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
+        return g
+
+    def test_nan_in_a_cell_rpa_does_not_read_is_refused(self):
+        g = self._g()
+        g[1, 0, 0, 0, 0] = np.nan          # R != 0: not in the Hartree band
+        with self.assertRaises(ValueError) as cm:
+            self._call(g)
+        self.assertIn("non-finite", str(cm.exception))
+
+    def test_g_tolerance_is_floored_at_1e_10(self):
+        # spin_free_tol = 0 tightens the band check, not the G check: G
+        # noise of 5e-11 (in a cell the Hartree band does not read, so the
+        # band itself is exactly spin-free) is still accepted
+        g = self._g()
+        g[1, 0, 0, 0, 0] = 0.1 + 5e-11
+        g[1, 1, 0, 1, 0] = 0.1
+        self.assertIsNotNone(self._call(g, tol=0.0))
+        g[1, 0, 0, 0, 0] = 0.1 + 5e-10   # above the floor: refused
+        with self.assertRaises(ValueError) as cm:
+            self._call(g, tol=0.0)
+        self.assertIn("green_init describes a spin-dependent state",
+                      str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

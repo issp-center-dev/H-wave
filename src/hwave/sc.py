@@ -1993,7 +1993,7 @@ def _load_band_into_solver(solver, up):
 # and inter-site at R = 0 under [mode.param] orbital_site): the two differ
 # for EVERY row of CoulombInter / Hund / Ising / Exchange (on-site
 # intra-orbital rows included), for OFF-SITE rows of PairHop (off-site in
-# RPA's sense: R != 0 on the folded grid, or orbitals on different sites),
+# RPA's sense: declared R != 0, or orbitals on different sites),
 # and never for CoulombIntra or PairLift. tests/test_sc_trans_mod.py
 # (TestGreenInitFockOmission) recomputes that comparison and pins this
 # table against it.
@@ -2022,10 +2022,15 @@ def _fold_rows(table, shape):
 
 def _green_init_fock_omissions(ham_param, site=None, shape=None):
     """Declarations whose Fock term the green_init band leaves out (see the
-    table above), classified on the folded table. ``Coulomb`` is split as
-    the readers split it (``wan90.split_coulomb``) and counts through its
-    CoulombInter part. ``site`` is the parsed ``orbital_site`` (RPA's
-    ``sites.is_onsite`` decides on-site vs off-site)."""
+    table above). ``Coulomb`` is split as the readers split it
+    (``wan90.split_coulomb``) and counts through its CoulombInter part.
+
+    PairHop locality is decided exactly as RPA decides it: on the DECLARED
+    (pre-fold) R and orbital labels, with ``sites.is_onsite`` and the
+    parsed ``orbital_site`` ``site`` -- a row declared at R = (Nx, 0, 0) is
+    off-site for RPA (and dropped) even though it folds onto R = 0. The
+    grid ``shape`` is used only to detect rows that cancel once folded
+    (they contribute nothing to either band)."""
     from hwave.solver.sites import is_onsite
     reasons = []
     for key, table in (ham_param or {}).items():
@@ -2037,14 +2042,15 @@ def _green_init_fock_omissions(ham_param, site=None, shape=None):
             if _fold_rows(inter, shape):
                 reasons.append("{} (its CoulombInter part)".format(key))
             continue
-        rows = _fold_rows(table, shape)
-        if not rows:
-            continue
         if k in _GREEN_INIT_FOCK_ANY_ROW:
-            reasons.append(str(key))
-        elif k in _GREEN_INIT_FOCK_OFFSITE_ROW and any(
-                not is_onsite(r, o, site) for r, o in rows):
-            reasons.append("off-site {}".format(key))
+            if _fold_rows(table, shape):
+                reasons.append(str(key))
+        elif k in _GREEN_INIT_FOCK_OFFSITE_ROW:
+            # RPA's rule: locality of each DECLARED row (pre-fold R)
+            offsite = {(r, o): v for (r, o), v in table.items()
+                       if v != 0 and not is_onsite(r, o, site)}
+            if _fold_rows(offsite, shape):
+                reasons.append("off-site {}".format(key))
     return sorted(set(reasons))
 
 
