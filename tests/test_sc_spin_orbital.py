@@ -203,6 +203,76 @@ def _reverse(gap):
     return sc._reverse_k_and_orbital(gap)
 
 
+def _clusters(vals, vecs, rtol=1e-8):
+    """Group eigenvalues equal to ``rtol`` and give each cluster's even
+    and odd dimension (k -> -k with the orbital transpose): for a
+    degenerate cluster the solver may return parity-mixed eigenvectors,
+    so the dimensions are the ranks of the projected span."""
+    order = np.argsort(vals.real)
+    out = []
+    for i in order:
+        if out and abs(vals[i] - out[-1][0]) <= rtol * abs(out[-1][0]):
+            out[-1][1].append(i)
+        else:
+            out.append([vals[i], [i]])
+    res = []
+    for v, idx in out:
+        V = np.stack([vecs[i].ravel() for i in idx], axis=1)
+        dims = []
+        for ch in ("singlet", "triplet"):
+            P = np.stack([sc._project_gap_parity(vecs[i], ch).ravel()
+                          for i in idx], axis=1)
+            sv = np.linalg.svd(P, compute_uv=False)
+            dims.append(int(np.sum(sv > 1e-6 * np.linalg.norm(V, 2))))
+        res.append((v, len(idx), dims[0], dims[1]))
+    return res
+
+
+def _assert_su2_multiplicities(tc, res, so, rtol=1e-8, forbidden_floor=0.5):
+    """SU(2) oracle: every allowed singlet eigenvalue of the non-SO kernels
+    ``res["singlet"]`` (even sector) appears once and every allowed triplet
+    eigenvalue of ``res["triplet"]`` (odd sector) three times in the
+    spin-orbital spectrum ``so``; the large Pauli-forbidden triplet modes
+    (above ``forbidden_floor``) are absent. ``res[ch]`` / ``so`` are :func:`_run` captures; the non-SO
+    sets must cover all but the smallest-magnitude eigenvalues."""
+    evs = so["evs"]
+    scale = np.abs(evs).max()
+    nonzero = np.abs(evs) > 1e-10 * scale
+    tc.assertTrue(np.all(so["match"][nonzero]))
+    # expected multiplicity of each value: even singlet x 1 + odd triplet x 3
+    expected, forbidden = {}, []
+    floor = {ch: np.abs(res[ch]["evs"]).min() for ch in res}
+    for ch, allowed_even in (("singlet", True), ("triplet", False)):
+        for v, n, d_even, d_odd in _clusters(res[ch]["evs"], res[ch]["vecs"],
+                                             rtol):
+            tc.assertEqual(d_even + d_odd, n)
+            if abs(v) <= (1 + 1e-6) * floor[ch]:
+                continue        # a cluster cut by the truncation
+            d_ok, d_bad = (d_even, d_odd) if allowed_even else (d_odd, d_even)
+            key = next((k for k in expected
+                        if abs(k - v) <= rtol * abs(v)), v)
+            expected[key] = expected.get(key, 0) + d_ok * (
+                1 if ch == "singlet" else 3)
+            if d_bad:
+                forbidden.append((ch, v))
+    tc.assertGreater(len(expected), 20)
+    for v, count in expected.items():
+        got = int(np.sum(np.abs(evs - v) <= rtol * abs(v)))
+        with tc.subTest(value=v):
+            tc.assertEqual(got, count)
+    # the large Pauli-forbidden triplet modes (even k-parity) are absent
+    big = sorted((v for ch, v in forbidden
+                  if ch == "triplet" and v.real > forbidden_floor),
+                 key=lambda x: -x.real)
+    tc.assertGreaterEqual(len(big), 2)
+    for v in big:
+        with tc.subTest(forbidden=v):
+            if any(abs(k - v) <= rtol * abs(v) for k in expected):
+                continue
+            tc.assertFalse(np.any(np.abs(evs - v) <= 1e-6 * abs(v)))
+    return expected
+
+
 class _TmpDir(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="sc_so_")
@@ -215,31 +285,6 @@ class TestStaticEntry(_TmpDir):
         evs, match = seen["evs"], seen["match"]
         self.assertTrue(match[0])
         return evs[0]
-
-    @staticmethod
-    def _clusters(vals, vecs, rtol=1e-8):
-        """Group eigenvalues equal to ``rtol`` and give each cluster's even
-        and odd dimension (k -> -k with the orbital transpose): for a
-        degenerate cluster the solver may return parity-mixed eigenvectors,
-        so the dimensions are the ranks of the projected span."""
-        order = np.argsort(vals.real)
-        out = []
-        for i in order:
-            if out and abs(vals[i] - out[-1][0]) <= rtol * abs(out[-1][0]):
-                out[-1][1].append(i)
-            else:
-                out.append([vals[i], [i]])
-        res = []
-        for v, idx in out:
-            V = np.stack([vecs[i].ravel() for i in idx], axis=1)
-            dims = []
-            for ch in ("singlet", "triplet"):
-                P = np.stack([sc._project_gap_parity(vecs[i], ch).ravel()
-                              for i in idx], axis=1)
-                sv = np.linalg.svd(P, compute_uv=False)
-                dims.append(int(np.sum(sv > 1e-6 * np.linalg.norm(V, 2))))
-            res.append((v, len(idx), dims[0], dims[1]))
-        return res
 
     def test_su2_model_reproduces_singlet_and_triplet(self):
         """SU(2) limit: with spin-independent hopping and a rotation-invariant
@@ -260,40 +305,7 @@ class TestStaticEntry(_TmpDir):
         files = _write_model(self.d, so=True)
         so = _run(_input(self.d, files, True, dict(eli, num_eigenvalues=254),
                          out="out_so"))
-        evs = so["evs"]
-        scale = np.abs(evs).max()
-        nonzero = np.abs(evs) > 1e-10 * scale
-        self.assertTrue(np.all(so["match"][nonzero]))
-        # expected multiplicity of each value: even singlet x 1 + odd triplet x 3
-        expected, forbidden = {}, []
-        floor = {ch: np.abs(res[ch]["evs"]).min() for ch in res}
-        for ch, allowed_even in (("singlet", True), ("triplet", False)):
-            for v, n, d_even, d_odd in self._clusters(res[ch]["evs"],
-                                                      res[ch]["vecs"]):
-                self.assertEqual(d_even + d_odd, n)
-                if abs(v) <= (1 + 1e-6) * floor[ch]:
-                    continue        # a cluster cut by the truncation
-                d_ok, d_bad = (d_even, d_odd) if allowed_even else (d_odd, d_even)
-                key = next((k for k in expected
-                            if abs(k - v) <= 1e-8 * abs(v)), v)
-                expected[key] = expected.get(key, 0) + d_ok * (
-                    1 if ch == "singlet" else 3)
-                if d_bad:
-                    forbidden.append((ch, v))
-        self.assertGreater(len(expected), 20)
-        for v, count in expected.items():
-            got = int(np.sum(np.abs(evs - v) <= 1e-8 * abs(v)))
-            with self.subTest(value=v):
-                self.assertEqual(got, count)
-        # the large Pauli-forbidden triplet modes (even k-parity) are absent
-        big = sorted((v for ch, v in forbidden
-                      if ch == "triplet" and v.real > 0.5), key=lambda x: -x.real)
-        self.assertGreaterEqual(len(big), 2)
-        for v in big:
-            with self.subTest(forbidden=v):
-                if any(abs(k - v) <= 1e-8 * abs(v) for k in expected):
-                    continue
-                self.assertFalse(np.any(np.abs(evs - v) <= 1e-6 * abs(v)))
+        _assert_su2_multiplicities(self, res, so)
 
     def test_complex_soc_model_runs(self):
         files = _write_model(self.d, so=True, soc=0.3)
@@ -567,6 +579,60 @@ class TestRefusals(_TmpDir):
 
     def test_green_init_file(self):
         self._mean_field_refused("green_init", ("green_init", "GREEN_INIT"))
+
+    def test_init_gap_without_antisymmetric_component(self):
+        """An odd seed on a single k point vanishes (sin k = 0): refused
+        before the kernel is built; an even seed on the same grid runs. (The
+        model keeps only the on-site transfer, which a 1 x 1 x 1 cell can
+        hold.)"""
+        files = _write_model(self.d, so=True)
+        _wfile(os.path.join(self.d, "transfer.dat"), "Transfer", ND,
+               [(0, 0, 0, i + 1, i + 1, 0.3 * (i // 2), 0.0)
+                for i in range(ND)])
+        boom = mock.Mock(side_effect=AssertionError("kernel built"))
+        for seed, refused in (("p_x", True), ("s", False)):
+            out = "out_" + seed
+            inp = _input(self.d, files, True,
+                         {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                          "num_eigenvalues": 2, "init_gap": seed},
+                         CellShape=[1, 1, 1], out=out)
+            with self.subTest(init_gap=seed), _quiet():
+                if refused:
+                    with mock.patch.object(sc, "_make_kernel_operator", boom), \
+                            self.assertRaisesRegex(
+                                ValueError, r"init_gap = 'p_x' has no fermion-"
+                                            r"antisymmetric component"):
+                        sc.calc_eliashberg(inp)
+                    path = os.path.join(self.d, out)
+                    self.assertFalse(os.path.exists(path) and os.listdir(path))
+                else:
+                    # control: the same grid with an even seed runs
+                    sc.calc_eliashberg(inp)
+        boom.assert_not_called()
+
+    def test_load_layout_error_is_rewrapped(self):
+        """A chi0q file ``_load_chi0q`` itself rejects (no supported layout)
+        is refused in load mode with the spin-orbital requirement appended."""
+        out = os.path.join(self.d, "out")
+        os.makedirs(out)
+        nvol = int(np.prod(CELL))
+        np.savez(os.path.join(out, "chi0q.npz"),
+                 chi0q=np.zeros((64, nvol) + (3,) * 4, complex),
+                 index_convention="spin_block", momentum_convention="e_plus_ikR",
+                 spin_orbital=True)
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True, {"chi0q_mode": "load",
+                                           "solver_mode": "eigenvalue"})
+        with self.assertRaisesRegex(
+                ValueError, r"(?s)matches no supported layout.*\(\[mode\] "
+                            r"enable_spin_orbital = true with chi0q_mode = "
+                            r"\"load\" needs the general \(4-index\) spinful "
+                            r"chi0q of a spin-orbital RPA run over nd = 4"):
+            with _quiet(), mock.patch.object(
+                    sc, "_build_bond_green",
+                    side_effect=AssertionError("Green built before the check")):
+                sc.calc_eliashberg(inp)
+        self.assertEqual(os.listdir(out), ["chi0q.npz"])
 
     def test_dynamic_entry_still_refuses(self):
         from hwave.solver import eliashberg_dynamic
@@ -1065,6 +1131,132 @@ class TestFlexMode(unittest.TestCase):
         # bubble moves it far beyond the bound above
         dense0 = self._dense_spectrum(inp, chi0, green)
         self.assertGreater(abs(dense0[np.argmax(dense0.real)] - lead), 1e-4 * abs(lead))
+
+    def test_off_centre_static_frequency(self):
+        """The zero bosonic frequency is located through the archive's
+        ``freq_index`` / ``nmat``, not the centre of the stored axis: chiq and
+        chi0q restricted to the original indices 14..21 of nmat = 32 (zero
+        frequency, original index 16, at position 2; the centre, position 4,
+        is a finite frequency) give the eigenvalues of the full archives --
+        also when the configured Nmat (64) differs from the file's nmat."""
+        bad = os.path.join(self.d, "flex_off_centre")
+        self.addCleanup(shutil.rmtree, bad, True)
+        shutil.copytree(self.flex, bad)
+        sel = np.arange(14, 22)
+        for name, key in (("chiq.npz", "chiq"), ("chi0q.npz", "chi0q")):
+            with np.load(os.path.join(self.flex, name)) as z:
+                fi, arr = z["freq_index"], z[key]
+                self.assertEqual(int(z["nmat"]), 32)
+            np.testing.assert_array_equal(fi, np.arange(32))
+            _resave(os.path.join(self.flex, name), os.path.join(bad, name),
+                    **{key: arr[sel], "freq_index": fi[sel]})
+            # non-vacuity: the centre of the restricted axis is another slice
+            self.assertGreater(np.abs(arr[sel][len(sel) // 2] - arr[16]).max(),
+                               1e-3 * np.abs(arr[16]).max())
+        ref = _run(_flex_input(self.d, self.files, self.flex,
+                               out=self._out("out_full")))
+        for nmat in (32, 64):
+            with self.subTest(config_nmat=nmat):
+                got = _run(_flex_input(self.d, self.files, bad, Nmat=nmat,
+                                       out=self._out("out_off_%d" % nmat)))
+                np.testing.assert_allclose(got["evs"], ref["evs"], rtol=1e-12,
+                                           atol=0)
+
+    def test_su2_limit_against_non_so_flex(self):
+        """Independent oracle at the FLEX level: soc = 0 spin-orbital FLEX
+        followed by the spin-orbital hwave_sc reproduces the non-SO general
+        FLEX followed by the non-SO singlet / triplet hwave_sc -- every
+        allowed singlet eigenvalue once and every allowed triplet eigenvalue
+        three times (the multiplicities of the static SU(2) test). The two
+        FLEX runs reach the same fixed point (their dressed Green functions
+        agree to round-off), checked first."""
+        root = tempfile.mkdtemp(prefix="sc_so_flex_su2_")
+        self.addCleanup(shutil.rmtree, root, True)
+        d_so, d_n = os.path.join(root, "so"), os.path.join(root, "nonso")
+        os.makedirs(d_so)
+        os.makedirs(d_n)
+        f_so = _write_model(d_so, so=True)
+        f_n = _write_model(d_n, so=False)
+        flex_so = _run_flex(d_so, f_so, "flex")
+        flex_n = _run_flex(d_n, f_n, "flex", so=False)
+        with np.load(os.path.join(flex_so, "green.npz")) as a, \
+                np.load(os.path.join(flex_n, "green.npz")) as b:
+            gs, gn = a["green"][0], b["green"][0]
+        gs = gs.reshape(gs.shape[:2] + (2, NP, 2, NP))
+        for s_ in range(2):
+            np.testing.assert_allclose(gs[:, :, s_, :, s_, :], gn, rtol=0,
+                                       atol=1e-12)
+        self.assertEqual(np.abs(gs[:, :, 0, :, 1, :]).max(), 0.0)
+        res = {}
+        for ch in ("singlet", "triplet"):
+            inp = _input(d_n, f_n, False,
+                         {"chi0q_mode": "flex", "solver_mode": "eigenvalue",
+                          "num_eigenvalues": 62, "pairing_type": ch},
+                         nmat=32, out="sc_" + ch)
+            inp["file"]["input"]["path_to_flex_output"] = flex_n
+            res[ch] = _run(inp)
+        so = _run(_flex_input(d_so, f_so, flex_so, {"num_eigenvalues": 254}))
+        _assert_su2_multiplicities(self, res, so, forbidden_floor=0.25)
+
+    def test_archive_content_refusals(self):
+        """``_load_flex_so`` refuses a chiq archive whose orbital layout is
+        not ``acbd``, that has no ``chiq`` array, whose ``index_convention``
+        has another VALUE, or a non-finite chiq / chi0q static slice -- each
+        through the public entry, with nothing written."""
+        with np.load(os.path.join(self.flex, "chiq.npz")) as z:
+            chiq = np.array(z["chiq"])
+        with np.load(os.path.join(self.flex, "chi0q.npz")) as z:
+            chi0q = np.array(z["chi0q"])
+        si = chiq.shape[0] // 2
+        nan_chi, nan_chi0 = chiq.copy(), chi0q.copy()
+        nan_chi[si, 3, 0, 1, 0, 1] = np.nan
+        nan_chi0[si, 5, 1, 0, 1, 0] = np.inf
+        cases = (
+            ("layout", "chiq.npz", (), {"chi_orbital_layout": "abcd"},
+             r"chi_orbital_layout = 'abcd' but this reader only supports "
+             r"'acbd'"),
+            ("no_chiq", "chiq.npz", ("chiq",), {}, r"has no 'chiq' array"),
+            ("index_value", "chiq.npz", (), {"index_convention": "interleaved"},
+             r"index_convention = 'interleaved', expected 'spin_block'"),
+            # a non-finite chiq is caught earlier, by the whole-array scan
+            # of the momentum-convention check
+            ("nan_chiq", "chiq.npz", (), {"chiq": nan_chi},
+             r"chiq\.npz' contains non-finite values"),
+            ("nan_chi0q", "chi0q.npz", (), {"chi0q": nan_chi0},
+             r"FLEX chi0q in .*non-finite values at the zero bosonic"),
+        )
+        for tag, name, drop, replace, pattern in cases:
+            bad = os.path.join(self.d, "flex_bad_" + tag)
+            self.addCleanup(shutil.rmtree, bad, True)
+            shutil.copytree(self.flex, bad)
+            _resave(os.path.join(self.flex, name), os.path.join(bad, name),
+                    drop, **replace)
+            with self.subTest(case=tag), mock.patch.object(
+                    sc, "_so_rpa_vertex",
+                    side_effect=AssertionError("vertex built before the check")):
+                self._refused(pattern, _flex_input(
+                    self.d, self.files, bad, out=self._out("out_bad_" + tag)))
+
+    def test_unconverged_flex_warns(self):
+        """A chiq archive recording ``scf_converged = false`` is used, with a
+        WARNING naming the archive."""
+        bad = os.path.join(self.d, "flex_unconverged")
+        self.addCleanup(shutil.rmtree, bad, True)
+        shutil.copytree(self.flex, bad)
+        _resave(os.path.join(self.flex, "chiq.npz"),
+                os.path.join(bad, "chiq.npz"), scf_converged=False)
+        inp = _flex_input(self.d, self.files, bad, out=self._out("out_unconv"))
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            sc.calc_eliashberg(inp)
+        hits = [m for m in cm.output if "scf_converged = false" in m]
+        self.assertEqual(len(hits), 1, cm.output)
+        self.assertIn("chiq.npz", hits[0])
+        # the converged archive does not warn about convergence
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            sc.calc_eliashberg(_flex_input(self.d, self.files, self.flex,
+                                           out=self._out("out_conv")))
+            logging.getLogger("hwave_sc").warning("sentinel")
+        self.assertFalse([m for m in cm.output if "scf_converged" in m])
 
     def test_requires_chi0q_archive(self):
         """Without the run's chi0q the vertex cannot be checked: refused
