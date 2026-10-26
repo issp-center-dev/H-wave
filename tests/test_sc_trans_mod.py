@@ -14,6 +14,7 @@ a run whose Transfer file IS that band must give the same eigenvalues.
 Tests must be run from the repository root.
 """
 
+import logging
 import os
 import tempfile
 import unittest
@@ -195,8 +196,10 @@ class _Capture:
                  prepared=None):
             self.data["mu_chi0"] = precomputed_mu
             self.data["prepared"] = prepared
-            return orig(input_dict, chi0q_tensor=chi0q_tensor,
-                        precomputed_mu=precomputed_mu, prepared=prepared)
+            r = orig(input_dict, chi0q_tensor=chi0q_tensor,
+                     precomputed_mu=precomputed_mu, prepared=prepared)
+            self.data["chi0q"] = np.array(r)
+            return r
 
         def bond_green(orig, *a, **k):
             r = orig(*a, **k)
@@ -538,8 +541,9 @@ class TestMixedCaseAndControl(unittest.TestCase):
                                        extra_param={"coeff_extern": 0.0}))
                 without = _run(_input(d, os.path.join(d, "o2"),
                                       chi0q_tensor=tensor))
-                self.assertTrue(np.array_equal(with_ext["eig"],
-                                               without["eig"]))
+                for key in ("eig", "green", "chi0q"):
+                    self.assertTrue(np.array_equal(with_ext[key],
+                                                   without[key]), key)
 
 
 class TestLoadAndBond(unittest.TestCase):
@@ -752,15 +756,26 @@ class TestAssembledBandCheck(unittest.TestCase):
             return sc._mean_field_band(inp, sources, "general",
                                        (NX, NY, 1), norb)
 
-    def test_green_init_only_onsite_cell_enters(self):
-        # spin-free g0[0], spin-dependent cell 1: the RPA band uses g0[0]
-        # only, so the band is spin-free and accepted
+    def test_green_init_band_is_rpa_onsite_assembly(self):
+        """RPA-ASSEMBLY BEHAVIOUR, NOT PHYSICS.
+
+        Spin-free g0[0], spin-dependent G in cell 1 = R (0, 1), which is a
+        CoulombInter bond of this model. RPA's green_init HF uses g0[0]
+        only, so its band is T + Hartree and spin-free, and it is accepted.
+        A physical UHF band would carry the spin-dependent off-site Fock
+        term of that bond. hwave_sc warns about this combination
+        (green_init with an off-site interaction) and recommends trans_mod.
+        """
         g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
         g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
         g[1, 0, 0, 0, 0] = 0.2
         g[1, 1, 0, 1, 0] = -0.2
-        band = self._band(extra_file={"green_init": "g.npz"},
-                          files={"g.npz": {"green": g}})
+        with self.assertLogs("hwave_sc", level="WARNING") as logs:
+            band = self._band(extra_file={"green_init": "g.npz"},
+                              files={"g.npz": {"green": g}})
+        self.assertTrue(any("green_init is combined with" in m_
+                            and "CoulombInter" in m_ and "trans_mod" in m_
+                            for m_ in logs.output), logs.output)
         # and it is T + Hartree: U n + z V (2n), z = 4 bonds, n per spin
         eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
         hartree = 1.4 * FILLING + 4 * 0.25 * 2 * FILLING
@@ -1211,7 +1226,8 @@ class TestSpinFreeTol(unittest.TestCase):
                         np.asarray(band.solver.H0_k)[0, :, 0, 0], eps))
 
     def test_bad_values_refused(self):
-        for val in (-1.0, float("nan"), "abc", True):
+        for val in (-1.0, float("nan"), "abc", True, np.bool_(True), "1e-3",
+                    np.str_("1e-3")):
             with self.subTest(val=val):
                 with self.assertRaises(ValueError) as cm:
                     sc._read_spin_free_tol({"spin_free_tol": val})
@@ -1302,6 +1318,87 @@ class TestGreenInitLoadOracle(unittest.TestCase):
                                coulomb_inter=False, chi0q_tensor="reduced"))
         self.assertAlmostEqual(_leading(res), _leading(ref), delta=1e-9)
         self.assertGreater(abs(_leading(res) - _leading(bare)), 1e-3)
+
+
+class TestRound5(unittest.TestCase):
+
+    def test_load_mode_refuses_a_band_that_needs_averaging(self):
+        # reviewer probe: a trans_mod split of 1e-6 / 1e-4 with
+        # spin_free_tol = 1e-3. calc averages; load must refuse before the
+        # chi0q file is read (it was built on a different band).
+        for delta in (1e-6, 1e-4):
+            with self.subTest(delta=delta), \
+                    tempfile.TemporaryDirectory() as d:
+                h = _nematic_hr(1)
+                hd = h.copy()
+                hd[0, 0, 0, 0] += delta
+                _write_model(d, 1)
+                np.savez(os.path.join(d, "tm.npz"),
+                         trans_mod=_trans_mod_from_hr(h, hd))
+                tol = {"spin_free_tol": 1e-3}
+                with _ForbidDownstream(), \
+                        self.assertRaises(ValueError) as cm:
+                    sc.calc_eliashberg(_input(
+                        d, os.path.join(d, "rpa"), chi0q_mode="load",
+                        coulomb_inter=False, eliashberg=tol,
+                        extra_file={"trans_mod": "tm.npz"}))
+                msg = str(cm.exception)
+                self.assertIn("chi0q_mode = 'load'", msg)
+                self.assertIn("chi0q_mode = 'calc'", msg)
+                # calc mode accepts it with the averaged band
+                with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                    _run(_input(d, os.path.join(d, "c"), coulomb_inter=False,
+                                chi0q_tensor="reduced", eliashberg=tol,
+                                extra_file={"trans_mod": "tm.npz"}))
+                self.assertTrue(any("spin-averaged" in m_
+                                    for m_ in logs.output))
+
+    def test_green_init_without_offsite_interaction_does_not_warn(self):
+        g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
+        for s_ in range(2):
+            g[0, s_, 0, s_, 0] = 0.6
+            g[0, s_, 1, s_, 1] = 0.3
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                _write_model(d, 2, inter=False)
+                np.savez(os.path.join(d, "g.npz"), green=g)
+                _run(_input(d, os.path.join(d, "o"), coulomb_inter=False,
+                            extra_file={"green_init": "g.npz"}))
+        finally:
+            lg.removeHandler(handler)
+        self.assertFalse(any("green_init is combined with" in r.getMessage()
+                             for r in records))
+
+    def _transfer_with_asymmetry(self, d, eps):
+        h = _bare_hr(1).copy()
+        h[1, 0, 0, 0] += eps          # R = (1, 0) without its -R partner
+        _write_model(d, 1, transfer_hr=h, extern=True)
+
+    def test_slightly_non_hermitian_transfer_is_hermitized(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._transfer_with_asymmetry(d, 1e-7)
+            with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                res = _run(_input(d, os.path.join(d, "o"), extern=True,
+                                  extra_param={"coeff_extern": 0.0}))
+        self.assertTrue(any("not exactly Hermitian" in m_
+                            for m_ in logs.output), logs.output)
+        eps = res["prepared"].epsilon_k
+        herm = np.abs(eps - np.conj(np.swapaxes(eps, 0, 1))).max()
+        self.assertLess(herm, 1e-15)
+
+    def test_grossly_non_hermitian_transfer_is_refused(self):
+        with tempfile.TemporaryDirectory() as d:
+            self._transfer_with_asymmetry(d, 1e-2)
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(_input(d, os.path.join(d, "o"),
+                                          extern=True,
+                                          extra_param={"coeff_extern": 0.0}))
+        self.assertIn("not Hermitian", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

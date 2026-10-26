@@ -1761,8 +1761,11 @@ def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
 # splitting (a relative test would).
 SPIN_FREE_ATOL = 1.0e-10
 
-# Absolute tolerance on max |H(k) - H(k)^dagger| of the assembled band.
+# Hermiticity of the assembled band: max |H(k) - H(k)^dagger| above
+# max(HERMITIAN_ATOL, HERMITIAN_RTOL * max |H|) is refused; between
+# HERMITIAN_ATOL and that bound the Hermitian part is used, with a warning.
 HERMITIAN_ATOL = 1.0e-10
+HERMITIAN_RTOL = 1.0e-6
 
 
 def _spin_dependence(arr, norb):
@@ -1791,13 +1794,23 @@ def _refuse_spin_dependent(what, detail, tol=SPIN_FREE_ATOL):
 def _read_spin_free_tol(eli_param):
     """``[eliashberg] spin_free_tol`` (case-insensitive): finite float >= 0,
     default :data:`SPIN_FREE_ATOL`."""
+    import numbers
     from requests.structures import CaseInsensitiveDict
-    tol = _bond_float_option(CaseInsensitiveDict(eli_param or {}),
-                             "spin_free_tol", SPIN_FREE_ATOL)
+    raw = CaseInsensitiveDict(eli_param or {}).get("spin_free_tol")
+    if raw is None:
+        return SPIN_FREE_ATOL
+    # type-strict (the _resolve_bond_coeff_tail pattern): a boolean would
+    # become 1.0 and a quoted number would be coerced -- both silently
+    # change the tolerance, so both are refused
+    if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real):
+        raise ValueError(
+            "[eliashberg] spin_free_tol must be a real number, got "
+            "{!r}.".format(raw))
+    tol = float(raw)
     if not np.isfinite(tol) or tol < 0.0:
         raise ValueError(
             "[eliashberg] spin_free_tol must be a finite number >= 0; got "
-            "{!r}.".format(tol))
+            "{!r}.".format(raw))
     return float(tol)
 
 
@@ -1814,7 +1827,8 @@ _EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
                      "ham_extern_q")
 
 
-def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL):
+def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL,
+                  allow_average=True):
     """Assemble the one-body H0(k) ONCE, check it, and return its spin-free
     block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
 
@@ -1874,13 +1888,23 @@ def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL):
             "(NaN or Inf) entries. Check [mode.param] coeff_extern, the "
             "Extern file and the trans_mod / green_init file.".format(what))
     herm = float(np.max(np.abs(H0 - np.conj(np.swapaxes(H0, -1, -2)))))
-    if herm > HERMITIAN_ATOL:
+    herm_bound = max(HERMITIAN_ATOL,
+                     HERMITIAN_RTOL * float(np.max(np.abs(H0))))
+    if herm > herm_bound:
         raise ValueError(
             "hwave_sc: the one-body band assembled from {} is not Hermitian "
-            "(max |H(k) - H(k)^dagger| = {:.3e} > {:g}). Check the "
-            "trans_mod / green_init file and the Transfer / Extern tables "
-            "(each R entry needs its conjugate partner at -R)."
-            .format(what, herm, HERMITIAN_ATOL))
+            "(max |H(k) - H(k)^dagger| = {:.3e} > {:.3e} = max({:g}, {:g} * "
+            "max |H|)). Check the trans_mod / green_init file and the "
+            "Transfer / Extern tables (each R entry needs its conjugate "
+            "partner at -R).".format(what, herm, herm_bound, HERMITIAN_ATOL,
+                                     HERMITIAN_RTOL))
+    if herm > HERMITIAN_ATOL:
+        # round-off-level asymmetry (e.g. +-R rows rounded independently)
+        logger.warning(
+            "hwave_sc: the one-body band assembled from %s is not exactly "
+            "Hermitian (max |H(k) - H(k)^dagger| = %.3e, within %.3e); using "
+            "its Hermitian part (H + H^dagger)/2.", what, herm, herm_bound)
+        H0 = 0.5 * (H0 + np.conj(np.swapaxes(H0, -1, -2)))
 
     if H0.shape[0] == 2:                       # Extern on the Transfer band
         up, dn = H0[0], H0[1]
@@ -1901,6 +1925,17 @@ def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL):
               "|spin-mixing| = {:.3e}".format(split, mix))
     if split > spin_free_tol or mix > spin_free_tol:
         _refuse_spin_dependent(what, detail, spin_free_tol)
+    if not allow_average and (split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL):
+        raise ValueError(
+            "hwave_sc: the one-body band from {} is spin-dependent beyond "
+            "SPIN_FREE_ATOL = {:g} ({}). chi0q_mode = 'load' reads a chi0q "
+            "that an external RPA run computed on its own band, which cannot "
+            "be the spin-averaged band; the spin-averaged band "
+            "([eliashberg] spin_free_tol) is available only when hwave_sc "
+            "computes chi0q itself (chi0q_mode = 'calc', or the bond_channels "
+            "path). Use chi0q_mode = 'calc', or regenerate the chi0q file "
+            "from a spin-symmetric band (tighter UHF convergence or a "
+            "spin-symmetric UHF start).".format(what, SPIN_FREE_ATOL, detail))
     if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
         # within the user's spin_free_tol: spin-average, drop the mixing
         logger.warning(
@@ -1940,8 +1975,40 @@ def _load_band_into_solver(solver, up):
             "chi0q on a different band.".format(solver.spin_mode, H0.shape))
 
 
+_GREEN_INIT_NO_FOCK_TYPES = ("coulombinter", "exchange", "pairlift")
+_NON_INTERACTION_KEYS = ("geometry", "transfer", "extern", "path_to_input")
+
+
+def _warn_green_init_fock_omission(ham_param):
+    """WARNING: the RPA reader turns green_init into T + HF[G] with its
+    on-site assembly (``RPA._calc_trans_mod``: the R = 0 Green function
+    only), which omits the off-site Fock terms and the Fock parts of
+    CoulombInter / Exchange / PairLift. With such interactions the band can
+    differ from the trans_mod UHFk writes for the same solution."""
+    reasons = []
+    for key, table in (ham_param or {}).items():
+        k = str(key).lower()
+        if k in _NON_INTERACTION_KEYS or not isinstance(table, dict):
+            continue
+        rows = [(r, v) for (r, _o), v in table.items() if v != 0]
+        if not rows:
+            continue
+        if k in _GREEN_INIT_NO_FOCK_TYPES:
+            reasons.append(str(key))
+        elif any(tuple(int(x) for x in r) != (0, 0, 0) for r, _v in rows):
+            reasons.append("off-site {}".format(key))
+    if reasons:
+        logger.warning(
+            "hwave_sc: green_init is combined with %s. The band is built "
+            "with RPA's on-site Hartree-Fock assembly of green_init, which "
+            "does not include the off-site and spin-flip Fock terms of these "
+            "interactions, so it can differ from the trans_mod UHFk writes "
+            "for the same solution. Prefer [file.input] trans_mod.",
+            ", ".join(sorted(set(reasons))))
+
+
 def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
-                     spin_free_tol=SPIN_FREE_ATOL):
+                     spin_free_tol=SPIN_FREE_ATOL, allow_average=True):
     """Assemble the one-body band through the RPA machinery (issue #273).
 
     The band is built exactly as the internal chi0q builds it --
@@ -1999,6 +2066,8 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
     logger.info("One-body band from {} (RPA H0 assembly; used for chi0q, "
                 "mu and the kernel Green function)".format(", ".join(sources)))
     read_io = read_input_k.QLMSkInput(info_inputfile)
+    if "green_init" in sources and "trans_mod" not in sources:
+        _warn_green_init_fock_omission(read_io.get_param("ham"))
     solver = sol_rpa.RPA(read_io.get_param("ham"), info_log, info_mode_rpa)
     green_info = read_io.get_param("green")
     green_info.update(solver.read_init(info_inputfile))
@@ -2006,7 +2075,8 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
     # Assemble the band ONCE, check it (spin independence, finiteness),
     # before any diagonalization and before any chi0q / pair-bubble /
     # kernel work; the checked band is the band that is used.
-    up = _checked_band(solver, green_info, sources, spin_free_tol)
+    up = _checked_band(solver, green_info, sources, spin_free_tol,
+                       allow_average=allow_average)
 
     Nx, Ny, Nz = spatial_shape
     if up.shape != (Nx * Ny * Nz, norb, norb):
@@ -7622,9 +7692,14 @@ def calc_eliashberg(input_dict):
                 # band only; 'general' keeps the RPA reader from issuing its
                 # reduced-scheme advisory for a chi0q that is never built
                 band_scheme = "general"
+            # spin averaging needs hwave_sc to build chi0q itself (calc,
+            # or the bond path's own bubble); a loaded chi0q was built by
+            # an external RPA run on its own band
             band = _mean_field_band(input_dict, band_sources, band_scheme,
                                     (Nx, Ny, Nz), norb,
-                                    spin_free_tol=spin_free_tol)
+                                    spin_free_tol=spin_free_tol,
+                                    allow_average=(chi0q_mode == "calc"
+                                                   or use_bond_channels))
             if chi0q_mode != "calc" or use_bond_channels:
                 band = band._replace(solver=None)
 

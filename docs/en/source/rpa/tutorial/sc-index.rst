@@ -187,8 +187,17 @@ This section controls the Eliashberg solver. Key parameters:
      or the ``Transfer`` band plus the Hartree-Fock term of ``green_init``,
      plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
      may differ, and its spin-mixing blocks may be nonzero, by at most an
-     absolute :math:`10^{-10}` in energy units; all entries must be finite
-     and the band Hermitian (to :math:`10^{-10}`). A paramagnetic UHF
+     absolute :math:`10^{-10}` in energy units. All entries must be finite.
+     A band whose :math:`\max|H - H^\dagger|` exceeds
+     :math:`\max(10^{-10}, 10^{-6}\max|H|)` is refused; a smaller deviation
+     above :math:`10^{-10}` (for example :math:`\pm R` rows rounded
+     independently) is replaced by the Hermitian part
+     :math:`(H + H^\dagger)/2`, with a warning. ``green_init`` is turned into
+     a band with RPA's on-site Hartree-Fock assembly, which leaves out the
+     off-site and spin-flip Fock terms; with an off-site interaction,
+     ``CoulombInter``, ``Exchange`` or ``PairLift`` this band can differ from
+     the ``trans_mod`` UHFk writes, and a warning recommends ``trans_mod``.
+     A paramagnetic UHF
      solution converged only loosely (for example ``EPS = 6`` from a random
      start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
      convergence, start UHF from a spin-symmetric state, or raise
@@ -249,7 +258,13 @@ This section controls the Eliashberg solver. Key parameters:
   above ``1e-10`` but within ``spin_free_tol``, ``hwave_sc`` uses the
   spin-averaged band :math:`(H_\uparrow + H_\downarrow)/2`, drops the
   spin-mixing blocks, and logs a warning with both discarded magnitudes.
-  Above ``spin_free_tol`` the band is refused.
+  Above ``spin_free_tol`` the band is refused. The spin-averaged band is
+  available only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself
+  (``chi0q_mode = "calc"``, or ``bond_channels = true``); with
+  ``chi0q_mode = "load"`` a band beyond ``1e-10`` is refused, because the
+  loaded chi0q was computed by the RPA run on its own band (use
+  ``"calc"``, or regenerate chi0q from a spin-symmetric band). A value
+  below ``1e-10`` (for example ``0``) tightens the default check.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an
