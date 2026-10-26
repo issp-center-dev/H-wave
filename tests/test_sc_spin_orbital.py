@@ -339,6 +339,11 @@ class TestStaticEntry(_TmpDir):
         files = _write_model(self.d, so=True)
         so = _run(_input(self.d, files, True, dict(eli, num_eigenvalues=254),
                          out="out_so"))
+        # every physical mode: the antisymmetric space has dimension 120
+        # (36 even singlet + 3 x 28 odd triplet) and all 120 are returned
+        self.assertEqual(sc._SOAntisymmetricBasis((ND, ND) + tuple(CELL)).dim,
+                         120)
+        self.assertEqual(len(so["evs"]), 120)
         _assert_su2_multiplicities(self, res, so)
 
     def test_complex_soc_model_runs(self):
@@ -1057,6 +1062,49 @@ class TestRepulsiveSpectralShift(_TmpDir):
         self.assertAlmostEqual(lam, dense[0].real, delta=1e-8)
         np.testing.assert_array_equal(g, -_reverse(g))
 
+    def test_full_spectrum_boundary(self):
+        """``dim = 5`` (shape (2, 2, 3, 1, 1): 12 entries, 2 self-paired):
+        ``num_eigenvalues`` 3, 4, 5 and 7 return ``min(requested, dim)``
+        eigenpairs -- none dropped at ARPACK's ``k < dim - 1`` limit --
+        selected by magnitude (no shift) or by real part (shift 0.3), equal
+        to the dense restricted spectrum and ordered by real part."""
+        from scipy.sparse.linalg import aslinearoperator
+        shape = (2, 2, 3, 1, 1)
+        n = int(np.prod(shape))
+        rng = np.random.default_rng(21)
+        M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+        A = aslinearoperator(M)
+        basis = sc._SOAntisymmetricBasis(shape)
+        self.assertEqual(basis.dim, 5)
+        dense, m = _dense_antisymmetric_spectrum(M, shape)
+        self.assertEqual(m, 5)
+        for shift in (None, 0.3):
+            for req in (3, 4, 5, 7):
+                with self.subTest(spectral_shift=shift, num_eigenvalues=req), \
+                        _quiet():
+                    vals, gaps = sc._so_solve_eigenvalue(
+                        A, basis, req, "arnoldi", spectral_shift=shift)
+                    k = min(req, 5)
+                    self.assertEqual(len(vals), k)
+                    self.assertEqual(gaps.shape, (k,) + shape)
+                    key = (-dense.real if shift is not None
+                           else -np.abs(dense))
+                    want = dense[np.argsort(key)][:k]
+                    want = want[np.argsort(-want.real)]
+                    np.testing.assert_allclose(vals, want, rtol=0, atol=1e-10)
+                    for v, g in zip(vals, gaps):
+                        r = (M @ g.ravel()).reshape(shape)
+                        r = sc._project_gap_parity(r, "triplet")
+                        np.testing.assert_allclose(r, v * g, rtol=0, atol=1e-10)
+
+    def test_non_arnoldi_method_is_refused(self):
+        from scipy.sparse.linalg import aslinearoperator
+        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        with self.assertRaisesRegex(ValueError, "supports only eigenvalue_"
+                                                "method = \"arnoldi\""):
+            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 2,
+                                    "subspace")
+
     def test_non_antisymmetric_solver_output_is_refused(self):
         """Defensive check: a solver that returned a gap only 95 %
         antisymmetric (accepted by the dominant-sector test) is refused in
@@ -1467,6 +1515,7 @@ class TestFlexMode(unittest.TestCase):
             inp["file"]["input"]["path_to_flex_output"] = flex_n
             res[ch] = _run(inp)
         so = _run(_flex_input(d_so, f_so, flex_so, {"num_eigenvalues": 254}))
+        self.assertEqual(len(so["evs"]), 120)
         _assert_su2_multiplicities(self, res, so, forbidden_floor=0.25)
 
     def test_archive_content_refusals(self):

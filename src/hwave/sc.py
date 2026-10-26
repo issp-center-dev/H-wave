@@ -7541,8 +7541,14 @@ class _SOAntisymmetricBasis:
         def matvec(c):
             v = self.to_full(np.asarray(c).ravel())
             return self.to_reduced(np.asarray(A.matvec(v)).ravel())
+
+        def matmat(C):
+            C = np.asarray(C)
+            if C.ndim == 1:
+                return matvec(C)
+            return self.to_reduced(np.asarray(A.matmat(self.to_full(C))))
         return LinearOperator((self.dim, self.dim), matvec=matvec,
-                              dtype=complex)
+                              matmat=matmat, dtype=complex)
 
 
 def _so_antisymmetry_residual(gap):
@@ -7585,13 +7591,38 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
                          spectral_shift=None):
     """The eigenvalue analysis of the spin-orbital kernel on the
     antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
-    the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``."""
+    the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``,
+    ordered by descending real part.
+
+    ARPACK needs ``k < dim - 1``; when ``num_eigenvalues >= dim - 1`` the
+    reduced operator (then small) is diagonalized densely instead and
+    ``min(num_eigenvalues, dim)`` eigenpairs are returned, selected as the
+    Arnoldi path selects them (largest magnitude, or largest real part with
+    a ``spectral_shift``), so no physical eigenpair is dropped at the
+    full-spectrum boundary. Only ``method = "arnoldi"`` is supported."""
+    if method != "arnoldi":
+        raise ValueError(
+            "[mode] enable_spin_orbital = true supports only "
+            "eigenvalue_method = \"arnoldi\", got {!r}.".format(method))
+    _validate_spectral_shift(spectral_shift, method)
     red = basis.reduce(A)
-    _, _, eig = _solve_leading(
-        lambda: (red, basis.dim), basis.dim, method,
-        num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
-        spectral_shift=spectral_shift)
-    vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+    dim = basis.dim
+    if num_eigenvalues >= dim - 1:
+        dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
+        vals, vecs = np.linalg.eig(dense)
+        n_keep = min(max(1, int(num_eigenvalues)), dim)
+        key = -vals.real if spectral_shift is not None else -np.abs(vals)
+        sel = np.argsort(key, kind="stable")[:n_keep]
+        vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
+        logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
+                    "antisymmetric space; dense diagonalization, %d eigenpairs.",
+                    num_eigenvalues, dim - 1, n_keep)
+    else:
+        _, _, eig = _solve_leading(
+            lambda: (red, dim), dim, method,
+            num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+            spectral_shift=spectral_shift)
+        vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
     gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
                      for i in range(len(vals))])
     return vals, gaps

@@ -1959,11 +1959,16 @@ before any calculation:
 Practical advice
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- The spin-orbital operator has four times the dimension of the
-  non-spin-orbital one, and the Pauli-forbidden subspace it projects out
-  stays in the operator as a large zero sector. Use a larger
-  ``num_eigenvalues`` than for a non-spin-orbital run: in the validation
-  model ``num_eigenvalues = 4`` missed the physical leading eigenvalue.
+- The spin-orbital solve works in the antisymmetric subspace (see "Pauli
+  projection" above), whose dimension is about half of
+  :math:`(2N)^2 N_k`; at most that many eigenvalues exist, and a
+  ``num_eigenvalues`` at or above it returns all of them (the small reduced
+  operator is then diagonalized densely). Without ``spectral_shift`` the
+  Arnoldi solver selects by magnitude, so large repulsive (negative)
+  eigenvalues can mask the physical leading one: in the SU(2)-limit test
+  model ``num_eigenvalues = 4`` missed it and ``8`` found it. Request
+  enough eigenvalues, or set ``spectral_shift = "auto"`` (largest real
+  part), which found it already with ``num_eigenvalues = 1``.
 - The default ``init_gap = "cos"`` seed is singlet-structured
   (:math:`\phi(\mathbf{k}) \otimes i\sigma_y`). In a centrosymmetric model
   the power iteration cannot leave the parity sector of its seed, so it
