@@ -169,15 +169,16 @@ This section controls the Eliashberg solver. Key parameters:
   .. note::
 
      **Mean-field one-body band.** ``[file.input] trans_mod`` (the one-body
-     Hamiltonian written by UHFk), ``green_init`` and an ``Extern`` field
-     with a nonzero ``coeff_extern`` replace the ``Transfer`` band. With
-     ``chi0q_mode = "calc"`` or ``"load"``, and with
-     ``bond_channels = true`` without an external ``bond_green``,
-     ``hwave_sc`` uses that band for
+     Hamiltonian written by UHFk) replaces the ``Transfer`` band;
+     ``green_init`` adds its Hartree-Fock term to the ``Transfer`` band; an
+     ``Extern`` field with a nonzero ``coeff_extern`` is added on top. With
+     ``chi0q_mode = "calc"`` or ``"load"`` (including
+     ``bond_channels = true`` without an external ``bond_green``),
+     ``hwave_sc`` uses this assembled band for
      :math:`\chi_0(\mathbf{q})`, for the chemical potential and for the Green
      function of the pairing kernel, so all three describe the same
      Hamiltonian. For ``"load"``, give the same ``trans_mod`` /
-     ``green_init`` as the RPA run that wrote the chi0q file. The keys are
+     ``green_init`` / ``Extern`` as the RPA run that wrote the chi0q file. The keys are
      case-insensitive. Only a spin-independent band is supported, because the
      singlet/triplet pairing kernel has no spin index. A spin-dependent band
      (a magnetic ``trans_mod`` or ``green_init``, or an active ``Extern``)
@@ -187,8 +188,7 @@ This section controls the Eliashberg solver. Key parameters:
      plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
      may differ, and its spin-mixing blocks may be nonzero, by at most an
      absolute :math:`10^{-10}` in energy units, and all entries must be
-     finite. The checked band itself (its up-up block, ``Extern`` included)
-     is the band used. The spin-polarized case is tracked in
+     finite. The spin-polarized case is tracked in
      issue #88. With ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``,
      and with an external ``bond_green``, these keys are not used and a
      warning says so: the susceptibilities and the Green function come from

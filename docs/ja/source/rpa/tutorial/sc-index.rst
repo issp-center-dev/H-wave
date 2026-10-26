@@ -166,15 +166,16 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   .. note::
 
      **平均場の一体バンド。** ``[file.input] trans_mod``\ （UHFk が出力する
-     一体ハミルトニアン）、``green_init``\ 、および\ ``coeff_extern``\ が
-     ゼロでない\ ``Extern``\ 場は、``Transfer``\ のバンドを置き換えます。
-     ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合と、外部の
-     ``bond_green``\ を指定しない\ ``bond_channels = true``\ の場合、
-     ``hwave_sc``\ はこのバンドを
+     一体ハミルトニアン）は\ ``Transfer``\ のバンドを置き換えます。
+     ``green_init``\ は\ ``Transfer``\ のバンドに Hartree-Fock 項を加え、
+     ``coeff_extern``\ がゼロでない\ ``Extern``\ 場はさらにその上に加わります。
+     ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合（外部の
+     ``bond_green``\ を指定しない\ ``bond_channels = true``\ を含む）、
+     ``hwave_sc``\ はこの組み立てたバンドを
      :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green
      関数のすべてに用います。したがって三つは同じハミルトニアンを表します。
      ``"load"``\ では、chi0q ファイルを出力した RPA 計算と同じ
-     ``trans_mod``\ / ``green_init``\ を指定してください。キーの大文字・小文字は
+     ``trans_mod``\ / ``green_init``\ / ``Extern``\ を指定してください。キーの大文字・小文字は
      区別しません。ペアリング核（一重項・三重項）はスピンの添字を持たないため、
      スピンに依存しないバンドのみに対応します。スピンに依存するバンド
      （磁性をもつ\ ``trans_mod``\ や\ ``green_init``\ 、または有効な
@@ -184,8 +185,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      Hartree-Fock 項を加えたもの、さらに\ ``coeff_extern``\ 倍の\ ``Extern``\ ）
      に対して行います。上向き・下向きスピンのブロックの差とスピン混成ブロックの
      大きさは、エネルギーの単位で絶対値\ :math:`10^{-10}`\ まで許され、
-     すべての成分が有限でなければなりません。判定したバンドそのもの
-     （上向きスピンのブロック、``Extern``\ を含む）が計算に使われます。
+     すべての成分が有限でなければなりません。
      スピン偏極の場合は issue #88 で扱います。``chi0q_mode = "flex"``\ 、``frequency = "dynamic"``\ 、および
      外部の\ ``bond_green``\ を指定した場合は、これらのキーは使われず、その旨の
      警告が出ます。感受率と Green 関数は FLEX 計算または\ ``bond_green``\ の
