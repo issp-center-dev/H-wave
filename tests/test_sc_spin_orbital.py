@@ -542,28 +542,6 @@ class TestRefusals(_TmpDir):
 
     def _mean_field_refused(self, name, spellings):
         files = _write_model(self.d, so=True)
-        _wfile(os.path.join(self.d, "mf.npz"), "x", NP, [])
-        for key in spellings:
-            with self.subTest(key=key):
-                inp = _input(self.d, files, True,
-                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue"})
-                inp["file"]["input"][key] = "mf.npz"
-                boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
-                with mock.patch.object(sc, "_so_rpa_vertex", boom), \
-                        mock.patch("hwave.solver.rpa.RPA.read_init", boom):
-                    with self.assertRaisesRegex(ValueError, name + r".*#273"):
-                        with _quiet():
-                            sc.calc_eliashberg(inp)
-                boom.assert_not_called()
-
-    def test_trans_mod_file(self):
-        self._mean_field_refused("trans_mod", ("trans_mod", "Trans_Mod"))
-
-    def test_green_init_file(self):
-        self._mean_field_refused("green_init", ("green_init", "GREEN_INIT"))
-
-    def _mean_field_refused(self, name, spellings):
-        files = _write_model(self.d, so=True)
         with open(os.path.join(self.d, "mf.npz"), "wb") as f:
             f.write(b"placeholder")
         for key in spellings:
@@ -572,12 +550,17 @@ class TestRefusals(_TmpDir):
                              {"chi0q_mode": "calc", "solver_mode": "eigenvalue"})
                 inp["file"]["input"][key] = "mf.npz"
                 boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
+                read = mock.Mock(side_effect=AssertionError("input files read"))
                 with mock.patch.object(sc, "_so_rpa_vertex", boom), \
-                        mock.patch("hwave.solver.rpa.RPA.read_init", boom):
+                        mock.patch("hwave.solver.rpa.RPA.read_init", boom), \
+                        mock.patch.object(sc, "_read_interaction_files", read):
                     with self.assertRaisesRegex(ValueError, name + r".*#273"):
                         with _quiet():
                             sc.calc_eliashberg(inp)
                 boom.assert_not_called()
+                read.assert_not_called()
+                out = inp["file"]["output"]["path_to_output"]
+                self.assertFalse(os.path.exists(out) and os.listdir(out))
 
     def test_trans_mod_file(self):
         self._mean_field_refused("trans_mod", ("trans_mod", "Trans_Mod"))
@@ -738,6 +721,140 @@ class TestAntisymmetricOperator(unittest.TestCase):
                 # non-vacuity: the raw kernel output is not antisymmetric
                 raw = (M @ B[:, 0]).reshape(shape)
                 self.assertGreater(np.linalg.norm(raw + self._partner(raw)), 1.0)
+
+
+class TestRepulsiveSpectralShift(_TmpDir):
+    """A repulsive-dominated spin-orbital kernel under ``spectral_shift``.
+
+    ``P K`` maps the Pauli-forbidden (symmetric) sector -- about half the
+    space -- to eigenvalue 0. Under the plain shift ``P K + sigma I`` that
+    sector sits at ``+sigma``, above every physical eigenvalue when all of
+    them are negative, and the largest-real selection returned it. The model
+    is the complex-SOC model with the kernel lowered by one (``K - 1``, so
+    ``P (K - 1) = P K - P``: every antisymmetric eigenvalue moves down by 1
+    and the leading one is negative); the operator is still built by
+    ``_so_antisymmetric_operator``. The solver must return the leading
+    antisymmetric eigenvalues, equal to the dense diagonalization of the
+    kernel restricted to the antisymmetric subspace."""
+
+    def _lowered_run(self, eli):
+        from scipy.sparse.linalg import LinearOperator
+        files = _write_model(self.d, so=True, soc=0.4)
+        real = sc._so_antisymmetric_operator
+        built = {}
+
+        def lowered(A, n, shape):
+            Am = LinearOperator((n, n), matvec=lambda v: A.matvec(v) - v,
+                                dtype=complex)
+            built["op"] = real(Am, n, shape)
+            built["shape"] = shape
+            return built["op"]
+
+        with mock.patch.object(sc, "_so_antisymmetric_operator",
+                               side_effect=lowered):
+            seen = _run(_input(self.d, files, True, eli))
+        return seen, built
+
+    @staticmethod
+    def _dense_antisymmetric(built):
+        op, shape = built["op"], built["shape"]
+        n = int(np.prod(shape))
+        eye = np.eye(n, dtype=complex)
+        M = np.stack([op.matvec(eye[:, j]) for j in range(n)], axis=1)
+        P = np.stack([sc._project_gap_parity(eye[:, j].reshape(shape),
+                                             "triplet").ravel()
+                      for j in range(n)], axis=1)
+        w, U = np.linalg.eigh(P)
+        Q = U[:, w > 0.5]
+        vals = np.linalg.eigvals(Q.conj().T @ M @ Q)
+        return vals[np.argsort(-vals.real)], Q.shape[1], n
+
+    def test_shifted_arnoldi_returns_the_antisymmetric_leading(self):
+        seen, built = self._lowered_run(
+            {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+             "num_eigenvalues": 4, "spectral_shift": 3.0})
+        dense, n_anti, n = self._dense_antisymmetric(built)
+        self.assertLess(n_anti, n)
+        # repulsive-dominated: every physical eigenvalue is negative, so the
+        # forbidden sector (0 of P K) would outrank all of them
+        self.assertLess(dense[0].real, -0.1)
+        self.assertTrue(np.all(seen["match"]))
+        np.testing.assert_allclose(seen["evs"], dense[:4], rtol=0, atol=1e-9)
+        gap = seen["gap"]
+        np.testing.assert_allclose(gap, -_reverse(gap), rtol=0,
+                                   atol=1e-12 * np.abs(gap).max())
+
+    def test_shifted_auto_and_iteration(self):
+        """``spectral_shift = "auto"`` (Arnoldi) and the shifted power
+        iteration reach the same leading antisymmetric eigenvalue."""
+        seen, built = self._lowered_run(
+            {"chi0q_mode": "calc", "solver_mode": "both",
+             "num_eigenvalues": 4, "spectral_shift": "auto",
+             "convergence_tol": 1e-10, "max_iter": 20000})
+        dense, _, _ = self._dense_antisymmetric(built)
+        self.assertLess(dense[0].real, -0.1)
+        self.assertTrue(np.all(seen["match"]))
+        np.testing.assert_allclose(seen["evs"], dense[:4], rtol=0, atol=1e-9)
+        self.assertAlmostEqual(seen["ev"], dense[0].real,
+                               delta=1e-7 * abs(dense[0]))
+
+    def test_driver_confines_unprojected_seeds(self):
+        """``_solve_leading`` on a sector-confined operator: a seed (or a
+        Krylov start) with a forbidden component converges to the physical
+        leading eigenpair -- in the shifted power iteration the forbidden
+        sector is annihilated (``P K + sigma P``), in the shifted Arnoldi it
+        lies below the spectrum."""
+        from scipy.sparse.linalg import aslinearoperator
+        shape = (4, 4, 2, 2, 1)
+        n = int(np.prod(shape))
+        rng = np.random.default_rng(7)
+        B = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+        M = -(B @ B.conj().T) / n - 0.5 * np.eye(n)
+        PK = sc._so_antisymmetric_operator(aslinearoperator(M), n, shape)
+        eye = np.eye(n)
+        P = np.stack([PK.sector_projector(eye[:, j]) for j in range(n)], axis=1)
+        w, U = np.linalg.eigh(P)
+        Q = U[:, w > 0.5]
+        dense = np.sort(np.linalg.eigvalsh(Q.conj().T @ M @ Q))[::-1]
+        self.assertLess(dense[0], -0.4)
+        seed = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        with _quiet():
+            lam, vec, info = sc._solve_leading(
+                lambda: (PK, n), n, "iteration", init_vec=seed,
+                max_iter=5000, convergence_tol=1e-11, spectral_shift=10.0)
+        self.assertTrue(info["converged"])
+        self.assertAlmostEqual(lam, dense[0], delta=1e-8)
+        g = vec.reshape(shape)
+        np.testing.assert_allclose(g, -_reverse(g), rtol=0, atol=1e-12)
+        with _quiet():
+            lam, vec, info = sc._solve_leading(
+                lambda: (PK, n), n, "arnoldi", num_eigenvalues=3,
+                spectral_shift=10.0)
+        np.testing.assert_allclose(info["eigenvalues"], dense[:3], rtol=0,
+                                   atol=1e-9)
+
+    def test_forbidden_leading_is_refused(self):
+        """Defensive check: an operator whose computed eigenpairs are all
+        Pauli-forbidden (the plain shift, without the sector deflation) is
+        refused instead of written under the antisymmetric header."""
+        from scipy.sparse.linalg import LinearOperator
+        files = _write_model(self.d, so=True, soc=0.4)
+        real = sc._so_antisymmetric_operator
+
+        def plain(A, n, shape):
+            PK = real(A, n, shape)
+            P = PK.sector_projector
+            return LinearOperator((n, n), matvec=lambda v: PK.matvec(v) - P(v),
+                                  dtype=complex)
+
+        inp = _input(self.d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                      "num_eigenvalues": 4, "spectral_shift": 3.0})
+        with _quiet(), mock.patch.object(sc, "_so_antisymmetric_operator",
+                                         side_effect=plain):
+            with self.assertRaisesRegex(ValueError, "fermion-antisymmetric"):
+                sc.calc_eliashberg(inp)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "out", "gap.dat")))
 
 
 class _Stop(Exception):
