@@ -1759,13 +1759,13 @@ def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
                        " / ".join(sources), where, reason)
 
 
-# Absolute tolerance of the spin-independence test of the one-body band
-# (issue #273). The up-up and down-down blocks may differ, and the spin-mixing
-# blocks may be nonzero, by at most this much (energy units for trans_mod and
-# Extern, k-space H0(k) entries; occupation units for the green_init Green
-# function, real-space entries). It only absorbs convergence round-off of a
-# paramagnetic UHF solution; it is absolute so that a large common energy
-# offset cannot hide a finite splitting (a relative test would).
+# Absolute tolerance (energy units) of the spin-independence test of the
+# ASSEMBLED one-body band H0(k) -- trans_mod, or T + HF[green_init], plus
+# coeff_extern * Extern (issue #273). Its up-up and down-down blocks may
+# differ, and its spin-mixing blocks may be nonzero, by at most this much.
+# It only absorbs convergence round-off of a paramagnetic UHF solution; it
+# is absolute so that a large common energy offset cannot hide a finite
+# splitting (a relative test would).
 SPIN_FREE_ATOL = 1.0e-10
 
 
@@ -1791,67 +1791,50 @@ def _refuse_spin_dependent(what, detail):
             what, detail, SPIN_FREE_ATOL))
 
 
-def _check_band_spin_free(ci_input, sources, spatial_shape, norb):
-    """Refuse a spin-dependent one-body band BEFORE the RPA solver is built.
+class _AssembledH0Ready(Exception):
+    """Internal sentinel: stops the check pass of
+    :func:`_assembled_band_spin_dependence` once H0(k) is assembled, before
+    RPA diagonalizes it."""
 
-    Runs on the raw inputs, so no interaction tensor and no
-    eigendecomposition is spent on a band that is refused anyway:
 
-    * an active Extern adds +h / -h to the two spins, so it is refused when
-      its table has a nonzero entry the RPA reader would use;
-    * trans_mod is checked on its k-space form H0(k) (the e^{+ikR} transform
-      RPA applies), up-up vs down-down and the spin-mixing blocks;
-    * green_init (used only without trans_mod) enters the band as
-      T + HF[G]. Every H-wave interaction conserves S^z and is symmetric
-      under a global spin flip, so a spin-independent G gives a
-      spin-independent HF term; G itself is therefore required to be
-      spin-independent. (A spin-dependent G whose HF term happened to be
-      spin-free would also be refused -- a conservative choice.)
+def _assembled_band_spin_dependence(solver, green_info):
+    """``(splitting, mixing)`` of the ASSEMBLED one-body H0(k) of ``solver``.
 
-    Arrays of an unexpected shape are left to the RPA reader, which reports
-    them. The RPA classification after assembly stays as a backstop.
+    RPA's ``_calc_epsilon_k`` collapses a spin-free H0 to one spin block
+    after a RELATIVE comparison (``np.allclose``), which would discard the
+    down block of a band with a large common offset. The check pass
+    therefore assembles H0 with the solver's ``_keep_spinful`` switch (the
+    uncollapsed ``2*norb`` form) and stops it before the
+    eigendecomposition. ``green_info`` is not modified (the trans_mod
+    branch adds the Extern term in place, so it gets a copy).
+
+    Returns the max |up-up - down-down| and the max |spin-mixing| entry.
+    An Extern on the bare Transfer band (no trans_mod / green_init) is
+    assembled by RPA directly as two spin-diagonal blocks.
     """
-    from requests.structures import CaseInsensitiveDict
-    Nx, Ny, Nz = spatial_shape
-    nvol = Nx * Ny * Nz
-    expected = (nvol, 2 * norb, 2 * norb)
-    path_to_input = ci_input.get("path_to_input", "")
+    gi = green_info.copy()
+    if "trans_mod" in gi:
+        gi["trans_mod"] = np.array(gi["trans_mod"], copy=True)
 
-    if "Extern" in sources:
-        inter = CaseInsensitiveDict(ci_input.get("interaction", {}) or {})
-        f = os.path.join(inter.get("path_to_input", ""), inter["Extern"])
-        tbl = wan90.read_w90(f)
-        if any(v != 0 and a < norb and b < norb
-               for (_r, (a, b)), v in tbl.items()):
-            _refuse_spin_dependent(
-                "Extern",
-                "an active Extern field (nonzero coeff_extern) shifts the two "
-                "spins in opposite directions")
+    def _stop(*args, **kwargs):
+        raise _AssembledH0Ready()
 
-    if "trans_mod" in sources:
-        f = os.path.join(path_to_input, ci_input["trans_mod"])
-        with np.load(f) as data:
-            tab_r = np.asarray(data["trans_mod"])
-        if tab_r.shape == expected:
-            tab_k = (np.fft.ifftn(tab_r.reshape(Nx, Ny, Nz, *expected[1:]),
-                                  axes=(0, 1, 2)) * nvol)
-            split, mix = _spin_dependence(tab_k, norb)
-            if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
-                _refuse_spin_dependent(
-                    "trans_mod",
-                    "max |H_up - H_down| = {:.3e}, max |spin-mixing| = {:.3e}"
-                    .format(split, mix))
-    elif "green_init" in sources:
-        f = os.path.join(path_to_input, ci_input["green_init"])
-        with np.load(f) as data:
-            g = np.asarray(data["green"]) if "green" in data.files else None
-        if g is not None and g.size == int(np.prod(expected)):
-            split, mix = _spin_dependence(g.reshape(expected), norb)
-            if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
-                _refuse_spin_dependent(
-                    "green_init",
-                    "the Green function has max |G_up - G_down| = {:.3e}, "
-                    "max |spin-mixing| = {:.3e}".format(split, mix))
+    solver._keep_spinful = True
+    solver._find_block_diagonal = _stop      # instance override, removed below
+    try:
+        solver._calc_epsilon_k(gi)
+    except _AssembledH0Ready:
+        pass
+    finally:
+        del solver._find_block_diagonal
+        solver._keep_spinful = False
+    H0 = np.asarray(solver.H0_k)
+    norb = solver.norb
+    if H0.shape[0] == 2:                       # (2, nvol, norb, norb)
+        return float(np.max(np.abs(H0[0] - H0[1]))), 0.0
+    if H0.shape[-1] == 2 * norb:               # (1, nvol, 2norb, 2norb)
+        return _spin_dependence(H0[0], norb)
+    return 0.0, 0.0                            # already spin-free form
 
 
 def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
@@ -1865,12 +1848,15 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
 
     Only a spin-independent band is accepted: the singlet/triplet kernel
     carries no spin index, so a spin-diagonal or spin-mixing mean field
-    cannot be represented. :func:`_check_band_spin_free` refuses such a band
-    with ``ValueError`` from the raw inputs, with the absolute tolerance
-    :data:`SPIN_FREE_ATOL`, before the RPA solver (interaction tensors) or
-    any eigendecomposition is built -- and so before chi0q is built or
-    loaded. The RPA classification (``spin_mode == "spin-free"``) after the
-    assembly is kept as a backstop.
+    cannot be represented. The check is made on the band RPA assembles
+    (:func:`_assembled_band_spin_dependence`, absolute tolerance
+    :data:`SPIN_FREE_ATOL`), after the input files are read by the RPA
+    readers and before H0 is diagonalized -- so before any chi0q, pair
+    bubble or kernel is built, and before a chi0q file is loaded. A band
+    that passes is assembled again for use; an Extern contribution within
+    the tolerance is dropped there (RPA would otherwise keep a two-block
+    spin-diagonal form). The RPA classification afterwards stays as a
+    backstop.
     """
     from requests.structures import CaseInsensitiveDict
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1894,10 +1880,6 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
         if key in ci:
             info_inputfile[key] = ci[key]
 
-    # Refuse a spin-dependent band before the RPA solver (interaction
-    # tensors) and the H0 eigendecomposition are built.
-    _check_band_spin_free(info_inputfile, sources, spatial_shape, norb)
-
     info_log = dict(input_dict.get("log", {}) or {})
     info_log.setdefault("print_level", 1)
     info_log.setdefault("print_step", 1)
@@ -1916,10 +1898,23 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
     solver = sol_rpa.RPA(read_io.get_param("ham"), info_log, info_mode_rpa)
     green_info = read_io.get_param("green")
     green_info.update(solver.read_init(info_inputfile))
+
+    # Spin-independence of the assembled band, before H0 is diagonalized
+    # and before any chi0q / pair-bubble / kernel work.
+    split, mix = _assembled_band_spin_dependence(solver, green_info)
+    if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
+        _refuse_spin_dependent(
+            " / ".join(sources),
+            "assembled H0(k): max |H_up - H_down| = {:.3e}, max "
+            "|spin-mixing| = {:.3e}".format(split, mix))
+    if "Extern" in sources:
+        logger.info("Extern contribution is within SPIN_FREE_ATOL; dropped "
+                    "from the band")
+        solver.ham_info.ham_extern_q = None
     solver._calc_epsilon_k(green_info)
 
     if solver.spin_mode != "spin-free":
-        # backstop: _check_band_spin_free above should have refused already
+        # backstop: the assembled-band check above should have refused
         _refuse_spin_dependent(" / ".join(sources),
                                "RPA classifies it as '{}'".format(
                                    solver.spin_mode))

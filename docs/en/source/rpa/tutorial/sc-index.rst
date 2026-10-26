@@ -182,10 +182,12 @@ This section controls the Eliashberg solver. Key parameters:
      singlet/triplet pairing kernel has no spin index. A spin-dependent band
      (a magnetic ``trans_mod`` or ``green_init``, or an active ``Extern``)
      is refused with an error before :math:`\chi_0(\mathbf{q})` is computed or
-     loaded. The up-up and down-down blocks may differ, and the spin-mixing
-     blocks may be nonzero, by at most an absolute :math:`10^{-10}` (energy
-     units for ``trans_mod``; for ``green_init`` the same bound applies to
-     the Green function itself). The spin-polarized case is tracked in
+     loaded. The check is made on the assembled one-body band (``trans_mod``,
+     or the ``Transfer`` band plus the Hartree-Fock term of ``green_init``,
+     plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
+     may differ, and its spin-mixing blocks may be nonzero, by at most an
+     absolute :math:`10^{-10}` in energy units. An ``Extern`` contribution
+     within that bound is dropped. The spin-polarized case is tracked in
      issue #88. With ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``,
      and with an external ``bond_green``, these keys are not used and a
      warning says so: the susceptibilities and the Green function come from

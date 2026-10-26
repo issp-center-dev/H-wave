@@ -242,6 +242,33 @@ def _band_k(h):
 # tests
 # ---------------------------------------------------------------------------
 
+class _ForbidDownstream:
+    """Make every chi0q / Green / pair-bubble / kernel builder raise, so a
+    refusal test proves the refusal precedes all of them."""
+
+    def __enter__(self):
+        import hwave.solver.rpa as rpa
+        self._targets = [
+            (sc, "_calc_chi0q_internal"), (sc, "_load_chi0q"),
+            (sc, "_chi0q_from_prepared_solver"), (sc, "_calc_g2"),
+            (sc, "_build_bond_green"), (sc, "_make_kernel_operator"),
+            (rpa.RPA, "_calc_green"), (rpa.RPA, "_calc_chi0q")]
+        self._saved = [(obj, name, getattr(obj, name))
+                       for obj, name in self._targets]
+
+        def forbidden(*a, **k):
+            raise AssertionError("chi0q / G / kernel reached before the "
+                                 "refusal")
+        for obj, name in self._targets:
+            setattr(obj, name, forbidden)
+        return self
+
+    def __exit__(self, *exc):
+        for obj, name, orig in self._saved:
+            setattr(obj, name, orig)
+        return False
+
+
 class TestTransModOracle(unittest.TestCase):
     """A spin-free trans_mod run equals a run whose Transfer IS that band."""
 
@@ -364,20 +391,9 @@ class TestSpinDependentRefused(unittest.TestCase):
             inp = _input(d, os.path.join(d, "out"), chi0q_mode=chi0q_mode,
                          extern=extern, extra_file=extra_file,
                          extra_param=extra_param)
-            saved = (sc._calc_chi0q_internal, sc._load_chi0q,
-                     sc._chi0q_from_prepared_solver)
-
-            def forbidden(*a, **k):
-                raise AssertionError("chi0q reached before the refusal")
-            sc._calc_chi0q_internal = forbidden
-            sc._load_chi0q = forbidden
-            sc._chi0q_from_prepared_solver = forbidden
-            try:
-                with self.assertRaises(ValueError) as cm:
-                    sc.calc_eliashberg(inp)
-            finally:
-                (sc._calc_chi0q_internal, sc._load_chi0q,
-                 sc._chi0q_from_prepared_solver) = saved
+            with _ForbidDownstream(), \
+                    self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
         self.assertIn("#88", str(cm.exception))
         return str(cm.exception)
 
@@ -620,70 +636,157 @@ def _ferro_green(norb=1, m=0.05):
 
 
 class TestRefusalOrdering(unittest.TestCase):
-    """The spin-dependence refusal precedes the RPA interaction tensors and
-    every eigendecomposition: nothing heavy is built for a refused band."""
+    """The refusal is made on the ASSEMBLED band, before any chi0q, Green
+    function, pair bubble or kernel is built."""
 
-    def _refused_before_heavy_work(self, extra_file, files, extern=False,
-                                   extra_param=None):
-        import hwave.solver.rpa as rpa
+    def _refused(self, extra_file, files, extern=False, extra_param=None,
+                 inter_key="Extern", norb=1):
         with tempfile.TemporaryDirectory() as d:
-            _write_model(d, 1, extern=extern)
+            _write_model(d, norb, extern=extern)
             for name, payload in files.items():
                 np.savez(os.path.join(d, name), **payload)
             inp = _input(d, os.path.join(d, "out"), extra_file=extra_file,
-                         extern=extern, extra_param=extra_param)
-
-            def boom(*a, **k):
-                raise AssertionError("heavy work before the refusal")
-            saved = (rpa.Interaction._make_ham_inter, np.linalg.eigh,
-                     rpa.RPA._find_block_diagonal)
-            rpa.Interaction._make_ham_inter = boom
-            np.linalg.eigh = boom
-            rpa.RPA._find_block_diagonal = boom
-            try:
-                with self.assertRaises(ValueError) as cm:
-                    sc.calc_eliashberg(inp)
-            finally:
-                (rpa.Interaction._make_ham_inter, np.linalg.eigh,
-                 rpa.RPA._find_block_diagonal) = saved
+                         extra_param=extra_param)
+            if extern:
+                inp["file"]["input"]["interaction"][inter_key] = "extern.dat"
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
         self.assertIn("#88", str(cm.exception))
+        return str(cm.exception)
 
     def test_trans_mod(self):
         h = _bare_hr(1)
         m = np.zeros_like(h)
         m[0, 0, 0, 0] = 0.3
-        self._refused_before_heavy_work(
+        self._refused(
             {"trans_mod": "tm.npz"},
             {"tm.npz": {"trans_mod": _trans_mod_from_hr(h + m, h - m)}})
 
     def test_green_init(self):
-        self._refused_before_heavy_work(
-            {"green_init": "g.npz"}, {"g.npz": {"green": _ferro_green()}})
+        self._refused({"green_init": "g.npz"},
+                      {"g.npz": {"green": _ferro_green()}})
 
     def test_green_init_mixed_case(self):
-        self._refused_before_heavy_work(
-            {"Green_Init": "g.npz"}, {"g.npz": {"green": _ferro_green()}})
+        self._refused({"Green_Init": "g.npz"},
+                      {"g.npz": {"green": _ferro_green()}})
 
     def test_extern_mixed_case(self):
         # 'extern' table key and 'Coeff_Extern' are both honoured
-        import hwave.solver.rpa as rpa
-        with tempfile.TemporaryDirectory() as d:
-            _write_model(d, 1, extern=True)
-            inp = _input(d, os.path.join(d, "out"),
-                         extra_param={"Coeff_Extern": 0.2})
-            inp["file"]["input"]["interaction"]["extern"] = "extern.dat"
+        msg = self._refused({}, {}, extern=True, inter_key="extern",
+                            extra_param={"Coeff_Extern": 0.2})
+        self.assertIn("Extern", msg)
 
-            def boom(*a, **k):
-                raise AssertionError("heavy work before the refusal")
-            saved = rpa.Interaction._make_ham_inter
-            rpa.Interaction._make_ham_inter = boom
-            try:
-                with self.assertRaises(ValueError) as cm:
-                    sc.calc_eliashberg(inp)
-            finally:
-                rpa.Interaction._make_ham_inter = saved
+
+class TestAssembledBandCheck(unittest.TestCase):
+    """The criterion is the assembled band, not the raw inputs."""
+
+    def _band(self, norb=1, extra_file=None, files=None, extern_rows=None,
+              coeff=None, inter=None):
+        """_mean_field_band on a small model; returns None or raises."""
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, norb)
+            for name, payload in (files or {}).items():
+                np.savez(os.path.join(d, name), **payload)
+            inp = _input(d, os.path.join(d, "out"), extra_file=extra_file,
+                         extra_param=({"coeff_extern": coeff}
+                                      if coeff is not None else None))
+            if extern_rows is not None:
+                with open(os.path.join(d, "ext.dat"), "w") as f:
+                    f.write("Extern\n{}\n{}\n".format(norb, len(extern_rows)))
+                    f.write(" ".join("1" for _ in extern_rows) + "\n")
+                    for r in extern_rows:
+                        f.write("{} {} {} {} {} {!r} 0.0\n".format(*r))
+                inp["file"]["input"]["interaction"]["Extern"] = "ext.dat"
+            if inter is not None:
+                files_ = inp["file"]["input"]["interaction"]
+                for k in ("CoulombIntra", "CoulombInter"):
+                    files_.pop(k, None)
+                tname, fname = inter
+                files_[tname] = fname
+            sources = sc._one_body_band_sources(inp)
+            return sc._mean_field_band(inp, sources, "general",
+                                       (NX, NY, 1), norb)
+
+    def test_green_init_only_onsite_cell_enters(self):
+        # spin-free g0[0], spin-dependent cell 1: the RPA band uses g0[0]
+        # only, so the band is spin-free and accepted
+        g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
+        g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
+        g[1, 0, 0, 0, 0] = 0.2
+        g[1, 1, 0, 1, 0] = -0.2
+        band = self._band(extra_file={"green_init": "g.npz"},
+                          files={"g.npz": {"green": g}})
+        self.assertIsNotNone(band)
+
+    def test_extern_boundary(self):
+        # on-site Extern 1.0: H_up - H_down = 2 * coeff_extern
+        rows = [(0, 0, 0, 1, 1, 1.0)]
+        band = self._band(extern_rows=rows, coeff=0.4e-10)
+        self.assertTrue(band.same_as_bare)
+        with self.assertRaises(ValueError) as cm:
+            self._band(extern_rows=rows, coeff=0.6e-10)
         self.assertIn("#88", str(cm.exception))
-        self.assertIn("Extern", str(cm.exception))
+
+    def test_extern_cancelling_on_the_grid(self):
+        # R = 0 and R = -NX wrap onto the same slot and cancel exactly
+        rows = [(0, 0, 0, 1, 1, 1.0), (-NX, 0, 0, 1, 1, -1.0)]
+        band = self._band(extern_rows=rows, coeff=0.2)
+        self.assertTrue(band.same_as_bare)
+
+    def test_each_interaction_type(self):
+        """Per interaction type: a spin-free G gives an accepted band; a ferro
+        G gives a refused band whenever RPA's T + HF[G] carries its spin
+        dependence (two orbitals, on-site terms).
+
+        RPA's green_init band is T plus the on-site HF term its
+        ``_calc_trans_mod`` builds. For CoulombInter, Exchange and PairLift
+        that term carries no spin dependence for the ferro patterns below
+        (nor for an on-site spin-flip G), so those bands ARE spin-free and
+        are accepted -- the same band RPA's own chi0q uses. This pins the
+        current RPA behaviour; it is not a statement about the UHF band of
+        such a G.
+        """
+        norb = 2
+        m = 0.05
+
+        def g_of(diag, off):
+            g = np.zeros((NX * NY, 2, norb, 2, norb), dtype=complex)
+            for s_, sign in ((0, 1.0), (1, -1.0)):
+                g[0, s_, 0, s_, 0] = g[0, s_, 1, s_, 1] = 0.4 + sign * diag
+                g[0, s_, 0, s_, 1] = g[0, s_, 1, s_, 0] = 0.1 + sign * off
+            return g
+        g_free = g_of(0.0, 0.0)
+        g_ferro = g_of(m, m)
+        refused = {"CoulombIntra": True, "Hund": True, "Ising": True,
+                   "PairHop": True, "CoulombInter": False, "Exchange": False,
+                   "PairLift": False}
+        for tname, ferro_refused in refused.items():
+            with self.subTest(type=tname), tempfile.TemporaryDirectory() as d:
+                if tname == "CoulombIntra":
+                    rows = [(0, 0, 0, 1, 1, 1.0), (0, 0, 0, 2, 2, 1.0)]
+                else:
+                    rows = [(0, 0, 0, 1, 2, 0.5), (0, 0, 0, 2, 1, 0.5)]
+                path = os.path.join(d, "x.dat")
+                with open(path, "w") as f:
+                    f.write("{}\n{}\n1\n1\n".format(tname, norb))
+                    for r in rows:
+                        f.write("{} {} {} {} {} {!r} 0.0\n".format(*r))
+                for label, g, ok in (("free", g_free, True),
+                                     ("ferro", g_ferro, not ferro_refused)):
+                    np.savez(os.path.join(d, "g.npz"), green=g)
+
+                    def call():
+                        return self._band(
+                            norb=norb,
+                            extra_file={"green_init":
+                                        os.path.join(d, "g.npz")},
+                            inter=(tname, path))
+                    if ok:
+                        self.assertIsNotNone(call(), label)
+                    else:
+                        with self.assertRaises(ValueError) as cm:
+                            call()
+                        self.assertIn("#88", str(cm.exception))
 
 
 class TestSpinFreeTolerance(unittest.TestCase):
@@ -768,15 +871,28 @@ class TestExternalBondGreen(unittest.TestCase):
                      trans_mod=_trans_mod_from_hr(h + m, h - m))
             plain = _run(_input(d, os.path.join(d, "o1"),
                                 eliashberg=bond_ext))
-            for tm in ("ferro.npz", "does_not_exist.npz"):
-                with self.subTest(trans_mod=tm):
+            cases = [
+                ("trans_mod", {"trans_mod": "ferro.npz"}, None, None),
+                ("trans_mod", {"trans_mod": "does_not_exist.npz"}, None,
+                 None),
+                ("green_init", {"Green_Init": "does_not_exist.npz"}, None,
+                 None),
+                ("Extern", {}, "does_not_exist.dat", {"Coeff_Extern": 0.2}),
+            ]
+            for name, extra_file, extern_file, param in cases:
+                with self.subTest(name=name, extra=extra_file):
+                    inp = _input(d, os.path.join(d, "o2"),
+                                 eliashberg=bond_ext, extra_file=extra_file,
+                                 extra_param=param)
+                    if extern_file is not None:
+                        inp["file"]["input"]["interaction"]["extern"] = \
+                            extern_file
                     with self.assertLogs("hwave_sc", level="WARNING") as logs:
-                        res = _run(_input(d, os.path.join(d, "o2"),
-                                          eliashberg=bond_ext,
-                                          extra_file={"trans_mod": tm}))
+                        res = _run(inp)
                     self.assertTrue(np.array_equal(res["eig"], plain["eig"]))
                     self.assertTrue(any(
-                        "trans_mod is ignored" in msg and "bond_green" in msg
+                        "{} is ignored".format(name) in msg
+                        and "bond_green" in msg
                         for msg in logs.output), logs.output)
 
 if __name__ == "__main__":
