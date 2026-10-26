@@ -326,9 +326,10 @@ class TestStaticEntry(_TmpDir):
         singlet kernel) appears once in the spin-orbital spectrum and every
         triplet eigenvalue (odd sector of the non-SO triplet kernel) three
         times; the Pauli-forbidden modes (odd singlet, even triplet) are
-        absent. Both non-SO sets cover 62 of the 64 eigenvalues, the SO set
-        254 of 256 (every nonzero eigenvalue: the symmetric sector sits at
-        zero)."""
+        absent. Both non-SO sets cover 62 of the 64 eigenvalues; the SO
+        solve works in the antisymmetric space of dimension 120 (36 even
+        singlet + 3 x 28 odd triplet), and a request of 254 returns all 120
+        of its eigenvalues (dense branch)."""
         eli = {"chi0q_mode": "calc", "solver_mode": "eigenvalue"}
         res = {}
         for ch in ("singlet", "triplet"):
@@ -1066,8 +1067,9 @@ class TestRepulsiveSpectralShift(_TmpDir):
         """``dim = 5`` (shape (2, 2, 3, 1, 1): 12 entries, 2 self-paired):
         ``num_eigenvalues`` 3, 4, 5 and 7 return ``min(requested, dim)``
         eigenpairs -- none dropped at ARPACK's ``k < dim - 1`` limit --
-        selected by magnitude (no shift) or by real part (shift 0.3), equal
-        to the dense restricted spectrum and ordered by real part."""
+        selected by magnitude (no shift) or by real part (shift 0.3 or
+        "auto"), equal to the dense restricted spectrum and ordered by real
+        part."""
         from scipy.sparse.linalg import aslinearoperator
         shape = (2, 2, 3, 1, 1)
         n = int(np.prod(shape))
@@ -1078,7 +1080,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
         self.assertEqual(basis.dim, 5)
         dense, m = _dense_antisymmetric_spectrum(M, shape)
         self.assertEqual(m, 5)
-        for shift in (None, 0.3):
+        for shift in (None, 0.3, "auto"):
             for req in (3, 4, 5, 7):
                 with self.subTest(spectral_shift=shift, num_eigenvalues=req), \
                         _quiet():
@@ -1096,6 +1098,14 @@ class TestRepulsiveSpectralShift(_TmpDir):
                         r = (M @ g.ravel()).reshape(shape)
                         r = sc._project_gap_parity(r, "triplet")
                         np.testing.assert_allclose(r, v * g, rtol=0, atol=1e-10)
+
+    def test_dense_branch_warns_about_sigma_shift(self):
+        from scipy.sparse.linalg import aslinearoperator
+        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        with self.assertLogs("hwave_sc", level="WARNING") as cm:
+            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 5,
+                                    "arnoldi", sigma_shift=0.2)
+        self.assertTrue(any("sigma_shift is ignored" in m for m in cm.output))
 
     def test_non_arnoldi_method_is_refused(self):
         from scipy.sparse.linalg import aslinearoperator

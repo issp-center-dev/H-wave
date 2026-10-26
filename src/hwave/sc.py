@@ -7608,6 +7608,12 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
     red = basis.reduce(A)
     dim = basis.dim
     if num_eigenvalues >= dim - 1:
+        if sigma_shift is not None:
+            # the same advisory the ARPACK path (_solve_leading) gives
+            logger.warning(
+                "[eliashberg] sigma_shift is ignored for eigenvalue_method="
+                "'arnoldi' (it targets the shift-invert methods); use "
+                "spectral_shift to bias the arnoldi selection.")
         dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
         vals, vecs = np.linalg.eig(dense)
         n_keep = min(max(1, int(num_eigenvalues)), dim)
