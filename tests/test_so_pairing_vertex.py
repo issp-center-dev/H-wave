@@ -372,8 +372,12 @@ class TestInterface(unittest.TestCase):
 
 
 class TestSharedVertex(unittest.TestCase):
-    """The antisymmetrized spinful vertex has ONE builder, shared by the
-    spin-orbital FLEX and the Eliashberg solver."""
+    """Delegation pin, not an oracle: the antisymmetrized spinful vertex has
+    ONE builder, shared by the spin-orbital FLEX and the Eliashberg solver,
+    so the two cannot drift apart. Both sides call the same code, so this
+    test says nothing about whether that vertex is correct; its correctness
+    is checked by the exact-diagonalization gate
+    (``tests/test_so_pairing_ed.py``) and the SU(2) limits."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="so_vertex_")

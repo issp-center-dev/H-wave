@@ -83,7 +83,7 @@ def _wfile(path, head, n, rows):
 
 
 def _write_model(d, so, soc=0.0, types=_SU2_TYPES, extra_rows=None,
-                 n_geom=None):
+                 n_geom=None, spin_rot=None):
     """A centrosymmetric two-orbital square lattice (real, symmetric
     hopping) plus, in the spin-orbital encoding, the Rashba-like hopping
     ``soc (sin ky sigma_x - sin kx sigma_y)`` on both orbitals.
@@ -91,7 +91,10 @@ def _write_model(d, so, soc=0.0, types=_SU2_TYPES, extra_rows=None,
     ``so``: geometry of ``2 NP`` spin-orbitals and the transfer on the
     interleaved index ``2 a + s``; the interaction files use the PHYSICAL
     orbital index either way. ``extra_rows``: ``{type: [(R, a, b, v)]}``
-    appended to the interaction files. Returns the interaction file map."""
+    appended to the interaction files. ``spin_rot``: a 2 x 2 SU(2) matrix
+    ``U``; the spin part of the spin-orbit hopping becomes ``U m U^dagger``
+    (a global spin rotation of the model). Returns the interaction file
+    map."""
     n = 2 * NP if so else NP
     with open(os.path.join(d, "geom.dat"), "w") as f:
         ng = n if n_geom is None else n_geom
@@ -114,21 +117,24 @@ def _write_model(d, so, soc=0.0, types=_SU2_TYPES, extra_rows=None,
         # partners: eps(k) = soc (sin ky sigma_x - sin kx sigma_y)
         for R, m in (((1, 0), 1j * soc * sy), ((-1, 0), -1j * soc * sy),
                      ((0, 1), -1j * soc * sx), ((0, -1), 1j * soc * sx)):
+            if spin_rot is not None:
+                m = spin_rot @ m @ spin_rot.conj().T
             for a in range(NP):
                 for s in range(2):
                     for sp in range(2):
                         if m[s, sp] != 0:
                             hop.append((R, a, a, s, sp, m[s, sp]))
-    rows = []
-    for R, a, b, s, sp, v in hop:
+    acc = {}    # one row per (R, i, j): a rotated spin-orbit term can land
+    for R, a, b, s, sp, v in hop:     # on a spin-diagonal slot
         if so:
             i, j = 2 * a + s + 1, 2 * b + sp + 1
         elif s == 0 and sp == 0:
             i, j = a + 1, b + 1
         else:
             continue
-        v = complex(v)
-        rows.append((R[0], R[1], 0, i, j, v.real, v.imag))
+        key = (R[0], R[1], 0, i, j)
+        acc[key] = acc.get(key, 0.0) + complex(v)
+    rows = [k + (v.real, v.imag) for k, v in acc.items()]
     _wfile(os.path.join(d, "transfer.dat"), "Transfer", n, rows)
     offd = [(a, b) for a in range(NP) for b in range(NP) if a != b]
     files = {}
@@ -327,8 +333,74 @@ class TestStaticEntry(_TmpDir):
         w = _spin_weights(gap, NP)
         self.assertAlmostEqual(sum(w), 1.0, places=12)
         self.assertGreater(min(w[0], max(w[1:])), 1e-6)
+        # pinned (measured): the leading gap is non-degenerate (0.1737 vs
+        # 0.0854), mostly psi with an in-plane d (d_x and d_y equal by the
+        # fourfold symmetry of the Rashba term) and no d_z
+        self.assertGreater(lam.real - seen["evs"][1].real, 0.05)
+        np.testing.assert_allclose(w[:3], [0.68772500088, 0.15613749788,
+                                           0.15613749788], rtol=1e-6, atol=0)
+        self.assertLess(w[3], 1e-6)
         self.assertEqual(seen["provenance"]["spin_orbital"], "true")
         self.assertEqual(seen["provenance"]["index_convention"], "spin_block")
+
+    def test_global_spin_rotation_invariance(self):
+        """A global SU(2) rotation ``U`` of the spin-orbit hopping
+        (``m -> U m U^dagger``), with the rotation-invariant (Kanamori)
+        interaction, leaves the spectrum unchanged to 1e-10 and rotates the
+        leading gap as ``Delta -> (U x 1) Delta (U x 1)^T``, i.e. ``psi``
+        invariant and ``d -> R(U) d``. ``U``: pi/2 about z (``d_x' = -d_y``,
+        ``d_y' = d_x``), then pi/3 about x on top. Non-vacuity: the rotated
+        Transfer differs, and the composite rotation changes the spin
+        weights."""
+        from scipy.linalg import expm
+        sx = np.array([[0, 1], [1, 0]], complex)
+        sz = np.diag([1.0, -1.0]).astype(complex)
+        Uz = expm(-0.25j * np.pi * sz)
+        Uzx = expm(-1j * np.pi / 6 * sx) @ Uz
+        eli = {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+               "num_eigenvalues": 12}
+        runs, transfers = {}, {}
+        for name, U in (("id", None), ("z", Uz), ("zx", Uzx)):
+            d = os.path.join(self.d, name)
+            os.makedirs(d)
+            files = _write_model(d, so=True, soc=0.4, spin_rot=U)
+            with open(os.path.join(d, "transfer.dat")) as f:
+                transfers[name] = f.read()
+            runs[name] = _run(_input(d, files, True, eli))
+        self.assertNotEqual(transfers["z"], transfers["id"])
+        self.assertNotEqual(transfers["zx"], transfers["z"])
+        ref = runs["id"]
+        lead = ref["evs"]
+        # the leading eigenvalue is non-degenerate, so its gap is unique up
+        # to a phase
+        self.assertGreater(lead[0].real - lead[1].real, 1e-2)
+        for name, U in (("z", Uz), ("zx", Uzx)):
+            got = runs[name]
+            with self.subTest(rotation=name):
+                np.testing.assert_allclose(got["evs"], lead, rtol=0,
+                                           atol=1e-10)
+                W = np.kron(U, np.eye(NP))
+                expect = np.einsum("AC,CDxyz,BD->ABxyz", W, ref["gap"], W)
+                g = got["gap"]
+                phase = np.vdot(g, expect) / abs(np.vdot(g, expect))
+                np.testing.assert_allclose(g * phase, expect, rtol=0,
+                                           atol=1e-8 * np.abs(expect).max())
+        # pi/2 about z: d_x' = -d_y, d_y' = d_x, psi and d_z unchanged
+        c0 = so_pairing.so_spin_components(ref["gap"], NP)
+        g = runs["z"]["gap"]
+        expect = np.einsum("AC,CDxyz,BD->ABxyz", np.kron(Uz, np.eye(NP)),
+                           ref["gap"], np.kron(Uz, np.eye(NP)))
+        g = g * np.vdot(g, expect) / abs(np.vdot(g, expect))
+        c1 = so_pairing.so_spin_components(g, NP)
+        tol = 1e-8 * max(np.abs(c).max() for c in c0)
+        for got_c, want in ((c1[0], c0[0]), (c1[1], -c0[2]),
+                            (c1[2], c0[1]), (c1[3], c0[3])):
+            np.testing.assert_allclose(got_c, want, rtol=0, atol=tol)
+        self.assertGreater(np.abs(c0[1]).max(), 1e-2)
+        w_id = so_pairing.so_spin_decomposition(ref["gap"], NP)
+        w_zx = so_pairing.so_spin_decomposition(runs["zx"]["gap"], NP)
+        self.assertAlmostEqual(w_zx["psi"], w_id["psi"], delta=1e-8)
+        self.assertGreater(abs(w_zx["dz"] - w_id["dz"]), 0.1)
 
     def test_iteration_matches_eigenvalue(self):
         """The shifted power iteration (with the projection in every step)
@@ -923,6 +995,99 @@ class TestRepulsiveSpectralShift(_TmpDir):
         self.assertFalse(os.path.exists(os.path.join(self.d, "out", "gap.dat")))
 
 
+class TestStaticKernelBridge(_TmpDir):
+    """Bridge from the production static operator to the exact-
+    diagonalization-validated dynamic kernel (``tests/test_so_pairing_ed.py``
+    validates the ``BondPairKernel`` fed with ``so_pairing_vertex_parts``
+    followed by the antisymmetric projection). On the complex-SOC model, the
+    operator the production run builds (``_make_kernel_operator`` on its
+    ``Vs_q`` / ``G2``, then ``_so_antisymmetric_operator``; ``G`` from
+    ``_build_bond_green``, ``g2_tail = false``) applied to a static gap
+    equals, at every fermionic frequency, that ``BondPairKernel`` with the
+    same ``G``, ``V_inst = V_bare`` and the frequency-independent ``V_fluct``
+    at every bosonic frequency, followed by the projection."""
+
+    def test_production_operator_equals_validated_kernel(self):
+        import types
+        from hwave.solver.eliashberg_bond import (
+            ArrayBlockSource, BondPairKernel, PairVertexUniform, _vinst_as_block)
+        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+        files = _write_model(self.d, so=True, soc=0.3)
+        inp = _input(self.d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                      "num_eigenvalues": 2, "g2_tail": False}, nmat=16)
+        cap = {}
+        real_green = sc._build_bond_green
+        real_vertex = sc._so_static_vertex_from_chi
+        real_op = sc._so_antisymmetric_operator
+
+        def spy_green(*a, **kw):
+            out = real_green(*a, **kw)
+            cap["green"] = np.array(out.full_sc, copy=True)
+            return out
+
+        def spy_vertex(gam, chi, nd, shape):
+            cap["gam"], cap["chi"] = np.array(gam), np.array(chi)
+            cap["Vs"] = real_vertex(gam, chi, nd, shape)
+            return cap["Vs"]
+
+        def spy_op(A, n, shape):
+            cap["A"] = A
+            cap["op"] = real_op(A, n, shape)
+            return cap["op"]
+
+        with _quiet(), \
+                mock.patch.object(sc, "_build_bond_green", side_effect=spy_green), \
+                mock.patch.object(sc, "_so_static_vertex_from_chi",
+                                  side_effect=spy_vertex), \
+                mock.patch.object(sc, "_so_antisymmetric_operator",
+                                  side_effect=spy_op):
+            sc.calc_eliashberg(inp)
+        Nx, Ny, Nz = CELL
+        nvol, nd2 = Nx * Ny * Nz, ND * ND
+        g = cap["green"]
+        nmat = g.shape[-1]
+        self.assertEqual(g.shape, (ND, ND, Nx, Ny, Nz, nmat))
+        # the spin-off-diagonal Green function blocks are load bearing
+        self.assertGreater(np.linalg.norm(g[:NP, NP:]), 1e-2 * np.linalg.norm(g))
+        V_bare, V_fl = so_pairing.so_pairing_vertex_parts(
+            cap["gam"], cap["chi"], ND, (Nx, Ny, Nz))
+        np.testing.assert_allclose(V_bare + V_fl, cap["Vs"], rtol=0,
+                                   atol=1e-13 * np.abs(cap["Vs"]).max())
+        self.assertGreater(np.abs(V_fl).max(), 1e-2 * np.abs(V_bare).max())
+        blocks = np.repeat(_vinst_as_block(V_fl, nd2, nvol)[None], nmat, axis=0)
+        view = types.SimpleNamespace(n_channels=1, delta_r=[(0, 0, 0)])
+        vert = PairVertexUniform(source=ArrayBlockSource({"G": blocks}, nd2),
+                                 slot="G", B=1, nd=nd2, nmat=nmat, nvol=nvol)
+        beta = 1.0 / 0.25
+        K = BondPairKernel(vert, calc_g2_dynamic(g, beta), view, xp=np,
+                           spatial_shape=(Nx, Ny, Nz), norb=ND, beta=beta,
+                           nfreq=nmat, V_inst=V_bare, residency="host",
+                           host_cap=10 ** 12, device_cap=10 ** 12)
+        shape = (ND, ND, Nx, Ny, Nz)
+        rng = np.random.default_rng(3)
+        for trial, antisym in ((0, True), (1, False)):
+            # a general gap too: then the projection itself is compared
+            D = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+            if antisym:
+                D = sc._project_gap_parity(D, "triplet")
+            want = cap["op"].matvec(D.ravel()).reshape(shape)
+            raw = cap["A"].matvec(D.ravel()).reshape(shape)
+            Dw = np.ascontiguousarray(np.repeat(D[..., None], nmat, axis=-1))
+            out = K.matvec(Dw.ravel()).reshape(shape + (nmat,))
+            with self.subTest(antisymmetric_gap=antisym):
+                self.assertGreater(np.linalg.norm(want), 1e-3 * np.linalg.norm(D))
+                if not antisym:
+                    self.assertGreater(np.linalg.norm(raw - want),
+                                       1e-2 * np.linalg.norm(want))
+                for n in range(nmat):
+                    np.testing.assert_allclose(
+                        out[..., n], raw, rtol=0, atol=1e-12 * np.abs(raw).max())
+                    got = sc._project_gap_parity(out[..., n], "triplet")
+                    np.testing.assert_allclose(
+                        got, want, rtol=0, atol=1e-12 * np.abs(want).max())
+
+
 class _Stop(Exception):
     """Ends a run once the array under test has been captured."""
 
@@ -1302,16 +1467,24 @@ class TestFlexMode(unittest.TestCase):
 
     def test_vertex_mismatch_is_refused(self):
         """Interaction files that do not reproduce the FLEX run's vertex are
-        refused through the stored chi0q."""
-        d = tempfile.mkdtemp(prefix="sc_so_flex_u_")
-        self.addCleanup(shutil.rmtree, d, True)
-        files = _write_model(d, so=True, soc=0.3)
-        with open(os.path.join(d, "coulombintra.dat")) as f:
-            txt = f.read()
-        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
-            f.write(txt.replace("1.600000000000", "1.700000000000"))
-        self._refused(r"do not reproduce the vertex",
-                      _flex_input(d, files, self.flex, out=self._out("out_mis")))
+        refused through the stored chi0q: a CoulombIntra change, and -- a
+        smaller, spin-structure-only perturbation -- a Hund-only or an
+        Exchange-only change of 2.5 %."""
+        for fname, old, new in (
+                ("coulombintra.dat", "1.600000000000", "1.700000000000"),
+                ("hund.dat", "0.120000000000", "0.123000000000"),
+                ("exchange.dat", "0.040000000000", "0.041000000000")):
+            d = tempfile.mkdtemp(prefix="sc_so_flex_u_")
+            self.addCleanup(shutil.rmtree, d, True)
+            files = _write_model(d, so=True, soc=0.3)
+            with open(os.path.join(d, fname)) as f:
+                txt = f.read()
+            self.assertIn(old, txt)
+            with open(os.path.join(d, fname), "w") as f:
+                f.write(txt.replace(old, new))
+            with self.subTest(file=fname):
+                self._refused(r"do not reproduce the vertex", _flex_input(
+                    d, files, self.flex, out=self._out("out_mis")))
 
     def test_norb1_shape_ambiguity_uses_tags(self):
         """N = 1 (nd = 2, the shape of a two-orbital non-spin-orbital file)

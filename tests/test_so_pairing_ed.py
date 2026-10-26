@@ -60,8 +60,9 @@ Tolerance. The production side is exact up to the Matsubara truncation, an
 ``O(1/nmat)`` error; Richardson extrapolation over ``nmat = 128, 256``
 leaves 5.8e-6 (``c1``) and 4.5e-5 (``c2``), falling to 1.5e-6 / 1.3e-5 over
 ``256, 512`` (measured), so the residual is the truncation and not a
-formula defect. The bounds are those of ``tests/test_bond_pairing_ed.py``:
-5e-5 and 2e-4. The comparison is two-sided: the fluctuation term read in
+formula defect. The bounds are 2e-5 (``c1``, 3.4x the measured 5.8e-6;
+tightened from the 5e-5 of ``tests/test_bond_pairing_ed.py``) and 2e-4
+(``c2``, 4.4x the measured 4.5e-5). The comparison is two-sided: the fluctuation term read in
 the opposite orientation (``-(Gamma chi Gamma)[(d, c), (b, a)]`` at
 ``-q``, the same tensor only at zero bosonic frequency) misses ``c2`` by
 1.9e-2, and the ladder without the fluctuation term by 9.9e-2 (both at
@@ -105,7 +106,7 @@ TYPES = (("CoulombIntra", 1.0), ("CoulombInter", 0.6), ("Hund", 0.5), ("Exchange
 H = 0.05
 LAMS = (-2 * H, -H, 0.0, H, 2 * H)
 NMATS = (128, 256)
-TOL_C1, TOL_C2, MISS = 5e-5, 2e-4, 1e-2
+TOL_C1, TOL_C2, MISS = 2e-5, 2e-4, 1e-2
 
 _K = 2 * np.pi * np.arange(L) / L
 #: pair basis (A, B, d'): spin-orbital A at the origin, B at d'
