@@ -63,7 +63,8 @@ Only on-site interactions are representable: an off-site term makes
 import numpy as np
 
 __all__ = ["so_pairing_vertex", "so_pairing_vertex_parts", "so_initial_gap",
-           "check_so_config", "check_so_supported"]
+           "check_so_config", "check_so_supported", "so_spin_components",
+           "so_spin_decomposition", "SPIN_COMPONENTS"]
 
 #: relative tolerance of the on-site (q-independent Gamma) check
 _ONSITE_RTOL = 1.0e-10
@@ -319,3 +320,77 @@ def check_so_supported(input_dict, interactions, site, norb_phys=None):
                 "{}: {} is not supported; the spin-orbital pairing vertex supports "
                 "on-site interactions only (the exchange crossing of an off-site "
                 "term depends on k + k'). {}.".format(_SO_WHAT, why, fix[0].upper() + fix[1:]))
+
+
+# ---------------------------------------------------------------------------
+# Spin structure of a spin-orbital gap (output diagnostics)
+# ---------------------------------------------------------------------------
+
+#: names of the spin components, in output order
+SPIN_COMPONENTS = ("psi", "dx", "dy", "dz")
+
+_PAULI = (np.eye(2, dtype=complex),
+          np.array([[0, 1], [1, 0]], dtype=complex),
+          np.array([[0, -1j], [1j, 0]], dtype=complex),
+          np.array([[1, 0], [0, -1]], dtype=complex))
+#: ``i sigma_y``
+_I_SIGMA_Y = 1j * _PAULI[2]
+#: the spin basis ``sigma_mu i sigma_y`` (mu = 0, x, y, z) of the
+#: decomposition; orthogonal, ``Tr[B_mu^dagger B_nu] = 2 delta_mu,nu``
+_SPIN_BASIS = tuple(m @ _I_SIGMA_Y for m in _PAULI)
+
+
+def _split_spin_blocks(gap, norb_phys):
+    gap = np.asarray(gap)
+    n = int(norb_phys)
+    if n <= 0 or gap.ndim < 2 or gap.shape[0] != 2 * n or gap.shape[1] != 2 * n:
+        raise ValueError(
+            "a spin-orbital gap must have shape (2 N, 2 N, ...) with N = "
+            "norb_phys = {}; got {}".format(norb_phys, gap.shape))
+    return gap.reshape((2, n, 2, n) + gap.shape[2:])
+
+
+def so_spin_components(gap, norb_phys):
+    """Singlet and triplet components of a spin-orbital gap.
+
+    ``gap`` is ``Delta_AB(...)`` of shape ``(2N, 2N, ...)`` in spin-block
+    order (``A = s * N + a``, spin 0 = up; the trailing axes are the k grid,
+    or anything else). For every orbital pair ``(a, b)`` (and k) the 2 x 2
+    spin block ``[Delta_ab]_st = Delta_{(s,a),(t,b)}`` is written as
+
+        Delta_ab = (psi_ab + d_ab . sigma) i sigma_y,
+
+    i.e. ``psi_ab = 1/2 Tr[(i sigma_y)^dagger Delta_ab]`` and
+    ``d_ab,j = 1/2 Tr[(sigma_j i sigma_y)^dagger Delta_ab]``; explicitly
+
+        psi = (D_ud - D_du) / 2,      d_x = (D_dd - D_uu) / 2,
+        d_y = (D_uu + D_dd) / (2 i),  d_z = (D_ud + D_du) / 2.
+
+    Returns ``(psi, dx, dy, dz)``, complex arrays of shape ``(N, N, ...)``.
+    The four matrices ``sigma_mu i sigma_y`` are orthogonal with norm
+    ``sqrt(2)``, so ``|Delta_ab|_F^2 = 2 (|psi_ab|^2 + |d_ab|^2)``."""
+    g = _split_spin_blocks(gap, norb_phys)
+    return tuple(0.5 * np.einsum("st,satb...->ab...", b.conj(), g)
+                 for b in _SPIN_BASIS)
+
+
+def so_spin_decomposition(gap, norb_phys):
+    """Spin weights of a spin-orbital gap: ``{"psi", "dx", "dy", "dz"}``.
+
+    With the components of :func:`so_spin_components`
+    (``Delta_ab(k) = (psi_ab(k) + d_ab(k) . sigma) i sigma_y`` per orbital
+    pair), each weight is the sum over k and the orbital pairs ``(a, b)`` of
+    the component's ``|.|^2``, normalized so that the four sum to 1:
+
+        w_psi = sum_{k,a,b} |psi_ab(k)|^2 / W,  w_dj = sum_{k,a,b} |d_ab,j(k)|^2 / W,
+        W = sum_{k,a,b} (|psi_ab(k)|^2 + |d_ab(k)|^2) = |Delta|_F^2 / 2.
+
+    ``w_psi = 1`` is a pure (spin-singlet) gap, ``w_dx + w_dy + w_dz = 1`` a
+    pure spin-triplet one. The weights do not depend on the overall phase or
+    normalization of the gap. A zero gap gives NaN weights."""
+    comps = so_spin_components(gap, norb_phys)
+    sq = [float(np.sum(np.abs(c) ** 2)) for c in comps]
+    tot = sum(sq)
+    if not tot > 0.0:
+        return {k: float("nan") for k in SPIN_COMPONENTS}
+    return {k: v / tot for k, v in zip(SPIN_COMPONENTS, sq)}

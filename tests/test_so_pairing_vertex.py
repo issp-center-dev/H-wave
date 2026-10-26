@@ -18,7 +18,12 @@ consumes (``Delta_ad = -sum_bc V_abcd F_bc``).
   action of the existing non-spin-orbital singlet (triplet) kernel, bare and
   fluctuation parts together. Hund and Exchange alone conserve S_z but are not
   rotation invariant; for them only the equal-spin triplet (the non-SO
-  triplet's own definition) is an exact limit.
+  triplet's own definition) is an exact limit. Their singlet and ``d_z``
+  (opposite-spin) components are not compared: the non-spin-orbital singlet
+  and triplet formulas assume spin-rotation invariance and are only
+  approximate for these terms (issue #88), while the spin-orbital vertex
+  treats them exactly. For Hund alone, which acts between equal spins only,
+  the spin-orbital kernel returns exactly zero opposite-spin pairing.
 """
 import contextlib
 import logging
@@ -307,6 +312,27 @@ class TestSU2Limit(unittest.TestCase):
         for t, v in (("Hund", 0.3), ("Exchange", 0.25)):
             with self.subTest(t=t):
                 self._check(_onsite_decl(t, v), [("triplet", "x"), ("triplet", "y")])
+
+    def test_hund_alone_has_no_opposite_spin_pairing(self):
+        """Hund alone couples equal spins only, so the spin-orbital kernel maps
+        the singlet and ``d_z`` gaps (opposite-spin blocks) to exactly zero,
+        while the equal-spin ``d_x`` gap gets a nonzero response. The
+        non-spin-orbital singlet kernel is not compared here (issue #88)."""
+        from hwave.solver.so_pairing import so_pairing_vertex
+        gam = _gamma(_onsite_decl("Hund", 0.3))
+        chi = np.linalg.solve(np.eye(ND * ND)[None] + self.chi0so @ gam, self.chi0so)
+        Kso, _ = sc._make_kernel_operator(so_pairing_vertex(gam, chi, ND, (NX, 1, 1)),
+                                          self.G2so, ND, NX, 1, 1)
+        rng = np.random.default_rng(5)
+        for spin in "szx":
+            phi = rng.standard_normal((NP, NP, NX)) + 1j * rng.standard_normal((NP, NP, NX))
+            gap = np.einsum("st,abk->satbk", _SPIN[spin], phi)
+            out = Kso.matvec(gap.ravel()).reshape(2, NP, 2, NP, NX)
+            with self.subTest(spin=spin):
+                if spin == "x":
+                    self.assertGreater(np.abs(out[0, :, 0]).max(), 1e-3)
+                else:
+                    self.assertEqual(np.abs(out).max(), 0.0)
 
 
 _SPIN = {"s": _IY, "z": _TRIPLET["z"], "x": _TRIPLET["x"], "y": _TRIPLET["y"]}

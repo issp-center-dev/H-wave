@@ -184,7 +184,8 @@ This section controls the Eliashberg solver. Key parameters:
   :math:`V(\mathbf{q}, i\omega_l)` and gap :math:`\phi(\mathbf{k}, i\omega_n)`;
   it requires ``chi0q_mode = "flex"`` (see
   :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below).
-- ``pairing_type``: ``"singlet"`` or ``"triplet"``.
+- ``pairing_type``: ``"singlet"`` or ``"triplet"``. Not set in spin-orbital
+  mode, where the gap is one spin-orbital matrix (see :ref:`sc_spin_orbital`).
 - ``init_gap``: Initial gap symmetry for iteration.
   Options include ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`),
   ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`), ``"random"``, etc.
@@ -1614,10 +1615,10 @@ was checked by running the combination.
      - **spin-free only**
      - general raises for a polarized one-body Hamiltonian
    * - ``enable_spin_orbital``
-     - accepted by FLEX
      - rejected
-     - ``hwave_sc`` refuses the configuration outright (as of version 2.0); see
-       *Spin structure* below
+     - accepted with ``flex_hartree_fock = true`` (on-site interactions only)
+     - the static ``hwave_sc`` reads this output with ``chi0q_mode = "flex"``;
+       see :ref:`sc_spin_orbital`
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
@@ -1707,23 +1708,280 @@ full ``spinful`` form; see :ref:`flex_spin_orbital`).
 - **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
   whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
   or even spin-free model can be written in this representation) --
-  **not supported.** ``hwave_sc`` rejects the configuration up front with
-  an explicit error, on both the static and the dynamic entry, and
+  **supported by the static solver**, with a full spin-matrix gap function
+  and the spinful (charge, longitudinal and transverse spin) susceptibility;
+  see :ref:`sc_spin_orbital` for its scope. The dynamic entry
+  (``frequency = "dynamic"``) still rejects the configuration up front, and
   ``hwave_tsweep`` with ``run_eliashberg = true`` rejects it in preflight
-  before any FLEX rung runs (as of version 2.0; a FLEX-only sweep runs it,
-  with ``warm_start = false``): before this guard, the internally computed :math:`\chi_0`
-  path ran to completion and printed eigenvalues built on inconsistent
-  index/orbital-count conventions -- a silently wrong result, not an
-  approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
-  files remains in the low-level loader for direct helper calls and
-  malformed input; it is no longer reachable through the guarded public
-  entries.)
+  before any FLEX rung runs (a FLEX-only sweep runs it, with
+  ``warm_start = false``).
 
-Supporting either spin-polarized case would require an
-:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
-gap function), together with the transverse susceptibility
-:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
-addition rather than a configuration change.
+Supporting a spin-polarized model in the singlet/triplet channels would
+require an :math:`S_z`-resolved pairing vertex together with the transverse
+susceptibility :math:`\chi^{+-}`, which the reduced scheme does not store.
+That is a feature addition rather than a configuration change; the
+spin-orbital representation above is the route for spin-mixing models.
+
+
+.. _sc_spin_orbital:
+
+Spin-orbital models (``enable_spin_orbital``)
+--------------------------------------------------
+
+With ``[mode] enable_spin_orbital = true`` the static solver treats the gap
+as one general matrix :math:`\Delta_{AB}(\mathbf{k})` over the :math:`2N`
+spin-orbitals (:math:`N` physical orbitals) instead of separate singlet and
+triplet channels. Spin-orbit coupling and other spin-mixing one-body terms in
+the Transfer file are then included exactly, and the singlet and triplet
+components of the gap mix as the model dictates.
+
+Scope
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- static pairing vertex only (``frequency = "static"``, the default);
+- on-site two-body interactions only;
+- no bond-resolved channels (``bond_channels = false``, the default);
+- ``chi0q_mode = "calc"`` (the spinful :math:`\chi_0` is computed
+  internally), ``"load"`` (the general four-index chi0q written by a
+  spin-orbital RPA run) or ``"flex"`` (the outputs of a spin-orbital FLEX
+  run, which must be a ``calc_scheme = "general"`` run with
+  ``[mode.param] flex_hartree_fock = true``; see
+  :ref:`flex_spin_orbital`);
+- ``solver_mode = "iteration"``, ``"eigenvalue"`` or ``"both"`` with
+  ``eigenvalue_method = "arnoldi"``.
+
+The input files follow the spin-orbital conventions of RPA and FLEX: the
+Geometry ``norb`` is the spin-orbital count :math:`2N`, the Transfer file
+uses the interleaved index :math:`2\alpha + s`, and the interaction files use
+the **physical** orbital indices :math:`1 \ldots N`. ``pairing_type`` is not
+set: there is only one gap.
+
+Pairing vertex
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The pairing vertex is built from the antisymmetrized spinful vertex
+:math:`\Gamma` (the direct term plus its on-site exchange crossing) -- the
+same :math:`\Gamma` that spin-orbital RPA and FLEX use, which is why
+``[mode.param] spinful_vertex_exchange`` must stay ``true`` -- and the
+spinful susceptibility :math:`\chi`:
+
+.. math::
+
+   V = \tfrac{1}{2}\,\Gamma \;-\; \Gamma\,\chi(\mathbf{q})\,\Gamma ,
+   \qquad
+   \chi = \left[1 + \chi_0 \Gamma\right]^{-1} \chi_0 ,
+
+at zero bosonic frequency. For ``"calc"`` and ``"load"`` :math:`\chi` is the
+RPA expression on the right; for ``"flex"`` it is the susceptibility stored
+by the FLEX run. :math:`\chi` carries the charge, longitudinal and
+transverse spin channels and their mixing in one object.
+
+Pauli projection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A gap must be fermion-antisymmetric,
+:math:`\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})`. The solver
+projects the gap onto this subspace after every application of the kernel
+(and projects the initial gap). This removes the Pauli-forbidden modes of
+the symmetric sector, which would otherwise appear in the spectrum with
+nonzero eigenvalues and could be selected by the power iteration or the
+Arnoldi solver; the eigenvalues of the antisymmetric sector are not
+changed.
+
+Gap convention and spin decomposition
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The spin-orbital index of the gap is in **spin-block** order,
+:math:`A = s N + \alpha` (spin :math:`s = 0` is up, :math:`s = 1` down;
+``index_convention = spin_block``), not the interleaved order of the
+Transfer file. For each orbital pair :math:`(a, b)` the :math:`2\times 2`
+spin block :math:`[\Delta_{ab}]_{st} = \Delta_{(s,a),(t,b)}` is decomposed as
+
+.. math::
+
+   \Delta_{ab}(\mathbf{k}) =
+   \left[\psi_{ab}(\mathbf{k}) + \mathbf{d}_{ab}(\mathbf{k})\cdot
+   \boldsymbol{\sigma}\right] i\sigma_y ,
+
+that is
+:math:`\psi = (\Delta_{\uparrow\downarrow} - \Delta_{\downarrow\uparrow})/2`,
+:math:`d_x = (\Delta_{\downarrow\downarrow} - \Delta_{\uparrow\uparrow})/2`,
+:math:`d_y = (\Delta_{\uparrow\uparrow} + \Delta_{\downarrow\downarrow})/(2i)`,
+:math:`d_z = (\Delta_{\uparrow\downarrow} + \Delta_{\downarrow\uparrow})/2`.
+:math:`\psi` is the spin-singlet and :math:`\mathbf{d}` the spin-triplet
+component. The four spin weights are
+
+.. math::
+
+   w_\psi = \frac{1}{W}\sum_{\mathbf{k},a,b} |\psi_{ab}(\mathbf{k})|^2 ,
+   \qquad
+   w_{d_j} = \frac{1}{W}\sum_{\mathbf{k},a,b} |d_{ab,j}(\mathbf{k})|^2 ,
+   \qquad
+   W = \sum_{\mathbf{k},a,b}
+   \left(|\psi_{ab}(\mathbf{k})|^2 + |\mathbf{d}_{ab}(\mathbf{k})|^2\right),
+
+so that :math:`w_\psi + w_{d_x} + w_{d_y} + w_{d_z} = 1`. Without spin-orbit
+coupling a pure singlet gives :math:`w_\psi = 1` and a pure triplet
+:math:`w_{d_x} + w_{d_y} + w_{d_z} = 1`; spin-orbit coupling mixes them. The
+weights do not depend on the phase or the normalization of the gap.
+
+Outputs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``gap.dat`` has the usual layout over the :math:`2N` spin-orbital indices
+  (``sigma_ij`` is :math:`\Delta_{ij}` in spin-block order), preceded by the
+  comment lines ``# spin_orbital = true``, ``# index_convention =
+  spin_block`` and ``# gap_layout = ...``.
+
+- ``eigenvalue.dat`` starts with ``# key = value`` comment lines, among them
+  ``# spin_orbital = true``, ``# index_convention = spin_block``, the gap
+  layout, the decomposition formula and ``gap_spin_weights`` (the weights of
+  the gap written to ``gap.dat``). Each eigenpair row carries the four
+  weights after the ``match`` column, which is ``1`` for a
+  fermion-antisymmetric eigenvector:
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz
+        0  3.15509804e-01  7.35115141e-15  3.15509804e-01 1  1.00000000e+00  1.58260973e-33  2.03409188e-33  2.94567224e-32
+        ...
+        4 -1.06188646e-01 -3.28383154e-15  1.06188646e-01 1  7.10085111e-31  5.45001702e-01  2.16795802e-01  2.38202496e-01
+
+  (In the spin-rotation invariant limit a triplet eigenvalue is threefold
+  degenerate, so how its weight splits among :math:`d_x, d_y, d_z` depends
+  on the eigenvector the solver returns; only the sum is meaningful.)
+
+- ``gap.npz`` (the gap file name with its extension replaced by ``.npz``)
+  holds the gap at full precision:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 30 70
+
+     * - key
+       - content
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k})`, shape ``(2N, 2N, Nx, Ny, Nz)``,
+         spin-block order (the gap of ``gap.dat``)
+     * - ``index_convention``
+       - ``"spin_block"``
+     * - ``spin_orbital``, ``norb_phys``
+       - ``True``; the number :math:`N` of physical orbitals
+     * - ``kx``, ``ky``, ``kz``
+       - the k grid
+     * - ``spin_components``, ``gap_spin_weights``
+       - ``["psi", "dx", "dy", "dz"]`` and the four weights of ``gap``
+     * - ``eigenvalues``, ``eigenvectors``, ``eigenvector_spin_weights``,
+         ``eigenvalue_match``
+       - with an eigenvalue analysis only: the eigenvalues, the eigenvectors
+         (shape ``(n, 2N, 2N, Nx, Ny, Nz)``), their weights ``(n, 4)`` and
+         the ``match`` flags
+
+Reading the outputs of a spin-orbital FLEX run
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``chi0q_mode = "flex"`` the solver reads three archives of a FLEX run
+with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
+``[mode.param] flex_hartree_fock = true``, from ``[file.input]
+path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
+
+- ``[eliashberg] flex_chiq`` (default ``"chiq.npz"``): the spinful
+  susceptibility :math:`\chi`; the FLEX run writes it when ``[file.output]
+  chiq`` is set;
+- ``[eliashberg] flex_chi0q`` (default ``"chi0q.npz"``): the FLEX
+  :math:`\chi_0`; **required** -- write it with ``[file.output] chi0q`` in
+  the FLEX run. It is used to check that the vertex of this input reproduces
+  the stored :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`; a
+  mismatch (for example a changed interaction file) is refused;
+- ``[eliashberg] flex_green`` (default ``"green.npz"``): the dressed Green
+  function, also required.
+
+``flex_chiq`` and ``flex_chi0q`` are used only in spin-orbital mode; the
+keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
+because a spin-orbital FLEX run stores one spinful channel rather than
+separate spin and charge channels. If the FLEX archive records
+``scf_converged = false``, a WARNING is logged: the stored :math:`\chi` and
+Green function agree only at convergence.
+
+Refused combinations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Each of the following raises an error that names the key or file to change,
+before any calculation:
+
+- ``frequency = "dynamic"``;
+- ``bond_channels = true``;
+- any off-site two-body row (:math:`\mathbf{R} \neq 0`), an
+  :math:`\mathbf{R} = 0` row between orbitals of different sites under
+  ``[mode.param] orbital_site``, and off-site rows inside a ``Coulomb``
+  aggregate file;
+- an interaction file written in spin-orbital indices (an orbital index
+  larger than :math:`N`);
+- a reduced (two-index) chi0q (``chi0q_tensor = "reduced"`` or a reduced
+  file), and a chi0q file without the spin-orbital ``index_convention`` tag;
+- FLEX outputs of a run without ``enable_spin_orbital``, of a
+  ``calc_scheme = "reduced"`` run, or without the ``chi_convention`` /
+  ``index_convention`` tags;
+- ``flex_chi_s`` / ``flex_chi_c``;
+- a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
+  run), a missing FLEX Green function archive, and a FLEX :math:`\chi` that
+  the vertex of this input does not reproduce;
+- ``eigenvalue_method`` other than ``"arnoldi"``;
+- an explicit ``pairing_type``;
+- an odd spin-orbital count (Geometry ``norb``);
+- an ``Extern`` file (write a Zeeman field into the Transfer file instead);
+- ``[mode.param] spinful_vertex_exchange = false``.
+
+``hwave_sc`` with ``frequency = "dynamic"`` and ``hwave_tsweep`` with
+``run_eliashberg = true`` still refuse ``enable_spin_orbital``.
+
+Practical advice
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- The spin-orbital operator has four times the dimension of the
+  non-spin-orbital one, and the Pauli-forbidden subspace it projects out
+  stays in the operator as a large zero sector. Use a larger
+  ``num_eigenvalues`` than for a non-spin-orbital run: in the validation
+  model ``num_eigenvalues = 4`` missed the physical leading eigenvalue.
+- The default ``init_gap = "cos"`` seed is singlet-structured
+  (:math:`\phi(\mathbf{k}) \otimes i\sigma_y`). In a centrosymmetric model
+  the power iteration cannot leave the parity sector of its seed, so it
+  cannot reach a triplet-led state from this seed. Use ``solver_mode =
+  "eigenvalue"`` (Arnoldi), or an odd seed (``"p_x"``, ``"p_y"``, ...,
+  which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
+- A Zeeman term written into the Transfer file as a spin-dependent one-body
+  term runs, but this case has not been validated.
+
+Validation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- **SU(2) limit.** With spin-independent hopping and spin-rotation
+  invariant interactions, every eigenvalue of the non-spin-orbital singlet
+  kernel appears once in the spin-orbital spectrum and every eigenvalue of
+  the triplet kernel three times, to a relative accuracy of
+  :math:`10^{-8}`; the Pauli-forbidden modes are absent.
+- **First order with spin-orbit coupling.** The bare part of the vertex
+  equals an independent first-order construction in the spin-orbital basis
+  for every on-site interaction type.
+- **Second order with spin-orbit coupling.** The static pair
+  susceptibility built from the vertex agrees with exact diagonalization of
+  a small chain in the first- and second-order coefficients of the
+  interaction.
+- **Agreement between inputs.** ``chi0q_mode = "calc"`` and ``"load"`` give
+  the same eigenvalues, and ``"flex"`` reproduces the spectrum built
+  directly from the stored FLEX :math:`\chi` and Green function.
+
+Relation to the non-spin-orbital singlet and triplet
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The non-spin-orbital singlet and triplet formulas assume a spin-rotation
+invariant interaction. ``Hund`` alone or ``Exchange`` alone conserves
+:math:`S_z` but is not rotation invariant, so for them those formulas are an
+approximation (see issue #88), whereas the spin-orbital path treats these
+terms exactly. Its singlet eigenvalues can therefore differ from those of a
+non-spin-orbital run for such models; the equal-spin triplet agrees.
+Rotation-invariant combinations (for example ``Hund`` and ``Exchange`` in
+the Kanamori form) agree in both channels.
 
 
 Tips

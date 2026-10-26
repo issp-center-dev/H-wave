@@ -20,6 +20,12 @@ kernel application.
 * ``TestRefusals``: every unsupported combination is refused through the
   public entry, with the key named (G5).
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
+* ``TestSpinDecomposition``: ``so_pairing.so_spin_components`` /
+  ``so_spin_decomposition`` on hand-built gaps (pure psi, d_x, d_y, d_z and a
+  mixture), written out as explicit 2 x 2 spin matrices.
+* ``TestOutputs``: the spin-orbital output schema (eigenvalue.dat header and
+  weight columns, gap.dat comments, the gap.npz archive) end to end in the
+  SU(2) limit.
 """
 import contextlib
 import logging
@@ -742,6 +748,167 @@ class TestInitialGap(unittest.TestCase):
         self.assertEqual(gap.shape, (ND, ND) + tuple(CELL))
         self.assertTrue(np.all(np.abs(gap.reshape(2, NP, 2, NP, -1)).sum(
             axis=(1, 3, 4)) > 0))
+
+
+def _hand_gap(psi, dx, dy, dz):
+    """``(2N, 2N, ...)`` spin-block gap from components ``(N, N, ...)``,
+    with the spin blocks written out explicitly (rows/columns up, down):
+    ``(psi + d . sigma) i sigma_y = [[-dx + i dy, psi + dz],
+    [-psi + dz, dx + i dy]]``."""
+    psi, dx, dy, dz = (np.asarray(x, complex) for x in (psi, dx, dy, dz))
+    n = psi.shape[0]
+    g = np.zeros((2, n, 2, n) + psi.shape[2:], complex)
+    g[0, :, 0] = -dx + 1j * dy
+    g[0, :, 1] = psi + dz
+    g[1, :, 0] = -psi + dz
+    g[1, :, 1] = dx + 1j * dy
+    return g.reshape((2 * n, 2 * n) + psi.shape[2:])
+
+
+class TestSpinDecomposition(unittest.TestCase):
+
+    SHAPE = (NP, NP, 3, 2, 1)
+
+    def setUp(self):
+        rng = np.random.default_rng(83)
+        self.f = [rng.normal(size=self.SHAPE) + 1j * rng.normal(size=self.SHAPE)
+                  for _ in range(4)]
+        self.zero = np.zeros(self.SHAPE, complex)
+
+    def _check_pure(self, slot):
+        parts = [self.f[i] if i == slot else self.zero for i in range(4)]
+        gap = _hand_gap(*parts)
+        comps = so_pairing.so_spin_components(gap, NP)
+        for i, c in enumerate(comps):
+            np.testing.assert_allclose(c, parts[i], rtol=0, atol=1e-14)
+        w = so_pairing.so_spin_decomposition(gap, NP)
+        self.assertEqual(tuple(w), so_pairing.SPIN_COMPONENTS)
+        for i, key in enumerate(so_pairing.SPIN_COMPONENTS):
+            self.assertAlmostEqual(w[key], 1.0 if i == slot else 0.0, places=14)
+
+    def test_pure_psi(self):
+        self._check_pure(0)
+
+    def test_pure_dx(self):
+        self._check_pure(1)
+
+    def test_pure_dy(self):
+        self._check_pure(2)
+
+    def test_pure_dz(self):
+        self._check_pure(3)
+
+    def test_mixture(self):
+        amps = (0.5, 1.0, np.sqrt(2.0), 1.5)
+        parts = [a * fi / np.linalg.norm(fi) for a, fi in zip(amps, self.f)]
+        gap = _hand_gap(*parts)
+        comps = so_pairing.so_spin_components(gap, NP)
+        for c, ref in zip(comps, parts):
+            np.testing.assert_allclose(c, ref, rtol=0, atol=1e-14)
+        w = so_pairing.so_spin_decomposition(gap, NP)
+        tot = sum(a * a for a in amps)
+        for key, a in zip(so_pairing.SPIN_COMPONENTS, amps):
+            self.assertAlmostEqual(w[key], a * a / tot, places=14)
+        self.assertAlmostEqual(sum(w.values()), 1.0, places=14)
+        # |Delta|_F^2 = 2 (|psi|^2 + |d|^2)
+        self.assertAlmostEqual(np.linalg.norm(gap) ** 2, 2 * tot, places=12)
+        # invariant under the overall phase and normalization of the gap
+        w2 = so_pairing.so_spin_decomposition(-3.0j * gap, NP)
+        for key in w:
+            self.assertAlmostEqual(w2[key], w[key], places=14)
+        # the independent test helper agrees
+        np.testing.assert_allclose(_spin_weights(gap, NP),
+                                   [w[k] for k in so_pairing.SPIN_COMPONENTS],
+                                   rtol=0, atol=1e-14)
+
+    def test_bad_shape_and_zero_gap(self):
+        with self.assertRaisesRegex(ValueError, "2 N, 2 N"):
+            so_pairing.so_spin_decomposition(np.zeros((3, 3, 2)), 2)
+        w = so_pairing.so_spin_decomposition(np.zeros((ND, ND, 2)), NP)
+        self.assertTrue(all(np.isnan(v) for v in w.values()))
+
+
+class TestOutputs(_TmpDir):
+
+    def test_header_and_weights(self):
+        """SU(2) limit: the leading (singlet) eigenvector has psi weight 1, a
+        triplet one d weight 1; eigenvalue.dat carries the spin-orbital header
+        lines and the four weight columns; gap.npz holds the
+        ``(nd, nd, Nx, Ny, Nz)`` gap with its index_convention tag."""
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                      "num_eigenvalues": 24})
+        seen = _run(inp)
+        evs, vecs = seen["evs"], seen["vecs"]
+        weights = [so_pairing.so_spin_decomposition(v, NP) for v in vecs]
+        self.assertAlmostEqual(weights[0]["psi"], 1.0, delta=1e-10)
+        trip = [i for i, w in enumerate(weights)
+                if abs(w["dx"] + w["dy"] + w["dz"] - 1.0) <= 1e-10
+                and abs(evs[i]) > 1e-8 * abs(evs[0])]
+        self.assertTrue(trip)
+        # every physical eigenvector is either a pure singlet or a pure triplet
+        for i, w in enumerate(weights):
+            if abs(evs[i]) > 1e-8 * abs(evs[0]):
+                with self.subTest(index=i):
+                    self.assertLess(min(w["psi"], 1.0 - w["psi"]), 1e-8)
+        out = inp["file"]["output"]["path_to_output"]
+        with open(os.path.join(out, "eigenvalue.dat")) as f:
+            lines = f.read().splitlines()
+        self.assertIn("# spin_orbital = true", lines)
+        self.assertIn("# index_convention = spin_block", lines)
+        head = [ln for ln in lines if ln.startswith("# index  Re")]
+        self.assertEqual(len(head), 1)
+        self.assertTrue(head[0].split()[-4:] == ["w_psi", "w_dx", "w_dy", "w_dz"])
+        start = lines.index("# Eigenvalue analysis")
+        rows = np.loadtxt(lines[start:])
+        self.assertEqual(rows.shape, (len(evs), 9))
+        np.testing.assert_allclose(rows[:, 1], evs.real, rtol=1e-8,
+                                   atol=1e-8 * abs(evs[0]))
+        ref = np.array([[w[k] for k in so_pairing.SPIN_COMPONENTS]
+                        for w in weights])
+        np.testing.assert_allclose(rows[:, 5:], ref, rtol=1e-8, atol=1e-15)
+        with open(os.path.join(out, "gap.dat")) as f:
+            gap_head = [next(f) for _ in range(4)]
+        self.assertEqual(gap_head[0], "# spin_orbital = true\n")
+        self.assertEqual(gap_head[1], "# index_convention = spin_block\n")
+        self.assertTrue(gap_head[3].startswith("# kx ky kz"))
+        with np.load(os.path.join(out, "gap.npz")) as z:
+            self.assertEqual(str(z["index_convention"]), "spin_block")
+            self.assertTrue(bool(z["spin_orbital"]))
+            self.assertEqual(int(z["norb_phys"]), NP)
+            self.assertEqual(z["gap"].shape, (ND, ND) + tuple(CELL))
+            np.testing.assert_array_equal(z["gap"], seen["gap"])
+            np.testing.assert_array_equal(z["eigenvalues"], evs)
+            self.assertEqual(z["eigenvectors"].shape,
+                             (len(evs), ND, ND) + tuple(CELL))
+            np.testing.assert_allclose(z["eigenvector_spin_weights"], ref,
+                                       rtol=0, atol=1e-15)
+            np.testing.assert_allclose(z["gap_spin_weights"], ref[0],
+                                       rtol=0, atol=1e-15)
+            self.assertEqual(list(z["spin_components"]),
+                             ["psi", "dx", "dy", "dz"])
+
+    def test_iteration_only_writes_gap_weights(self):
+        files = _write_model(self.d, so=True, soc=0.3)
+        inp = _input(self.d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "iteration",
+                      "max_iter": 50, "output_gap": "g.txt"})
+        seen = _run(inp)
+        out = inp["file"]["output"]["path_to_output"]
+        prov = seen["provenance"]
+        w = so_pairing.so_spin_decomposition(seen["gap"], NP)
+        self.assertEqual(prov["gap_npz"], "g.npz")
+        self.assertEqual(prov["gap_spin_weights"], " ".join(
+            "{}={:.8e}".format(k, w[k]) for k in so_pairing.SPIN_COMPONENTS))
+        with np.load(os.path.join(out, "g.npz")) as z:
+            np.testing.assert_array_equal(z["gap"], seen["gap"])
+            self.assertNotIn("eigenvalues", z.files)
+
+    def test_npz_name(self):
+        self.assertEqual(sc._so_gap_npz_name("gap.dat"), "gap.npz")
+        self.assertEqual(sc._so_gap_npz_name("gap"), "gap.npz")
+        self.assertEqual(sc._so_gap_npz_name("gap.npz"), "gap.npz.npz")
 
 
 if __name__ == "__main__":

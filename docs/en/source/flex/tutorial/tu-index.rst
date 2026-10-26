@@ -1253,8 +1253,10 @@ writes its archives on the spin-orbital index of dimension
   spin-orbital density (``Sx`` and ``Sy`` are written only in spin-orbital
   runs, as in UHFk).
 
-``hwave_sc`` does not accept these archives (it refuses
-``enable_spin_orbital``).
+The static ``hwave_sc`` reads these archives with ``chi0q_mode = "flex"``
+(``chiq.npz``, ``chi0q.npz`` and ``green.npz``; write ``[file.output] chiq``
+and ``chi0q`` in the FLEX run); see :ref:`sc_spin_orbital`. The dynamic
+Eliashberg solver does not accept them.
 
 The output files of a run without ``enable_spin_orbital`` can also be used
 as input for the Eliashberg equation solver (``hwave_sc``) to analyze

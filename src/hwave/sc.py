@@ -6842,7 +6842,8 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
 def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_array, kz_array,
                   gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
                   eigenvalue_match=None, provenance=None,
-                  eigenvalue_note=None):
+                  eigenvalue_note=None, eigenvalue_weights=None,
+                  gap_comments=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -6876,6 +6877,16 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         silently confused with the signed ``lambda_rayleigh`` sitting in the
         provenance block above it. Additive in the same sense as
         ``provenance``: comment lines only, no numeric row changes.
+    eigenvalue_weights : ndarray, optional
+        Spin-orbital mode only: ``(n_eig, 4)`` spin weights
+        ``(psi, dx, dy, dz)`` of each eigenvector
+        (:func:`hwave.solver.so_pairing.so_spin_decomposition`), appended as
+        four columns after the ``match`` column. None (the default) leaves the
+        eigenvalue rows unchanged.
+    gap_comments : list of str, optional
+        Spin-orbital mode only: ``#`` comment lines written before the column
+        header of the gap file. None (the default) leaves the gap file
+        unchanged.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -6886,6 +6897,8 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         logger.info("Saving gap function to {}".format(filepath))
 
         with open(filepath, "w") as fw:
+            for line in (gap_comments or ()):
+                fw.write("# {}\n".format(line))
             # Header
             header_parts = ["# kx", "ky", "kz"]
             for i in range(norb):
@@ -6937,7 +6950,11 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                 # sector. The leading index/Re/Im/|ev| columns are unchanged, so
                 # position-based parsers (e.g. reading column 1 as Re) are
                 # unaffected; only the column count grows from 4 to 5.
-                if eigenvalue_match is not None:
+                if eigenvalue_weights is not None:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|  match(1=fermion-antisymmetric)  "
+                             "w_psi  w_dx  w_dy  w_dz\n")
+                elif eigenvalue_match is not None:
                     fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
                              "|eigenvalue|  match(1=channel-parity)\n")
                 else:
@@ -6948,6 +6965,9 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                         i, ev.real, ev.imag, abs(ev))
                     if eigenvalue_match is not None:
                         row += " {:d}".format(int(bool(eigenvalue_match[i])))
+                    if eigenvalue_weights is not None:
+                        row += "".join(" {:15.8e}".format(w)
+                                       for w in eigenvalue_weights[i])
                     fw.write(row + "\n")
 
 
@@ -7062,6 +7082,92 @@ def _so_rpa_vertex(input_dict):
     ham = np.asarray(backend.to_host(solver.ham_info.ham_inter_q)).reshape(
         nvol, nd, nd, nd, nd)
     return sol_rpa.spinful_bubble_vertex(ham, solver.ham_info.spinful_exchange())
+
+
+def _so_gap_npz_name(gap_file):
+    """The spin-orbital gap archive: the gap file name with its extension
+    replaced by ``.npz`` (``gap.dat`` -> ``gap.npz``); a gap file that is
+    itself named ``*.npz`` gets ``.npz`` appended instead, so the two never
+    collide."""
+    name = os.path.splitext(gap_file)[0] + ".npz"
+    return gap_file + ".npz" if name == gap_file else name
+
+
+def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
+                      eigenvectors, match, kx_array, ky_array, kz_array):
+    """The spin-orbital output schema (issue #83).
+
+    Writes the gap archive (:func:`_so_gap_npz_name`, default ``gap.npz``)
+    and returns ``(provenance, weights, gap_comments)`` for
+    :func:`_save_results`:
+
+    * ``provenance`` -- the ``# key = value`` lines of ``eigenvalue.dat``
+      (``spin_orbital = true``, ``index_convention = spin_block``, the gap
+      layout, the spin decomposition and the weights of the written gap);
+    * ``weights`` -- ``(n_eig, 4)`` spin weights ``(psi, dx, dy, dz)`` of the
+      eigenvectors (:func:`hwave.solver.so_pairing.so_spin_decomposition`),
+      or None without an eigenvalue analysis;
+    * ``gap_comments`` -- the comment lines of ``gap.dat``.
+
+    The archive holds ``gap`` ``(nd, nd, Nx, Ny, Nz)`` (the gap of
+    ``gap.dat``), ``index_convention``, ``spin_orbital``, ``norb_phys``,
+    ``kx``/``ky``/``kz``, ``spin_components`` and ``gap_spin_weights``; with
+    an eigenvalue analysis also ``eigenvalues``, ``eigenvectors``
+    ``(n_eig, nd, nd, Nx, Ny, Nz)``, ``eigenvector_spin_weights`` and
+    ``eigenvalue_match``."""
+    from hwave.solver import so_pairing, spin_orbital
+    comps = so_pairing.SPIN_COMPONENTS
+    nd = 2 * int(norb_phys)
+    layout = ("Delta_AB(k), A = spin * {} + orb (spin 0 = up, spin 1 = down); "
+              "fermion-antisymmetric, Delta_AB(k) = -Delta_BA(-k)"
+              .format(norb_phys))
+    npz_name = _so_gap_npz_name(gap_file)
+    prov = {
+        "spin_orbital": "true",
+        "index_convention": spin_orbital.INDEX_CONVENTION,
+        "gap_layout": layout,
+        "gap_npz": npz_name,
+        "match_column": "1 = fermion-antisymmetric eigenvector",
+        "spin_decomposition": (
+            "Delta_ab(k) = (psi_ab(k) + d_ab(k) . sigma) i sigma_y per orbital "
+            "pair (a, b); w_X = sum_{k,a,b} |X_ab(k)|^2 / sum_{k,a,b} "
+            "(|psi_ab(k)|^2 + |d_ab(k)|^2), X = psi, dx, dy, dz"),
+        "weight_columns": "w_psi w_dx w_dy w_dz (after the match column)",
+    }
+    record = {"index_convention": np.array(spin_orbital.INDEX_CONVENTION),
+              "spin_orbital": np.array(True),
+              "norb_phys": np.array(int(norb_phys)),
+              "kx": np.asarray(kx_array), "ky": np.asarray(ky_array),
+              "kz": np.asarray(kz_array),
+              "spin_components": np.array(comps)}
+    if gap is not None:
+        gap = np.asarray(backend.to_host(gap))
+        w = so_pairing.so_spin_decomposition(gap, norb_phys)
+        prov["gap_spin_weights"] = " ".join(
+            "{}={:.8e}".format(c, w[c]) for c in comps)
+        record["gap"] = gap.reshape((nd, nd) + gap.shape[2:])
+        record["gap_spin_weights"] = np.array([w[c] for c in comps])
+    weights = None
+    if eigenvalues is not None:
+        vecs = np.stack([np.asarray(backend.to_host(v)) for v in eigenvectors])
+        weights = np.array([[so_pairing.so_spin_decomposition(v, norb_phys)[c]
+                             for c in comps] for v in vecs])
+        record["eigenvalues"] = np.asarray(eigenvalues)
+        record["eigenvectors"] = vecs
+        record["eigenvector_spin_weights"] = weights
+        if match is not None:
+            record["eigenvalue_match"] = np.asarray(match, dtype=bool)
+    gap_comments = [
+        "spin_orbital = true",
+        "index_convention = {}".format(spin_orbital.INDEX_CONVENTION),
+        "gap_layout = {}; sigma_ij below is Delta_ij".format(layout),
+    ]
+    if gap is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, npz_name)
+        logger.info("Saving the spin-orbital gap to {}".format(path))
+        np.savez(path, **record)
+    return prov, weights, gap_comments
 
 
 def _so_static_vertex_from_chi(gam, chi_static, nd, spatial_shape):
@@ -7888,6 +7994,7 @@ def calc_eliashberg(input_dict):
     sigma_result = None
     eigenvalue_iter = None
     eigenvalues_eig = None
+    eigenvectors_eig = None
     eigenvalue_match = None
     # Live only on the iteration path; kept in scope so the output artifact can
     # record WHICH quantity the written number is and whether it converged
@@ -8093,15 +8200,14 @@ def calc_eliashberg(input_dict):
                          .format(bond_provenance["lambda_rayleigh"]))
             eigenvalue_note = note
 
+    so_weights = None
+    so_gap_comments = None
     if spin_orbital_mode:
-        bond_provenance = {
-            "spin_orbital": "true",
-            "index_convention": spin_orbital.INDEX_CONVENTION,
-            "gap_layout": ("Delta_AB(k), A = spin * {} + orb (spin 0 = up); "
-                           "fermion-antisymmetric, Delta_AB(k) = -Delta_BA(-k)"
-                           .format(norb_phys)),
-            "match_column": "1 = fermion-antisymmetric eigenvector",
-        }
+        so_out = _so_output_record(
+            output_dir, gap_file, norb_phys, sigma_result, eigenvalues_eig,
+            eigenvectors_eig,
+            eigenvalue_match, kx_array, ky_array, kz_array)
+        bond_provenance, so_weights, so_gap_comments = so_out
 
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
@@ -8109,7 +8215,9 @@ def calc_eliashberg(input_dict):
         gap_file=gap_file, eigenvalue_file=eigenvalue_file,
         eigenvalue_match=eigenvalue_match,
         provenance=bond_provenance,
-        eigenvalue_note=eigenvalue_note
+        eigenvalue_note=eigenvalue_note,
+        eigenvalue_weights=so_weights,
+        gap_comments=so_gap_comments,
     )
 
     logger.info("=== Done ===")
