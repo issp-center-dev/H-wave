@@ -12,24 +12,37 @@
     **CoulombIntra**:
       :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}` (\ :math:`n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}}`)
     **CoulombInter**:
-      :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}` (\ :math:`n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`)
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}` (\ :math:`n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`)
     **Coulomb**:
       CoulombIntra と CoulombInter をまとめた形式（RESPACK の\ ``zvo_ur.dat``\ を想定）。:math:`r=0`\ かつ同一軌道（:math:`\alpha=\beta`\ ）の成分を CoulombIntra、それ以外を CoulombInter として読み込みます。CoulombIntra/CoulombInter を個別に指定するのと等価です。
     **Hund**:
-      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c. \right]`
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c.`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + h.c. \right]`
 
 .. note::
 
-   上の式のうち2つは、ソルバーが以前から実装している内容に合わせて修正した
+   上の式のいくつかは、ソルバーが以前から実装している内容に合わせて修正した
    ものです。\ **入力ファイルを変更する必要はなく**\ 、数値結果も変わりません。
+
+   - **因子 1/2**\ （CoulombInter, Hund, Ising, PairHop, PairLift）: 和はすべての
+     順序対、すなわち宣言したすべての行についてとります。値 :math:`X`\ の各行
+     :math:`(R, \alpha, \beta)`\ には値 :math:`X^{*}`\ の相方の行
+     :math:`(-R, \beta, \alpha)`\ が必要で（下記参照）、両者は同じボンドを
+     表します。これらの型では相方の行が元の行と同じ項（PairHop と PairLift では
+     エルミート共役まで含めた同じ括弧）を与えるため、各行はその半分を担います。
+     値 :math:`V`\ の CoulombInter の行の組で宣言したボンドは
+     :math:`V n_{i\alpha} n_{j\beta}`\ を1回だけ与えます。これは各ボンドの
+     両方向を列挙する RESPACK の\ ``zvo_ur.dat``\ の規約です。改訂前の本ページ
+     ではこの因子が抜けていました。\ **Exchange**\ には因子は不要です。その
+     被加数には明示的な\ ``h.c.``\ がなく、相方の行がその行の項のエルミート
+     共役を与えるため、記載どおりの和がボンドの項を1回だけ与えます。
 
    - **Hund**: 実装されている規約は上のとおりマイナス符号を伴います。
      したがって強磁性的な（同スピン間で引力的な）Hund 結合は、係数
