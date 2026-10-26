@@ -3658,17 +3658,13 @@ class FLEX(RPA):
         the direct (ring) tensor plus the on-site exchange crossing, the
         vertex the spinful RPA resums (issue #137; validated against exact
         diagonalization there). Cached per solve."""
-        from hwave.solver.rpa import _to_bubble_pair_convention
+        from hwave.solver.rpa import spinful_bubble_vertex
         cached = getattr(self, "_so_vertex", None)
         if cached is not None and _bk.array_module_of(cached) is xp:
             return cached
         nvol, nd = self.lattice.nvol, 2 * self.norb
         ham = np.asarray(_bk.to_host(self.ham_info.ham_inter_q)).reshape(nvol, nd, nd, nd, nd)
-        exch = self.ham_info.spinful_exchange()
-        if exch is not None:
-            ham = ham + np.asarray(exch).reshape(nd, nd, nd, nd)[None, ...]
-        gam = np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
-            nvol, nd * nd, nd * nd)
+        gam = spinful_bubble_vertex(ham, self.ham_info.spinful_exchange())
         self._so_vertex = xp.asarray(gam)
         return self._so_vertex
 

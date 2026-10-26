@@ -438,6 +438,23 @@ def _to_bubble_pair_convention(ham):
     return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
 
 
+def spinful_bubble_vertex(ham_inter_q, exchange):
+    """The antisymmetrized spinful vertex of the spin-orbital solvers (#83).
+
+    ``ham_inter_q`` is the host ``(nvol, nd, nd, nd, nd)`` interaction in the
+    Hamiltonian slot convention and ``exchange`` the on-site exchange crossing
+    ``(nd, nd, nd, nd)`` (or ``None``).  Returns the direct tensor plus the
+    crossing in the bubble's pair convention, ``(nvol, nd^2, nd^2)`` complex
+    (issue #137).  Shared by the spin-orbital FLEX and the Eliashberg solver.
+    """
+    ham = np.asarray(ham_inter_q)
+    nvol, nd = ham.shape[0], ham.shape[1]
+    if exchange is not None:
+        ham = ham + np.asarray(exchange).reshape(nd, nd, nd, nd)[None, ...]
+    return np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
+        nvol, nd * nd, nd * nd)
+
+
 def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
     # Mask arithmetic must stay identical to _find_mu's internal _fermi
     # closure below (both implement the same overflow-guarded Fermi
