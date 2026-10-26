@@ -1249,6 +1249,11 @@ writes its archives on the spin-orbital index of dimension
   "spin_orbital"``, ``chi_orbital_layout = "acbd"`` and ``index_convention =
   "spin_block"``. No ``chiq_s`` / ``chiq_c`` is written: there is no
   spin/charge split.
+- ``chi0q.npz`` and ``chiq.npz`` also carry the boolean marker
+  ``spin_orbital = True``. Only a spin-orbital run writes this key; the
+  archives of a run without ``enable_spin_orbital`` do not have it (their
+  members are unchanged). The spin-orbital ``hwave_sc`` requires it on the
+  chi0q archive.
 - ``Sx``, ``Sy`` and ``Sz`` in ``energy.dat`` are computed from the full
   spin-orbital density (``Sx`` and ``Sy`` are written only in spin-orbital
   runs, as in UHFk).

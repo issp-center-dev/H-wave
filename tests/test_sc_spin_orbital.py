@@ -19,6 +19,12 @@ kernel application.
   a vertex the FLEX run did not use are refused.
 * ``TestRefusals``: every unsupported combination is refused through the
   public entry, with the key named.
+* ``TestFlexVertexCheck``: the FLEX vertex-consistency check is a per-q
+  backward error (independent of the lattice size; zero-scale blocks).
+* ``TestAntisymmetricOperator``: ``matmat`` of the projected kernel equals
+  stacked ``matvec`` and returns antisymmetric gaps.
+* ``TestArchiveMembers``: only spin-orbital runs write the ``spin_orbital``
+  marker; non-spin-orbital RPA / FLEX archives keep their member sets.
 * ``TestTransferUnderSOC``: with spin-orbit hopping, the epsilon(k) of
   hwave_sc equals the H0(k) of the spin-orbital RPA.
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
@@ -414,7 +420,8 @@ class TestRefusals(_TmpDir):
         """A REAL non-spin-orbital RPA chi0q over ND orbitals, carrying every
         tag the RPA writes (index_convention = "spin_block" included), has
         exactly the shape of a spin-orbital chi0q over NP physical orbitals;
-        only its spin_orbital = False marker tells them apart."""
+        only the spin_orbital = True marker, which ONLY a spin-orbital run
+        writes, tells them apart: the non-spin-orbital file has no marker."""
         from hwave import qlms
         src = os.path.join(self.d, "nonso")
         os.makedirs(src)
@@ -433,14 +440,14 @@ class TestRefusals(_TmpDir):
             self.assertEqual(z["chi0q"].shape, (64, nvol) + (ND,) * 4)
             self.assertEqual(str(z["index_convention"]), "spin_block")
             self.assertEqual(str(z["momentum_convention"]), "e_plus_ikR")
-            self.assertFalse(bool(z["spin_orbital"]))
+            self.assertNotIn("spin_orbital", z.files)
         before = os.listdir(os.path.join(self.d, "out"))
         files = _write_model(self.d, so=True)
         inp = _input(self.d, files, True, {"chi0q_mode": "load",
                                            "solver_mode": "eigenvalue"})
-        # refused at load, before the Green function is built
+        # refused at load as unmarked, before the Green function is built
         with self.assertRaisesRegex(
-                ValueError, r"(?s)chi0q\.npz' records spin_orbital = False.*"
+                ValueError, r"(?s)chi0q\.npz' has no spin_orbital marker.*"
                             r"enable_spin_orbital = true"):
             with _quiet(), mock.patch.object(
                     sc, "_build_bond_green",
@@ -448,11 +455,11 @@ class TestRefusals(_TmpDir):
                 sc.calc_eliashberg(inp)
         self.assertEqual(sorted(os.listdir(os.path.join(self.d, "out"))),
                          sorted(before))
-        # the same file with the marker removed: refused as unmarked
+        # the same file with an explicit False marker: refused as such
         with np.load(path) as z:
-            items = {k: z[k] for k in z.files if k != "spin_orbital"}
-        np.savez(path, **items)
-        with self.assertRaisesRegex(ValueError, r"has no spin_orbital marker"):
+            items = {k: z[k] for k in z.files}
+        np.savez(path, spin_orbital=False, **items)
+        with self.assertRaisesRegex(ValueError, r"records spin_orbital = False"):
             with _quiet():
                 sc.calc_eliashberg(inp)
 
@@ -497,6 +504,34 @@ class TestRefusals(_TmpDir):
                              extra_rows={"CoulombIntra": [(0, 3, 3, 1.0)]})
         self._refused(r"PHYSICAL orbital indices", so_files=files)
 
+    def test_interaction_orbital_index_zero(self):
+        """A 1-based orbital index 0 (internally -1) would wrap to the last
+        orbital in the vertex; it is refused in the early validation, before
+        any Green, susceptibility or vertex work."""
+        boom = AssertionError("heavy work before the orbital-index check")
+        for nm, rows in (("CoulombIntra", [(0, -1, -1, 1.0)]),
+                         ("CoulombInter", [(0, -1, 1, 0.3), (0, 1, -1, 0.3)]),
+                         ("Hund", [(0, 0, -1, 0.1), (0, -1, 0, 0.1)])):
+            with self.subTest(file=nm):
+                files = _write_model(self.d, so=True, extra_rows={nm: rows})
+                inp = _input(self.d, files, True, {"chi0q_mode": "calc",
+                                                   "solver_mode": "eigenvalue"})
+                with self.assertRaisesRegex(
+                        ValueError,
+                        r"the {} file '{}' has a row on orbital 0, outside the "
+                        r"physical orbitals 1\.\.{}".format(
+                            nm, files[nm].replace(".", r"\."), NP)), \
+                        _quiet(), \
+                        mock.patch.object(sc, "_build_bond_green", side_effect=boom), \
+                        mock.patch.object(sc, "_calc_chi0q_internal", side_effect=boom), \
+                        mock.patch.object(sc, "_load_chi0q", side_effect=boom), \
+                        mock.patch.object(sc, "_load_flex_so", side_effect=boom), \
+                        mock.patch.object(sc, "_so_static_vertex", side_effect=boom), \
+                        mock.patch.object(sc, "_so_rpa_vertex", side_effect=boom):
+                    sc.calc_eliashberg(inp)
+                out = inp["file"]["output"]["path_to_output"]
+                self.assertFalse(os.path.exists(out) and os.listdir(out))
+
     def test_extern_file(self):
         files = _write_model(self.d, so=True)
         _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP,
@@ -536,6 +571,128 @@ class TestStaticVertexLayouts(_TmpDir):
             v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
             v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
         self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
+
+
+class TestFlexVertexCheck(unittest.TestCase):
+    """``_check_so_flex_vertex`` measures the backward error PER q block:
+    the same mismatch must be refused at every lattice size."""
+
+    M = 16
+
+    def _block(self):
+        rng = np.random.default_rng(3)
+        m = self.M
+        c0 = rng.standard_normal((m, m)) + 1j * rng.standard_normal((m, m))
+        c0 = 0.1 * (c0 + c0.conj().T)
+        gam = rng.standard_normal((m, m))
+        gam = 0.5 * (gam + gam.T)
+        chi = np.linalg.solve(np.eye(m) + c0 @ gam, c0)
+        return gam, c0, chi, rng.standard_normal((m, m))
+
+    @staticmethod
+    def _global_error(gam, chi, chi0):
+        """The global-norm measure (for the non-vacuity check only)."""
+        c0g = chi0 @ gam
+        return (np.linalg.norm(chi + c0g @ chi - chi0)
+                / (np.linalg.norm(chi0) + np.linalg.norm(c0g) * np.linalg.norm(chi)))
+
+    def test_error_is_independent_of_nvol(self):
+        gam, c0, chi, d = self._block()
+        eps = 3.0e-8
+        errs = []
+        for nvol in (1, 4, 16, 64, 256):
+            C0 = np.broadcast_to(c0, (nvol,) + c0.shape).copy()
+            C = np.broadcast_to(chi + eps * d, (nvol,) + c0.shape).copy()
+            with self.subTest(nvol=nvol):
+                with _quiet(), self.assertRaisesRegex(
+                        ValueError, r"do not reproduce the vertex .*\(backward "
+                                    r"error 3\.00\de-08 >"):
+                    sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+                # the error itself, through the tolerance-free path
+                with _quiet(), mock.patch.object(sc, "_SO_FLEX_GAMMA_TOL", np.inf):
+                    errs.append(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
+                if nvol >= 16:
+                    # non-vacuity: a global norm would let this pass
+                    self.assertLess(self._global_error(gam, C, C0),
+                                    sc._SO_FLEX_GAMMA_TOL)
+        self.assertGreater(errs[0], sc._SO_FLEX_GAMMA_TOL)
+        np.testing.assert_allclose(errs, errs[0], rtol=1e-10)
+
+    def test_one_bad_block_among_many(self):
+        gam, c0, chi, d = self._block()
+        nvol = 256
+        C0 = np.broadcast_to(c0, (nvol,) + c0.shape).copy()
+        C = np.broadcast_to(chi, (nvol,) + c0.shape).copy()
+        C[nvol // 3] += 3.0e-8 * d
+        with _quiet(), self.assertRaisesRegex(ValueError, r"do not reproduce"):
+            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+        with _quiet():
+            C[nvol // 3] = chi
+            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc._SO_FLEX_GAMMA_TOL)
+
+    def test_zero_scale_block(self):
+        """A block with ``chi0_q = 0``: passes when ``chi_q = 0`` too, and is
+        refused (error infinity, no division by zero) when ``chi_q != 0``."""
+        gam, c0, chi, d = self._block()
+        C0 = np.stack([c0, np.zeros_like(c0)])
+        C = np.stack([chi, np.zeros_like(chi)])
+        with _quiet(), np.errstate(all="raise"):
+            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc._SO_FLEX_GAMMA_TOL)
+            C[1] = 1e-3 * d
+            with self.assertRaisesRegex(ValueError, r"backward error inf"):
+                sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+
+    def test_nan_is_refused(self):
+        gam, c0, chi, d = self._block()
+        C0 = np.stack([c0, c0])
+        C = np.stack([chi, chi])
+        C[1, 0, 0] = np.nan
+        with _quiet(), self.assertRaisesRegex(ValueError, r"backward error nan"):
+            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+
+
+class TestAntisymmetricOperator(unittest.TestCase):
+    """``_so_antisymmetric_operator(A).matmat(B)`` equals the column-stacked
+    ``matvec`` results, and every column is a fermion-antisymmetric gap
+    ``Delta_AB(k) = -Delta_BA(-k)``, on even and odd k-grid dimensions."""
+
+    @staticmethod
+    def _partner(g):
+        """``Delta_BA(-k)`` by explicit index arithmetic (k_i -> (-k_i) mod n)."""
+        nd, _, nx, ny, nz = g.shape
+        out = np.empty_like(g)
+        for ix in range(nx):
+            for iy in range(ny):
+                for iz in range(nz):
+                    out[:, :, ix, iy, iz] = g[:, :, (-ix) % nx, (-iy) % ny,
+                                              (-iz) % nz].T
+        return out
+
+    def test_matmat_equals_matvec_and_is_antisymmetric(self):
+        from scipy.sparse.linalg import aslinearoperator
+        nd = 4
+        for grid in ((4, 2, 1), (3, 5, 1), (2, 3, 3)):
+            with self.subTest(grid=grid):
+                shape = (nd, nd) + grid
+                n = int(np.prod(shape))
+                rng = np.random.default_rng(sum(grid))
+                M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+                PK = sc._so_antisymmetric_operator(aslinearoperator(M), n, shape)
+                B = rng.standard_normal((n, 5)) + 1j * rng.standard_normal((n, 5))
+                got = PK.matmat(B)
+                self.assertEqual(got.shape, (n, 5))
+                cols = np.stack([PK.matvec(B[:, j]) for j in range(5)], axis=1)
+                np.testing.assert_allclose(got, cols, rtol=0, atol=1e-12)
+                for j in range(5):
+                    g = got[:, j].reshape(shape)
+                    self.assertGreater(np.linalg.norm(g), 1.0)
+                    np.testing.assert_allclose(g, -self._partner(g),
+                                               rtol=0, atol=1e-10)
+                # non-vacuity: the raw kernel output is not antisymmetric
+                raw = (M @ B[:, 0]).reshape(shape)
+                self.assertGreater(np.linalg.norm(raw + self._partner(raw)), 1.0)
 
 
 class _Stop(Exception):
@@ -824,6 +981,76 @@ class TestFlexMode(unittest.TestCase):
                 self._refused(pattern, _flex_input(d, files, bad,
                                                    out="out_" + os.path.basename(bad)))
 
+    def test_so_outputs_carry_the_marker(self):
+        """The spin-orbital FLEX run writes ``spin_orbital = True`` (0-d
+        bool) into its chi0q and chiq archives."""
+        for name in ("chi0q.npz", "chiq.npz"):
+            with self.subTest(file=name), \
+                    np.load(os.path.join(self.flex, name)) as z:
+                self.assertIn("spin_orbital", z.files)
+                m = np.asarray(z["spin_orbital"])
+                self.assertEqual((m.ndim, m.dtype), (0, np.bool_))
+                self.assertTrue(bool(m))
+
+    def _assert_chi0q_marker_refused(self, d, files, flex, label):
+        """The chi0q companion of ``flex`` replaced by unmarked / False /
+        malformed copies of the same shape: refused before the green or any
+        vertex is built; the marked original gets past the check (the green
+        mock fires), so the marker is what refuses."""
+        green_boom = AssertionError("green read before the check")
+        for tag, replace, pattern in (
+                ("unmarked", None, r"chi0q\.npz' has no spin_orbital marker"),
+                ("false", False, r"records spin_orbital = False: it was not "
+                                 r"written by a spin-orbital FLEX run"),
+                ("malformed", np.array([True]), r"malformed spin_orbital")):
+            bad = os.path.join(d, "{}_{}".format(label, tag))
+            self.addCleanup(shutil.rmtree, bad, True)
+            shutil.copytree(flex, bad)
+            src = os.path.join(flex, "chi0q.npz")
+            dst = os.path.join(bad, "chi0q.npz")
+            if replace is None:
+                _resave(src, dst, ("spin_orbital",))
+            else:
+                _resave(src, dst, spin_orbital=replace)
+            with np.load(src) as a, np.load(dst) as b:
+                self.assertEqual(a["chi0q"].shape, b["chi0q"].shape)
+            with self.subTest(case=label, marker=tag), mock.patch.object(
+                    sc, "_load_flex_green", side_effect=green_boom), \
+                    mock.patch.object(
+                        sc, "_so_rpa_vertex",
+                        side_effect=AssertionError("vertex built before the check")):
+                self._refused(pattern, _flex_input(
+                    d, files, bad, out=self._out("out_{}_{}".format(label, tag))))
+        with mock.patch.object(sc, "_load_flex_green", side_effect=green_boom), \
+                self.assertRaisesRegex(AssertionError, "green read"), _quiet():
+            sc.calc_eliashberg(_flex_input(d, files, flex,
+                                           out=self._out("out_" + label + "_ok")))
+
+    def test_unmarked_chi0q_companion_is_refused(self):
+        """A same-shaped chi0q companion without ``spin_orbital = True`` (the
+        member set of a non-spin-orbital archive) is refused."""
+        self._assert_chi0q_marker_refused(self.d, self.files, self.flex, "u")
+
+    def test_unmarked_chi0q_companion_is_refused_at_zero_vertex(self):
+        """Gamma = 0 (U = 0): the stored chi equals chi0, so the vertex
+        consistency check alone would accept an unmarked chi0q of the same
+        values; the marker refuses it."""
+        d = tempfile.mkdtemp(prefix="sc_so_flex_g0_")
+        self.addCleanup(shutil.rmtree, d, True)
+        files = _write_one_orbital(d, U=0.0)
+        flex = _run_flex(d, files, "flex")
+        with np.load(os.path.join(flex, "chiq.npz")) as z, \
+                np.load(os.path.join(flex, "chi0q.npz")) as z0:
+            si = z["chiq"].shape[0] // 2
+            nvol = z["chiq"].shape[1]
+            chi = z["chiq"][si].reshape(nvol, 4, 4)
+            chi0 = z0["chi0q"][si].reshape(nvol, 4, 4)
+        # the vertex check passes vacuously here
+        with _quiet():
+            self.assertLess(sc._check_so_flex_vertex(
+                np.zeros((4, 4)), chi, chi0, "chiq.npz"), sc._SO_FLEX_GAMMA_TOL)
+        self._assert_chi0q_marker_refused(d, files, flex, "g0")
+
     def test_refuses_non_so_and_reduced(self):
         """A non-spin-orbital general FLEX output ("myo") and a reduced one
         ("kuroki") are refused, before the green or any vertex is built."""
@@ -843,6 +1070,84 @@ class TestFlexMode(unittest.TestCase):
                 self._refused(r"chi_convention = '{}'".format(tag),
                               _flex_input(self.d, self.files, flex,
                                           out=self._out("out_" + scheme)))
+
+
+#: npz member sets of the NON-spin-orbital chi0q / chiq archives, recorded
+#: from the revision before the spin-orbital marker (796738aa) by running the
+#: same inputs as TestArchiveMembers; the marker must not change them
+_RPA_MEMBERS = ["calc_scheme", "calc_scheme_requested", "coeff_tail",
+                "freq_index", "index_convention", "momentum_convention", "nmat",
+                "scheme_resolution", "tail_endpoint", "wavevector_index",
+                "wavevector_unit"]
+_FLEX_PHASE_B = ["density_target_enforced", "flex_guard_policy",
+                 "flex_guard_violations", "flex_second_order",
+                 "flex_second_order_schema", "hf_density_error",
+                 "hf_density_source", "map_iteration", "payload_kind",
+                 "scf_component_residual", "scf_converged",
+                 "scf_green_residual", "scf_iterations", "scf_sigma_residual",
+                 "state_iteration"]
+_NON_SO_MEMBERS = {
+    ("RPA", "general", "chiq"): sorted(_RPA_MEMBERS + ["chiq"]),
+    ("RPA", "general", "chi0q"): sorted(_RPA_MEMBERS + ["chi0q"]),
+    ("RPA", "reduced", "chiq"): sorted(_RPA_MEMBERS + ["chiq"]),
+    ("RPA", "reduced", "chi0q"): sorted(_RPA_MEMBERS + ["chi0q"]),
+    ("FLEX", "general", "chi0q"): sorted(_RPA_MEMBERS + _FLEX_PHASE_B + ["chi0q"]),
+    ("FLEX", "general", "chiq"): sorted(
+        ["calc_scheme", "calc_scheme_requested", "chi_convention",
+         "chi_orbital_layout", "chiq_c", "chiq_s", "freq_index",
+         "momentum_convention", "nmat", "sc_vertex_version",
+         "scheme_resolution", "wavevector_index", "wavevector_unit"]
+        + _FLEX_PHASE_B),
+    ("FLEX", "reduced", "chi0q"): sorted(_RPA_MEMBERS + ["chi0q"]),
+    ("FLEX", "reduced", "chiq"): sorted(
+        ["calc_scheme", "calc_scheme_requested", "chi_convention", "chiq_c",
+         "chiq_s", "freq_index", "momentum_convention", "nmat",
+         "sc_vertex_version", "scheme_resolution", "wavevector_index",
+         "wavevector_unit"]),
+}
+
+
+class TestArchiveMembers(_TmpDir):
+    """The ``spin_orbital`` marker is written ONLY by spin-orbital runs: a
+    non-spin-orbital RPA / FLEX archive keeps exactly its previous member
+    set; a spin-orbital RPA run writes ``spin_orbital = True``."""
+
+    def _rpa(self, files, so, scheme, out):
+        from hwave import qlms
+        inp = _input(self.d, files, so, {}, out=out)
+        inp["mode"]["calc_scheme"] = scheme
+        inp["file"]["input"]["path_to_input"] = self.d
+        inp["file"]["output"].update({"chiq": "chiq", "chi0q": "chi0q"})
+        del inp["eliashberg"]
+        inp["log"] = {"print_level": 0}
+        with _quiet():
+            qlms.run(input_dict=inp)
+        return os.path.join(self.d, out)
+
+    def test_non_so_member_sets_unchanged(self):
+        files = _write_model(self.d, so=False, types=("CoulombIntra", "CoulombInter"))
+        for scheme in ("general", "reduced"):
+            dirs = {"RPA": self._rpa(files, False, scheme, "rpa_" + scheme),
+                    "FLEX": _run_flex(self.d, files, "flex_" + scheme, so=False,
+                                      scheme=scheme)}
+            for solver, path in dirs.items():
+                for name in ("chiq", "chi0q"):
+                    with self.subTest(solver=solver, scheme=scheme, file=name), \
+                            np.load(os.path.join(path, name + ".npz")) as z:
+                        self.assertEqual(sorted(z.files),
+                                         _NON_SO_MEMBERS[(solver, scheme, name)])
+
+    def test_so_rpa_writes_the_marker(self):
+        files = _write_model(self.d, so=True, soc=0.3)
+        path = self._rpa(files, True, "general", "rpa_so")
+        for name in ("chiq", "chi0q"):
+            with self.subTest(file=name), \
+                    np.load(os.path.join(path, name + ".npz")) as z:
+                m = np.asarray(z["spin_orbital"])
+                self.assertEqual((m.ndim, m.dtype), (0, np.bool_))
+                self.assertTrue(bool(m))
+                self.assertEqual(sorted(set(z.files) - {"spin_orbital"}),
+                                 _NON_SO_MEMBERS[("RPA", "general", name)])
 
 
 class TestInitialGap(unittest.TestCase):

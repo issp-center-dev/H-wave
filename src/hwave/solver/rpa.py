@@ -2949,11 +2949,14 @@ class RPA:
             # so on its own it cannot tell a spin-orbital chi0q from a
             # non-spin-orbital one of coincident shape (2N orbitals vs N
             # spin-orbital orbitals); hwave_sc requires this marker in
-            # spin-orbital load mode. getattr: tests drive save_results on
-            # __new__-built stubs without ham_info.
+            # spin-orbital load mode. Written ONLY by a spin-orbital run, so a
+            # non-spin-orbital archive keeps exactly its previous member set.
+            # getattr: tests drive save_results on __new__-built stubs
+            # without ham_info.
             ham_info = getattr(self, "ham_info", None)
-            return {"spin_orbital": bool(
-                getattr(ham_info, "enable_spin_orbital", False))}
+            if bool(getattr(ham_info, "enable_spin_orbital", False)):
+                return {"spin_orbital": True}
+            return {}
 
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:

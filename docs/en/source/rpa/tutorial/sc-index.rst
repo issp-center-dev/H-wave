@@ -1916,22 +1916,28 @@ before any calculation:
   :math:`\mathbf{R} = 0` row between orbitals of different sites under
   ``[mode.param] orbital_site``, and off-site rows inside a ``Coulomb``
   aggregate file;
-- an interaction file written in spin-orbital indices (an orbital index
-  larger than :math:`N`);
+- an interaction file with an orbital index outside :math:`1 \ldots N`
+  (an index larger than :math:`N` means the file was written in
+  spin-orbital indices; an index 0 is never valid);
 - ``chi0q_tensor`` other than ``"auto"`` or ``"general"``, a reduced
   (two-index) chi0q file, a chi0q file without the ``index_convention``
-  tag, and a chi0q file whose ``spin_orbital`` marker is missing or
-  ``False`` (a non-spin-orbital RPA chi0q over :math:`2N` orbitals has the
-  same shape as a spin-orbital one over :math:`N`; regenerate the file with
-  a spin-orbital RPA run, ``[mode] enable_spin_orbital = true``);
+  tag, and a chi0q file without the marker ``spin_orbital = True`` (only a
+  spin-orbital run writes it, so a non-spin-orbital RPA chi0q has no
+  marker; over :math:`2N` orbitals it has the same shape as a spin-orbital
+  one over :math:`N`; regenerate the file with a spin-orbital RPA run,
+  ``[mode] enable_spin_orbital = true``);
 - FLEX outputs of a run without ``enable_spin_orbital``, of a
   ``calc_scheme = "reduced"`` run, or without the ``chi_convention`` /
   ``index_convention`` tags; a FLEX archive whose ``chi_orbital_layout`` is
   not ``"acbd"``; non-finite FLEX values;
 - ``flex_chi_s`` / ``flex_chi_c``;
 - a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
-  run), a missing FLEX Green function archive, and a FLEX :math:`\chi` that
-  the vertex of this input does not reproduce;
+  run), a FLEX chi0q archive without the marker ``spin_orbital = True``
+  (written only by a spin-orbital FLEX run), a missing FLEX Green function
+  archive, and a FLEX :math:`\chi` that the vertex of this input does not
+  reproduce (checked per wavevector, so the bound does not loosen with the
+  lattice size; the marker alone does not show that the interactions
+  match);
 - ``eigenvalue_method`` other than ``"arnoldi"``;
 - an ``init_gap`` with no fermion-antisymmetric component;
 - an explicit ``pairing_type``;

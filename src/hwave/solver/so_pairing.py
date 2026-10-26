@@ -285,22 +285,33 @@ def check_so_supported(input_dict, interactions, site, norb_phys=None):
     with ``R != 0`` (also inside a ``Coulomb`` aggregate file) and, with
     ``orbital_site``, any ``R = 0`` row between orbitals of different sites:
     the spin-orbital pairing vertex supports on-site interactions only.
-    With ``norb_phys`` given, an orbital index outside the physical orbitals
-    (a file written in spin-orbital indices) is refused too."""
+    Every orbital index must satisfy ``0 <= o < norb_phys`` (``o >= 0``
+    when ``norb_phys`` is not given): an input orbital 0 (reads as -1) would
+    otherwise wrap to the last orbital in the vertex, and an index past the
+    physical orbitals means a file written in spin-orbital indices."""
     from hwave.solver.sites import is_onsite
     check_so_config(input_dict)
     files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
     aggregate = "Coulomb" in files
     for t, tbl in (interactions or {}).items():
         for (irvec, orbvec), v in (tbl or {}).items():
-            if norb_phys is not None and max(int(o) for o in orbvec) >= int(norb_phys):
+            bad = [int(o) for o in orbvec if int(o) < 0
+                   or (norb_phys is not None and int(o) >= int(norb_phys))]
+            if bad:
+                fname = files.get("Coulomb" if (
+                    aggregate and t in ("CoulombIntra", "CoulombInter")
+                    and t not in files) else t, "")
+                rng = ("1..{}".format(int(norb_phys)) if norb_phys is not None
+                       else "starting at 1")
                 raise ValueError(
-                    "{}: the {} file has a row on orbital {} but the model has {} "
-                    "physical orbitals: in spin-orbital mode the interaction files "
-                    "use PHYSICAL orbital indices 1..{} (the Geometry norb and the "
-                    "Transfer file count spin-orbitals).".format(
-                        _SO_WHAT, t, max(int(o) for o in orbvec) + 1, norb_phys,
-                        norb_phys))
+                    "{}: the {} file{} has a row on orbital {}, outside the "
+                    "physical orbitals {}: in spin-orbital mode the interaction "
+                    "files use 1-based PHYSICAL orbital indices{} (the Geometry "
+                    "norb and the Transfer file count spin-orbitals).".format(
+                        _SO_WHAT, t, " '{}'".format(fname) if fname else "",
+                        bad[0] + 1, rng,
+                        "" if norb_phys is None else
+                        ", and the model has {}".format(int(norb_phys))))
             if v == 0 or is_onsite(irvec, orbvec, site):
                 continue
             R = tuple(int(x) for x in irvec)

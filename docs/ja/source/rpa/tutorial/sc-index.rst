@@ -1821,21 +1821,26 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - オフサイトの2体項の行（\ :math:`\mathbf{R} \neq 0`\ ）、\ ``[mode.param]
   orbital_site``\ のもとで異なるサイトの軌道間の\ :math:`\mathbf{R} = 0`\ の行、
   ``Coulomb``\ 集約ファイル中のオフサイトの行;
-- スピン軌道添字で書かれた相互作用ファイル（\ :math:`N`\ を超える軌道添字）;
+- 軌道添字が\ :math:`1 \ldots N`\ の範囲外の相互作用ファイル（\ :math:`N`\ を
+  超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;
 - ``"auto"``\ ・\ ``"general"``\ 以外の\ ``chi0q_tensor``\ 、reduced（2添字）の
   chi0q ファイル、\ ``index_convention``\ タグのない chi0q ファイル、
-  ``spin_orbital``\ マーカーがないか\ ``False``\ である chi0q ファイル（\ :math:`2N`
-  軌道の非スピン軌道 RPA の chi0q は\ :math:`N`\ 軌道のスピン軌道の chi0q と同じ
-  形をもちます。スピン軌道の RPA（\ ``[mode] enable_spin_orbital = true``\ ）で
-  ファイルを作り直してください）;
+  マーカー\ ``spin_orbital = True``\ をもたない chi0q ファイル（このマーカーは
+  スピン軌道の計算だけが書き込むため、非スピン軌道 RPA の chi0q はマーカーを
+  もちません。\ :math:`2N`\ 軌道の非スピン軌道 RPA の chi0q は\ :math:`N`\ 軌道の
+  スピン軌道の chi0q と同じ形をもちます。スピン軌道の RPA（\ ``[mode]
+  enable_spin_orbital = true``\ ）でファイルを作り直してください）;
 - ``enable_spin_orbital``\ なしの FLEX、\ ``calc_scheme = "reduced"``\ の FLEX、
   ``chi_convention``\ ・\ ``index_convention``\ タグのない FLEX の出力、
   ``chi_orbital_layout``\ が\ ``"acbd"``\ でない FLEX のアーカイブ、有限でない値を
   含む FLEX の出力;
 - ``flex_chi_s``\ ・\ ``flex_chi_c``;
 - FLEX の chi0q アーカイブがない場合（FLEX の実行で\ ``[file.output] chi0q``\ を
-  指定してください）、FLEX の Green 関数アーカイブがない場合、この入力の頂点が
-  FLEX の\ :math:`\chi`\ を再現しない場合;
+  指定してください）、FLEX の chi0q アーカイブがマーカー\ ``spin_orbital = True``
+  （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
+  アーカイブがない場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
+  （波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
+  相互作用が一致することは示せません）;
 - ``"arnoldi"``\ 以外の\ ``eigenvalue_method``;
 - フェルミオン反対称な成分をもたない\ ``init_gap``;
 - ``pairing_type``\ の明示的な指定;

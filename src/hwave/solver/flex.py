@@ -4776,7 +4776,13 @@ class FLEX(RPA):
                      index_convention=spin_orbital.INDEX_CONVENTION,
                      **tail_meta,
                      **_freq_meta("B"),
-                     **_scheme_stamp(self))
+                     **_scheme_stamp(self),
+                     # #83: the spin-orbital marker, written ONLY by a
+                     # spin-orbital run (a non-spin-orbital archive keeps its
+                     # member set); hwave_sc requires it in spin-orbital
+                     # flex mode -- index_convention alone is on every file
+                     **({"spin_orbital": True}
+                        if getattr(self, "_so_spinful", False) else {}))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -4861,6 +4867,9 @@ class FLEX(RPA):
                 # the single antisymmetrized spinful channel (#83)
                 save_dict["chiq"] = green_info["chiq"]
                 save_dict["index_convention"] = spin_orbital.INDEX_CONVENTION
+            if self._so_spinful:
+                # #83: written ONLY by a spin-orbital run (see chi0q above)
+                save_dict["spin_orbital"] = True
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
 

@@ -39,7 +39,7 @@ The file contains several arrays bound to the following keys:
 
 - ``spin_orbital``:
 
-  A boolean marker written by RPA: ``True`` when the producing run used ``enable_spin_orbital = true``, ``False`` otherwise. The ``index_convention`` marker is written by every run, so it cannot distinguish a spin-orbital file from a non-spin-orbital one whose orbital count happens to match (:math:`2N` orbitals versus :math:`N` orbitals with spin). ``hwave_sc`` in spin-orbital mode with ``chi0q_mode = "load"`` requires ``spin_orbital = True``. Files written before this marker existed lack it.
+  A boolean marker ``spin_orbital = True``, written ONLY by a run with ``enable_spin_orbital = true``; a non-spin-orbital run does not write the key, so its archive has the same members as before the marker existed. The ``index_convention`` marker is written by every run, so it cannot distinguish a spin-orbital file from a non-spin-orbital one whose orbital count happens to match (:math:`2N` orbitals versus :math:`N` orbitals with spin). ``hwave_sc`` in spin-orbital mode with ``chi0q_mode = "load"`` requires ``spin_orbital = True`` and refuses a file without it. Files written before this marker existed lack it and must be regenerated for that use.
 
 - ``coeff_tail``:
 

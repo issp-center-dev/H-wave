@@ -1246,18 +1246,21 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
-def _require_so_chi0q_marker(data, file_name):
+def _require_so_chi0q_marker(data, file_name, hint=None, producer="RPA"):
     """Refuse a chi0q that does not record ``spin_orbital = True``.
 
     Every RPA run writes ``index_convention = "spin_block"``, so that tag does
     not identify a spin-orbital file, and the shape cannot either: a
     non-spin-orbital chi0q over 2N orbitals has the shape of a spin-orbital
     one over N physical orbitals. The RPA therefore writes an explicit
-    ``spin_orbital`` marker (the producing run's ``enable_spin_orbital``);
-    spin-orbital load mode accepts only a 0-d boolean ``True``. Checked on
-    the open npz before the chi0q array itself is read."""
-    hint = ("Regenerate the file with a spin-orbital RPA run "
-            "([mode] enable_spin_orbital = true, calc_scheme = \"general\").")
+    ``spin_orbital = True`` marker, ONLY in a spin-orbital run (a
+    non-spin-orbital archive carries no such key); spin-orbital mode accepts
+    only a 0-d boolean ``True``. Checked on the open npz before the chi0q
+    array itself is read. Also used for the chi0q companion of a
+    spin-orbital FLEX run (``producer = "FLEX"``)."""
+    if hint is None:
+        hint = ("Regenerate the file with a spin-orbital RPA run "
+                "([mode] enable_spin_orbital = true, calc_scheme = \"general\").")
     if "spin_orbital" not in data:
         raise ValueError(
             "chi0q file '{}' has no spin_orbital marker, so it cannot be told "
@@ -1270,9 +1273,9 @@ def _require_so_chi0q_marker(data, file_name):
             "boolean. {}".format(file_name, data["spin_orbital"], hint))
     if not bool(val[()]):
         raise ValueError(
-            "chi0q file '{}' records spin_orbital = False: it was written by a "
-            "non-spin-orbital RPA run and cannot be used with [mode] "
-            "enable_spin_orbital = true. {}".format(file_name, hint))
+            "chi0q file '{}' records spin_orbital = False: it was not written "
+            "by a spin-orbital {} run and cannot be used with [mode] "
+            "enable_spin_orbital = true. {}".format(file_name, producer, hint))
 
 
 def _load_chi0q(input_dict, norb=None):
@@ -7316,7 +7319,9 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
     one): ``chi_convention = "spin_orbital"`` and ``index_convention`` equal
     to :data:`hwave.solver.spin_orbital.INDEX_CONVENTION`. A non-spin-orbital
     ("myo"), reduced ("kuroki") or untagged archive is refused before any
-    heavy work, and so is a Green function without the spin-block tag."""
+    heavy work, and so is a Green function without the spin-block tag and a
+    chi0q without the ``spin_orbital = True`` marker (written only by a
+    spin-orbital run)."""
     from requests.structures import CaseInsensitiveDict
     from hwave.solver import spin_orbital
     from hwave.solver.rpa import (validate_momentum_convention,
@@ -7405,6 +7410,15 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
                                     "chiq")
         del chiq
 
+    # the chi0q companion must be a spin-orbital FLEX output: its marker is
+    # checked here, before its array is read and before the Green function
+    # or any vertex is built (_check_so_flex_vertex still follows: the marker
+    # does not establish that the interactions are equal)
+    with np.load(chi0_path) as d0:
+        _require_so_chi0q_marker(
+            d0, chi0_path, producer="FLEX",
+            hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
+
     # the Green function: required (the stored chi belongs to the dressed G)
     if not os.path.exists(green_path):
         raise ValueError(
@@ -7440,12 +7454,23 @@ def _check_so_flex_vertex(gam, chi, chi0, chi_path):
     vertex the FLEX run resummed: the stored ``chi`` must solve
     ``(1 + chi0 gam) chi = chi0`` with the stored ``chi0`` of the same map.
     Measured as a backward error, ``|(1 + chi0 gam) chi - chi0| /
-    (|chi0| + |chi0 gam| |chi|)`` (Frobenius, all q), so the bound does not
-    depend on how close the run is to an instability."""
+    (|chi0| + |chi0 gam| |chi|)`` (Frobenius) PER q block, and the maximum
+    over q is compared with the tolerance: the bound does not depend on how
+    close the run is to an instability, nor on the number of q points (a
+    global norm would dilute one bad block by ``1/sqrt(nvol)``). A block of
+    zero scale (``chi0_q = 0`` and ``chi0_q gam chi_q = 0``) has error 0 if
+    its residual vanishes and infinity otherwise."""
     c0g = chi0 @ gam
-    res = np.linalg.norm(chi + c0g @ chi - chi0)
-    scale = np.linalg.norm(chi0) + np.linalg.norm(c0g) * np.linalg.norm(chi)
-    err = float(res / scale) if scale > 0 else float(res)
+    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
+    scale = (np.linalg.norm(chi0, axis=(-2, -1))
+             + np.linalg.norm(c0g, axis=(-2, -1))
+             * np.linalg.norm(chi, axis=(-2, -1)))
+    pos = scale > 0
+    per_q = np.where(res == 0, 0.0, np.inf)
+    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
+    # NaN in any block propagates (and is refused by the test below)
+    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
+    err = float(np.max(per_q)) if per_q.size else 0.0
     logger.info("spin-orbital FLEX: vertex consistency backward error %.3e", err)
     if not err <= _SO_FLEX_GAMMA_TOL:
         raise ValueError(
