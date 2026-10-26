@@ -305,7 +305,12 @@ The line reports the relative Frobenius deviation of the Hermitian
 symmetry of the equal-time density against ``flex_hf_density_tol``
 and, with ``longitudinal_bond_channels = true``, the smallest
 conditioning score of the spin and of the charge RPA denominator of
-that iteration's map against ``longitudinal_bond_cond_tol``.
+that iteration's map against ``longitudinal_bond_cond_tol``. On the GPU
+path a well-conditioned map may report ``in bracket [low, up]`` instead
+of a value: the device-side bounds already proved that no block can
+fail, so the exact decomposition was skipped and the exact minimum lies
+in the bracket (``longitudinal_bond_guard_exact``; the last map is
+always exact).
 
 In a sweep, keep the default ``flex_guard_policy = "refuse"`` for the
 automated runs and turn ``"warn"`` on for a single point you have
@@ -546,7 +551,9 @@ outputs record ``longitudinal_bond_device`` and ``longitudinal_bond_nb``.
 conditioning bounds are computed on the device and only the blocks that
 can attain the batch minimum are decomposed on the host, with outputs
 identical to the full decomposition), so it is a reasonable default for
-production too. ``"static"`` remains the reduced diagnostic and is still
+production too. In addition, a frequency batch whose device-side bounds
+already prove the pass is not decomposed at all
+(``longitudinal_bond_guard_exact = "decide"``, the default). ``"static"`` remains the reduced diagnostic and is still
 about three times faster per iteration, so the previous advice -- check
 once with ``"all"``, then switch to ``"static"`` -- still applies when
 throughput matters.
