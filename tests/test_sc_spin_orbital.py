@@ -1,5 +1,5 @@
 """The static spin-orbital entry of hwave_sc (``[mode] enable_spin_orbital``,
-issue #83): ``chi0q_mode = "calc"`` and ``"load"``.
+issue #83): ``chi0q_mode = "calc"``, ``"load"`` and ``"flex"``.
 
 The gap is one ``2N x 2N`` spin-orbital matrix ``Delta_AB(k)`` (spin-block
 order ``A = s * N + a``); the kernel is ``P K`` with the pairing vertex of
@@ -12,6 +12,11 @@ kernel application.
   complex Rashba-like spin-orbit hopping runs and returns an antisymmetric
   gap; ``chi0q_mode = "load"`` of a spin-orbital RPA chi0q equals
   ``chi0q_mode = "calc"`` (G4, part).
+* ``TestFlexMode``: ``chi0q_mode = "flex"`` uses the stored chi (zero bosonic
+  frequency) and dressed green of a spin-orbital FLEX run (G4, part); the
+  archive is identified by its tags (nd = 2 has the shape of a two-orbital
+  non-spin-orbital file); non-spin-orbital, reduced and untagged outputs and
+  a vertex the FLEX run did not use are refused.
 * ``TestRefusals``: every unsupported combination is refused through the
   public entry, with the key named (G5).
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
@@ -417,8 +422,13 @@ class TestRefusals(_TmpDir):
             with self.subTest(key=key):
                 self._refused(r"pairing_type", {key: "singlet"})
 
-    def test_flex_mode_not_yet(self):
-        self._refused(r"chi0q_mode", {"chi0q_mode": "flex"})
+    def test_flex_spin_charge_file_keys(self):
+        for key in ("flex_chi_s", "Flex_Chi_C"):
+            with self.subTest(key=key):
+                self._refused(key.lower(), {"chi0q_mode": "flex", key: "chiq_s.npz"})
+
+    def test_flex_mode_without_archive(self):
+        self._refused(r"chiq\.npz' not found", {"chi0q_mode": "flex"})
 
     def test_spinful_vertex_exchange_false(self):
         self._refused(r"spinful_vertex_exchange", spinful_vertex_exchange=False)
@@ -471,6 +481,199 @@ class TestStaticVertexLayouts(_TmpDir):
             v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
             v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
         self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
+
+
+def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
+              cell=None, T=0.25):
+    """A FLEX run of the model in ``d`` through the public entry, writing
+    ``chiq``, ``chi0q`` and ``green`` into ``d/out``."""
+    from hwave import qlms
+    inp = _input(d, files, so, {}, T=T, nmat=nmat, out=out,
+                 **({"CellShape": list(cell)} if cell else {}))
+    inp["mode"]["mode"] = "FLEX"
+    inp["mode"]["calc_scheme"] = scheme
+    inp["mode"]["param"].update({
+        "IterationMax": 200, "Mix": 0.5, "EPS": 10, "mixing_scheme": "linear",
+        "flex_hartree_fock": scheme == "general"})
+    inp["file"]["input"]["path_to_input"] = d
+    inp["file"]["output"].update({"chiq": "chiq", "green": "green",
+                                  "chi0q": "chi0q"})
+    del inp["eliashberg"]
+    inp["log"] = {"print_level": 0}
+    with _quiet():
+        qlms.run(input_dict=inp)
+    return os.path.join(d, out)
+
+
+def _flex_input(d, files, flex_dir, eli=None, out="out_sc", **param):
+    inp = _input(d, files, True,
+                 dict({"chi0q_mode": "flex", "solver_mode": "eigenvalue",
+                       "num_eigenvalues": 8}, **(eli or {})),
+                 nmat=32, out=out, **param)
+    inp["file"]["input"]["path_to_flex_output"] = flex_dir
+    return inp
+
+
+def _write_one_orbital(d, soc=0.3, U=2.0):
+    """One physical orbital (nd = 2) on the square lattice: nearest-neighbour
+    hopping plus the Rashba-like ``soc (sin ky sigma_x - sin kx sigma_y)``;
+    CoulombIntra ``U``. The transfer uses the interleaved index ``s + 1``."""
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1 0 0\n0 1 0\n0 0 1\n2\n0 0 0\n0 0 0\n")
+    sx = np.array([[0, 1], [1, 0]], complex)
+    sy = np.array([[0, -1j], [1j, 0]], complex)
+    rows = []
+    for R, m in (((1, 0), -np.eye(2) + 1j * soc * sy),
+                 ((-1, 0), -np.eye(2) - 1j * soc * sy),
+                 ((0, 1), -np.eye(2) - 1j * soc * sx),
+                 ((0, -1), -np.eye(2) + 1j * soc * sx)):
+        for s_ in range(2):
+            for sp in range(2):
+                if m[s_, sp] != 0:
+                    rows.append((R[0], R[1], 0, s_ + 1, sp + 1,
+                                 m[s_, sp].real, m[s_, sp].imag))
+    _wfile(os.path.join(d, "transfer.dat"), "Transfer", 2, rows)
+    _wfile(os.path.join(d, "coulombintra.dat"), "CoulombIntra", 1,
+           [(0, 0, 0, 1, 1, U, 0.0)])
+    return {"CoulombIntra": "coulombintra.dat"}
+
+
+def _resave(src, dst, drop=(), **replace):
+    """Copy the npz ``src`` to ``dst`` without the keys ``drop``."""
+    with np.load(src) as z:
+        items = {k: z[k] for k in z.files if k not in drop}
+    items.update(replace)
+    np.savez(dst, **items)
+
+
+class TestFlexMode(unittest.TestCase):
+    """``chi0q_mode = "flex"`` reads the stored ``chiq`` (the single
+    antisymmetrized spinful channel) and the dressed ``green`` of a
+    spin-orbital FLEX run, both tagged ``index_convention = "spin_block"``;
+    the archive is identified by its tags, never by its shape."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.d = tempfile.mkdtemp(prefix="sc_so_flex_")
+        cls.files = _write_model(cls.d, so=True, soc=0.3)
+        cls.flex = _run_flex(cls.d, cls.files, "flex")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.d, True)
+
+    def _out(self, name):
+        out = os.path.join(self.d, name)
+        self.addCleanup(shutil.rmtree, out, True)
+        return out
+
+    def _refused(self, pattern, inp):
+        with self.assertRaisesRegex(ValueError, pattern):
+            with _quiet():
+                sc.calc_eliashberg(inp)
+        out = inp["file"]["output"]["path_to_output"]
+        self.assertFalse(os.path.exists(out) and os.listdir(out))
+
+    def _dense_spectrum(self, inp, chi_static, green):
+        """Eigenvalues of ``P K`` built independently of the flex loader from
+        a static chi ``(nvol, nd^2, nd^2)`` and a Green function in the
+        stored ``(nmat, nvol, nd, nd)`` layout."""
+        Nx, Ny, Nz = CELL
+        nmat = green.shape[0]
+        g = green.reshape(nmat, Nx, Ny, Nz, ND, ND).transpose(4, 5, 1, 2, 3, 0)
+        with _quiet():
+            gam = sc._so_rpa_vertex(inp)
+        Vs = sc._so_static_vertex_from_chi(gam, chi_static, ND, (Nx, Ny, Nz))
+        G2 = sc._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
+        n = ND * ND * Nx * Ny * Nz
+        A, _ = sc._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
+        PK = sc._so_antisymmetric_operator(A, n, (ND, ND, Nx, Ny, Nz))
+        return np.linalg.eigvals(PK.matmat(np.eye(n, dtype=complex)))
+
+    def test_uses_stored_chi_and_green(self):
+        """G4: the eigenvalues equal those of ``P K`` built from the stored
+        chi at the zero bosonic frequency and the stored green."""
+        inp = _flex_input(self.d, self.files, self.flex, out=self._out("out_g4"))
+        seen = _run(inp)
+        with np.load(os.path.join(self.flex, "chiq.npz")) as z:
+            chiq = z["chiq"]
+        with np.load(os.path.join(self.flex, "chi0q.npz")) as z:
+            chi0q = z["chi0q"]
+        with np.load(os.path.join(self.flex, "green.npz")) as z:
+            green = z["green"][0]
+        nmat, nvol = chiq.shape[:2]
+        si = nmat // 2
+        chi = chiq[si].reshape(nvol, ND * ND, ND * ND)
+        chi0 = chi0q[si].reshape(nvol, ND * ND, ND * ND)
+        # non-vacuity: the dressed chi is far from the bare bubble
+        self.assertGreater(np.linalg.norm(chi - chi0) / np.linalg.norm(chi0), 0.01)
+        dense = self._dense_spectrum(inp, chi, green)
+        evs = np.asarray(seen["evs"])
+        self.assertTrue(np.all(seen["match"]))
+        for lam in evs:
+            k = np.argmin(np.abs(dense - lam))
+            self.assertLess(abs(dense[k] - lam), 1e-10 * abs(lam), msg=str(lam))
+        lead = dense[np.argmax(dense.real)]
+        self.assertLess(abs(evs[0] - lead), 1e-10 * abs(lead))
+        # the leading eigenvalue depends on WHICH chi is read: the bare
+        # bubble moves it far beyond the bound above
+        dense0 = self._dense_spectrum(inp, chi0, green)
+        self.assertGreater(abs(dense0[np.argmax(dense0.real)] - lead), 1e-4 * abs(lead))
+
+    def test_vertex_mismatch_is_refused(self):
+        """Interaction files that do not reproduce the FLEX run's vertex are
+        refused through the stored chi0q."""
+        d = tempfile.mkdtemp(prefix="sc_so_flex_u_")
+        self.addCleanup(shutil.rmtree, d, True)
+        files = _write_model(d, so=True, soc=0.3)
+        with open(os.path.join(d, "coulombintra.dat")) as f:
+            txt = f.read()
+        with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+            f.write(txt.replace("1.600000000000", "1.700000000000"))
+        self._refused(r"do not reproduce the vertex",
+                      _flex_input(d, files, self.flex, out=self._out("out_mis")))
+
+    def test_norb1_shape_ambiguity_uses_tags(self):
+        """N = 1 (nd = 2, the shape of a two-orbital non-spin-orbital file)
+        loads by its tags; a copy without a tag is refused."""
+        d = tempfile.mkdtemp(prefix="sc_so_flex_n1_")
+        self.addCleanup(shutil.rmtree, d, True)
+        files = _write_one_orbital(d)
+        flex = _run_flex(d, files, "flex")
+        inp = _flex_input(d, files, flex, out="out_ok")
+        seen = _run(inp)
+        self.assertEqual(seen["gap"].shape, (2, 2) + tuple(CELL))
+        self.assertTrue(np.isfinite(seen["evs"][0]))
+        cases = (("chiq.npz", ("chi_convention",), r"no chi_convention tag"),
+                 ("chiq.npz", ("index_convention",), r"no index_convention tag"),
+                 ("green.npz", ("index_convention",), r"index_convention = None"))
+        for name, drop, pattern in cases:
+            with self.subTest(file=name, drop=drop):
+                bad = os.path.join(d, "bad_" + "_".join(drop) + name[:-4])
+                shutil.copytree(flex, bad)
+                _resave(os.path.join(flex, name), os.path.join(bad, name), drop)
+                self._refused(pattern, _flex_input(d, files, bad,
+                                                   out="out_" + os.path.basename(bad)))
+
+    def test_refuses_non_so_and_reduced(self):
+        """A non-spin-orbital general FLEX output ("myo") and a reduced one
+        ("kuroki") are refused, before the green or any vertex is built."""
+        d = tempfile.mkdtemp(prefix="sc_so_flex_nonso_")
+        self.addCleanup(shutil.rmtree, d, True)
+        nfiles = _write_model(d, so=False, types=("CoulombIntra", "CoulombInter"))
+        for scheme, tag in (("general", "myo"), ("reduced", "kuroki")):
+            flex = _run_flex(d, nfiles, "flex_" + scheme, so=False, scheme=scheme)
+            with np.load(os.path.join(flex, "chiq.npz")) as z:
+                self.assertEqual(str(z["chi_convention"]), tag)
+            with self.subTest(scheme=scheme), mock.patch.object(
+                    sc, "_load_flex_green",
+                    side_effect=AssertionError("green read before the check")), \
+                    mock.patch.object(
+                        sc, "_so_rpa_vertex",
+                        side_effect=AssertionError("vertex built before the check")):
+                self._refused(r"chi_convention = '{}'".format(tag),
+                              _flex_input(self.d, self.files, flex,
+                                          out=self._out("out_" + scheme)))
 
 
 class TestInitialGap(unittest.TestCase):

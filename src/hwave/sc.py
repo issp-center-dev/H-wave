@@ -7036,8 +7036,8 @@ def reject_spin_orbital_mode(input_dict):
             "Eliashberg entry (the dynamic solver, frequency = \"dynamic\", "
             "its bond path and the temperature sweep): it would produce "
             "silently wrong eigenvalues (issue #83). The static solver "
-            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\" or "
-            "\"load\") supports spin-orbital models.")
+            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\", "
+            "\"load\" or \"flex\") supports spin-orbital models.")
 
 
 def _so_rpa_vertex(input_dict):
@@ -7119,6 +7119,191 @@ def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
     eye = np.eye(nd * nd, dtype=complex)
     chi = np.linalg.solve(eye[None] + chi0 @ gam, chi0)
     return _so_static_vertex_from_chi(gam, chi, nd, (Nx, Ny, Nz))
+
+
+#: ``chi_convention`` of the single antisymmetrized spinful channel a
+#: spin-orbital FLEX run stores as ``chiq`` (flex.py save_results).
+_SO_FLEX_CHI_CONVENTION = "spin_orbital"
+
+#: Backward-error bound of the Gamma consistency check of
+#: :func:`_check_so_flex_vertex` (round-off of the FLEX solve is ~1e-15; an
+#: interaction that differs from the FLEX run's shows up at O(dU/U)).
+_SO_FLEX_GAMMA_TOL = 1.0e-8
+
+
+def _so_flex_static_slice(data, arr, path, nd, nvol, config_nmat, what):
+    """The zero-bosonic-frequency slice ``(nvol, nd^2, nd^2)`` of a raw
+    spinful FLEX array ``arr`` ``(nmat, nvol, nd, nd, nd, nd)`` of the open
+    npz ``data`` read from ``path``, located through the file's
+    ``freq_index`` / ``nmat`` metadata."""
+    if arr.ndim != 6 or arr.shape[1:] != (nvol,) + (nd,) * 4:
+        raise ValueError(
+            "FLEX {} in '{}' has shape {}, not the general spinful layout "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}) over nd = {nd} spin-orbitals of "
+            "this run. Re-run FLEX on the same model and grid.".format(
+                what, path, arr.shape, nvol, nd=nd))
+    fi, fn = _read_freq_meta(data)
+    pos = _static_freq_position(fi, arr.shape[0], config_nmat, path,
+                                file_nmat=fn)
+    si = arr.shape[0] // 2 if pos is None else pos
+    out = np.ascontiguousarray(arr[si].reshape(nvol, nd * nd, nd * nd),
+                               dtype=complex)
+    if not np.all(np.isfinite(out)):
+        raise ValueError(
+            "FLEX {} in '{}' contains non-finite values at the zero bosonic "
+            "frequency; re-run the producing FLEX calculation.".format(what, path))
+    return out
+
+
+def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
+    """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
+    ``[mode] enable_spin_orbital = true``) for ``chi0q_mode = "flex"``.
+
+    Returns ``(chi, green_kw, chi0)``:
+
+    * ``chi`` ``(nvol, nd^2, nd^2)``: the stored ``chiq`` -- the single
+      antisymmetrized spinful channel ``[1 + chi0 Gamma]^-1 chi0`` in the
+      bubble ``[a, c, b, d]`` pair layout over spin-block spin-orbitals
+      (``Flex._flex_compute_veff_spinful``) -- at the zero bosonic frequency;
+    * ``green_kw`` ``(nd, nd, Nx, Ny, Nz, nmat)``: the stored dressed Green
+      function (spin-block order, as stored; no reorder);
+    * ``chi0`` ``(nvol, nd^2, nd^2)`` or ``None``: the stored static bubble of
+      the same map when the chi0q archive is present (for
+      :func:`_check_so_flex_vertex`).
+
+    The archive is identified by its TAGS, never by its shape (a one-orbital
+    spin-orbital file has nd = 2, the shape of a two-orbital non-spin-orbital
+    one): ``chi_convention = "spin_orbital"`` and ``index_convention`` equal
+    to :data:`hwave.solver.spin_orbital.INDEX_CONVENTION`. A non-spin-orbital
+    ("myo"), reduced ("kuroki") or untagged archive is refused before any
+    heavy work, and so is a Green function without the spin-block tag."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import spin_orbital
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    eli = CaseInsensitiveDict(input_dict.get("eliashberg", {}) or {})
+    flex_dir = _resolve_flex_dir(input_dict)
+    chi_path = os.path.join(flex_dir, eli.get("flex_chiq", "chiq.npz"))
+    chi0_path = os.path.join(flex_dir, eli.get("flex_chi0q", "chi0q.npz"))
+    # the Green file name is read case-insensitively like the keys above; the
+    # shared loader below is handed a view of the config with that name
+    green_name = eli.get("flex_green", "green.npz")
+    green_path = os.path.join(flex_dir, green_name)
+    green_input = dict(input_dict)
+    green_input["eliashberg"] = dict(
+        {k: v for k, v in (input_dict.get("eliashberg", {}) or {}).items()
+         if str(k).lower() != "flex_green"}, flex_green=green_name)
+    nvol = Nx * Ny * Nz
+    config_nmat = input_dict.get("mode", {}).get("param", {}).get(
+        "Nmat", _DEFAULT_NMAT)
+    hint = ("[mode] enable_spin_orbital = true with chi0q_mode = \"flex\" reads "
+            "the outputs of a spin-orbital FLEX run (calc_scheme = \"general\", "
+            "[mode] enable_spin_orbital = true, [file.output] chiq and green)")
+
+    if not os.path.exists(chi_path):
+        raise ValueError(
+            "FLEX susceptibility archive '{}' not found. {}; set [eliashberg] "
+            "flex_chiq to the file the FLEX run wrote as [file.output] "
+            "chiq.".format(chi_path, hint))
+    logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
+    data = np.load(chi_path)
+    _reject_ir_native(data, chi_path, _STATIC_IR_HINT)
+    if "chi_convention" not in data:
+        raise ValueError(
+            "FLEX archive '{}' has no chi_convention tag: an untagged file "
+            "cannot be told from a non-spin-orbital one by its shape (one "
+            "spin-orbital orbital has the shape of two orbitals). {}.".format(
+                chi_path, hint))
+    conv = str(data["chi_convention"])
+    if conv != _SO_FLEX_CHI_CONVENTION:
+        what = {"myo": "a non-spin-orbital general FLEX output",
+                "kuroki": "a reduced FLEX output"}.get(
+                    conv.lower(), "not a spin-orbital FLEX output")
+        raise ValueError(
+            "FLEX archive '{}' carries chi_convention = {!r}: {} (separate spin "
+            "and charge channels), which cannot carry the spin-flip pairs of a "
+            "spin-orbital model. {}.".format(chi_path, conv, what, hint))
+    if "index_convention" not in data:
+        raise ValueError(
+            "FLEX archive '{}' has no index_convention tag; the spin-orbital "
+            "order of its axes cannot be verified. {}.".format(chi_path, hint))
+    if str(data["index_convention"]) != spin_orbital.INDEX_CONVENTION:
+        raise ValueError(
+            "FLEX archive '{}' carries index_convention = {!r}, expected {!r}. "
+            "{}.".format(chi_path, str(data["index_convention"]),
+                         spin_orbital.INDEX_CONVENTION, hint))
+    if "chiq" not in data:
+        raise ValueError(
+            "FLEX archive '{}' has no 'chiq' array (the spinful channel). "
+            "{}.".format(chi_path, hint))
+    if "chi_orbital_layout" in data and str(data["chi_orbital_layout"]) != "acbd":
+        raise ValueError(
+            "FLEX archive '{}' declares chi_orbital_layout = {!r} but this "
+            "reader only supports 'acbd'.".format(
+                chi_path, str(data["chi_orbital_layout"])))
+    chiq = data["chiq"]
+    check_momentum_marker(data, chi_path)
+    if chiq.ndim >= 2 and chiq.shape[1] == nvol:
+        validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
+    chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
+                                "chiq")
+
+    # the Green function: required (the stored chi belongs to the dressed G)
+    if not os.path.exists(green_path):
+        raise ValueError(
+            "FLEX Green archive '{}' not found. {}; set [eliashberg] flex_green "
+            "to the file the FLEX run wrote as [file.output] green.".format(
+                green_path, hint))
+    with np.load(green_path) as gdata:
+        gtag = (str(gdata["index_convention"]) if "index_convention" in gdata
+                else None)
+    if gtag != spin_orbital.INDEX_CONVENTION:
+        raise ValueError(
+            "FLEX Green archive '{}' carries index_convention = {!r}, expected "
+            "{!r} (a spin-orbital FLEX run tags it). {}.".format(
+                green_path, gtag, spin_orbital.INDEX_CONVENTION, hint))
+    green_kw = _load_flex_green(green_input, nd, Nx, Ny, Nz,
+                                interactions=interactions)
+    if green_kw is None or _resolve_flex_paths(green_input)[2] != green_path:
+        raise AssertionError("the FLEX Green path resolved differently")
+
+    chi0 = None
+    if os.path.exists(chi0_path):
+        d0 = np.load(chi0_path)
+        _reject_ir_native(d0, chi0_path, _STATIC_IR_HINT)
+        validate_chi0q_index_convention(d0, True, chi0_path)
+        check_momentum_marker(d0, chi0_path)
+        chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                     config_nmat, "chi0q")
+    else:
+        logger.info("FLEX chi0q archive '%s' not present: the check that the "
+                    "interaction files reproduce the FLEX run's vertex is "
+                    "skipped.", chi0_path)
+    return chi, green_kw, chi0
+
+
+def _check_so_flex_vertex(gam, chi, chi0, chi_path):
+    """Refuse when ``gam`` (built here from the interaction files) is not the
+    vertex the FLEX run resummed: the stored ``chi`` must solve
+    ``(1 + chi0 gam) chi = chi0`` with the stored ``chi0`` of the same map.
+    Measured as a backward error, ``|(1 + chi0 gam) chi - chi0| /
+    (|chi0| + |chi0 gam| |chi|)`` (Frobenius, all q), so the bound does not
+    depend on how close the run is to an instability."""
+    if chi0 is None:
+        return None
+    c0g = chi0 @ gam
+    res = np.linalg.norm(chi + c0g @ chi - chi0)
+    scale = np.linalg.norm(chi0) + np.linalg.norm(c0g) * np.linalg.norm(chi)
+    err = float(res / scale) if scale > 0 else float(res)
+    logger.info("spin-orbital FLEX: vertex consistency backward error %.3e", err)
+    if not err <= _SO_FLEX_GAMMA_TOL:
+        raise ValueError(
+            "the interaction files of this run do not reproduce the vertex of "
+            "the FLEX run that wrote '{}' (backward error {:.3e} > {:.1e} of "
+            "(1 + chi0 Gamma) chi = chi0 at the zero bosonic frequency). Use the "
+            "same interaction files and [mode.param] as the FLEX run.".format(
+                chi_path, err, _SO_FLEX_GAMMA_TOL))
+    return err
 
 
 def _so_antisymmetric_operator(A, vec_size, shape):
@@ -7391,31 +7576,46 @@ def calc_eliashberg(input_dict):
 
     if spin_orbital_mode:
         # --- Spin-orbital mode (issue #83): one spinful channel ---
-        if chi0q_mode == "calc":
-            chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
-                                             precomputed_mu=mu)
-            static_index = None
+        if chi0q_mode == "flex":
+            # the stored chi and G of a spin-orbital FLEX run (tags checked
+            # before any heavy work); Gamma from the interaction files, checked
+            # against the run's when its chi0q archive is present
+            chi_so, green_kw, chi0_so = _load_flex_so(
+                input_dict, norb, Nx, Ny, Nz, interactions=interactions)
+            logger.info("Using the spin-orbital FLEX chiq and dressed Green's "
+                        "function")
+            gam = _so_rpa_vertex(input_dict)
+            _check_so_flex_vertex(gam, chi_so, chi0_so,
+                                  _resolve_flex_dir(input_dict))
+            del chi0_so
+            Vs_q = _so_static_vertex_from_chi(gam, chi_so, norb, (Nx, Ny, Nz))
+            del chi_so, gam
         else:
-            try:
-                chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
-            except ValueError as err:
-                raise ValueError(
-                    "{} ([mode] enable_spin_orbital = true with chi0q_mode = "
-                    "\"load\" needs the general (4-index) spinful chi0q of a "
-                    "spin-orbital RPA run over nd = {} spin-orbitals; a model the "
-                    "RPA reduces to spin-free or spin-diagonal form writes a "
-                    "physical-orbital chi0q instead -- use chi0q_mode = \"calc\" "
-                    "for it.)".format(err, norb)) from err
-            # refuse a reduced / non-spinful layout before any further work
-            # (_so_static_vertex re-checks it)
-            _so_static_chi0(chi0q_raw, norb, Nx, Ny, Nz, static_index)
-        logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
-        green_kw = _build_bond_green(
-            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
-        logger.info("Computing the spin-orbital pairing vertex...")
-        Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
-                                 Nx, Ny, Nz, static_index)
-        del chi0q_raw
+            if chi0q_mode == "calc":
+                chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
+                                                 precomputed_mu=mu)
+                static_index = None
+            else:
+                try:
+                    chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
+                except ValueError as err:
+                    raise ValueError(
+                        "{} ([mode] enable_spin_orbital = true with chi0q_mode = "
+                        "\"load\" needs the general (4-index) spinful chi0q of a "
+                        "spin-orbital RPA run over nd = {} spin-orbitals; a model the "
+                        "RPA reduces to spin-free or spin-diagonal form writes a "
+                        "physical-orbital chi0q instead -- use chi0q_mode = \"calc\" "
+                        "for it.)".format(err, norb)) from err
+                # refuse a reduced / non-spinful layout before any further work
+                # (_so_static_vertex re-checks it)
+                _so_static_chi0(chi0q_raw, norb, Nx, Ny, Nz, static_index)
+            logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
+            green_kw = _build_bond_green(
+                eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+            logger.info("Computing the spin-orbital pairing vertex...")
+            Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
+                                     Nx, Ny, Nz, static_index)
+            del chi0q_raw
         logger.info("Spin-orbital vertex shape: {}".format(Vs_q.shape))
 
     elif chi0q_mode == "flex":

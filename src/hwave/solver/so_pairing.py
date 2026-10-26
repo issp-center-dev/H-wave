@@ -197,7 +197,9 @@ def check_so_config(input_dict):
     up case-insensitively; each message names the key and what to change.
 
     Supported: ``frequency = "static"``, ``bond_channels = false``,
-    ``chi0q_mode = "calc"`` or ``"load"`` with a general (4-index) chi0q,
+    ``chi0q_mode = "calc"`` or ``"load"`` with a general (4-index) chi0q, or
+    ``"flex"`` with the outputs of a spin-orbital FLEX run (``flex_chiq``,
+    ``flex_green``; ``flex_chi_s`` / ``flex_chi_c`` are refused),
     ``solver_mode = "iteration" / "eigenvalue" / "both"`` with
     ``eigenvalue_method = "arnoldi"``, no ``pairing_type`` (the gap is one
     general spin-orbital matrix), the antisymmetrized spinful vertex
@@ -236,11 +238,20 @@ def check_so_config(input_dict):
             "{}: [eliashberg] solver_mode = {!r} is not supported; use "
             "\"iteration\", \"eigenvalue\" or \"both\".".format(_SO_WHAT, solver_mode))
     chi0q_mode = eli.get("chi0q_mode", "load")
-    if chi0q_mode not in ("calc", "load"):
+    if chi0q_mode not in ("calc", "load", "flex"):
         raise ValueError(
             "{}: [eliashberg] chi0q_mode = {!r} is not supported; use \"calc\" "
-            "(the spinful chi0 is computed here) or \"load\" (a general chi0q of "
-            "a spin-orbital RPA run).".format(_SO_WHAT, chi0q_mode))
+            "(the spinful chi0 is computed here), \"load\" (a general chi0q of "
+            "a spin-orbital RPA run) or \"flex\" (the chiq and green of a "
+            "spin-orbital FLEX run).".format(_SO_WHAT, chi0q_mode))
+    for key in ("flex_chi_s", "flex_chi_c"):
+        if key in eli:
+            raise ValueError(
+                "{}: [eliashberg] {} names a spin or charge channel file, which a "
+                "spin-orbital FLEX run does not write (it stores the single "
+                "spinful channel as chiq). Remove {} and set flex_chiq to the "
+                "chiq archive of the spin-orbital FLEX run (default "
+                "\"chiq.npz\").".format(_SO_WHAT, key, key))
     tensor = eli.get("chi0q_tensor", "auto")
     if tensor not in ("auto", "general"):
         raise ValueError(
