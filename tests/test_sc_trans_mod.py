@@ -759,18 +759,15 @@ class TestAssembledBandCheck(unittest.TestCase):
     def test_green_init_band_is_rpa_onsite_assembly(self):
         """RPA-ASSEMBLY BEHAVIOUR, NOT PHYSICS.
 
-        Spin-free g0[0], spin-dependent G in cell 1 = R (0, 1), which is a
-        CoulombInter bond of this model. RPA's green_init assembly is
-        T + Hartree[G] (g0[0] only, no Fock term), so its band is spin-free
-        and it is accepted.
-        A physical UHF band would carry the spin-dependent off-site Fock
-        term of that bond. hwave_sc warns about this combination
-        (green_init with an off-site interaction) and recommends trans_mod.
+        Spin-free G with a nonzero cell 1 = R (0, 1), a CoulombInter bond of
+        this model. RPA's green_init assembly is T + Hartree[G] (g0[0]
+        only, no Fock term), so the band is T + Hartree; a UHF band would
+        also carry the bond's Fock term. hwave_sc warns about this
+        combination and recommends trans_mod.
         """
         g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
         g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
-        g[1, 0, 0, 0, 0] = 0.2
-        g[1, 1, 0, 1, 0] = -0.2
+        g[1, 0, 0, 0, 0] = g[1, 1, 0, 1, 0] = 0.2
         with self.assertLogs("hwave_sc", level="WARNING") as logs:
             band = self._band(extra_file={"green_init": "g.npz"},
                               files={"g.npz": {"green": g}})
@@ -782,6 +779,20 @@ class TestAssembledBandCheck(unittest.TestCase):
         hartree = 1.4 * FILLING + 4 * 0.25 * 2 * FILLING
         self.assertLess(np.abs(eps - (_band_k(_bare_hr(1)) + hartree)).max(),
                         1e-12)
+
+    def test_green_init_spin_dependent_in_another_cell_is_refused(self):
+        # G-level check: a moment in cell 1 is refused even though RPA's
+        # Hartree band (g0[0] only) would be spin-free
+        g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
+        g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
+        g[1, 0, 0, 0, 0] = 0.2
+        g[1, 1, 0, 1, 0] = -0.2
+        with self.assertRaises(ValueError) as cm:
+            self._band(extra_file={"green_init": "g.npz"},
+                       files={"g.npz": {"green": g}})
+        self.assertIn("#88", str(cm.exception))
+        self.assertIn("green_init describes a spin-dependent state",
+                      str(cm.exception))
 
     def test_extern_boundary(self):
         # on-site Extern 1.0: H_up - H_down = 2 * coeff_extern
@@ -804,19 +815,10 @@ class TestAssembledBandCheck(unittest.TestCase):
         self.assertTrue(band.same_as_bare)
 
     def test_each_interaction_type(self):
-        """Per interaction type: a spin-free G gives an accepted band; a ferro
-        G gives a refused band whenever RPA's T + Hartree[G] carries its spin
-        dependence (two orbitals, on-site terms).
-
-        RPA's green_init band is T plus the Hartree term its
-        ``_calc_trans_mod`` builds (no Fock term). For CoulombInter, Exchange
-        and PairLift that term carries no spin dependence for the ferro
-        patterns below
-        (nor for an on-site spin-flip G), so those bands ARE spin-free and
-        are accepted -- the same band RPA's own chi0q uses. This pins the
-        current RPA behaviour; it is not a statement about the UHF band of
-        such a G.
-        """
+        """Per interaction type (two orbitals, on-site terms): a spin-free G
+        gives an accepted band, a ferro G is refused -- by the G-level
+        check, for every type (including those whose Hartree term would
+        carry no spin dependence)."""
         norb = 2
         m = 0.05
 
@@ -828,20 +830,8 @@ class TestAssembledBandCheck(unittest.TestCase):
             return g
         g_free = g_of(0.0, 0.0)
         g_ferro = g_of(m, m)
-        # True: the ferro G must be refused (its Hartree term is
-        # spin-dependent for this G).
-        # False: RPA-ASSEMBLY BEHAVIOUR, NOT PHYSICS. RPA's green_init
-        # assembly (``_calc_trans_mod``, T + Hartree[G]) omits the spin-dependent Fock part of these
-        # types, so the band it assembles -- the band its own chi0q uses --
-        # is spin-free and is accepted. A physical UHF band of this G would
-        # be spin-dependent. Known RPA limitation, tracked separately; flip
-        # these to True when RPA's assembly includes that Fock part.
-        refused = {"CoulombIntra": True, "Hund": True, "Ising": True,
-                   "PairHop": True,
-                   "CoulombInter": False,   # RPA assembly omits the Fock part
-                   "Exchange": False,       # RPA assembly omits the Fock part
-                   "PairLift": False}       # RPA assembly omits the Fock part
-        for tname, ferro_refused in refused.items():
+        for tname in ("CoulombIntra", "Hund", "Ising", "PairHop",
+                      "CoulombInter", "Exchange", "PairLift"):
             with self.subTest(type=tname), tempfile.TemporaryDirectory() as d:
                 if tname == "CoulombIntra":
                     rows = [(0, 0, 0, 1, 1, 1.0), (0, 0, 0, 2, 2, 1.0)]
@@ -853,7 +843,7 @@ class TestAssembledBandCheck(unittest.TestCase):
                     for r in rows:
                         f.write("{} {} {} {} {} {!r} 0.0\n".format(*r))
                 for label, g, ok in (("free", g_free, True),
-                                     ("ferro", g_ferro, not ferro_refused)):
+                                     ("ferro", g_ferro, False)):
                     np.savez(os.path.join(d, "g.npz"), green=g)
 
                     def call():
@@ -867,12 +857,10 @@ class TestAssembledBandCheck(unittest.TestCase):
                     else:
                         with self.assertRaises(ValueError) as cm:
                             call()
+                        # |G_up - G_down| = 2 m = 0.1
                         self.assertIn("#88", str(cm.exception))
-                        if tname == "CoulombIntra":
-                            # hand value: H_up - H_dn = U (n_dn - n_up)
-                            # = -2 U m = -0.1 for U = 1, m = 0.05
-                            self.assertIn("max |H_up - H_down| = 1.000e-01",
-                                          str(cm.exception))
+                        self.assertIn("max |G_up - G_down| = 1.000e-01",
+                                      str(cm.exception))
 
 
 class TestSpinFreeTolerance(unittest.TestCase):
@@ -1403,10 +1391,12 @@ class TestRound5(unittest.TestCase):
         self.assertIn("not Hermitian", str(cm.exception))
 
 
-def _green_init_vs_uhfk_difference(typ, rows, G):
+def _green_init_vs_uhfk_difference(typ, rows, G, orbital_site=None):
     """max |H_UHFk - H_green_init| over the real-space one-body table:
     UHFk's mean-field Hamiltonian (Hartree + Fock) of G against the band RPA
-    assembles from green_init (T + Hartree[G]); two orbitals."""
+    assembles from green_init (T + Hartree[G], the production
+    ``RPA._calc_trans_mod`` on copies of the solver's arrays); two
+    orbitals. Returns (difference, ham_param, parsed orbital_site, grid)."""
     from hwave.qlmsio import read_input_k
     import hwave.solver.uhfk as uhfk
     import hwave.solver.rpa as rpa
@@ -1431,19 +1421,31 @@ def _green_init_vs_uhfk_difference(typ, rows, G):
         u._detect_blocks()
         u.Green = G.copy()
         u._make_ham()
+        param = {"T": 0.1, "CellShape": [NX, NY, 1], "SubShape": [1, 1, 1],
+                 "Nmat": 8, "filling": 0.5}
+        if orbital_site is not None:
+            param["orbital_site"] = list(orbital_site)
         r = rpa.RPA(read_input_k.QLMSkInput(fin).get_param("ham"),
                     {"print_level": 0, "print_step": 1},
                     {"mode": "RPA", "calc_scheme": "general",
-                     "param": {"T": 0.1, "CellShape": [NX, NY, 1],
-                               "SubShape": [1, 1, 1], "Nmat": 8,
-                               "filling": 0.5}})
-        h_rpa = r._calc_trans_mod_copy(G.reshape(NX * NY, nd, nd))
+                     "param": param})
+        hi = r.ham_info
+        saved = {n: np.array(getattr(hi, n), copy=True)
+                 for n in ("ham_trans_r", "ham_inter_r")}
+        try:
+            h_rpa = np.array(r._calc_trans_mod(
+                np.array(G.reshape(NX * NY, nd, nd), copy=True)))
+        finally:
+            for n, v in saved.items():
+                setattr(hi, n, v)
         ham = read_input_k.QLMSkInput(fin).get_param("ham")
+        site = getattr(hi, "orbital_site", None)
+        grid = tuple(r.lattice.shape)
 
     def to_r(hk):
         return (np.fft.fftn(np.asarray(hk).reshape(NX, NY, 1, nd, nd),
                             axes=(0, 1, 2)) / (NX * NY)).reshape(-1, nd, nd)
-    return float(np.abs(to_r(u.ham) - to_r(h_rpa)).max()), ham
+    return float(np.abs(to_r(u.ham) - to_r(h_rpa)).max()), ham, site, grid
 
 
 class TestGreenInitFockOmission(unittest.TestCase):
@@ -1479,18 +1481,99 @@ class TestGreenInitFockOmission(unittest.TestCase):
         checked = {True: 0, False: 0}
         for typ in self.TYPES:
             for kind, rows in self.ROW_KINDS.items():
-                try:
-                    diff, ham = _green_init_vs_uhfk_difference(typ, rows, G)
-                except ValueError:
-                    continue            # declaration refused by the reader
-                with self.subTest(type=typ, rows=kind, diff=diff):
-                    differs = diff > 1e-10
-                    reasons = sc._green_init_fock_omissions(ham)
-                    self.assertEqual(bool(reasons), differs, reasons)
-                    checked[differs] += 1
+                for site in (None, (0, 1)):
+                    try:
+                        diff, ham, psite, grid = \
+                            _green_init_vs_uhfk_difference(typ, rows, G, site)
+                    except ValueError:
+                        continue        # declaration refused by the reader
+                    with self.subTest(type=typ, rows=kind, site=site,
+                                      diff=diff):
+                        differs = diff > 1e-10
+                        reasons = sc._green_init_fock_omissions(
+                            ham, site=psite, shape=grid)
+                        self.assertEqual(bool(reasons), differs, reasons)
+                        checked[differs] += 1
         # both outcomes are exercised
         self.assertGreater(checked[True], 10)
         self.assertGreater(checked[False], 4)
+
+    def test_spin_flip_green_is_refused_for_every_type(self):
+        """A spin-flip (in-plane) G is no longer a warning case: the
+        G-level check refuses it for every type and row kind."""
+        G = self._green()
+        G[0, 0, 0, 1, 0] = G[0, 1, 0, 0, 0] = 0.1
+        G[0, 0, 1, 1, 1] = G[0, 1, 1, 0, 1] = 0.05
+        for typ in self.TYPES:
+            with self.subTest(type=typ), tempfile.TemporaryDirectory() as d:
+                rows = (self.ROW_KINDS["onsite_intra"]
+                        if typ in ("CoulombIntra", "Coulomb")
+                        else self.ROW_KINDS["offsite_inter"])
+                _write_model(d, 2, inter=False)
+                w = np.zeros((NX, NY, 2, 2), complex)
+                for (rx, ry, a, b, v) in rows:
+                    w[rx % NX, ry % NY, a, b] += v
+                _write_w90(os.path.join(d, "x.dat"), typ, w)
+                np.savez(os.path.join(d, "g.npz"), green=G)
+                inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
+                             extra_file={"green_init": "g.npz"})
+                files_ = inp["file"]["input"]["interaction"]
+                files_.pop("CoulombIntra")
+                files_[typ] = "x.dat"
+                with self.assertRaises(ValueError) as cm:
+                    sc._mean_field_band(inp, ("green_init",), "general",
+                                        (NX, NY, 1), 2)
+                self.assertIn("green_init describes a spin-dependent state",
+                              str(cm.exception))
+
+    def test_classification_uses_the_folded_grid(self):
+        # PairHop at R = (+-NX, 0, 0) folds onto R = 0: on-site, no warning
+        tbl = {((NX, 0, 0), (0, 1)): 0.3, ((-NX, 0, 0), (1, 0)): 0.3}
+        self.assertEqual(sc._green_init_fock_omissions(
+            {"PairHop": tbl}, shape=(NX, NY, 1)), [])
+        self.assertEqual(sc._green_init_fock_omissions({"PairHop": tbl}),
+                         ["off-site PairHop"])
+        # rows one cell length apart that cancel on the grid
+        tbl = {((1, 0, 0), (0, 0)): 0.3, ((1 - NX, 0, 0), (0, 0)): -0.3}
+        self.assertEqual(sc._green_init_fock_omissions(
+            {"CoulombInter": tbl}, shape=(NX, NY, 1)), [])
+        # R = 0 PairHop between orbitals on different sites is off-site
+        tbl = {((0, 0, 0), (0, 1)): 0.3, ((0, 0, 0), (1, 0)): 0.3}
+        self.assertEqual(sc._green_init_fock_omissions({"PairHop": tbl}), [])
+        self.assertEqual(sc._green_init_fock_omissions(
+            {"PairHop": tbl}, site=(0, 1)), ["off-site PairHop"])
+
+    def test_orbital_site_pairhop_warns_through_the_full_path(self):
+        g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
+        for s_ in range(2):
+            g[0, s_, 0, s_, 0] = 0.6
+            g[0, s_, 1, s_, 1] = 0.3
+            g[0, s_, 0, s_, 1] = g[0, s_, 1, s_, 0] = 0.1
+        for site, expect in ((None, False), ([0, 1], True)):
+            with self.subTest(site=site), tempfile.TemporaryDirectory() as d:
+                _write_model(d, 2, inter=False)
+                w = np.zeros((NX, NY, 2, 2), complex)
+                w[0, 0, 0, 1] = w[0, 0, 1, 0] = 0.3
+                _write_w90(os.path.join(d, "x.dat"), "PairHop", w)
+                np.savez(os.path.join(d, "g.npz"), green=g)
+                inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
+                             extra_file={"green_init": "g.npz"})
+                inp["file"]["input"]["interaction"]["PairHop"] = "x.dat"
+                if site is not None:
+                    inp["mode"]["param"]["orbital_site"] = site
+                records = []
+                handler = logging.Handler()
+                handler.emit = records.append
+                lg = logging.getLogger("hwave_sc")
+                lg.addHandler(handler)
+                try:
+                    sc._mean_field_band(inp, ("green_init",), "general",
+                                        (NX, NY, 1), 2)
+                finally:
+                    lg.removeHandler(handler)
+                fired = any("off-site PairHop" in r.getMessage()
+                            for r in records)
+                self.assertEqual(fired, expect)
 
     def test_warning_reaches_the_log(self):
         g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
@@ -1589,6 +1672,97 @@ class TestHermiticityRound6(unittest.TestCase):
                            (2, 3, 0, 1)).reshape(-1, norb, norb)
         self.assertTrue(np.array_equal(eps, expected))
         self.assertGreater(np.abs(H - expected).max(), 1e-8)
+
+
+class TestGreenInitSpinCheck(unittest.TestCase):
+    """A magnetic green_init is refused whatever the spin direction."""
+
+    def _call(self, g, tol=None):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, inter=False)
+            np.savez(os.path.join(d, "g.npz"), green=g)
+            inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
+                         extra_file={"green_init": "g.npz"})
+            kw = {} if tol is None else {"spin_free_tol": tol}
+            return sc._mean_field_band(inp, ("green_init",), "general",
+                                       (NX, NY, 1), 1, **kw)
+
+    @staticmethod
+    def _g(mz=0.0, mx=0.0):
+        g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
+        g[0, 0, 0, 0, 0] = FILLING + mz
+        g[0, 1, 0, 1, 0] = FILLING - mz
+        g[0, 0, 0, 1, 0] = g[0, 1, 0, 0, 0] = mx
+        return g
+
+    def test_in_plane_and_z_moments_refused_paramagnet_accepted(self):
+        for label, g in (("in-plane", self._g(mx=0.2)),
+                         ("z", self._g(mz=0.2))):
+            with self.subTest(moment=label):
+                with self.assertRaises(ValueError) as cm:
+                    self._call(g)
+                msg = str(cm.exception)
+                for word in ("#88", "trans_mod", "spin_free_tol",
+                             "dimensionless"):
+                    self.assertIn(word, msg)
+        band = self._call(self._g())
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        self.assertLess(np.abs(eps - (_band_k(_bare_hr(1))
+                                      + 1.4 * FILLING)).max(), 1e-12)
+
+    def test_loosened_tolerance_is_consistent(self):
+        g = self._g(mz=0.5e-6)          # |G_up - G_down| = 1e-6
+        with self.assertRaises(ValueError):
+            self._call(g)
+        with self.assertLogs("hwave_sc", level="WARNING") as logs:
+            band = self._call(g, tol=1e-3)
+        # accepted, and the band check then spin-averages the Hartree band
+        self.assertTrue(any("spin-averaged" in m_ for m_ in logs.output))
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        self.assertLess(np.abs(eps - (_band_k(_bare_hr(1))
+                                      + 1.4 * FILLING)).max(), 1e-12)
+
+
+class TestHermitianRtolPinned(unittest.TestCase):
+    """The bound is exactly HERMITIAN_RTOL * max|H| next to a large
+    offset: an asymmetry just below it is accepted, just above refused."""
+
+    def _assembled(self, d, asym):
+        import hwave.qlmsio.read_input_k as rik
+        import hwave.solver.rpa as rpa
+        h = _bare_hr(1).copy()
+        h[1, 0, 0, 0] += asym
+        h[0, 0, 0, 0] += 1.0e3
+        _write_model(d, 1, transfer_hr=h, extern=True)
+        inp = _input(d, os.path.join(d, "o"), extern=True,
+                     extra_param={"coeff_extern": 0.0})
+        info = {"path_to_input": d,
+                "interaction": inp["file"]["input"]["interaction"]}
+        r = rpa.RPA(rik.QLMSkInput(info).get_param("ham"), {"print_level": 0},
+                    {"mode": "RPA", "calc_scheme": "general",
+                     "param": dict(inp["mode"]["param"])})
+        H = np.asarray(r.ham_info.ham_trans_q)
+        herm = np.abs(H - np.conj(np.swapaxes(H, -1, -2))).max()
+        bound = 1.0e-6 * np.abs(H).max()     # the documented relative bound
+        return inp, herm, bound
+
+    def test_just_below_and_just_above(self):
+        with tempfile.TemporaryDirectory() as d:
+            _inp, herm1, bound1 = self._assembled(d, 1e-4)
+        # herm is linear in the asymmetry: herm = c * asym
+        c = herm1 / 1e-4
+        for factor, accepted in ((0.99, True), (1.01, False)):
+            with self.subTest(factor=factor), \
+                    tempfile.TemporaryDirectory() as d:
+                inp, herm, bound = self._assembled(d, factor * bound1 / c)
+                self.assertEqual(herm < bound, accepted)   # precondition
+                if accepted:
+                    _run(inp)
+                else:
+                    with _ForbidDownstream(), \
+                            self.assertRaises(ValueError) as cm:
+                        sc.calc_eliashberg(inp)
+                    self.assertIn("not Hermitian", str(cm.exception))
 
 if __name__ == "__main__":
     unittest.main()

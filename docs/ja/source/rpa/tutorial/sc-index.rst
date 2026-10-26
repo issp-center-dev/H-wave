@@ -194,10 +194,17 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      ため、:math:`10^{-10}`\ を超えるずれは拒否されます。``green_init``\ の
      バンドは\ :math:`T + \mathrm{Hartree}[G]`\ （RPA の組み立てで、Fock 項を
      含みません）です。そのため Fock 項がある場合、つまり\ ``CoulombInter``\ 、
-     ``Hund``\ 、``Ising``\ 、``Exchange``\ の行、オフサイトの\ ``PairHop``\ の行、
-     または\ ``Coulomb``\ の\ ``CoulombInter``\ 部分がある場合は、同じ解から
-     UHFk が出力する\ ``trans_mod``\ と異なります。このとき\ ``trans_mod``\ を
-     勧める警告が出ます。``trans_mod``\ の指定を推奨します。
+     ``Hund``\ 、``Ising``\ 、``Exchange``\ の行、オフサイトの\ ``PairHop``\ の行
+     （:math:`R \neq 0`\ 、または\ ``[mode.param] orbital_site``\ で異なるサイトに
+     ある軌道間）、または\ ``Coulomb``\ の\ ``CoulombInter``\ 部分がある場合は、
+     同じ解から UHFk が出力する\ ``trans_mod``\ と異なります。このとき
+     ``trans_mod``\ を勧める警告が出ます。``trans_mod``\ の指定を推奨します。
+     また、``green_init``\ の Green 関数そのものも、すべてのセルでスピンに
+     依存してはなりません（上向き・上向きと下向き・下向きのブロックが等しく、
+     スピン混成ブロックがない）。許容誤差は無次元の成分に対して
+     :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`\ です。磁性をもつ
+     ``green_init``\ はスピンの向きによらず磁性状態を表すため拒否されます
+     （issue #88）。常磁性状態には UHFk の\ ``trans_mod``\ が整合した入力です。
      収束の緩い常磁性 UHF 解（例えばランダム初期状態から
      ``EPS = 6``\ ）には\ :math:`10^{-5}`\ 程度の分裂が残ることがあります。
      UHF の収束を厳しくする、スピン対称な初期状態から UHF を始める、または

@@ -198,9 +198,17 @@ This section controls the Eliashberg solver. Key parameters:
      :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
      term), so it differs from the ``trans_mod`` UHFk writes for the same
      solution whenever Fock terms are present: for any ``CoulombInter``,
-     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row,
-     or the ``CoulombInter`` part of ``Coulomb``. A warning then recommends
-     ``trans_mod``, which is the preferred input.
+     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row
+     (:math:`R \neq 0`, or between orbitals on different sites per
+     ``[mode.param] orbital_site``), or the ``CoulombInter`` part of
+     ``Coulomb``. A warning then recommends ``trans_mod``, which is the
+     preferred input. The ``green_init`` Green function itself must also be
+     spin-independent in every cell (up-up equal to down-down, no
+     spin-mixing block) within :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`
+     on its dimensionless entries: a magnetic ``green_init`` describes a
+     magnetic state, whatever the spin direction, and is refused (issue
+     #88). For a paramagnetic state, ``trans_mod`` from UHFk is the
+     consistent input.
      A paramagnetic UHF
      solution converged only loosely (for example ``EPS = 6`` from a random
      start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
