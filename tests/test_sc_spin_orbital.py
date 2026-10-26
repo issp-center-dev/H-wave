@@ -1,0 +1,403 @@
+"""The static spin-orbital entry of hwave_sc (``[mode] enable_spin_orbital``,
+issue #83): ``chi0q_mode = "calc"`` and ``"load"``.
+
+The gap is one ``2N x 2N`` spin-orbital matrix ``Delta_AB(k)`` (spin-block
+order ``A = s * N + a``); the kernel is ``P K`` with the pairing vertex of
+``hwave.solver.so_pairing`` and ``P`` the projection onto fermion-
+antisymmetric gaps ``Delta_AB(k) = -Delta_BA(-k)``, applied after every
+kernel application.
+
+* ``TestStaticEntry``: the SU(2) limit reproduces the non-spin-orbital
+  singlet and (threefold) triplet eigenvalues (G1, end to end); a model with
+  complex Rashba-like spin-orbit hopping runs and returns an antisymmetric
+  gap; ``chi0q_mode = "load"`` of a spin-orbital RPA chi0q equals
+  ``chi0q_mode = "calc"`` (G4, part).
+* ``TestRefusals``: every unsupported combination is refused through the
+  public entry, with the key named (G5).
+* ``TestInitialGap``: the spin structure of the spin-orbital seed.
+"""
+import contextlib
+import logging
+import os
+import shutil
+import tempfile
+import unittest
+from unittest import mock
+
+import numpy as np
+
+import hwave.sc as sc
+from hwave.solver import so_pairing
+
+#: physical orbitals
+NP = 2
+ND = 2 * NP
+#: the lattice
+CELL = [4, 4, 1]
+
+#: the rotation-invariant on-site set (Kanamori form, as in
+#: tests/test_flex_spin_orbital.py): J_Exchange = J_Hund - 2 J_Ising
+_J_HUND, _J_ISING = 0.12, 0.04
+_SU2_VALUES = {"CoulombIntra": None, "CoulombInter": 0.5, "Hund": _J_HUND,
+               "Exchange": _J_HUND - 2 * _J_ISING, "Ising": _J_ISING,
+               "PairHop": 0.05}
+_SU2_TYPES = tuple(_SU2_VALUES)
+
+_IY = np.array([[0, 1], [-1, 0]], complex)
+
+
+@contextlib.contextmanager
+def _quiet():
+    prev = logging.root.manager.disable
+    logging.disable(logging.WARNING)
+    try:
+        yield
+    finally:
+        logging.disable(prev)
+
+
+def _wfile(path, head, n, rows):
+    with open(path, "w") as f:
+        f.write("{}\n{}\n1\n 1\n".format(head, n))
+        for r in rows:
+            f.write("  %d %d %d %d %d  %.12f  %.12f\n" % r)
+
+
+def _write_model(d, so, soc=0.0, types=_SU2_TYPES, extra_rows=None,
+                 n_geom=None):
+    """A centrosymmetric two-orbital square lattice (real, symmetric
+    hopping) plus, in the spin-orbital encoding, the Rashba-like hopping
+    ``soc (sin ky sigma_x - sin kx sigma_y)`` on both orbitals.
+
+    ``so``: geometry of ``2 NP`` spin-orbitals and the transfer on the
+    interleaved index ``2 a + s``; the interaction files use the PHYSICAL
+    orbital index either way. ``extra_rows``: ``{type: [(R, a, b, v)]}``
+    appended to the interaction files. Returns the interaction file map."""
+    n = 2 * NP if so else NP
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        ng = n if n_geom is None else n_geom
+        f.write("1 0 0\n0 1 0\n0 0 1\n%d\n" % ng)
+        f.write("0 0 0\n" * ng)
+    t = {(0, 0): -1.0, (1, 1): -0.7, (0, 1): 0.15, (1, 0): 0.15}
+    eps = {0: 0.0, 1: 0.3}
+    hop = []   # (R, a, b, sa, sb, value)
+    for (a, b), v in t.items():
+        for R in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            for s in range(2):
+                hop.append((R, a, b, s, s, v))
+    for a, e in eps.items():
+        for s in range(2):
+            hop.append(((0, 0), a, a, s, s, e))
+    if so and soc:
+        sx = np.array([[0, 1], [1, 0]], complex)
+        sy = np.array([[0, -1j], [1j, 0]], complex)
+        # t(+x) = i soc sigma_y, t(+y) = -i soc sigma_x and their Hermitian
+        # partners: eps(k) = soc (sin ky sigma_x - sin kx sigma_y)
+        for R, m in (((1, 0), 1j * soc * sy), ((-1, 0), -1j * soc * sy),
+                     ((0, 1), -1j * soc * sx), ((0, -1), 1j * soc * sx)):
+            for a in range(NP):
+                for s in range(2):
+                    for sp in range(2):
+                        if m[s, sp] != 0:
+                            hop.append((R, a, a, s, sp, m[s, sp]))
+    rows = []
+    for R, a, b, s, sp, v in hop:
+        if so:
+            i, j = 2 * a + s + 1, 2 * b + sp + 1
+        elif s == 0 and sp == 0:
+            i, j = a + 1, b + 1
+        else:
+            continue
+        v = complex(v)
+        rows.append((R[0], R[1], 0, i, j, v.real, v.imag))
+    _wfile(os.path.join(d, "transfer.dat"), "Transfer", n, rows)
+    offd = [(a, b) for a in range(NP) for b in range(NP) if a != b]
+    files = {}
+    for nm in types:
+        if nm == "CoulombIntra":
+            spec = [(0, a, a, 1.6 + 0.3 * a) for a in range(NP)]
+        else:
+            spec = [(0, a, b, _SU2_VALUES[nm]) for a, b in offd]
+        spec = spec + list((extra_rows or {}).get(nm, ()))
+        fn = nm.lower() + ".dat"
+        _wfile(os.path.join(d, fn), nm, NP,
+               [(R, 0, 0, a + 1, b + 1, v, 0.0) for R, a, b, v in spec])
+        files[nm] = fn
+    return files
+
+
+def _input(d, files, so, eli, T=0.25, nmat=64, out="out", **param):
+    par = {"T": T, "CellShape": list(CELL), "SubShape": [1, 1, 1],
+           "Nmat": nmat, "filling": 0.4}
+    par.update(param)
+    inter = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+    inter.update(files)
+    mode = {"mode": "RPA", "param": par}
+    if so:
+        mode["enable_spin_orbital"] = True
+    return {"mode": mode,
+            "file": {"input": {"path_to_input": "", "interaction": inter},
+                     "output": {"path_to_output": os.path.join(d, out),
+                                "chi0q": "chi0q"}},
+            "eliashberg": dict(eli)}
+
+
+def _run(inp):
+    """``calc_eliashberg`` with the arguments of ``_save_results`` captured at
+    full precision: ``(gap, eigenvalue, eigenvalues, match, provenance)``."""
+    seen = {}
+    real = sc._save_results
+
+    def spy(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw):
+        seen.update(gap=sigma, ev=eigenvalue, evs=eigenvalues_eig,
+                    match=kw.get("eigenvalue_match"),
+                    provenance=kw.get("provenance"))
+        return real(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw)
+
+    with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy):
+        sc.calc_eliashberg(inp)
+    return seen
+
+
+def _spin_weights(gap, n):
+    """``(|psi|^2, |d_x|^2, |d_y|^2, |d_z|^2) / |Delta|^2`` of a spin-block
+    gap, ``Delta = (psi + d . sigma) i sigma_y`` per orbital pair."""
+    g = np.asarray(gap).reshape((2, n, 2, n) + gap.shape[2:])
+    sx = np.array([[0, 1], [1, 0]], complex)
+    sy = np.array([[0, -1j], [1j, 0]], complex)
+    sz = np.diag([1.0, -1.0]).astype(complex)
+    basis = [_IY, sx @ _IY, sy @ _IY, sz @ _IY]
+    tot = np.linalg.norm(g) ** 2
+    return [float(np.sum(np.abs(np.einsum("st,satb...->ab...", m.conj(), g)) ** 2)
+                  / 2.0 / tot) for m in basis]
+
+
+def _reverse(gap):
+    return sc._reverse_k_and_orbital(gap)
+
+
+class _TmpDir(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="sc_so_")
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+
+class TestStaticEntry(_TmpDir):
+
+    def _leading_physical(self, seen):
+        evs, match = seen["evs"], seen["match"]
+        self.assertTrue(match[0])
+        return evs[0]
+
+    def test_su2_model_reproduces_singlet_and_triplet(self):
+        """G1: with spin-independent hopping and a rotation-invariant
+        interaction, the spin-orbital spectrum contains the leading singlet
+        eigenvalue once and the leading triplet eigenvalue three times."""
+        eli = {"chi0q_mode": "calc", "solver_mode": "eigenvalue"}
+        lam = {}
+        for ch in ("singlet", "triplet"):
+            files = _write_model(self.d, so=False)
+            seen = _run(_input(self.d, files, False,
+                               dict(eli, pairing_type=ch, num_eigenvalues=16),
+                               out="out_" + ch))
+            lam[ch] = self._leading_physical(seen)
+        files = _write_model(self.d, so=True)
+        seen = _run(_input(self.d, files, True, dict(eli, num_eigenvalues=96),
+                           out="out_so"))
+        self.assertTrue(np.all(seen["match"]))
+        evs = seen["evs"]
+        for ch, count in (("singlet", 1), ("triplet", 3)):
+            rel = np.abs(evs - lam[ch]) / abs(lam[ch])
+            hits = np.sort(rel)[:count]
+            with self.subTest(channel=ch, lam=lam[ch], rel=hits):
+                self.assertTrue(np.all(hits < 1e-8))
+        self.assertGreater(abs(lam["singlet"] - lam["triplet"]),
+                           1e-3 * abs(lam["singlet"]))
+
+    def test_complex_soc_model_runs(self):
+        files = _write_model(self.d, so=True, soc=0.3)
+        seen = _run(_input(self.d, files, True,
+                           {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                            "num_eigenvalues": 8}))
+        # every computed eigenpair is fermion-antisymmetric: the symmetric
+        # (Pauli-forbidden) sector is projected out of the kernel
+        self.assertTrue(np.all(seen["match"]))
+        lam = seen["evs"][0]
+        self.assertTrue(np.isfinite(lam))
+        self.assertGreater(abs(lam.real), 1e-3)
+        self.assertLess(abs(lam.imag), 1e-10)
+        gap = seen["gap"]
+        self.assertEqual(gap.shape, (ND, ND) + tuple(CELL))
+        np.testing.assert_allclose(gap, -_reverse(gap), rtol=0,
+                                   atol=1e-12 * np.abs(gap).max())
+        # spin-orbit coupling mixes the spin structure of the gap
+        w = _spin_weights(gap, NP)
+        self.assertAlmostEqual(sum(w), 1.0, places=12)
+        self.assertGreater(min(w[0], max(w[1:])), 1e-6)
+        self.assertEqual(seen["provenance"]["spin_orbital"], "true")
+        self.assertEqual(seen["provenance"]["index_convention"], "spin_block")
+
+    def test_iteration_matches_eigenvalue(self):
+        """The shifted power iteration (with the projection in every step)
+        converges to the leading (largest real part) eigenpair of the Arnoldi
+        solve."""
+        files = _write_model(self.d, so=True, soc=0.3)
+        seen = _run(_input(self.d, files, True,
+                           {"chi0q_mode": "calc", "solver_mode": "both",
+                            "num_eigenvalues": 8, "convergence_tol": 1e-10,
+                            "max_iter": 20000, "spectral_shift": "auto"}))
+        lam = seen["evs"][0]
+        self.assertGreater(lam.real, 0.0)
+        self.assertAlmostEqual(seen["ev"], lam.real, delta=1e-7 * abs(lam))
+        gap = seen["gap"]
+        np.testing.assert_allclose(gap, -_reverse(gap), rtol=0,
+                                   atol=1e-12 * np.abs(gap).max())
+
+    def test_calc_and_load_agree(self):
+        """G4 (part): the general chi0q of a spin-orbital RPA run, loaded,
+        gives the eigenvalues of chi0q_mode = "calc"."""
+        from hwave import qlms
+        files = _write_model(self.d, so=True, soc=0.3)
+        eli = {"solver_mode": "eigenvalue", "num_eigenvalues": 8}
+        calc = _run(_input(self.d, files, True, dict(eli, chi0q_mode="calc"),
+                           out="out_calc"))
+        rpa_in = _input(self.d, files, True, {}, out="out_load")
+        rpa_in["mode"]["calc_scheme"] = "general"
+        rpa_in["file"]["input"]["path_to_input"] = self.d
+        del rpa_in["eliashberg"]
+        rpa_in["log"] = {"print_level": 0}
+        with _quiet():
+            qlms.run(input_dict=rpa_in)
+        load = _run(_input(self.d, files, True, dict(eli, chi0q_mode="load"),
+                           out="out_load"))
+        np.testing.assert_allclose(load["evs"], calc["evs"], rtol=1e-10, atol=0)
+
+
+class TestRefusals(_TmpDir):
+    """G5: each unsupported combination is refused through the public entry
+    with the key named."""
+
+    def _refused(self, pattern, eli=None, so_files=None, **kw):
+        files = so_files if so_files is not None else _write_model(self.d, so=True)
+        inp = _input(self.d, files, True,
+                     dict({"chi0q_mode": "calc", "solver_mode": "eigenvalue"},
+                          **(eli or {})), **kw)
+        with self.assertRaisesRegex(ValueError, pattern):
+            with _quiet():
+                sc.calc_eliashberg(inp)
+        out = inp["file"]["output"]["path_to_output"]
+        self.assertFalse(os.path.exists(out) and os.listdir(out))
+
+    def test_dynamic(self):
+        self._refused(r"frequency", {"frequency": "dynamic", "chi0q_mode": "flex"})
+
+    def test_dynamic_case_insensitive_key(self):
+        self._refused(r"frequency", {"Frequency": "dynamic"})
+
+    def test_bond_channels(self):
+        self._refused(r"bond_channels", {"bond_channels": True})
+
+    def test_offsite_coulomb_inter(self):
+        files = _write_model(self.d, so=True, extra_rows={
+            "CoulombInter": [(1, 0, 0, 0.2), (-1, 0, 0, 0.2)]})
+        self._refused(r"off-site row .* in the CoulombInter file", so_files=files)
+
+    def test_offsite_row_in_coulomb_aggregate(self):
+        _write_model(self.d, so=True, types=())
+        _wfile(os.path.join(self.d, "coulomb.dat"), "Coulomb", NP,
+               [(0, 0, 0, 1, 1, 1.5, 0.0), (0, 0, 0, 2, 2, 1.5, 0.0),
+                (1, 0, 0, 1, 1, 0.3, 0.0), (-1, 0, 0, 1, 1, 0.3, 0.0)])
+        self._refused(r"off-site row .* in the Coulomb file", so_files={"Coulomb": "coulomb.dat"})
+
+    def test_cross_site_row_under_orbital_site(self):
+        files = _write_model(self.d, so=True, types=("CoulombIntra", "CoulombInter"))
+        self._refused(r"orbital_site", so_files=files, orbital_site=[0, 1])
+
+    def test_reduced_chi0q_tensor(self):
+        self._refused(r"chi0q_tensor", {"chi0q_tensor": "reduced"})
+
+    def test_reduced_chi0q_file(self):
+        out = os.path.join(self.d, "out")
+        os.makedirs(out)
+        nvol = int(np.prod(CELL))
+        np.savez(os.path.join(out, "chi0q.npz"),
+                 chi0q=np.zeros((64, nvol, ND, ND), complex),
+                 index_convention="spin_block", momentum_convention="e_plus_ikR")
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True, {"chi0q_mode": "load",
+                                           "solver_mode": "eigenvalue"})
+        with self.assertRaisesRegex(ValueError, r"general \(4-index\)"):
+            with _quiet():
+                sc.calc_eliashberg(inp)
+        self.assertEqual(os.listdir(out), ["chi0q.npz"])
+
+    def test_non_so_chi0q_file(self):
+        out = os.path.join(self.d, "out")
+        os.makedirs(out)
+        nvol = int(np.prod(CELL))
+        np.savez(os.path.join(out, "chi0q.npz"),
+                 chi0q=np.zeros((64, nvol) + (ND,) * 4, complex))
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True, {"chi0q_mode": "load",
+                                           "solver_mode": "eigenvalue"})
+        with self.assertRaisesRegex(ValueError, r"index_convention"):
+            with _quiet():
+                sc.calc_eliashberg(inp)
+
+    def test_eigenvalue_method(self):
+        self._refused(r"eigenvalue_method", {"eigenvalue_method": "shift-invert-gmres"})
+
+    def test_explicit_pairing_type(self):
+        for key in ("pairing_type", "Pairing_Type"):
+            with self.subTest(key=key):
+                self._refused(r"pairing_type", {key: "singlet"})
+
+    def test_flex_mode_not_yet(self):
+        self._refused(r"chi0q_mode", {"chi0q_mode": "flex"})
+
+    def test_spinful_vertex_exchange_false(self):
+        self._refused(r"spinful_vertex_exchange", spinful_vertex_exchange=False)
+
+    def test_odd_spin_orbital_count(self):
+        files = _write_model(self.d, so=True, n_geom=3)
+        self._refused(r"even Geometry norb", so_files=files)
+
+    def test_interaction_in_spin_orbital_indices(self):
+        files = _write_model(self.d, so=True, types=("CoulombIntra",),
+                             extra_rows={"CoulombIntra": [(0, 3, 3, 1.0)]})
+        self._refused(r"PHYSICAL orbital indices", so_files=files)
+
+    def test_dynamic_entry_still_refuses(self):
+        from hwave.solver import eliashberg_dynamic
+        with self.assertRaisesRegex(ValueError, "enable_spin_orbital"):
+            eliashberg_dynamic.solve_dynamic({"mode": {"enable_spin_orbital": True}})
+
+
+class TestInitialGap(unittest.TestCase):
+
+    K = [np.linspace(0, 2 * np.pi, n, endpoint=False) for n in CELL]
+
+    def test_even_seed_is_singlet_structured(self):
+        gap = so_pairing.so_initial_gap("cos", NP, *self.K)
+        proj = sc._project_gap_parity(gap, "triplet")
+        self.assertGreater(np.linalg.norm(proj), 0.99)
+        np.testing.assert_allclose(proj, gap, atol=1e-14)
+        w = _spin_weights(gap, NP)
+        self.assertAlmostEqual(w[0], 1.0, places=12)
+
+    def test_odd_seed_is_sz0_triplet(self):
+        gap = so_pairing.so_initial_gap("p_x", NP, *self.K)
+        np.testing.assert_allclose(sc._project_gap_parity(gap, "triplet"), gap,
+                                   atol=1e-14)
+        w = _spin_weights(gap, NP)
+        self.assertAlmostEqual(w[3], 1.0, places=12)
+
+    def test_random_seed_spans_all_spin_blocks(self):
+        gap = so_pairing.so_initial_gap("random", NP, *self.K)
+        self.assertEqual(gap.shape, (ND, ND) + tuple(CELL))
+        self.assertTrue(np.all(np.abs(gap.reshape(2, NP, 2, NP, -1)).sum(
+            axis=(1, 3, 4)) > 0))
+
+
+if __name__ == "__main__":
+    unittest.main()

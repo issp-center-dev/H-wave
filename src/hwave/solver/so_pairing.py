@@ -62,7 +62,8 @@ Only on-site interactions are representable: an off-site term makes
 """
 import numpy as np
 
-__all__ = ["so_pairing_vertex", "so_pairing_vertex_parts"]
+__all__ = ["so_pairing_vertex", "so_pairing_vertex_parts", "so_initial_gap",
+           "check_so_config", "check_so_supported"]
 
 #: relative tolerance of the on-site (q-independent Gamma) check
 _ONSITE_RTOL = 1.0e-10
@@ -141,3 +142,169 @@ def so_pairing_vertex(gam, chi, nd, spatial_shape):
     (:func:`so_pairing_vertex_parts`), shape ``(nd, nd, nd, nd, Nx, Ny, Nz)``."""
     bare, fluct = so_pairing_vertex_parts(gam, chi, nd, spatial_shape)
     return bare + fluct
+
+
+# ---------------------------------------------------------------------------
+# The static hwave_sc entry in spin-orbital mode: the initial gap and the
+# refusal of every combination it does not support
+# ---------------------------------------------------------------------------
+
+#: spin structure of the even (singlet-like) and odd (triplet-like) seeds,
+#: ``i sigma_y`` and ``sigma_z i sigma_y``
+_SEED_SPIN_EVEN = np.array([[0.0, 1.0], [-1.0, 0.0]], dtype=complex)
+_SEED_SPIN_ODD = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
+
+#: the odd (k -> -k) form factors of ``sc._initialize_gap``
+_ODD_SEEDS = ("p_x", "p_y", "p_z", "f_x", "f_y")
+
+
+def so_initial_gap(init_gap_mode, norb_phys, kx_array, ky_array, kz_array):
+    """Initial spin-orbital gap ``(nd, nd, Nx, Ny, Nz)``, ``nd = 2 norb_phys``,
+    spin-block order (``A = s * norb_phys + a``).
+
+    The orbital seed of ``sc._initialize_gap`` (``1_orb (x) f(k)``) times a
+    spin structure that makes it fermion-antisymmetric
+    (``Delta_AB(k) = -Delta_BA(-k)``): ``i sigma_y`` (singlet) for an even
+    form factor, ``sigma_z i sigma_y`` (the S_z = 0 triplet) for an odd one
+    (``p_*``, ``f_*``). ``"random"`` fills the whole spin-orbital matrix (the
+    caller's antisymmetric projection then keeps its admissible part). The
+    result has unit norm unless the form factor vanishes on the grid."""
+    from hwave import sc
+    if init_gap_mode == "random":
+        return sc._initialize_gap("random", 2 * int(norb_phys),
+                                  kx_array, ky_array, kz_array)
+    phi = sc._initialize_gap(init_gap_mode, int(norb_phys),
+                             kx_array, ky_array, kz_array)
+    spin = _SEED_SPIN_ODD if init_gap_mode in _ODD_SEEDS else _SEED_SPIN_EVEN
+    n = int(norb_phys)
+    gap = np.einsum("st,ab...->satb...", spin, phi).reshape(
+        (2 * n, 2 * n) + phi.shape[2:])
+    norm = np.linalg.norm(gap)
+    return gap / norm if norm > 0 else gap
+
+
+def _ci(mapping):
+    from requests.structures import CaseInsensitiveDict
+    return CaseInsensitiveDict(mapping or {})
+
+
+_SO_WHAT = "[mode] enable_spin_orbital = true (hwave_sc, issue #83)"
+
+
+def check_so_config(input_dict):
+    """Refuse every configuration the spin-orbital static entry does not
+    support, from the configuration alone (no file is read). Keys are looked
+    up case-insensitively; each message names the key and what to change.
+
+    Supported: ``frequency = "static"``, ``bond_channels = false``,
+    ``chi0q_mode = "calc"`` or ``"load"`` with a general (4-index) chi0q,
+    ``solver_mode = "iteration" / "eigenvalue" / "both"`` with
+    ``eigenvalue_method = "arnoldi"``, no ``pairing_type`` (the gap is one
+    general spin-orbital matrix), the antisymmetrized spinful vertex
+    (``spinful_vertex_exchange`` not false) and no ``Extern`` file."""
+    from hwave.solver.backend import strict_bool
+    eli = _ci(input_dict.get("eliashberg", {}))
+    freq = eli.get("frequency", "static")
+    if freq != "static":
+        raise ValueError(
+            "{}: [eliashberg] frequency = {!r} is not supported; the spin-orbital "
+            "Eliashberg solver is static only. Set frequency = \"static\" (or remove "
+            "the key).".format(_SO_WHAT, freq))
+    bond = eli.get("bond_channels")
+    if bond is not None:
+        from hwave import sc
+        if sc._bond_bool_option(eli, "bond_channels", False):
+            raise ValueError(
+                "{}: [eliashberg] bond_channels = true is not supported; the "
+                "spin-orbital pairing vertex is on-site only. Set bond_channels = "
+                "false.".format(_SO_WHAT))
+    if "pairing_type" in eli:
+        raise ValueError(
+            "{}: [eliashberg] pairing_type = {!r} has no meaning in spin-orbital "
+            "mode: the gap is one general 2N x 2N spin-orbital matrix, not a "
+            "singlet or a triplet channel. Remove pairing_type.".format(
+                _SO_WHAT, eli["pairing_type"]))
+    method = eli.get("eigenvalue_method", "arnoldi")
+    if method != "arnoldi":
+        raise ValueError(
+            "{}: [eliashberg] eigenvalue_method = {!r} is not supported; only "
+            "\"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" (or remove the "
+            "key).".format(_SO_WHAT, method))
+    solver_mode = eli.get("solver_mode", "iteration")
+    if solver_mode not in ("iteration", "eigenvalue", "both"):
+        raise ValueError(
+            "{}: [eliashberg] solver_mode = {!r} is not supported; use "
+            "\"iteration\", \"eigenvalue\" or \"both\".".format(_SO_WHAT, solver_mode))
+    chi0q_mode = eli.get("chi0q_mode", "load")
+    if chi0q_mode not in ("calc", "load"):
+        raise ValueError(
+            "{}: [eliashberg] chi0q_mode = {!r} is not supported; use \"calc\" "
+            "(the spinful chi0 is computed here) or \"load\" (a general chi0q of "
+            "a spin-orbital RPA run).".format(_SO_WHAT, chi0q_mode))
+    tensor = eli.get("chi0q_tensor", "auto")
+    if tensor not in ("auto", "general"):
+        raise ValueError(
+            "{}: [eliashberg] chi0q_tensor = {!r} is not supported; the "
+            "spin-orbital vertex needs the general (4-index) chi0q. Set "
+            "chi0q_tensor = \"general\" (or \"auto\").".format(_SO_WHAT, tensor))
+    param = _ci(input_dict.get("mode", {}).get("param", {}))
+    sve = param.get("spinful_vertex_exchange")
+    if sve is not None and not strict_bool(sve, "[mode.param] spinful_vertex_exchange"):
+        raise ValueError(
+            "{}: [mode.param] spinful_vertex_exchange = false is not supported; "
+            "the spin-orbital pairing vertex is built from the antisymmetrized "
+            "spinful vertex. Set spinful_vertex_exchange = true (or remove the "
+            "key).".format(_SO_WHAT))
+    files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
+    if "Extern" in files:
+        raise ValueError(
+            "{}: the Extern (external field) file is not used by hwave_sc. In "
+            "spin-orbital mode write a Zeeman term into the Transfer file as a "
+            "spin-dependent one-body term, and remove Extern.".format(_SO_WHAT))
+
+
+def check_so_supported(input_dict, interactions, site, norb_phys=None):
+    """:func:`check_so_config` plus the interaction tables.
+
+    ``interactions`` are the ORIGINAL declarations ``{type: {(R, (a, b)): v}}``
+    in physical orbital indices (as read, before any folding: an off-site row
+    can fold onto ``R = 0``), ``site`` the ``[mode.param] orbital_site``
+    labels of the physical orbitals or ``None``. Refused: any nonzero row
+    with ``R != 0`` (also inside a ``Coulomb`` aggregate file) and, with
+    ``orbital_site``, any ``R = 0`` row between orbitals of different sites:
+    the spin-orbital pairing vertex supports on-site interactions only.
+    With ``norb_phys`` given, an orbital index outside the physical orbitals
+    (a file written in spin-orbital indices) is refused too."""
+    from hwave.solver.sites import is_onsite
+    check_so_config(input_dict)
+    files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
+    aggregate = "Coulomb" in files
+    for t, tbl in (interactions or {}).items():
+        for (irvec, orbvec), v in (tbl or {}).items():
+            if norb_phys is not None and max(int(o) for o in orbvec) >= int(norb_phys):
+                raise ValueError(
+                    "{}: the {} file has a row on orbital {} but the model has {} "
+                    "physical orbitals: in spin-orbital mode the interaction files "
+                    "use PHYSICAL orbital indices 1..{} (the Geometry norb and the "
+                    "Transfer file count spin-orbitals).".format(
+                        _SO_WHAT, t, max(int(o) for o in orbvec) + 1, norb_phys,
+                        norb_phys))
+            if v == 0 or is_onsite(irvec, orbvec, site):
+                continue
+            R = tuple(int(x) for x in irvec)
+            src = ("the Coulomb file (split into {})".format(t)
+                   if aggregate and t in ("CoulombIntra", "CoulombInter")
+                   else "the {} file".format(t))
+            if R != (0, 0, 0):
+                why = "an off-site row (R = {}, orbitals {}) in {}".format(
+                    R, tuple(int(o) + 1 for o in orbvec), src)
+                fix = "remove the off-site rows"
+            else:
+                why = ("an R = 0 row between orbitals {} of different sites "
+                       "([mode.param] orbital_site) in {}".format(
+                           tuple(int(o) + 1 for o in orbvec), src))
+                fix = "remove the row or the orbital_site labels"
+            raise ValueError(
+                "{}: {} is not supported; the spin-orbital pairing vertex supports "
+                "on-site interactions only (the exchange crossing of an off-site "
+                "term depends on k + k'). {}.".format(_SO_WHAT, why, fix[0].upper() + fix[1:]))

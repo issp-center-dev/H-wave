@@ -1602,6 +1602,11 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     # Create RPA solver (sets up Lattice, Interaction, parameters)
     solver = sol_rpa.RPA(ham_info, info_log, info_mode_rpa)
+    if info_mode_rpa["enable_spin_orbital"]:
+        # the spin-orbital Eliashberg vertex needs the full spinful chi0
+        # (nd = 2 * norb spin-orbitals) even when the transfer happens to be
+        # spin-diagonal, as the spin-orbital FLEX does (#83)
+        solver._keep_spinful = True
 
     # Get green_info (may contain chi0q_init, trans_mod, green_init)
     green_info = read_io.get_param("green")
@@ -7005,15 +7010,20 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 # ---------------------------------------------------------------------------
 
 def reject_spin_orbital_mode(input_dict):
-    """Raise when [mode] enable_spin_orbital is set: the Eliashberg module
-    does not support it, and until issue #83 it RAN anyway and printed
-    eigenvalues built on four internal inconsistencies (norb never halved
-    to the physical count; the internally computed chi0q in interleaved
-    order against spin-block consumers -- measured 27% off, exactly a
-    [0,2,1,3] permutation; interaction files read at the spin-orbital
-    dimension, so U landed on (orb0, up)/(orb0, down) as two 'orbitals'
-    and orbital 1 got none; paramagnetic orbital-space S/C rules applied
-    to spin-orbital indices). A silent wrong result, not an approximation.
+    """Raise when [mode] enable_spin_orbital is set, for the Eliashberg
+    entries that do not support it: the dynamic solver
+    (``eliashberg_dynamic.solve_dynamic``), the dynamic bond path and the
+    temperature sweep. The static entry (:func:`calc_eliashberg`) supports
+    spin-orbital models since issue #83 and refuses only its unsupported
+    combinations (:func:`hwave.solver.so_pairing.check_so_supported`).
+
+    Until issue #83 a spin-orbital config RAN through these entries and
+    printed eigenvalues built on four internal inconsistencies (norb never
+    halved to the physical count; the internally computed chi0q in
+    interleaved order against spin-block consumers; interaction files read
+    at the spin-orbital dimension; paramagnetic orbital-space S/C rules
+    applied to spin-orbital indices). A silent wrong result, not an
+    approximation.
 
     Resolution is strict (shared _resolve_spin_orbital_flag): recognized
     false forms proceed as non-SO, unrecognized values raise -- a user who
@@ -7022,12 +7032,117 @@ def reject_spin_orbital_mode(input_dict):
     """
     if _resolve_spin_orbital_flag(input_dict):
         raise ValueError(
-            "[mode] enable_spin_orbital = true is not supported by the "
-            "Eliashberg module (hwave_sc): the pairing vertex is "
-            "paramagnetic and the internal index/orbital-count "
-            "conventions are not spin-orbital aware, so a run would "
-            "produce silently wrong eigenvalues (issue #83). Use the "
-            "UHFk/RPA/FLEX solvers for spin-orbital models.")
+            "[mode] enable_spin_orbital = true is not supported by this "
+            "Eliashberg entry (the dynamic solver, frequency = \"dynamic\", "
+            "its bond path and the temperature sweep): it would produce "
+            "silently wrong eigenvalues (issue #83). The static solver "
+            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\" or "
+            "\"load\") supports spin-orbital models.")
+
+
+def _so_rpa_vertex(input_dict):
+    """The antisymmetrized spinful vertex ``Gamma`` ``(nvol, nd^2, nd^2)``
+    (:func:`hwave.solver.rpa.spinful_bubble_vertex`) of a spin-orbital
+    config, built from the interaction objects of the spin-orbital RPA
+    (``ham_inter_q`` and ``spinful_exchange()``, the tensors the RPA and FLEX
+    SO resum; interaction files in physical orbital indices)."""
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.rpa as sol_rpa
+
+    info_inputfile = dict(input_dict.get("file", {}).get("input", {}))
+    info_inputfile["path_to_input"] = info_inputfile.get("path_to_input", "")
+    info_mode_rpa = dict(input_dict.get("mode", {}))
+    info_mode_rpa["calc_scheme"] = "general"
+    info_mode_rpa["_orbital_site_reported"] = True
+    info_mode_rpa["enable_spin_orbital"] = True
+    read_io = read_input_k.QLMSkInput(info_inputfile)
+    solver = sol_rpa.RPA(read_io.get_param("ham"),
+                         {"print_level": 1, "print_step": 1}, info_mode_rpa)
+    nvol, nd = solver.lattice.nvol, 2 * solver.norb
+    ham = np.asarray(backend.to_host(solver.ham_info.ham_inter_q)).reshape(
+        nvol, nd, nd, nd, nd)
+    return sol_rpa.spinful_bubble_vertex(ham, solver.ham_info.spinful_exchange())
+
+
+def _so_static_vertex_from_chi(gam, chi_static, nd, spatial_shape):
+    """The static spin-orbital pairing vertex ``Vs_q``
+    ``(nd, nd, nd, nd, Nx, Ny, Nz)`` from the spinful vertex ``gam`` and a
+    static spinful susceptibility ``chi_static`` (both ``(nvol, nd^2,
+    nd^2)``, bubble ``[a, c, b, d]`` layout, spin-block order):
+    :func:`hwave.solver.so_pairing.so_pairing_vertex`. Pure; the susceptibility
+    may come from the RPA (:func:`_so_static_vertex`) or from FLEX."""
+    from hwave.solver.so_pairing import so_pairing_vertex
+    return so_pairing_vertex(gam, chi_static, nd, spatial_shape)
+
+
+def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
+                      static_index):
+    """The static spin-orbital pairing vertex of the RPA paths
+    (``chi0q_mode = "calc"`` / ``"load"``): ``Gamma`` from the spin-orbital RPA
+    objects (:func:`_so_rpa_vertex`), ``chi = [1 + chi0 Gamma]^-1 chi0`` at the
+    zero bosonic frequency ``static_index`` (``nmat // 2`` when ``None``) of
+    the general spinful ``chi0q_raw`` -- raw ``(nmat, nvol, nd, nd, nd, nd)``
+    or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- then
+    :func:`_so_static_vertex_from_chi`."""
+    nd = 2 * int(norb_phys)
+    nvol = Nx * Ny * Nz
+    chi0q_raw = np.asarray(chi0q_raw)
+    if chi0q_raw.ndim == 6 and chi0q_raw.shape[1:] == (nvol,) + (nd,) * 4:
+        nmat = chi0q_raw.shape[0]
+        si = nmat // 2 if static_index is None else static_index
+        chi0 = chi0q_raw[si].reshape(nvol, nd * nd, nd * nd)
+    elif chi0q_raw.ndim == 8 and chi0q_raw.shape[:7] == (nd,) * 4 + (Nx, Ny, Nz):
+        nmat = chi0q_raw.shape[-1]
+        si = nmat // 2 if static_index is None else static_index
+        chi0 = chi0q_raw[..., si].reshape(nd * nd, nd * nd, nvol).transpose(2, 0, 1)
+    else:
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the chi0q has shape {}, not the "
+            "general (4-index) spinful layout over nd = {} spin-orbitals "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}). A reduced (2-index) or a "
+            "spin-free / spin-diagonal chi0q cannot carry the spin-flip "
+            "particle-hole pairs; use chi0q_mode = \"calc\", or load the "
+            "chi0q of a spin-orbital RPA run with calc_scheme = \"general\" and a "
+            "spin-mixing transfer.".format(chi0q_raw.shape, nd, nvol, nd=nd))
+    chi0 = np.ascontiguousarray(chi0, dtype=complex)
+    gam = _so_rpa_vertex(input_dict)
+    eye = np.eye(nd * nd, dtype=complex)
+    chi = np.linalg.solve(eye[None] + chi0 @ gam, chi0)
+    return _so_static_vertex_from_chi(gam, chi, nd, (Nx, Ny, Nz))
+
+
+def _so_antisymmetric_operator(A, vec_size, shape):
+    """``P K``: the kernel followed by the projection onto fermion-
+    antisymmetric gaps ``Delta_AB(k) = -Delta_BA(-k)``
+    (``_project_gap_parity(., "triplet")`` on spin-orbital indices).
+
+    The spin-orbital pairing vertex is the direct image only
+    (``hwave.solver.so_pairing``); on an antisymmetric gap ``P K`` is the
+    kernel of the fully antisymmetrized vertex (validated against exact
+    diagonalization in ``tests/test_so_pairing_ed.py``, where the
+    frequency-dependent ladder needs ``P`` after every application). The
+    static ``K`` maps antisymmetric gaps onto antisymmetric gaps (the
+    particle-exchange symmetry of the static vertex), but on SYMMETRIC gaps
+    it has nonzero, Pauli-forbidden eigenvalues that can dominate the power
+    iteration and the largest-magnitude Arnoldi selection. So the projection
+    follows EVERY application -- each power-iteration step and each Arnoldi
+    matvec -- and those modes sit at eigenvalue zero."""
+    def _proj(x):
+        return _project_gap_parity(x, "triplet")
+
+    def matvec(v):
+        return _proj(np.asarray(A.matvec(v)).reshape(shape)).ravel()
+
+    def matmat(B):
+        B = np.asarray(B)
+        if B.ndim == 1:
+            return matvec(B)
+        k = B.shape[1]
+        out = np.asarray(A.matmat(B)).reshape(shape + (k,))
+        return _proj(out).reshape(vec_size, k)
+
+    return LinearOperator((vec_size, vec_size), matvec=matvec, matmat=matmat,
+                          dtype=complex)
 
 
 def calc_eliashberg(input_dict):
@@ -7045,7 +7160,14 @@ def calc_eliashberg(input_dict):
         Parsed TOML configuration dictionary.
     """
     # --- Parse parameters ---
-    reject_spin_orbital_mode(input_dict)
+    # [mode] enable_spin_orbital (issue #83): the static entry solves the
+    # spin-orbital gap equation; every combination it does not support is
+    # refused here, before any file is read (check_so_config), and after the
+    # interaction files are read (check_so_supported, below).
+    spin_orbital_mode = _resolve_spin_orbital_flag(input_dict)
+    if spin_orbital_mode:
+        from hwave.solver import so_pairing
+        so_pairing.check_so_config(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)
@@ -7104,6 +7226,11 @@ def calc_eliashberg(input_dict):
 
     # Eliashberg parameters
     eli_param = input_dict.get("eliashberg", {})
+    if spin_orbital_mode:
+        # the spin-orbital checks read [eliashberg] case-insensitively, so the
+        # run must too (a key the checks see must be the key the run uses)
+        from requests.structures import CaseInsensitiveDict
+        eli_param = CaseInsensitiveDict(eli_param or {})
 
     # Dispatch to dynamic Eliashberg if requested
     if _eliashberg_frequency(input_dict) == "dynamic":
@@ -7168,6 +7295,20 @@ def calc_eliashberg(input_dict):
     # --- Step 2: Read input files ---
     geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = geom_info["norb"]
+    if spin_orbital_mode:
+        # Geometry norb and the Transfer file count SPIN-ORBITALS (interleaved
+        # 2*orb+spin); the interaction files use PHYSICAL orbital indices. The
+        # gap, the Green function and the vertex run over nd = norb spin-
+        # orbitals in spin-block order (spin_orbital.INDEX_CONVENTION).
+        from hwave.solver import spin_orbital
+        norb_phys = spin_orbital.physical_norb(
+            norb, True, source="the Geometry file ({})".format(
+                input_dict["file"]["input"]["interaction"].get("Geometry", "")))
+        so_pairing.check_so_supported(
+            input_dict, interactions, _nonbond_site(input_dict, norb_phys),
+            norb_phys=norb_phys)
+        logger.info("enable_spin_orbital: %d physical orbitals, nd = %d "
+                    "spin-orbitals (spin-block order)", norb_phys, norb)
 
     if use_bond_channels:
         # Every guard raises before any susceptibility/Green data is built, so
@@ -7208,6 +7349,10 @@ def calc_eliashberg(input_dict):
     # --- Step 4: Build Hamiltonian and diagonalize ---
     logger.info("Building Hamiltonian in k-space...")
     epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+    if spin_orbital_mode:
+        # the Transfer file is interleaved; everything downstream is spin-block
+        epsilon_k = spin_orbital.interleaved_to_spinblock(
+            epsilon_k, norb_phys, axes=(0, 1))
 
     logger.info("Diagonalizing Hamiltonian...")
     eigenvalues, eigenvectors = _calc_eigenvalues(epsilon_k)
@@ -7222,7 +7367,7 @@ def calc_eliashberg(input_dict):
     # only the non-bond paths read the k-space table; the bond path builds its
     # vertices from the declarations themselves
     inter_k = None
-    if not use_bond_channels:
+    if not use_bond_channels and not spin_orbital_mode:
         _check_nonbond_offsite(interactions, "hwave_sc (bond_channels = false)",
                                _nonbond_site(input_dict, norb))
         inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions,
@@ -7234,7 +7379,33 @@ def calc_eliashberg(input_dict):
     bond_provenance = None
     bond_attribution = None
 
-    if chi0q_mode == "flex":
+    if spin_orbital_mode:
+        # --- Spin-orbital mode (issue #83): one spinful channel ---
+        logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
+        green_kw = _build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+        if chi0q_mode == "calc":
+            chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
+                                             precomputed_mu=mu)
+            static_index = None
+        else:
+            try:
+                chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
+            except ValueError as err:
+                raise ValueError(
+                    "{} ([mode] enable_spin_orbital = true with chi0q_mode = "
+                    "\"load\" needs the general (4-index) spinful chi0q of a "
+                    "spin-orbital RPA run over nd = {} spin-orbitals; a model the "
+                    "RPA reduces to spin-free or spin-diagonal form writes a "
+                    "physical-orbital chi0q instead -- use chi0q_mode = \"calc\" "
+                    "for it.)".format(err, norb)) from err
+        logger.info("Computing the spin-orbital pairing vertex...")
+        Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
+                                 Nx, Ny, Nz, static_index)
+        del chi0q_raw
+        logger.info("Spin-orbital vertex shape: {}".format(Vs_q.shape))
+
+    elif chi0q_mode == "flex":
         # --- FLEX mode: use pre-computed dressed susceptibilities ---
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
@@ -7454,7 +7625,18 @@ def calc_eliashberg(input_dict):
         _warn_if_g2_indefinite(G2, norb, g2_tail)
 
     # --- Step 11: Initialize gap function ---
-    sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
+    if spin_orbital_mode:
+        sigma_init = so_pairing.so_initial_gap(
+            init_gap_mode, norb_phys, kx_array, ky_array, kz_array)
+        sigma_init = _project_gap_parity(sigma_init, "triplet")
+        if np.linalg.norm(sigma_init) == 0.0:
+            raise ValueError(
+                "[eliashberg] init_gap = {!r} has no fermion-antisymmetric "
+                "component on this k grid; choose another init_gap.".format(
+                    init_gap_mode))
+        sigma_init = sigma_init / np.linalg.norm(sigma_init)
+    else:
+        sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
 
     # GPU: park the two large invariants (pairing vertex and pair bubble) on the
     # device once; each matvec then only moves the gap vector across PCIe. The
@@ -7500,12 +7682,28 @@ def calc_eliashberg(input_dict):
     # eigenvalue.dat may be called an eigenvalue at all.
     iteration_info = {}
 
+    if spin_orbital_mode:
+        # P K: the antisymmetric projection after every kernel application
+        # (both solvers below use this operator)
+        so_vec_size = norb * norb * Nx * Ny * Nz
+        A_so, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        kernel_operator = (_so_antisymmetric_operator(
+            A_so, so_vec_size, (norb, norb, Nx, Ny, Nz)), so_vec_size)
+        # the gap is one spin-orbital matrix: the iteration's channel parity
+        # projection/leakage probe does not apply (P is in the operator), and
+        # the eigenpairs are tagged by fermion antisymmetry
+        pairing_type = None
+        parity_channel = "triplet"
+    else:
+        kernel_operator = bond_operator
+        parity_channel = pairing_type
+
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
         sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
             green_kw, Vs_q, G2, sigma_init, norb,
             max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type,
-            operator=bond_operator,
+            operator=kernel_operator,
             spectral_shift=iteration_spectral_shift,
             info_out=iteration_info,
         )
@@ -7520,13 +7718,13 @@ def calc_eliashberg(input_dict):
             method=eigenvalue_method,
             sigma_shift=eli_param.get("sigma_shift"),
             spectral_shift=eli_param.get("spectral_shift"),
-            operator=bond_operator,
+            operator=kernel_operator,
         )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported
         # leading eigenpair is the physical solution for this channel.
         eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
-            eigenvalues_eig, eigenvectors_eig, pairing_type)
+            eigenvalues_eig, eigenvectors_eig, parity_channel)
         # Flag whether each eigenvector lies (dominantly) in the channel's
         # parity sector (even for singlet, odd for triplet). _is_gap_parity is a
         # threshold test, so this is "dominantly the channel parity" rather than
@@ -7534,7 +7732,7 @@ def calc_eliashberg(input_dict):
         # symmetry and the opposite-parity modes are unphysical for the channel
         # (e.g. an even mode in the triplet kernel is Pauli-forbidden).
         eigenvalue_match = np.array(
-            [_is_gap_parity(g, pairing_type) for g in eigenvectors_eig])
+            [_is_gap_parity(g, parity_channel) for g in eigenvectors_eig])
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
             tag = "" if eigenvalue_match[i] else "  [opposite-parity sector]"
@@ -7668,6 +7866,16 @@ def calc_eliashberg(input_dict):
                          "solver_mode=\"eigenvalue\"."
                          .format(bond_provenance["lambda_rayleigh"]))
             eigenvalue_note = note
+
+    if spin_orbital_mode:
+        bond_provenance = {
+            "spin_orbital": "true",
+            "index_convention": spin_orbital.INDEX_CONVENTION,
+            "gap_layout": ("Delta_AB(k), A = spin * {} + orb (spin 0 = up); "
+                           "fermion-antisymmetric, Delta_AB(k) = -Delta_BA(-k)"
+                           .format(norb_phys)),
+            "match_column": "1 = fermion-antisymmetric eigenvector",
+        }
 
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
