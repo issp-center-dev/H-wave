@@ -1260,7 +1260,9 @@ def _require_so_chi0q_marker(data, file_name, hint=None, producer="RPA"):
     spin-orbital FLEX run (``producer = "FLEX"``)."""
     if hint is None:
         hint = ("Regenerate the file with a spin-orbital RPA run "
-                "([mode] enable_spin_orbital = true, calc_scheme = \"general\").")
+                "([mode] enable_spin_orbital = true, calc_scheme = \"general\") "
+                "that computes chi0q itself or reads a chi0q_init marked "
+                "spin_orbital = True.")
     if "spin_orbital" not in data:
         raise ValueError(
             "chi0q file '{}' has no spin_orbital marker, so it cannot be told "
@@ -7402,6 +7404,15 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
                 "FLEX archive '%s' records scf_converged = false: the FLEX run "
                 "did not converge, and its chiq and green may not belong to one "
                 "self-consistent state.", chi_path)
+        # the chi0q companion must be a spin-orbital FLEX output: its marker
+        # is checked after the lightweight chiq metadata above, but before
+        # any array (chiq or chi0q) is materialized and before the Green
+        # function or any vertex is built (_check_so_flex_vertex still
+        # follows: the marker does not establish equal interactions)
+        with np.load(chi0_path) as d0:
+            _require_so_chi0q_marker(
+                d0, chi0_path, producer="FLEX",
+                hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
         chiq = data["chiq"]
         check_momentum_marker(data, chi_path)
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
@@ -7409,15 +7420,6 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
         chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
                                     "chiq")
         del chiq
-
-    # the chi0q companion must be a spin-orbital FLEX output: its marker is
-    # checked here, before its array is read and before the Green function
-    # or any vertex is built (_check_so_flex_vertex still follows: the marker
-    # does not establish that the interactions are equal)
-    with np.load(chi0_path) as d0:
-        _require_so_chi0q_marker(
-            d0, chi0_path, producer="FLEX",
-            hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
 
     # the Green function: required (the stored chi belongs to the dressed G)
     if not os.path.exists(green_path):

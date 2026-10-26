@@ -1017,6 +1017,9 @@ class TestFlexMode(unittest.TestCase):
             with self.subTest(case=label, marker=tag), mock.patch.object(
                     sc, "_load_flex_green", side_effect=green_boom), \
                     mock.patch.object(
+                        sc, "_so_flex_static_slice",
+                        side_effect=AssertionError("array sliced before the check")), \
+                    mock.patch.object(
                         sc, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
@@ -1105,6 +1108,157 @@ _NON_SO_MEMBERS = {
          "sc_vertex_version", "scheme_resolution", "wavevector_index",
          "wavevector_unit"]),
 }
+
+
+class TestChi0qInitProvenance(_TmpDir):
+    """A spin-orbital RPA run PROPAGATES the ``spin_orbital`` marker of a
+    chi0q it did not compute (``chi0q_init`` file or in-memory green_info
+    reuse): marked source -> marked output; unmarked source -> the run
+    proceeds, the output has no marker (hwave_sc SO load refuses it);
+    explicit ``False`` / malformed -> refused before solve."""
+
+    def _rpa(self, d, files, so, out, chi0q_init=None, capture=None):
+        from hwave import qlms
+        from hwave.solver.rpa import RPA
+        inp = _input(d, files, so, {}, out=out)
+        inp["mode"]["calc_scheme"] = "general"
+        inp["file"]["input"]["path_to_input"] = d
+        inp["file"]["output"].update({"chiq": "chiq", "chi0q": "chi0q"})
+        if chi0q_init is not None:
+            inp["file"]["input"]["chi0q_init"] = chi0q_init
+        del inp["eliashberg"]
+        inp["log"] = {"print_level": 0}
+        real = RPA.save_results
+
+        def spy(slf, info_outputfile, green_info):
+            if capture is not None:
+                capture.update(solver=slf, green_info=green_info,
+                               outputs=info_outputfile)
+            return real(slf, info_outputfile, green_info)
+
+        with mock.patch.object(RPA, "save_results", autospec=True,
+                               side_effect=spy):
+            qlms.run(input_dict=inp)
+        return os.path.join(d, out)
+
+    def _non_so_chi0q(self):
+        """A real non-spin-orbital general chi0q over ND orbitals (no
+        marker), the shape of a spin-orbital one over NP orbitals."""
+        src = os.path.join(self.d, "nonso")
+        os.makedirs(src)
+        files = _write_model(src, so=True)   # read as a plain ND-orbital model
+        with _quiet():
+            path = self._rpa(src, files, False, "out")
+        path = os.path.join(path, "chi0q.npz")
+        with np.load(path) as z:
+            self.assertNotIn("spin_orbital", z.files)
+        return path
+
+    def _marker(self, out):
+        res = {}
+        for name in ("chiq", "chi0q"):
+            with np.load(os.path.join(out, name + ".npz")) as z:
+                res[name] = (bool(z["spin_orbital"]) if "spin_orbital" in z.files
+                             else None)
+        return res
+
+    def _so_load_refused(self, out, pattern):
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True, {"chi0q_mode": "load",
+                                           "solver_mode": "eigenvalue"})
+        inp["file"]["output"]["path_to_output"] = out
+        with self.assertRaisesRegex(ValueError, pattern), _quiet(), \
+                mock.patch.object(sc, "_build_bond_green",
+                                  side_effect=AssertionError("Green built")):
+            sc.calc_eliashberg(inp)
+
+    def test_unmarked_chi0q_init_gives_unmarked_output(self):
+        src = self._non_so_chi0q()
+        files = _write_model(self.d, so=True)
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as logs:
+            out = self._rpa(self.d, files, True, "so_out", chi0q_init=src)
+        self.assertTrue(any("no spin_orbital = True marker" in m
+                            and "hwave_sc cannot load them" in m
+                            for m in logs.output))
+        self.assertEqual(self._marker(out), {"chiq": None, "chi0q": None})
+        self._so_load_refused(out, r"has no spin_orbital marker")
+
+    def test_false_or_malformed_chi0q_init_refused_before_solve(self):
+        from hwave.solver.rpa import RPA
+        src = self._non_so_chi0q()
+        files = _write_model(self.d, so=True)
+        for tag, value, pattern in (
+                ("false", False, r"records spin_orbital = False"),
+                ("str", "true", r"malformed spin_orbital"),
+                ("array", np.array([True]), r"malformed spin_orbital")):
+            with self.subTest(marker=tag):
+                bad = os.path.join(self.d, "bad_{}.npz".format(tag))
+                _resave(src, bad, spin_orbital=value)
+                with self.assertRaisesRegex(ValueError, pattern), _quiet(), \
+                        mock.patch.object(
+                            RPA, "solve",
+                            side_effect=AssertionError("solve reached")):
+                    self._rpa(self.d, files, True, "so_" + tag, chi0q_init=bad)
+
+    def test_marked_chi0q_init_keeps_marker(self):
+        files = _write_model(self.d, so=True, soc=0.3)
+        with _quiet():
+            first = self._rpa(self.d, files, True, "first")
+        self.assertEqual(self._marker(first), {"chiq": True, "chi0q": True})
+        with _quiet():
+            second = self._rpa(self.d, files, True, "second",
+                               chi0q_init=os.path.join(first, "chi0q.npz"))
+        self.assertEqual(self._marker(second), {"chiq": True, "chi0q": True})
+        with np.load(os.path.join(first, "chi0q.npz")) as a, \
+                np.load(os.path.join(second, "chi0q.npz")) as b:
+            np.testing.assert_array_equal(a["chi0q"], b["chi0q"])
+
+    def test_in_memory_reuse(self):
+        files = _write_model(self.d, so=True, soc=0.3)
+        cap = {}
+        with _quiet():
+            self._rpa(self.d, files, True, "mem0", capture=cap)
+        solver, gi, outputs = cap["solver"], cap["green_info"], cap["outputs"]
+        self.assertIs(gi["chi0q_freq_meta"]["spin_orbital"], True)
+
+        def reuse(out, meta_update=None, drop=False):
+            g = dict(gi)
+            meta = dict(gi["chi0q_freq_meta"])
+            if drop:
+                meta.pop("spin_orbital")
+            meta.update(meta_update or {})
+            g["chi0q_freq_meta"] = meta
+            path = os.path.join(self.d, out)
+            os.makedirs(path)
+            o = dict(outputs, path_to_output=path)
+            solver.solve(g, path)
+            solver.save_results(o, g)
+            return path, g
+
+        with _quiet():
+            out, _ = reuse("mem_marked")
+        self.assertEqual(self._marker(out), {"chiq": True, "chi0q": True})
+        with self.assertLogs("hwave.solver.rpa", level="INFO") as logs:
+            out, g = reuse("mem_unmarked", drop=True)
+        self.assertTrue(any("no spin_orbital = True marker" in m
+                            for m in logs.output))
+        self.assertEqual(self._marker(out), {"chiq": None, "chi0q": None})
+        # a further reuse of the unmarked bubble stays unmarked
+        self.assertIsNone(g["chi0q_freq_meta"]["spin_orbital"])
+        with _quiet():
+            path = os.path.join(self.d, "mem_chain")
+            os.makedirs(path)
+            solver.solve(g, path)
+            solver.save_results(dict(outputs, path_to_output=path), g)
+        self.assertEqual(self._marker(path), {"chiq": None, "chi0q": None})
+        for tag, value, pattern in (
+                ("false", False, r"records spin_orbital = False"),
+                ("str", "yes", r"malformed spin_orbital")):
+            with self.subTest(marker=tag), \
+                    self.assertRaisesRegex(ValueError, pattern), _quiet(), \
+                    mock.patch.object(solver, "_solve_rpa",
+                                      side_effect=AssertionError("solved")):
+                reuse("mem_" + tag, {"spin_orbital": value})
 
 
 class TestArchiveMembers(_TmpDir):
