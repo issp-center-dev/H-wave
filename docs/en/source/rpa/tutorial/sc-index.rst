@@ -1945,6 +1945,8 @@ before any calculation:
   ``output_eigenvalue``;
 - an odd spin-orbital count (Geometry ``norb``);
 - an ``Extern`` file (write a Zeeman field into the Transfer file instead);
+- ``[file.input] trans_mod`` and ``green_init`` (a mean-field one-body input is not
+  supported yet; see issue #273);
 - ``[mode.param] spinful_vertex_exchange = false``.
 
 ``hwave_sc`` with ``frequency = "dynamic"`` and ``hwave_tsweep`` with

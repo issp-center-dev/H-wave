@@ -267,6 +267,16 @@ def check_so_config(input_dict):
             "the spin-orbital pairing vertex is built from the antisymmetrized "
             "spinful vertex. Set spinful_vertex_exchange = true (or remove the "
             "key).".format(_SO_WHAT))
+    finp = _ci(input_dict.get("file", {}).get("input", {}))
+    for key in ("trans_mod", "green_init"):
+        if key in finp:
+            raise ValueError(
+                "{}: [file.input] {} is not supported: the spin-orbital "
+                "Eliashberg solver does not support a mean-field one-body input "
+                "yet (the susceptibility would be built from that one-body "
+                "Hamiltonian while the kernel Green function and chemical "
+                "potential come from the bare Transfer file; see issue #273). "
+                "Remove {}.".format(_SO_WHAT, key, key))
     files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
     if "Extern" in files:
         raise ValueError(

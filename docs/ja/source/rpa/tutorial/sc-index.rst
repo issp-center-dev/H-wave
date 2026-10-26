@@ -1848,6 +1848,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``output_gap``;
 - 奇数のスピン軌道数（Geometry の\ ``norb``\ ）;
 - ``Extern``\ ファイル（Zeeman 場は Transfer ファイルに書いてください）;
+- ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ （平均場の一体入力は
+  まだサポートされていません。issue #273 を参照）;
 - ``[mode.param] spinful_vertex_exchange = false``\ 。
 
 ``frequency = "dynamic"``\ の\ ``hwave_sc``\ と、\ ``run_eliashberg = true``\ の

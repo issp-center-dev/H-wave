@@ -540,6 +540,51 @@ class TestRefusals(_TmpDir):
             with self.subTest(key=key):
                 self._refused(r"Extern", so_files=dict(files, **{key: "extern.dat"}))
 
+    def _mean_field_refused(self, name, spellings):
+        files = _write_model(self.d, so=True)
+        _wfile(os.path.join(self.d, "mf.npz"), "x", NP, [])
+        for key in spellings:
+            with self.subTest(key=key):
+                inp = _input(self.d, files, True,
+                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue"})
+                inp["file"]["input"][key] = "mf.npz"
+                boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
+                with mock.patch.object(sc, "_so_rpa_vertex", boom), \
+                        mock.patch("hwave.solver.rpa.RPA.read_init", boom):
+                    with self.assertRaisesRegex(ValueError, name + r".*#273"):
+                        with _quiet():
+                            sc.calc_eliashberg(inp)
+                boom.assert_not_called()
+
+    def test_trans_mod_file(self):
+        self._mean_field_refused("trans_mod", ("trans_mod", "Trans_Mod"))
+
+    def test_green_init_file(self):
+        self._mean_field_refused("green_init", ("green_init", "GREEN_INIT"))
+
+    def _mean_field_refused(self, name, spellings):
+        files = _write_model(self.d, so=True)
+        with open(os.path.join(self.d, "mf.npz"), "wb") as f:
+            f.write(b"placeholder")
+        for key in spellings:
+            with self.subTest(key=key):
+                inp = _input(self.d, files, True,
+                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue"})
+                inp["file"]["input"][key] = "mf.npz"
+                boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
+                with mock.patch.object(sc, "_so_rpa_vertex", boom), \
+                        mock.patch("hwave.solver.rpa.RPA.read_init", boom):
+                    with self.assertRaisesRegex(ValueError, name + r".*#273"):
+                        with _quiet():
+                            sc.calc_eliashberg(inp)
+                boom.assert_not_called()
+
+    def test_trans_mod_file(self):
+        self._mean_field_refused("trans_mod", ("trans_mod", "Trans_Mod"))
+
+    def test_green_init_file(self):
+        self._mean_field_refused("green_init", ("green_init", "GREEN_INIT"))
+
     def test_dynamic_entry_still_refuses(self):
         from hwave.solver import eliashberg_dynamic
         with self.assertRaisesRegex(ValueError, "enable_spin_orbital"):
