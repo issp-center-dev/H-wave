@@ -1719,10 +1719,11 @@ def _one_body_band_sources(input_dict):
     """Inputs that make the one-body band differ from the bare Transfer.
 
     ``trans_mod`` / ``green_init`` in ``[file.input]`` and an ``Extern``
-    table in ``[file.input.interaction]`` with a nonzero ``[mode.param]
-    coeff_extern`` (the RPA reader multiplies the field by that
-    coefficient, so a zero coefficient adds nothing). Keys are matched
-    case-insensitively.
+    table in ``[file.input.interaction]``, whatever ``coeff_extern`` is: the
+    RPA reader turns a declared Extern into a two-block H0 even at a zero
+    coefficient, so that band has to go through the same assembly and
+    check (a zero field then simply yields the Transfer band). Keys are
+    matched case-insensitively.
     """
     from requests.structures import CaseInsensitiveDict
     fin = (input_dict.get("file", {}) or {}).get("input", {}) or {}
@@ -1730,15 +1731,7 @@ def _one_body_band_sources(input_dict):
     sources = [key for key in _ONE_BODY_FILE_KEYS if key in lowered]
     inter = CaseInsensitiveDict(fin.get("interaction", {}) or {})
     if "Extern" in inter:
-        param = CaseInsensitiveDict(
-            (input_dict.get("mode", {}) or {}).get("param", {}) or {})
-        coeff = param.get("coeff_extern", 0.0)
-        try:
-            active = float(np.asarray(coeff).ravel()[0]) != 0.0
-        except (TypeError, ValueError, IndexError):
-            active = True        # let the RPA reader report the bad value
-        if active:
-            sources.append("Extern")
+        sources.append("Extern")
     return tuple(sources)
 
 
@@ -1768,6 +1761,9 @@ def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
 # splitting (a relative test would).
 SPIN_FREE_ATOL = 1.0e-10
 
+# Absolute tolerance on max |H(k) - H(k)^dagger| of the assembled band.
+HERMITIAN_ATOL = 1.0e-10
+
 
 def _spin_dependence(arr, norb):
     """``(splitting, mixing)`` of a ``(..., 2*norb, 2*norb)`` spin-block
@@ -1779,16 +1775,30 @@ def _spin_dependence(arr, norb):
     return split, mix
 
 
-def _refuse_spin_dependent(what, detail):
+def _refuse_spin_dependent(what, detail, tol=SPIN_FREE_ATOL):
     raise ValueError(
-        "hwave_sc: the one-body band defined by {} is spin-dependent ({}). "
-        "The singlet/triplet pairing kernel of hwave_sc carries no spin "
-        "index, so a magnetic (spin-diagonal with unequal spins, or "
-        "spin-mixing) mean field or an active Extern field cannot be "
-        "represented; that needs the spin-polarized treatment of issue #88. "
-        "Only a spin-independent trans_mod / green_init is supported "
-        "(absolute tolerance SPIN_FREE_ATOL = {:g}).".format(
-            what, detail, SPIN_FREE_ATOL))
+        "hwave_sc: the one-body band defined by {} is spin-dependent ({}; "
+        "[eliashberg] spin_free_tol = {:g}). The singlet/triplet pairing "
+        "kernel of hwave_sc carries no spin index. If the field is meant to "
+        "be paramagnetic, tighten the UHF convergence ([mode.param] EPS), "
+        "start UHF from a spin-symmetric initial state, or raise "
+        "[eliashberg] spin_free_tol (the band is then spin-averaged). A "
+        "genuinely magnetic (spin-diagonal with unequal spins, or "
+        "spin-mixing) mean field, or a finite Extern field, needs the "
+        "spin-polarized treatment of issue #88.".format(what, detail, tol))
+
+
+def _read_spin_free_tol(eli_param):
+    """``[eliashberg] spin_free_tol`` (case-insensitive): finite float >= 0,
+    default :data:`SPIN_FREE_ATOL`."""
+    from requests.structures import CaseInsensitiveDict
+    tol = _bond_float_option(CaseInsensitiveDict(eli_param or {}),
+                             "spin_free_tol", SPIN_FREE_ATOL)
+    if not np.isfinite(tol) or tol < 0.0:
+        raise ValueError(
+            "[eliashberg] spin_free_tol must be a finite number >= 0; got "
+            "{!r}.".format(tol))
+    return float(tol)
 
 
 class _AssembledH0Ready(Exception):
@@ -1804,7 +1814,7 @@ _EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
                      "ham_extern_q")
 
 
-def _checked_band(solver, green_info, sources):
+def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL):
     """Assemble the one-body H0(k) ONCE, check it, and return its spin-free
     block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
 
@@ -1816,10 +1826,17 @@ def _checked_band(solver, green_info, sources):
     transactional: ``green_info`` is copied and every Hamiltonian array the
     assembly can modify is restored afterwards.
 
-    The checked H0 must be finite, its up-up and down-down blocks must agree
-    and its spin-mixing blocks vanish within the absolute
-    :data:`SPIN_FREE_ATOL`; otherwise ``ValueError``. The up-up block of the
-    checked H0 is returned (Extern included).
+    The checked H0 must be finite and Hermitian (:data:`HERMITIAN_ATOL`).
+    Its up-up and down-down blocks are compared and its spin-mixing blocks
+    measured (absolute values):
+
+    * both within :data:`SPIN_FREE_ATOL`: the up-up block is returned
+      (Extern included) -- the strict default;
+    * either above ``spin_free_tol`` (``[eliashberg] spin_free_tol``,
+      default :data:`SPIN_FREE_ATOL`): ``ValueError``;
+    * otherwise (between the two): the spin-averaged block
+      ``(H_up + H_down)/2`` is returned, the mixing blocks are discarded,
+      and a WARNING reports both discarded magnitudes.
     """
     ham = solver.ham_info
     snapshot = {}
@@ -1856,24 +1873,44 @@ def _checked_band(solver, green_info, sources):
             "hwave_sc: the one-body band assembled from {} has non-finite "
             "(NaN or Inf) entries. Check [mode.param] coeff_extern, the "
             "Extern file and the trans_mod / green_init file.".format(what))
+    herm = float(np.max(np.abs(H0 - np.conj(np.swapaxes(H0, -1, -2)))))
+    if herm > HERMITIAN_ATOL:
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} is not Hermitian "
+            "(max |H(k) - H(k)^dagger| = {:.3e} > {:g}). Check the "
+            "trans_mod / green_init file and the Transfer / Extern tables "
+            "(each R entry needs its conjugate partner at -R)."
+            .format(what, herm, HERMITIAN_ATOL))
 
     if H0.shape[0] == 2:                       # Extern on the Transfer band
-        up = H0[0]
-        split, mix = float(np.max(np.abs(H0[0] - H0[1]))), 0.0
+        up, dn = H0[0], H0[1]
+        split, mix = float(np.max(np.abs(up - dn))), 0.0
     elif H0.shape[-1] == 2 * norb:             # (1, nvol, 2norb, 2norb)
         split, mix = _spin_dependence(H0[0], norb)
-        up = H0[0].reshape(-1, 2, norb, 2, norb)[:, 0, :, 0, :]
+        blk = H0[0].reshape(-1, 2, norb, 2, norb)
+        up, dn = blk[:, 0, :, 0, :], blk[:, 1, :, 1, :]
     else:                                      # already one spin-free block
-        up, split, mix = H0[0], 0.0, 0.0
+        up = dn = H0[0]
+        split, mix = 0.0, 0.0
     if not (np.isfinite(split) and np.isfinite(mix)):
         raise ValueError(
             "hwave_sc: the spin comparison of the band assembled from {} is "
             "not finite. Check [mode.param] coeff_extern, the Extern file "
             "and the trans_mod / green_init file.".format(what))
+    detail = ("assembled H0(k): max |H_up - H_down| = {:.3e}, max "
+              "|spin-mixing| = {:.3e}".format(split, mix))
+    if split > spin_free_tol or mix > spin_free_tol:
+        _refuse_spin_dependent(what, detail, spin_free_tol)
     if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
-        _refuse_spin_dependent(
-            what, "assembled H0(k): max |H_up - H_down| = {:.3e}, max "
-            "|spin-mixing| = {:.3e}".format(split, mix))
+        # within the user's spin_free_tol: spin-average, drop the mixing
+        logger.warning(
+            "hwave_sc: the one-body band from %s is spin-dependent beyond "
+            "SPIN_FREE_ATOL = %g but within [eliashberg] spin_free_tol = %g "
+            "(%s). Using the spin-averaged band (H_up + H_down)/2 and "
+            "DISCARDING the spin-mixing blocks: discarded max |H_up - H_down|"
+            "/2 = %.3e, discarded max |spin-mixing| = %.3e.",
+            what, SPIN_FREE_ATOL, spin_free_tol, detail, split / 2.0, mix)
+        return np.ascontiguousarray(0.5 * (up + dn))
     return np.ascontiguousarray(up)
 
 
@@ -1903,7 +1940,8 @@ def _load_band_into_solver(solver, up):
             "chi0q on a different band.".format(solver.spin_mode, H0.shape))
 
 
-def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
+def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
+                     spin_free_tol=SPIN_FREE_ATOL):
     """Assemble the one-body band through the RPA machinery (issue #273).
 
     The band is built exactly as the internal chi0q builds it --
@@ -1968,7 +2006,7 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
     # Assemble the band ONCE, check it (spin independence, finiteness),
     # before any diagonalization and before any chi0q / pair-bubble /
     # kernel work; the checked band is the band that is used.
-    up = _checked_band(solver, green_info, sources)
+    up = _checked_band(solver, green_info, sources, spin_free_tol)
 
     Nx, Ny, Nz = spatial_shape
     if up.shape != (Nx * Ny * Nz, norb, norb):
@@ -7562,6 +7600,7 @@ def calc_eliashberg(input_dict):
     # before any chi0q is computed or loaded. The FLEX path takes chi and G
     # from the FLEX run, whose outputs already include its one-body band.
     band = None
+    spin_free_tol = _read_spin_free_tol(eli_param)
     if chi0q_mode == "flex":
         _warn_one_body_band_ignored(input_dict, "chi0q_mode = 'flex'")
     elif use_bond_channels and bond_green is not None:
@@ -7584,7 +7623,8 @@ def calc_eliashberg(input_dict):
                 # reduced-scheme advisory for a chi0q that is never built
                 band_scheme = "general"
             band = _mean_field_band(input_dict, band_sources, band_scheme,
-                                    (Nx, Ny, Nz), norb)
+                                    (Nx, Ny, Nz), norb,
+                                    spin_free_tol=spin_free_tol)
             if chi0q_mode != "calc" or use_bond_channels:
                 band = band._replace(solver=None)
 

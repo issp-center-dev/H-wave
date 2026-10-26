@@ -1,7 +1,7 @@
 """hwave_sc on a mean-field one-body band (issue #273).
 
 ``[file.input] trans_mod`` (the T + Sigma_HF that UHFk writes), ``green_init``
-(T + HF[G]) and an active ``Extern`` field replace the bare Transfer band in
+(T + HF[G]) and an ``Extern`` field replace the bare Transfer band in
 the RPA H0 assembly that the internal chi0q is built on. hwave_sc used to
 take the chemical potential and every kernel Green function from the BARE
 Transfer band anyway, so chi0q was evaluated at the wrong filling and the
@@ -14,7 +14,6 @@ a run whose Transfer file IS that band must give the same eigenvalues.
 Tests must be run from the repository root.
 """
 
-import logging
 import os
 import tempfile
 import unittest
@@ -64,6 +63,10 @@ def _nematic_hr(norb):
         for (rx, ry) in ((0, 1), (0, -1)):
             h[rx % NX, ry % NY, a, a] += 0.15
         h[0, 0, a, a] += 0.1 * (1 - 1.5 * a)
+        # complex next-nearest-neighbour bond: eps(k) != eps(-k), so the
+        # one-orbital oracle is not blind to a k -> -k (Fourier-sign) error
+        h[1 % NX, 1 % NY, a, a] += 0.1j
+        h[(-1) % NX, (-1) % NY, a, a] += -0.1j
     if norb == 2:
         v = 0.05 + 0.08j
         h[1, 0, 0, 1] += v
@@ -293,12 +296,27 @@ class TestTransModOracle(unittest.TestCase):
         # the field must matter, or the oracle proves nothing
         self.assertGreater(abs(lam - lam_bare), 1e-2)
 
-        # mu handed to chi0q == RPA._find_mu on the trans_mod band
         band = res["prepared"]
         self.assertIsNotNone(band)
-        solver = band.solver
-        _dist, mu_rpa = solver._find_mu(solver.Ncond / 2, solver.T)
-        self.assertLessEqual(abs(res["mu_chi0"] - mu_rpa), 1e-12)
+        # the chi0q solver runs the requested scheme
+        self.assertEqual(band.solver.calc_scheme, chi0q_tensor)
+
+        # mu handed to chi0q == the root of sum_k,n f(e_n(k) - mu) =
+        # filling * norb * Nk, by plain bisection on an independent band
+        ev = np.linalg.eigvalsh(_band_k(h)).ravel()
+        target = FILLING * norb * NX * NY
+
+        def count(mu):
+            x = np.clip((ev - mu) / T_RUN, -700.0, 700.0)
+            return np.sum(1.0 / (np.exp(x) + 1.0)) - target
+        lo, hi = ev.min() - 10.0, ev.max() + 10.0
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            if count(mid) < 0.0:
+                lo = mid
+            else:
+                hi = mid
+        self.assertLessEqual(abs(res["mu_chi0"] - 0.5 * (lo + hi)), 1e-10)
 
         # kernel G == 1/(i w_n + mu - eps_tm(k)), eps_tm by direct sum
         eps = _band_k(h)                               # (Nx, Ny, a, b)
@@ -325,6 +343,21 @@ class TestTransModOracle(unittest.TestCase):
 
     def test_two_orbital_general(self):
         self._oracle(2, "general")
+
+    def test_auto_scheme_follows_the_frozen_rule(self):
+        # chi0q_tensor = "auto" with CoulombInter declared: the prepared
+        # solver must run the scheme hwave_sc's frozen auto rule selects
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=_trans_mod_from_hr(_nematic_hr(1)))
+            inp = _input(d, os.path.join(d, "o"), chi0q_tensor="auto",
+                         extra_file={"trans_mod": "tm.npz"})
+            expected = sc._auto_chi0q_tensor_scheme(
+                inp["file"]["input"]["interaction"])
+            res = _run(inp)
+        self.assertEqual(expected, "general")
+        self.assertEqual(res["prepared"].solver.calc_scheme, expected)
 
 
 class TestGreenInit(unittest.TestCase):
@@ -440,7 +473,7 @@ class TestSpinDependentRefused(unittest.TestCase):
             inp = _input(d, os.path.join(d, "out"),
                          extra_file={"trans_mod": "tm.npz"},
                          eliashberg={"bond_channels": True})
-            with self.assertRaises(ValueError) as cm:
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
                 sc.calc_eliashberg(inp)
         self.assertIn("#88", str(cm.exception))
 
@@ -487,14 +520,26 @@ class TestMixedCaseAndControl(unittest.TestCase):
                 self.assertTrue(np.array_equal(with_tm["green"],
                                                without["green"]))
 
-    def test_inactive_extern_keeps_bare_path(self):
-        # coeff_extern = 0 adds nothing to the band: no RPA band is built
-        self.assertEqual(sc._one_body_band_sources(
-            {"file": {"input": {"interaction": {"extern": "e.dat"}}},
-             "mode": {"param": {"coeff_extern": 0.0}}}), ())
-        self.assertEqual(sc._one_body_band_sources(
-            {"file": {"input": {"interaction": {"Extern": "e.dat"}}},
-             "mode": {"param": {"Coeff_Extern": 0.5}}}), ("Extern",))
+    def test_extern_is_a_source_whatever_the_coefficient(self):
+        for coeff in (0.0, 0.5):
+            self.assertEqual(sc._one_body_band_sources(
+                {"file": {"input": {"interaction": {"extern": "e.dat"}}},
+                 "mode": {"param": {"Coeff_Extern": coeff}}}), ("Extern",))
+
+    def test_zero_coeff_extern_equals_run_without_extern(self):
+        # used to fail with "Unexpected chi0q shape (2, ...)": RPA builds a
+        # two-block H0 for any declared Extern
+        for tensor in ("reduced", "general"):
+            with self.subTest(chi0q_tensor=tensor), \
+                    tempfile.TemporaryDirectory() as d:
+                _write_model(d, 1, extern=True)
+                with_ext = _run(_input(d, os.path.join(d, "o1"),
+                                       chi0q_tensor=tensor, extern=True,
+                                       extra_param={"coeff_extern": 0.0}))
+                without = _run(_input(d, os.path.join(d, "o2"),
+                                      chi0q_tensor=tensor))
+                self.assertTrue(np.array_equal(with_ext["eig"],
+                                               without["eig"]))
 
 
 class TestLoadAndBond(unittest.TestCase):
@@ -716,7 +761,11 @@ class TestAssembledBandCheck(unittest.TestCase):
         g[1, 1, 0, 1, 0] = -0.2
         band = self._band(extra_file={"green_init": "g.npz"},
                           files={"g.npz": {"green": g}})
-        self.assertIsNotNone(band)
+        # and it is T + Hartree: U n + z V (2n), z = 4 bonds, n per spin
+        eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
+        hartree = 1.4 * FILLING + 4 * 0.25 * 2 * FILLING
+        self.assertLess(np.abs(eps - (_band_k(_bare_hr(1)) + hartree)).max(),
+                        1e-12)
 
     def test_extern_boundary(self):
         # on-site Extern 1.0: H_up - H_down = 2 * coeff_extern
@@ -762,9 +811,19 @@ class TestAssembledBandCheck(unittest.TestCase):
             return g
         g_free = g_of(0.0, 0.0)
         g_ferro = g_of(m, m)
+        # True: the ferro G must be refused (physics: the HF term of this
+        # type is spin-dependent for this G).
+        # False: RPA-ASSEMBLY BEHAVIOUR, NOT PHYSICS. RPA's green_init HF
+        # (``_calc_trans_mod``) omits the spin-dependent Fock part of these
+        # types, so the band it assembles -- the band its own chi0q uses --
+        # is spin-free and is accepted. A physical UHF band of this G would
+        # be spin-dependent. Known RPA limitation, tracked separately; flip
+        # these to True when RPA's assembly includes that Fock part.
         refused = {"CoulombIntra": True, "Hund": True, "Ising": True,
-                   "PairHop": True, "CoulombInter": False, "Exchange": False,
-                   "PairLift": False}
+                   "PairHop": True,
+                   "CoulombInter": False,   # RPA assembly omits the Fock part
+                   "Exchange": False,       # RPA assembly omits the Fock part
+                   "PairLift": False}       # RPA assembly omits the Fock part
         for tname, ferro_refused in refused.items():
             with self.subTest(type=tname), tempfile.TemporaryDirectory() as d:
                 if tname == "CoulombIntra":
@@ -792,6 +851,11 @@ class TestAssembledBandCheck(unittest.TestCase):
                         with self.assertRaises(ValueError) as cm:
                             call()
                         self.assertIn("#88", str(cm.exception))
+                        if tname == "CoulombIntra":
+                            # hand value: H_up - H_dn = U (n_dn - n_up)
+                            # = -2 U m = -0.1 for U = 1, m = 0.05
+                            self.assertIn("max |H_up - H_down| = 1.000e-01",
+                                          str(cm.exception))
 
 
 class TestSpinFreeTolerance(unittest.TestCase):
@@ -853,7 +917,7 @@ class TestMixedCaseGreenInit(unittest.TestCase):
                                      extra_file={"Green_Init": "g.npz"})))
             bare = _leading(_run(_input(d, os.path.join(d, "o3"))))
         self.assertEqual(a, b)
-        self.assertGreater(abs(a - bare), 1e-6)
+        self.assertGreater(abs(a - bare), 1e-3)
 
 
 class TestExternalBondGreen(unittest.TestCase):
@@ -1023,6 +1087,221 @@ class TestNonFiniteRefused(unittest.TestCase):
                 with self.subTest(mode=mode, bond=bond, coeff=coeff,
                                   nan_row=nan_row):
                     self._refused(mode, coeff, nan_row=nan_row, bond=bond)
+
+
+class TestUHFkLayout(unittest.TestCase):
+    """The trans_mod layout the tests write is the one UHFk writes: at
+    U = 0 UHFk's trans_mod is the Transfer table itself."""
+
+    def test_uhfk_trans_mod_at_zero_u(self):
+        import hwave.qlms as qlms
+        norb = 2
+        h = _nematic_hr(norb)
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, norb, transfer_hr=h, inter=False)
+            with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+                f.write("CoulombIntra\n2\n1\n1\n"
+                        "0 0 0 1 1 0.0 0.0\n0 0 0 2 2 0.0 0.0\n")
+            out = os.path.join(d, "uhfk")
+            qlms.run(input_dict={
+                "log": {"print_level": 0},
+                "mode": {"mode": "UHFk",
+                         "param": {"Ncond": 112, "IterationMax": 50,
+                                   "EPS": 10, "Mix": 0.5, "T": T_RUN,
+                                   "CellShape": [NX, NY, 1],
+                                   "SubShape": [1, 1, 1]}},
+                "file": {"input": {"path_to_input": "",
+                                   "interaction": {
+                                       "path_to_input": d,
+                                       "Geometry": "geom.dat",
+                                       "Transfer": "transfer.dat",
+                                       "CoulombIntra": "coulombintra.dat"}},
+                         "output": {"path_to_output": out,
+                                    "rpa": "trans_mod"}}})
+            tm = np.load(os.path.join(out, "trans_mod.npz"))["trans_mod"]
+        self.assertEqual(tm.shape, (NX * NY, 2 * norb, 2 * norb))
+        self.assertLess(np.abs(tm - _trans_mod_from_hr(h)).max(), 1e-12)
+
+
+# 4x4 random-start UHFk fixture: converged to a paramagnetic state at
+# EPS = 6, whose trans_mod keeps a ~1e-5 spin splitting and mixing.
+_RAND_NX = 4
+
+
+def _run_random_uhfk(d):
+    import hwave.qlms as qlms
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n0.0 0.0 0.0\n")
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("Transfer\n1\n4\n 1 1 1 1\n"
+                "-1 0 0 1 1 -1.0 0.0\n0 -1 0 1 1 -1.0 0.0\n"
+                "0 1 0 1 1 -1.0 0.0\n1 0 0 1 1 -1.0 0.0\n")
+    with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+        f.write("CoulombIntra\n1\n1\n 1\n0 0 0 1 1 1.5 0.0\n")
+    inter = {"path_to_input": d, "Geometry": "geom.dat",
+             "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+    out = os.path.join(d, "uhfk")
+    qlms.run(input_dict={
+        "log": {"print_level": 0},
+        "mode": {"mode": "UHFk",
+                 "param": {"Ncond": 12, "IterationMax": 2000, "EPS": 6,
+                           "Mix": 0.5, "RndSeed": 1, "T": 0.1,
+                           "CellShape": [_RAND_NX, _RAND_NX, 1],
+                           "SubShape": [1, 1, 1]}},
+        "file": {"input": {"path_to_input": "", "initial_mode": "random",
+                           "interaction": dict(inter)},
+                 "output": {"path_to_output": out, "rpa": "trans_mod"}}})
+    return inter, os.path.join(out, "trans_mod.npz")
+
+
+def _random_sc_input(d, inter, tm_path, eli_extra=None):
+    eli = {"solver_mode": "eigenvalue", "chi0q_mode": "calc",
+           "chi0q_tensor": "reduced", "pairing_type": "singlet",
+           "init_gap": "d_x2y2", "num_eigenvalues": 2}
+    eli.update(eli_extra or {})
+    return {"log": {"print_level": 0},
+            "mode": {"mode": "RPA",
+                     "param": {"T": 0.1, "CellShape": [_RAND_NX, _RAND_NX, 1],
+                               "SubShape": [1, 1, 1], "Nmat": 32,
+                               "filling": 0.375, "coeff_tail": 1.0}},
+            "file": {"input": {"path_to_input": d, "trans_mod": tm_path,
+                               "interaction": dict(inter)},
+                     "output": {"path_to_output": os.path.join(d, "o")}},
+            "eliashberg": eli}
+
+
+class TestSpinFreeTol(unittest.TestCase):
+    """[eliashberg] spin_free_tol: a converged-but-noisy paramagnetic UHF
+    output is refused by default and spin-averaged when allowed."""
+
+    def test_random_start_uhfk_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            inter, tm_path = _run_random_uhfk(d)
+            tm = np.load(tm_path)["trans_mod"]
+            k = (np.fft.ifftn(tm.reshape(_RAND_NX, _RAND_NX, 1, 2, 2),
+                              axes=(0, 1, 2)) * _RAND_NX ** 2).reshape(-1, 2, 2)
+            split = np.abs(k[:, 0, 0] - k[:, 1, 1]).max()
+            mix = np.abs(k[:, 0, 1]).max()
+            # fixture precondition: noisy, but far below a real moment
+            self.assertGreater(max(split, mix), 1e-8)
+            self.assertLess(max(split, mix), 1e-3)
+
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(_random_sc_input(d, inter, tm_path))
+            msg = str(cm.exception)
+            for word in ("#88", "spin_free_tol", "EPS",
+                         "{:.3e}".format(split)):
+                self.assertIn(word, msg)
+
+            for key in ("spin_free_tol", "Spin_Free_Tol"):
+                with self.subTest(key=key):
+                    with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                        res = _run(_random_sc_input(d, inter, tm_path,
+                                                    {key: 1e-3}))
+                    self.assertTrue(any("spin-averaged" in m_
+                                        for m_ in logs.output), logs.output)
+                    self.assertTrue(any("{:.3e}".format(mix) in m_
+                                        for m_ in logs.output), logs.output)
+                    band = res["prepared"]
+                    eps = band.epsilon_k[0, 0].reshape(-1)
+                    avg = 0.5 * (k[:, 0, 0] + k[:, 1, 1])
+                    self.assertLess(np.abs(eps - avg).max(), 1e-13)
+                    # the chi0q solver holds exactly the averaged band
+                    self.assertTrue(np.array_equal(
+                        np.asarray(band.solver.H0_k)[0, :, 0, 0], eps))
+
+    def test_bad_values_refused(self):
+        for val in (-1.0, float("nan"), "abc", True):
+            with self.subTest(val=val):
+                with self.assertRaises(ValueError) as cm:
+                    sc._read_spin_free_tol({"spin_free_tol": val})
+                self.assertIn("spin_free_tol", str(cm.exception))
+        self.assertEqual(sc._read_spin_free_tol({}), sc.SPIN_FREE_ATOL)
+        self.assertEqual(sc._read_spin_free_tol({"SPIN_FREE_TOL": 2e-3}),
+                         2e-3)
+
+
+class TestBandGuards(unittest.TestCase):
+
+    def test_load_band_into_solver_detects_a_different_band(self):
+        class _Ham:
+            ham_extern_q = None
+
+        class _Solver:
+            ham_info = _Ham()
+
+            def _calc_epsilon_k(self, gi):
+                self.spin_mode = "spin-free"
+                tm = gi["trans_mod"]
+                self.H0_k = tm[np.newaxis, :, :1, :1] + 1e-9   # not `up`
+
+        up = np.zeros((4, 1, 1), complex)
+        with self.assertRaises(RuntimeError):
+            sc._load_band_into_solver(_Solver(), up)
+
+    def test_wrong_cellshape_trans_mod(self):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"),
+                     trans_mod=np.zeros((16, 2, 2), complex))
+            inp = _input(d, os.path.join(d, "o"),
+                         extra_file={"trans_mod": "tm.npz"})
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("does not match", str(cm.exception))
+
+    def test_non_hermitian_band_refused(self):
+        h = _nematic_hr(1)
+        tm = _trans_mod_from_hr(h)
+        tm[1, 0, 0] += 0.01          # R = (0, 1) without its -R partner
+        tm[1, 1, 1] += 0.01
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"), trans_mod=tm)
+            inp = _input(d, os.path.join(d, "o"),
+                         extra_file={"trans_mod": "tm.npz"})
+            with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("not Hermitian", str(cm.exception))
+
+
+class TestGreenInitLoadOracle(unittest.TestCase):
+    """green_init on the LOAD path: chi0q written by an RPA run with
+    green_init, loaded by hwave_sc with the same green_init, gives the
+    lambda of a run whose Transfer IS T + HF[G] (U only: the on-site
+    Hartree shift U n_a per orbital, spin-free G)."""
+
+    def test_load_green_init_equals_transfer_oracle(self):
+        import hwave.qlms as qlms
+        norb = 2
+        occ = (0.6, 0.3)
+        g = np.zeros((NX * NY, 2, norb, 2, norb), dtype=complex)
+        for s_ in range(2):
+            for a in range(norb):
+                g[0, s_, a, s_, a] = occ[a]
+        h_hf = _bare_hr(norb).copy()
+        for a in range(norb):
+            h_hf[0, 0, a, a] += 1.4 * occ[a]
+        with tempfile.TemporaryDirectory() as d, \
+                tempfile.TemporaryDirectory() as d_or:
+            _write_model(d, norb, inter=False)
+            np.savez(os.path.join(d, "g.npz"), green=g)
+            out = os.path.join(d, "rpa")
+            rpa_in = _input(d, out, coulomb_inter=False,
+                            extra_file={"green_init": "g.npz"})
+            rpa_in["mode"]["calc_scheme"] = "reduced"
+            rpa_in["file"]["output"]["chi0q"] = "chi0q"
+            del rpa_in["eliashberg"]
+            qlms.run(input_dict=rpa_in)
+            res = _run(_input(d, out, chi0q_mode="load", coulomb_inter=False,
+                              extra_file={"green_init": "g.npz"}))
+            _write_model(d_or, norb, transfer_hr=h_hf, inter=False)
+            ref = _run(_input(d_or, os.path.join(d_or, "o"),
+                              coulomb_inter=False, chi0q_tensor="reduced"))
+            bare = _run(_input(d, os.path.join(d, "ob"),
+                               coulomb_inter=False, chi0q_tensor="reduced"))
+        self.assertAlmostEqual(_leading(res), _leading(ref), delta=1e-9)
+        self.assertGreater(abs(_leading(res) - _leading(bare)), 1e-3)
 
 if __name__ == "__main__":
     unittest.main()

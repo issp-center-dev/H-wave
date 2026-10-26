@@ -981,7 +981,7 @@ They specify the settings of the input and output files, respectively, on the ty
   **Description :**
   This parameter specifies the filename of the initial configuration exported from UHFk by the parameter ``file.output.rpa``. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.
 
-  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
+  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units, adjustable with ``[eliashberg] spin_free_tol``, in which case a band within that tolerance is spin-averaged) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
 
 - ``green_init``
 

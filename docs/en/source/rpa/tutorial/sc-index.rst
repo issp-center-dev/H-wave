@@ -171,7 +171,7 @@ This section controls the Eliashberg solver. Key parameters:
      **Mean-field one-body band.** ``[file.input] trans_mod`` (the one-body
      Hamiltonian written by UHFk) replaces the ``Transfer`` band;
      ``green_init`` adds its Hartree-Fock term to the ``Transfer`` band; an
-     ``Extern`` field with a nonzero ``coeff_extern`` is added on top. With
+     ``Extern`` field (``coeff_extern`` times the table) is added on top. With
      ``chi0q_mode = "calc"`` or ``"load"`` (including
      ``bond_channels = true`` without an external ``bond_green``),
      ``hwave_sc`` uses this assembled band for
@@ -181,14 +181,18 @@ This section controls the Eliashberg solver. Key parameters:
      ``green_init`` / ``Extern`` as the RPA run that wrote the chi0q file. The keys are
      case-insensitive. Only a spin-independent band is supported, because the
      singlet/triplet pairing kernel has no spin index. A spin-dependent band
-     (a magnetic ``trans_mod`` or ``green_init``, or an active ``Extern``)
+     (a magnetic ``trans_mod`` or ``green_init``, or a finite ``Extern`` field)
      is refused with an error before :math:`\chi_0(\mathbf{q})` is computed or
      loaded. The check is made on the assembled one-body band (``trans_mod``,
      or the ``Transfer`` band plus the Hartree-Fock term of ``green_init``,
      plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
      may differ, and its spin-mixing blocks may be nonzero, by at most an
-     absolute :math:`10^{-10}` in energy units, and all entries must be
-     finite. The spin-polarized case is tracked in
+     absolute :math:`10^{-10}` in energy units; all entries must be finite
+     and the band Hermitian (to :math:`10^{-10}`). A paramagnetic UHF
+     solution converged only loosely (for example ``EPS = 6`` from a random
+     start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
+     convergence, start UHF from a spin-symmetric state, or raise
+     ``spin_free_tol`` (below). The spin-polarized case is tracked in
      issue #88. With ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``,
      and with an external ``bond_green``, these keys are not used and a
      warning says so: the susceptibilities and the Green function come from
@@ -238,6 +242,14 @@ This section controls the Eliashberg solver. Key parameters:
   largest-real eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``spin_free_tol``: absolute tolerance, in energy units, of the
+  spin-independence check of the mean-field one-body band (see the
+  ``chi0q_mode`` note above; default ``1e-10``, a finite number
+  :math:`\geq 0`). When the measured up/down difference or spin mixing lies
+  above ``1e-10`` but within ``spin_free_tol``, ``hwave_sc`` uses the
+  spin-averaged band :math:`(H_\uparrow + H_\downarrow)/2`, drops the
+  spin-mixing blocks, and logs a warning with both discarded magnitudes.
+  Above ``spin_free_tol`` the band is refused.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an
