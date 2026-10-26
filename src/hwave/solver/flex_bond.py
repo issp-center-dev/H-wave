@@ -257,7 +257,8 @@ def _sandwich(left, x, right, workers):
 
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
-           guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1):
+           guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1,
+           guard_exact="always"):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
@@ -266,7 +267,7 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
                                       # pass through the refusal wrapper below, so the
                                       # iteration reaches them at the source
                                       iteration=iteration, guard_method=guard_method, stats=stats,
-                                      workers=workers)
+                                      workers=workers, guard_exact=guard_exact)
     except ValueError as exc:
         if iteration is None:
             raise
@@ -350,12 +351,21 @@ class DressResult:
     #: number it guarded (issue #197; equal under guard_method = "svd")
     guard_exact_blocks: int = 0
     guard_blocks: int = 0
+    #: ``None`` when ``cond_min_s`` is the exact minimum of the map (always
+    #: the case under ``guard_exact = "always"``). Otherwise (issue #276:
+    #: the interval alone proved the pass of some frequency batch, so they
+    #: were not decomposed) ``cond_min_s`` is NaN and this is the bracket
+    #: ``(low, up, index)`` of the exact minimum, ``low <= min <= up``, with
+    #: ``index = l * nvol + q`` the flattened grid index of the smallest
+    #: upper end (``None`` when that end is an exactly decomposed batch's)
+    cond_bracket_s: tuple = None
+    cond_bracket_c: tuple = None
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       guard_freqs="all", guard_policy="refuse",
-                      guard_method="auto", workers=1, bond_w2=None):
+                      guard_method="auto", workers=1, bond_w2=None, guard_exact="always"):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -411,6 +421,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     channels and every frequency batch, are returned as
     ``DressResult.guard_exact_blocks`` and ``DressResult.guard_blocks``.
 
+    ``guard_exact`` (issue #276) is threaded to every
+    :func:`~hwave.solver.bond_channels.dress_batch` call unchanged
+    (``"always"``, the default, or ``"decide"``). Under ``"decide"`` a
+    frequency batch whose interval alone proves the pass is not decomposed,
+    and when the map's minimum then is not known exactly,
+    ``DressResult.cond_min_s`` / ``cond_min_c`` are NaN and
+    ``cond_bracket_s`` / ``cond_bracket_c`` carry its bracket.
+
     ``bond_w2`` (issue #181): the factors ``[(triple, A, B), ...]`` of
     :func:`hwave.solver.second_order.build_bond_w2_factors`, on ``dev.xp``.
     When given, the second order of every block is ``1/2 sum A chibar B``
@@ -460,7 +478,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     static_s = np.zeros((nvol, ND, ND), dtype=np.complex128)
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
     l_static = nmat // 2
-    cond_s = cond_c = np.inf
+    cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
@@ -471,8 +489,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
         collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
         chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers)
-        cond_s = min(cond_s, cs if cs is not None else np.inf)
+                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
+                             guard_exact)
+        cond_s.add(cs)
         collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
@@ -482,8 +501,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
         chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers)
-        cond_c = min(cond_c, cc if cc is not None else np.inf)
+                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
+                             guard_exact)
+        cond_c.add(cc)
         collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_c[...] = _bk.to_host(chi_c_b[l_static - l0])
@@ -530,14 +550,54 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         # overwrites the batch just consumed, and nothing above reads it again
         store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
         del W_b, cb
+    cond_min_s, bracket_s = cond_s.result()
+    cond_min_c, bracket_c = cond_c.result()
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
                        static_s=static_s, static_c=static_c,
-                       cond_min_s=float(cond_s), cond_min_c=float(cond_c),
+                       cond_min_s=cond_min_s, cond_min_c=cond_min_c,
+                       cond_bracket_s=bracket_s, cond_bracket_c=bracket_c,
                        guard_violations=len(violations),
                        guard_residual_violations=sum(1 for v in violations
                                                      if v["kind"] == "residual"),
                        guard_exact_blocks=int(stats["guard_exact_blocks"]),
                        guard_blocks=int(stats["guard_blocks"]))
+
+
+class _CondMin:
+    """The per-map minimum of one channel's guard score over the frequency
+    batches (issue #276): the exact minimum over the batches the guard
+    decomposed and the bracket over the batches the interval alone passed
+    (:class:`~hwave.solver.bond_channels.GuardBracket`)."""
+
+    def __init__(self):
+        self.exact = np.inf
+        self.bracketed = False
+        self.low = np.inf
+        self.up = np.inf
+        self.index = None
+
+    def add(self, c):
+        if c is None:
+            return
+        if isinstance(c, _bc.GuardBracket):
+            self.low = min(self.low, c.low)
+            if not self.bracketed or c.up < self.up:
+                self.up, self.index = c.up, int(c.index)
+            self.bracketed = True
+        else:
+            self.exact = min(self.exact, c)
+
+    def result(self):
+        """``(cond_min, bracket)``: the exact minimum and ``None`` when no
+        batch was bracketed, or when no bracketed lower end is below the
+        exact minimum -- the minimum is then attained in a decomposed batch
+        (the interval encloses every bracketed block's exact score); else
+        ``(nan, (low, up, index))``."""
+        if not self.bracketed or self.exact <= self.low:
+            return float(self.exact), None
+        if self.exact < self.up:
+            return float("nan"), (float(self.low), float(self.exact), None)
+        return float("nan"), (float(self.low), float(self.up), self.index)
 
 
 # =============================================================================

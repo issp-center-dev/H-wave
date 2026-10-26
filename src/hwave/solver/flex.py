@@ -298,6 +298,7 @@ class FLEX(RPA):
                           "longitudinal_bond_max_shells",
                           "longitudinal_bond_memory_cap_gb",
                           "longitudinal_bond_guard_freqs",
+                          "longitudinal_bond_guard_exact",
                           "longitudinal_bond_pairing",
                           "longitudinal_bond_cond_tol")
 
@@ -458,7 +459,8 @@ class FLEX(RPA):
                        longitudinal_bond_output_layout="npz",
                        longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
-                       longitudinal_bond_guard_freqs="all")
+                       longitudinal_bond_guard_freqs="all",
+                       longitudinal_bond_guard_exact="decide")
             return out
         # step 2: domain keys that need no assembly
         nmat = param.get("Nmat", 1024)          # the solver's default grid
@@ -513,7 +515,8 @@ class FLEX(RPA):
                        longitudinal_bond_output_layout="npz",
                        longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
-                       longitudinal_bond_guard_freqs="all")
+                       longitudinal_bond_guard_freqs="all",
+                       longitudinal_bond_guard_exact="decide")
             return out
         v = param.get("longitudinal_bond_output_full", False)
         if not isinstance(v, (bool, np.bool_)):
@@ -563,6 +566,16 @@ class FLEX(RPA):
                 "can return a tiny residual for a nearly singular denominator, so \"static\" does "
                 "NOT detect every near singularity), got {!r}".format(gf))
         out["longitudinal_bond_guard_freqs"] = gf.strip().lower()
+        ge = param.get("longitudinal_bond_guard_exact", "decide")
+        if not isinstance(ge, str) or ge.strip().lower() not in ("decide", "always"):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_guard_exact must be \"decide\" (the default: "
+                "on the GPU path, a frequency batch whose device-side interval already proves "
+                "that no block can fail the conditioning guard is passed without the exact "
+                "host SVD, and the bracket of its minimum is logged) or \"always\" (every "
+                "guarded block that could be the minimum is decomposed exactly in every "
+                "iteration), got {!r}".format(ge))
+        out["longitudinal_bond_guard_exact"] = ge.strip().lower()
         ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
         if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
                 or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
@@ -587,6 +600,7 @@ class FLEX(RPA):
         self.longitudinal_bond_max_shells = raw["longitudinal_bond_max_shells"]
         self.longitudinal_bond_memory_cap_gb = raw["longitudinal_bond_memory_cap_gb"]
         self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
+        self.longitudinal_bond_guard_exact = raw["longitudinal_bond_guard_exact"]
         self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
         # the guard surface of issue #199
         self.flex_hf_density_tol = raw["flex_hf_density_tol"]
@@ -2311,7 +2325,9 @@ class FLEX(RPA):
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if gate:
                     chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
-                        store, dev, green_kw, green_scf, beta, iteration + 1)
+                        store, dev, green_kw, green_scf, beta, iteration + 1,
+                        guard_exact=self._bond_guard_exact_for_map(
+                            iteration + 1, counter.count, counter.needed))
                 else:
                     chi0q_raw = self._calc_chi0q(green_scf, green0_tail, beta)
                     assert chi0q_raw.shape[0] == 1
@@ -2354,8 +2370,11 @@ class FLEX(RPA):
                 guards = "  guards: density hermitian {:.3e} (tol {:.1e})".format(
                     dens_hermitian, self.flex_hf_density_tol)
                 if gate:
-                    guards += "  bond cond_min spin {:.3e} charge {:.3e} (tol {:.1e})".format(
-                        self._bond_last.cond_min_s, self._bond_last.cond_min_c,
+                    guards += "  bond cond_min spin {} charge {} (tol {:.1e})".format(
+                        self._format_bond_cond(self._bond_last.cond_min_s,
+                                               self._bond_last.cond_bracket_s),
+                        self._format_bond_cond(self._bond_last.cond_min_c,
+                                               self._bond_last.cond_bracket_c),
                         self.longitudinal_bond_cond_tol)
                 logger.info(guards)
                 if self._iteration_hook is not None:
@@ -2502,6 +2521,35 @@ class FLEX(RPA):
                 n, n - m, m, self.longitudinal_bond_cond_tol,
                 res.cond_min_s, res.cond_min_c))
 
+    def _bond_guard_exact_for_map(self, iteration, passes, needed):
+        """The ``guard_exact`` mode of the bond map of SCF ``iteration``
+        (1-based; issue #276). ``longitudinal_bond_guard_exact = "always"``
+        always gives ``"always"``. Under ``"decide"`` the exact path is still
+        forced on every map that can be the LAST one -- the map of
+        ``IterationMax``, and any map that starts with ``passes`` (the
+        convergence counter's consecutive passes so far) one short of
+        ``needed``, since its residuals can complete the convergence -- so
+        that the published ``longitudinal_bond_cond_min_s/c`` of the last
+        map are always exact. Every other map gets ``"decide"``."""
+        if self.longitudinal_bond_guard_exact == "always":
+            return "always"
+        if iteration >= self.max_iter or passes >= needed - 1:
+            return "always"
+        return "decide"
+
+    @staticmethod
+    def _format_bond_cond(cond_min, bracket):
+        """The per-iteration log text of one channel's guard minimum: the
+        exact value, or -- when the interval alone passed some frequency
+        batches (issue #276) -- the bracket of the exact minimum and the
+        grid position of its smallest upper end."""
+        if bracket is None:
+            return "{:.3e}".format(cond_min)
+        low, up, index = bracket
+        where = "n/a" if index is None else "flat index {}".format(index)
+        return "in bracket [{:.3e}, {:.3e}] (interval bound, no exact SVD; smallest upper " \
+               "end at {})".format(low, up, where)
+
     def _bond_w_in_place(self):
         """Whether ``W`` shares the ``chibar`` slot of the block store (issue
         #222): every map rebuilds ``chibar`` before it reads it, and the
@@ -2522,7 +2570,8 @@ class FLEX(RPA):
             names += ["chi_s_w", "chi_c_w"]
         return tuple(names), aliases
 
-    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration):
+    def _phase_b_bond_map(self, store, dev, green_kw, green_scf, beta, iteration,
+                          guard_exact="always"):
         """One bond-resolved map (spec 1, gate on): bubble -> batched
         dressing / W / collapses -> Sigma_fluct. Returns the three rank-6
         collapses (``acbd`` layout) and Sigma_fluct.
@@ -2534,7 +2583,10 @@ class FLEX(RPA):
         (issue #196), so nothing of the Green function crosses to the host
         here. The block store stays host-resident either way: the bubble
         brings back one channel-pair block at a time and the kernels move
-        one frequency batch (and one W block pair) at a time."""
+        one frequency batch (and one W block pair) at a time.
+
+        ``guard_exact`` is handed to the dressing unchanged (issue #276;
+        :meth:`_bond_guard_exact_for_map` chooses it per map)."""
         from hwave.solver import flex_bond
         nvol, nmat, norb = self.lattice.nvol, self.nmat, self.norb
         nd = norb * norb
@@ -2572,7 +2624,7 @@ class FLEX(RPA):
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy,
                     guard_method="auto", workers=workers,
-                    bond_w2=self._bond_w2_on(xp))
+                    bond_w2=self._bond_w2_on(xp), guard_exact=guard_exact)
             phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
@@ -2612,6 +2664,11 @@ class FLEX(RPA):
         resolved ``"auto"`` against for this map, issue #197)."""
         from hwave.solver import bond_channels as _bc
         res = self._bond_last
+        if res.cond_bracket_s is not None or res.cond_bracket_c is not None:
+            # _bond_guard_exact_for_map forces the exact guard on every map
+            # that can be the last one (issue #276)
+            raise RuntimeError("internal error: the last bond map's conditioning minimum "
+                               "was not computed exactly")
         topo = self._bond_topo
         nvol, norb = self.lattice.nvol, self.norb
         nd = norb * norb
