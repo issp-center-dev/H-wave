@@ -1220,7 +1220,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 
 静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
 （\ ``chiq.npz``\ 、\ ``chi0q.npz``\ 、\ ``green.npz``\ 。FLEX の実行で
-``[file.output] chiq``\ と\ ``chi0q``\ を指定してください）を読みます。
+``[file.output]``\ の\ ``chiq``\ 、\ ``chi0q``\ 、\ ``green``\ を指定してください。
+FLEX は指定されたアーカイブだけを出力します）を読みます。
 :ref:`sc_spin_orbital`\ を参照してください。動的 Eliashberg ソルバーはこれらを
 受け付けません。
 

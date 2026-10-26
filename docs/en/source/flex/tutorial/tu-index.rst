@@ -1254,8 +1254,9 @@ writes its archives on the spin-orbital index of dimension
   runs, as in UHFk).
 
 The static ``hwave_sc`` reads these archives with ``chi0q_mode = "flex"``
-(``chiq.npz``, ``chi0q.npz`` and ``green.npz``; write ``[file.output] chiq``
-and ``chi0q`` in the FLEX run); see :ref:`sc_spin_orbital`. The dynamic
+(``chiq.npz``, ``chi0q.npz`` and ``green.npz``; write ``[file.output] chiq``,
+``chi0q`` and ``green`` in the FLEX run, which writes each archive only when
+it is requested); see :ref:`sc_spin_orbital`. The dynamic
 Eliashberg solver does not accept them.
 
 The output files of a run without ``enable_spin_orbital`` can also be used

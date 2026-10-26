@@ -1802,7 +1802,7 @@ FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （な�
   :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合（たとえば
   相互作用ファイルを変更した場合）は拒否します;
 - ``[eliashberg] flex_green``\ （既定値\ ``"green.npz"``\ ）: 繰り込まれた Green 関数。
-  これも必須です。
+  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します。
 
 ``flex_chiq``\ と\ ``flex_chi0q``\ はスピン軌道モードでのみ使われ、キーの大文字・
 小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
@@ -1822,16 +1822,21 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   orbital_site``\ のもとで異なるサイトの軌道間の\ :math:`\mathbf{R} = 0`\ の行、
   ``Coulomb``\ 集約ファイル中のオフサイトの行;
 - スピン軌道添字で書かれた相互作用ファイル（\ :math:`N`\ を超える軌道添字）;
-- reduced（2添字）の chi0q（\ ``chi0q_tensor = "reduced"``\ または reduced の
-  ファイル）、スピン軌道の\ ``index_convention``\ タグのない chi0q ファイル;
+- ``"auto"``\ ・\ ``"general"``\ 以外の\ ``chi0q_tensor``\ 、reduced（2添字）の
+  chi0q ファイル、スピン軌道の\ ``index_convention``\ タグのない chi0q ファイル;
 - ``enable_spin_orbital``\ なしの FLEX、\ ``calc_scheme = "reduced"``\ の FLEX、
-  ``chi_convention``\ ・\ ``index_convention``\ タグのない FLEX の出力;
+  ``chi_convention``\ ・\ ``index_convention``\ タグのない FLEX の出力、
+  ``chi_orbital_layout``\ が\ ``"acbd"``\ でない FLEX のアーカイブ、有限でない値を
+  含む FLEX の出力;
 - ``flex_chi_s``\ ・\ ``flex_chi_c``;
 - FLEX の chi0q アーカイブがない場合（FLEX の実行で\ ``[file.output] chi0q``\ を
   指定してください）、FLEX の Green 関数アーカイブがない場合、この入力の頂点が
   FLEX の\ :math:`\chi`\ を再現しない場合;
 - ``"arnoldi"``\ 以外の\ ``eigenvalue_method``;
+- フェルミオン反対称な成分をもたない\ ``init_gap``;
 - ``pairing_type``\ の明示的な指定;
+- ギャップアーカイブの名前（「出力」を参照）が\ ``output_eigenvalue``\ と一致する
+  ``output_gap``;
 - 奇数のスピン軌道数（Geometry の\ ``norb``\ ）;
 - ``Extern``\ ファイル（Zeeman 場は Transfer ファイルに書いてください）;
 - ``[mode.param] spinful_vertex_exchange = false``\ 。

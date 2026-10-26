@@ -7599,6 +7599,15 @@ def calc_eliashberg(input_dict):
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
 
     output_dir = input_dict["file"]["output"]["path_to_output"]
+    if spin_orbital_mode:
+        so_npz = _so_gap_npz_name(gap_file)
+        if os.path.normpath(so_npz) == os.path.normpath(eigenvalue_file):
+            raise ValueError(
+                "[mode] enable_spin_orbital = true (hwave_sc, issue #83): the "
+                "spin-orbital gap archive '{}' (derived from [eliashberg] "
+                "output_gap = {!r}) would overwrite [eliashberg] "
+                "output_eigenvalue = {!r}. Change output_gap or "
+                "output_eigenvalue.".format(so_npz, gap_file, eigenvalue_file))
 
     logger.info("=== Linearized Eliashberg Equation Solver ===")
     logger.info("T = {}, beta = {:.4f}".format(T, beta))

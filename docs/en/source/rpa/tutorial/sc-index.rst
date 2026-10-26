@@ -1894,7 +1894,8 @@ path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
   the stored :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`; a
   mismatch (for example a changed interaction file) is refused;
 - ``[eliashberg] flex_green`` (default ``"green.npz"``): the dressed Green
-  function, also required.
+  function, also required; the FLEX run writes it only when ``[file.output]
+  green`` is set.
 
 ``flex_chiq`` and ``flex_chi0q`` are used only in spin-orbital mode; the
 keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
@@ -1917,17 +1918,22 @@ before any calculation:
   aggregate file;
 - an interaction file written in spin-orbital indices (an orbital index
   larger than :math:`N`);
-- a reduced (two-index) chi0q (``chi0q_tensor = "reduced"`` or a reduced
-  file), and a chi0q file without the spin-orbital ``index_convention`` tag;
+- ``chi0q_tensor`` other than ``"auto"`` or ``"general"``, a reduced
+  (two-index) chi0q file, and a chi0q file without the spin-orbital
+  ``index_convention`` tag;
 - FLEX outputs of a run without ``enable_spin_orbital``, of a
   ``calc_scheme = "reduced"`` run, or without the ``chi_convention`` /
-  ``index_convention`` tags;
+  ``index_convention`` tags; a FLEX archive whose ``chi_orbital_layout`` is
+  not ``"acbd"``; non-finite FLEX values;
 - ``flex_chi_s`` / ``flex_chi_c``;
 - a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
   run), a missing FLEX Green function archive, and a FLEX :math:`\chi` that
   the vertex of this input does not reproduce;
 - ``eigenvalue_method`` other than ``"arnoldi"``;
+- an ``init_gap`` with no fermion-antisymmetric component;
 - an explicit ``pairing_type``;
+- an ``output_gap`` whose gap archive name (see *Outputs*) equals
+  ``output_eigenvalue``;
 - an odd spin-orbital count (Geometry ``norb``);
 - an ``Extern`` file (write a Zeeman field into the Transfer file instead);
 - ``[mode.param] spinful_vertex_exchange = false``.

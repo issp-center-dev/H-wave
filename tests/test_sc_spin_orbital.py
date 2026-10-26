@@ -905,6 +905,19 @@ class TestOutputs(_TmpDir):
             np.testing.assert_array_equal(z["gap"], seen["gap"])
             self.assertNotIn("eigenvalues", z.files)
 
+    def test_gap_archive_colliding_with_eigenvalue_file(self):
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                      "output_gap": "res.dat", "output_eigenvalue": "res.npz"})
+        with _quiet(), mock.patch.object(
+                sc, "_read_interaction_files",
+                side_effect=AssertionError("input read before the check")):
+            with self.assertRaisesRegex(ValueError,
+                                        "output_gap.*output_eigenvalue"):
+                sc.calc_eliashberg(inp)
+        self.assertFalse(os.path.exists(inp["file"]["output"]["path_to_output"]))
+
     def test_npz_name(self):
         self.assertEqual(sc._so_gap_npz_name("gap.dat"), "gap.npz")
         self.assertEqual(sc._so_gap_npz_name("gap"), "gap.npz")
