@@ -167,7 +167,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 
      **平均場の一体バンド。** ``[file.input] trans_mod``\ （UHFk が出力する
      一体ハミルトニアン）は\ ``Transfer``\ のバンドを置き換えます。
-     ``green_init``\ は\ ``Transfer``\ のバンドに Hartree-Fock 項を加え、
+     ``green_init``\ は\ ``Transfer``\ のバンドに Hartree 項を加え、
      ``Extern``\ 場（``coeff_extern``\ 倍のテーブル）はさらにその上に加わります。
      ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合（外部の
      ``bond_green``\ を指定しない\ ``bond_channels = true``\ を含む）、
@@ -182,18 +182,22 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      ``Extern``\ 場）は、:math:`\chi_0(\mathbf{q})`\ の計算や読み込みの前に
      エラーとして拒否されます。判定は組み立てた一体バンド
      （``trans_mod``\ 、または\ ``Transfer``\ のバンドに\ ``green_init``\ の
-     Hartree-Fock 項を加えたもの、さらに\ ``coeff_extern``\ 倍の\ ``Extern``\ ）
+     Hartree 項を加えたもの、さらに\ ``coeff_extern``\ 倍の\ ``Extern``\ ）
      に対して行います。上向き・下向きスピンのブロックの差とスピン混成ブロックの
      大きさは、エネルギーの単位で絶対値\ :math:`10^{-10}`\ まで許されます。
      すべての成分が有限でなければなりません。
      :math:`\max|H - H^\dagger|`\ が\ :math:`\max(10^{-10}, 10^{-6}\max|H|)`\ を
      超えるバンドは拒否されます。:math:`10^{-10}`\ を超えるがそれより小さい
      ずれ（例えば\ :math:`\pm R`\ の行を別々に丸めた場合）は、エルミート部分
-     :math:`(H + H^\dagger)/2`\ に置き換えられ、警告が出ます。``green_init``\ は
-     RPA のオンサイト Hartree-Fock の組み立てでバンドに変換され、オフサイトと
-     スピン反転の Fock 項は含まれません。オフサイトの相互作用、``CoulombInter``\ 、
-     ``Exchange``\ 、``PairLift``\ がある場合、このバンドは UHFk が出力する
-     ``trans_mod``\ と異なり得るため、``trans_mod``\ を勧める警告が出ます。
+     :math:`(H + H^\dagger)/2`\ に置き換えられ、警告が出ます。ただし
+     ``chi0q_mode = "load"``\ では、読み込む chi0q が元のバンドで計算されている
+     ため、:math:`10^{-10}`\ を超えるずれは拒否されます。``green_init``\ の
+     バンドは\ :math:`T + \mathrm{Hartree}[G]`\ （RPA の組み立てで、Fock 項を
+     含みません）です。そのため Fock 項がある場合、つまり\ ``CoulombInter``\ 、
+     ``Hund``\ 、``Ising``\ 、``Exchange``\ の行、オフサイトの\ ``PairHop``\ の行、
+     または\ ``Coulomb``\ の\ ``CoulombInter``\ 部分がある場合は、同じ解から
+     UHFk が出力する\ ``trans_mod``\ と異なります。このとき\ ``trans_mod``\ を
+     勧める警告が出ます。``trans_mod``\ の指定を推奨します。
      収束の緩い常磁性 UHF 解（例えばランダム初期状態から
      ``EPS = 6``\ ）には\ :math:`10^{-5}`\ 程度の分裂が残ることがあります。
      UHF の収束を厳しくする、スピン対称な初期状態から UHF を始める、または

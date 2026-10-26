@@ -170,7 +170,7 @@ This section controls the Eliashberg solver. Key parameters:
 
      **Mean-field one-body band.** ``[file.input] trans_mod`` (the one-body
      Hamiltonian written by UHFk) replaces the ``Transfer`` band;
-     ``green_init`` adds its Hartree-Fock term to the ``Transfer`` band; an
+     ``green_init`` adds its Hartree term to the ``Transfer`` band; an
      ``Extern`` field (``coeff_extern`` times the table) is added on top. With
      ``chi0q_mode = "calc"`` or ``"load"`` (including
      ``bond_channels = true`` without an external ``bond_green``),
@@ -184,7 +184,7 @@ This section controls the Eliashberg solver. Key parameters:
      (a magnetic ``trans_mod`` or ``green_init``, or a finite ``Extern`` field)
      is refused with an error before :math:`\chi_0(\mathbf{q})` is computed or
      loaded. The check is made on the assembled one-body band (``trans_mod``,
-     or the ``Transfer`` band plus the Hartree-Fock term of ``green_init``,
+     or the ``Transfer`` band plus the Hartree term of ``green_init``,
      plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
      may differ, and its spin-mixing blocks may be nonzero, by at most an
      absolute :math:`10^{-10}` in energy units. All entries must be finite.
@@ -192,11 +192,15 @@ This section controls the Eliashberg solver. Key parameters:
      :math:`\max(10^{-10}, 10^{-6}\max|H|)` is refused; a smaller deviation
      above :math:`10^{-10}` (for example :math:`\pm R` rows rounded
      independently) is replaced by the Hermitian part
-     :math:`(H + H^\dagger)/2`, with a warning. ``green_init`` is turned into
-     a band with RPA's on-site Hartree-Fock assembly, which leaves out the
-     off-site and spin-flip Fock terms; with an off-site interaction,
-     ``CoulombInter``, ``Exchange`` or ``PairLift`` this band can differ from
-     the ``trans_mod`` UHFk writes, and a warning recommends ``trans_mod``.
+     :math:`(H + H^\dagger)/2`, with a warning; with ``chi0q_mode = "load"``
+     any deviation above :math:`10^{-10}` is refused instead, because the
+     loaded chi0q was computed on the raw band. The ``green_init`` band is
+     :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
+     term), so it differs from the ``trans_mod`` UHFk writes for the same
+     solution whenever Fock terms are present: for any ``CoulombInter``,
+     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row,
+     or the ``CoulombInter`` part of ``Coulomb``. A warning then recommends
+     ``trans_mod``, which is the preferred input.
      A paramagnetic UHF
      solution converged only loosely (for example ``EPS = 6`` from a random
      start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF

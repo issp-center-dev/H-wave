@@ -1753,7 +1753,7 @@ def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
 
 
 # Absolute tolerance (energy units) of the spin-independence test of the
-# ASSEMBLED one-body band H0(k) -- trans_mod, or T + HF[green_init], plus
+# ASSEMBLED one-body band H0(k) -- trans_mod, or T + Hartree[green_init], plus
 # coeff_extern * Extern (issue #273). Its up-up and down-down blocks may
 # differ, and its spin-mixing blocks may be nonzero, by at most this much.
 # It only absorbs convergence round-off of a paramagnetic UHF solution; it
@@ -1821,19 +1821,19 @@ class _AssembledH0Ready(Exception):
 
 # Interaction/Hamiltonian arrays of the RPA solver that _calc_epsilon_k can
 # modify in place (the spin-orbital green_init branch of _calc_trans_mod adds
-# the HF term into a view of ham_trans_r; the trans_mod branch adds Extern
+# the Hartree term into a view of ham_trans_r; the trans_mod branch adds Extern
 # into the green_info array). The check pass restores all of them.
 _EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
                      "ham_extern_q")
 
 
 def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL,
-                  allow_average=True):
+                  allow_average=True, allow_hermitize=True):
     """Assemble the one-body H0(k) ONCE, check it, and return its spin-free
     block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
 
     The assembly is RPA's own ``_calc_epsilon_k`` (trans_mod, or T +
-    HF[green_init], plus coeff_extern * Extern), run with the solver's
+    Hartree[green_init], plus coeff_extern * Extern), run with the solver's
     ``_keep_spinful`` switch so the two spin blocks stay uncollapsed (RPA's
     own collapse is a RELATIVE ``np.allclose`` test, which a large common
     offset defeats), and stopped before the eigendecomposition. The pass is
@@ -1898,6 +1898,16 @@ def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL,
             "Transfer / Extern tables (each R entry needs its conjugate "
             "partner at -R).".format(what, herm, herm_bound, HERMITIAN_ATOL,
                                      HERMITIAN_RTOL))
+    if herm > HERMITIAN_ATOL and not allow_hermitize:
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} is not exactly "
+            "Hermitian (max |H(k) - H(k)^dagger| = {:.3e} > {:g}). With "
+            "chi0q_mode = 'load' the band is not replaced by its Hermitian "
+            "part: the loaded chi0q was computed by the RPA run on the raw "
+            "band, so mu and G would not match it. Use chi0q_mode = 'calc', "
+            "or fix the band (each R entry of trans_mod / Transfer / Extern "
+            "needs its conjugate partner at -R).".format(
+                what, herm, HERMITIAN_ATOL))
     if herm > HERMITIAN_ATOL:
         # round-off-level asymmetry (e.g. +-R rows rounded independently)
         logger.warning(
@@ -1975,45 +1985,68 @@ def _load_band_into_solver(solver, up):
             "chi0q on a different band.".format(solver.spin_mode, H0.shape))
 
 
-_GREEN_INIT_NO_FOCK_TYPES = ("coulombinter", "exchange", "pairlift")
+# Which declarations carry a Fock term that RPA's green_init assembly
+# (``RPA._calc_trans_mod``: T + Hartree[G], from the R = 0 Green function)
+# leaves out. Derived by comparing UHFk's mean-field Hamiltonian (Hartree +
+# Fock) with that assembly for a spin-diagonal G, per interaction type and
+# per row kind (on-site intra-orbital, on-site inter-orbital, off-site):
+# the two differ for EVERY row of CoulombInter / Hund / Ising / Exchange
+# (on-site intra-orbital rows included), for OFF-SITE rows of PairHop, and
+# never for CoulombIntra or PairLift. tests/test_sc_trans_mod.py
+# (TestGreenInitFockOmission) recomputes that comparison and pins this
+# table against it.
+_GREEN_INIT_FOCK_ANY_ROW = ("coulombinter", "hund", "ising", "exchange")
+_GREEN_INIT_FOCK_OFFSITE_ROW = ("pairhop",)
 _NON_INTERACTION_KEYS = ("geometry", "transfer", "extern", "path_to_input")
 
 
-def _warn_green_init_fock_omission(ham_param):
-    """WARNING: the RPA reader turns green_init into T + HF[G] with its
-    on-site assembly (``RPA._calc_trans_mod``: the R = 0 Green function
-    only), which omits the off-site Fock terms and the Fock parts of
-    CoulombInter / Exchange / PairLift. With such interactions the band can
-    differ from the trans_mod UHFk writes for the same solution."""
+def _green_init_fock_omissions(ham_param):
+    """Declarations whose Fock term the green_init band leaves out (see the
+    table above); ``Coulomb`` is split as the readers split it
+    (``wan90.split_coulomb``) and counts through its CoulombInter part."""
     reasons = []
     for key, table in (ham_param or {}).items():
         k = str(key).lower()
         if k in _NON_INTERACTION_KEYS or not isinstance(table, dict):
             continue
-        rows = [(r, v) for (r, _o), v in table.items() if v != 0]
+        if k == "coulomb":
+            _intra, inter = wan90.split_coulomb(table)
+            if any(v != 0 for v in inter.values()):
+                reasons.append("{} (its CoulombInter part)".format(key))
+            continue
+        rows = [r for (r, _o), v in table.items() if v != 0]
         if not rows:
             continue
-        if k in _GREEN_INIT_NO_FOCK_TYPES:
+        if k in _GREEN_INIT_FOCK_ANY_ROW:
             reasons.append(str(key))
-        elif any(tuple(int(x) for x in r) != (0, 0, 0) for r, _v in rows):
+        elif k in _GREEN_INIT_FOCK_OFFSITE_ROW and any(
+                tuple(int(x) for x in r) != (0, 0, 0) for r in rows):
             reasons.append("off-site {}".format(key))
+    return sorted(set(reasons))
+
+
+def _warn_green_init_fock_omission(ham_param):
+    """WARNING when the green_init band (T + Hartree[G], RPA's assembly,
+    no Fock term) differs from the T + Hartree + Fock band UHFk writes as
+    trans_mod for the same solution."""
+    reasons = _green_init_fock_omissions(ham_param)
     if reasons:
         logger.warning(
-            "hwave_sc: green_init is combined with %s. The band is built "
-            "with RPA's on-site Hartree-Fock assembly of green_init, which "
-            "does not include the off-site and spin-flip Fock terms of these "
-            "interactions, so it can differ from the trans_mod UHFk writes "
-            "for the same solution. Prefer [file.input] trans_mod.",
-            ", ".join(sorted(set(reasons))))
+            "hwave_sc: green_init is combined with %s. The green_init band "
+            "is T + Hartree[G] (RPA's assembly, without the Fock term), so "
+            "with these interactions it differs from the trans_mod UHFk "
+            "writes for the same solution. Prefer [file.input] trans_mod.",
+            ", ".join(reasons))
 
 
 def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
-                     spin_free_tol=SPIN_FREE_ATOL, allow_average=True):
+                     spin_free_tol=SPIN_FREE_ATOL, allow_average=True,
+                     allow_hermitize=True):
     """Assemble the one-body band through the RPA machinery (issue #273).
 
     The band is built exactly as the internal chi0q builds it --
     ``QLMSkInput`` + ``RPA.read_init`` + ``RPA._calc_epsilon_k`` -- so that
-    trans_mod (T + Sigma_HF written by UHFk), T + HF[green_init] and the
+    trans_mod (T + Sigma_HF written by UHFk), T + Hartree[green_init] and the
     Extern field define the SAME H0(k) for chi0q, the chemical potential
     and the kernel Green function.
 
@@ -2076,7 +2109,8 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
     # before any diagonalization and before any chi0q / pair-bubble /
     # kernel work; the checked band is the band that is used.
     up = _checked_band(solver, green_info, sources, spin_free_tol,
-                       allow_average=allow_average)
+                       allow_average=allow_average,
+                       allow_hermitize=allow_hermitize)
 
     Nx, Ny, Nz = spatial_shape
     if up.shape != (Nx * Ny * Nz, norb, norb):
@@ -7692,14 +7726,15 @@ def calc_eliashberg(input_dict):
                 # band only; 'general' keeps the RPA reader from issuing its
                 # reduced-scheme advisory for a chi0q that is never built
                 band_scheme = "general"
-            # spin averaging needs hwave_sc to build chi0q itself (calc,
-            # or the bond path's own bubble); a loaded chi0q was built by
-            # an external RPA run on its own band
+            # spin averaging and hermitization need hwave_sc to build chi0q
+            # itself (calc, or the bond path's own bubble); a loaded chi0q
+            # was built by an external RPA run on the raw band
+            own_chi0q = (chi0q_mode == "calc") or use_bond_channels
             band = _mean_field_band(input_dict, band_sources, band_scheme,
                                     (Nx, Ny, Nz), norb,
                                     spin_free_tol=spin_free_tol,
-                                    allow_average=(chi0q_mode == "calc"
-                                                   or use_bond_channels))
+                                    allow_average=own_chi0q,
+                                    allow_hermitize=own_chi0q)
             if chi0q_mode != "calc" or use_bond_channels:
                 band = band._replace(solver=None)
 
