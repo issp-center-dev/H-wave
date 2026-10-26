@@ -1919,8 +1919,11 @@ before any calculation:
 - an interaction file written in spin-orbital indices (an orbital index
   larger than :math:`N`);
 - ``chi0q_tensor`` other than ``"auto"`` or ``"general"``, a reduced
-  (two-index) chi0q file, and a chi0q file without the spin-orbital
-  ``index_convention`` tag;
+  (two-index) chi0q file, a chi0q file without the ``index_convention``
+  tag, and a chi0q file whose ``spin_orbital`` marker is missing or
+  ``False`` (a non-spin-orbital RPA chi0q over :math:`2N` orbitals has the
+  same shape as a spin-orbital one over :math:`N`; regenerate the file with
+  a spin-orbital RPA run, ``[mode] enable_spin_orbital = true``);
 - FLEX outputs of a run without ``enable_spin_orbital``, of a
   ``calc_scheme = "reduced"`` run, or without the ``chi_convention`` /
   ``index_convention`` tags; a FLEX archive whose ``chi_orbital_layout`` is
@@ -1957,6 +1960,15 @@ Practical advice
   which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
 - A Zeeman term written into the Transfer file as a spin-dependent one-body
   term runs, but this case has not been validated.
+- Memory. The full-frequency spinful chi0q (computed in ``chi0q_mode =
+  "calc"``, read whole in ``"load"`` and ``"flex"``) holds
+  :math:`N_\mathrm{mat} N_k (2N)^4` complex numbers, i.e.
+  :math:`16\,N_\mathrm{mat} N_k (2N)^4` bytes, with :math:`N_k` the number
+  of k points. For :math:`N = 4`, a :math:`32 \times 32` grid and
+  ``Nmat = 1024`` this is about 69 GB, against about 4.3 GB for a
+  non-spin-orbital general chi0q (:math:`N^4` orbital indices) of the same
+  physical :math:`N`.
+- ``gpu = true`` in spin-orbital mode has not been validated.
 
 Validation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

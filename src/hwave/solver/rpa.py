@@ -2943,6 +2943,18 @@ class RPA:
                 "scheme_resolution": str(res),
             }
 
+        def _spin_orbital_stamp():
+            # #83: an explicit marker of the PRODUCING run's spin-orbital
+            # mode. The index_convention tag above is written by every run,
+            # so on its own it cannot tell a spin-orbital chi0q from a
+            # non-spin-orbital one of coincident shape (2N orbitals vs N
+            # spin-orbital orbitals); hwave_sc requires this marker in
+            # spin-orbital load mode. getattr: tests drive save_results on
+            # __new__-built stubs without ham_info.
+            ham_info = getattr(self, "ham_info", None)
+            return {"spin_orbital": bool(
+                getattr(ham_info, "enable_spin_orbital", False))}
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
@@ -2957,6 +2969,7 @@ class RPA:
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
+                    **_spin_orbital_stamp(),
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -3015,6 +3028,7 @@ class RPA:
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
+                **_spin_orbital_stamp(),
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))

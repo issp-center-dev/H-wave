@@ -1823,7 +1823,11 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``Coulomb``\ 集約ファイル中のオフサイトの行;
 - スピン軌道添字で書かれた相互作用ファイル（\ :math:`N`\ を超える軌道添字）;
 - ``"auto"``\ ・\ ``"general"``\ 以外の\ ``chi0q_tensor``\ 、reduced（2添字）の
-  chi0q ファイル、スピン軌道の\ ``index_convention``\ タグのない chi0q ファイル;
+  chi0q ファイル、\ ``index_convention``\ タグのない chi0q ファイル、
+  ``spin_orbital``\ マーカーがないか\ ``False``\ である chi0q ファイル（\ :math:`2N`
+  軌道の非スピン軌道 RPA の chi0q は\ :math:`N`\ 軌道のスピン軌道の chi0q と同じ
+  形をもちます。スピン軌道の RPA（\ ``[mode] enable_spin_orbital = true``\ ）で
+  ファイルを作り直してください）;
 - ``enable_spin_orbital``\ なしの FLEX、\ ``calc_scheme = "reduced"``\ の FLEX、
   ``chi_convention``\ ・\ ``index_convention``\ タグのない FLEX の出力、
   ``chi_orbital_layout``\ が\ ``"acbd"``\ でない FLEX のアーカイブ、有限でない値を
@@ -1859,6 +1863,14 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``"random"``\ は全スピンブロックを含みます）を使ってください。
 - Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
   この場合は検証していません。
+- メモリ。全振動数のスピンを含む chi0q（\ ``chi0q_mode = "calc"``\ で計算し、
+  ``"load"``\ と\ ``"flex"``\ では全体を読み込みます）は
+  :math:`N_\mathrm{mat} N_k (2N)^4`\ 個の複素数、すなわち
+  :math:`16\,N_\mathrm{mat} N_k (2N)^4`\ バイトです（\ :math:`N_k`\ は k 点の数）。
+  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 69 GB
+  で、同じ物理軌道数\ :math:`N`\ の非スピン軌道 general の chi0q（軌道添字
+  :math:`N^4`\ ）の約 4.3 GB と比べて大きくなります。
+- スピン軌道モードでの\ ``gpu = true``\ は検証していません。
 
 検証
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

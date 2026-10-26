@@ -1246,6 +1246,35 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
+def _require_so_chi0q_marker(data, file_name):
+    """Refuse a chi0q that does not record ``spin_orbital = True``.
+
+    Every RPA run writes ``index_convention = "spin_block"``, so that tag does
+    not identify a spin-orbital file, and the shape cannot either: a
+    non-spin-orbital chi0q over 2N orbitals has the shape of a spin-orbital
+    one over N physical orbitals. The RPA therefore writes an explicit
+    ``spin_orbital`` marker (the producing run's ``enable_spin_orbital``);
+    spin-orbital load mode accepts only a 0-d boolean ``True``. Checked on
+    the open npz before the chi0q array itself is read."""
+    hint = ("Regenerate the file with a spin-orbital RPA run "
+            "([mode] enable_spin_orbital = true, calc_scheme = \"general\").")
+    if "spin_orbital" not in data:
+        raise ValueError(
+            "chi0q file '{}' has no spin_orbital marker, so it cannot be told "
+            "from a non-spin-orbital chi0q of the same shape. {}".format(
+                file_name, hint))
+    val = np.asarray(data["spin_orbital"])
+    if val.ndim != 0 or val.dtype != np.bool_:
+        raise ValueError(
+            "chi0q file '{}': malformed spin_orbital marker ({!r}); expected a "
+            "boolean. {}".format(file_name, data["spin_orbital"], hint))
+    if not bool(val[()]):
+        raise ValueError(
+            "chi0q file '{}' records spin_orbital = False: it was written by a "
+            "non-spin-orbital RPA run and cannot be used with [mode] "
+            "enable_spin_orbital = true. {}".format(file_name, hint))
+
+
 def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
@@ -1277,6 +1306,8 @@ def _load_chi0q(input_dict, norb=None):
         "\"ir\".")
     enable_spin_orbital = _resolve_spin_orbital_flag(input_dict)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
+    if enable_spin_orbital:
+        _require_so_chi0q_marker(data, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
 

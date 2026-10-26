@@ -8,17 +8,19 @@ antisymmetric gaps ``Delta_AB(k) = -Delta_BA(-k)``, applied after every
 kernel application.
 
 * ``TestStaticEntry``: the SU(2) limit reproduces the non-spin-orbital
-  singlet and (threefold) triplet eigenvalues (G1, end to end); a model with
+  singlet and (threefold) triplet eigenvalues end to end; a model with
   complex Rashba-like spin-orbit hopping runs and returns an antisymmetric
   gap; ``chi0q_mode = "load"`` of a spin-orbital RPA chi0q equals
-  ``chi0q_mode = "calc"`` (G4, part).
+  ``chi0q_mode = "calc"`` (input agreement).
 * ``TestFlexMode``: ``chi0q_mode = "flex"`` uses the stored chi (zero bosonic
-  frequency) and dressed green of a spin-orbital FLEX run (G4, part); the
-  archive is identified by its tags (nd = 2 has the shape of a two-orbital
+  frequency) and dressed green of a spin-orbital FLEX run (input
+  agreement); the archive is identified by its tags (nd = 2 has the shape of a two-orbital
   non-spin-orbital file); non-spin-orbital, reduced and untagged outputs and
   a vertex the FLEX run did not use are refused.
 * ``TestRefusals``: every unsupported combination is refused through the
-  public entry, with the key named (G5).
+  public entry, with the key named.
+* ``TestTransferUnderSOC``: with spin-orbit hopping, the epsilon(k) of
+  hwave_sc equals the H0(k) of the spin-orbital RPA.
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
 * ``TestSpinDecomposition``: ``so_pairing.so_spin_components`` /
   ``so_spin_decomposition`` on hand-built gaps (pure psi, d_x, d_y, d_z and a
@@ -234,7 +236,7 @@ class TestStaticEntry(_TmpDir):
         return res
 
     def test_su2_model_reproduces_singlet_and_triplet(self):
-        """G1: with spin-independent hopping and a rotation-invariant
+        """SU(2) limit: with spin-independent hopping and a rotation-invariant
         interaction, every singlet eigenvalue (even sector of the non-SO
         singlet kernel) appears once in the spin-orbital spectrum and every
         triplet eigenvalue (odd sector of the non-SO triplet kernel) three
@@ -327,7 +329,7 @@ class TestStaticEntry(_TmpDir):
                                    atol=1e-12 * np.abs(gap).max())
 
     def test_calc_and_load_agree(self):
-        """G4 (part): the general chi0q of a spin-orbital RPA run, loaded,
+        """Input agreement: the general chi0q of a spin-orbital RPA run, loaded,
         gives the eigenvalues of chi0q_mode = "calc"."""
         from hwave import qlms
         files = _write_model(self.d, so=True, soc=0.3)
@@ -347,7 +349,7 @@ class TestStaticEntry(_TmpDir):
 
 
 class TestRefusals(_TmpDir):
-    """G5: each unsupported combination is refused through the public entry
+    """Refusals: each unsupported combination is refused through the public entry
     with the key named."""
 
     def _refused(self, pattern, eli=None, so_files=None, **kw):
@@ -395,7 +397,8 @@ class TestRefusals(_TmpDir):
         nvol = int(np.prod(CELL))
         np.savez(os.path.join(out, "chi0q.npz"),
                  chi0q=np.zeros((64, nvol, ND, ND), complex),
-                 index_convention="spin_block", momentum_convention="e_plus_ikR")
+                 index_convention="spin_block", momentum_convention="e_plus_ikR",
+                 spin_orbital=True)
         files = _write_model(self.d, so=True)
         inp = _input(self.d, files, True, {"chi0q_mode": "load",
                                            "solver_mode": "eigenvalue"})
@@ -408,6 +411,52 @@ class TestRefusals(_TmpDir):
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
 
     def test_non_so_chi0q_file(self):
+        """A REAL non-spin-orbital RPA chi0q over ND orbitals, carrying every
+        tag the RPA writes (index_convention = "spin_block" included), has
+        exactly the shape of a spin-orbital chi0q over NP physical orbitals;
+        only its spin_orbital = False marker tells them apart."""
+        from hwave import qlms
+        src = os.path.join(self.d, "nonso")
+        os.makedirs(src)
+        # the spin-orbital model files read as a plain ND-orbital model
+        files = _write_model(src, so=True)
+        rpa_in = _input(src, files, False, {}, out=os.path.join(self.d, "out"))
+        rpa_in["mode"]["calc_scheme"] = "general"
+        rpa_in["file"]["input"]["path_to_input"] = src
+        del rpa_in["eliashberg"]
+        rpa_in["log"] = {"print_level": 0}
+        with _quiet():
+            qlms.run(input_dict=rpa_in)
+        path = os.path.join(self.d, "out", "chi0q.npz")
+        nvol = int(np.prod(CELL))
+        with np.load(path) as z:
+            self.assertEqual(z["chi0q"].shape, (64, nvol) + (ND,) * 4)
+            self.assertEqual(str(z["index_convention"]), "spin_block")
+            self.assertEqual(str(z["momentum_convention"]), "e_plus_ikR")
+            self.assertFalse(bool(z["spin_orbital"]))
+        before = os.listdir(os.path.join(self.d, "out"))
+        files = _write_model(self.d, so=True)
+        inp = _input(self.d, files, True, {"chi0q_mode": "load",
+                                           "solver_mode": "eigenvalue"})
+        # refused at load, before the Green function is built
+        with self.assertRaisesRegex(
+                ValueError, r"(?s)chi0q\.npz' records spin_orbital = False.*"
+                            r"enable_spin_orbital = true"):
+            with _quiet(), mock.patch.object(
+                    sc, "_build_bond_green",
+                    side_effect=AssertionError("Green built before the check")):
+                sc.calc_eliashberg(inp)
+        self.assertEqual(sorted(os.listdir(os.path.join(self.d, "out"))),
+                         sorted(before))
+        # the same file with the marker removed: refused as unmarked
+        with np.load(path) as z:
+            items = {k: z[k] for k in z.files if k != "spin_orbital"}
+        np.savez(path, **items)
+        with self.assertRaisesRegex(ValueError, r"has no spin_orbital marker"):
+            with _quiet():
+                sc.calc_eliashberg(inp)
+
+    def test_untagged_chi0q_file(self):
         out = os.path.join(self.d, "out")
         os.makedirs(out)
         nvol = int(np.prod(CELL))
@@ -487,6 +536,78 @@ class TestStaticVertexLayouts(_TmpDir):
             v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
             v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
         self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
+
+
+class _Stop(Exception):
+    """Ends a run once the array under test has been captured."""
+
+
+class TestTransferUnderSOC(_TmpDir):
+
+    def test_epsilon_k_equals_spin_orbital_rpa(self):
+        """With spin-orbit hopping (soc != 0), the epsilon(k) hwave_sc
+        diagonalizes for its Green function (the interleaved Transfer file
+        reordered to spin-block) equals the H0(k) the spin-orbital RPA
+        assembles, to 1e-12. The complex-conjugate, the k -> -k and the
+        un-reordered (interleaved) readings all miss by O(soc), so the
+        comparison is not vacuous."""
+        from hwave import qlms
+        from hwave.solver import rpa as rpa_mod
+        from hwave.solver import spin_orbital
+        files = _write_model(self.d, so=True, soc=0.35)
+        Nx, Ny, Nz = CELL
+        nvol = Nx * Ny * Nz
+        seen = {}
+
+        def spy_eig(eps, *a, **kw):
+            seen["sc"] = np.array(eps, copy=True)
+            raise _Stop()
+
+        inp = _input(self.d, files, True, {"chi0q_mode": "calc",
+                                           "solver_mode": "eigenvalue"})
+        with _quiet(), mock.patch.object(sc, "_calc_eigenvalues",
+                                         side_effect=spy_eig):
+            with self.assertRaises(_Stop):
+                sc.calc_eliashberg(inp)
+
+        real_eps = rpa_mod.RPA._calc_epsilon_k
+
+        def spy_rpa(self_, green_info):
+            real_eps(self_, green_info)
+            seen["rpa"] = np.array(self_.H0_k, copy=True)
+            seen["spin_mode"] = self_.spin_mode
+            raise _Stop()
+
+        rpa_in = _input(self.d, files, True, {}, out="out_rpa")
+        rpa_in["mode"]["calc_scheme"] = "general"
+        rpa_in["file"]["input"]["path_to_input"] = self.d
+        del rpa_in["eliashberg"]
+        rpa_in["log"] = {"print_level": 0}
+        with _quiet(), mock.patch.object(rpa_mod.RPA, "_calc_epsilon_k",
+                                         autospec=True, side_effect=spy_rpa):
+            with self.assertRaises(_Stop):
+                qlms.run(input_dict=rpa_in)
+
+        self.assertEqual(seen["spin_mode"], "spinful")
+        H = seen["rpa"].reshape(nvol, ND, ND)
+        eps = seen["sc"]
+        self.assertEqual(eps.shape, (ND, ND, Nx, Ny, Nz))
+        E = np.moveaxis(eps.reshape(ND, ND, nvol), -1, 0)
+        self.assertGreater(np.abs(H).max(), 1.0)
+        # spin-flip blocks are present, so the reorder is exercised
+        self.assertGreater(np.abs(H[:, :NP, NP:]).max(), 0.1)
+        np.testing.assert_allclose(E, H, rtol=0, atol=1e-12)
+        # the readings a sign or ordering slip would produce all miss
+        ix, iy, iz = np.meshgrid(np.arange(Nx), np.arange(Ny), np.arange(Nz),
+                                 indexing="ij")
+        minus_k = (((-ix) % Nx) * Ny * Nz + ((-iy) % Ny) * Nz
+                   + (-iz) % Nz).ravel()
+        interleaved = spin_orbital.spinblock_to_interleaved(H, NP)
+        for name, other in (("conjugate", H.conj()),
+                            ("k -> -k", H[minus_k]),
+                            ("interleaved", interleaved)):
+            with self.subTest(reading=name):
+                self.assertGreater(np.abs(E - other).max(), 0.1)
 
 
 def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
@@ -597,7 +718,7 @@ class TestFlexMode(unittest.TestCase):
         return np.linalg.eigvals(PK.matmat(np.eye(n, dtype=complex)))
 
     def test_uses_stored_chi_and_green(self):
-        """G4: the eigenvalues equal those of ``P K`` built from the stored
+        """Input agreement: the eigenvalues equal those of ``P K`` built from the stored
         chi at the zero bosonic frequency and the stored green."""
         inp = _flex_input(self.d, self.files, self.flex, out=self._out("out_g4"))
         seen = _run(inp)

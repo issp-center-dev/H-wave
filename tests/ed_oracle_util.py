@@ -1097,10 +1097,10 @@ class TotalNED:
     with ``(N_up, N_dn)`` tuples replaced by a bare ``int`` total N.
 
     Implemented: ``bond_correlator_transverse`` and the
-    ``_build_operator``/``_lehmann_dagger`` machinery it needs (Phase S,
-    Task 1), plus ``green`` and ``pair_correlator`` with arbitrary spin
-    labels (#83, the spin-orbital Eliashberg ED gate; each pinned to
-    ``SectorED`` on an S_z-conserving model in
+    ``_build_operator``/``_lehmann_dagger`` machinery it needs, plus
+    ``green`` and ``pair_correlator`` with arbitrary spin labels (#83, the
+    exact-diagonalization check of the spin-orbital Eliashberg vertex; each
+    pinned to ``SectorED`` on an S_z-conserving model in
     ``tests/test_so_pairing_ed.py``). ``chi_connected``/``bond_correlator``
     analogues are not implemented.
 
