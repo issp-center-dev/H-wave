@@ -7075,16 +7075,12 @@ def _so_static_vertex_from_chi(gam, chi_static, nd, spatial_shape):
     return so_pairing_vertex(gam, chi_static, nd, spatial_shape)
 
 
-def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
-                      static_index):
-    """The static spin-orbital pairing vertex of the RPA paths
-    (``chi0q_mode = "calc"`` / ``"load"``): ``Gamma`` from the spin-orbital RPA
-    objects (:func:`_so_rpa_vertex`), ``chi = [1 + chi0 Gamma]^-1 chi0`` at the
-    zero bosonic frequency ``static_index`` (``nmat // 2`` when ``None``) of
-    the general spinful ``chi0q_raw`` -- raw ``(nmat, nvol, nd, nd, nd, nd)``
-    or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- then
-    :func:`_so_static_vertex_from_chi`."""
-    nd = 2 * int(norb_phys)
+def _so_static_chi0(chi0q_raw, nd, Nx, Ny, Nz, static_index):
+    """The static spinful bubble ``(nvol, nd^2, nd^2)`` (bubble ``[a, c, b,
+    d]`` layout) of a general spinful chi0q -- raw ``(nmat, nvol, nd, nd, nd,
+    nd)`` or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- at the zero
+    bosonic frequency ``static_index`` (``nmat // 2`` when ``None``). Any other
+    layout (reduced 2-index, spin-free / spin-diagonal) is refused."""
     nvol = Nx * Ny * Nz
     chi0q_raw = np.asarray(chi0q_raw)
     if chi0q_raw.ndim == 6 and chi0q_raw.shape[1:] == (nvol,) + (nd,) * 4:
@@ -7104,6 +7100,20 @@ def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
             "particle-hole pairs; use chi0q_mode = \"calc\", or load the "
             "chi0q of a spin-orbital RPA run with calc_scheme = \"general\" and a "
             "spin-mixing transfer.".format(chi0q_raw.shape, nd, nvol, nd=nd))
+    return chi0
+
+
+def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
+                      static_index):
+    """The static spin-orbital pairing vertex of the RPA paths
+    (``chi0q_mode = "calc"`` / ``"load"``): ``Gamma`` from the spin-orbital RPA
+    objects (:func:`_so_rpa_vertex`), ``chi = [1 + chi0 Gamma]^-1 chi0`` at the
+    zero bosonic frequency ``static_index`` (``nmat // 2`` when ``None``) of
+    the general spinful ``chi0q_raw`` -- raw ``(nmat, nvol, nd, nd, nd, nd)``
+    or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- then
+    :func:`_so_static_vertex_from_chi`."""
+    nd = 2 * int(norb_phys)
+    chi0 = _so_static_chi0(chi0q_raw, nd, Nx, Ny, Nz, static_index)
     chi0 = np.ascontiguousarray(chi0, dtype=complex)
     gam = _so_rpa_vertex(input_dict)
     eye = np.eye(nd * nd, dtype=complex)
@@ -7381,9 +7391,6 @@ def calc_eliashberg(input_dict):
 
     if spin_orbital_mode:
         # --- Spin-orbital mode (issue #83): one spinful channel ---
-        logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
-        green_kw = _build_bond_green(
-            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
         if chi0q_mode == "calc":
             chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
                                              precomputed_mu=mu)
@@ -7399,6 +7406,12 @@ def calc_eliashberg(input_dict):
                     "RPA reduces to spin-free or spin-diagonal form writes a "
                     "physical-orbital chi0q instead -- use chi0q_mode = \"calc\" "
                     "for it.)".format(err, norb)) from err
+            # refuse a reduced / non-spinful layout before any further work
+            # (_so_static_vertex re-checks it)
+            _so_static_chi0(chi0q_raw, norb, Nx, Ny, Nz, static_index)
+        logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
+        green_kw = _build_bond_green(
+            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
         logger.info("Computing the spin-orbital pairing vertex...")
         Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
                                  Nx, Ny, Nz, static_index)

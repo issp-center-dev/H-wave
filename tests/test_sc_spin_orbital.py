@@ -147,6 +147,12 @@ def _run(inp):
     full precision: ``(gap, eigenvalue, eigenvalues, match, provenance)``."""
     seen = {}
     real = sc._save_results
+    real_reorder = sc._reorder_eigenpairs_by_parity
+
+    def spy_reorder(*a, **kw):
+        out = real_reorder(*a, **kw)
+        seen["vecs"] = out[1]
+        return out
 
     def spy(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw):
         seen.update(gap=sigma, ev=eigenvalue, evs=eigenvalues_eig,
@@ -154,7 +160,9 @@ def _run(inp):
                     provenance=kw.get("provenance"))
         return real(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw)
 
-    with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy):
+    with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy), \
+            mock.patch.object(sc, "_reorder_eigenpairs_by_parity",
+                              side_effect=spy_reorder):
         sc.calc_eliashberg(inp)
     return seen
 
@@ -189,30 +197,84 @@ class TestStaticEntry(_TmpDir):
         self.assertTrue(match[0])
         return evs[0]
 
+    @staticmethod
+    def _clusters(vals, vecs, rtol=1e-8):
+        """Group eigenvalues equal to ``rtol`` and give each cluster's even
+        and odd dimension (k -> -k with the orbital transpose): for a
+        degenerate cluster the solver may return parity-mixed eigenvectors,
+        so the dimensions are the ranks of the projected span."""
+        order = np.argsort(vals.real)
+        out = []
+        for i in order:
+            if out and abs(vals[i] - out[-1][0]) <= rtol * abs(out[-1][0]):
+                out[-1][1].append(i)
+            else:
+                out.append([vals[i], [i]])
+        res = []
+        for v, idx in out:
+            V = np.stack([vecs[i].ravel() for i in idx], axis=1)
+            dims = []
+            for ch in ("singlet", "triplet"):
+                P = np.stack([sc._project_gap_parity(vecs[i], ch).ravel()
+                              for i in idx], axis=1)
+                sv = np.linalg.svd(P, compute_uv=False)
+                dims.append(int(np.sum(sv > 1e-6 * np.linalg.norm(V, 2))))
+            res.append((v, len(idx), dims[0], dims[1]))
+        return res
+
     def test_su2_model_reproduces_singlet_and_triplet(self):
         """G1: with spin-independent hopping and a rotation-invariant
-        interaction, the spin-orbital spectrum contains the leading singlet
-        eigenvalue once and the leading triplet eigenvalue three times."""
+        interaction, every singlet eigenvalue (even sector of the non-SO
+        singlet kernel) appears once in the spin-orbital spectrum and every
+        triplet eigenvalue (odd sector of the non-SO triplet kernel) three
+        times; the Pauli-forbidden modes (odd singlet, even triplet) are
+        absent. Both non-SO sets cover 62 of the 64 eigenvalues, the SO set
+        254 of 256 (every nonzero eigenvalue: the symmetric sector sits at
+        zero)."""
         eli = {"chi0q_mode": "calc", "solver_mode": "eigenvalue"}
-        lam = {}
+        res = {}
         for ch in ("singlet", "triplet"):
             files = _write_model(self.d, so=False)
-            seen = _run(_input(self.d, files, False,
-                               dict(eli, pairing_type=ch, num_eigenvalues=16),
-                               out="out_" + ch))
-            lam[ch] = self._leading_physical(seen)
+            res[ch] = _run(_input(self.d, files, False,
+                                  dict(eli, pairing_type=ch, num_eigenvalues=62),
+                                  out="out_" + ch))
         files = _write_model(self.d, so=True)
-        seen = _run(_input(self.d, files, True, dict(eli, num_eigenvalues=96),
-                           out="out_so"))
-        self.assertTrue(np.all(seen["match"]))
-        evs = seen["evs"]
-        for ch, count in (("singlet", 1), ("triplet", 3)):
-            rel = np.abs(evs - lam[ch]) / abs(lam[ch])
-            hits = np.sort(rel)[:count]
-            with self.subTest(channel=ch, lam=lam[ch], rel=hits):
-                self.assertTrue(np.all(hits < 1e-8))
-        self.assertGreater(abs(lam["singlet"] - lam["triplet"]),
-                           1e-3 * abs(lam["singlet"]))
+        so = _run(_input(self.d, files, True, dict(eli, num_eigenvalues=254),
+                         out="out_so"))
+        evs = so["evs"]
+        scale = np.abs(evs).max()
+        nonzero = np.abs(evs) > 1e-10 * scale
+        self.assertTrue(np.all(so["match"][nonzero]))
+        # expected multiplicity of each value: even singlet x 1 + odd triplet x 3
+        expected, forbidden = {}, []
+        floor = {ch: np.abs(res[ch]["evs"]).min() for ch in res}
+        for ch, allowed_even in (("singlet", True), ("triplet", False)):
+            for v, n, d_even, d_odd in self._clusters(res[ch]["evs"],
+                                                      res[ch]["vecs"]):
+                self.assertEqual(d_even + d_odd, n)
+                if abs(v) <= (1 + 1e-6) * floor[ch]:
+                    continue        # a cluster cut by the truncation
+                d_ok, d_bad = (d_even, d_odd) if allowed_even else (d_odd, d_even)
+                key = next((k for k in expected
+                            if abs(k - v) <= 1e-8 * abs(v)), v)
+                expected[key] = expected.get(key, 0) + d_ok * (
+                    1 if ch == "singlet" else 3)
+                if d_bad:
+                    forbidden.append((ch, v))
+        self.assertGreater(len(expected), 20)
+        for v, count in expected.items():
+            got = int(np.sum(np.abs(evs - v) <= 1e-8 * abs(v)))
+            with self.subTest(value=v):
+                self.assertEqual(got, count)
+        # the large Pauli-forbidden triplet modes (even k-parity) are absent
+        big = sorted((v for ch, v in forbidden
+                      if ch == "triplet" and v.real > 0.5), key=lambda x: -x.real)
+        self.assertGreaterEqual(len(big), 2)
+        for v in big:
+            with self.subTest(forbidden=v):
+                if any(abs(k - v) <= 1e-8 * abs(v) for k in expected):
+                    continue
+                self.assertFalse(np.any(np.abs(evs - v) <= 1e-6 * abs(v)))
 
     def test_complex_soc_model_runs(self):
         files = _write_model(self.d, so=True, soc=0.3)
@@ -326,8 +388,11 @@ class TestRefusals(_TmpDir):
         files = _write_model(self.d, so=True)
         inp = _input(self.d, files, True, {"chi0q_mode": "load",
                                            "solver_mode": "eigenvalue"})
+        # refused right after loading, before the Green function is built
         with self.assertRaisesRegex(ValueError, r"general \(4-index\)"):
-            with _quiet():
+            with _quiet(), mock.patch.object(
+                    sc, "_build_bond_green",
+                    side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
 
@@ -367,10 +432,45 @@ class TestRefusals(_TmpDir):
                              extra_rows={"CoulombIntra": [(0, 3, 3, 1.0)]})
         self._refused(r"PHYSICAL orbital indices", so_files=files)
 
+    def test_extern_file(self):
+        files = _write_model(self.d, so=True)
+        _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP,
+               [(0, 0, 0, a + 1, a + 1, 0.1, 0.0) for a in range(NP)])
+        for key in ("Extern", "EXTERN"):
+            with self.subTest(key=key):
+                self._refused(r"Extern", so_files=dict(files, **{key: "extern.dat"}))
+
     def test_dynamic_entry_still_refuses(self):
         from hwave.solver import eliashberg_dynamic
         with self.assertRaisesRegex(ValueError, "enable_spin_orbital"):
             eliashberg_dynamic.solve_dynamic({"mode": {"enable_spin_orbital": True}})
+
+
+class TestStaticVertexLayouts(_TmpDir):
+
+    def test_raw_and_reference_chi0q_layouts_agree(self):
+        """``_so_static_vertex`` reads the same static bubble from the raw
+        ``(nmat, nvol, nd^4)`` and the reference ``(nd^4, Nx, Ny, Nz, nmat)``
+        layouts."""
+        files = _write_model(self.d, so=True, soc=0.3)
+        inp = _input(self.d, files, True, {})
+        Nx, Ny, Nz = CELL
+        nvol, nmat = Nx * Ny * Nz, 6
+        rng = np.random.default_rng(7)
+        raw = 0.05 * (rng.standard_normal((nmat, nvol) + (ND,) * 4)
+                      + 1j * rng.standard_normal((nmat, nvol) + (ND,) * 4))
+        ref = raw.reshape((nmat, Nx, Ny, Nz) + (ND,) * 4).transpose(
+            4, 5, 6, 7, 1, 2, 3, 0)
+        for si in (None, 1):
+            with self.subTest(static_index=si), _quiet():
+                v_raw = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, si)
+                v_ref = sc._so_static_vertex(inp, ref, NP, Nx, Ny, Nz, si)
+                self.assertGreater(np.abs(v_raw).max(), 0.0)
+                np.testing.assert_array_equal(v_raw, v_ref)
+        with _quiet():
+            v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
+            v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
+        self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
 
 
 class TestInitialGap(unittest.TestCase):
