@@ -6072,53 +6072,6 @@ def _shifted_eigenvalue_note(solver_mode, spectral_shift, converged, n_iter,
                 info.get("rayleigh_residual_tol"), tail))
 
 
-# Safety factor on the spectral-radius estimate used by _sector_deflated_shift
-# to push the Pauli-forbidden sector of a sector-confined operator below the
-# whole physical spectrum of the shifted operator.
-_SECTOR_DEFLATION_MARGIN = 4.0
-
-
-def _sector_deflated_shift(A, sector_p, sig, vec_size, rho=None):
-    """``P K + sigma P - c (1 - P)`` for the largest-real Arnoldi selection.
-
-    ``A`` is a sector-confined operator ``P K`` (it carries the flat projector
-    ``sector_p = P``, see :func:`_so_antisymmetric_operator`), so its
-    complementary sector ``1 - P`` is mapped to eigenvalue 0. Under the plain
-    shift ``A + sigma I`` that sector sits at ``+sigma`` -- above every
-    physical eigenvalue whenever they are all negative -- and which='LR' would
-    return it. Here it is sent to ``-c`` instead, below the physical spectrum
-    ``lambda + sigma >= sigma - rho`` of the shifted operator:
-    ``c = sigma + _SECTOR_DEFLATION_MARGIN * rho_est + 1`` with ``rho_est`` the
-    given spectral-radius estimate (the "auto" pre-pass) or a short power
-    iteration on ``A``. In the basis (P-sector, complement) the operator is
-    block upper-triangular with ``-c I`` in the complement block, so the
-    physical eigenvalues are exactly those of ``P K + sigma`` on the P-sector
-    and their eigenvectors lie in that sector; only the forbidden
-    eigenvalue moves."""
-    from scipy.sparse.linalg import LinearOperator as _LinOp
-    if rho is None:
-        rng = np.random.default_rng(0)
-        probe = (rng.standard_normal(vec_size)
-                 + 1j * rng.standard_normal(vec_size))
-        rho = _estimate_spectral_radius(A, (probe,))
-    c = sig + _SECTOR_DEFLATION_MARGIN * float(rho) + 1.0
-    if not np.isfinite(c):
-        raise ValueError(
-            "the deflation of the forbidden sector overflowed (spectral radius "
-            "estimate {!r}); pass a smaller explicit spectral_shift.".format(rho))
-    logger.info(
-        "Sector-confined operator: the complementary (forbidden) sector is "
-        "sent to %.6f of the shifted operator (spectral radius estimate "
-        "%.6f), below the whole physical spectrum.", -c, float(rho))
-
-    def matvec(v):
-        v = np.asarray(v).ravel()
-        pv = sector_p(v)
-        return np.asarray(A.matvec(v)).ravel() + sig * pv - c * (v - pv)
-
-    return _LinOp(A.shape, matvec=matvec, dtype=A.dtype)
-
-
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
                    sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
@@ -6246,25 +6199,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 shift,
                 "auto" if isinstance(spectral_shift, str) else "explicit")
             A_unshifted = A
-            sector_p = getattr(A_unshifted, "sector_projector", None)
-            if sector_p is None:
-                A = LinearOperator(
-                    (vec_size, vec_size),
-                    matvec=lambda v: A_unshifted.matvec(v) + shift * v,
-                    dtype=complex)
-            else:
-                # A sector-confined operator (P K, see
-                # _so_antisymmetric_operator): shift ONLY the physical sector,
-                # K -> P K + sigma P. The complementary (Pauli-forbidden)
-                # sector, where P K vanishes, then stays at eigenvalue 0 of the
-                # shifted operator and is annihilated by every step, instead
-                # of sitting at +sigma where it would outrank every physical
-                # mode whenever all of them are negative.
-                A = LinearOperator(
-                    (vec_size, vec_size),
-                    matvec=lambda v: (A_unshifted.matvec(v)
-                                      + shift * sector_p(v)),
-                    dtype=complex)
+            A = LinearOperator(
+                (vec_size, vec_size),
+                matvec=lambda v: A_unshifted.matvec(v) + shift * v,
+                dtype=complex)
         # the sigma actually applied (None when no shift was requested), so
         # callers can report it; `shift` itself is the arithmetic value.
         shift_used = shift if spectral_shift is not None else None
@@ -6448,13 +6386,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             from scipy.sparse.linalg import LinearOperator as _LinOp
             # spectral_shift is validated (positive-finite / "auto", arnoldi)
             # near the top of _solve_leading.
-            rho_pre = None
             if isinstance(spectral_shift, str):  # "auto"
                 k_pre = min(6, vec_size - 2)
                 if k_pre >= 1:
                     vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
-                    rho_pre = float(np.max(np.abs(vals_pre)))
-                    sig = rho_pre * 1.5 + 1.0e-6
+                    sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
                 else:
                     sig = 1.0
                 if not np.isfinite(sig):
@@ -6464,13 +6400,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             else:
                 sig = float(spectral_shift)
             logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
-            sector_p = getattr(A, "sector_projector", None)
-            if sector_p is None:
-                A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
-                              dtype=A.dtype)
-            else:
-                A_sh = _sector_deflated_shift(A, sector_p, sig, vec_size,
-                                              rho=rho_pre)
+            A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
+                          dtype=A.dtype)
             vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=_arpack_start(A_sh, seed_vec))
             vals = vals - sig
             selection_label = "LR"
@@ -7553,72 +7484,139 @@ def _check_so_flex_vertex(gam, chi, chi0, chi_path):
     return err
 
 
+#: Bound on the relative antisymmetry residual ``||v - P v|| / ||v||`` of a
+#: spin-orbital gap (:func:`_so_antisymmetry_residual`). The solvers return
+#: gaps that are antisymmetric by construction (residual exactly 0, see
+#: :class:`_SOAntisymmetricBasis`); anything above round-off is refused.
+_SO_ANTISYM_TOL = 1.0e-10
+
+
+class _SOAntisymmetricBasis:
+    """Orthonormal basis of the fermion-antisymmetric spin-orbital gaps
+    ``Delta_AB(k) = -Delta_BA(-k)`` on ``shape = (nd, nd, Nx, Ny, Nz)``.
+
+    The map ``R: (A, B, k) -> (B, A, -k)`` is an involution of the flat gap
+    index. Each orbit ``{i, R i}`` with ``i != R i`` carries one coordinate,
+    the unit vector ``(e_i - e_{R i}) / sqrt(2)`` (``i`` the smaller index of
+    the orbit); a self-paired element ``i = R i`` (``A = B`` and ``k = -k``)
+    is forced to zero by the antisymmetry and carries none. ``E``
+    (:meth:`to_full`) is therefore an isometry onto range(P), ``P = (1 -
+    R) / 2``, with ``E^dagger E = 1`` and ``E E^dagger = P``; ``dim`` is
+    ``(n - n_self) / 2``. The spin-orbital eigenproblem is solved on
+    ``E^dagger K E`` (:meth:`reduce`), where no Pauli-forbidden mode exists,
+    so no shift or selection can return one."""
+
+    def __init__(self, shape):
+        self.shape = tuple(int(x) for x in shape)
+        n = int(np.prod(self.shape))
+        idx = np.arange(n).reshape(self.shape)
+        self.partner = np.ascontiguousarray(
+            _reverse_k_and_orbital(idx)).ravel()
+        flat = np.arange(n)
+        self.rep = flat[flat < self.partner]
+        self.rep_partner = self.partner[self.rep]
+        self.n_self = int(np.sum(flat == self.partner))
+        self.n = n
+        self.dim = len(self.rep)
+
+    def to_full(self, c):
+        """``E c``: reduced coordinates ``(dim,)`` or ``(dim, k)`` -> flat
+        antisymmetric gaps ``(n,)`` / ``(n, k)``."""
+        c = np.asarray(c)
+        out = np.zeros((self.n,) + c.shape[1:], dtype=complex)
+        h = c / np.sqrt(2.0)
+        out[self.rep] = h
+        out[self.rep_partner] = -h
+        return out
+
+    def to_reduced(self, v):
+        """``E^dagger v``: flat gaps ``(n,)`` / ``(n, k)`` -> reduced
+        coordinates."""
+        v = np.asarray(v)
+        return (v[self.rep] - v[self.rep_partner]) / np.sqrt(2.0)
+
+    def reduce(self, A):
+        """``E^dagger K E`` of the flat kernel operator ``A`` (``E^dagger P
+        = E^dagger``, so this is also ``E^dagger (P K) E``)."""
+        def matvec(c):
+            v = self.to_full(np.asarray(c).ravel())
+            return self.to_reduced(np.asarray(A.matvec(v)).ravel())
+        return LinearOperator((self.dim, self.dim), matvec=matvec,
+                              dtype=complex)
+
+
+def _so_antisymmetry_residual(gap):
+    """``||v - P v|| / ||v||`` of a spin-orbital gap ``(nd, nd, Nx, Ny, Nz)``
+    with ``P`` the projection onto fermion-antisymmetric gaps; ``inf`` for a
+    zero or non-finite gap. Unlike :func:`_is_gap_parity` (a dominant-sector
+    test used by the non-spin-orbital channels) this is a round-off-scale
+    criterion: compare with :data:`_SO_ANTISYM_TOL`."""
+    gap = np.asarray(gap)
+    n = float(np.linalg.norm(gap))
+    if n == 0.0 or not np.isfinite(n):
+        return float("inf")
+    sym = 0.5 * (gap + _reverse_k_and_orbital(gap))
+    return float(np.linalg.norm(sym)) / n
+
+
+def _so_is_antisymmetric(gap):
+    return _so_antisymmetry_residual(gap) <= _SO_ANTISYM_TOL
+
+
+def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
+                        spectral_shift=None, info_out=None):
+    """The power iteration of the spin-orbital kernel on the antisymmetric
+    coordinates of ``basis`` (the shared ``_solve_leading`` driver on
+    ``E^dagger K E``); returns ``(gap, eigenvalue, converged, n_iter)`` with
+    the gap mapped back by ``E``."""
+    red = basis.reduce(A)
+    c0 = basis.to_reduced(np.asarray(sigma_init).ravel())
+    eigenvalue, c, info = _solve_leading(
+        lambda: (red, basis.dim), basis.dim, "iteration",
+        max_iter=max_iter, convergence_tol=tol, init_vec=c0, alpha=alpha,
+        project_fn=None, spectral_shift=spectral_shift)
+    if info_out is not None:
+        info_out.update(info)
+    gap = basis.to_full(c).reshape(basis.shape)
+    return gap, eigenvalue, info["converged"], info["n_iter"]
+
+
+def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
+                         spectral_shift=None):
+    """The eigenvalue analysis of the spin-orbital kernel on the
+    antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
+    the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``."""
+    red = basis.reduce(A)
+    _, _, eig = _solve_leading(
+        lambda: (red, basis.dim), basis.dim, method,
+        num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+        spectral_shift=spectral_shift)
+    vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+    gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
+                     for i in range(len(vals))])
+    return vals, gaps
+
+
 def _so_check_antisymmetric_eigenpairs(vals, match):
-    """Defensive check of the spin-orbital eigenpairs (after the parity
-    reorder, so a fermion-antisymmetric pair, if any, leads): refuse when the
-    LEADING eigenvector -- the gap written under the fermion-antisymmetric
-    header -- is not antisymmetric, and warn about any further pair that is
-    not (its match column is 0). The solvers confine the kernel to the
-    antisymmetric sector (``P K``; the forbidden sector sits at eigenvalue 0,
-    or below the spectrum under a spectral_shift), so this fires only when
-    every computed pair belongs to that zero sector."""
+    """Defensive check of the spin-orbital eigenpairs (``match`` from
+    :func:`_so_is_antisymmetric`): refuse when the LEADING eigenvector --
+    the gap written under the fermion-antisymmetric header -- is not
+    antisymmetric, and warn about any further pair that is not (match
+    column 0). The solvers work on antisymmetric coordinates, so this fires
+    only if that construction is broken."""
     match = np.asarray(match, dtype=bool)
     if match.size and not match[0]:
         raise ValueError(
-            "[mode] enable_spin_orbital = true: no computed eigenpair is "
-            "fermion-antisymmetric (Delta_AB(k) = -Delta_BA(-k)); the "
-            "eigenvalues {} belong to the Pauli-forbidden sector and are not "
-            "written. Increase num_eigenvalues or change spectral_shift."
+            "[mode] enable_spin_orbital = true: the leading eigenvector is not "
+            "fermion-antisymmetric (Delta_AB(k) = -Delta_BA(-k)) to round-off; "
+            "it is Pauli-forbidden and is not written (eigenvalues {})."
             .format(np.asarray(vals)))
     bad = np.where(~match)[0]
     if bad.size:
         logger.warning(
-            "spin-orbital eigenpairs %s are not fermion-antisymmetric "
-            "(Pauli-forbidden, eigenvalues %s); they are written with match "
-            "= 0 and are not physical pairing modes.",
+            "spin-orbital eigenpairs %s are not fermion-antisymmetric to "
+            "round-off (eigenvalues %s); they are written with match = 0.",
             bad.tolist(), np.asarray(vals)[bad])
-
-
-def _so_antisymmetric_operator(A, vec_size, shape):
-    """``P K``: the kernel followed by the projection onto fermion-
-    antisymmetric gaps ``Delta_AB(k) = -Delta_BA(-k)``
-    (``_project_gap_parity(., "triplet")`` on spin-orbital indices).
-
-    The spin-orbital pairing vertex is the direct image only
-    (``hwave.solver.so_pairing``); on an antisymmetric gap ``P K`` is the
-    kernel of the fully antisymmetrized vertex (validated against exact
-    diagonalization in ``tests/test_so_pairing_ed.py``, where the
-    frequency-dependent ladder needs ``P`` after every application). The
-    static ``K`` maps antisymmetric gaps onto antisymmetric gaps (the
-    particle-exchange symmetry of the static vertex), but on SYMMETRIC gaps
-    it has nonzero, Pauli-forbidden eigenvalues that can dominate the power
-    iteration and the largest-magnitude Arnoldi selection. So the projection
-    follows EVERY application -- each power-iteration step and each Arnoldi
-    matvec -- and those modes sit at eigenvalue zero."""
-    def _proj(x):
-        return _project_gap_parity(x, "triplet")
-
-    def matvec(v):
-        return _proj(np.asarray(A.matvec(v)).reshape(shape)).ravel()
-
-    def matmat(B):
-        B = np.asarray(B)
-        if B.ndim == 1:
-            return matvec(B)
-        k = B.shape[1]
-        out = np.asarray(A.matmat(B)).reshape(shape + (k,))
-        return _proj(out).reshape(vec_size, k)
-
-    op = LinearOperator((vec_size, vec_size), matvec=matvec, matmat=matmat,
-                        dtype=complex)
-    # The flat projector P: _solve_leading shifts only this sector under a
-    # spectral_shift (P K + sigma P), so the forbidden sector, at eigenvalue 0
-    # of P K, can never outrank the physical modes (see
-    # _sector_deflated_shift). Without a shift it is not used, so the
-    # unshifted Arnoldi and power iteration see P K exactly.
-    op.sector_projector = lambda v: _proj(
-        np.asarray(v).reshape(shape)).ravel()
-    return op
 
 
 def calc_eliashberg(input_dict):
@@ -8186,12 +8184,11 @@ def calc_eliashberg(input_dict):
     iteration_info = {}
 
     if spin_orbital_mode:
-        # P K: the antisymmetric projection after every kernel application
-        # (both solvers below use this operator)
-        so_vec_size = norb * norb * Nx * Ny * Nz
+        # both solvers below work on the antisymmetric coordinates of the
+        # gap (E^dagger K E): the Pauli-forbidden sector is not in the space
+        so_basis = _SOAntisymmetricBasis((norb, norb, Nx, Ny, Nz))
         A_so, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
-        kernel_operator = (_so_antisymmetric_operator(
-            A_so, so_vec_size, (norb, norb, Nx, Ny, Nz)), so_vec_size)
+        kernel_operator = None
         # the gap is one spin-orbital matrix: the iteration's channel parity
         # projection/leakage probe does not apply (P is in the operator), and
         # the eigenpairs are tagged by fermion antisymmetry
@@ -8203,33 +8200,46 @@ def calc_eliashberg(input_dict):
 
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
-        sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
-            green_kw, Vs_q, G2, sigma_init, norb,
-            max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type,
-            operator=kernel_operator,
-            spectral_shift=iteration_spectral_shift,
-            info_out=iteration_info,
-        )
+        if spin_orbital_mode:
+            sigma_result, eigenvalue_iter, converged, n_iter = (
+                _so_solve_iteration(
+                    A_so, so_basis, sigma_init, max_iter, alpha, tol,
+                    spectral_shift=iteration_spectral_shift,
+                    info_out=iteration_info))
+        else:
+            sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
+                green_kw, Vs_q, G2, sigma_init, norb,
+                max_iter=max_iter, alpha=alpha, tol=tol,
+                pairing_type=pairing_type,
+                operator=kernel_operator,
+                spectral_shift=iteration_spectral_shift,
+                info_out=iteration_info,
+            )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
-        if spin_orbital_mode and not _is_gap_parity(sigma_result, "triplet"):
+        if spin_orbital_mode and not _so_is_antisymmetric(sigma_result):
             raise ValueError(
                 "[mode] enable_spin_orbital = true: the power iteration "
                 "returned a gap that is not fermion-antisymmetric "
-                "(Delta_AB(k) = -Delta_BA(-k)); it is Pauli-forbidden and is "
-                "not written. Use solver_mode = \"eigenvalue\" or another "
-                "spectral_shift.")
+                "(Delta_AB(k) = -Delta_BA(-k)) to round-off; it is not "
+                "written.")
 
     if solver_mode in ("eigenvalue", "both"):
         logger.info("=== Eigenvalue analysis ===")
-        eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
-            Vs_q, G2, norb, Nx, Ny, Nz,
-            num_eigenvalues=num_eigenvalues,
-            method=eigenvalue_method,
-            sigma_shift=eli_param.get("sigma_shift"),
-            spectral_shift=eli_param.get("spectral_shift"),
-            operator=kernel_operator,
-        )
+        if spin_orbital_mode:
+            eigenvalues_eig, eigenvectors_eig = _so_solve_eigenvalue(
+                A_so, so_basis, num_eigenvalues, eigenvalue_method,
+                sigma_shift=eli_param.get("sigma_shift"),
+                spectral_shift=eli_param.get("spectral_shift"))
+        else:
+            eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
+                Vs_q, G2, norb, Nx, Ny, Nz,
+                num_eigenvalues=num_eigenvalues,
+                method=eigenvalue_method,
+                sigma_shift=eli_param.get("sigma_shift"),
+                spectral_shift=eli_param.get("spectral_shift"),
+                operator=kernel_operator,
+            )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported
         # leading eigenpair is the physical solution for this channel.
@@ -8241,11 +8251,15 @@ def calc_eliashberg(input_dict):
         # an exact label; for a centrosymmetric model parity is an exact kernel
         # symmetry and the opposite-parity modes are unphysical for the channel
         # (e.g. an even mode in the triplet kernel is Pauli-forbidden).
-        eigenvalue_match = np.array(
-            [_is_gap_parity(g, parity_channel) for g in eigenvectors_eig])
         if spin_orbital_mode:
+            # round-off criterion, not the dominant-sector test
+            eigenvalue_match = np.array(
+                [_so_is_antisymmetric(g) for g in eigenvectors_eig])
             _so_check_antisymmetric_eigenpairs(eigenvalues_eig,
                                                eigenvalue_match)
+        else:
+            eigenvalue_match = np.array(
+                [_is_gap_parity(g, parity_channel) for g in eigenvectors_eig])
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
             tag = "" if eigenvalue_match[i] else "  [opposite-parity sector]"

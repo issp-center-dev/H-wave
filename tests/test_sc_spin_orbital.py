@@ -2,10 +2,10 @@
 issue #83): ``chi0q_mode = "calc"``, ``"load"`` and ``"flex"``.
 
 The gap is one ``2N x 2N`` spin-orbital matrix ``Delta_AB(k)`` (spin-block
-order ``A = s * N + a``); the kernel is ``P K`` with the pairing vertex of
-``hwave.solver.so_pairing`` and ``P`` the projection onto fermion-
-antisymmetric gaps ``Delta_AB(k) = -Delta_BA(-k)``, applied after every
-kernel application.
+order ``A = s * N + a``); the kernel ``K`` (pairing vertex of
+``hwave.solver.so_pairing``) is solved on the fermion-antisymmetric gaps
+``Delta_AB(k) = -Delta_BA(-k)`` only, as ``E^dagger K E`` with ``E`` an
+orthonormal basis of that subspace (``sc._SOAntisymmetricBasis``).
 
 * ``TestStaticEntry``: the SU(2) limit reproduces the non-spin-orbital
   singlet and (threefold) triplet eigenvalues end to end; a model with
@@ -21,8 +21,14 @@ kernel application.
   public entry, with the key named.
 * ``TestFlexVertexCheck``: the FLEX vertex-consistency check is a per-q
   backward error (independent of the lattice size; zero-scale blocks).
-* ``TestAntisymmetricOperator``: ``matmat`` of the projected kernel equals
-  stacked ``matvec`` and returns antisymmetric gaps.
+* ``TestAntisymmetricBasis`` / ``TestAntisymmetryResidual``: the basis is
+  an isometry onto the antisymmetric subspace (dimension = rank P); the
+  acceptance test of a spin-orbital gap is round-off scaled.
+* ``TestRepulsiveSpectralShift``: shifted and unshifted solves of a
+  repulsive-dominated kernel equal the dense antisymmetric spectrum; a
+  solver output that is not antisymmetric is refused.
+* ``TestStaticKernelBridge``: the production static operator equals the
+  exact-diagonalization-validated dynamic kernel.
 * ``TestArchiveMembers``: only spin-orbital runs write the ``spin_orbital``
   marker; non-spin-orbital RPA / FLEX archives keep their member sets.
 * ``TestTransferUnderSOC``: with spin-orbit hopping, the epsilon(k) of
@@ -246,15 +252,17 @@ def _assert_su2_multiplicities(tc, res, so, rtol=1e-8, forbidden_floor=0.5):
     nonzero = np.abs(evs) > 1e-10 * scale
     tc.assertTrue(np.all(so["match"][nonzero]))
     # expected multiplicity of each value: even singlet x 1 + odd triplet x 3
-    expected, forbidden = {}, []
+    expected, forbidden, allowed = {}, [], []
     floor = {ch: np.abs(res[ch]["evs"]).min() for ch in res}
     for ch, allowed_even in (("singlet", True), ("triplet", False)):
         for v, n, d_even, d_odd in _clusters(res[ch]["evs"], res[ch]["vecs"],
                                              rtol):
             tc.assertEqual(d_even + d_odd, n)
+            d_ok, d_bad = (d_even, d_odd) if allowed_even else (d_odd, d_even)
+            if d_ok:
+                allowed.append(v)
             if abs(v) <= (1 + 1e-6) * floor[ch]:
                 continue        # a cluster cut by the truncation
-            d_ok, d_bad = (d_even, d_odd) if allowed_even else (d_odd, d_even)
             key = next((k for k in expected
                         if abs(k - v) <= rtol * abs(v)), v)
             expected[key] = expected.get(key, 0) + d_ok * (
@@ -266,6 +274,26 @@ def _assert_su2_multiplicities(tc, res, so, rtol=1e-8, forbidden_floor=0.5):
         got = int(np.sum(np.abs(evs - v) <= rtol * abs(v)))
         with tc.subTest(value=v):
             tc.assertEqual(got, count)
+    # no EXTRA spin-orbital modes: every computed SO eigenvalue is an
+    # allowed eigenvalue of a non-SO channel -- or lies below a channel's
+    # truncation floor, where that channel's spectrum was not computed --
+    # and the ones at the counted values add up to exactly the expected
+    # multiplicities
+    allowed = np.array(allowed)
+    cut = (1 + 1e-6) * max(floor.values())
+    n_below = 0
+    for v in evs:
+        if abs(v) < cut and not np.any(np.abs(allowed - v) <= rtol * abs(v)):
+            n_below += 1
+            continue
+        with tc.subTest(so_value=v):
+            tc.assertTrue(np.any(np.abs(allowed - v) <= rtol * abs(v)))
+    # each non-SO channel computed all but 2 eigenvalues: at most 2 singlet
+    # (x 1) and 2 triplet (x 3) values are missing
+    tc.assertLessEqual(n_below, 2 + 3 * 2)
+    counted = sum(int(np.any([abs(v - k) <= rtol * abs(k) for k in expected]))
+                  for v in evs)
+    tc.assertEqual(counted, sum(expected.values()))
     # the large Pauli-forbidden triplet modes (even k-parity) are absent
     big = sorted((v for ch, v in forbidden
                   if ch == "triplet" and v.real > forbidden_floor),
@@ -819,10 +847,32 @@ class TestFlexVertexCheck(unittest.TestCase):
             sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
 
 
-class TestAntisymmetricOperator(unittest.TestCase):
-    """``_so_antisymmetric_operator(A).matmat(B)`` equals the column-stacked
-    ``matvec`` results, and every column is a fermion-antisymmetric gap
-    ``Delta_AB(k) = -Delta_BA(-k)``, on even and odd k-grid dimensions."""
+def _dense_P(shape):
+    """The antisymmetric projector ``P`` as a dense matrix, built column by
+    column from ``_project_gap_parity`` (independent of the basis)."""
+    n = int(np.prod(shape))
+    eye = np.eye(n, dtype=complex)
+    return np.stack([sc._project_gap_parity(eye[:, j].reshape(shape),
+                                            "triplet").ravel()
+                     for j in range(n)], axis=1)
+
+
+def _dense_antisymmetric_spectrum(M, shape):
+    """Eigenvalues of the dense kernel ``M`` restricted to range(P), from an
+    orthonormal basis of range(P) obtained by diagonalizing ``P`` (not the
+    production basis), ordered by descending real part."""
+    w, U = np.linalg.eigh(_dense_P(shape))
+    Q = U[:, w > 0.5]
+    vals = np.linalg.eigvals(Q.conj().T @ M @ Q)
+    return vals[np.argsort(-vals.real)], Q.shape[1]
+
+
+class TestAntisymmetricBasis(unittest.TestCase):
+    """``_SOAntisymmetricBasis``: ``E`` is an isometry onto range(P)
+    (``E^dagger E = 1``, ``E E^dagger = P``), its dimension is rank(P) =
+    ``(n - n_self) / 2`` with the self-paired elements (``A = B``,
+    ``k = -k``) excluded, and ``E c`` is antisymmetric to the last bit; on
+    even and odd k-grid dimensions."""
 
     @staticmethod
     def _partner(g):
@@ -836,91 +886,123 @@ class TestAntisymmetricOperator(unittest.TestCase):
                                               (-iz) % nz].T
         return out
 
-    def test_matmat_equals_matvec_and_is_antisymmetric(self):
-        from scipy.sparse.linalg import aslinearoperator
+    def test_isometry_onto_the_antisymmetric_subspace(self):
         nd = 4
         for grid in ((4, 2, 1), (3, 5, 1), (2, 3, 3)):
             with self.subTest(grid=grid):
                 shape = (nd, nd) + grid
                 n = int(np.prod(shape))
+                b = sc._SOAntisymmetricBasis(shape)
+                P = _dense_P(shape)
+                rank = int(round(np.trace(P).real))
+                self.assertEqual(b.dim, rank)
+                # self-paired: A = B and k = -k (each axis: k = 0, and n/2
+                # on an even axis)
+                n_kself = int(np.prod([2 if g % 2 == 0 else 1 for g in grid]))
+                self.assertEqual(b.n_self, nd * n_kself)
+                self.assertEqual(2 * b.dim + b.n_self, n)
+                E = b.to_full(np.eye(b.dim))
+                np.testing.assert_allclose(E.conj().T @ E, np.eye(b.dim),
+                                           rtol=0, atol=1e-14)
+                np.testing.assert_allclose(E @ E.conj().T, P, rtol=0,
+                                           atol=1e-14)
                 rng = np.random.default_rng(sum(grid))
-                M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
-                PK = sc._so_antisymmetric_operator(aslinearoperator(M), n, shape)
-                B = rng.standard_normal((n, 5)) + 1j * rng.standard_normal((n, 5))
-                got = PK.matmat(B)
-                self.assertEqual(got.shape, (n, 5))
-                cols = np.stack([PK.matvec(B[:, j]) for j in range(5)], axis=1)
-                np.testing.assert_allclose(got, cols, rtol=0, atol=1e-12)
-                for j in range(5):
-                    g = got[:, j].reshape(shape)
-                    self.assertGreater(np.linalg.norm(g), 1.0)
-                    np.testing.assert_allclose(g, -self._partner(g),
-                                               rtol=0, atol=1e-10)
-                # non-vacuity: the raw kernel output is not antisymmetric
-                raw = (M @ B[:, 0]).reshape(shape)
-                self.assertGreater(np.linalg.norm(raw + self._partner(raw)), 1.0)
+                c = rng.standard_normal(b.dim) + 1j * rng.standard_normal(b.dim)
+                g = b.to_full(c).reshape(shape)
+                np.testing.assert_array_equal(g, -self._partner(g))
+                self.assertEqual(sc._so_antisymmetry_residual(g), 0.0)
+                np.testing.assert_allclose(b.to_reduced(g.ravel()), c,
+                                           rtol=0, atol=1e-14)
+                # E^dagger annihilates the symmetric sector
+                v = rng.standard_normal(n).reshape(shape)
+                sym = (v + self._partner(v)).ravel()
+                np.testing.assert_allclose(b.to_reduced(sym), 0, atol=1e-13)
+
+
+class TestAntisymmetryResidual(unittest.TestCase):
+    """The spin-orbital acceptance test is round-off scaled: gaps keeping
+    89 % or 95 % of their norm under ``P`` (which the dominant-sector test
+    ``_is_gap_parity`` accepts at 95 %) are refused; a round-off-level
+    symmetric admixture is accepted."""
+
+    def test_boundaries(self):
+        shape = (4, 4, 4, 4, 1)
+        rng = np.random.default_rng(11)
+        x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+        a = sc._project_gap_parity(x, "triplet")
+        s_ = x - a
+        a, s_ = a / np.linalg.norm(a), s_ / np.linalg.norm(s_)
+        for keep, accepted in ((0.89, False), (0.95, False),
+                               (1.0 - 1e-24, True)):
+            sym = np.sqrt(1.0 - keep ** 2)
+            g = keep * a + sym * s_
+            if keep > 0.999:
+                g = a + 1e-13 * s_
+            with self.subTest(keep=keep):
+                self.assertEqual(sc._so_is_antisymmetric(g), accepted)
+                self.assertAlmostEqual(sc._so_antisymmetry_residual(g),
+                                       np.linalg.norm(g - sc._project_gap_parity(
+                                           g, "triplet")) / np.linalg.norm(g),
+                                       delta=1e-15)
+        # the dominant-sector test (non-SO semantics, unchanged) accepts 95 %
+        self.assertTrue(sc._is_gap_parity(0.95 * a + np.sqrt(1 - 0.95 ** 2)
+                                          * s_, "triplet"))
+        self.assertEqual(sc._so_antisymmetry_residual(np.zeros(shape)),
+                         float("inf"))
 
 
 class TestRepulsiveSpectralShift(_TmpDir):
     """A repulsive-dominated spin-orbital kernel under ``spectral_shift``.
 
-    ``P K`` maps the Pauli-forbidden (symmetric) sector -- about half the
-    space -- to eigenvalue 0. Under the plain shift ``P K + sigma I`` that
-    sector sits at ``+sigma``, above every physical eigenvalue when all of
-    them are negative, and the largest-real selection returned it. The model
-    is the complex-SOC model with the kernel lowered by one (``K - 1``, so
-    ``P (K - 1) = P K - P``: every antisymmetric eigenvalue moves down by 1
-    and the leading one is negative); the operator is still built by
-    ``_so_antisymmetric_operator``. The solver must return the leading
-    antisymmetric eigenvalues, equal to the dense diagonalization of the
-    kernel restricted to the antisymmetric subspace."""
+    The Pauli-forbidden (symmetric) sector is about half the gap space; on
+    the full space a plain shift ``P K + sigma I`` puts it at ``+sigma``,
+    above every physical eigenvalue when all of them are negative. The
+    solvers work on the antisymmetric coordinates ``E^dagger K E``, where
+    that sector does not exist. The model is the complex-SOC model with the
+    kernel lowered by one (``K - 1``: every antisymmetric eigenvalue moves
+    down by 1 and the leading one is negative). The results must equal the
+    dense diagonalization restricted to range(P)."""
 
     def _lowered_run(self, eli):
         from scipy.sparse.linalg import LinearOperator
         files = _write_model(self.d, so=True, soc=0.4)
-        real = sc._so_antisymmetric_operator
+        real = sc._make_kernel_operator
         built = {}
 
-        def lowered(A, n, shape):
-            Am = LinearOperator((n, n), matvec=lambda v: A.matvec(v) - v,
-                                dtype=complex)
-            built["op"] = real(Am, n, shape)
-            built["shape"] = shape
-            return built["op"]
+        def lowered(*a, **kw):
+            A, n = real(*a, **kw)
+            built["op"] = LinearOperator(
+                (n, n), matvec=lambda v: np.asarray(A.matvec(v)) - v,
+                dtype=complex)
+            return built["op"], n
 
-        with mock.patch.object(sc, "_so_antisymmetric_operator",
+        with mock.patch.object(sc, "_make_kernel_operator",
                                side_effect=lowered):
             seen = _run(_input(self.d, files, True, eli))
         return seen, built
 
     @staticmethod
-    def _dense_antisymmetric(built):
-        op, shape = built["op"], built["shape"]
+    def _dense(built):
+        shape = (ND, ND) + tuple(CELL)
         n = int(np.prod(shape))
         eye = np.eye(n, dtype=complex)
-        M = np.stack([op.matvec(eye[:, j]) for j in range(n)], axis=1)
-        P = np.stack([sc._project_gap_parity(eye[:, j].reshape(shape),
-                                             "triplet").ravel()
-                      for j in range(n)], axis=1)
-        w, U = np.linalg.eigh(P)
-        Q = U[:, w > 0.5]
-        vals = np.linalg.eigvals(Q.conj().T @ M @ Q)
-        return vals[np.argsort(-vals.real)], Q.shape[1], n
+        M = np.stack([built["op"].matvec(eye[:, j]) for j in range(n)], axis=1)
+        return _dense_antisymmetric_spectrum(M, shape)[0]
 
     def test_shifted_arnoldi_returns_the_antisymmetric_leading(self):
-        seen, built = self._lowered_run(
-            {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
-             "num_eigenvalues": 4, "spectral_shift": 3.0})
-        dense, n_anti, n = self._dense_antisymmetric(built)
-        self.assertLess(n_anti, n)
-        # repulsive-dominated: every physical eigenvalue is negative, so the
-        # forbidden sector (0 of P K) would outrank all of them
-        self.assertLess(dense[0].real, -0.1)
-        self.assertTrue(np.all(seen["match"]))
-        np.testing.assert_allclose(seen["evs"], dense[:4], rtol=0, atol=1e-9)
-        gap = seen["gap"]
-        np.testing.assert_allclose(gap, -_reverse(gap), rtol=0,
-                                   atol=1e-12 * np.abs(gap).max())
+        for shift in (0.01, 0.3, 3.0):
+            with self.subTest(spectral_shift=shift):
+                seen, built = self._lowered_run(
+                    {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                     "num_eigenvalues": 4, "spectral_shift": shift})
+                dense = self._dense(built)
+                # repulsive-dominated: every physical eigenvalue is negative
+                self.assertLess(dense[0].real, -0.1)
+                self.assertTrue(np.all(seen["match"]))
+                np.testing.assert_allclose(seen["evs"], dense[:4], rtol=0,
+                                           atol=1e-9)
+                gap = seen["gap"]
+                np.testing.assert_array_equal(gap, -_reverse(gap))
 
     def test_shifted_auto_and_iteration(self):
         """``spectral_shift = "auto"`` (Arnoldi) and the shifted power
@@ -929,70 +1011,86 @@ class TestRepulsiveSpectralShift(_TmpDir):
             {"chi0q_mode": "calc", "solver_mode": "both",
              "num_eigenvalues": 4, "spectral_shift": "auto",
              "convergence_tol": 1e-10, "max_iter": 20000})
-        dense, _, _ = self._dense_antisymmetric(built)
+        dense = self._dense(built)
         self.assertLess(dense[0].real, -0.1)
         self.assertTrue(np.all(seen["match"]))
         np.testing.assert_allclose(seen["evs"], dense[:4], rtol=0, atol=1e-9)
         self.assertAlmostEqual(seen["ev"], dense[0].real,
                                delta=1e-7 * abs(dense[0]))
 
-    def test_driver_confines_unprojected_seeds(self):
-        """``_solve_leading`` on a sector-confined operator: a seed (or a
-        Krylov start) with a forbidden component converges to the physical
-        leading eigenpair -- in the shifted power iteration the forbidden
-        sector is annihilated (``P K + sigma P``), in the shifted Arnoldi it
-        lies below the spectrum."""
+    def test_small_explicit_shifts_on_a_repulsive_operator(self):
+        """The spin-orbital solvers on a negative-definite random kernel
+        (leading antisymmetric eigenvalue ~ -0.84): explicit shifts 0.01 and
+        0.3 -- far below |lambda_lead| -- and no shift (largest magnitude)
+        give the dense antisymmetric spectrum; the iteration from an
+        UNprojected seed converges to the leading eigenvalue for a shift
+        that makes it dominant."""
         from scipy.sparse.linalg import aslinearoperator
         shape = (4, 4, 2, 2, 1)
         n = int(np.prod(shape))
         rng = np.random.default_rng(7)
         B = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
         M = -(B @ B.conj().T) / n - 0.5 * np.eye(n)
-        PK = sc._so_antisymmetric_operator(aslinearoperator(M), n, shape)
-        eye = np.eye(n)
-        P = np.stack([PK.sector_projector(eye[:, j]) for j in range(n)], axis=1)
-        w, U = np.linalg.eigh(P)
-        Q = U[:, w > 0.5]
-        dense = np.sort(np.linalg.eigvalsh(Q.conj().T @ M @ Q))[::-1]
-        self.assertLess(dense[0], -0.4)
-        seed = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        A = aslinearoperator(M)
+        basis = sc._SOAntisymmetricBasis(shape)
+        dense, m = _dense_antisymmetric_spectrum(M, shape)
+        self.assertEqual(basis.dim, m)
+        self.assertAlmostEqual(dense[0].real, -0.8376, delta=1e-3)
+        for shift in (0.01, 0.3, 10.0):
+            with self.subTest(spectral_shift=shift), _quiet():
+                vals, gaps = sc._so_solve_eigenvalue(
+                    A, basis, 3, "arnoldi", spectral_shift=shift)
+                np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
+                for g in gaps:
+                    np.testing.assert_array_equal(g, -_reverse(g))
         with _quiet():
-            lam, vec, info = sc._solve_leading(
-                lambda: (PK, n), n, "iteration", init_vec=seed,
-                max_iter=5000, convergence_tol=1e-11, spectral_shift=10.0)
-        self.assertTrue(info["converged"])
-        self.assertAlmostEqual(lam, dense[0], delta=1e-8)
-        g = vec.reshape(shape)
-        np.testing.assert_allclose(g, -_reverse(g), rtol=0, atol=1e-12)
+            vals, _ = sc._so_solve_eigenvalue(A, basis, 3, "arnoldi")
+        mag = dense[np.argsort(-np.abs(dense))][:3]
+        np.testing.assert_allclose(np.sort(vals.real), np.sort(mag.real),
+                                   rtol=0, atol=1e-9)
+        seed = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
         with _quiet():
-            lam, vec, info = sc._solve_leading(
-                lambda: (PK, n), n, "arnoldi", num_eigenvalues=3,
+            g, lam, conv, _ = sc._so_solve_iteration(
+                A, basis, seed / np.linalg.norm(seed), 5000, 0.5, 1e-11,
                 spectral_shift=10.0)
-        np.testing.assert_allclose(info["eigenvalues"], dense[:3], rtol=0,
-                                   atol=1e-9)
+        self.assertTrue(conv)
+        self.assertAlmostEqual(lam, dense[0].real, delta=1e-8)
+        np.testing.assert_array_equal(g, -_reverse(g))
 
-    def test_forbidden_leading_is_refused(self):
-        """Defensive check: an operator whose computed eigenpairs are all
-        Pauli-forbidden (the plain shift, without the sector deflation) is
-        refused instead of written under the antisymmetric header."""
-        from scipy.sparse.linalg import LinearOperator
+    def test_non_antisymmetric_solver_output_is_refused(self):
+        """Defensive check: a solver that returned a gap only 95 %
+        antisymmetric (accepted by the dominant-sector test) is refused in
+        both solver modes, with nothing written."""
         files = _write_model(self.d, so=True, soc=0.4)
-        real = sc._so_antisymmetric_operator
-
-        def plain(A, n, shape):
-            PK = real(A, n, shape)
-            P = PK.sector_projector
-            return LinearOperator((n, n), matvec=lambda v: PK.matvec(v) - P(v),
-                                  dtype=complex)
-
-        inp = _input(self.d, files, True,
-                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
-                      "num_eigenvalues": 4, "spectral_shift": 3.0})
-        with _quiet(), mock.patch.object(sc, "_so_antisymmetric_operator",
-                                         side_effect=plain):
-            with self.assertRaisesRegex(ValueError, "fermion-antisymmetric"):
-                sc.calc_eliashberg(inp)
-        self.assertFalse(os.path.exists(os.path.join(self.d, "out", "gap.dat")))
+        shape = (ND, ND) + tuple(CELL)
+        rng = np.random.default_rng(5)
+        x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+        a = sc._project_gap_parity(x, "triplet")
+        s_ = x - a
+        mixed = (0.95 * a / np.linalg.norm(a)
+                 + np.sqrt(1 - 0.95 ** 2) * s_ / np.linalg.norm(s_))
+        self.assertTrue(sc._is_gap_parity(mixed, "triplet"))
+        cases = (
+            ("eigenvalue", "_so_solve_eigenvalue",
+             lambda *_a, **_k: (np.array([0.5, 0.1]),
+                                np.stack([mixed, a / np.linalg.norm(a)]))),
+            ("iteration", "_so_solve_iteration",
+             lambda *_a, **_k: (mixed, 0.5, True, 3)),
+        )
+        for mode, name, fake in cases:
+            out = "out_" + mode
+            inp = _input(self.d, files, True,
+                         {"chi0q_mode": "calc", "solver_mode": mode,
+                          "num_eigenvalues": 2}, out=out)
+            with self.subTest(solver_mode=mode), _quiet(), \
+                    mock.patch.object(sc, name, side_effect=fake):
+                with self.assertRaisesRegex(ValueError,
+                                            "not fermion-antisymmetric"):
+                    sc.calc_eliashberg(inp)
+                path = os.path.join(self.d, out)
+                self.assertFalse(os.path.exists(os.path.join(path, "gap.dat")))
+                self.assertFalse(os.path.exists(os.path.join(path,
+                                                             "eigenvalue.dat")))
 
 
 class TestStaticKernelBridge(_TmpDir):
@@ -1001,11 +1099,13 @@ class TestStaticKernelBridge(_TmpDir):
     validates the ``BondPairKernel`` fed with ``so_pairing_vertex_parts``
     followed by the antisymmetric projection). On the complex-SOC model, the
     operator the production run builds (``_make_kernel_operator`` on its
-    ``Vs_q`` / ``G2``, then ``_so_antisymmetric_operator``; ``G`` from
-    ``_build_bond_green``, ``g2_tail = false``) applied to a static gap
-    equals, at every fermionic frequency, that ``BondPairKernel`` with the
-    same ``G``, ``V_inst = V_bare`` and the frequency-independent ``V_fluct``
-    at every bosonic frequency, followed by the projection."""
+    ``Vs_q`` / ``G2``; ``G`` from ``_build_bond_green``, ``g2_tail =
+    false``) applied to a static gap equals, at every fermionic frequency,
+    that ``BondPairKernel`` with the same ``G``, ``V_inst = V_bare`` and the
+    frequency-independent ``V_fluct`` at every bosonic frequency; and the
+    operator the solver actually iterates, ``E^dagger K E`` on the
+    antisymmetric coordinates, mapped back, equals that kernel followed by
+    the projection."""
 
     def test_production_operator_equals_validated_kernel(self):
         import types
@@ -1019,7 +1119,7 @@ class TestStaticKernelBridge(_TmpDir):
         cap = {}
         real_green = sc._build_bond_green
         real_vertex = sc._so_static_vertex_from_chi
-        real_op = sc._so_antisymmetric_operator
+        real_solve = sc._so_solve_eigenvalue
 
         def spy_green(*a, **kw):
             out = real_green(*a, **kw)
@@ -1031,17 +1131,16 @@ class TestStaticKernelBridge(_TmpDir):
             cap["Vs"] = real_vertex(gam, chi, nd, shape)
             return cap["Vs"]
 
-        def spy_op(A, n, shape):
-            cap["A"] = A
-            cap["op"] = real_op(A, n, shape)
-            return cap["op"]
+        def spy_solve(A, basis, *a, **kw):
+            cap["A"], cap["basis"] = A, basis
+            return real_solve(A, basis, *a, **kw)
 
         with _quiet(), \
                 mock.patch.object(sc, "_build_bond_green", side_effect=spy_green), \
                 mock.patch.object(sc, "_so_static_vertex_from_chi",
                                   side_effect=spy_vertex), \
-                mock.patch.object(sc, "_so_antisymmetric_operator",
-                                  side_effect=spy_op):
+                mock.patch.object(sc, "_so_solve_eigenvalue",
+                                  side_effect=spy_solve):
             sc.calc_eliashberg(inp)
         Nx, Ny, Nz = CELL
         nvol, nd2 = Nx * Ny * Nz, ND * ND
@@ -1066,13 +1165,19 @@ class TestStaticKernelBridge(_TmpDir):
                            host_cap=10 ** 12, device_cap=10 ** 12)
         shape = (ND, ND, Nx, Ny, Nz)
         rng = np.random.default_rng(3)
+        basis = cap["basis"]
+        red = basis.reduce(cap["A"])
         for trial, antisym in ((0, True), (1, False)):
-            # a general gap too: then the projection itself is compared
+            # a general gap too: then the raw kernel is compared off range(P)
             D = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
             if antisym:
                 D = sc._project_gap_parity(D, "triplet")
-            want = cap["op"].matvec(D.ravel()).reshape(shape)
             raw = cap["A"].matvec(D.ravel()).reshape(shape)
+            want = sc._project_gap_parity(raw, "triplet")
+            if antisym:
+                # what the solver iterates, mapped back
+                want = basis.to_full(red.matvec(
+                    basis.to_reduced(D.ravel()))).reshape(shape)
             Dw = np.ascontiguousarray(np.repeat(D[..., None], nmat, axis=-1))
             out = K.matvec(Dw.ravel()).reshape(shape + (nmat,))
             with self.subTest(antisymmetric_gap=antisym):
@@ -1252,7 +1357,8 @@ class TestFlexMode(unittest.TestCase):
         self.assertFalse(os.path.exists(out) and os.listdir(out))
 
     def _dense_spectrum(self, inp, chi_static, green):
-        """Eigenvalues of ``P K`` built independently of the flex loader from
+        """Eigenvalues of ``K`` on range(P), built independently of the flex
+        loader from
         a static chi ``(nvol, nd^2, nd^2)`` and a Green function in the
         stored ``(nmat, nvol, nd, nd)`` layout."""
         Nx, Ny, Nz = CELL
@@ -1264,8 +1370,8 @@ class TestFlexMode(unittest.TestCase):
         G2 = sc._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
         n = ND * ND * Nx * Ny * Nz
         A, _ = sc._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
-        PK = sc._so_antisymmetric_operator(A, n, (ND, ND, Nx, Ny, Nz))
-        return np.linalg.eigvals(PK.matmat(np.eye(n, dtype=complex)))
+        M = A.matmat(np.eye(n, dtype=complex))
+        return _dense_antisymmetric_spectrum(M, (ND, ND, Nx, Ny, Nz))[0]
 
     def test_uses_stored_chi_and_green(self):
         """Input agreement: the eigenvalues equal those of ``P K`` built from the stored

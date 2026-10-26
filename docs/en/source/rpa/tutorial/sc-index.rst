@@ -1781,12 +1781,16 @@ Pauli projection
 
 A gap must be fermion-antisymmetric,
 :math:`\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})`. The solver
-projects the gap onto this subspace after every application of the kernel
-(and projects the initial gap). This removes the Pauli-forbidden modes of
-the symmetric sector, which would otherwise appear in the spectrum with
-nonzero eigenvalues and could be selected by the power iteration or the
-Arnoldi solver; the eigenvalues of the antisymmetric sector are not
-changed.
+works in an orthonormal basis of this subspace: one coordinate per pair
+:math:`\{(A, B, \mathbf{k}), (B, A, -\mathbf{k})\}` (the elements with
+:math:`A = B` and :math:`\mathbf{k} = -\mathbf{k}` are forced to zero),
+and both the power iteration and the Arnoldi solver, with or without
+``spectral_shift``, act on the kernel restricted to it (the initial gap is
+projected as well). The Pauli-forbidden modes of the symmetric sector,
+which would otherwise appear in the spectrum and could be selected, are
+therefore not part of the problem; the eigenvalues of the antisymmetric
+sector are not changed. Every reported eigenvector is checked to be
+antisymmetric to round-off.
 
 Gap convention and spin decomposition
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
