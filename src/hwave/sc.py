@@ -7404,6 +7404,7 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
                 "FLEX archive '%s' records scf_converged = false: the FLEX run "
                 "did not converge, and its chiq and green may not belong to one "
                 "self-consistent state.", chi_path)
+        check_momentum_marker(data, chi_path)
         # the chi0q companion must be a spin-orbital FLEX output: its marker
         # is checked after the lightweight chiq metadata above, but before
         # any array (chiq or chi0q) is materialized and before the Green
@@ -7414,7 +7415,6 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
                 d0, chi0_path, producer="FLEX",
                 hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
         chiq = data["chiq"]
-        check_momentum_marker(data, chi_path)
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
         chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
