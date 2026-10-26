@@ -1742,18 +1742,116 @@ def _one_body_band_sources(input_dict):
     return tuple(sources)
 
 
-def _warn_one_body_band_ignored(input_dict, where):
-    """WARNING for the paths that take chi and G from a FLEX run: the
-    one-body band of that run is already inside its outputs, so a
+_FLEX_BAND_REASON = ("the susceptibilities and the Green function are read "
+                     "from the FLEX output, which already includes the "
+                     "one-body band of that run")
+
+
+def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
+    """WARNING for the paths whose chi and G do not come from hwave_sc's own
+    band: the FLEX paths (the band of the FLEX run is already inside its
+    outputs) and the bond path with an external ``bond_green``. A
     ``trans_mod`` / ``green_init`` / ``Extern`` in the hwave_sc input is not
-    applied again (issue #273)."""
+    applied there (issue #273)."""
     sources = _one_body_band_sources(input_dict)
     if sources:
-        logger.warning(
-            "%s is ignored by hwave_sc for %s: the susceptibilities and the "
-            "Green function are read from the FLEX output, which already "
-            "includes the one-body band of that run.",
-            " / ".join(sources), where)
+        logger.warning("%s is ignored by hwave_sc for %s: %s.",
+                       " / ".join(sources), where, reason)
+
+
+# Absolute tolerance of the spin-independence test of the one-body band
+# (issue #273). The up-up and down-down blocks may differ, and the spin-mixing
+# blocks may be nonzero, by at most this much (energy units for trans_mod and
+# Extern, k-space H0(k) entries; occupation units for the green_init Green
+# function, real-space entries). It only absorbs convergence round-off of a
+# paramagnetic UHF solution; it is absolute so that a large common energy
+# offset cannot hide a finite splitting (a relative test would).
+SPIN_FREE_ATOL = 1.0e-10
+
+
+def _spin_dependence(arr, norb):
+    """``(splitting, mixing)`` of a ``(..., 2*norb, 2*norb)`` spin-block
+    array: max |up-up - down-down| and max |spin-mixing block|."""
+    a = np.asarray(arr).reshape(-1, 2, norb, 2, norb)
+    split = float(np.max(np.abs(a[:, 0, :, 0, :] - a[:, 1, :, 1, :])))
+    mix = float(max(np.max(np.abs(a[:, 0, :, 1, :])),
+                    np.max(np.abs(a[:, 1, :, 0, :]))))
+    return split, mix
+
+
+def _refuse_spin_dependent(what, detail):
+    raise ValueError(
+        "hwave_sc: the one-body band defined by {} is spin-dependent ({}). "
+        "The singlet/triplet pairing kernel of hwave_sc carries no spin "
+        "index, so a magnetic (spin-diagonal with unequal spins, or "
+        "spin-mixing) mean field or an active Extern field cannot be "
+        "represented; that needs the spin-polarized treatment of issue #88. "
+        "Only a spin-independent trans_mod / green_init is supported "
+        "(absolute tolerance SPIN_FREE_ATOL = {:g}).".format(
+            what, detail, SPIN_FREE_ATOL))
+
+
+def _check_band_spin_free(ci_input, sources, spatial_shape, norb):
+    """Refuse a spin-dependent one-body band BEFORE the RPA solver is built.
+
+    Runs on the raw inputs, so no interaction tensor and no
+    eigendecomposition is spent on a band that is refused anyway:
+
+    * an active Extern adds +h / -h to the two spins, so it is refused when
+      its table has a nonzero entry the RPA reader would use;
+    * trans_mod is checked on its k-space form H0(k) (the e^{+ikR} transform
+      RPA applies), up-up vs down-down and the spin-mixing blocks;
+    * green_init (used only without trans_mod) enters the band as
+      T + HF[G]. Every H-wave interaction conserves S^z and is symmetric
+      under a global spin flip, so a spin-independent G gives a
+      spin-independent HF term; G itself is therefore required to be
+      spin-independent. (A spin-dependent G whose HF term happened to be
+      spin-free would also be refused -- a conservative choice.)
+
+    Arrays of an unexpected shape are left to the RPA reader, which reports
+    them. The RPA classification after assembly stays as a backstop.
+    """
+    from requests.structures import CaseInsensitiveDict
+    Nx, Ny, Nz = spatial_shape
+    nvol = Nx * Ny * Nz
+    expected = (nvol, 2 * norb, 2 * norb)
+    path_to_input = ci_input.get("path_to_input", "")
+
+    if "Extern" in sources:
+        inter = CaseInsensitiveDict(ci_input.get("interaction", {}) or {})
+        f = os.path.join(inter.get("path_to_input", ""), inter["Extern"])
+        tbl = wan90.read_w90(f)
+        if any(v != 0 and a < norb and b < norb
+               for (_r, (a, b)), v in tbl.items()):
+            _refuse_spin_dependent(
+                "Extern",
+                "an active Extern field (nonzero coeff_extern) shifts the two "
+                "spins in opposite directions")
+
+    if "trans_mod" in sources:
+        f = os.path.join(path_to_input, ci_input["trans_mod"])
+        with np.load(f) as data:
+            tab_r = np.asarray(data["trans_mod"])
+        if tab_r.shape == expected:
+            tab_k = (np.fft.ifftn(tab_r.reshape(Nx, Ny, Nz, *expected[1:]),
+                                  axes=(0, 1, 2)) * nvol)
+            split, mix = _spin_dependence(tab_k, norb)
+            if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
+                _refuse_spin_dependent(
+                    "trans_mod",
+                    "max |H_up - H_down| = {:.3e}, max |spin-mixing| = {:.3e}"
+                    .format(split, mix))
+    elif "green_init" in sources:
+        f = os.path.join(path_to_input, ci_input["green_init"])
+        with np.load(f) as data:
+            g = np.asarray(data["green"]) if "green" in data.files else None
+        if g is not None and g.size == int(np.prod(expected)):
+            split, mix = _spin_dependence(g.reshape(expected), norb)
+            if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
+                _refuse_spin_dependent(
+                    "green_init",
+                    "the Green function has max |G_up - G_down| = {:.3e}, "
+                    "max |spin-mixing| = {:.3e}".format(split, mix))
 
 
 def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
@@ -1765,10 +1863,14 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
     Extern field define the SAME H0(k) for chi0q, the chemical potential
     and the kernel Green function.
 
-    Only a spin-independent band is accepted (RPA ``spin_mode ==
-    "spin-free"``): the singlet/triplet kernel carries no spin index, so a
-    spin-diagonal or spin-mixing mean field cannot be represented. Such a
-    band is refused with ``ValueError`` before chi0q is built or loaded.
+    Only a spin-independent band is accepted: the singlet/triplet kernel
+    carries no spin index, so a spin-diagonal or spin-mixing mean field
+    cannot be represented. :func:`_check_band_spin_free` refuses such a band
+    with ``ValueError`` from the raw inputs, with the absolute tolerance
+    :data:`SPIN_FREE_ATOL`, before the RPA solver (interaction tensors) or
+    any eigendecomposition is built -- and so before chi0q is built or
+    loaded. The RPA classification (``spin_mode == "spin-free"``) after the
+    assembly is kept as a backstop.
     """
     from requests.structures import CaseInsensitiveDict
     import hwave.qlmsio.read_input_k as read_input_k
@@ -1792,6 +1894,10 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
         if key in ci:
             info_inputfile[key] = ci[key]
 
+    # Refuse a spin-dependent band before the RPA solver (interaction
+    # tensors) and the H0 eigendecomposition are built.
+    _check_band_spin_free(info_inputfile, sources, spatial_shape, norb)
+
     info_log = dict(input_dict.get("log", {}) or {})
     info_log.setdefault("print_level", 1)
     info_log.setdefault("print_step", 1)
@@ -1813,15 +1919,10 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb):
     solver._calc_epsilon_k(green_info)
 
     if solver.spin_mode != "spin-free":
-        raise ValueError(
-            "hwave_sc: the one-body band defined by {} is spin-dependent "
-            "(RPA classifies it as '{}'). The singlet/triplet pairing kernel "
-            "of hwave_sc carries no spin index, so a magnetic (spin-diagonal "
-            "with unequal spins, or spin-mixing) mean field or an active "
-            "Extern field cannot be represented; that needs the "
-            "spin-polarized treatment of issue #88. Only a spin-independent "
-            "trans_mod / green_init is supported.".format(
-                " / ".join(sources), solver.spin_mode))
+        # backstop: _check_band_spin_free above should have refused already
+        _refuse_spin_dependent(" / ".join(sources),
+                               "RPA classifies it as '{}'".format(
+                                   solver.spin_mode))
 
     Nx, Ny, Nz = spatial_shape
     H0 = np.asarray(solver.H0_k)
@@ -7415,6 +7516,13 @@ def calc_eliashberg(input_dict):
     band = None
     if chi0q_mode == "flex":
         _warn_one_body_band_ignored(input_dict, "chi0q_mode = 'flex'")
+    elif use_bond_channels and bond_green is not None:
+        # the external Green function replaces the band entirely: the bond
+        # path builds its bubble and kernel from bond_green
+        _warn_one_body_band_ignored(
+            input_dict, "bond_channels with an external bond_green",
+            "the Green function of the pairing kernel and of the bond bubble "
+            "is read from bond_green = '{}'".format(bond_green))
     else:
         band_sources = _one_body_band_sources(input_dict)
         if band_sources:

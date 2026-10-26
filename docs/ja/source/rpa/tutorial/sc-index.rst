@@ -168,8 +168,9 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      **平均場の一体バンド。** ``[file.input] trans_mod``\ （UHFk が出力する
      一体ハミルトニアン）、``green_init``\ 、および\ ``coeff_extern``\ が
      ゼロでない\ ``Extern``\ 場は、``Transfer``\ のバンドを置き換えます。
-     ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合と
-     ``bond_channels = true``\ の場合、``hwave_sc``\ はこのバンドを
+     ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合と、外部の
+     ``bond_green``\ を指定しない\ ``bond_channels = true``\ の場合、
+     ``hwave_sc``\ はこのバンドを
      :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green
      関数のすべてに用います。したがって三つは同じハミルトニアンを表します。
      ``"load"``\ では、chi0q ファイルを出力した RPA 計算と同じ
@@ -178,10 +179,14 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      スピンに依存しないバンドのみに対応します。スピンに依存するバンド
      （磁性をもつ\ ``trans_mod``\ や\ ``green_init``\ 、または有効な
      ``Extern``\ ）は、:math:`\chi_0(\mathbf{q})`\ の計算や読み込みの前に
-     エラーとして拒否されます。スピン偏極の場合は issue #88 で扱います。
-     ``chi0q_mode = "flex"``\ と\ ``frequency = "dynamic"``\ ではこれらのキーは
-     使われず、その旨の警告が出ます。感受率と Green 関数は FLEX 計算から
-     読み込まれ、その計算自身の一体バンドがすでに含まれているためです。
+     エラーとして拒否されます。上向き・下向きスピンのブロックの差と
+     スピン混成ブロックの大きさは、絶対値で\ :math:`10^{-10}`\ まで許されます
+     （``trans_mod``\ ではエネルギーの単位、``green_init``\ では Green 関数
+     そのものに同じ上限を適用します）。スピン偏極の場合は issue #88 で
+     扱います。``chi0q_mode = "flex"``\ 、``frequency = "dynamic"``\ 、および
+     外部の\ ``bond_green``\ を指定した場合は、これらのキーは使われず、その旨の
+     警告が出ます。感受率と Green 関数は FLEX 計算または\ ``bond_green``\ の
+     ファイルから読み込まれるためです。
 
   .. warning::
 

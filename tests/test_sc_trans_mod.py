@@ -195,7 +195,13 @@ class _Capture:
             return orig(input_dict, chi0q_tensor=chi0q_tensor,
                         precomputed_mu=precomputed_mu, prepared=prepared)
 
+        def bond_green(orig, *a, **k):
+            r = orig(*a, **k)
+            self.data["bond_green"] = np.array(r.full_sc)
+            return r
+
         wrap("_solve_eigenvalue", solve_eig)
+        wrap("_build_bond_green", bond_green)
         wrap("_calc_g2", g2)
         wrap("_calc_chi0q_internal", chi0)
         return self
@@ -397,7 +403,7 @@ class TestSpinDependentRefused(unittest.TestCase):
                 msg = self._assert_refused(
                     mode, extra_file={"trans_mod": "tm.npz"},
                     tm=self._mixing())
-                self.assertIn("spinful", msg)
+                self.assertIn("spin-mixing", msg)
 
     def test_active_extern(self):
         for mode in ("calc", "load"):
@@ -602,6 +608,176 @@ class TestFlexPathsUnchanged(unittest.TestCase):
         self.assertTrue(any("green_init is ignored" in m
                             for m in logs.output), logs.output)
 
+
+
+def _ferro_green(norb=1, m=0.05):
+    """A UHFk-layout green (cellvol, 2, norb, 2, norb) with unequal spins."""
+    g = np.zeros((NX * NY, 2, norb, 2, norb), dtype=complex)
+    for a in range(norb):
+        g[0, 0, a, 0, a] = FILLING + m
+        g[0, 1, a, 1, a] = FILLING - m
+    return g
+
+
+class TestRefusalOrdering(unittest.TestCase):
+    """The spin-dependence refusal precedes the RPA interaction tensors and
+    every eigendecomposition: nothing heavy is built for a refused band."""
+
+    def _refused_before_heavy_work(self, extra_file, files, extern=False,
+                                   extra_param=None):
+        import hwave.solver.rpa as rpa
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, extern=extern)
+            for name, payload in files.items():
+                np.savez(os.path.join(d, name), **payload)
+            inp = _input(d, os.path.join(d, "out"), extra_file=extra_file,
+                         extern=extern, extra_param=extra_param)
+
+            def boom(*a, **k):
+                raise AssertionError("heavy work before the refusal")
+            saved = (rpa.Interaction._make_ham_inter, np.linalg.eigh,
+                     rpa.RPA._find_block_diagonal)
+            rpa.Interaction._make_ham_inter = boom
+            np.linalg.eigh = boom
+            rpa.RPA._find_block_diagonal = boom
+            try:
+                with self.assertRaises(ValueError) as cm:
+                    sc.calc_eliashberg(inp)
+            finally:
+                (rpa.Interaction._make_ham_inter, np.linalg.eigh,
+                 rpa.RPA._find_block_diagonal) = saved
+        self.assertIn("#88", str(cm.exception))
+
+    def test_trans_mod(self):
+        h = _bare_hr(1)
+        m = np.zeros_like(h)
+        m[0, 0, 0, 0] = 0.3
+        self._refused_before_heavy_work(
+            {"trans_mod": "tm.npz"},
+            {"tm.npz": {"trans_mod": _trans_mod_from_hr(h + m, h - m)}})
+
+    def test_green_init(self):
+        self._refused_before_heavy_work(
+            {"green_init": "g.npz"}, {"g.npz": {"green": _ferro_green()}})
+
+    def test_green_init_mixed_case(self):
+        self._refused_before_heavy_work(
+            {"Green_Init": "g.npz"}, {"g.npz": {"green": _ferro_green()}})
+
+    def test_extern_mixed_case(self):
+        # 'extern' table key and 'Coeff_Extern' are both honoured
+        import hwave.solver.rpa as rpa
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1, extern=True)
+            inp = _input(d, os.path.join(d, "out"),
+                         extra_param={"Coeff_Extern": 0.2})
+            inp["file"]["input"]["interaction"]["extern"] = "extern.dat"
+
+            def boom(*a, **k):
+                raise AssertionError("heavy work before the refusal")
+            saved = rpa.Interaction._make_ham_inter
+            rpa.Interaction._make_ham_inter = boom
+            try:
+                with self.assertRaises(ValueError) as cm:
+                    sc.calc_eliashberg(inp)
+            finally:
+                rpa.Interaction._make_ham_inter = saved
+        self.assertIn("#88", str(cm.exception))
+        self.assertIn("Extern", str(cm.exception))
+
+
+class TestSpinFreeTolerance(unittest.TestCase):
+    """The spin-independence test is ABSOLUTE (SPIN_FREE_ATOL)."""
+
+    def _lam_or_error(self, tm):
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            np.savez(os.path.join(d, "tm.npz"), trans_mod=tm)
+            try:
+                return _leading(_run(_input(
+                    d, os.path.join(d, "out"),
+                    extra_file={"trans_mod": "tm.npz"}))), None
+            except ValueError as exc:
+                return None, str(exc)
+
+    def test_large_offset_does_not_hide_a_splitting(self):
+        h = _nematic_hr(1)
+        shift = np.zeros_like(h)
+        shift[0, 0, 0, 0] = 1.0e3
+        split = np.zeros_like(h)
+        split[0, 0, 0, 0] = 0.5e-6
+        tm = _trans_mod_from_hr(h + shift + split, h + shift - split)
+        # a relative comparison would call these blocks equal
+        self.assertTrue(np.allclose(tm[:, 0, 0], tm[:, 1, 1]))
+        lam, err = self._lam_or_error(tm)
+        self.assertIsNone(lam)
+        self.assertIn("#88", err)
+
+    def test_spin_mixing_threshold(self):
+        h = _nematic_hr(1)
+        self.assertEqual(sc.SPIN_FREE_ATOL, 1.0e-10)
+        lam_ref, _ = self._lam_or_error(_trans_mod_from_hr(h))
+        above = _trans_mod_from_hr(h, mixing=np.array([[1.0e-9]]))
+        lam, err = self._lam_or_error(above)
+        self.assertIsNone(lam)
+        self.assertIn("#88", err)
+        below = _trans_mod_from_hr(h, mixing=np.array([[1.0e-12]]))
+        lam, err = self._lam_or_error(below)
+        self.assertIsNone(err)
+        self.assertAlmostEqual(lam, lam_ref, delta=1e-9)
+
+
+class TestMixedCaseGreenInit(unittest.TestCase):
+
+    def test_green_init_spelling_gives_same_lambda(self):
+        # two orbitals with unequal occupations: the Hartree shift is
+        # orbital-dependent, so the green_init band differs from the bare one
+        g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
+        for s_ in range(2):
+            g[0, s_, 0, s_, 0] = 0.6
+            g[0, s_, 1, s_, 1] = 0.3
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 2)
+            np.savez(os.path.join(d, "g.npz"), green=g)
+            a = _leading(_run(_input(d, os.path.join(d, "o1"),
+                                     extra_file={"green_init": "g.npz"})))
+            b = _leading(_run(_input(d, os.path.join(d, "o2"),
+                                     extra_file={"Green_Init": "g.npz"})))
+            bare = _leading(_run(_input(d, os.path.join(d, "o3"))))
+        self.assertEqual(a, b)
+        self.assertGreater(abs(a - bare), 1e-6)
+
+
+class TestExternalBondGreen(unittest.TestCase):
+    """With an external bond_green the band plays no role: trans_mod /
+    green_init / Extern are not read, not validated, and reported."""
+
+    def test_external_bond_green_ignores_band_inputs(self):
+        bond = {"bond_channels": True}
+        with tempfile.TemporaryDirectory() as d:
+            _write_model(d, 1)
+            # a valid external Green function: the bare model's own
+            ref = _run(_input(d, os.path.join(d, "o0"), eliashberg=bond))
+            np.savez(os.path.join(d, "green.npz"),
+                     green=sc._green_sc_to_canonical(ref["bond_green"]))
+            bond_ext = dict(bond, bond_green=os.path.join(d, "green.npz"))
+            h = _bare_hr(1)
+            m = np.zeros_like(h)
+            m[0, 0, 0, 0] = 0.3
+            np.savez(os.path.join(d, "ferro.npz"),
+                     trans_mod=_trans_mod_from_hr(h + m, h - m))
+            plain = _run(_input(d, os.path.join(d, "o1"),
+                                eliashberg=bond_ext))
+            for tm in ("ferro.npz", "does_not_exist.npz"):
+                with self.subTest(trans_mod=tm):
+                    with self.assertLogs("hwave_sc", level="WARNING") as logs:
+                        res = _run(_input(d, os.path.join(d, "o2"),
+                                          eliashberg=bond_ext,
+                                          extra_file={"trans_mod": tm}))
+                    self.assertTrue(np.array_equal(res["eig"], plain["eig"]))
+                    self.assertTrue(any(
+                        "trans_mod is ignored" in msg and "bond_green" in msg
+                        for msg in logs.output), logs.output)
 
 if __name__ == "__main__":
     unittest.main()

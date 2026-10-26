@@ -858,7 +858,7 @@ TOML形式
 
   **説明 :** UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の\ ``file.output.rpa``\ に指定した出力ファイルのファイル名を指定します。
 
-  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しないバンドのみに対応し、スピンに依存するバンドは拒否します（issue #88）。``green_init``\ と\ ``Extern``\ 場についても同様です。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
+  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しないバンド（絶対許容誤差\ :math:`10^{-10}`\ ）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは使われません。``green_init``\ と\ ``Extern``\ 場についても同様です。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
 
 
 - ``green_init``
