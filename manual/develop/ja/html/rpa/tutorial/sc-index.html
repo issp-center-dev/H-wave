@@ -446,25 +446,25 @@ RPAソルバーと共通です。詳細は<a class="reference internal" href="..
 </ol>
 <p>実行ログの例:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Self-consistent iteration ===
-hwave_sc: Iteration    0: eigenvalue = 0.909443, diff = 5.659296e-01
-hwave_sc: Iteration    1: eigenvalue = 0.699373, diff = 8.679877e-02
+hwave_sc: Iteration    0: eigenvalue = 0.925449, diff = 3.540384e-01
+hwave_sc: Iteration    1: eigenvalue = 0.818387, diff = 7.885727e-02
 ...
-hwave_sc: Iteration  132: eigenvalue = 0.942845, diff = 9.971819e-06
-hwave_sc: Converged at iteration 133
-hwave_sc: Iteration result: eigenvalue = 0.942845, converged = True, n_iter = 133
+hwave_sc: Iteration  192: eigenvalue = 0.961078, diff = 9.752299e-06
+hwave_sc: Converged at iteration 193
+hwave_sc: Iteration result: eigenvalue = 0.961078, converged = True, n_iter = 193
 </pre></div>
 </div>
 <p>引き続き固有値解析の結果が表示されます:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>hwave_sc: === Eigenvalue analysis ===
 hwave_sc: Leading eigenvalues:
-hwave_sc:     0: 0.942845 (|ev| = 0.942845)
-hwave_sc:     1: 0.790190 (|ev| = 0.790190)
-hwave_sc:     2: -0.962522 (|ev| = 0.962522)
-hwave_sc:     3: -1.120544 (|ev| = 1.120544)
-hwave_sc:     4: -1.356804 (|ev| = 1.356804)
-hwave_sc:     5: 0.953007 (|ev| = 0.953007)  [opposite-parity sector]
-hwave_sc:     6: 0.794702 (|ev| = 0.794702)  [opposite-parity sector]
-hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
+hwave_sc:     0: 0.961079 (|ev| = 0.961079)
+hwave_sc:     1: 0.837896 (|ev| = 0.837896)
+hwave_sc:     2: 0.812195 (|ev| = 0.812195)
+hwave_sc:     3: -0.889340 (|ev| = 0.889340)
+hwave_sc:     4: -1.072771 (|ev| = 1.072771)
+hwave_sc:     5: -1.351573 (|ev| = 1.351573)
+hwave_sc:     6: 0.977706 (|ev| = 0.977706)  [opposite-parity sector]
+hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ...
 </pre></div>
 </div>
@@ -486,7 +486,7 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 <p>以下の図は、自己無撞着反復から得られた
 ギャップ関数<span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
-<p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.94\)</span>):</p>
+<p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
 <figure class="align-center" id="id36">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
@@ -494,11 +494,11 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 <p><span class="caption-number">図 5.3 </span><span class="caption-text">一重項ギャップ関数のk空間分布。
 左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
-軌道間成分が軌道内成分の約4倍大きく、
+軌道間成分が軌道内成分の約5倍大きく、
 軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id36" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
-<p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 1.00\)</span>):</p>
+<p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
 <figure class="align-center" id="id37">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
@@ -523,7 +523,7 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 赤破線は<span class="math notranslate nohighlight">\(\lambda = 1\)</span>（超伝導不安定性の判定基準）を示す。
 塗りつぶしマーカーは <strong>物理的</strong> な固有値（ギャップがチャネルのパリティ
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
-モードである。物理的な固有値はすべて1未満（三重項はわずかに下回る）。1を超える
+モードである。物理的な固有値はすべて1未満である。1を超える
 2つの白抜きマーカーは<em>三重項</em>カーネルの偶パリティ解で、スピン三重項
 ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id38" title="Link to this image">¶</a></p>
 </figcaption>
@@ -532,13 +532,14 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 図には超伝導不安定性の判定基準<span class="math notranslate nohighlight">\(\lambda = 1\)</span>に関連する
 正の固有値のみを示しています。
 一重項チャネルの主要な <strong>物理的</strong>（偶パリティ）固有値は
-<span class="math notranslate nohighlight">\(\lambda_S \approx 0.94 &lt; 1\)</span>で、自己無撞着反復法の結果と一致し、
+<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96 &lt; 1\)</span>で、自己無撞着反復法の結果と一致し、
 この温度で一重項SC不安定性は存在しません。</p>
 <p>三重項チャネルの主要な <strong>物理的</strong>（奇パリティ）固有値は
-<span class="math notranslate nohighlight">\(\lambda_T \approx 0.999\)</span>で、1をわずかに下回ります。三重項の計算に現れる
-<span class="math notranslate nohighlight">\(1.58\)</span>や<span class="math notranslate nohighlight">\(1.09\)</span>付近の大きな値は偶パリティの spurious モードであり、
-三重項不安定性では <strong>ありません</strong>。三重項が先行し（<span class="math notranslate nohighlight">\(\lambda_T &gt; \lambda_S\)</span>）、
-しきい値上にあるため、この温度は三重項の転移の近くにあります。</p>
+<span class="math notranslate nohighlight">\(\lambda_T \approx 0.97 &lt; 1\)</span>です。三重項の計算に現れる
+<span class="math notranslate nohighlight">\(1.58\)</span>や<span class="math notranslate nohighlight">\(1.10\)</span>付近の大きな値は偶パリティの spurious モードであり、
+三重項不安定性では <strong>ありません</strong>。三重項がわずかに先行します
+（<span class="math notranslate nohighlight">\(\lambda_T &gt; \lambda_S\)</span>）が、この温度ではどちらのチャネルもしきい値を
+いくらか下回っています。</p>
 </section>
 <section id="id16">
 <h3>描画スクリプト<a class="headerlink" href="#id16" title="Link to this heading">¶</a></h3>
@@ -564,11 +565,11 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 <span id="sc-eigenvalue-dat"></span><h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
 <p>線形化Eliashberg方程式の固有値:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Iteration eigenvalue
-9.42845268e-01
+9.61078331e-01
 # Eigenvalue analysis
 # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
-   0  9.42844825e-01 -3.65296976e-12  9.42844825e-01 1
-   1  7.90190294e-01 -3.37474212e-12  7.90190294e-01 1
+   0  9.61078596e-01 -3.64174908e-12  9.61078596e-01 1
+   1  8.37896272e-01 -3.65082177e-12  8.37896272e-01 1
    ...
 </pre></div>
 </div>
@@ -596,8 +597,8 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 <p>温度を変化させて最大の正の固有値が<span class="math notranslate nohighlight">\(\lambda = 1\)</span>となる点を
 求めることで、超伝導転移温度<span class="math notranslate nohighlight">\(T_c\)</span>を決定できます。</p>
 <p>本チュートリアルでは、<span class="math notranslate nohighlight">\(T = 0.1\)</span>で両方の物理的チャネルが不安定性の
-しきい値を下回っており、<span class="math notranslate nohighlight">\(\lambda_S \approx 0.94\)</span>（一重項・偶）、
-<span class="math notranslate nohighlight">\(\lambda_T \approx 1.00\)</span>（三重項・奇）で、三重項が先行してしきい値上にあります。</p>
+しきい値を下回っており、<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>（一重項・偶）、
+<span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span>（三重項・奇）で、三重項がわずかに先行します。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><strong>パリティとパウリ原理。</strong>
@@ -613,7 +614,7 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 パウリ原理で禁止されます）。そのため<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は各反復をチャネルのパリティ
 セクターへ射影し、固有値解析は各モードを物理的（<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">1</span></code>）か spurious
 （<code class="docutils literal notranslate"><span class="pre">match</span> <span class="pre">=</span> <span class="pre">0</span></code>）かでラベル付けします。三重項の計算に現れる
-<span class="math notranslate nohighlight">\(\lambda \approx 1.58,\ 1.09\)</span>という大きな値はこのような spurious な
+<span class="math notranslate nohighlight">\(\lambda \approx 1.58,\ 1.10\)</span>という大きな値はこのような spurious な
 偶パリティモードであり、三重項不安定性では <strong>ありません</strong> 。</p>
 </div>
 <section id="id19">
@@ -628,8 +629,8 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 （非物理的なセクターへ収束するのを防ぐため）。あるいは<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>を
 省略すれば、ソルバーがチャネルのパリティを自動選択します。
 同じパラメータで<span class="math notranslate nohighlight">\(T = 0.1\)</span>の場合、主要な物理的固有値は
-<span class="math notranslate nohighlight">\(\lambda_T \approx 1.00\)</span>（三重項）と<span class="math notranslate nohighlight">\(\lambda_S \approx 0.94\)</span>
-（一重項）で、三重項が先行してしきい値上にあります。これは、<span class="math notranslate nohighlight">\(T &gt; 0.05\)</span>で
+<span class="math notranslate nohighlight">\(\lambda_T \approx 0.97\)</span>（三重項）と<span class="math notranslate nohighlight">\(\lambda_S \approx 0.96\)</span>
+（一重項）で、三重項がわずかに先行します。これは、<span class="math notranslate nohighlight">\(T &gt; 0.05\)</span>で
 三重項SC状態が一重項と競合するという文献 <a class="footnote-reference brackets" href="#id7" id="id20" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> の結果と整合します。</p>
 <p>単位胞内の2つの分子は別々のサイトなので、入力では<code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">=</span> <span class="pre">[0,</span> <span class="pre">1]</span></code>と
 宣言しています。これにより、単位胞内の分子間相互作用（<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の軌道間
@@ -639,7 +640,8 @@ hwave_sc:     7: -0.781888 (|ev| = 0.781888)  [opposite-parity sector]
 参照）。issue #239 以降、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の対形成バーテックス（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
 <span class="pre">false</span></code>）も、文献 <a class="footnote-reference brackets" href="#id7" id="id22" role="doc-noteref"><span class="fn-bracket">[</span>1<span class="fn-bracket">]</span></a> と同じく単位胞をまたぐ相互作用の Hartree 部分だけを含みます
 （以前の版ではその交換を近似的に、つぶした形で加えていました）。この節に示す数値は
-その変更より前に計算したものです。</p>
+現在の扱いで計算したものです（以前の版では<span class="math notranslate nohighlight">\(\lambda_S \approx 0.94\)</span>、
+<span class="math notranslate nohighlight">\(\lambda_T \approx 1.00\)</span>でした）。</p>
 </section>
 </section>
 <section id="sc-dynamic-frequency">
