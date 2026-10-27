@@ -11,6 +11,7 @@ import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as rpa_mod
+from tests.isolated_trace import run_isolated
 
 _IN = "tests/rpa/input_2orb"
 
@@ -836,25 +837,43 @@ class TestGatePipelineAndOutputs(unittest.TestCase):
         self.assertTrue(any("chiq is the plain" in m for m in cm.output), cm.output[-5:])
 
     def test_measured_peak_below_preflight_estimate(self):
-        import tracemalloc
-        from hwave.solver import bond_channels as bc
-        from hwave.solver.offsite import sc_matrices_from_split
-        s, gi = self._run()
-        topo, split = s._validate_longitudinal_bond_prereqs()
-        est = s._longitudinal_bond_resource_preflight(topo)
-        nx, ny, nz = s.lattice.shape
-        nvol, nd = s.lattice.nvol, s.norb ** 2
-        S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
-                                        s.norb, nx, ny, nz)
-        S0 = S0.reshape(nvol, nd, nd)
-        C0 = C0.reshape(nvol, nd, nd)
-        tracemalloc.start()
+        # measured in a fresh process (issue #266): state left by earlier
+        # tests -- a logger level lowered and not restored, whose records
+        # pytest's log capture then keeps, or a coverage tracer -- would
+        # otherwise count as pipeline memory
+        res = run_isolated("tests.test_rpa_longitudinal_bond_gate", "_traced_bond_pipeline",
+                           TestGatePipelineAndOutputs._OUT)
+        self.assertTrue(res["is_results"])
+        self.assertLess(res["peak"], res["est_peak"])
+
+
+def _traced_bond_pipeline(out_dir):
+    """The tracemalloc measurement behind
+    ``TestGatePipelineAndOutputs.test_measured_peak_below_preflight_estimate``
+    (run through :func:`tests.isolated_trace.run_isolated`)."""
+    import tracemalloc
+    from hwave.solver import bond_channels as bc
+    from hwave.solver.offsite import sc_matrices_from_split
+    s, r = _build({"longitudinal_bond_channels": True})
+    gi = r.get_param("green")
+    os.makedirs(out_dir, exist_ok=True)
+    s.solve(gi, out_dir)
+    topo, split = s._validate_longitudinal_bond_prereqs()
+    est = s._longitudinal_bond_resource_preflight(topo)
+    nx, ny, nz = s.lattice.shape
+    nvol, nd = s.lattice.nvol, s.norb ** 2
+    S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
+                                    s.norb, nx, ny, nz)
+    S0 = S0.reshape(nvol, nd, nd)
+    C0 = C0.reshape(nvol, nd, nd)
+    tracemalloc.start()
+    try:
         res = s._run_longitudinal_bond_pipeline(s.green0, s.green0_tail, 0.5, topo, S0, C0)
         _, peak = tracemalloc.get_traced_memory()
+    finally:
         tracemalloc.stop()
-        self.assertLess(peak, est["peak"])
-        self.assertIsInstance(res, rpa_mod.LongitudinalBondResults)
-
+    return {"peak": peak, "est_peak": float(est["peak"]),
+            "is_results": isinstance(res, rpa_mod.LongitudinalBondResults)}
 
 if __name__ == "__main__":
     unittest.main()
