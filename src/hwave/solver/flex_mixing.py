@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from hwave.solver import backend as _bk
+
 _GEMV_CHUNK = 1 << 20
 
 
@@ -197,33 +199,97 @@ def frequency_reversed_dagger(sigma):
     return sigma[:, ::-1].swapaxes(-1, -2).conj()
 
 
-def _deviation(sigma, rev):
-    if not sigma.size:
+# The helpers below work one frequency PAIR (n, nfreq - 1 - n) at a time,
+# so that their temporaries are a few single-frequency slices
+# (1/nfreq of Sigma) instead of Sigma-sized arrays: the projection runs
+# after every update and the diagnostics at the end of a converged solve,
+# where a memory-tight (GPU) run must not fail for want of workspace.
+# The maxima are accumulated as device scalars and read back once.
+
+
+def _dagger(x):
+    return x.swapaxes(-1, -2).conj()
+
+
+def _pairs(nfreq):
+    return ((n, nfreq - 1 - n) for n in range((nfreq + 1) // 2))
+
+
+def _finish(dmax, smax):
+    if dmax is None:
         return 0.0, 0.0
-    a = float(abs(sigma - rev).max())
-    scale = float(abs(sigma).max())
+    a, scale = float(dmax), float(smax)
     return a, (a / scale if scale > 0.0 else a)
 
 
-def frequency_hermitian_deviation(sigma):
+def _acc(cur, val):
+    if cur is None:
+        return val
+    return _bk.array_module_of(val).maximum(cur, val)
+
+
+def frequency_hermitian_deviation(sigma, static=None):
     """``(abs, rel)``: ``max |Sigma(k, i w) - Sigma(k, -i w)^dag|`` and its
-    ratio to ``max |Sigma|`` (``abs`` itself when ``Sigma`` vanishes)."""
-    return _deviation(sigma, frequency_reversed_dagger(sigma))
+    ratio to ``max |Sigma|`` (``abs`` itself when ``Sigma`` vanishes). With
+    ``static`` (``(nblock, 1, nvol, n, n)``) the deviation of
+    ``sigma + static`` (the total of a split state), formed slice by slice.
+    The pair (n, m) covers both frequencies: ``|a - b^dag|`` and
+    ``|b - a^dag|`` have the same maximum."""
+    if not sigma.size:
+        return 0.0, 0.0
+    dmax = smax = None
+    for n, m in _pairs(sigma.shape[1]):
+        a, b = sigma[:, n], sigma[:, m]
+        if static is not None:
+            a, b = a + static[:, 0], b + static[:, 0]
+        dmax = _acc(dmax, abs(a - _dagger(b)).max())
+        smax = _acc(smax, abs(a).max())
+        smax = _acc(smax, abs(b).max())
+    return _finish(dmax, smax)
+
+
+def project_frequency_hermitian_inplace(sigma, with_deviation=False):
+    """Replace ``sigma`` IN PLACE by ``(Sigma(k, i w) + Sigma(k, -i w)^dag)
+    / 2``, one frequency pair at a time (the same arithmetic, element by
+    element, as the out-of-place formula). Returns ``sigma``, and with
+    ``with_deviation`` also the ``(abs, rel)`` deviation of the input."""
+    dmax = smax = None
+    for n, m in _pairs(sigma.shape[1]):
+        a = sigma[:, n].copy()
+        if n == m:
+            if with_deviation:
+                dmax = _acc(dmax, abs(a - _dagger(a)).max())
+                smax = _acc(smax, abs(a).max())
+            sigma[:, n] = 0.5 * (a + _dagger(a))
+            continue
+        b = sigma[:, m]
+        if with_deviation:
+            dmax = _acc(dmax, abs(a - _dagger(b)).max())
+            smax = _acc(smax, abs(a).max())
+            smax = _acc(smax, abs(b).max())
+        new_n = 0.5 * (a + _dagger(b))
+        sigma[:, m] = 0.5 * (b + _dagger(a))
+        sigma[:, n] = new_n
+    if with_deviation:
+        return sigma, (_finish(dmax, smax) if sigma.size else (0.0, 0.0))
+    return sigma
 
 
 def project_frequency_hermitian(sigma, with_deviation=False):
-    """``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` (a new array); with
+    """``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` as a new array; with
     ``with_deviation`` also the ``(abs, rel)`` deviation of the INPUT."""
-    rev = frequency_reversed_dagger(sigma)
-    out = 0.5 * (sigma + rev)
-    if with_deviation:
-        return out, _deviation(sigma, rev)
-    return out
+    return project_frequency_hermitian_inplace(sigma.copy(), with_deviation)
 
 
-def project_split_state(state):
+def project_split_state(state, inplace=False):
     """Both components of a :class:`SplitState` projected; the singleton
-    static axis makes the static projection ``(S + S^dag) / 2``."""
+    static axis makes the static projection ``(S + S^dag) / 2``. With
+    ``inplace`` the arrays of ``state`` are overwritten and ``state`` is
+    returned."""
+    if inplace:
+        project_frequency_hermitian_inplace(state.static)
+        project_frequency_hermitian_inplace(state.fluct)
+        return state
     return SplitState(static=project_frequency_hermitian(state.static),
                       fluct=project_frequency_hermitian(state.fluct))
 

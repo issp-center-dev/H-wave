@@ -4739,8 +4739,19 @@ class FLEX(RPA):
         if isinstance(sigma, _fm.SplitState):
             return max(_fm.frequency_hermitian_deviation(sigma.static)[1],
                        _fm.frequency_hermitian_deviation(sigma.fluct)[1],
-                       _fm.frequency_hermitian_deviation(sigma.total())[1])
+                       _fm.frequency_hermitian_deviation(sigma.fluct, static=sigma.static)[1])
         return _fm.frequency_hermitian_deviation(sigma)[1]
+
+    def _sigma_deviation_guarded(self, sigma, what):
+        """The diagnostic deviation, which must never fail a solve: any
+        failure (e.g. device memory exhausted after convergence) is logged
+        and reported as NaN."""
+        try:
+            return self._sigma_deviation(sigma)
+        except Exception as exc:          # diagnostics only
+            logger.warning("FLEX: the Sigma(k, i w) = Sigma(k, -i w)^dag check of the %s was "
+                           "skipped (%s: %s)", what, type(exc).__name__, exc)
+            return float("nan")
 
     def _project_sigma_seed(self, sigma):
         """Project a warm-start seed (an array, or a Phase B SplitState)
@@ -4749,7 +4760,7 @@ class FLEX(RPA):
         is reported loudly but not refused. With the projection off the
         seed is used as is, and only a large asymmetry is reported."""
         from hwave.solver import flex_mixing as _fm
-        rel = self._sigma_deviation(sigma)
+        rel = self._sigma_deviation_guarded(sigma, "seed")
         self.sigma_seed_hermitian_deviation = rel
         far = rel > self.SIGMA_SEED_ASYMMETRY_WARN
         if not self.flex_sigma_hermitian_projection:
@@ -4760,10 +4771,11 @@ class FLEX(RPA):
                     "(flex_sigma_hermitian_projection = false); {}".format(
                         rel, self.SIGMA_SEED_ASYMMETRY_WARN, self._BROKEN_BRANCH_NOTE))
             return sigma
+        # in place: the seed arrays are this solve's own copies
         if isinstance(sigma, _fm.SplitState):
-            out = _fm.project_split_state(sigma)
+            out = _fm.project_split_state(sigma, inplace=True)
         else:
-            out = _fm.project_frequency_hermitian(sigma)
+            out = _fm.project_frequency_hermitian_inplace(sigma)
         msg = ("FLEX: sigma_init projected onto Sigma(k, i w) = Sigma(k, -i w)^dag "
                "(relative deviation removed {:.3e})".format(rel))
         if far:
@@ -4782,7 +4794,7 @@ class FLEX(RPA):
             logger.info("FLEX: sigma Hermitian projection: largest relative deviation "
                         "removed in one update {:.3e}".format(self.sigma_hermitian_removed_max))
             return
-        rel = self._sigma_deviation(sigma)
+        rel = self._sigma_deviation_guarded(sigma, "final self-energy")
         self.sigma_final_hermitian_deviation = rel
         if rel > self.SIGMA_UNPROJECTED_WARN:
             logger.warning(
@@ -4798,11 +4810,15 @@ class FLEX(RPA):
         The relative deviation removed is logged (debug) and its running
         maximum kept in ``self.sigma_hermitian_removed_max``."""
         from hwave.solver import flex_mixing as _fm
+        # in place, one frequency pair at a time (a few single-frequency
+        # temporaries): the mixed iterate is a fresh array that no mixer
+        # history references yet
         if isinstance(sigma, _fm.SplitState):
-            rel = _fm.frequency_hermitian_deviation(sigma.fluct)[1]
-            out = _fm.project_split_state(sigma)
+            _, (_, rel) = _fm.project_frequency_hermitian_inplace(sigma.fluct, with_deviation=True)
+            _fm.project_frequency_hermitian_inplace(sigma.static)
+            out = sigma
         else:
-            out, (_, rel) = _fm.project_frequency_hermitian(sigma, with_deviation=True)
+            out, (_, rel) = _fm.project_frequency_hermitian_inplace(sigma, with_deviation=True)
         logger.debug("  sigma Hermitian projection: relative deviation removed "
                      "{:.3e} (iteration {})".format(rel, iteration))
         self.sigma_hermitian_removed_max = max(

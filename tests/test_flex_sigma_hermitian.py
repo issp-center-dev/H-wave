@@ -200,6 +200,20 @@ class TestProjectionHelpers(unittest.TestCase):
         z = np.zeros_like(self.s)
         self.assertEqual(fm.frequency_hermitian_deviation(z), (0.0, 0.0))
 
+    def test_inplace_pairwise_equals_the_formula(self):
+        for nf in (6, 5, 1):                     # even, odd (IR-like), static
+            s = self.s[:, :nf].copy()
+            ref = 0.5 * (s + fm.frequency_reversed_dagger(s))
+            out, (a, rel) = fm.project_frequency_hermitian_inplace(s.copy(), with_deviation=True)
+            np.testing.assert_array_equal(out, ref)          # bit for bit
+            full = float(np.abs(s - fm.frequency_reversed_dagger(s)).max())
+            self.assertEqual(a, full)
+            self.assertEqual(fm.frequency_hermitian_deviation(s)[0], full)
+            st = self.s[:, :1].copy()
+            tot = s + st
+            self.assertEqual(fm.frequency_hermitian_deviation(s, static=st)[0],
+                             float(np.abs(tot - fm.frequency_reversed_dagger(tot)).max()))
+
     def test_split_state(self):
         st = fm.SplitState(static=self.s[:1, :1].copy(), fluct=self.s[:1].copy())
         out = fm.project_split_state(st)
@@ -375,6 +389,80 @@ class TestBrokenBranchLight(_TmpDir):
         self.assertFalse(any("final self-energy violates" in m for m in warn))
 
 
+class TestDiagnosticsNeverFailTheSolve(_TmpDir):
+    """The deviation diagnostics (end of solve with the projection off,
+    seed check) must not fail a solve: a failure inside them -- e.g. device
+    memory exhausted after convergence -- is logged as a skipped check and
+    recorded as NaN, and the results are kept."""
+
+    def _boom(self, *a, **k):
+        raise MemoryError("simulated out-of-memory in the diagnostic")
+
+    def _solve_patched(self, s, gi):
+        from unittest import mock
+        with mock.patch.object(fm, "frequency_hermitian_deviation", self._boom), \
+                self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s.solve(gi, self.d)
+        return cm.output
+
+    def test_end_of_solve_legacy_and_phase_b(self):
+        files = _write_dimer(self.d, 1.5, V=0.4)
+        for extra in ({}, {"scheme": "general", "flex_hartree_fock": True}):
+            with self.subTest(**{k: str(v) for k, v in extra.items()}):
+                s, gi = _dimer_solver(self.d, files, flex_sigma_hermitian_projection=False,
+                                      IterationMax=3, **extra)
+                out = self._solve_patched(s, gi)
+                self.assertTrue(any("check of the final self-energy was skipped" in m
+                                    and "MemoryError" in m for m in out))
+                self.assertTrue(np.isnan(s.sigma_final_hermitian_deviation))
+                self.assertEqual(s.scf_iterations, 3)
+                self.assertIn("sigma", gi)
+                self.assertGreater(float(np.abs(s.sigma).max()), 1e-3)
+
+    def test_seed_check(self):
+        files = _write_dimer(self.d, 1.5)
+        s, gi = _dimer_solver(self.d, files, IterationMax=1)
+        gi["sigma_init"] = _antisymmetric((1, 16, 16, 2, 2), 1e-2)
+        out = self._solve_patched(s, gi)
+        self.assertTrue(any("check of the seed was skipped" in m for m in out))
+        self.assertTrue(np.isnan(s.sigma_seed_hermitian_deviation))
+        self.assertEqual(_rel_dev(s.sigma), 0.0)     # the projection itself still ran
+
+
+class TestIRNativeArchiveCheck(_TmpDir):
+
+    @unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
+    def test_check_and_mixed_metadata(self):
+        from hwave.sigma_split import main
+        from hwave.solver.flex_hf import sigma_hermitian_check
+        files = _write_dimer(self.d, 1.5)
+        s, gi = _dimer_solver(self.d, files, matsubara_basis="ir", ir_wmax=20.0,
+                              write_densified=False)
+        _solve(s, gi, self.d)
+        s.save_results({"path_to_output": self.d, "sigma": "ir.npz"}, gi)
+        path = os.path.join(self.d, "ir.npz")
+        data = dict(np.load(path))
+        self.assertNotIn("freq_index", data)
+        self.assertEqual(sigma_hermitian_check(path)["grid"], "ir")
+        with _quiet():
+            self.assertEqual(main(["--check", path]), 0)
+        # mixed metadata: IR-native nodes AND a uniform freq_index
+        mixed = os.path.join(self.d, "mixed.npz")
+        np.savez(mixed, **dict(data, freq_index=np.arange(data["sigma"].shape[1])))
+        with self.assertRaisesRegex(ValueError, "both IR-native node metadata and a uniform"):
+            sigma_hermitian_check(mixed)
+        # inconsistent: a node set that is not reversal-symmetric
+        bad = os.path.join(self.d, "bad.npz")
+        n = np.array(data["ir_freq_n"]).copy()
+        n[-1] += 2
+        np.savez(bad, **dict(data, ir_freq_n=n))
+        with self.assertRaisesRegex(ValueError, "not reversal-symmetric"):
+            sigma_hermitian_check(bad)
+        with _quiet():
+            self.assertEqual(main(["--check", mixed]), 1)
+            self.assertEqual(main(["--check", bad]), 1)
+
+
 class TestEquivariance(_TmpDir):
     """F(S Sigma) = S F(Sigma) for one unprojected map step from a random
     asymmetric seed (S: Sigma -> Sigma(k, -i w)^dag), on the dimer without
@@ -541,21 +629,50 @@ class TestSigmaSplitSymmetrization(_TmpDir):
         data = dict(np.load(os.path.join(self.d, "small.npz")))
         nf = data["sigma"].shape[1]
         self.assertTrue(np.array_equal(data["freq_index"], np.arange(nf)))
-        bad = {"restricted": dict(data, freq_index=np.arange(nf - 1)),
-               "ir_asym": dict(data, ir_freq_n=np.arange(-nf + 1, nf + 1, 2) + 2)}
-        for name, members in bad.items():
-            with self.subTest(name=name):
-                np.savez(os.path.join(self.d, name + ".npz"), **members)
-                with self.assertRaisesRegex(ValueError, "reversing the frequency axis"):
-                    self._convert(name)
-        # a symmetric IR node set is accepted
-        np.savez(os.path.join(self.d, "ir_sym.npz"),
+        # a restricted uniform grid
+        np.savez(os.path.join(self.d, "restricted.npz"), **dict(data, freq_index=np.arange(nf - 1)))
+        with self.assertRaisesRegex(ValueError, "reversing the frequency axis"):
+            self._convert("restricted")
+        # an incomplete set of sparse-node markers (canonical discriminator)
+        np.savez(os.path.join(self.d, "incomplete.npz"),
                  **dict(data, ir_freq_n=np.arange(-nf + 1, nf + 1, 2)))
-        self._convert("ir_sym")
+        with self.assertRaisesRegex(ValueError, "incomplete IR-native discriminator"):
+            self._convert("incomplete")
         # no metadata: taken as the full centred grid
         nometa = {k: v for k, v in data.items() if k != "freq_index"}
         np.savez(os.path.join(self.d, "nometa.npz"), **nometa)
         self.assertGreater(self._convert("nometa")["asymmetry"], 0.5e-5)
+
+    def test_cli_unreadable_inputs(self):
+        """Missing, empty and corrupt archives: exit status 1, a one-line
+        error and no traceback, for --check and for the conversion; no
+        output file is written."""
+        import subprocess
+        import sys
+        empty = os.path.join(self.d, "empty.npz")
+        open(empty, "wb").close()
+        corrupt = os.path.join(self.d, "corrupt.npz")
+        with open(os.path.join(self.d, "small.npz"), "rb") as fh:
+            head = fh.read(200)
+        with open(corrupt, "wb") as fh:
+            fh.write(head)                       # a truncated zip
+        text = os.path.join(self.d, "text.npz")
+        with open(text, "w") as fh:
+            fh.write("not an archive\n")
+        missing = os.path.join(self.d, "missing.npz")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join(
+            (os.path.join(os.getcwd(), "src"), os.getcwd())))
+        drive = "import sys; from hwave.sigma_split import main; sys.exit(main(sys.argv[1:]))"
+        out = os.path.join(self.d, "never.npz")
+        for src in (missing, empty, corrupt, text):
+            for argv in (["--check", src], [src, out, "--zero-static"]):
+                with self.subTest(src=os.path.basename(src), mode=argv[0]):
+                    r = subprocess.run([sys.executable, "-B", "-c", drive] + argv, env=env,
+                                       capture_output=True, text=True)
+                    self.assertEqual(r.returncode, 1, r.stderr)
+                    self.assertNotIn("Traceback", r.stderr)
+                    self.assertIn("ERROR hwave_sigma_split", r.stderr)
+                    self.assertFalse(os.path.exists(out))
 
     def test_cli(self):
         from hwave.sigma_split import main

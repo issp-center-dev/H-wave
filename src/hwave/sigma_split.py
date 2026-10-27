@@ -30,7 +30,18 @@ projection existed.
 """
 import argparse
 import logging
+import pickle
 import sys
+import zipfile
+
+#: Every refusal the converter and the audit report as exit status 1 with a
+#: one-line message instead of a traceback: invalid content (ValueError,
+#: KeyError), an existing output (FileExistsError, an OSError), a missing
+#: or unreadable file (OSError), an empty file (EOFError), a corrupt or
+#: truncated npz (zipfile.BadZipFile) and a non-npz file that numpy tries to
+#: unpickle (pickle.UnpicklingError).
+_LOAD_ERRORS = (ValueError, KeyError, OSError, EOFError, zipfile.BadZipFile,
+                pickle.UnpicklingError)
 
 _USAGE = ("hwave_sigma_split total.npz out.npz "
           "(--static static.npz [--uhfk-spin-major] | --zero-static | "
@@ -90,7 +101,7 @@ def main(argv=None):
         from hwave.solver.flex_hf import sigma_hermitian_check
         try:
             res = sigma_hermitian_check(args.total, logger=log)
-        except (ValueError, OSError, KeyError) as exc:
+        except _LOAD_ERRORS as exc:
             log.error("%s", exc)
             return 1
         ok = res["asymmetry"] <= tol
@@ -111,7 +122,7 @@ def main(argv=None):
             uhfk_trans_mod=args.uhfk_trans_mod, bare_transfer=args.bare_transfer,
             uhfk_spin_major=args.uhfk_spin_major, force=args.force, logger=log,
             asymmetry_tol=tol)
-    except (ValueError, FileExistsError, OSError, KeyError) as exc:
+    except _LOAD_ERRORS as exc:
         log.error("%s", exc)
         parser.print_usage(sys.stderr)
         return 1

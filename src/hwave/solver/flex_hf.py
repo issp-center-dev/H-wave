@@ -336,16 +336,35 @@ SIGMA_SPLIT_ASYMMETRY_TOL = 1.0e-3
 
 def check_frequency_reversal(members, nfreq, label, log=None):
     """Refuse an archive whose frequency axis is not reversal-symmetric, so
-    that reversing axis 1 is ``i w -> -i w`` (issue #281): an IR-native
-    archive needs ``ir_freq_n == -ir_freq_n[::-1]`` with ``nfreq`` nodes, a
-    uniform one the full centred grid ``freq_index == arange(nfreq)`` (what
-    every FLEX archive records). An archive without either member (a
-    hand-made one) is taken to be on the full centred uniform grid, and that
-    assumption is logged."""
-    if "ir_freq_n" in members:
-        n = np.asarray(members["ir_freq_n"]).ravel()
-        if n.size != nfreq or not np.issubdtype(n.dtype, np.integer) \
-                or not np.array_equal(n, -n[::-1]):
+    that reversing axis 1 is ``i w -> -i w`` (issue #281).
+
+    IR-native data is recognised by the canonical discriminator
+    :func:`hwave.solver.ir_axis.is_ir_native` (which already refuses an
+    incomplete set of sparse-node markers); it must carry fermionic nodes
+    with ``ir_freq_n == -ir_freq_n[::-1]``, ``nfreq`` of them, and no
+    uniform-grid ``freq_index`` beside them. A uniform archive needs the
+    full centred grid ``freq_index == arange(nfreq)`` (what every FLEX
+    archive records). An archive with neither (a hand-made one) is taken
+    to be on the full centred uniform grid, and that assumption is logged."""
+    from hwave.solver.ir_axis import is_ir_native, ir_native_meta
+    try:
+        native = is_ir_native(members)
+    except ValueError as exc:
+        raise ValueError("{}: {}".format(label, exc)) from None
+    if native:
+        if "freq_index" in members:
+            raise ValueError(
+                "{}: the archive carries both IR-native node metadata and a uniform-grid "
+                "freq_index; its frequency axis is ambiguous".format(label))
+        try:
+            meta = ir_native_meta(members)
+        except (ValueError, KeyError) as exc:
+            raise ValueError("{}: inconsistent IR-native metadata ({})".format(label, exc)) from None
+        if meta["statistics"] != "F":
+            raise ValueError("{}: a self-energy needs fermionic IR nodes, the archive records "
+                             "ir_statistics={!r}".format(label, meta["statistics"]))
+        n = meta["freq_n"]
+        if n.size != nfreq or not np.array_equal(n, -n[::-1]):
             raise ValueError(
                 "{}: the IR node set ir_freq_n ({} nodes) is not reversal-symmetric for the {} "
                 "frequencies of sigma; Sigma(k, -i w) cannot be formed by reversing the "
