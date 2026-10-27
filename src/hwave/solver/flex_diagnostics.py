@@ -254,7 +254,7 @@ def _monotone(values, tol):
 
 def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
                        sigma_finite, window, f_window, monitor=None,
-                       is_ir=False):
+                       is_ir=False, note=""):
     """The error text when the chemical-potential search fails.
 
     ``ncond`` is the target and ``nstate`` the number of states it is
@@ -332,4 +332,4 @@ def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
         verdict = (" The self-energy has diverged ({}); the target filling is "
                    "reachable, so this is not a problem of the filling or the "
                    "temperature.".format(why))
-    return head + verdict + ctx + " " + ADVICE
+    return head + verdict + note + ctx + " " + ADVICE

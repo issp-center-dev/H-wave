@@ -159,6 +159,59 @@ class TestDivergedWarmStart(unittest.TestCase):
                 mus[basis] = s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
         self.assertAlmostEqual(mus["ir"], mus["uniform"], delta=5e-3)
 
+    def _ir_fallback_with_fault(self, fault):
+        """Run the healthy IR fallback case (target 15.999, see above) with
+        ``fault`` applied to the LAST N(mu) evaluation only -- the
+        post-solve validation of the fallback root."""
+        s, gi = _make_solver({'matsubara_basis': 'ir', 'ir_wmax': 10.0,
+                              'IterationMax': 1})
+        s.solve(gi, 'tests/flex/output')
+        nb, nv, nd = s.H0_eigenvalue.shape
+        sigma = np.zeros((nb, s._ir_axF.n_freq, nv, nd, nd), dtype=np.complex128)
+        orig = s._number_from_eigs_ir
+        calls = []
+
+        def counting(lam, mu):
+            calls.append(mu)
+            return orig(lam, mu)
+        s._number_from_eigs_ir = counting
+        with self.assertLogs(_LOGGER, level="WARNING"):
+            s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+        last = len(calls) - 1
+        seen = []
+
+        def faulty(lam, mu):
+            seen.append(mu)
+            if len(seen) - 1 == last:
+                return fault(orig(lam, mu))
+            return orig(lam, mu)
+        s._number_from_eigs_ir = faulty
+        s._scf_monitor = diag.ScfMonitor(logging.getLogger("test282.fb"))
+        s._scf_monitor.record(3, 0.25, {"spin": (0.9, (0.5, 0.5, 0.0))}, last=False)
+        with self.assertRaises(RuntimeError) as cm, \
+                self.assertLogs(_LOGGER, level="WARNING"):
+            s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+        self.assertEqual(len(seen), last + 1)
+        msg = str(cm.exception)
+        self.assertIn("not bracketed after expansion", msg)        # classified
+        self.assertIn("band-window fallback on", msg)
+        self.assertIn("not a reliable root", msg)
+        self.assertIn("diverged, or ir_wmax does not cover the spectrum", msg)
+        self.assertIn("last completed iteration was 3", msg)       # SCF context
+        return msg
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_fallback_bad_residual_is_classified(self):
+        msg = self._ir_fallback_with_fault(lambda nd: (nd[0] + 1.0, nd[1]))
+        self.assertIn("with N-Ncond = ", msg)
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_fallback_validation_error_does_not_escape(self):
+        def boom(nd):
+            raise FloatingPointError("divide by zero (test)")
+        msg = self._ir_fallback_with_fault(boom)
+        self.assertIn("N(mu) could not be evaluated: divide by zero (test)", msg)
+
     @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
     def test_ir_narrow_basis_names_ir_wmax(self):
         """Sigma = 0 and a reachable target, but ir_wmax far below the band:

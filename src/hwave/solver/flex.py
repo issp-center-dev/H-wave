@@ -3583,6 +3583,8 @@ class FLEX(RPA):
                     "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, Ncond,
                     nstate, sigma_finite, window, f_window,
                     getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
+            # keep what the classified error needs, should the fallback fail
+            expanded = (lo, hi, f_lo, f_hi, window, f_window)
             lo, f_lo, hi, f_hi = sub
             fallback = (min(lo, hi), max(lo, hi))
             if f_lo == 0.0:
@@ -3635,16 +3637,25 @@ class FLEX(RPA):
 
         if fallback is not None:
             # the fallback root must be a real root inside its sub-interval
-            f_mu = _delta_n(mu)
-            if not (fallback[0] <= mu <= fallback[1]
+            # (classified like any other failure of the search; an error
+            # while evaluating the residual counts as a failed validation)
+            try:
+                f_mu = float(_delta_n(mu))
+            except Exception as exc:
+                f_mu, why = None, "N(mu) could not be evaluated: {}".format(exc)
+            else:
+                why = "N-Ncond = {}".format(f_mu)
+            if not (f_mu is not None and np.isfinite(f_mu)
+                    and fallback[0] <= mu <= fallback[1]
                     and abs(f_mu) <= 1.0e-8 * max(1.0, float(nstate))):
-                raise RuntimeError(
-                    "FLEX._find_mu_dressed: the band-window fallback search "
-                    "ended at mu = {} with N-Ncond = {} (sub-interval [{}, {}]); "
-                    "no reliable root.{}".format(
-                        mu, f_mu, fallback[0], fallback[1],
-                        " On the IR path check that ir_wmax covers the spectrum."
-                        if self.use_ir else ""))
+                e_lo, e_hi, e_flo, e_fhi, e_win, e_fwin = expanded
+                raise RuntimeError(_diag.mu_failure_message(
+                    "FLEX._find_mu_dressed", e_lo, e_hi, e_flo, e_fhi, Ncond,
+                    nstate, sigma_finite, e_win, e_fwin,
+                    getattr(self, "_scf_monitor", None), is_ir=self.use_ir,
+                    note=" The band-window fallback on [{}, {}] ended at mu = "
+                         "{} with {}, which is not a reliable root.".format(
+                             fallback[0], fallback[1], mu, why)))
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu
 
