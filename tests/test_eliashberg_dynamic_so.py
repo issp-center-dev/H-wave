@@ -683,6 +683,29 @@ class TestOutputs(_FlexFixture):
                                (S.ND, S.ND) + tuple(S.CELL) + (_NMAT_E2E,), False,
                                None, _NMAT_E2E)
 
+    def test_seed_without_index_convention_is_refused(self):
+        """A marked seed without the index_convention tag (an interleaved gap
+        has the same shape) is refused, as is one with another tag."""
+        out1 = self._out("s6")
+        _run(self._flex_input(out1))
+        d = self._out("s7")
+        os.makedirs(d)
+        for name, kw in (("untagged.npz", {"drop": ("index_convention",)}),
+                         ("interleaved.npz", {"index_convention": np.array("interleaved")})):
+            bad = os.path.join(d, name)
+            S._resave(os.path.join(out1, "gap_dynamic.npz"), bad, **kw)
+            with self.subTest(seed=name):
+                with self.assertRaisesRegex(ValueError, "index_convention"):
+                    with _quiet(), mock.patch.object(
+                            sc._SOAntisymmetricBasis, "to_reduced",
+                            side_effect=AssertionError("reduced before the check")):
+                        dso.load_seed(bad, (S.ND, S.ND) + tuple(S.CELL) + (_NMAT_E2E,))
+                out = self._out("s8_" + name)
+                with self.assertRaisesRegex(ValueError, "index_convention"):
+                    with _quiet():
+                        sc.calc_eliashberg(self._flex_input(out, seed_eigenvector=bad))
+                self.assertFalse(os.path.exists(out) and os.listdir(out))
+
     def test_unmarked_seed_is_refused(self):
         out1 = self._out("s3")
         _run(self._flex_input(out1))
@@ -775,6 +798,29 @@ class TestRefusals(unittest.TestCase):
 
     def test_odd_nmat(self):
         self._refused("Nmat", {}, Nmat=15)
+
+    def test_output_name_collisions(self):
+        """output_gap, output_eigenvalue and gap_dynamic.npz are compared as
+        resolved paths: exact names, absolute paths and ../ aliases."""
+        out = os.path.join(self.d, "out")
+        cases = (
+            {"output_gap": "gap_dynamic.npz"},
+            {"output_eigenvalue": "gap_dynamic.npz"},
+            {"output_gap": "same.dat", "output_eigenvalue": "same.dat"},
+            {"output_gap": os.path.join(out, "gap_dynamic.npz")},
+            {"output_gap": "x.dat",
+             "output_eigenvalue": os.path.join(out, "x.dat")},
+            {"output_eigenvalue": os.path.join("..", "out", "gap_dynamic.npz")},
+            {"output_gap": "e.dat",
+             "output_eigenvalue": os.path.join("sub", "..", "e.dat")},
+        )
+        files = S._write_model(self.d, so=True, soc=0.3)
+        for eli in cases:
+            with self.subTest(**eli):
+                with mock.patch.object(
+                        sc, "_read_interaction_files",
+                        side_effect=AssertionError("model read before the check")):
+                    self._refused("resolve to the same file", eli, files=files)
 
     def test_memory_cap(self):
         self._refused("mem_limit_gb", {"mem_limit_gb": 1e-6}, exc=MemoryError)

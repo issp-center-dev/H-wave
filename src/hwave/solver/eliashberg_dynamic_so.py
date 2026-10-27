@@ -340,12 +340,15 @@ def load_seed(path, gap_shape):
                 "seed_eigenvector '{}' is not the gap of a spin-orbital run (no "
                 "spin_orbital = True marker); a spin-orbital dynamic run is seeded "
                 "only by the gap_dynamic.npz of another one.".format(path))
-        if ("index_convention" in data and str(data["index_convention"])
-                != spin_orbital.INDEX_CONVENTION):
+        # required: an interleaved gap has the shape of a spin-block one
+        tag = (str(data["index_convention"]) if "index_convention" in data
+               else None)
+        if tag != spin_orbital.INDEX_CONVENTION:
             raise ValueError(
                 "seed_eigenvector '{}' carries index_convention = {!r}, expected "
-                "{!r}.".format(path, str(data["index_convention"]),
-                               spin_orbital.INDEX_CONVENTION))
+                "{!r} (the spin-orbital order of the gap's first two axes cannot "
+                "be told from its shape).".format(
+                    path, tag, spin_orbital.INDEX_CONVENTION))
         gap = np.asarray(data["gap"])
         if gap.ndim != 6:
             raise ValueError(
@@ -591,13 +594,25 @@ def solve_dynamic_so(input_dict):
                            "(matsubara_basis = \"uniform\"); it is ignored.", key)
     gap_file = eli.get("output_gap", "gap.dat")
     eigenvalue_file = eli.get("output_eigenvalue", "eigenvalue.dat")
-    for name, what in ((gap_file, "output_gap"), (eigenvalue_file, "output_eigenvalue")):
-        if os.path.normpath(name) == os.path.normpath(_OUTPUT_NPZ):
-            raise ValueError(
-                "[eliashberg] {} = {!r} would overwrite the spin-orbital dynamic "
-                "gap archive '{}'; choose another name.".format(what, name,
-                                                                _OUTPUT_NPZ))
     output_dir = input_dict["file"]["output"]["path_to_output"]
+    # the three output files, resolved as they will be opened (absolute paths
+    # and ../ aliases included), must be distinct -- checked before any input
+    # is read
+    outs = (("output_gap", gap_file), ("output_eigenvalue", eigenvalue_file),
+            ("the gap archive", _OUTPUT_NPZ))
+    resolved = [os.path.realpath(os.path.join(output_dir, name))
+                for _, name in outs]
+    for i in range(len(outs)):
+        for j in range(i + 1, len(outs)):
+            if resolved[i] == resolved[j]:
+                raise ValueError(
+                    "[mode] enable_spin_orbital = true with frequency = "
+                    "\"dynamic\": {} ({!r}) and {} ({!r}) resolve to the same "
+                    "file '{}' (the gap archive is '{}' in path_to_output); "
+                    "choose different names for [eliashberg] output_gap and "
+                    "output_eigenvalue.".format(
+                        outs[i][0], outs[i][1], outs[j][0], outs[j][1],
+                        resolved[i], _OUTPUT_NPZ))
 
     # --- model (no heavy work yet) ---
     geom_info, hr, interactions = sc._read_interaction_files(input_dict)
