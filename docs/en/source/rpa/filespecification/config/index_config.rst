@@ -508,8 +508,9 @@ that has no effect under the current settings.
   relative), the denominator at :math:`(q, -\nu)` is the complex
   conjugate of the one at :math:`(-q, \nu)` and has the same score, so the
   negative frequencies are not decomposed again; a frequency batch whose
-  minimum score lies within the error bound of that check of the
-  threshold is still guarded on its own, and a refusal is reported at the
+  minimum score lies closer to the threshold than the tolerance of that
+  symmetry check (:math:`10^{-12}` relative) can resolve is still guarded
+  on its own, and a refusal is reported at the
   mirror of the stored violating block. In every case the decision
   (refuse, warn or pass) is that of ``false``, and ``cond_min`` (log and
   ``longitudinal_bond_cond_min_s`` / ``_c``) is the minimum over the whole
@@ -527,9 +528,12 @@ that has no effect under the current settings.
   ``longitudinal_bond_guard_exact_blocks_*``) count the stored
   frequencies only; such outputs carry ``longitudinal_bond_half_grid =
   true``. A ``sigma_init`` seed must satisfy
-  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`. The
-  dynamic bond archive (``longitudinal_bond_output_full``) still holds the
-  full grid, so it is read by ``hwave_sc`` as before. The in-process
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`. With
+  ``longitudinal_bond_output_full`` the in-memory dynamic buffers
+  (``chi_s_w``, ``chi_c_w``) hold the stored half during the solve; they
+  are expanded to the full grid when the results are published, so the
+  archive written to disk still holds the full grid and is read by
+  ``hwave_sc`` as before. The in-process
   pairing (``longitudinal_bond_pairing``) works on the half grid too: the
   pairing vertex satisfies the same relation, so only the stored
   frequencies are dressed again and accumulated, and the kernel rebuilds
@@ -567,7 +571,9 @@ that has no effect under the current settings.
   bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
   ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing has no
   ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
-  for how multi-orbital results are validated (issue #239).
+  for how multi-orbital results are validated (issue #239). Combining
+  any pairing with ``longitudinal_bond_half_grid = true`` is supported
+  (see that key).
 
 - ``flex_hartree_fock``
 
