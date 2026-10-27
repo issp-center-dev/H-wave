@@ -545,8 +545,11 @@ class TestBitIdentityWhenOff(unittest.TestCase):
         self.assertEqual(sorted(ga), sorted(go))
         for k in ga:
             if isinstance(ga[k], np.ndarray):
-                np.testing.assert_allclose(ga[k], go[k], rtol=1e-12, atol=1e-14,
-                                           err_msg=k)
+                if np.issubdtype(ga[k].dtype, np.inexact):
+                    np.testing.assert_allclose(ga[k], go[k], rtol=1e-12,
+                                               atol=1e-14, err_msg=k)
+                else:
+                    np.testing.assert_array_equal(ga[k], go[k], err_msg=k)
         self.assertEqual(sorted(fa), sorted(fo))
         for fn in fa:
             self.assertEqual(sorted(fa[fn]), sorted(fo[fn]))
