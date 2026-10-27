@@ -197,12 +197,24 @@ class PairVertexAccumulator:
 
     # -- the frequency grid ------------------------------------------------
     def _check_grid(self, source, what):
-        """Refuse a source whose frequency layout is not the accumulator's."""
+        """Refuse a source whose frequency layout is not the accumulator's:
+        the half-grid flag, and for a half-grid source its full grid ``nmat``
+        and its slice count (a half-grid batch of another ``nmat`` would be
+        folded at the wrong partners). ``nvol`` and ``ND`` are checked when
+        the source carries them. Runs before anything is absorbed."""
         if bool(getattr(source, "half_grid", False)) != self.half_grid:
             raise ValueError("PairVertexAccumulator: {} is {} but the accumulator works on the "
                              "{}".format(what, "a half-grid store" if not self.half_grid
                                          else "a full-grid store",
                                          "half grid" if self.half_grid else "full grid"))
+        want = [("nvol", self.nvol), ("ND", self.ND)]
+        if self.half_grid:
+            want = [("nmat", self.nmat), ("nslices", self.nslices)] + want
+        for attr, value in want:
+            got = getattr(source, attr, None)
+            if (got is not None or attr in ("nmat", "nslices")) and got != value:
+                raise ValueError("PairVertexAccumulator: {} has {} = {} but the accumulator "
+                                 "works with {} = {}".format(what, attr, got, attr, value))
 
     def _batches(self):
         """``(s0, s1, ls)`` over the stored slices: ``ls`` the grid index of

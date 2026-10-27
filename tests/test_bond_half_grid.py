@@ -1603,6 +1603,7 @@ def _capture_kernels(store):
     def init(self, vertex, *a, **k):
         real(self, vertex, *a, **k)
         rec = {}
+        rec["_nd"] = self.nd
         if self.is_ir:
             rec["coeffs"] = np.array(vertex.coeffs)
             rec["const"] = None if vertex.const is None else np.array(vertex.const)
@@ -1665,11 +1666,36 @@ def _compare_pairing(full, half):
         kern["count"] = np.inf
     for i, (a, b) in enumerate(zip(kf, kh)):
         for key in a:
+            if key == "_nd":
+                continue
             if a[key] is None:
                 kern["{}:{}".format(i, key)] = 0.0 if b.get(key) is None else np.inf
+            elif key in ("coeffs", "const"):
+                kern["{}:{}".format(i, key)] = _blockwise_rel(a[key], b[key], a["_nd"])
             else:
                 kern["{}:{}".format(i, key)] = _rel(a[key], b[key])
     return flex, pairing, kern, eig
+
+
+def _blockwise_rel(a, b, nd):
+    """The IR coefficients (or constant) per ``(alpha, beta)`` channel block,
+    each relative to its OWN scale (a small bond block is not hidden under
+    the on-site block's), with an absolute floor of 1e-14 x the global scale
+    for blocks that are zero up to round-off."""
+    a, b = np.asarray(a), np.asarray(b)
+    if a.shape != b.shape:
+        return np.inf
+    if not (np.all(np.isfinite(a)) and np.all(np.isfinite(b))):
+        return np.inf
+    floor = 1e-14 * max(float(np.abs(a).max()), 1e-300)
+    B = a.shape[-1] // nd
+    worst = 0.0
+    for x in range(B):
+        for y in range(B):
+            sl = (Ellipsis, slice(x * nd, (x + 1) * nd), slice(y * nd, (y + 1) * nd))
+            scale = max(float(np.abs(a[sl]).max()), floor)
+            worst = max(worst, float(np.abs(a[sl] - b[sl]).max()) / scale)
+    return worst
 
 
 class _PairingOracle(unittest.TestCase):
@@ -1769,6 +1795,115 @@ class TestPairingUnits(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "half-grid store"):
                 acc.add_channel("spin", eb.ArrayBlockSource(
                     {"x": hg.half_from_full(full, nmat)}, nd, half_grid=True, nmat=nmat), "x")
+
+    def test_accumulator_refuses_another_half_grid(self):
+        """A half-grid source of another Nmat (or another nvol / ND) is refused
+        before anything is absorbed or zeroed: the chibar source given to
+        add_dressed and an external uniform target store alike."""
+        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver import half_grid as hg
+        nd, B = 1, 2
+        S = np.zeros((4, B * nd, B * nd), complex)
+        S[:] = np.eye(B * nd)
+        kw = dict(pairing_types=("singlet",), nb=2, nvol=4, nd=nd, spatial_shape=(2, 2, 1),
+                  half_grid=True)
+
+        def half_source(name, nmat, nvol=4, ND=B * nd, seed=9):
+            x = hg.half_from_full(_hermitian_in_frequency(nmat, nvol, ND, seed=seed), nmat)
+            return eb.ArrayBlockSource({name: x}, nd, half_grid=True, nmat=nmat), x.copy()
+
+        with flex_bond.BondDeviceContext(np, S, S) as dev:
+            # add_dressed: Nmat 10 into an Nmat 8 accumulator; also nvol
+            for src_kw, msg in ((dict(nmat=10), "nmat = 10"), (dict(nmat=8, nvol=2), "nvol = 2")):
+                with self.subTest(**src_kw):
+                    acc = eb.PairVertexAccumulator(dev, nmat=8, **kw)
+                    src, before = half_source("chibar", **src_kw)
+                    target = acc._target.get_freq_batch("W", 0, acc.nslices).copy()
+                    with self.assertRaisesRegex(ValueError, msg):
+                        acc.add_dressed(src)
+                    np.testing.assert_array_equal(src.get_freq_batch("chibar", 0, src.nslices),
+                                                  before)
+                    np.testing.assert_array_equal(
+                        acc._target.get_freq_batch("W", 0, acc.nslices), target)
+                    self.assertEqual(acc._done, set())
+                    self.assertFalse(acc._tainted)
+                    # the refusal left the accumulator usable
+                    good, _ = half_source("chibar", 8)
+                    acc.add_dressed(good)
+                    self.assertEqual(acc._done, {"spin", "charge"})
+            # an external uniform target of another Nmat is refused unzeroed
+            out, before = half_source("W", 10)
+            with self.assertRaisesRegex(ValueError, "nmat = 10"):
+                eb.PairVertexAccumulator(dev, nmat=8, out_store=out, out_slot="W", **kw)
+            np.testing.assert_array_equal(out.get_freq_batch("W", 0, out.nslices), before)
+            # and of another ND
+            out, before = half_source("W", 8, ND=2 * B * nd)
+            with self.assertRaisesRegex(ValueError, "ND = 4"):
+                eb.PairVertexAccumulator(dev, nmat=8, out_store=out, out_slot="W", **kw)
+            np.testing.assert_array_equal(out.get_freq_batch("W", 0, out.nslices), before)
+            # a legacy full-grid source without the attributes still works
+            acc = eb.PairVertexAccumulator(dev, nmat=8, **dict(kw, half_grid=False))
+
+            class Legacy:
+                def __init__(self, a):
+                    self.a = a
+
+                def get_freq_batch(self, name, l0, l1):
+                    return self.a[l0:l1]
+
+            acc.add_channel("spin", Legacy(_hermitian_in_frequency(8, 4, B * nd, seed=3)), "x")
+            self.assertEqual(acc._done, {"spin"})
+
+
+class TestPairingRedressRefusal(unittest.TestCase):
+    """The pairing re-dresses the last map's bubble under the "refuse"
+    policy (whatever flex_guard_policy the FLEX solve used). Its floor is
+    put just above / just below the last map's minimum score (the published
+    cond_min, which covers the whole grid): the half grid must take the full
+    grid's decision and name the same channel; the reported location may
+    differ (documented)."""
+
+    def _run(self, case, half, floor):
+        from hwave.solver import bond_channels as bc
+        from hwave.solver import eliashberg_bond_io as io
+        real = io._run_inprocess_pairing
+
+        def wrapped(*a, **k):
+            with mock.patch.object(bc, "_BOND_COND_FLOOR", floor):
+                return real(*a, **k)
+
+        with mock.patch.object(io, "_run_inprocess_pairing", wrapped):
+            return _run(case, {"longitudinal_bond_pairing": "both", "flex_guard_policy": "warn"},
+                        half=half, save=False, eli=_ELI_UNIFORM)
+
+    def test_decision_and_channel(self):
+        import re
+        for case in ("UV", "complex_t"):
+            # the last map's scores (identical on both grids, part 1)
+            _s, gi, _f = _run(case, {"flex_guard_policy": "warn"}, half=False, save=False)
+            cs = float(gi["longitudinal_bond_cond_min_s"])
+            cc = float(gi["longitudinal_bond_cond_min_c"])
+            worst, channel = min((cs, "spin"), (cc, "charge"))
+            for factor, refused in ((1.0 + 1e-6, True), (1.0 - 1e-6, False)):
+                with self.subTest(case=case, refused=refused):
+                    out = {h: self._run(case, h, worst * factor)[1] for h in (False, True)}
+                    for h, g in out.items():
+                        for eta in ("singlet", "triplet"):
+                            err = g.get("pairing_{}_error".format(eta))
+                            if not refused:
+                                self.assertIsNone(err, (h, err))
+                                self.assertIn("pairing_{}_eigenvalue".format(eta), g)
+                                continue
+                            self.assertIsNotNone(err, h)
+                            self.assertTrue(err.startswith("vertex: BondConditioningError"), err)
+                            m = re.search(r"the (spin|charge) RPA denominator", err)
+                            self.assertIsNotNone(m, err)
+                            self.assertEqual(m.group(1), channel, (h, err))
+                    if not refused:
+                        for eta in ("singlet", "triplet"):
+                            k = "pairing_{}_eigenvalue".format(eta)
+                            self.assertLessEqual(abs(out[True][k] - out[False][k]),
+                                                 _EIG_TOL * abs(out[False][k]))
 
 
 class TestPairingOracleUniform(_PairingOracle):
