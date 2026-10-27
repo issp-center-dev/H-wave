@@ -755,6 +755,40 @@ def solve_dynamic_so(input_dict):
         selection = "LR" if spectral_shift is not None else "LM"
         if seed_red is not None:
             selection += "_seed_overlap"
+        # As in the non-spin-orbital dynamic solver: a plain which='LM' set
+        # (no spectral_shift, no seed, not the dense full-spectrum branch)
+        # whose leading eigenvalue is negative may have lost the physical
+        # leading eigenvalue to large repulsive ones, which grow with Nmat;
+        # re-solve ONCE with spectral_shift = "auto" (largest real part) on
+        # the same reduced operator.
+        if (selection == "LM" and eigenvalue_method == "arnoldi"
+                and num_eigenvalues < basis.dim - 1):
+            vals_arr = np.asarray(vals)
+            scale = float(np.max(np.abs(vals_arr))) if vals_arr.size else 0.0
+            neg_tol = 1.0e-8 * max(1.0, scale)
+            leading_re = float(np.real(vals_arr[0])) if vals_arr.size else float("nan")
+            if not vals_arr.size or leading_re < -neg_tol:
+                logger.warning(
+                    "%s: arnoldi (which='LM', num_eigenvalues=%d) returned "
+                    "no positive '%s' eigenvalue (leading Re(lambda) = "
+                    "%.4g); re-solving with spectral_shift = \"auto\" "
+                    "(largest real part) -- set [eliashberg] spectral_shift "
+                    "= \"auto\" or use solver_mode = \"iteration\" to avoid "
+                    "the extra solve",
+                    "Spin-orbital dynamic Eliashberg", num_eigenvalues,
+                    "fermion-antisymmetric", leading_re)
+                vals, vecs = sc._so_solve_eigenvalue(
+                    A, basis, num_eigenvalues, eigenvalue_method,
+                    sigma_shift=eli.get("sigma_shift"), spectral_shift="auto",
+                    seed_vec=None, map_back=False)
+                selection = "LR_retry"
+                note = (
+                    "eigenvalue selection: which='LM' with "
+                    "num_eigenvalues={} returned no positive '{}' "
+                    "eigenvalue (Re(lambda) = {:.4g}); the values below "
+                    "come from a second solve with spectral_shift='auto' "
+                    "(largest real part)".format(
+                        num_eigenvalues, "fermion-antisymmetric", leading_re))
         rows, match = [], []
         gap_w = None
         for i in range(len(vals)):

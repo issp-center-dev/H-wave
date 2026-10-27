@@ -907,10 +907,14 @@ def calc_g2_dynamic(green_kw, beta):
     # G2[ij, lm, site, n] = A[ij, site, n] * B[lm, site, n]  (no sum over n)
     G2 = A[:, np.newaxis, :, :] * B[np.newaxis, :, :, :]
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-    # in place: the same values as ``G2 / beta`` without a second
-    # four-leg-sized buffer (the spin-orbital solver's memory peak, #284)
-    G2 /= beta
-    return G2
+    # in place when that keeps the dtype ``G2 / beta`` would have (the same
+    # values without a second four-leg-sized buffer, the spin-orbital
+    # solver's memory peak, #284); otherwise (e.g. complex64 G and a float64
+    # beta, or an integer G) out of place, exactly as ``G2 / beta``
+    if G2.dtype == np.result_type(G2, beta):
+        G2 /= beta
+        return G2
+    return G2 / beta
 
 
 def vertex_qw_to_rt(Vs_q_w, workers=1):

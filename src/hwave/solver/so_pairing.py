@@ -243,7 +243,7 @@ def _check_so_dynamic_config(eli):
     case-insensitive ``[eliashberg]`` table ``eli``, before any file is read.
     Supported: ``chi0q_mode = "flex"`` (a spin-orbital FLEX run with the full
     bosonic axis) or ``"calc"``, ``matsubara_basis = "uniform"``. Refused:
-    ``chi0q_mode = "load"``, the IR basis, ``zero_chi_s`` / ``zero_chi_c``
+    ``chi0q_mode = "load"``, the IR basis, ``zero_chi_s`` / ``zero_chi_c`` = true
     (there is no spin/charge split of the spinful channel) and the bond-path
     keys ``parity_leakage_policy`` / ``parity_leakage_tol``. (``bond_channels``,
     ``pairing_type`` and ``eigenvalue_method`` are refused by
@@ -265,12 +265,15 @@ def _check_so_dynamic_config(eli):
             "run) or \"calc\" (the spinful chi0 is computed here at every "
             "bosonic frequency). A loaded chi0q carries no Green function for "
             "the pair bubble.".format(_SO_DYN_WHAT, mode))
+    from hwave import sc
     for key in ("zero_chi_s", "zero_chi_c"):
-        if key in eli:
+        # strict parse, as on the bond path: a typo is refused, false is fine
+        if sc._bond_bool_option(eli, key, False):
             raise ValueError(
                 "{}: [eliashberg] {} has no meaning in spin-orbital mode: the "
                 "pairing vertex is built from the single spinful channel, which "
-                "has no spin/charge split. Remove {}.".format(_SO_DYN_WHAT, key, key))
+                "has no spin/charge split. Remove {} (or set it to false).".format(
+                    _SO_DYN_WHAT, key, key))
     for key in ("parity_leakage_policy", "parity_leakage_tol"):
         if key in eli:
             raise ValueError(

@@ -512,6 +512,53 @@ class TestCalcMode(_FlexFixture):
         self.assertIn("# eigenvalue_selection: iteration", txt)
 
 
+class TestLMRetry(_FlexFixture):
+    """which='LM' without a shift can miss the physical leading eigenvalue
+    when large repulsive eigenvalues (which grow with Nmat) fill the
+    num_eigenvalues largest-|lambda| set. On this model at Nmat = 32 the four
+    largest |lambda| are all negative; as the non-spin-orbital dynamic solver
+    does, the run re-solves once with spectral_shift = "auto" and reports the
+    positive leading eigenvalue."""
+
+    NMAT = 32
+
+    def _run32(self, out):
+        inp = S._input(self.d, self.files, True,
+                       _dyn_eli(chi0q_mode="calc", num_eigenvalues=4),
+                       nmat=self.NMAT, out=out)
+        return _run(inp)
+
+    def _check(self, cap, out, ref):
+        self.assertGreater(ref, 0.0)
+        self.assertGreater(cap["lam"], 0.0)
+        self.assertLess(abs(cap["lam"] - ref), 1e-8 * abs(ref))
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigenvalue_selection: LR_retry", txt)
+        self.assertIn("second solve with spectral_shift='auto'", txt)
+
+    def test_retry_finds_the_positive_leading_eigenvalue(self):
+        from scipy.sparse.linalg import eigs
+        out = self._out("lm32")
+        cap = self._run32(out)
+        red = cap["basis"].reduce(cap["A"])
+        # independent of the solver path: the 4 largest |lambda| are negative,
+        # the largest real part is positive
+        lm = eigs(red, k=4, which="LM", return_eigenvectors=False, tol=1e-12)
+        self.assertTrue(np.all(lm.real < 0))
+        lr = eigs(red, k=6, which="LR", return_eigenvectors=False, tol=1e-12)
+        self._check(cap, out, float(lr.real.max()))
+
+    @heavy
+    def test_retry_matches_the_dense_reduced_spectrum(self):
+        out = self._out("lm32d")
+        cap = self._run32(out)
+        dense = np.linalg.eigvals(_reduced_dense(cap["A"], cap["basis"]))
+        lead = dense[np.argmax(dense.real)]
+        # not among the num_eigenvalues = 4 largest in magnitude
+        self.assertGreaterEqual(int(np.sum(np.abs(dense) > abs(lead) * (1 + 1e-9))), 4)
+        self._check(cap, out, float(lead.real))
+
+
 class TestOutputs(_FlexFixture):
 
     def test_schema_weights_and_antisymmetry(self):
@@ -589,10 +636,14 @@ class TestOutputs(_FlexFixture):
     def test_seed_continuation(self):
         """A spin-orbital gap_dynamic.npz seeds a spin-orbital run (the
         leading eigenpair is kept); it is refused by a non-spin-orbital run."""
+        # largest real part in both runs: a seeded run is never re-solved
+        # (as on the non-spin-orbital path), so an unshifted which='LM' set
+        # need not contain the seeded state here
         out1 = self._out("s1")
-        cap1 = _run(self._flex_input(out1))
+        cap1 = _run(self._flex_input(out1, spectral_shift="auto"))
         seed = os.path.join(out1, "gap_dynamic.npz")
-        cap2 = _run(self._flex_input(self._out("s2"), seed_eigenvector=seed))
+        cap2 = _run(self._flex_input(self._out("s2"), seed_eigenvector=seed,
+                                     spectral_shift="auto"))
         self.assertAlmostEqual(complex(cap2["vals"][0]), complex(cap1["vals"][0]),
                                places=10)
         with self.assertRaisesRegex(ValueError, "spin_orbital"):
@@ -658,9 +709,26 @@ class TestRefusals(unittest.TestCase):
         self._refused("chi0q_mode", {"chi0q_mode": None, "Chi0q_Mode": "load"})
 
     def test_zero_chi(self):
-        for key in ("zero_chi_s", "zero_chi_c", "Zero_Chi_S"):
+        for key, val in (("zero_chi_s", True), ("zero_chi_c", "true"),
+                         ("Zero_Chi_S", True), ("zero_chi_s", "ture")):
+            with self.subTest(key=key, value=val):
+                self._refused("(?i)" + key, {key: val})
+
+    def test_zero_chi_false_is_accepted(self):
+        """``false`` is not refused: the run proceeds past the configuration
+        checks (stopped here at the chi0q computation)."""
+        files = S._write_model(self.d, so=True, soc=0.3)
+        for key in ("zero_chi_s", "Zero_Chi_C"):
+            inp = S._input(self.d, files, True,
+                           {"frequency": "dynamic", "chi0q_mode": "calc",
+                            "solver_mode": "eigenvalue", key: False},
+                           nmat=_NMAT_E2E)
             with self.subTest(key=key):
-                self._refused("(?i)" + key, {key: True})
+                with self.assertRaisesRegex(AssertionError, "reached"):
+                    with _quiet(), mock.patch.object(
+                            sc, "_calc_chi0q_internal",
+                            side_effect=AssertionError("reached")):
+                        sc.calc_eliashberg(inp)
 
     def test_pairing_type(self):
         self._refused("pairing_type", {"pairing_type": "singlet"})
@@ -699,6 +767,30 @@ class TestRefusals(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "chi0q_mode"):
             dyn.solve_dynamic({"mode": {"enable_spin_orbital": True},
                                "eliashberg": {"frequency": "dynamic"}})
+
+
+class TestPairBubbleDtype(unittest.TestCase):
+    """``calc_g2_dynamic`` scales in place only when that keeps the dtype of
+    ``G2 / beta``; the result is bit-identical to ``G2 / beta`` for every
+    input dtype."""
+
+    def test_bit_identical_to_out_of_place_division(self):
+        rng = np.random.default_rng(4)
+        shape = (2, 2, 3, 1, 1, 4)
+        beta = 3.7
+        raw = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+        for dt in (np.complex64, np.complex128, np.float32, np.float64,
+                   np.int64, np.bool_):
+            g = (raw.real > 0 if dt is np.bool_ else
+                 (np.round(3 * raw.real) if dt is np.int64 else
+                  (raw if np.dtype(dt).kind == "c" else raw.real))).astype(dt)
+            with self.subTest(dtype=np.dtype(dt).name):
+                gi = dyn.reverse_fft_axes(g[..., ::-1], (2, 3, 4))
+                want = (g.reshape(4, 3, 4)[:, None] * gi.reshape(4, 3, 4)[None]
+                        ).reshape(2, 2, 2, 2, 3, 1, 1, 4) / beta
+                got = dyn.calc_g2_dynamic(g, beta)
+                self.assertEqual(got.dtype, want.dtype)
+                self.assertTrue(np.array_equal(got, want))
 
 
 class TestMemoryEstimate(unittest.TestCase):

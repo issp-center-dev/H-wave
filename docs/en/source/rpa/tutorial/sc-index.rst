@@ -2095,8 +2095,9 @@ following are refused before any file is read. Each error names the key:
   mode yet);
 - ``chi0q_mode = "load"`` and a missing ``chi0q_mode`` (its default is
   ``"load"``);
-- ``zero_chi_s`` and ``zero_chi_c``. The vertex is built from the single
-  spinful channel, which has no spin/charge split;
+- ``zero_chi_s = true`` and ``zero_chi_c = true`` (``false`` is accepted).
+  The vertex is built from the single spinful channel, which has no
+  spin/charge split;
 - ``parity_leakage_policy`` and ``parity_leakage_tol``, which are keys of the
   bond-resolved dynamic path;
 - an odd ``Nmat``, and FLEX archives on a different grid;
@@ -2140,7 +2141,8 @@ spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
   flex mode, ``flex_vertex_backward_error_max``. Then come
   ``# eigenvalue_selection: LM`` (``LR`` with ``spectral_shift``,
   ``iteration`` for the power iteration, with ``_seed_overlap`` appended when
-  a seed orders the eigenpairs), the leading eigenvalue, and the table. The
+  a seed orders the eigenpairs, ``LR_retry`` as described below), the leading
+  eigenvalue, and the table. The
   match column stays the fifth column, so ``hwave_tsweep``'s reader works
   unchanged:
 
@@ -2201,6 +2203,15 @@ spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
          leading one is written, as ``gap``
      * - ``eigenvalue_selection``, ``pauli_leakage``
        - as in ``eigenvalue.dat``
+
+**Largest-magnitude selection.** Without ``spectral_shift`` the Arnoldi
+solver selects the ``num_eigenvalues`` eigenvalues of largest magnitude. The
+repulsive (negative) dynamic eigenvalues grow with ``Nmat`` and can fill that
+set. As in the non-spin-orbital dynamic solver, when the leading eigenvalue
+of that set is negative (and no seed is given), the solver re-solves once
+with ``spectral_shift = "auto"`` (largest real part), logs a WARNING, writes
+``eigenvalue_selection: LR_retry`` and a note in ``eigenvalue.dat``. Set
+``spectral_shift = "auto"`` yourself to avoid the extra solve.
 
 ``pauli_leakage`` measures how far the kernel maps antisymmetric gaps out of
 the antisymmetric space. It is the largest

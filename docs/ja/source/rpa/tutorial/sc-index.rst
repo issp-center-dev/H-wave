@@ -1987,8 +1987,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - ``matsubara_basis = "ir"``\ （スピン軌道モードではまだ IR 基底を使えません）;
 - ``chi0q_mode = "load"``\ と、\ ``chi0q_mode``\ の指定なし（既定値が\ ``"load"``\ の
   ため）;
-- ``zero_chi_s``\ と\ ``zero_chi_c``\ 。頂点はひとつのスピンフルなチャネルから作り、
-  スピン・電荷への分解がありません;
+- ``zero_chi_s = true``\ と\ ``zero_chi_c = true``\ （\ ``false``\ は受け付けます）。
+  頂点はひとつのスピンフルなチャネルから作り、スピン・電荷への分解がありません;
 - ``parity_leakage_policy``\ と\ ``parity_leakage_tol``\ （ボンド分解の動的経路の
   キーです）;
 - 奇数の\ ``Nmat``\ と、格子の異なる FLEX アーカイブ;
@@ -2028,7 +2028,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   :math:`4 \times 2`\ の表）、\ ``pauli_leakage``\ 、\ ``chi0q_mode``\ 、flex モードでは
   ``flex_vertex_backward_error_max``\ 。その後に\ ``# eigenvalue_selection: LM``
   （\ ``spectral_shift``\ では\ ``LR``\ 、べき乗反復では\ ``iteration``\ 。seed で固有対を
-  並べた場合は\ ``_seed_overlap``\ が付きます）、主要固有値、表が続きます。match の
+  並べた場合は\ ``_seed_overlap``\ が付き、下で述べる場合は\ ``LR_retry``\ ）、主要固有値、
+  表が続きます。match の
   列は5列目のままなので、\ ``hwave_tsweep``\ の読み取りはそのまま動きます。
 
   .. code-block:: text
@@ -2084,6 +2085,14 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
          **保存しません**\ 。主要なものだけを\ ``gap``\ として書きます
      * - ``eigenvalue_selection``\ 、\ ``pauli_leakage``
        - ``eigenvalue.dat``\ と同じ
+
+**絶対値最大の選択。** ``spectral_shift``\ を指定しない Arnoldi 法は、絶対値の
+大きい\ ``num_eigenvalues``\ 個の固有値を選びます。斥力的（負）な動的固有値は
+``Nmat``\ とともに大きくなり、この集合を埋めることがあります。非スピン軌道の
+動的ソルバーと同じく、その集合の主要固有値が負のとき（seed がない場合）は
+``spectral_shift = "auto"``\ （実部最大）で一度だけ解き直し、WARNING を出して
+``eigenvalue.dat``\ に\ ``eigenvalue_selection: LR_retry``\ と注記を書きます。
+余分な求解を避けるには\ ``spectral_shift = "auto"``\ を自分で指定してください。
 
 ``pauli_leakage``\ は、カーネルが反対称なギャップを反対称空間の外へどれだけ写す
 かを測ります。固定した3つの乱数プローブについての

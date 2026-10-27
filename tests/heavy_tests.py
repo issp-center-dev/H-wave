@@ -212,6 +212,11 @@ HEAVY_TESTS = (
      "kernel on the exact interacting Green function of the L = 3 spin-mixing "
      "chain (the shared ED fixture of test_so_pairing_ed, ~12 s); the free-G "
      "sibling stays in the fast gate"),
+    ("test_eliashberg_dynamic_so", "TestLMRetry",
+     "test_retry_matches_the_dense_reduced_spectrum",
+     "the which='LM' retry of the spin-orbital dynamic solver against the dense "
+     "reduced spectrum at Nmat = 32 (a 4096 x 4096 dense eigenproblem, ~22 s); "
+     "the ARPACK-referenced sibling stays in the fast gate"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",
