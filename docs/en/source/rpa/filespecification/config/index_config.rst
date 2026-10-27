@@ -578,6 +578,11 @@ that has no effect under the current settings.
   ``longitudinal_bond_pairing`` the device-store need also charges the
   pairing's re-dressing (the pair bubble ``norb^4 * nvol * Nmat * 16``
   bytes plus two frequency batches), which a host store left room for.
+  After the self-consistency the store leaves device memory before the
+  pairing kernel is admitted (the bubble slot is released, or moved to
+  host memory when a second pairing channel still needs it, and the vertex
+  slot moves to host memory), so the kernel can still keep
+  its blocks on the device.
   The memory pool's
   cached blocks are released before the free device memory is measured.
   The decision and its reason are logged with the device table. The store

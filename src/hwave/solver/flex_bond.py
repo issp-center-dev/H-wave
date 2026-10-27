@@ -176,6 +176,18 @@ class BondBlockStore:
     def get_freq_batch(self, name, l0, l1):
         return self._arr(name)[l0:l1]
 
+    def to_host(self):
+        """Move every remaining slot to host memory (issue #275): after the
+        SCF the in-process pairing reads the store only to build its vertex
+        and the kernel blocks, and the device memory is better spent on the
+        pairing kernel. Slot by slot, so at most one slot is held twice; the
+        store's module becomes numpy. The identity for a host store."""
+        if self.xp is np:
+            return
+        for name in list(self._arrays):
+            self._arrays[name] = _bk.to_host(self._arrays[name])
+        self.xp = np
+
     def _refuse_alias(self, name, what):
         if name in self._aliases:
             raise ValueError("BondBlockStore: cannot {} {!r}, an alias of {!r}".format(

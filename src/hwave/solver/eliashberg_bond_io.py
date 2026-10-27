@@ -736,6 +736,13 @@ def pairing_preflight(solver):
     kernel-only (the vertex is built by then) and charges none. Raises
     ``ValueError``; the post-SCF admission re-measures and is a per-channel
     error there, not an exception.
+
+    A DEVICE block store (issue #275, ``longitudinal_bond_store``) does not
+    compete with the kernel: it leaves device memory before the kernel's
+    admission (:func:`_release_device_store`), and the re-dressing that runs
+    while it is resident is charged by the FLEX device admission
+    (``pairing_redress`` row), so the kernel rows here are measured against
+    the device without the store.
     """
     from . import backend as _bk
     from . import eliashberg_bond as _eb
@@ -778,7 +785,8 @@ def pairing_preflight(solver):
             "longitudinal_bond_pairing: the pairing step would not fit after the FLEX solve "
             "({}); set [eliashberg] matsubara_basis = 'ir' or raise bond_memory_cap_gb"
             .format(exc))
-    logger.info("bond pairing preflight at solve entry: residency %s would fit; rows (GiB) %s",
+    logger.info("bond pairing preflight at solve entry: residency %s would fit (a device-"
+                "resident bond block store is released before the kernel); rows (GiB) %s",
                 residency, {k: round(v / _eb._GIB, 3) for k, v in table.rows.items()})
 
 
@@ -823,6 +831,34 @@ def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
         # the phase handlers below cover every failure the design foresees;
         # this is the backstop that keeps the promise for the one it does not
         _record_backstop(green_info, _requested_types(solver), "pairing", exc)
+
+
+def _release_device_store(store, *, last_group, xp):
+    """Give the device memory of a DEVICE block store (issue #275) back
+    before the pairing kernel's admission.
+
+    The vertex of this group is built (uniform grid: in the store's ``W``
+    slot; IR: as host coefficients), so the kernel reads the store only to
+    hoist its blocks. With the store resident the kernel's admission would
+    measure the device without the store's slots and fall back to the host
+    residency, whose matvecs are several times slower. ``chibar`` is
+    released when no later pairing group re-dresses it, the remaining slots
+    move to host memory -- exactly the state of a host store, so the kernel
+    is built as on the host-store path -- and the pool is emptied. A no-op
+    for a host store."""
+    from . import backend as _bk
+    if getattr(store, "resident", "host") != "device":
+        return
+    if last_group:
+        store.release_slot("chibar")
+    moved = store.nbytes
+    store.to_host()
+    if xp is not np:
+        _bk.free_device_pool()
+    logger.info("longitudinal_bond_pairing: the bond block store leaves device memory before "
+                "the pairing kernel (%s; %.3f GiB moved to host memory)",
+                "chibar released" if last_group else "chibar kept for the next channel",
+                moved / float(1024 ** 3))
 
 
 def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
@@ -897,6 +933,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
             stages(acc)
             vertices = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)
             del acc
+            _release_device_store(store, last_group=group is groups[-1], xp=xp)
         except caught as exc:
             fail(group, "vertex", exc)
             continue

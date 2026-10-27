@@ -294,20 +294,64 @@ class TestTransportFromADeviceStore(unittest.TestCase):
 # whole solves
 # ---------------------------------------------------------------------------
 
+#: the index of the fake's transfer record at which the in-process pairing
+#: of the last :func:`_solve` started (None: no pairing step ran)
+_PAIRING_MARK = []
+
+
 def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None):
     """One bond-gate FLEX solve of tests/test_bond_half_grid's "UV" fixture on
     the fake device (frequency batch pinned to 3 there); returns the solver,
-    green_info, the archives and the fake's transfer record."""
+    green_info, the archives and the fake's transfer record. The record
+    position where the in-process pairing started is left in
+    ``_PAIRING_MARK[0]``."""
+    from hwave.solver import eliashberg_bond_io as io
     from tests.test_bond_half_grid import _ELI_UNIFORM, _run
     par = {"gpu": True, "longitudinal_bond_store": store,
            "longitudinal_bond_pairing": pairing}
     par.update(extra or {})
+    _PAIRING_MARK[:] = [None]
+    real = io.run_inprocess_pairing
     with fake_cupy(**(cp_kw or {})) as cp:
+        def marked(*a, **k):
+            _PAIRING_MARK[0] = len(cp.transfers)
+            return real(*a, **k)
         if setup is not None:
             setup(cp)
-        s, gi, files = _run("UV", par, half=half,
-                            eli=None if pairing == "none" else _ELI_UNIFORM)
+        with mock.patch.object(io, "run_inprocess_pairing", marked):
+            s, gi, files = _run("UV", par, half=half,
+                                eli=None if pairing == "none" else _ELI_UNIFORM)
         return s, gi, files, list(cp.transfers)
+
+
+#: the eigensolver's outputs: ARPACK follows its iterates, and on a real
+#: BLAS a differently aligned operand can move them at round-off, so they are
+#: compared to 1e-10 (the gap modulo its global phase), as in
+#: tests/test_flex_bond_gpu.py; everything else bit for bit
+_EIG_TOL = 1.0e-10
+
+
+def _is_eig(name):
+    return name.startswith("eliashberg_bond_") or name.startswith("pairing_") or \
+        name.startswith("eigenvalue_bond_") or name.startswith("gap_bond_")
+
+
+def _close_modulo_phase(test, x, y, label, phase=1.0):
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    if x.dtype.kind not in "fc":
+        test.assertTrue(np.array_equal(x, y), label)
+        return
+    if y.dtype.kind == "c":
+        y = y * phase
+    scale = float(np.max(np.abs(x))) if x.size else 0.0
+    test.assertLessEqual(float(np.max(np.abs(x - y))) if x.size else 0.0,
+                         _EIG_TOL * max(scale, 1e-300), label)
+
+
+def _phase(x, y):
+    ov = np.vdot(np.asarray(y).ravel(), np.asarray(x).ravel())
+    return ov / abs(ov) if abs(ov) > 0 else 1.0
 
 
 def _assert_same_outputs(test, a, b):
@@ -316,6 +360,13 @@ def _assert_same_outputs(test, a, b):
     test.assertEqual(sorted(fa), sorted(fb))
     for fn in fa:
         test.assertEqual(sorted(fa[fn]), sorted(fb[fn]), fn)
+        if _is_eig(fn):
+            ph = _phase(fa[fn]["gap"], fb[fn]["gap"]) if "gap" in fa[fn] else 1.0
+            for m in fa[fn]:
+                _close_modulo_phase(test, fa[fn][m], fb[fn][m], (fn, m),
+                                    ph if m.startswith("gap") and m != "gap_sector_weights"
+                                    else 1.0)
+            continue
         for m in fa[fn]:
             x, y = fa[fn][m], fb[fn][m]
             test.assertEqual(x.shape, y.shape, (fn, m))
@@ -327,6 +378,10 @@ def _assert_same_outputs(test, a, b):
         x, y = gia.get(k), gib.get(k)
         if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
             test.assertFalse(is_device(x) or is_device(y), k)
+            if _is_eig(str(k)):
+                ph = (_phase(gia[str(k)], gib[str(k)]) if str(k).endswith("_gap") else 1.0)
+                _close_modulo_phase(test, x, y, k, ph)
+                continue
             np.testing.assert_array_equal(np.asarray(x), np.asarray(y), err_msg=str(k))
 
 
@@ -345,10 +400,20 @@ class TestEndToEnd(unittest.TestCase):
             self.assertTrue(any(f.startswith("eliashberg_bond_") for f in dev[2]))
             self.assertFalse(any("error" in str(k) for k in dev[1]), dev[1].keys())
         ND, nd = int(dev[0]._bond_est["ND"]), dev[0].norb ** 2
-        # the store's copies: chibar / W batches and the pair blocks to the
-        # device happen with the host store and never with the device store
+        mark = _PAIRING_MARK[0]
+        scf, pair = (dev[3], []) if mark is None else (dev[3][:mark], dev[3][mark:])
+        # the store's copies during the SCF: chibar / W batches and the pair
+        # blocks to the device happen with the host store and never with the
+        # device store
         self.assertGreater(len(_big(host[3], ND, nd)), 0)
-        self.assertEqual(_big(dev[3], ND, nd), [])
+        self.assertEqual(_big(scf, ND, nd), [])
+        if pairing != "none":
+            # before the kernel the store leaves the device once: the vertex
+            # slot W comes to the host (chibar is released), as one slot
+            st = dev[0]
+            slot = (st._bond_est["nslices"], st.lattice.nvol, ND, ND)
+            self.assertEqual([t for t in _big(pair, ND, nd) if t[1][-2:] == (ND, ND)],
+                             [("d2h", slot)])
 
     def test_pairing_none_full_grid(self):
         self._check("none", False)
@@ -413,6 +478,68 @@ def _big(transfers, ND, nd):
     store's)."""
     return [(d, s) for d, s, _n in transfers
             if len(s) == 4 and (s[-2:] == (ND, ND) or (d == "h2d" and s[-2:] == (nd, nd)))]
+
+
+class TestStoreLeavesTheDeviceBeforeThePairingKernel(unittest.TestCase):
+    """After the SCF a device store would hold device memory the pairing
+    kernel needs (kugui, Nmat 1024: the kernel fell back to its host
+    residency and the whole run got slower). The store leaves the device
+    before the kernel's admission, so the kernel gets the device residency
+    and the results are those of the host store."""
+
+    def _device(self, release=True):
+        """A solve whose device has room for the kernel only without the
+        store: the device reading is large until the store exists, then a
+        fixed capacity minus the store's live device slots."""
+        from hwave.solver import backend as bk, eliashberg_bond as eb
+        from hwave.solver import eliashberg_bond_io as io, flex_bond as fb
+        table = eb.estimate_pair_memory(
+            nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=5, num_eigenvalues=3,
+            residency="auto", ir=False, L_B=0, n_channels=1, in_process=True)
+        d_need = table.need("device")[1]
+        slots = 2 * 8 * 16 * 20 * 20 * 16          # chibar + W, full grid
+        capacity = d_need / 0.9 + 0.5 * slots
+        stores = []
+        real_store = fb.BondBlockStore
+
+        class Spy(real_store):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                stores.append(self)
+
+        def available():
+            if not stores:
+                return 2 ** 40
+            live = sum(st.nbytes for st in stores
+                       if not st.released and st.resident == "device")
+            return int(capacity - live)
+        patches = [mock.patch.object(fb, "BondBlockStore", Spy),
+                   mock.patch.object(bk, "device_available_bytes", available)]
+        if not release:
+            patches.append(mock.patch.object(io, "_release_device_store",
+                                             lambda *a, **k: None))
+        return patches
+
+    def _run(self, store, release=True):
+        with contextlib.ExitStack() as st:
+            for p in self._device(release):
+                st.enter_context(p)
+            cm = st.enter_context(self.assertLogs("qlms.solver.eliashberg_bond", level="INFO"))
+            out = _solve(store, "singlet")
+        res = [m.split("kernel residency ")[1] for m in cm.output if "kernel residency" in m]
+        return out, res
+
+    def test_kernel_on_the_device_and_results_unchanged(self):
+        host, res_h = self._run("host")
+        dev, res_d = self._run("device")
+        self.assertEqual(dev[0]._bond_store_resident, "device")
+        self.assertEqual(res_h, ["device"])
+        self.assertEqual(res_d, ["device"])
+        _assert_same_outputs(self, host, dev)
+        # the control: with the store kept on the device the same reading
+        # leaves the kernel no room, which is the situation the release fixes
+        _kept, res_k = self._run("device", release=False)
+        self.assertEqual(res_k, ["host"])
 
 
 class TestOutOfMemoryFallback(unittest.TestCase):
