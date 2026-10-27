@@ -694,6 +694,12 @@ TOML形式
 
   **説明 :** Anderson 加速の履歴の深さを指定します。メモリは自己エネルギーサイズの配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
 
+- ``flex_sigma_hermitian_projection``
+
+  **形式 :** bool型 (デフォルトは true、FLEXモードのみ)
+
+  **説明 :** SCF ループで自己エネルギーを更新するたびに（線形混合・Anderson 加速、\ ``flex_hartree_fock``\ の有無によらず）、また\ ``sigma_init``\ の初期値に対して、\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ を満たす部分へ射影します（各\ :math:`\mathbf{k}`\ で\ :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 、一様格子でも IR ノード上でも）。この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像もこれを保つため、既に対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、裸の Stoner 不安定性を超えたコールドスタートで\ ``sigma.npz``\ に非対称な残差が残り、\ ``flex_hartree_fock = true``\ の計算が\ ``sigma_init``\ として拒否することがあります。\ ``false``\ で射影しない従来の更新に戻ります。
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -937,7 +943,7 @@ TOML形式
 
   **形式 :** str型（FLEXモードのみ）
 
-  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
+  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります（\ ``flex_sigma_hermitian_projection``\ の射影を除く）。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
 
 
 ``file.input.interaction``\ セクション

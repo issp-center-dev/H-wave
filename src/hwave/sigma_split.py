@@ -15,6 +15,11 @@ the FLEX C-order momentum layout with the solver's convention
 validated spin-diagonal with equal spin blocks and reduced to the
 spin-free block. External one-body fields are not supported by
 ``flex_hartree_fock`` and are therefore not part of the recipe.
+
+The total self-energy is symmetrized to
+``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` before the split, and the
+relative deviation removed is reported. An archive whose deviation exceeds
+``--asymmetry-tol`` (default 1e-3) is refused.
 """
 import argparse
 import logging
@@ -22,7 +27,8 @@ import sys
 
 _USAGE = ("hwave_sigma_split total.npz out.npz "
           "(--static static.npz [--uhfk-spin-major] | --zero-static | "
-          "--uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat) [--force]")
+          "--uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat) [--asymmetry-tol TOL] "
+          "[--force]")
 
 
 def _parser():
@@ -39,6 +45,9 @@ def _parser():
                    help="the bare Transfer input of the run (Wannier90-style text or .npz)")
     p.add_argument("--uhfk-spin-major", action="store_true",
                    help="the --static array is spin-major (nvol, 2 norb, 2 norb)")
+    p.add_argument("--asymmetry-tol", metavar="TOL", type=float, default=None,
+                   help="largest relative deviation max|Sigma(k,iw) - Sigma(k,-iw)^dag| / max|Sigma| "
+                        "that is symmetrized away (default 1e-3); a larger one is refused")
     p.add_argument("--force", action="store_true", help="overwrite an existing output")
     return p
 
@@ -51,19 +60,26 @@ def main(argv=None):
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return 0 if exc.code == 0 else 1
-    from hwave.solver.flex_hf import sigma_split_convert
+    from hwave.solver.flex_hf import sigma_split_convert, SIGMA_SPLIT_ASYMMETRY_TOL
+    tol = SIGMA_SPLIT_ASYMMETRY_TOL if args.asymmetry_tol is None else args.asymmetry_tol
+    if not tol >= 0.0:
+        log.error("--asymmetry-tol must be a non-negative number, got %r", args.asymmetry_tol)
+        parser.print_usage(sys.stderr)
+        return 1
     try:
         summary = sigma_split_convert(
             args.total, args.out, static_path=args.static, zero_static=args.zero_static,
             uhfk_trans_mod=args.uhfk_trans_mod, bare_transfer=args.bare_transfer,
-            uhfk_spin_major=args.uhfk_spin_major, force=args.force, logger=log)
+            uhfk_spin_major=args.uhfk_spin_major, force=args.force, logger=log,
+            asymmetry_tol=tol)
     except (ValueError, FileExistsError, OSError, KeyError) as exc:
         log.error("%s", exc)
         parser.print_usage(sys.stderr)
         return 1
-    log.info("wrote %s (nmat=%d, nvol=%d, norb=%d; max|sigma_static| = %.3e, max|sigma_fluct| = %.3e)",
+    log.info("wrote %s (nmat=%d, nvol=%d, norb=%d; max|sigma_static| = %.3e, max|sigma_fluct| = %.3e; "
+             "relative Hermitian deviation removed %.3e)",
              summary["out"], summary["nmat"], summary["nvol"], summary["norb"],
-             summary["static_max"], summary["fluct_max"])
+             summary["static_max"], summary["fluct_max"], summary["asymmetry"])
     return 0
 
 

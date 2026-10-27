@@ -620,7 +620,9 @@ FLEX is spin-free.
 
 *Restarting from a previous run.* A ``sigma.npz`` written with
 ``flex_hartree_fock = true`` carries the split components and seeds a new
-run exactly as stored (``[file.input] sigma_init``). Remove (or comment
+run as stored (``[file.input] sigma_init``; only the projection of
+``flex_sigma_hermitian_projection`` is applied, which changes a converged
+archive at rounding level). Remove (or comment
 out) ``trans_mod`` and ``green_init`` from ``[file.input]`` in that case:
 the archive already contains the static part, and a mean field given at
 the same time is refused. A ``sigma.npz`` from a run without
@@ -637,6 +639,18 @@ The last form builds the static correction from a native UHFk ``trans_mod``
 archive and the run's bare Transfer input (the archive is Fourier-transformed
 with the solver's convention, the bare transfer is subtracted and the result
 is reduced to the spin-free block). ``--force`` overwrites an existing output.
+
+The converter first symmetrizes the total self-energy to
+:math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
+and logs the relative deviation it removed,
+:math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|`. A converged archive carries rounding error only; an
+archive written without ``flex_sigma_hermitian_projection`` after a cold
+start past the Stoner instability may carry a remnant of about
+:math:`10^{-5}`, which the symmetrization removes. A deviation above
+``--asymmetry-tol`` (default :math:`10^{-3}`) is refused: such an archive
+is not the self-energy of a converged Hermitian problem, and symmetrizing it
+would hide that.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1323,6 +1337,24 @@ The FLEX solver accepts the following parameters in the
      - History depth :math:`m` of the Anderson acceleration. Memory grows by
        :math:`2m` sigma-sized arrays (kept on the device under GPU
        execution).
+   * - ``flex_sigma_hermitian_projection``
+     - bool
+     - true
+     - After every self-energy update (and on a ``sigma_init`` seed),
+       project onto
+       :math:`\Sigma(\mathbf{k}, i\omega_n) =
+       \Sigma(\mathbf{k}, -i\omega_n)^\dagger`, i.e.
+       :math:`\Sigma \leftarrow [\Sigma(i\omega_n) +
+       \Sigma(-i\omega_n)^\dagger]/2` at every
+       :math:`\mathbf{k}`. The relation holds exactly for every
+       self-energy of a Hermitian problem, and the FLEX map preserves it, so
+       a symmetric run changes only at rounding level. Without the
+       projection, a cold start past the bare Stoner instability amplifies
+       the rounding-level asymmetry along with the transient, and linear
+       mixing removes it only slowly (or not at all): the archive then fails
+       the density check of a ``flex_hartree_fock = true`` run that uses
+       it as ``sigma_init``. Applies on the uniform grid and on the IR
+       nodes, in every scheme. ``false`` restores the unprojected update.
    * - ``matsubara_basis``
      - str
      - "uniform"

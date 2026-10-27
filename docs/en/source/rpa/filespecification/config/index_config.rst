@@ -818,6 +818,25 @@ that has no effect under the current settings.
   History depth of the Anderson acceleration. Memory grows by 2*depth
   sigma-sized arrays (kept on the device under GPU execution).
 
+- ``flex_sigma_hermitian_projection``
+
+  **Type :**
+  Boolean (default value is true; FLEX mode only)
+
+  **Description :**
+  Projects the self-energy onto
+  :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+  after every update of the SCF loop (linear or Anderson mixing, with or
+  without ``flex_hartree_fock``) and on a ``sigma_init`` seed:
+  :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`
+  at every :math:`\mathbf{k}`, on the uniform grid or the IR nodes. The
+  relation holds exactly for the self-energy of a Hermitian problem and the
+  FLEX map preserves it, so a run that is already symmetric changes only at
+  rounding level. Without it, a cold start past the bare Stoner instability
+  can leave an asymmetric remnant in ``sigma.npz`` that a
+  ``flex_hartree_fock = true`` run refuses as ``sigma_init``. ``false``
+  restores the unprojected update.
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -1075,7 +1094,8 @@ They specify the settings of the input and output files, respectively, on the ty
   loop" for the sweep workflow. With ``flex_hartree_fock = true`` only a
   ``sigma.npz`` written by such a run (``sigma_convention = "split"``,
   carrying ``sigma_static`` and ``sigma_fluct``) is accepted, the two
-  components seed the loop exactly as stored, and a mean field
+  components seed the loop as stored (apart from the projection of
+  ``flex_sigma_hermitian_projection``), and a mean field
   (``trans_mod`` / ``green_init``) given at the same time is refused; a
   legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
   (see :ref:`flex_bond_hf`).

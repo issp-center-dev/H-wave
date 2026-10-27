@@ -321,12 +321,31 @@ def _static_from_file(static_file, total, norb, nvol, spin_major, log):
     return np.array(st, dtype=np.complex128, copy=True)
 
 
+#: Default refusal threshold of :func:`sigma_split_convert` for the relative
+#: deviation ``max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max |Sigma|`` of the
+#: total archive (issue #281). A converged run carries round-off (~1e-14);
+#: a cold start past a bare Stoner instability without the solver's
+#: Hermitian projection leaves a slowly decaying remnant of ~1e-5. A
+#: deviation above 1e-3 is no longer a remnant: the archive is not the
+#: self-energy of a Hermitian problem (a blown-up or wrong file), and
+#: symmetrizing it would hide that, so the conversion is refused.
+SIGMA_SPLIT_ASYMMETRY_TOL = 1.0e-3
+
+
 def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=False,
                         uhfk_trans_mod=None, bare_transfer=None, uhfk_spin_major=False,
-                        force=False, logger=None):
+                        force=False, logger=None, asymmetry_tol=SIGMA_SPLIT_ASYMMETRY_TOL):
     """Write a ``"split"`` self-energy archive from a total-form one (spec
     2.3). Exactly one static source: ``static_path`` (the static.npz
     contract), ``zero_static`` or ``uhfk_trans_mod`` + ``bare_transfer``.
+
+    The total self-energy is first symmetrized to
+    ``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` (issue #281), the relation
+    every self-energy of a Hermitian problem satisfies and the equal-time
+    density guard of a ``flex_hartree_fock`` run checks; the relative
+    deviation removed is logged and returned as ``asymmetry``. A deviation
+    above ``asymmetry_tol`` is refused.
+
     Returns a summary dict; raises ``ValueError`` / ``FileExistsError`` on
     any refusal (nothing is written then)."""
     import logging
@@ -360,6 +379,18 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     if not np.all(np.isfinite(sigma)):
         raise ValueError("'{}': sigma is not finite".format(total_path))
     _, nmat, nvol, norb, _ = sigma.shape
+    from hwave.solver.flex_mixing import project_frequency_hermitian
+    sigma_sym, (_, asym) = project_frequency_hermitian(sigma, with_deviation=True)
+    if not asym <= float(asymmetry_tol):
+        raise ValueError(
+            "'{}': the self-energy violates Sigma(k, i w) = Sigma(k, -i w)^dag by a relative "
+            "deviation of {:.3e} > {:.1e} (max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max "
+            "|Sigma|); this is not the remnant of a converged run of a Hermitian problem, so the "
+            "archive is not symmetrized (raise --asymmetry-tol to convert it anyway)".format(
+                total_path, asym, float(asymmetry_tol)))
+    log.info("'%s': symmetrized to Sigma(k, i w) = Sigma(k, -i w)^dag (relative deviation "
+             "removed %.3e)", total_path, asym)
+    sigma = sigma_sym
     if "cell_shape" in total:
         cs = tuple(int(x) for x in total["cell_shape"])
         if int(np.prod(cs)) != nvol:
@@ -394,4 +425,5 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     with np.load(out_path) as data:
         validate_split_seed(make_seed_envelope(data, out_path, data["sigma"], None), sigma.shape)
     return dict(out=out_path, nmat=nmat, nvol=nvol, norb=norb,
-                static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))))
+                static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))),
+                asymmetry=asym)

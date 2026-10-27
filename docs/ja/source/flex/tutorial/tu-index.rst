@@ -583,7 +583,9 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 スピンフリーのため）。
 
 *以前の計算から再開する。* ``flex_hartree_fock = true``\ で出力された\ ``sigma.npz``\ は
-分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ ）。
+分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ 。
+``flex_sigma_hermitian_projection``\ の射影のみが適用され、収束したアーカイブは丸め誤差の
+範囲でしか変わりません）。
 その場合は\ ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ を削除（またはコメント
 アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
 ``flex_hartree_fock``\ なしの計算の\ ``sigma.npz``\ （や手作りの全自己エネルギー）は
@@ -598,6 +600,17 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 最後の形式は、UHFk の\ ``trans_mod``\ アーカイブと計算の裸の Transfer 入力から静的補正を
 作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
 ブロックに縮約します）。\ ``--force``\ で既存の出力を上書きします。
+
+変換ツールはまず全自己エネルギーを
+:math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
+に対称化し、除去した相対偏差
+:math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|`\ をログに出力します。収束したアーカイブには丸め誤差しか含まれません。
+``flex_sigma_hermitian_projection``\ なしで Stoner 不安定性を超えたコールドスタートから
+書き出したアーカイブには\ :math:`10^{-5}`\ 程度の残差が残ることがあり、対称化でこれを
+除去します。偏差が\ ``--asymmetry-tol``\ （デフォルト\ :math:`10^{-3}`\ ）を超える場合は
+拒否します。そのようなアーカイブは収束したエルミートな問題の自己エネルギーではなく、
+対称化するとそれを覆い隠してしまうためです。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1283,6 +1296,21 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
      - 5
      - Anderson 加速の履歴の深さ\ :math:`m`\ 。メモリは\ :math:`\Sigma`\ サイズの
        配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
+   * - ``flex_sigma_hermitian_projection``
+     - bool
+     - true
+     - 自己エネルギーを更新するたびに（および\ ``sigma_init``\ の初期値に対して）、
+       :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+       を満たす部分へ射影します。すなわち各\ :math:`\mathbf{k}`\ で
+       :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 。
+       この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像も
+       これを保つため、対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、
+       裸の Stoner 不安定性を超えたコールドスタートでは丸め誤差程度の非対称成分が
+       過渡的な発散とともに増幅され、線形混合はそれをゆっくりとしか（あるいは全く）
+       除去しません。その結果、そのアーカイブを\ ``sigma_init``\ に使う
+       ``flex_hartree_fock = true``\ の計算の密度チェックで拒否されます。一様格子と
+       IR ノードの両方、すべてのスキームで適用されます。\ ``false``\ で射影しない
+       従来の更新に戻ります。
    * - ``matsubara_basis``
      - str
      - "uniform"

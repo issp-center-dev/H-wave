@@ -919,6 +919,12 @@ class FLEX(RPA):
                 "mixing_scheme must be 'linear' or 'anderson', got '{}'."
                 .format(self.mixing_scheme))
         self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
+        # issue #281: project the self-energy onto the subspace with
+        # Sigma(k, i w) = Sigma(k, -i w)^dag after every update (see
+        # flex_mixing for the derivation of where the relation is exact).
+        self.flex_sigma_hermitian_projection = _bk.strict_bool(
+            self.param_mod.get("flex_sigma_hermitian_projection", True),
+            "[mode.param] flex_sigma_hermitian_projection")
 
         # Matsubara-axis representation (design: docs/design/ir-matsubara.md,
         # Stage 2): the default uniform grid, or the sparse-ir intermediate
@@ -965,6 +971,10 @@ class FLEX(RPA):
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
+        if self.flex_sigma_hermitian_projection:
+            # logged when on (the default) only: a run with the projection
+            # switched off logs exactly what it did before issue #281
+            logger.info("    sigma Hermitian projection = on")
         # The inherited _show_params ran before FLEX resolved 'auto', so it
         # printed the deferred marker; restate the settled value and the
         # token that produced it (#167).
@@ -1300,6 +1310,9 @@ class FLEX(RPA):
         in RPA.
         """
         logger.info("Start FLEX calculations")
+        # per-solve diagnostics of the Hermitian projection (issue #281)
+        self.sigma_hermitian_removed_max = 0.0
+        self.sigma_seed_hermitian_deviation = None
 
         beta = 1.0 / self.T
         nvol = self.lattice.nvol
@@ -1503,6 +1516,7 @@ class FLEX(RPA):
             else:
                 sigma = xp.asarray(seed)
                 logger.info("FLEX: warm-starting the SCF loop from sigma_init")
+                sigma = self._project_sigma_seed(sigma)
         else:
             sigma = xp.zeros(expected, dtype=np.complex128)
 
@@ -1596,6 +1610,8 @@ class FLEX(RPA):
                 sigma = mixer.step(sigma, sigma_new)
             else:
                 sigma = (1.0 - self.mix) * sigma + self.mix * sigma_new
+            if self.flex_sigma_hermitian_projection:
+                sigma = self._project_sigma_update(sigma, iteration + 1)
 
             if diff < self.eps:
                 logger.info("FLEX converged after {} iterations".format(
@@ -1607,6 +1623,8 @@ class FLEX(RPA):
             logger.warning("FLEX did not converge after {} iterations "
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
+
+        self._log_sigma_projection_summary()
 
         # SCF outcome, for programmatic consumers (sweeps, tests, mixer
         # comparisons)
@@ -2239,6 +2257,7 @@ class FLEX(RPA):
         del self._phase_b_seed            # the working state owns the seed from here on (spec 3.6)
         if np.any(state.static != 0) or np.any(state.fluct != 0):
             logger.info("FLEX: warm-starting the Phase B loop from the seed")
+            state = self._project_sigma_seed(state)
         mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
         gate = bool(self.longitudinal_bond_channels)
@@ -2404,6 +2423,10 @@ class FLEX(RPA):
                 if not ok:
                     raise ValueError("the mixed static self-energy is not Hermitian "
                                      "(relative deviation {:.3e})".format(err))
+                if self.flex_sigma_hermitian_projection:
+                    # after the Hermiticity guard, so that a defective static
+                    # map is still refused rather than silently repaired
+                    state = self._project_sigma_update(state, iteration + 1)
                 heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
                 if done:
                     logger.info("FLEX converged after {} iterations".format(iteration + 1))
@@ -2414,6 +2437,7 @@ class FLEX(RPA):
                                "green={:.3e}, component={:.3e}, eps={:.3e})".format(
                                    self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
                                    self.scf_component_residual, self.eps))
+            self._log_sigma_projection_summary()
             self.scf_converged = converged
             self.scf_iterations = n_iter_done
             with self._traced("post_scf"):
@@ -4690,6 +4714,60 @@ class FLEX(RPA):
                     .reshape(nblock, nmat, nvol, norb, norb) * (1.0 / beta))
 
         return sigma_kw
+
+    # Asymmetry of a seed above which the seed projection warns (issue #281):
+    # a converged archive of a Hermitian problem carries round-off, a
+    # cold-started one a slowly decaying remnant of ~1e-5; a larger value
+    # means a seed that is not the self-energy of this (Hermitian) problem.
+    SIGMA_SEED_ASYMMETRY_WARN = 1.0e-3
+
+    def _project_sigma_seed(self, sigma):
+        """Project a warm-start seed (an array, or a Phase B SplitState)
+        onto ``Sigma(k, i w) = Sigma(k, -i w)^dag`` (issue #281). The seed
+        is only the starting point of the iteration, so a large asymmetry
+        is reported loudly but not refused."""
+        if not self.flex_sigma_hermitian_projection:
+            return sigma
+        from hwave.solver import flex_mixing as _fm
+        if isinstance(sigma, _fm.SplitState):
+            rel = max(_fm.frequency_hermitian_deviation(sigma.static)[1],
+                      _fm.frequency_hermitian_deviation(sigma.fluct)[1],
+                      _fm.frequency_hermitian_deviation(sigma.total())[1])
+            out = _fm.project_split_state(sigma)
+        else:
+            out, (_, rel) = _fm.project_frequency_hermitian(sigma, with_deviation=True)
+        msg = ("FLEX: sigma_init projected onto Sigma(k, i w) = Sigma(k, -i w)^dag "
+               "(relative deviation removed {:.3e})".format(rel))
+        if rel > self.SIGMA_SEED_ASYMMETRY_WARN:
+            logger.warning(msg + "; the seed is far from the self-energy of a Hermitian "
+                           "problem (threshold {:.0e})".format(self.SIGMA_SEED_ASYMMETRY_WARN))
+        else:
+            logger.info(msg)
+        self.sigma_seed_hermitian_deviation = rel
+        return out
+
+    def _log_sigma_projection_summary(self):
+        if self.flex_sigma_hermitian_projection:
+            logger.info("FLEX: sigma Hermitian projection: largest relative deviation "
+                        "removed in one update {:.3e}".format(self.sigma_hermitian_removed_max))
+
+    def _project_sigma_update(self, sigma, iteration):
+        """Project the mixed self-energy (an array, or a Phase B SplitState)
+        onto ``Sigma(k, i w) = Sigma(k, -i w)^dag`` (issue #281); see
+        :mod:`hwave.solver.flex_mixing` for where the relation is exact.
+        The relative deviation removed is logged (debug) and its running
+        maximum kept in ``self.sigma_hermitian_removed_max``."""
+        from hwave.solver import flex_mixing as _fm
+        if isinstance(sigma, _fm.SplitState):
+            rel = _fm.frequency_hermitian_deviation(sigma.fluct)[1]
+            out = _fm.project_split_state(sigma)
+        else:
+            out, (_, rel) = _fm.project_frequency_hermitian(sigma, with_deviation=True)
+        logger.debug("  sigma Hermitian projection: relative deviation removed "
+                     "{:.3e} (iteration {})".format(rel, iteration))
+        self.sigma_hermitian_removed_max = max(
+            getattr(self, "sigma_hermitian_removed_max", 0.0), rel)
+        return out
 
     def _calc_convergence(self, sigma_old, sigma_new):
         """Calculate convergence criterion for self-energy.

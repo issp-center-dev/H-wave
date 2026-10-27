@@ -56,7 +56,12 @@ par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], 
        "flex_second_order": "local",
        # both orbitals on one site: the behaviour of the reference revision,
        # which ignores the key, stated so that no #234 warning enters the log
-       "orbital_site": [0, 0]}
+       "orbital_site": [0, 0],
+       # the reference revision predates the Hermitian projection of the
+       # self-energy (issue #281), which changes a symmetric run at round-off
+       # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
+       # that this byte-identity comparison stays about the code it names
+       "flex_sigma_hermitian_projection": False}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
 s.solve(gi, out)
