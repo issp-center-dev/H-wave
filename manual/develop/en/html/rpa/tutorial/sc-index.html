@@ -235,7 +235,8 @@ equation with a frequency-dependent pairing vertex
 <span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span> and gap <span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>;
 it requires <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (see
 <a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section</span></a> below).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>. Not set in spin-orbital
+mode, where the gap is one spin-orbital matrix (see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: Initial gap symmetry for iteration.
 Options include <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>),
 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>), <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>, etc.
@@ -499,7 +500,7 @@ spurious).</p>
 <p>The following figures show the gap function <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 in momentum space obtained from the self-consistent iteration.</p>
 <p><strong>Singlet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id6">
+<figure class="align-center" id="id7">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -507,11 +508,11 @@ in momentum space obtained from the self-consistent iteration.</p>
 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>.
 Right: inter-orbital component <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>.
 The inter-orbital component is about 5 times larger than the intra-orbital one,
-indicating that inter-orbital pairing is dominant.</span><a class="headerlink" href="#id6" title="Link to this image">¶</a></p>
+indicating that inter-orbital pairing is dominant.</span><a class="headerlink" href="#id7" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Triplet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id7">
+<figure class="align-center" id="id8">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -520,7 +521,7 @@ indicating that inter-orbital pairing is dominant.</span><a class="headerlink" h
 Right: inter-orbital component <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>.
 The gap is <strong>odd</strong> under <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> (with the orbital
 transpose), as required for spin-triplet pairing; the inter-orbital component
-is again the larger one.</span><a class="headerlink" href="#id7" title="Link to this image">¶</a></p>
+is again the larger one.</span><a class="headerlink" href="#id8" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
@@ -528,7 +529,7 @@ is again the larger one.</span><a class="headerlink" href="#id7" title="Link to 
 <h3>Eigenvalue spectrum<a class="headerlink" href="#eigenvalue-spectrum" title="Link to this heading">¶</a></h3>
 <p>The eigenvalue spectrum of the linearized Eliashberg equation is shown below
 for both singlet and triplet channels.</p>
-<figure class="align-center" id="id8">
+<figure class="align-center" id="id9">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -539,7 +540,7 @@ parity: even for singlet, odd for triplet); open markers are <strong>spurious</s
 opposite-parity modes. All physical eigenvalues lie below 1. The two open
 markers above 1 are even-parity solutions of the
 <em>triplet</em> kernel, which the Pauli principle forbids for spin-triplet pairing
-(see the parity note below).</span><a class="headerlink" href="#id8" title="Link to this image">¶</a></p>
+(see the parity note below).</span><a class="headerlink" href="#id9" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>The Arnoldi eigenvalue analysis finds multiple eigenvalues.
@@ -1610,10 +1611,10 @@ omitted there (a warning says so)</p></td>
 <td><p>general raises for a polarized one-body Hamiltonian</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
-<td><p>accepted by FLEX</p></td>
 <td><p>rejected</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the configuration outright (as of version 2.0); see
-<em>Spin structure</em> below</p></td>
+<td><p>accepted with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (on-site interactions only)</p></td>
+<td><p>the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads this output with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>;
+see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a></p></td>
 </tr>
 <tr class="row-odd"><td><p>susceptibility stored</p></td>
 <td><p>density-density only, <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -1715,26 +1716,312 @@ paramagnetic run.)</p></li>
 <li><p><strong>Spin-orbital representation</strong> (<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 whatever spin mode the Hamiltonian then classifies as – a spin-diagonal
 or even spin-free model can be written in this representation) –
-<strong>not supported.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> rejects the configuration up front with
-an explicit error, on both the static and the dynamic entry, and
+<strong>supported by the static solver</strong>, with a full spin-matrix gap function
+and the spinful (charge, longitudinal and transverse spin) susceptibility;
+see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a> for its scope. The dynamic entry
+(<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) still rejects the configuration up front, and
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> rejects it in preflight
-before any FLEX rung runs (as of version 2.0; a FLEX-only sweep runs it,
-with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>): before this guard, the internally computed <span class="math notranslate nohighlight">\(\chi_0\)</span>
-path ran to completion and printed eigenvalues built on inconsistent
-index/orbital-count conventions – a silently wrong result, not an
-approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
-files remains in the low-level loader for direct helper calls and
-malformed input; it is no longer reachable through the guarded public
-entries.)</p></li>
+before any FLEX rung runs (a FLEX-only sweep runs it, with
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>).</p></li>
 </ul>
-<p>Supporting either spin-polarized case would require an
-<span class="math notranslate nohighlight">\(S_z\)</span>-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
-gap function), together with the transverse susceptibility
-<span class="math notranslate nohighlight">\(\chi^{+-}\)</span>, which the reduced scheme does not store. That is a feature
-addition rather than a configuration change.</p>
+<p>Supporting a spin-polarized model in the singlet/triplet channels would
+require an <span class="math notranslate nohighlight">\(S_z\)</span>-resolved pairing vertex together with the transverse
+susceptibility <span class="math notranslate nohighlight">\(\chi^{+-}\)</span>, which the reduced scheme does not store.
+That is a feature addition rather than a configuration change; the
+spin-orbital representation above is the route for spin-mixing models.</p>
+</section>
+<section id="spin-orbital-models-enable-spin-orbital">
+<span id="sc-spin-orbital"></span><h2><span class="section-number">5.2.15. </span>Spin-orbital models (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>)<a class="headerlink" href="#spin-orbital-models-enable-spin-orbital" title="Link to this heading">¶</a></h2>
+<p>With <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> the static solver treats the gap
+as one general matrix <span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k})\)</span> over the <span class="math notranslate nohighlight">\(2N\)</span>
+spin-orbitals (<span class="math notranslate nohighlight">\(N\)</span> physical orbitals) instead of separate singlet and
+triplet channels. Spin-orbit coupling and other spin-mixing one-body terms in
+the Transfer file are then included exactly, and the singlet and triplet
+components of the gap mix as the model dictates.</p>
+<section id="scope">
+<h3>Scope<a class="headerlink" href="#scope" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>static pairing vertex only (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, the default);</p></li>
+<li><p>on-site two-body interactions only;</p></li>
+<li><p>no bond-resolved channels (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>, the default);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> (the spinful <span class="math notranslate nohighlight">\(\chi_0\)</span> is computed
+internally), <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (the general four-index chi0q written by a
+spin-orbital RPA run) or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> (the outputs of a spin-orbital FLEX
+run, which must be a <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> run with
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>; see
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code> with
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>.</p></li>
+</ul>
+<p>The input files follow the spin-orbital conventions of RPA and FLEX: the
+Geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code> is the spin-orbital count <span class="math notranslate nohighlight">\(2N\)</span>, the Transfer file
+uses the interleaved index <span class="math notranslate nohighlight">\(2\alpha + s\)</span>, and the interaction files use
+the <strong>physical</strong> orbital indices <span class="math notranslate nohighlight">\(1 \ldots N\)</span>. <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is not
+set: there is only one gap.</p>
+</section>
+<section id="pairing-vertex">
+<h3>Pairing vertex<a class="headerlink" href="#pairing-vertex" title="Link to this heading">¶</a></h3>
+<p>The pairing vertex is built from the antisymmetrized spinful vertex
+<span class="math notranslate nohighlight">\(\Gamma\)</span> (the direct term plus its on-site exchange crossing) – the
+same <span class="math notranslate nohighlight">\(\Gamma\)</span> that spin-orbital RPA and FLEX use, which is why
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">spinful_vertex_exchange</span></code> must stay <code class="docutils literal notranslate"><span class="pre">true</span></code> – and the
+spinful susceptibility <span class="math notranslate nohighlight">\(\chi\)</span>:</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-8">
+<span class="eqno">(5.9)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-8" title="Link to this equation">¶</a></span>\[V = \tfrac{1}{2}\,\Gamma \;-\; \Gamma\,\chi(\mathbf{q})\,\Gamma ,
+\qquad
+\chi = \left[1 + \chi_0 \Gamma\right]^{-1} \chi_0 ,\]</div>
+<p>at zero bosonic frequency. For <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> <span class="math notranslate nohighlight">\(\chi\)</span> is the
+RPA expression on the right; for <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> it is the susceptibility stored
+by the FLEX run. <span class="math notranslate nohighlight">\(\chi\)</span> carries the charge, longitudinal and
+transverse spin channels and their mixing in one object.</p>
+</section>
+<section id="pauli-projection">
+<h3>Pauli projection<a class="headerlink" href="#pauli-projection" title="Link to this heading">¶</a></h3>
+<p>A gap must be fermion-antisymmetric,
+<span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})\)</span>. The solver
+works in an orthonormal basis of this subspace: one coordinate per pair
+<span class="math notranslate nohighlight">\(\{(A, B, \mathbf{k}), (B, A, -\mathbf{k})\}\)</span> (the elements with
+<span class="math notranslate nohighlight">\(A = B\)</span> and <span class="math notranslate nohighlight">\(\mathbf{k} = -\mathbf{k}\)</span> are forced to zero),
+and both the power iteration and the Arnoldi solver, with or without
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>, act on the kernel restricted to it (the initial gap is
+projected as well). The Pauli-forbidden modes of the symmetric sector,
+which would otherwise appear in the spectrum and could be selected, are
+therefore not part of the problem; the eigenvalues of the antisymmetric
+sector are not changed. Every reported eigenvector is checked to be
+antisymmetric to round-off.</p>
+</section>
+<section id="gap-convention-and-spin-decomposition">
+<h3>Gap convention and spin decomposition<a class="headerlink" href="#gap-convention-and-spin-decomposition" title="Link to this heading">¶</a></h3>
+<p>The spin-orbital index of the gap is in <strong>spin-block</strong> order,
+<span class="math notranslate nohighlight">\(A = s N + \alpha\)</span> (spin <span class="math notranslate nohighlight">\(s = 0\)</span> is up, <span class="math notranslate nohighlight">\(s = 1\)</span> down;
+<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>), not the interleaved order of the
+Transfer file. For each orbital pair <span class="math notranslate nohighlight">\((a, b)\)</span> the <span class="math notranslate nohighlight">\(2\times 2\)</span>
+spin block <span class="math notranslate nohighlight">\([\Delta_{ab}]_{st} = \Delta_{(s,a),(t,b)}\)</span> is decomposed as</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-9">
+<span class="eqno">(5.10)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-9" title="Link to this equation">¶</a></span>\[\Delta_{ab}(\mathbf{k}) =
+\left[\psi_{ab}(\mathbf{k}) + \mathbf{d}_{ab}(\mathbf{k})\cdot
+\boldsymbol{\sigma}\right] i\sigma_y ,\]</div>
+<p>that is
+<span class="math notranslate nohighlight">\(\psi = (\Delta_{\uparrow\downarrow} - \Delta_{\downarrow\uparrow})/2\)</span>,
+<span class="math notranslate nohighlight">\(d_x = (\Delta_{\downarrow\downarrow} - \Delta_{\uparrow\uparrow})/2\)</span>,
+<span class="math notranslate nohighlight">\(d_y = (\Delta_{\uparrow\uparrow} + \Delta_{\downarrow\downarrow})/(2i)\)</span>,
+<span class="math notranslate nohighlight">\(d_z = (\Delta_{\uparrow\downarrow} + \Delta_{\downarrow\uparrow})/2\)</span>.
+<span class="math notranslate nohighlight">\(\psi\)</span> is the spin-singlet and <span class="math notranslate nohighlight">\(\mathbf{d}\)</span> the spin-triplet
+component. The four spin weights are</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-10">
+<span class="eqno">(5.11)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-10" title="Link to this equation">¶</a></span>\[w_\psi = \frac{1}{W}\sum_{\mathbf{k},a,b} |\psi_{ab}(\mathbf{k})|^2 ,
+\qquad
+w_{d_j} = \frac{1}{W}\sum_{\mathbf{k},a,b} |d_{ab,j}(\mathbf{k})|^2 ,
+\qquad
+W = \sum_{\mathbf{k},a,b}
+\left(|\psi_{ab}(\mathbf{k})|^2 + |\mathbf{d}_{ab}(\mathbf{k})|^2\right),\]</div>
+<p>so that <span class="math notranslate nohighlight">\(w_\psi + w_{d_x} + w_{d_y} + w_{d_z} = 1\)</span>. Without spin-orbit
+coupling a pure singlet gives <span class="math notranslate nohighlight">\(w_\psi = 1\)</span> and a pure triplet
+<span class="math notranslate nohighlight">\(w_{d_x} + w_{d_y} + w_{d_z} = 1\)</span>; spin-orbit coupling mixes them. The
+weights do not depend on the phase or the normalization of the gap.</p>
+</section>
+<section id="id6">
+<h3>Outputs<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> has the usual layout over the <span class="math notranslate nohighlight">\(2N\)</span> spin-orbital indices
+(<code class="docutils literal notranslate"><span class="pre">sigma_ij</span></code> is <span class="math notranslate nohighlight">\(\Delta_{ij}\)</span> in spin-block order), preceded by the
+comment lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">index_convention</span> <span class="pre">=</span>
+<span class="pre">spin_block</span></code> and <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_layout</span> <span class="pre">=</span> <span class="pre">...</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> starts with <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code> comment lines, among them
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>, the gap
+layout, the decomposition formula and <code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code> (the weights of
+the gap written to <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>). Each eigenpair row carries the four
+weights after the <code class="docutils literal notranslate"><span class="pre">match</span></code> column, which is <code class="docutils literal notranslate"><span class="pre">1</span></code> for a
+fermion-antisymmetric eigenvector:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz
+   0  3.15509804e-01  7.35115141e-15  3.15509804e-01 1  1.00000000e+00  1.58260973e-33  2.03409188e-33  2.94567224e-32
+   ...
+   4 -1.06188646e-01 -3.28383154e-15  1.06188646e-01 1  7.10085111e-31  5.45001702e-01  2.16795802e-01  2.38202496e-01
+</pre></div>
+</div>
+<p>(In the spin-rotation invariant limit a triplet eigenvalue is threefold
+degenerate, so how its weight splits among <span class="math notranslate nohighlight">\(d_x, d_y, d_z\)</span> depends
+on the eigenvector the solver returns; only the sum is meaningful.)</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> (the gap file name with its extension replaced by <code class="docutils literal notranslate"><span class="pre">.npz</span></code>)
+holds the gap at full precision:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>key</p></th>
+<th class="head"><p>content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k})\)</span>, shape <code class="docutils literal notranslate"><span class="pre">(2N,</span> <span class="pre">2N,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz)</span></code>,
+spin-block order (the gap of <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">index_convention</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;spin_block&quot;</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spin_orbital</span></code>, <code class="docutils literal notranslate"><span class="pre">norb_phys</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">True</span></code>; the number <span class="math notranslate nohighlight">\(N\)</span> of physical orbitals</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">kx</span></code>, <code class="docutils literal notranslate"><span class="pre">ky</span></code>, <code class="docutils literal notranslate"><span class="pre">kz</span></code></p></td>
+<td><p>the k grid</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spin_components</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[&quot;psi&quot;,</span> <span class="pre">&quot;dx&quot;,</span> <span class="pre">&quot;dy&quot;,</span> <span class="pre">&quot;dz&quot;]</span></code> and the four weights of <code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">eigenvalues</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvectors</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvector_spin_weights</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_match</span></code></p></td>
+<td><p>with an eigenvalue analysis only: the eigenvalues, the eigenvectors
+(shape <code class="docutils literal notranslate"><span class="pre">(n,</span> <span class="pre">2N,</span> <span class="pre">2N,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz)</span></code>), their weights <code class="docutils literal notranslate"><span class="pre">(n,</span> <span class="pre">4)</span></code> and
+the <code class="docutils literal notranslate"><span class="pre">match</span></code> flags</p></td>
+</tr>
+</tbody>
+</table>
+</li>
+</ul>
+</section>
+<section id="reading-the-outputs-of-a-spin-orbital-flex-run">
+<h3>Reading the outputs of a spin-orbital FLEX run<a class="headerlink" href="#reading-the-outputs-of-a-spin-orbital-flex-run" title="Link to this heading">¶</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> the solver reads three archives of a FLEX run
+with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>, from <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<span class="pre">path_to_flex_output</span></code> (falling back to <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>): the spinful
+susceptibility <span class="math notranslate nohighlight">\(\chi\)</span>; the FLEX run writes it when <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
+<span class="pre">chiq</span></code> is set;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chi0q</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;chi0q.npz&quot;</span></code>): the FLEX
+<span class="math notranslate nohighlight">\(\chi_0\)</span>; <strong>required</strong> – write it with <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code> in
+the FLEX run. It is used to check that the vertex of this input reproduces
+the stored <span class="math notranslate nohighlight">\(\chi\)</span>, <span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>; a
+mismatch (for example a changed interaction file) is refused;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;green.npz&quot;</span></code>): the dressed Green
+function, also required; the FLEX run writes it only when <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
+<span class="pre">green</span></code> is set.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code> are used only in spin-orbital mode; the
+keys are case-insensitive. <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> are refused,
+because a spin-orbital FLEX run stores one spinful channel rather than
+separate spin and charge channels. If the FLEX archive records
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>, a WARNING is logged: the stored <span class="math notranslate nohighlight">\(\chi\)</span> and
+Green function agree only at convergence.</p>
+</section>
+<section id="refused-combinations">
+<h3>Refused combinations<a class="headerlink" href="#refused-combinations" title="Link to this heading">¶</a></h3>
+<p>Each of the following raises an error that names the key or file to change,
+before any calculation:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
+<li><p>any off-site two-body row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>), an
+<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span> row between orbitals of different sites under
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>, and off-site rows inside a <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>
+aggregate file;</p></li>
+<li><p>an interaction file with an orbital index outside <span class="math notranslate nohighlight">\(1 \ldots N\)</span>
+(an index larger than <span class="math notranslate nohighlight">\(N\)</span> means the file was written in
+spin-orbital indices; an index 0 is never valid);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>, a reduced
+(two-index) chi0q file, a chi0q file without the <code class="docutils literal notranslate"><span class="pre">index_convention</span></code>
+tag, and a chi0q file without the marker <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code> (only a
+spin-orbital run writes it, so a non-spin-orbital RPA chi0q has no
+marker; over <span class="math notranslate nohighlight">\(2N\)</span> orbitals it has the same shape as a spin-orbital
+one over <span class="math notranslate nohighlight">\(N\)</span>; regenerate the file with a spin-orbital RPA run,
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>);</p></li>
+<li><p>FLEX outputs of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>, of a
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> run, or without the <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> /
+<code class="docutils literal notranslate"><span class="pre">index_convention</span></code> tags; a FLEX archive whose <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code> is
+not <code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>; non-finite FLEX values;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>;</p></li>
+<li><p>a missing FLEX chi0q archive (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code> in the FLEX
+run), a FLEX chi0q archive without the marker <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>
+(written only by a spin-orbital FLEX run), a missing FLEX Green function
+archive, and a FLEX <span class="math notranslate nohighlight">\(\chi\)</span> that the vertex of this input does not
+reproduce (checked per wavevector, so the bound does not loosen with the
+lattice size; the marker alone does not show that the interactions
+match);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>;</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> with no fermion-antisymmetric component;</p></li>
+<li><p>an explicit <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>;</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">output_gap</span></code> whose gap archive name (see <em>Outputs</em>) equals
+<code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>;</p></li>
+<li><p>an odd spin-orbital count (Geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code>);</p></li>
+<li><p>an <code class="docutils literal notranslate"><span class="pre">Extern</span></code> file (write a Zeeman field into the Transfer file instead);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> (a mean-field one-body input is not
+supported yet; see issue #273);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with
+<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>.</p>
+</section>
+<section id="practical-advice">
+<h3>Practical advice<a class="headerlink" href="#practical-advice" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The spin-orbital solve works in the antisymmetric subspace (see “Pauli
+projection” above), whose dimension is about half of
+<span class="math notranslate nohighlight">\((2N)^2 N_k\)</span>; at most that many eigenvalues exist, and a
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> at or above it returns all of them (the small reduced
+operator is then diagonalized densely). Without <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> the
+Arnoldi solver selects by magnitude, so large repulsive (negative)
+eigenvalues can mask the physical leading one: in the SU(2)-limit test
+model <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">4</span></code> missed it and <code class="docutils literal notranslate"><span class="pre">8</span></code> found it. Request
+enough eigenvalues, or set <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real
+part), which found it already with <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">1</span></code>.</p></li>
+<li><p>The default <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;cos&quot;</span></code> seed is singlet-structured
+(<span class="math notranslate nohighlight">\(\phi(\mathbf{k}) \otimes i\sigma_y\)</span>). In a centrosymmetric model
+the power iteration cannot leave the parity sector of its seed, so it
+cannot reach a triplet-led state from this seed. Use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi), or an odd seed (<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>, …,
+which gives the <span class="math notranslate nohighlight">\(d_z\)</span> triplet; <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> spans every spin block).</p></li>
+<li><p>A Zeeman term written into the Transfer file as a spin-dependent one-body
+term runs, but this case has not been validated.</p></li>
+<li><p>Memory. The full-frequency spinful chi0q (computed in <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;calc&quot;</span></code>, read whole in <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>) holds
+<span class="math notranslate nohighlight">\(N_\mathrm{mat} N_k (2N)^4\)</span> complex numbers, i.e.
+<span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span> bytes, with <span class="math notranslate nohighlight">\(N_k\)</span> the number
+of k points. For <span class="math notranslate nohighlight">\(N = 4\)</span>, a <span class="math notranslate nohighlight">\(32 \times 32\)</span> grid and
+<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code> this is about 69 GB, against about 4.3 GB for a
+non-spin-orbital general chi0q (<span class="math notranslate nohighlight">\(N^4\)</span> orbital indices) of the same
+physical <span class="math notranslate nohighlight">\(N\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> in spin-orbital mode has not been validated.</p></li>
+</ul>
+</section>
+<section id="validation">
+<h3>Validation<a class="headerlink" href="#validation" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>SU(2) limit.</strong> With spin-independent hopping and spin-rotation
+invariant interactions, every eigenvalue of the non-spin-orbital singlet
+kernel appears once in the spin-orbital spectrum and every eigenvalue of
+the triplet kernel three times, to a relative accuracy of
+<span class="math notranslate nohighlight">\(10^{-8}\)</span>; the Pauli-forbidden modes are absent.</p></li>
+<li><p><strong>First order with spin-orbit coupling.</strong> The bare part of the vertex
+equals an independent first-order construction in the spin-orbital basis
+for every on-site interaction type.</p></li>
+<li><p><strong>Second order with spin-orbit coupling.</strong> The static pair
+susceptibility built from the vertex agrees with exact diagonalization of
+a small chain in the first- and second-order coefficients of the
+interaction.</p></li>
+<li><p><strong>Agreement between inputs.</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> give
+the same eigenvalues, and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> reproduces the spectrum built
+directly from the stored FLEX <span class="math notranslate nohighlight">\(\chi\)</span> and Green function.</p></li>
+</ul>
+</section>
+<section id="relation-to-the-non-spin-orbital-singlet-and-triplet">
+<h3>Relation to the non-spin-orbital singlet and triplet<a class="headerlink" href="#relation-to-the-non-spin-orbital-singlet-and-triplet" title="Link to this heading">¶</a></h3>
+<p>The non-spin-orbital singlet and triplet formulas assume a spin-rotation
+invariant interaction. <code class="docutils literal notranslate"><span class="pre">Hund</span></code> alone or <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> alone conserves
+<span class="math notranslate nohighlight">\(S_z\)</span> but is not rotation invariant, so for them those formulas are an
+approximation (see issue #88), whereas the spin-orbital path treats these
+terms exactly. Its singlet eigenvalues can therefore differ from those of a
+non-spin-orbital run for such models; the equal-spin triplet agrees.
+Rotation-invariant combinations (for example <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> in
+the Kanamori form) agree in both channels.</p>
+</section>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.15. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.16. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>For large systems, set <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> to compute
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> internally and avoid loading
@@ -1795,7 +2082,8 @@ pairing instabilities using the appropriate vertex.</p></li>
 <li class="toctree-l3"><a class="reference internal" href="#bond-resolved-static-pairing-bond-channels">5.2.12. Bond-resolved static pairing (<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>)</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#what-each-mode-accepts">5.2.13. What each mode accepts</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#spin-structure">5.2.14. Spin structure</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.15. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#spin-orbital-models-enable-spin-orbital">5.2.15. Spin-orbital models (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.16. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. File specifications</a></li>

@@ -1072,10 +1072,12 @@ interaction is not a <span class="math notranslate nohighlight">\(\mathbf{q}\)</
 <li><p>no <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> / <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the run starts from
 the bare Hartree-Fock state.</p></li>
 </ul>
-<p>The reduced scheme refuses spin-orbital input, and the Eliashberg solver
-(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>) still
-refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
-<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code> (the spin-orbital FLEX takes no seed).</p>
+<p>The reduced scheme refuses spin-orbital input. The static Eliashberg solver
+(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the spin-orbital FLEX outputs (see
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>); its dynamic entry and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with
+<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. A FLEX-only
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code> (the spin-orbital FLEX
+takes no seed).</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>

@@ -130,10 +130,18 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>のその他の条件（一様松原格子、副格子なし、外場なし、
 偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>）も適用されます</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>はスピン軌道入力を拒否します</p></li>
-<li><p>Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>、および<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の
-<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>）は引き続き<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの
-<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます</p></li>
+<li><p>静的な Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span></code>でこの計算の出力を読みます（<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>を指定してください）。<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照。
+その動的エントリと<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます</p></li>
 </ul>
+<p><strong>Eliashberg ソルバー。</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はスピン軌道模型の静的な線形化
+Eliashberg 方程式を、ひとつの<span class="math notranslate nohighlight">\(2N \times 2N\)</span>ギャップ行列（<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>なし）、
+オンサイト相互作用、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>で
+解きます。適用範囲、出力、拒否される組み合わせは<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>に
+まとめています。</p>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -644,8 +652,34 @@ SCF の経路は変わり得ます。2軌道の自己無撞着
 <strong>動的</strong> ペアリング経路に固有のキーのみを説明します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
 テーブルの全体（<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>・
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>など）は
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Eliashberg ソルバーのチュートリアルの動的振動数の節</span></a>で説明しています。</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Eliashberg ソルバーのチュートリアルの動的振動数の節</span></a>で説明しています。スピン軌道の静的経路の2つのキーを
+先に示します。</p>
 <ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p>
+<p><strong>型 :</strong>
+文字列（デフォルト値は<code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>。<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のみ）</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>のとき、スピン軌道 FLEX が出力したスピンフル感受率
+<span class="math notranslate nohighlight">\(\chi\)</span>のアーカイブ（その計算の<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>）。
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ<code class="docutils literal notranslate"><span class="pre">[file.output]</span>
+<span class="pre">path_to_output</span></code>）から読みます。キーの大文字・小文字は区別しません。アーカイブは
+スピン軌道のタグ（<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
+<span class="pre">&quot;spin_block&quot;</span></code>）をもつ必要があり、非スピン軌道や<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>の
+計算の出力は拒否します。<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>を記録した FLEX の出力では
+WARNING を出します。スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>は
+拒否します。<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code></p>
+<p><strong>型 :</strong>
+文字列（デフォルト値は<code class="docutils literal notranslate"><span class="pre">&quot;chi0q.npz&quot;</span></code>。<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のみ）</p>
+<p><strong>説明 :</strong>
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>のとき、同じ FLEX 計算の<span class="math notranslate nohighlight">\(\chi_0\)</span>のアーカイブ
+（その計算の<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>）。必須で、ない場合は拒否します。この入力の
+頂点が保存された<span class="math notranslate nohighlight">\(\chi\)</span>を再現することの確認に使い、一致しない場合は
+拒否します。キーの大文字・小文字は区別しません。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。後処理の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
 のみ)</p>

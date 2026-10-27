@@ -233,7 +233,8 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>が必要です
 （下記の<a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。スピン軌道モードでは
+ギャップがひとつのスピン軌道行列なので指定しません（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
 <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>)、
 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>)、
@@ -487,7 +488,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ギャップ関数<span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id36">
+<figure class="align-center" id="id44">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -495,11 +496,11 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id36" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id44" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id37">
+<figure class="align-center" id="id45">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -508,14 +509,14 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは<span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>（および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id37" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id45" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id38">
+<figure class="align-center" id="id46">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -525,7 +526,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満である。1を超える
 2つの白抜きマーカーは<em>三重項</em>カーネルの偶パリティ解で、スピン三重項
-ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id38" title="Link to this image">¶</a></p>
+ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id46" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -1532,10 +1533,10 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 <td><p>偏極した一体ハミルトニアンでは general は例外</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
-<td><p>FLEX は受け付ける</p></td>
 <td><p>拒否</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は設定を即座に拒否します（バージョン 2.0 以降）。下の
-「スピン構造の取り扱い」参照</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける（オンサイト相互作用のみ）</p></td>
+<td><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>でこの出力を読みます。
+<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
 <td><p>密度‐密度成分のみ<code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -1631,24 +1632,288 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 常磁性ランが止まることはありません。）</p></li>
 <li><p><strong>スピン軌道表現</strong>（<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>。
 ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
-スピン自由な模型もこの表現で書けます）--- <strong>サポートされていません。</strong>
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は静的・動的の両エントリで設定を明示的なエラーとして即座に
-拒否し、<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に
-preflight で拒否します（バージョン 2.0 以降。FLEX のみの掃引は
-<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます）。このガード導入前は、内部で<span class="math notranslate nohighlight">\(\chi_0\)</span>を
-計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
-出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
-FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
-ための低水準ローダに残っていますが、ガードされた公開エントリからは到達
-しません。）</p></li>
+スピン自由な模型もこの表現で書けます）--- <strong>静的ソルバーでサポートされます。</strong>
+ギャップ関数はスピン行列として扱い、スピンフルな（電荷・縦スピン・横スピンの）
+感受率を用います。適用範囲は<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照してください。
+動的エントリ（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）は引き続き設定を即座に拒否し、
+<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に preflight で
+拒否します（FLEX のみの掃引は<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます）。</p></li>
 </ul>
-<p>いずれの偏極ケースに対応するにも、<span class="math notranslate nohighlight">\(S_z\)</span>で分解した pairing vertex
-（スピン軌道相互作用の場合はさらにスピン行列としてのギャップ関数）と、
-reduced スキームが保存していない横成分感受率<span class="math notranslate nohighlight">\(\chi^{+-}\)</span>が必要になります。
-設定変更ではなく機能追加の範疇です。</p>
+<p>偏極した模型を一重項・三重項チャネルで扱うには、<span class="math notranslate nohighlight">\(S_z\)</span>で分解した
+pairing vertex と、reduced スキームが保存していない横成分感受率
+<span class="math notranslate nohighlight">\(\chi^{+-}\)</span>が必要になります。設定変更ではなく機能追加の範疇です。
+スピン混成のある模型には上のスピン軌道表現を使ってください。</p>
+</section>
+<section id="enable-spin-orbital">
+<span id="sc-spin-orbital"></span><h2><span class="section-number">5.2.15. </span>スピン軌道模型（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>）<a class="headerlink" href="#enable-spin-orbital" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>のとき、静的ソルバーはギャップを一重項・
+三重項の別々のチャネルではなく、<span class="math notranslate nohighlight">\(2N\)</span>個のスピン軌道（<span class="math notranslate nohighlight">\(N\)</span>は物理
+軌道の数）にわたるひとつの一般的な行列<span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k})\)</span>として
+扱います。Transfer ファイル中のスピン軌道相互作用などのスピン混成一体項は厳密に
+取り込まれ、ギャップの一重項成分と三重項成分は模型に応じて混ざります。</p>
+<section id="id36">
+<h3>適用範囲<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>静的な pairing vertex のみ（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>、既定値）;</p></li>
+<li><p>オンサイトの2体相互作用のみ;</p></li>
+<li><p>ボンド分解チャネルなし（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>（スピンフルな<span class="math notranslate nohighlight">\(\chi_0\)</span>を内部計算）、
+<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>（スピン軌道 RPA が出力した一般の4添字 chi0q）、または
+<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>（スピン軌道 FLEX の出力。FLEX は<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>かつ
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行したものに限ります。
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>と
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>。</p></li>
+</ul>
+<p>入力ファイルは RPA・FLEX のスピン軌道の規約に従います。Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span></code>は
+スピン軌道の数<span class="math notranslate nohighlight">\(2N\)</span>、Transfer ファイルはインターリーブした添字
+<span class="math notranslate nohighlight">\(2\alpha + s\)</span>、相互作用ファイルは<strong>物理軌道</strong>の添字<span class="math notranslate nohighlight">\(1 \ldots N\)</span>を
+用います。ギャップはひとつなので<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>は指定しません。</p>
+</section>
+<section id="pairing-vertex">
+<h3>Pairing vertex<a class="headerlink" href="#pairing-vertex" title="Link to this heading">¶</a></h3>
+<p>Pairing vertex は、反対称化したスピンフル頂点<span class="math notranslate nohighlight">\(\Gamma\)</span>（直接項とその
+オンサイト交換交差の和）とスピンフル感受率<span class="math notranslate nohighlight">\(\chi\)</span>から作ります。
+<span class="math notranslate nohighlight">\(\Gamma\)</span>はスピン軌道 RPA・FLEX と同じものであり、そのため
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">spinful_vertex_exchange</span></code>は<code class="docutils literal notranslate"><span class="pre">true</span></code>のままにする必要があります。</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-8">
+<span class="eqno">(5.9)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-8" title="Link to this equation">¶</a></span>\[V = \tfrac{1}{2}\,\Gamma \;-\; \Gamma\,\chi(\mathbf{q})\,\Gamma ,
+\qquad
+\chi = \left[1 + \chi_0 \Gamma\right]^{-1} \chi_0 ,\]</div>
+<p>（ボソン振動数ゼロ）。<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では<span class="math notranslate nohighlight">\(\chi\)</span>は右式の RPA の
+表式、<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では FLEX が保存した感受率です。<span class="math notranslate nohighlight">\(\chi\)</span>は電荷・縦スピン・
+横スピンの各チャネルとその混成をひとつの量として含みます。</p>
+</section>
+<section id="pauli">
+<h3>Pauli 射影<a class="headerlink" href="#pauli" title="Link to this heading">¶</a></h3>
+<p>ギャップはフェルミオン反対称
+<span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})\)</span>でなければなりません。
+ソルバーはこの部分空間の正規直交基底で計算します。基底は組
+<span class="math notranslate nohighlight">\(\{(A, B, \mathbf{k}), (B, A, -\mathbf{k})\}\)</span> ごとに 1 つの座標をもち
+（<span class="math notranslate nohighlight">\(A = B\)</span> かつ <span class="math notranslate nohighlight">\(\mathbf{k} = -\mathbf{k}\)</span> の要素は 0 に固定されます）、
+べき乗反復も Arnoldi 法も、<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> の有無によらず、この部分空間に
+制限したカーネルに作用します（初期ギャップも射影します）。そのため、さもなければ
+スペクトルに現れて選ばれうる対称セクターの Pauli 禁制モードは、問題に含まれません。
+反対称セクターの固有値は変わりません。報告するすべての固有ベクトルについて、
+丸め誤差の精度で反対称であることを確認します。</p>
+</section>
+<section id="id37">
+<h3>ギャップの規約とスピン分解<a class="headerlink" href="#id37" title="Link to this heading">¶</a></h3>
+<p>ギャップのスピン軌道添字は<strong>spin-block</strong>順
+<span class="math notranslate nohighlight">\(A = s N + \alpha\)</span>（<span class="math notranslate nohighlight">\(s = 0\)</span>が上向き、<span class="math notranslate nohighlight">\(s = 1\)</span>が下向き。
+<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>）であり、Transfer ファイルのインターリーブ順
+ではありません。各軌道対<span class="math notranslate nohighlight">\((a, b)\)</span>について<span class="math notranslate nohighlight">\(2\times 2\)</span>のスピン
+ブロック<span class="math notranslate nohighlight">\([\Delta_{ab}]_{st} = \Delta_{(s,a),(t,b)}\)</span>を</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-9">
+<span class="eqno">(5.10)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-9" title="Link to this equation">¶</a></span>\[\Delta_{ab}(\mathbf{k}) =
+\left[\psi_{ab}(\mathbf{k}) + \mathbf{d}_{ab}(\mathbf{k})\cdot
+\boldsymbol{\sigma}\right] i\sigma_y\]</div>
+<p>と分解します。すなわち
+<span class="math notranslate nohighlight">\(\psi = (\Delta_{\uparrow\downarrow} - \Delta_{\downarrow\uparrow})/2\)</span>、
+<span class="math notranslate nohighlight">\(d_x = (\Delta_{\downarrow\downarrow} - \Delta_{\uparrow\uparrow})/2\)</span>、
+<span class="math notranslate nohighlight">\(d_y = (\Delta_{\uparrow\uparrow} + \Delta_{\downarrow\downarrow})/(2i)\)</span>、
+<span class="math notranslate nohighlight">\(d_z = (\Delta_{\uparrow\downarrow} + \Delta_{\downarrow\uparrow})/2\)</span>です。
+<span class="math notranslate nohighlight">\(\psi\)</span>がスピン一重項成分、<span class="math notranslate nohighlight">\(\mathbf{d}\)</span>がスピン三重項成分です。
+4つのスピン重みは</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-10">
+<span class="eqno">(5.11)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-10" title="Link to this equation">¶</a></span>\[w_\psi = \frac{1}{W}\sum_{\mathbf{k},a,b} |\psi_{ab}(\mathbf{k})|^2 ,
+\qquad
+w_{d_j} = \frac{1}{W}\sum_{\mathbf{k},a,b} |d_{ab,j}(\mathbf{k})|^2 ,
+\qquad
+W = \sum_{\mathbf{k},a,b}
+\left(|\psi_{ab}(\mathbf{k})|^2 + |\mathbf{d}_{ab}(\mathbf{k})|^2\right)\]</div>
+<p>で、<span class="math notranslate nohighlight">\(w_\psi + w_{d_x} + w_{d_y} + w_{d_z} = 1\)</span>となるよう規格化されて
+います。スピン軌道相互作用がなければ、純粋な一重項は<span class="math notranslate nohighlight">\(w_\psi = 1\)</span>、純粋な
+三重項は<span class="math notranslate nohighlight">\(w_{d_x} + w_{d_y} + w_{d_z} = 1\)</span>を与えます。スピン軌道相互作用は
+両者を混ぜます。重みはギャップの位相や規格化によりません。</p>
+</section>
+<section id="id38">
+<h3>出力<a class="headerlink" href="#id38" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>は通常と同じ形式で<span class="math notranslate nohighlight">\(2N\)</span>個のスピン軌道添字にわたります
+（<code class="docutils literal notranslate"><span class="pre">sigma_ij</span></code>が spin-block 順の<span class="math notranslate nohighlight">\(\Delta_{ij}\)</span>）。先頭にコメント行
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>、
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_layout</span> <span class="pre">=</span> <span class="pre">...</span></code>が付きます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code>形式のコメント行で始まり、その中に
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>、ギャップの
+並び、分解の式、<code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code>（<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>に書いたギャップの重み）が
+含まれます。各固有対の行には<code class="docutils literal notranslate"><span class="pre">match</span></code>列の後ろに4つの重みが付きます。
+<code class="docutils literal notranslate"><span class="pre">match</span></code>はフェルミオン反対称な固有ベクトルで<code class="docutils literal notranslate"><span class="pre">1</span></code>です。</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz
+   0  3.15509804e-01  7.35115141e-15  3.15509804e-01 1  1.00000000e+00  1.58260973e-33  2.03409188e-33  2.94567224e-32
+   ...
+   4 -1.06188646e-01 -3.28383154e-15  1.06188646e-01 1  7.10085111e-31  5.45001702e-01  2.16795802e-01  2.38202496e-01
+</pre></div>
+</div>
+<p>（スピン回転不変な極限では三重項の固有値は3重に縮退しているので、重みが
+<span class="math notranslate nohighlight">\(d_x, d_y, d_z\)</span>にどう分かれるかはソルバーが返す固有ベクトルによります。
+意味があるのは和だけです。）</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（ギャップファイル名の拡張子を<code class="docutils literal notranslate"><span class="pre">.npz</span></code>に置き換えた名前）に
+ギャップを全精度で保存します。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>キー</p></th>
+<th class="head"><p>内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k})\)</span>、形状<code class="docutils literal notranslate"><span class="pre">(2N,</span> <span class="pre">2N,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz)</span></code>、
+spin-block 順（<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>のギャップ）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">index_convention</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;spin_block&quot;</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spin_orbital</span></code>、<code class="docutils literal notranslate"><span class="pre">norb_phys</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">True</span></code>、物理軌道の数<span class="math notranslate nohighlight">\(N\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">kx</span></code>、<code class="docutils literal notranslate"><span class="pre">ky</span></code>、<code class="docutils literal notranslate"><span class="pre">kz</span></code></p></td>
+<td><p>k メッシュ</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spin_components</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[&quot;psi&quot;,</span> <span class="pre">&quot;dx&quot;,</span> <span class="pre">&quot;dy&quot;,</span> <span class="pre">&quot;dz&quot;]</span></code>と<code class="docutils literal notranslate"><span class="pre">gap</span></code>の4つの重み</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">eigenvalues</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvectors</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvector_spin_weights</span></code>、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_match</span></code></p></td>
+<td><p>固有値解析を行った場合のみ。固有値、固有ベクトル（形状
+<code class="docutils literal notranslate"><span class="pre">(n,</span> <span class="pre">2N,</span> <span class="pre">2N,</span> <span class="pre">Nx,</span> <span class="pre">Ny,</span> <span class="pre">Nz)</span></code>）、その重み<code class="docutils literal notranslate"><span class="pre">(n,</span> <span class="pre">4)</span></code>、<code class="docutils literal notranslate"><span class="pre">match</span></code>フラグ</p></td>
+</tr>
+</tbody>
+</table>
+</li>
+</ul>
+</section>
+<section id="id39">
+<h3>スピン軌道 FLEX の出力の読み込み<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行した
+FLEX の3つのアーカイブを<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>）から読みます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>）: スピンフル感受率
+<span class="math notranslate nohighlight">\(\chi\)</span>。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>を指定したときに出力します;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chi0q</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chi0q.npz&quot;</span></code>）: FLEX の<span class="math notranslate nohighlight">\(\chi_0\)</span>。
+<strong>必須</strong>です。FLEX の実行で<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>を指定して出力してください。
+この入力の頂点が保存された<span class="math notranslate nohighlight">\(\chi\)</span>を再現すること
+<span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>の確認に使い、一致しない場合（たとえば
+相互作用ファイルを変更した場合）は拒否します;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;green.npz&quot;</span></code>）: 繰り込まれた Green 関数。
+これも必須です。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定したときだけ出力します。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>はスピン軌道モードでのみ使われ、キーの大文字・
+小文字は区別しません。<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>は拒否します。スピン軌道
+FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
+ためです。FLEX のアーカイブが<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>を記録している場合は
+WARNING を出します。保存された<span class="math notranslate nohighlight">\(\chi\)</span>と Green 関数が整合するのは収束時
+だけです。</p>
+</section>
+<section id="id40">
+<h3>拒否される組み合わせ<a class="headerlink" href="#id40" title="Link to this heading">¶</a></h3>
+<p>次のいずれも、計算の前に、変更すべきキーやファイルを示すエラーになります。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
+<li><p>オフサイトの2体項の行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">orbital_site</span></code>のもとで異なるサイトの軌道間の<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>の行、
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>集約ファイル中のオフサイトの行;</p></li>
+<li><p>軌道添字が<span class="math notranslate nohighlight">\(1 \ldots N\)</span>の範囲外の相互作用ファイル（<span class="math notranslate nohighlight">\(N\)</span>を
+超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>、reduced（2添字）の
+chi0q ファイル、<code class="docutils literal notranslate"><span class="pre">index_convention</span></code>タグのない chi0q ファイル、
+マーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>をもたない chi0q ファイル（このマーカーは
+スピン軌道の計算だけが書き込むため、非スピン軌道 RPA の chi0q はマーカーを
+もちません。<span class="math notranslate nohighlight">\(2N\)</span>軌道の非スピン軌道 RPA の chi0q は<span class="math notranslate nohighlight">\(N\)</span>軌道の
+スピン軌道の chi0q と同じ形をもちます。スピン軌道の RPA（<code class="docutils literal notranslate"><span class="pre">[mode]</span>
+<span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>）でファイルを作り直してください）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>なしの FLEX、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>の FLEX、
+<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>・<code class="docutils literal notranslate"><span class="pre">index_convention</span></code>タグのない FLEX の出力、
+<code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>が<code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>でない FLEX のアーカイブ、有限でない値を
+含む FLEX の出力;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>;</p></li>
+<li><p>FLEX の chi0q アーカイブがない場合（FLEX の実行で<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>を
+指定してください）、FLEX の chi0q アーカイブがマーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>
+（スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
+アーカイブがない場合、この入力の頂点が FLEX の<span class="math notranslate nohighlight">\(\chi\)</span>を再現しない場合
+（波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
+相互作用が一致することは示せません）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>;</p></li>
+<li><p>フェルミオン反対称な成分をもたない<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>の明示的な指定;</p></li>
+<li><p>ギャップアーカイブの名前（「出力」を参照）が<code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>と一致する
+<code class="docutils literal notranslate"><span class="pre">output_gap</span></code>;</p></li>
+<li><p>奇数のスピン軌道数（Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span></code>）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Extern</span></code>ファイル（Zeeman 場は Transfer ファイルに書いてください）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>の<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と<code class="docutils literal notranslate"><span class="pre">green_init</span></code>（平均場の一体入力は
+まだサポートされていません。issue #273 を参照）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code>。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と、<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。</p>
+</section>
+<section id="id41">
+<h3>実用上の注意<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>スピン軌道の計算は反対称部分空間（上の「Pauli 射影」を参照）で行われ、その
+次元はおよそ<span class="math notranslate nohighlight">\((2N)^2 N_k\)</span>の半分です。固有値はたかだかその個数しか
+なく、<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>がそれ以上のときはすべてを返します（このとき
+小さな縮約演算子を密行列として対角化します）。<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を指定
+しない Arnoldi 法は絶対値で選ぶため、大きな斥力的（負の）固有値が物理的な
+最大固有値を隠すことがあります。SU(2) 極限のテスト模型では
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">4</span></code>で取りこぼし、<code class="docutils literal notranslate"><span class="pre">8</span></code>で見つかりました。十分な数を
+要求するか、<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>（実部最大）を指定してください。
+後者は<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">1</span></code>でも見つけました。</p></li>
+<li><p>既定の<code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;cos&quot;</span></code>は一重項構造（<span class="math notranslate nohighlight">\(\phi(\mathbf{k}) \otimes
+i\sigma_y\)</span>）の初期値です。反転対称な模型ではべき乗反復は初期値のパリティ
+セクターから出られないため、この初期値から三重項が主となる状態には到達
+できません。<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>（Arnoldi）を使うか、奇の初期値
+（<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>など。<span class="math notranslate nohighlight">\(d_z\)</span>三重項を与えます。
+<code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>は全スピンブロックを含みます）を使ってください。</p></li>
+<li><p>Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
+この場合は検証していません。</p></li>
+<li><p>メモリ。全振動数のスピンを含む chi0q（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>で計算し、
+<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では全体を読み込みます）は
+<span class="math notranslate nohighlight">\(N_\mathrm{mat} N_k (2N)^4\)</span>個の複素数、すなわち
+<span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span>バイトです（<span class="math notranslate nohighlight">\(N_k\)</span>は k 点の数）。
+<span class="math notranslate nohighlight">\(N = 4\)</span>、<span class="math notranslate nohighlight">\(32 \times 32\)</span>の格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>では約 69 GB
+で、同じ物理軌道数<span class="math notranslate nohighlight">\(N\)</span>の非スピン軌道 general の chi0q（軌道添字
+<span class="math notranslate nohighlight">\(N^4\)</span>）の約 4.3 GB と比べて大きくなります。</p></li>
+<li><p>スピン軌道モードでの<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は検証していません。</p></li>
+</ul>
+</section>
+<section id="id42">
+<h3>検証<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><strong>SU(2) 極限。</strong> スピンに依存しないホッピングとスピン回転不変な相互作用では、
+非スピン軌道の一重項カーネルの各固有値はスピン軌道のスペクトルに1回、
+三重項カーネルの各固有値は3回、相対精度<span class="math notranslate nohighlight">\(10^{-8}\)</span>で現れます。
+Pauli 禁制モードは現れません。</p></li>
+<li><p><strong>スピン軌道相互作用のある1次。</strong> 頂点の裸の部分は、すべてのオンサイト相互作用
+について、スピン軌道基底での独立な1次の構成と一致します。</p></li>
+<li><p><strong>スピン軌道相互作用のある2次。</strong> 頂点から作った静的なペア感受率は、小さな鎖の
+厳密対角化と相互作用の1次・2次の係数で一致します。</p></li>
+<li><p><strong>入力経路間の一致。</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>は同じ固有値を
+与え、<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>は保存された FLEX の<span class="math notranslate nohighlight">\(\chi\)</span>と Green 関数から直接
+作ったスペクトルを再現します。</p></li>
+</ul>
+</section>
+<section id="id43">
+<h3>非スピン軌道の一重項・三重項との関係<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
+<p>非スピン軌道の一重項・三重項の式はスピン回転不変な相互作用を仮定しています。
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>のみ、または<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>のみの相互作用は<span class="math notranslate nohighlight">\(S_z\)</span>を保存しますが
+回転不変ではないので、これらに対してその式は近似です（issue #88 を参照）。
+一方、スピン軌道の経路はこれらの項を厳密に扱います。したがってこのような模型
+では、スピン軌道の一重項の固有値は非スピン軌道の計算のものと異なり得ます。
+等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>と<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）では両チャネルとも一致します。</p>
+</section>
 </section>
 <section id="tips">
-<h2><span class="section-number">5.2.15. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
+<h2><span class="section-number">5.2.16. </span>Tips<a class="headerlink" href="#tips" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>大規模系では<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と設定すると、
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を内部計算し、
@@ -1708,7 +1973,8 @@ reduced スキームが保存していない横成分感受率<span class="math 
 <li class="toctree-l3"><a class="reference internal" href="#bond-channels">5.2.12. ボンド分解した静的対形成（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id34">5.2.13. 各モードが受け付けるもの</a></li>
 <li class="toctree-l3"><a class="reference internal" href="#id35">5.2.14. スピン構造の取り扱い</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.15. Tips</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#enable-spin-orbital">5.2.15. スピン軌道模型（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>）</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#tips">5.2.16. Tips</a></li>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="../filespecification/fi-index.html">5.3. ファイルフォーマット</a></li>

@@ -141,10 +141,19 @@ and the run starts from the bare Hartree-Fock state;</p></li>
 <li><p>the other conditions of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> apply (uniform Matsubara
 grid, no sublattice, no external field, even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> refuses spin-orbital input;</p></li>
-<li><p>the Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with
-<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>) still refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a
-FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
+<li><p>the static Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the outputs of such a
+run with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
+<span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. Its
+dynamic entry and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still
+refuse <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
 </ul>
+<p><strong>Eliashberg solver.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> solves the static linearized
+Eliashberg equation for a spin-orbital model with one
+<span class="math notranslate nohighlight">\(2N \times 2N\)</span> gap matrix (no <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>), on-site interactions
+and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>; the scope, the
+outputs and the refused combinations are listed in
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>.</p>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -769,8 +778,34 @@ Only the keys specific to the bond-resolved DYNAMIC pairing path are
 documented here; the full <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table (<code class="docutils literal notranslate"><span class="pre">frequency</span></code>,
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>, <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>,
 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, …) is documented in
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section of the Eliashberg solver tutorial</span></a>.</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section of the Eliashberg solver tutorial</span></a>. The two keys of the spin-orbital static path are
+listed first.</p>
 <ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> with
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> only)</p>
+<p><strong>Description :</strong>
+With <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, the archive of the spinful susceptibility
+<span class="math notranslate nohighlight">\(\chi\)</span> written by a spin-orbital FLEX run (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code> of
+that run), read from <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code> (falling back to
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>). The key is case-insensitive. The archive
+must carry the spin-orbital tags (<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_block&quot;</span></code>); the output of a non-spin-orbital or
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> run is refused. A FLEX run that recorded
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> gives a WARNING. <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>
+are refused in spin-orbital mode. See <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;chi0q.npz&quot;</span></code>; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> with
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> only)</p>
+<p><strong>Description :</strong>
+With <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, the <span class="math notranslate nohighlight">\(\chi_0\)</span> archive of the same FLEX
+run (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code> of that run). Required: a missing archive is
+refused. It is used to check that the vertex of this input reproduces the
+stored <span class="math notranslate nohighlight">\(\chi\)</span>; a mismatch is refused. The key is case-insensitive.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code></p>
 <p><strong>Type :</strong>
 Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; post-processing, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> only)</p>

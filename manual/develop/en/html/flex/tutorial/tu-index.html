@@ -1316,12 +1316,20 @@ writes its archives on the spin-orbital index of dimension
 <span class="pre">&quot;spin_orbital&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span> <span class="pre">=</span> <span class="pre">&quot;acbd&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
 <span class="pre">&quot;spin_block&quot;</span></code>. No <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> / <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> is written: there is no
 spin/charge split.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> also carry the boolean marker
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>. Only a spin-orbital run writes this key; the
+archives of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> do not have it (their
+members are unchanged). The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> requires it on the
+chi0q archive.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Sx</span></code>, <code class="docutils literal notranslate"><span class="pre">Sy</span></code> and <code class="docutils literal notranslate"><span class="pre">Sz</span></code> in <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> are computed from the full
 spin-orbital density (<code class="docutils literal notranslate"><span class="pre">Sx</span></code> and <code class="docutils literal notranslate"><span class="pre">Sy</span></code> are written only in spin-orbital
 runs, as in UHFk).</p></li>
 </ul>
-<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not accept these archives (it refuses
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>).</p>
+<p>The static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads these archives with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
+(<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>; write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>,
+<code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> in the FLEX run, which writes each archive only when
+it is requested); see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The dynamic
+Eliashberg solver does not accept them.</p>
 <p>The output files of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> can also be used
 as input for the Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
 superconducting instabilities. See <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a> for details.</p>
