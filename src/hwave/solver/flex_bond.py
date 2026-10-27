@@ -999,7 +999,7 @@ def transport_ops(B, nmat, nvol, norb):
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
                          guard_freqs="all", guard_enabled=True, w_in_place=False,
-                         w2_triples=0, half_grid=False, store="host"):
+                         w2_triples=0, half_grid=False, store="host", pairing=False):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -1123,7 +1123,12 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     ``device_*`` keys then describe the device-store table. The host table
     is not changed by the residency (the host preflight runs before the
     backend is known, so it keeps charging the store on the host: a
-    deliberately conservative reading)."""
+    deliberately conservative reading).
+
+    ``pairing`` (in-process pairing on): a device store also charges the
+    pairing's re-dressing, ``pairing_redress = norb^4 nvol Nmat 16 + 2 nb
+    nvol ND^2 16`` (the pair bubble plus two batch temporaries), a device
+    row of the device-store table only."""
     if store not in ("host", "device", "auto"):
         raise ValueError("estimate_bond_memory: store must be 'host', 'device' or 'auto', "
                          "got {!r}".format(store))
@@ -1289,19 +1294,32 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         n_slots = (1 if w_in_place else 2) + (2 if output_full else 0)
         store_bytes = n_slots * U_store
 
+        def _pair_redress(n):
+            # the in-process pairing's re-dressing (issue #275): with a host
+            # store it ran next to the device memory the store left free; with
+            # the store resident it is charged here -- the pair bubble G2
+            # (norb^4 nvol nmat, the uniform grid's frequency count, an upper
+            # bound for the IR nodes) plus two batch temporaries (the S chi S
+            # contribution and its scaled copy) on top of the dressing row
+            if not pairing:
+                return 0
+            return norb ** 4 * nvol * nmat * it + 2 * n * nvol * ND * ND * it
+
         def _dev_rows_store(n):
             rows = _dev_rows(n)
             rows["block_store"] = store_bytes
+            if pairing:
+                rows["pairing_redress"] = _pair_redress(n)
             return rows
 
         def _dev_need_store(n):
-            return _dev_need(n) + 1.25 * store_bytes
+            return _dev_need(n) + 1.25 * (store_bytes + _pair_redress(n))
 
         def _dev_table_store(n):
             return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
                               for k, v in _dev_rows_store(n).items())
         device_nb_store = 0
-        for cand in range(min(nb, nslices), 0, -1):
+        for cand in range(nslices, 0, -1):
             if _dev_need_store(cand) <= dev_cap:
                 device_nb_store = cand
                 break

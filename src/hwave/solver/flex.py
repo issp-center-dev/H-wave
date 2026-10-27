@@ -612,6 +612,11 @@ class FLEX(RPA):
                 "memory) or \"device\" (always in device memory; refused when it does not fit "
                 "or when the GPU backend is not active), got {!r}".format(bs))
         out["longitudinal_bond_store"] = bs.strip().lower()
+        if out["longitudinal_bond_store"] == "device" and not _bk.as_bool(param.get("gpu", False)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_store = \"device\" needs gpu = true (the bond "
+                "block store can only be kept in device memory on the GPU backend); use "
+                "\"auto\" or \"host\".")
         ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
         if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
                 or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
@@ -1781,7 +1786,7 @@ class FLEX(RPA):
                      "_bond_types", "_bond_w2", "_bond_w2_xp", "_bond_w2_entries",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
                      "_bond_xp_name", "_bond_mirror_guarded", "_bond_store_resident",
-                     "_bond_est_host_store",
+                     "_bond_est_host_store", "_bond_transfer_estimate",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
                      "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
@@ -2053,7 +2058,8 @@ class FLEX(RPA):
             guard_freqs=self.longitudinal_bond_guard_freqs,
             guard_enabled=self.longitudinal_bond_cond_tol is not None,
             w_in_place=self._bond_w_in_place(),
-            half_grid=self.longitudinal_bond_half_grid)
+            half_grid=self.longitudinal_bond_half_grid,
+            pairing=self.longitudinal_bond_pairing != "none")
         est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
         gib = flex_bond._GIB
         logger.info(
@@ -2256,6 +2262,8 @@ class FLEX(RPA):
                    + u_total * (1 + 2 * int(guard_all)
                                 + 2 * int(self.longitudinal_bond_output_full))
                    + small)
+        #: the last estimate in bytes, (host to device, device to host)
+        self._bond_transfer_estimate = (int(h2d), int(d2h))
         logger.info(
             "longitudinal_bond_channels (FLEX): bond-gate transfer volume per iteration "
             "(ESTIMATE) at frequency batch %d (%d batches): host to device %.4f GiB, "

@@ -562,7 +562,8 @@ that has no effect under the current settings.
   on the device when it fits there and on the host otherwise; ``"host"``
   always keeps it on the host (the behaviour of previous versions);
   ``"device"`` always keeps it on the device and is refused when it does
-  not fit or when the GPU backend is not active.
+  not fit or when the GPU backend is not active (with ``gpu = false``
+  already when the input is read).
 
   The admission is the device table of the bond gate with the store added
   as a persistent row: the store fits when
@@ -573,7 +574,11 @@ that has no effect under the current settings.
   not more than the host table admits), so that the store does not push
   the batch so small that the batched solves underfill the device;
   ``"device"`` needs the store to fit at batch 1; a pinned
-  ``longitudinal_bond_freq_batch`` is checked as given. The memory pool's
+  ``longitudinal_bond_freq_batch`` is checked as given. With
+  ``longitudinal_bond_pairing`` the device-store need also charges the
+  pairing's re-dressing (the pair bubble ``norb^4 * nvol * Nmat * 16``
+  bytes plus two frequency batches), which a host store left room for.
+  The memory pool's
   cached blocks are released before the free device memory is measured.
   The decision and its reason are logged with the device table. The store
   takes ``n_slots * Nmat_s * nvol * ND^2 * 16`` bytes, with ``Nmat_s =

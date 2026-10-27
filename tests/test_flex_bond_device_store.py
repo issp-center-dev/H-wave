@@ -362,6 +362,42 @@ class TestEndToEnd(unittest.TestCase):
     def test_pairing_singlet_half_grid(self):
         self._check("singlet", True)
 
+    def test_recorded_transfers_are_bounded_by_the_estimate(self):
+        """The logged per-iteration transfer volume is an upper bound of what
+        one bond map really copies (recorded by the fake), for either
+        residency and direction."""
+        import hwave.solver.flex as flex_mod
+        for store in ("host", "device"):
+            for half in (False, True):
+                with self.subTest(store=store, half=half):
+                    per_map = []
+                    real = flex_mod.FLEX._phase_b_bond_map
+
+                    def wrapped(self_, *a, **k):
+                        from hwave.solver import backend as bk
+                        cp = bk._import_cupy()
+                        n0 = len(cp.transfers)
+                        out = real(self_, *a, **k)
+                        moved = cp.transfers[n0:]
+                        # the per-map index vectors (the ring's pair
+                        # permutation) are not part of the estimate
+                        per_map.append((sum(b for d, sh, b in moved
+                                            if d == "h2d" and len(sh) > 1),
+                                        sum(b for d, _s, b in moved if d == "d2h")))
+                        return out
+                    with mock.patch.object(flex_mod.FLEX, "_phase_b_bond_map", wrapped):
+                        s = _solve(store, half=half)[0]
+                    h2d_est, d2h_est = s._bond_transfer_estimate
+                    self.assertEqual(len(per_map), 3)
+                    for h2d, d2h in per_map:
+                        self.assertLessEqual(d2h, d2h_est)
+                        self.assertGreater(d2h, 0)
+                        if store == "host":
+                            self.assertLessEqual(h2d, h2d_est)
+                        else:
+                            self.assertEqual(h2d_est, 0)
+                            self.assertEqual(h2d, 0)
+
     def test_auto_takes_the_device_when_it_fits(self):
         s = _solve("auto")[0]
         self.assertEqual(s._bond_store_resident, "device")
@@ -410,13 +446,43 @@ class TestOutOfMemoryFallback(unittest.TestCase):
         self.assertTrue(any("longitudinal_bond_store = \"device\"" in m for m in cm.output))
 
     def test_auto_fallback_restores_the_host_store_batch(self):
-        """Without a pinned batch the device table can choose a smaller batch
-        than the host-store table; the fallback goes back to the latter."""
+        """Without a pinned batch and with little device memory, the
+        device-store table admits a SMALLER batch than the host-store table
+        (the store takes memory the batch would use); after the fallback the
+        host-store batch is the one in force. The batch floor is lowered so
+        that "auto" admits the store at the small batch, and output_full
+        makes the store (3 slots) larger than one batch row."""
+        from hwave.solver import flex_bond
+        extra = {"longitudinal_bond_freq_batch": None, "longitudinal_bond_output_full": True}
+        probe = _solve("host", extra=extra)[0]
+        kw = dict(probe._bond_est_kwargs)
+        need = {n: flex_bond.estimate_bond_memory(device_available=2 ** 62, store="device",
+                                                  **dict(kw, freq_batch=n))["device_need"]
+                for n in range(1, 9)}
+        chosen = None
+        with mock.patch.object(flex_bond, "DEVICE_STORE_MIN_BLOCKS", 1):
+            for n in range(1, 8):
+                free = int(need[n] * 1.0001 / 0.9)
+                dev = flex_bond.estimate_bond_memory(device_available=free, store="auto", **kw)
+                host = flex_bond.estimate_bond_memory(device_available=free, store="host", **kw)
+                if dev["store_resident"] == "device" and dev["nb"] < host["nb"]:
+                    chosen = (free, dev["nb"], host["nb"])
+                    break
+        self.assertIsNotNone(chosen, "no device memory gives a smaller device-store batch")
+        free, nb_dev, nb_host = chosen
+
         def setup(cp):
             self._fail_store(cp)
-        s = _solve("auto", extra={"longitudinal_bond_freq_batch": None}, setup=setup)[0]
+        with mock.patch.object(flex_bond, "DEVICE_STORE_MIN_BLOCKS", 1):
+            s = _solve("auto", extra=extra, cp_kw={"free": free}, setup=setup)[0]
         self.assertEqual(s._bond_store_resident, "host")
-        self.assertEqual(s._bond_nb, int(s._bond_est_host_store["nb"]))
+        self.assertEqual(int(s._bond_est_host_store["nb"]), nb_host)
+        self.assertEqual(s._bond_nb, nb_host)
+        self.assertNotEqual(s._bond_nb, nb_dev)
+        # and without the failure the device store runs at the smaller batch
+        with mock.patch.object(flex_bond, "DEVICE_STORE_MIN_BLOCKS", 1):
+            s = _solve("auto", extra=extra, cp_kw={"free": free})[0]
+        self.assertEqual((s._bond_store_resident, s._bond_nb), ("device", nb_dev))
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +549,65 @@ class TestAdmission(unittest.TestCase):
         self.assertEqual(miss["store_resident"], "host")
         self.assertIn("does not fit", miss["store_reason"])
         self.assertNotIn("block_store", miss["device_rows"])
+
+    #: an estimate-only problem at the issue's nvol (1024), so that
+    #: nvol * (host batch) is far above DEVICE_STORE_MIN_BLOCKS
+    _BIG = dict(nmat=64, nvol=1024, norb=2, B=9, depth=0, output_full=False,
+                split_seed=False, n_types=1, freq_batch=None, cap_gb=1.0e6,
+                mixing="linear", w_in_place=True)
+
+    def _big(self, available, store, **kw):
+        from hwave.solver import flex_bond
+        return flex_bond.estimate_bond_memory(device_available=available, store=store,
+                                              **dict(self._BIG, **kw))
+
+    def test_batch_floor_is_decisive(self):
+        """Available memory between the need at the floor ceil(4096 / nvol)
+        and the need at the host batch: "auto" keeps the store on the device
+        with a batch between the two; deciding at the host batch would not."""
+        from hwave.solver import flex_bond
+        nb_host = self._big(2 ** 62, "host")["nb"]
+        floor = math.ceil(flex_bond.DEVICE_STORE_MIN_BLOCKS / self._BIG["nvol"])
+        self.assertGreater(self._BIG["nvol"] * nb_host, flex_bond.DEVICE_STORE_MIN_BLOCKS)
+        self.assertLess(floor, nb_host)
+        n_mid = (floor + nb_host) // 2
+        need_mid = self._big(2 ** 62, "device", freq_batch=n_mid)["device_need"]
+        need_host = self._big(2 ** 62, "device", freq_batch=nb_host)["device_need"]
+        self.assertLess(need_mid, need_host)
+        est = self._big(int(need_mid * 1.0001 / 0.9), "auto")
+        self.assertEqual(est["store_resident"], "device")
+        self.assertTrue(floor <= est["nb"] < nb_host, (floor, est["nb"], nb_host))
+        self.assertIn("at frequency batch {} ".format(floor), est["store_reason"])
+
+    def test_device_only_batch_is_not_capped_by_the_host_table(self):
+        """The host cap limits the batch below what the device admits:
+        device_nb_store reports the device's own limit, the selected batch is
+        the host's."""
+        from hwave.solver import flex_bond
+        peak5 = self._big(None, "host", freq_batch=5)["peak"]
+        cap_gb = peak5 * 1.0001 / flex_bond._GIB
+        est = self._big(2 ** 50, "auto", cap_gb=cap_gb)
+        self.assertEqual(est["store_resident"], "device")
+        self.assertEqual(est["nb"], 5)
+        self.assertEqual(est["device_nb_store"], est["nslices"])
+        self.assertEqual(est["device_nb"], est["nslices"])
+
+    def test_pairing_redress_row(self):
+        """With the in-process pairing a device store also charges the
+        pairing's re-dressing (G2 plus two batch temporaries); the host-store
+        table and the pairing-free table do not have the row."""
+        on = self._big(2 ** 50, "device", w_in_place=False, pairing=True, freq_batch=4)
+        off = self._big(2 ** 50, "device", w_in_place=False, pairing=False, freq_batch=4)
+        host = self._big(2 ** 50, "host", w_in_place=False, pairing=True, freq_batch=4)
+        it, nvol, ND = 16, self._BIG["nvol"], 9 * 4
+        row = 2 ** 4 * nvol * 64 * it + 2 * 4 * nvol * ND * ND * it
+        self.assertEqual(on["device_rows"]["pairing_redress"], row)
+        self.assertNotIn("pairing_redress", off["device_rows"])
+        self.assertNotIn("pairing_redress", host["device_rows"])
+        self.assertAlmostEqual(on["device_need"] - off["device_need"], 1.25 * row, delta=1.0)
+        # the solver passes the flag
+        self.assertTrue(self.solvers["singlet"]._bond_est_kwargs["pairing"])
+        self.assertFalse(self.solvers["none"]._bond_est_kwargs["pairing"])
 
     def test_device_refuses_below_nb_1_and_admits_above(self):
         need1 = self._need("singlet", 1)
@@ -558,17 +683,16 @@ class TestAdmission(unittest.TestCase):
             with tempfile.TemporaryDirectory() as out:
                 s.solve(r.get_param("green"), out)
             self.assertEqual(s._bond_store_resident, "host")
-        s, r = _flex({"IterationMax": 1, "longitudinal_bond_store": "device"})
-        with tempfile.TemporaryDirectory() as out:
-            with self.assertRaisesRegex(ValueError, "needs the GPU backend"):
-                s.solve(r.get_param("green"), out)
+        with self.assertRaisesRegex(ValueError, "needs gpu = true"):
+            _flex({"IterationMax": 1, "longitudinal_bond_store": "device"})
 
 
 class TestKey(unittest.TestCase):
 
     def _raw(self, param, gate=True):
         from hwave.solver.flex import FLEX
-        p = {"flex_hartree_fock": True, "longitudinal_bond_channels": gate, "Nmat": 8}
+        p = {"flex_hartree_fock": True, "longitudinal_bond_channels": gate, "Nmat": 8,
+             "gpu": True}
         p.update(param)
         return FLEX._parse_phase_b_keys({"param": p, "calc_scheme": "general"})
 
@@ -578,6 +702,25 @@ class TestKey(unittest.TestCase):
             for v, want in (("auto", "auto"), ("HOST", "host"), (" Device ", "device")):
                 with self.subTest(key=key, v=v):
                     self.assertEqual(self._raw({key: v})["longitudinal_bond_store"], want)
+
+    def test_device_needs_gpu_at_parse_time(self):
+        for gpu in (False, "false", None):
+            with self.subTest(gpu=gpu):
+                p = {"longitudinal_bond_store": "device"}
+                p["gpu"] = gpu
+                if gpu is None:
+                    del p["gpu"]
+                    from hwave.solver.flex import FLEX
+                    with self.assertRaisesRegex(ValueError, "needs gpu = true"):
+                        FLEX._parse_phase_b_keys({"param": {
+                            "flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                            "Nmat": 8, "longitudinal_bond_store": "device"},
+                            "calc_scheme": "general"})
+                else:
+                    with self.assertRaisesRegex(ValueError, "needs gpu = true"):
+                        self._raw(p)
+        for v in ("auto", "host"):
+            self._raw({"longitudinal_bond_store": v, "gpu": False})
 
     def test_strict_values(self):
         for v in ("gpu", "", True, 1, None, "pinned"):
