@@ -37,6 +37,10 @@ The file contains several arrays bound to the following keys:
 
   A string marker (always ``"spin_block"``) recording that the spin-orbital axes are ordered as spin*norb+orb (spin-block), distinct from UHFk's interleaved 2*orb+spin output. A ``chi0q`` file lacking this marker (produced before the convention fix) is rejected when reloaded in spin-orbital mode.
 
+- ``spin_orbital``:
+
+  A boolean marker ``spin_orbital = True``, written ONLY by a run with ``enable_spin_orbital = true``; a non-spin-orbital run does not write the key, so its archive has the same members as before the marker existed. A spin-orbital run that reads its chi0q (``chi0q_init``, or a chi0q passed on in memory) propagates the marker instead of asserting it: it writes ``spin_orbital = True`` only if that chi0q carries ``spin_orbital = True``. With an unmarked chi0q the run proceeds but writes no marker (an INFO line says so). With ``spin_orbital = False`` or a malformed marker it stops with an error before solving. The ``index_convention`` marker is written by every run, so it cannot distinguish a spin-orbital file from a non-spin-orbital one whose orbital count happens to match (:math:`2N` orbitals versus :math:`N` orbitals with spin). ``hwave_sc`` in spin-orbital mode with ``chi0q_mode = "load"`` requires ``spin_orbital = True`` and refuses a file without it. Files written before this marker existed lack it and must be regenerated for that use.
+
 - ``coeff_tail``:
 
   The value of the ``coeff_tail`` parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)` for moderate ``Nmat``, so runs that consume this file (e.g. ``hwave_sc``) warn when their own ``coeff_tail`` setting differs from the recorded value. When a pre-computed ``chi0q_init`` file is passed through, the input file's value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (``matsubara_basis = "ir"``, including densified output), where the uniform-grid tail correction does not apply.

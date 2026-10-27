@@ -232,7 +232,8 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
   ``chi0q_mode = "flex"``\ が必要です
   （下記の\ :ref:`動的振動数の節 <sc_dynamic_frequency>`\ を参照）。
-- ``pairing_type``: ``"singlet"``\ または\ ``"triplet"``\ 。
+- ``pairing_type``: ``"singlet"``\ または\ ``"triplet"``\ 。スピン軌道モードでは
+  ギャップがひとつのスピン軌道行列なので指定しません（\ :ref:`sc_spin_orbital`\ を参照）。
 - ``init_gap``: 反復法の初期ギャップ対称性。
   ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`)、
   ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`)、
@@ -1610,10 +1611,10 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - **spin-free のみ**
      - 偏極した一体ハミルトニアンでは general は例外
    * - ``enable_spin_orbital``
-     - FLEX は受け付ける
      - 拒否
-     - ``hwave_sc``\ は設定を即座に拒否します（バージョン 2.0 以降）。下の
-       「スピン構造の取り扱い」参照
+     - ``flex_hartree_fock = true``\ で受け付ける（オンサイト相互作用のみ）
+     - 静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこの出力を読みます。
+       :ref:`sc_spin_orbital`\ を参照
    * - 保存される感受率
      - 密度‐密度成分のみ\ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体
@@ -1697,21 +1698,291 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
 
 - **スピン軌道表現**\ （``mode.enable_spin_orbital = true``\ 。
   ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
-  スピン自由な模型もこの表現で書けます）--- \ **サポートされていません。**
-  ``hwave_sc``\ は静的・動的の両エントリで設定を明示的なエラーとして即座に
-  拒否し、\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は FLEX rung の実行前に
-  preflight で拒否します（バージョン 2.0 以降。FLEX のみの掃引は
-  ``warm_start = false``\ で実行できます）。このガード導入前は、内部で\ :math:`\chi_0`\ を
-  計算する経路が最後まで実行され、不整合な index・軌道数規約の上に固有値を
-  出力していました---近似ではなく、静かに間違った結果です。（スピン軌道
-  FLEX ファイルの chi 形状不一致診断は、直接のヘルパ呼び出しや不正入力の
-  ための低水準ローダに残っていますが、ガードされた公開エントリからは到達
-  しません。）
+  スピン自由な模型もこの表現で書けます）--- \ **静的ソルバーでサポートされます。**
+  ギャップ関数はスピン行列として扱い、スピンフルな（電荷・縦スピン・横スピンの）
+  感受率を用います。適用範囲は\ :ref:`sc_spin_orbital`\ を参照してください。
+  動的エントリ（\ ``frequency = "dynamic"``\ ）は引き続き設定を即座に拒否し、
+  ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は FLEX rung の実行前に preflight で
+  拒否します（FLEX のみの掃引は\ ``warm_start = false``\ で実行できます）。
 
-いずれの偏極ケースに対応するにも、:math:`S_z`\ で分解した pairing vertex
-（スピン軌道相互作用の場合はさらにスピン行列としてのギャップ関数）と、
-reduced スキームが保存していない横成分感受率\ :math:`\chi^{+-}`\ が必要になります。
-設定変更ではなく機能追加の範疇です。
+偏極した模型を一重項・三重項チャネルで扱うには、\ :math:`S_z`\ で分解した
+pairing vertex と、reduced スキームが保存していない横成分感受率
+:math:`\chi^{+-}`\ が必要になります。設定変更ではなく機能追加の範疇です。
+スピン混成のある模型には上のスピン軌道表現を使ってください。
+
+
+.. _sc_spin_orbital:
+
+スピン軌道模型（\ ``enable_spin_orbital``\ ）
+--------------------------------------------------
+
+``[mode] enable_spin_orbital = true``\ のとき、静的ソルバーはギャップを一重項・
+三重項の別々のチャネルではなく、\ :math:`2N`\ 個のスピン軌道（\ :math:`N`\ は物理
+軌道の数）にわたるひとつの一般的な行列\ :math:`\Delta_{AB}(\mathbf{k})`\ として
+扱います。Transfer ファイル中のスピン軌道相互作用などのスピン混成一体項は厳密に
+取り込まれ、ギャップの一重項成分と三重項成分は模型に応じて混ざります。
+
+適用範囲
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- 静的な pairing vertex のみ（\ ``frequency = "static"``\ 、既定値）;
+- オンサイトの2体相互作用のみ;
+- ボンド分解チャネルなし（\ ``bond_channels = false``\ 、既定値）;
+- ``chi0q_mode = "calc"``\ （スピンフルな\ :math:`\chi_0`\ を内部計算）、
+  ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q）、または
+  ``"flex"``\ （スピン軌道 FLEX の出力。FLEX は\ ``calc_scheme = "general"``\ かつ
+  ``[mode.param] flex_hartree_fock = true``\ で実行したものに限ります。
+  :ref:`flex_spin_orbital`\ を参照）;
+- ``solver_mode = "iteration"``\ 、\ ``"eigenvalue"``\ 、\ ``"both"``\ と
+  ``eigenvalue_method = "arnoldi"``\ 。
+
+入力ファイルは RPA・FLEX のスピン軌道の規約に従います。Geometry の\ ``norb``\ は
+スピン軌道の数\ :math:`2N`\ 、Transfer ファイルはインターリーブした添字
+:math:`2\alpha + s`\ 、相互作用ファイルは\ **物理軌道**\ の添字\ :math:`1 \ldots N`\ を
+用います。ギャップはひとつなので\ ``pairing_type``\ は指定しません。
+
+Pairing vertex
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Pairing vertex は、反対称化したスピンフル頂点\ :math:`\Gamma`\ （直接項とその
+オンサイト交換交差の和）とスピンフル感受率\ :math:`\chi`\ から作ります。
+:math:`\Gamma`\ はスピン軌道 RPA・FLEX と同じものであり、そのため
+``[mode.param] spinful_vertex_exchange``\ は\ ``true``\ のままにする必要があります。
+
+.. math::
+
+   V = \tfrac{1}{2}\,\Gamma \;-\; \Gamma\,\chi(\mathbf{q})\,\Gamma ,
+   \qquad
+   \chi = \left[1 + \chi_0 \Gamma\right]^{-1} \chi_0 ,
+
+（ボソン振動数ゼロ）。\ ``"calc"``\ と\ ``"load"``\ では\ :math:`\chi`\ は右式の RPA の
+表式、\ ``"flex"``\ では FLEX が保存した感受率です。\ :math:`\chi`\ は電荷・縦スピン・
+横スピンの各チャネルとその混成をひとつの量として含みます。
+
+Pauli 射影
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ギャップはフェルミオン反対称
+:math:`\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})`\ でなければなりません。
+ソルバーはこの部分空間の正規直交基底で計算します。基底は組
+:math:`\{(A, B, \mathbf{k}), (B, A, -\mathbf{k})\}` ごとに 1 つの座標をもち
+（:math:`A = B` かつ :math:`\mathbf{k} = -\mathbf{k}` の要素は 0 に固定されます）、
+べき乗反復も Arnoldi 法も、\ ``spectral_shift`` の有無によらず、この部分空間に
+制限したカーネルに作用します（初期ギャップも射影します）。そのため、さもなければ
+スペクトルに現れて選ばれうる対称セクターの Pauli 禁制モードは、問題に含まれません。
+反対称セクターの固有値は変わりません。報告するすべての固有ベクトルについて、
+丸め誤差の精度で反対称であることを確認します。
+
+ギャップの規約とスピン分解
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ギャップのスピン軌道添字は\ **spin-block**\ 順
+:math:`A = s N + \alpha`\ （\ :math:`s = 0`\ が上向き、\ :math:`s = 1`\ が下向き。
+``index_convention = spin_block``\ ）であり、Transfer ファイルのインターリーブ順
+ではありません。各軌道対\ :math:`(a, b)`\ について\ :math:`2\times 2`\ のスピン
+ブロック\ :math:`[\Delta_{ab}]_{st} = \Delta_{(s,a),(t,b)}`\ を
+
+.. math::
+
+   \Delta_{ab}(\mathbf{k}) =
+   \left[\psi_{ab}(\mathbf{k}) + \mathbf{d}_{ab}(\mathbf{k})\cdot
+   \boldsymbol{\sigma}\right] i\sigma_y
+
+と分解します。すなわち
+:math:`\psi = (\Delta_{\uparrow\downarrow} - \Delta_{\downarrow\uparrow})/2`\ 、
+:math:`d_x = (\Delta_{\downarrow\downarrow} - \Delta_{\uparrow\uparrow})/2`\ 、
+:math:`d_y = (\Delta_{\uparrow\uparrow} + \Delta_{\downarrow\downarrow})/(2i)`\ 、
+:math:`d_z = (\Delta_{\uparrow\downarrow} + \Delta_{\downarrow\uparrow})/2`\ です。
+:math:`\psi`\ がスピン一重項成分、\ :math:`\mathbf{d}`\ がスピン三重項成分です。
+4つのスピン重みは
+
+.. math::
+
+   w_\psi = \frac{1}{W}\sum_{\mathbf{k},a,b} |\psi_{ab}(\mathbf{k})|^2 ,
+   \qquad
+   w_{d_j} = \frac{1}{W}\sum_{\mathbf{k},a,b} |d_{ab,j}(\mathbf{k})|^2 ,
+   \qquad
+   W = \sum_{\mathbf{k},a,b}
+   \left(|\psi_{ab}(\mathbf{k})|^2 + |\mathbf{d}_{ab}(\mathbf{k})|^2\right)
+
+で、\ :math:`w_\psi + w_{d_x} + w_{d_y} + w_{d_z} = 1`\ となるよう規格化されて
+います。スピン軌道相互作用がなければ、純粋な一重項は\ :math:`w_\psi = 1`\ 、純粋な
+三重項は\ :math:`w_{d_x} + w_{d_y} + w_{d_z} = 1`\ を与えます。スピン軌道相互作用は
+両者を混ぜます。重みはギャップの位相や規格化によりません。
+
+出力
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``gap.dat``\ は通常と同じ形式で\ :math:`2N`\ 個のスピン軌道添字にわたります
+  （\ ``sigma_ij``\ が spin-block 順の\ :math:`\Delta_{ij}`\ ）。先頭にコメント行
+  ``# spin_orbital = true``\ 、\ ``# index_convention = spin_block``\ 、
+  ``# gap_layout = ...``\ が付きます。
+
+- ``eigenvalue.dat``\ は\ ``# key = value``\ 形式のコメント行で始まり、その中に
+  ``# spin_orbital = true``\ 、\ ``# index_convention = spin_block``\ 、ギャップの
+  並び、分解の式、\ ``gap_spin_weights``\ （\ ``gap.dat``\ に書いたギャップの重み）が
+  含まれます。各固有対の行には\ ``match``\ 列の後ろに4つの重みが付きます。
+  ``match``\ はフェルミオン反対称な固有ベクトルで\ ``1``\ です。
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz
+        0  3.15509804e-01  7.35115141e-15  3.15509804e-01 1  1.00000000e+00  1.58260973e-33  2.03409188e-33  2.94567224e-32
+        ...
+        4 -1.06188646e-01 -3.28383154e-15  1.06188646e-01 1  7.10085111e-31  5.45001702e-01  2.16795802e-01  2.38202496e-01
+
+  （スピン回転不変な極限では三重項の固有値は3重に縮退しているので、重みが
+  :math:`d_x, d_y, d_z`\ にどう分かれるかはソルバーが返す固有ベクトルによります。
+  意味があるのは和だけです。）
+
+- ``gap.npz``\ （ギャップファイル名の拡張子を\ ``.npz``\ に置き換えた名前）に
+  ギャップを全精度で保存します。
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 30 70
+
+     * - キー
+       - 内容
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k})`\ 、形状\ ``(2N, 2N, Nx, Ny, Nz)``\ 、
+         spin-block 順（\ ``gap.dat``\ のギャップ）
+     * - ``index_convention``
+       - ``"spin_block"``
+     * - ``spin_orbital``\ 、\ ``norb_phys``
+       - ``True``\ 、物理軌道の数\ :math:`N`
+     * - ``kx``\ 、\ ``ky``\ 、\ ``kz``
+       - k メッシュ
+     * - ``spin_components``\ 、\ ``gap_spin_weights``
+       - ``["psi", "dx", "dy", "dz"]``\ と\ ``gap``\ の4つの重み
+     * - ``eigenvalues``\ 、\ ``eigenvectors``\ 、\ ``eigenvector_spin_weights``\ 、
+         ``eigenvalue_match``
+       - 固有値解析を行った場合のみ。固有値、固有ベクトル（形状
+         ``(n, 2N, 2N, Nx, Ny, Nz)``\ ）、その重み\ ``(n, 4)``\ 、\ ``match``\ フラグ
+
+スピン軌道 FLEX の出力の読み込み
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``chi0q_mode = "flex"``\ では、\ ``enable_spin_orbital = true``\ 、
+``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
+FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
+``[file.output] path_to_output``\ ）から読みます。
+
+- ``[eliashberg] flex_chiq``\ （既定値\ ``"chiq.npz"``\ ）: スピンフル感受率
+  :math:`\chi`\ 。FLEX は\ ``[file.output] chiq``\ を指定したときに出力します;
+- ``[eliashberg] flex_chi0q``\ （既定値\ ``"chi0q.npz"``\ ）: FLEX の\ :math:`\chi_0`\ 。
+  **必須**\ です。FLEX の実行で\ ``[file.output] chi0q``\ を指定して出力してください。
+  この入力の頂点が保存された\ :math:`\chi`\ を再現すること
+  :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合（たとえば
+  相互作用ファイルを変更した場合）は拒否します;
+- ``[eliashberg] flex_green``\ （既定値\ ``"green.npz"``\ ）: 繰り込まれた Green 関数。
+  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します。
+
+``flex_chiq``\ と\ ``flex_chi0q``\ はスピン軌道モードでのみ使われ、キーの大文字・
+小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
+FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
+ためです。FLEX のアーカイブが\ ``scf_converged = false``\ を記録している場合は
+WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整合するのは収束時
+だけです。
+
+拒否される組み合わせ
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+次のいずれも、計算の前に、変更すべきキーやファイルを示すエラーになります。
+
+- ``frequency = "dynamic"``;
+- ``bond_channels = true``;
+- オフサイトの2体項の行（\ :math:`\mathbf{R} \neq 0`\ ）、\ ``[mode.param]
+  orbital_site``\ のもとで異なるサイトの軌道間の\ :math:`\mathbf{R} = 0`\ の行、
+  ``Coulomb``\ 集約ファイル中のオフサイトの行;
+- 軌道添字が\ :math:`1 \ldots N`\ の範囲外の相互作用ファイル（\ :math:`N`\ を
+  超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;
+- ``"auto"``\ ・\ ``"general"``\ 以外の\ ``chi0q_tensor``\ 、reduced（2添字）の
+  chi0q ファイル、\ ``index_convention``\ タグのない chi0q ファイル、
+  マーカー\ ``spin_orbital = True``\ をもたない chi0q ファイル（このマーカーは
+  スピン軌道の計算だけが書き込むため、非スピン軌道 RPA の chi0q はマーカーを
+  もちません。\ :math:`2N`\ 軌道の非スピン軌道 RPA の chi0q は\ :math:`N`\ 軌道の
+  スピン軌道の chi0q と同じ形をもちます。スピン軌道の RPA（\ ``[mode]
+  enable_spin_orbital = true``\ ）でファイルを作り直してください）;
+- ``enable_spin_orbital``\ なしの FLEX、\ ``calc_scheme = "reduced"``\ の FLEX、
+  ``chi_convention``\ ・\ ``index_convention``\ タグのない FLEX の出力、
+  ``chi_orbital_layout``\ が\ ``"acbd"``\ でない FLEX のアーカイブ、有限でない値を
+  含む FLEX の出力;
+- ``flex_chi_s``\ ・\ ``flex_chi_c``;
+- FLEX の chi0q アーカイブがない場合（FLEX の実行で\ ``[file.output] chi0q``\ を
+  指定してください）、FLEX の chi0q アーカイブがマーカー\ ``spin_orbital = True``
+  （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
+  アーカイブがない場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
+  （波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
+  相互作用が一致することは示せません）;
+- ``"arnoldi"``\ 以外の\ ``eigenvalue_method``;
+- フェルミオン反対称な成分をもたない\ ``init_gap``;
+- ``pairing_type``\ の明示的な指定;
+- ギャップアーカイブの名前（「出力」を参照）が\ ``output_eigenvalue``\ と一致する
+  ``output_gap``;
+- 奇数のスピン軌道数（Geometry の\ ``norb``\ ）;
+- ``Extern``\ ファイル（Zeeman 場は Transfer ファイルに書いてください）;
+- ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ （平均場の一体入力は
+  まだサポートされていません。issue #273 を参照）;
+- ``[mode.param] spinful_vertex_exchange = false``\ 。
+
+``frequency = "dynamic"``\ の\ ``hwave_sc``\ と、\ ``run_eliashberg = true``\ の
+``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。
+
+実用上の注意
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- スピン軌道の計算は反対称部分空間（上の「Pauli 射影」を参照）で行われ、その
+  次元はおよそ\ :math:`(2N)^2 N_k`\ の半分です。固有値はたかだかその個数しか
+  なく、\ ``num_eigenvalues``\ がそれ以上のときはすべてを返します（このとき
+  小さな縮約演算子を密行列として対角化します）。\ ``spectral_shift``\ を指定
+  しない Arnoldi 法は絶対値で選ぶため、大きな斥力的（負の）固有値が物理的な
+  最大固有値を隠すことがあります。SU(2) 極限のテスト模型では
+  ``num_eigenvalues = 4``\ で取りこぼし、\ ``8``\ で見つかりました。十分な数を
+  要求するか、\ ``spectral_shift = "auto"``\ （実部最大）を指定してください。
+  後者は\ ``num_eigenvalues = 1``\ でも見つけました。
+- 既定の\ ``init_gap = "cos"``\ は一重項構造（\ :math:`\phi(\mathbf{k}) \otimes
+  i\sigma_y`\ ）の初期値です。反転対称な模型ではべき乗反復は初期値のパリティ
+  セクターから出られないため、この初期値から三重項が主となる状態には到達
+  できません。\ ``solver_mode = "eigenvalue"``\ （Arnoldi）を使うか、奇の初期値
+  （\ ``"p_x"``\ 、\ ``"p_y"``\ など。\ :math:`d_z`\ 三重項を与えます。
+  ``"random"``\ は全スピンブロックを含みます）を使ってください。
+- Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
+  この場合は検証していません。
+- メモリ。全振動数のスピンを含む chi0q（\ ``chi0q_mode = "calc"``\ で計算し、
+  ``"load"``\ と\ ``"flex"``\ では全体を読み込みます）は
+  :math:`N_\mathrm{mat} N_k (2N)^4`\ 個の複素数、すなわち
+  :math:`16\,N_\mathrm{mat} N_k (2N)^4`\ バイトです（\ :math:`N_k`\ は k 点の数）。
+  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 69 GB
+  で、同じ物理軌道数\ :math:`N`\ の非スピン軌道 general の chi0q（軌道添字
+  :math:`N^4`\ ）の約 4.3 GB と比べて大きくなります。
+- スピン軌道モードでの\ ``gpu = true``\ は検証していません。
+
+検証
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- **SU(2) 極限。** スピンに依存しないホッピングとスピン回転不変な相互作用では、
+  非スピン軌道の一重項カーネルの各固有値はスピン軌道のスペクトルに1回、
+  三重項カーネルの各固有値は3回、相対精度\ :math:`10^{-8}`\ で現れます。
+  Pauli 禁制モードは現れません。
+- **スピン軌道相互作用のある1次。** 頂点の裸の部分は、すべてのオンサイト相互作用
+  について、スピン軌道基底での独立な1次の構成と一致します。
+- **スピン軌道相互作用のある2次。** 頂点から作った静的なペア感受率は、小さな鎖の
+  厳密対角化と相互作用の1次・2次の係数で一致します。
+- **入力経路間の一致。** ``chi0q_mode = "calc"``\ と\ ``"load"``\ は同じ固有値を
+  与え、\ ``"flex"``\ は保存された FLEX の\ :math:`\chi`\ と Green 関数から直接
+  作ったスペクトルを再現します。
+
+非スピン軌道の一重項・三重項との関係
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+非スピン軌道の一重項・三重項の式はスピン回転不変な相互作用を仮定しています。
+``Hund``\ のみ、または\ ``Exchange``\ のみの相互作用は\ :math:`S_z`\ を保存しますが
+回転不変ではないので、これらに対してその式は近似です（issue #88 を参照）。
+一方、スピン軌道の経路はこれらの項を厳密に扱います。したがってこのような模型
+では、スピン軌道の一重項の固有値は非スピン軌道の計算のものと異なり得ます。
+等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
+``Hund``\ と\ ``Exchange``\ ）では両チャネルとも一致します。
 
 
 Tips

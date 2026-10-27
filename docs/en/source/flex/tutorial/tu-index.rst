@@ -305,7 +305,12 @@ The line reports the relative Frobenius deviation of the Hermitian
 symmetry of the equal-time density against ``flex_hf_density_tol``
 and, with ``longitudinal_bond_channels = true``, the smallest
 conditioning score of the spin and of the charge RPA denominator of
-that iteration's map against ``longitudinal_bond_cond_tol``.
+that iteration's map against ``longitudinal_bond_cond_tol``. On the GPU
+path a well-conditioned map may report ``in bracket [low, up]`` instead
+of a value: the device-side bounds already proved that no block can
+fail, so the exact decomposition was skipped and the exact minimum lies
+in the bracket (``longitudinal_bond_guard_exact``; the last map is
+always exact).
 
 In a sweep, keep the default ``flex_guard_policy = "refuse"`` for the
 automated runs and turn ``"warn"`` on for a single point you have
@@ -546,7 +551,9 @@ outputs record ``longitudinal_bond_device`` and ``longitudinal_bond_nb``.
 conditioning bounds are computed on the device and only the blocks that
 can attain the batch minimum are decomposed on the host, with outputs
 identical to the full decomposition), so it is a reasonable default for
-production too. ``"static"`` remains the reduced diagnostic and is still
+production too. In addition, a frequency batch whose device-side bounds
+already prove the pass is not decomposed at all
+(``longitudinal_bond_guard_exact = "decide"``, the default). ``"static"`` remains the reduced diagnostic and is still
 about three times faster per iteration, so the previous advice -- check
 once with ``"all"``, then switch to ``"static"`` -- still applies when
 throughput matters.
@@ -1249,12 +1256,20 @@ writes its archives on the spin-orbital index of dimension
   "spin_orbital"``, ``chi_orbital_layout = "acbd"`` and ``index_convention =
   "spin_block"``. No ``chiq_s`` / ``chiq_c`` is written: there is no
   spin/charge split.
+- ``chi0q.npz`` and ``chiq.npz`` also carry the boolean marker
+  ``spin_orbital = True``. Only a spin-orbital run writes this key; the
+  archives of a run without ``enable_spin_orbital`` do not have it (their
+  members are unchanged). The spin-orbital ``hwave_sc`` requires it on the
+  chi0q archive.
 - ``Sx``, ``Sy`` and ``Sz`` in ``energy.dat`` are computed from the full
   spin-orbital density (``Sx`` and ``Sy`` are written only in spin-orbital
   runs, as in UHFk).
 
-``hwave_sc`` does not accept these archives (it refuses
-``enable_spin_orbital``).
+The static ``hwave_sc`` reads these archives with ``chi0q_mode = "flex"``
+(``chiq.npz``, ``chi0q.npz`` and ``green.npz``; write ``[file.output] chiq``,
+``chi0q`` and ``green`` in the FLEX run, which writes each archive only when
+it is requested); see :ref:`sc_spin_orbital`. The dynamic
+Eliashberg solver does not accept them.
 
 The output files of a run without ``enable_spin_orbital`` can also be used
 as input for the Eliashberg equation solver (``hwave_sc``) to analyze

@@ -89,9 +89,19 @@ that has no effect under the current settings.
   - the other conditions of ``flex_hartree_fock`` apply (uniform Matsubara
     grid, no sublattice, no external field, even ``Nmat``);
   - ``calc_scheme = "reduced"`` refuses spin-orbital input;
-  - the Eliashberg solver (``hwave_sc``, and ``hwave_tsweep`` with
-    ``run_eliashberg = true``) still refuses ``enable_spin_orbital``; a
-    FLEX-only ``hwave_tsweep`` runs it with ``warm_start = false``.
+  - the static Eliashberg solver (``hwave_sc``) reads the outputs of such a
+    run with ``[eliashberg] chi0q_mode = "flex"`` (write ``[file.output]
+    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. Its
+    dynamic entry and ``hwave_tsweep`` with ``run_eliashberg = true`` still
+    refuse ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
+    ``warm_start = false``.
+
+  **Eliashberg solver.** ``hwave_sc`` solves the static linearized
+  Eliashberg equation for a spin-orbital model with one
+  :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site interactions
+  and ``chi0q_mode = "calc"``, ``"load"`` or ``"flex"``; the scope, the
+  outputs and the refused combinations are listed in
+  :ref:`sc_spin_orbital`.
 
 .. _rpa_calc_scheme_auto:
 
@@ -413,6 +423,38 @@ that has no effect under the current settings.
   guard and is recorded in the outputs (``longitudinal_bond_guard_freqs``
   member). The default does not depend on ``gpu``. Ignored with a
   warning unless ``longitudinal_bond_channels = true``.
+
+- ``longitudinal_bond_guard_exact``
+
+  **Type :**
+  String (``"decide"`` or ``"always"``, case-insensitive; default value
+  is ``"decide"``)
+
+  **Description :**
+  When the conditioning guard of ``longitudinal_bond_guard_freqs =
+  "all"`` decomposes blocks exactly on the GPU path. Under ``"decide"``
+  (default), a frequency batch whose device-side bounds already prove
+  that every block passes -- every block has valid bounds and the
+  smallest lower bound of the score exceeds ``2 * longitudinal_bond_cond_tol``
+  (plus a round-off allowance of order :math:`10^{-12}`) -- is passed
+  without gathering its blocks to the host and without any exact
+  singular-value decomposition. Otherwise the batch is decomposed
+  exactly as before, so a refusal, a ``flex_guard_policy = "warn"``
+  record and every decision are identical to ``"always"``; only the
+  per-iteration log and the recorded exact-decomposition counts change. When a map's minimum was not computed
+  exactly, the ``guards:`` line reports
+  ``bond cond_min spin in bracket [low, up] (interval bound, no exact
+  SVD; smallest upper end at flat index i)`` in place of the value: the
+  exact minimum lies in ``[low, up]``, and ``i = l * nvol + q`` is the
+  flattened (bosonic grid index, q-point) position of the smallest
+  upper bound. Every map that can be the last one -- the map of
+  ``IterationMax`` and any map that can complete the convergence
+  criterion -- runs the exact decomposition, so the
+  ``longitudinal_bond_cond_min_s`` / ``_c`` written to the outputs are
+  always exact. ``"always"`` decomposes exactly in every map (the
+  behaviour of previous versions). The setting changes nothing on the
+  CPU path, nor with ``longitudinal_bond_guard_freqs = "static"``.
+  Ignored with a warning unless ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_cond_tol``
 
@@ -790,7 +832,37 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
 ``ir_wmax``, ...) is documented in
 :ref:`the dynamic-frequency section of the Eliashberg solver tutorial
-<sc_dynamic_frequency>`.
+<sc_dynamic_frequency>`. The two keys of the spin-orbital static path are
+listed first.
+
+- ``flex_chiq``
+
+  **Type :**
+  String (default value is ``"chiq.npz"``; ``hwave_sc`` with
+  ``[mode] enable_spin_orbital = true`` only)
+
+  **Description :**
+  With ``chi0q_mode = "flex"``, the archive of the spinful susceptibility
+  :math:`\chi` written by a spin-orbital FLEX run (``[file.output] chiq`` of
+  that run), read from ``[file.input] path_to_flex_output`` (falling back to
+  ``[file.output] path_to_output``). The key is case-insensitive. The archive
+  must carry the spin-orbital tags (``chi_convention = "spin_orbital"``,
+  ``index_convention = "spin_block"``); the output of a non-spin-orbital or
+  ``calc_scheme = "reduced"`` run is refused. A FLEX run that recorded
+  ``scf_converged = false`` gives a WARNING. ``flex_chi_s`` / ``flex_chi_c``
+  are refused in spin-orbital mode. See :ref:`sc_spin_orbital`.
+
+- ``flex_chi0q``
+
+  **Type :**
+  String (default value is ``"chi0q.npz"``; ``hwave_sc`` with
+  ``[mode] enable_spin_orbital = true`` only)
+
+  **Description :**
+  With ``chi0q_mode = "flex"``, the :math:`\chi_0` archive of the same FLEX
+  run (``[file.output] chi0q`` of that run). Required: a missing archive is
+  refused. It is used to check that the vertex of this input reproduces the
+  stored :math:`\chi`; a mismatch is refused. The key is case-insensitive.
 
 - ``bond_channels``
 

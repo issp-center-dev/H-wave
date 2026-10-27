@@ -286,6 +286,11 @@ H-wave 2.0.0 以前は Takimoto-Hotta-Ueda の式
 ``flex_hf_density_tol``\ と並べて示し、\ ``longitudinal_bond_channels =
 true``\ の場合はさらに、その反復の写像におけるスピン・電荷 RPA 分母の
 条件数の最小値を\ ``longitudinal_bond_cond_tol``\ と並べて示します。
+GPU 経路では、条件の良い写像で値の代わりに\ ``in bracket [low, up]``\ が
+出力されることがあります。デバイス上のバウンドだけでどのブロックも
+不合格になり得ないことが示されたため厳密な分解を省略したもので、厳密な
+最小値はこの範囲にあります（\ ``longitudinal_bond_guard_exact``\ 。
+最後の写像は常に厳密です）。
 
 掃引では自動実行の側はデフォルトの\ ``flex_guard_policy = "refuse"``
 のままにし、\ ``"warn"``\ は原因を確認した個別の点にのみ使ってください。
@@ -513,7 +518,9 @@ GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartr
 計算し、バッチ最小値になり得るブロックのみをホストで厳密に分解する
 ため、出力は全ブロック分解の場合と完全に一致したまま、コストはおよそ
 半減します）。そのため本番運用でも\ ``"all"``\ を既定のまま使うのが
-妥当です。\ ``"static"``\ は縮約された診断のままであり、1 反復あたり
+妥当です。さらに、デバイス上のバウンドだけで合格が証明できる振動数
+バッチは一切分解しません（\ ``longitudinal_bond_guard_exact = "decide"``\ 、
+デフォルト）。\ ``"static"``\ は縮約された診断のままであり、1 反復あたり
 依然として約3倍高速なので、\ ``longitudinal_bond_guard_freqs = "all"``\
 で一度検査した後に\ ``"static"``\ に切り替えるという従来の助言は、
 スループットを重視する場合には引き続き有効です。
@@ -1215,11 +1222,19 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
   形状は\ ``(nmat, nvol, nd, nd, nd, nd)``\ で、\ ``chi_convention = "spin_orbital"``\ 、
   ``chi_orbital_layout = "acbd"``\ 、\ ``index_convention = "spin_block"``\ を伴います。
   スピン・電荷の分離がないため、\ ``chiq_s``\ ・\ ``chiq_c``\ は書き出されません。
+- ``chi0q.npz``\ と\ ``chiq.npz``\ は真偽値のマーカー\ ``spin_orbital = True``\ も
+  持ちます。このキーはスピン軌道の計算だけが書き込みます。\ ``enable_spin_orbital``\ を
+  使わない計算のアーカイブはこのキーを持ちません（メンバーは変わりません）。
+  スピン軌道モードの\ ``hwave_sc``\ は chi0q アーカイブにこのマーカーを要求します。
 - ``energy.dat``\ の\ ``Sx``\ ・\ ``Sy``\ ・\ ``Sz``\ は全スピン軌道密度から計算されます
   （UHFk と同様、\ ``Sx``\ と\ ``Sy``\ はスピン軌道計算でのみ書き出されます）。
 
-``hwave_sc``\ はこれらのアーカイブを受け付けません（\ ``enable_spin_orbital``\ を
-拒否します）。
+静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
+（\ ``chiq.npz``\ 、\ ``chi0q.npz``\ 、\ ``green.npz``\ 。FLEX の実行で
+``[file.output]``\ の\ ``chiq``\ 、\ ``chi0q``\ 、\ ``green``\ を指定してください。
+FLEX は指定されたアーカイブだけを出力します）を読みます。
+:ref:`sc_spin_orbital`\ を参照してください。動的 Eliashberg ソルバーはこれらを
+受け付けません。
 
 ``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。

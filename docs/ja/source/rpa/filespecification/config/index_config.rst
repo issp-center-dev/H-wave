@@ -77,9 +77,18 @@ TOML形式
   - ``flex_hartree_fock``\ のその他の条件（一様松原格子、副格子なし、外場なし、
     偶数の\ ``Nmat``\ ）も適用されます
   - ``calc_scheme = "reduced"``\ はスピン軌道入力を拒否します
-  - Eliashberg ソルバー（``hwave_sc``\ 、および\ ``run_eliashberg = true``\ の
-    ``hwave_tsweep``\ ）は引き続き\ ``enable_spin_orbital``\ を拒否します。FLEX のみの
-    ``hwave_tsweep``\ は\ ``warm_start = false``\ で実行できます
+  - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は\ ``[eliashberg] chi0q_mode =
+    "flex"``\ でこの計算の出力を読みます（\ ``[file.output]``\ の\ ``chiq``\ ・
+    ``chi0q``\ ・\ ``green``\ を指定してください）。\ :ref:`sc_spin_orbital`\ を参照。
+    その動的エントリと\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
+    ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
+    ``warm_start = false``\ で実行できます
+
+  **Eliashberg ソルバー。** ``hwave_sc``\ はスピン軌道模型の静的な線形化
+  Eliashberg 方程式を、ひとつの\ :math:`2N \times 2N`\ ギャップ行列（\ ``pairing_type``\ なし）、
+  オンサイト相互作用、\ ``chi0q_mode = "calc"``\ ・\ ``"load"``\ ・\ ``"flex"``\ で
+  解きます。適用範囲、出力、拒否される組み合わせは\ :ref:`sc_spin_orbital`\ に
+  まとめています。
 
 .. _rpa_calc_scheme_auto:
 
@@ -350,6 +359,35 @@ TOML形式
   通過し得ます）、出力にも記録されます
   （``longitudinal_bond_guard_freqs``\ メンバー）。デフォルト値は
   ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
+  でない場合は警告付きで無視されます。
+
+- ``longitudinal_bond_guard_exact``
+
+  **形式 :** str型 (\ ``"decide"``\ または\ ``"always"``\ 、大文字小文字を
+  区別しません。デフォルトは\ ``"decide"``)
+
+  **説明 :**
+  GPU 経路で\ ``longitudinal_bond_guard_freqs = "all"``\ の条件数ガードが
+  ブロックを厳密に分解するタイミングを指定します。デフォルトの
+  ``"decide"``\ では、デバイス上で計算したバウンドだけで全ブロックの
+  合格が証明できる振動数バッチ（全ブロックのバウンドが有効で、スコアの
+  下限の最小値が\ ``2 * longitudinal_bond_cond_tol``\ （に
+  :math:`10^{-12}`\ 程度の丸め誤差の余裕を加えた値）を上回るもの）は、
+  ブロックをホストに集めることも厳密な特異値分解を行うこともなく合格と
+  します。それ以外のバッチは従来どおり厳密に分解するため、拒否、
+  ``flex_guard_policy = "warn"``\ の記録、およびすべての判定は
+  ``"always"``\ と同一であり、変わるのは反復ごとのログと記録される厳密分解のカウントだけです。ある写像の
+  最小値を厳密に計算していない場合、\ ``guards:``\ 行には値の代わりに
+  ``bond cond_min spin in bracket [low, up] (interval bound, no exact
+  SVD; smallest upper end at flat index i)``\ が出力されます。厳密な
+  最小値は\ ``[low, up]``\ の範囲にあり、\ ``i = l * nvol + q``\ は上限が
+  最小となる（ボソン格子インデックス, :math:`q`\ 点）を平坦化した位置です。
+  最後の写像になり得る写像（\ ``IterationMax``\ 回目の写像と、収束判定を
+  満たし得る写像）では必ず厳密な分解を行うため、出力ファイルに書かれる
+  ``longitudinal_bond_cond_min_s`` / ``_c``\ は常に厳密な値です。
+  ``"always"``\ は全ての写像で厳密に分解します（旧バージョンの挙動）。
+  CPU 経路、および\ ``longitudinal_bond_guard_freqs = "static"``\ では
+  この設定は何も変えません。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_cond_tol``
@@ -670,7 +708,37 @@ TOML形式
 テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
 :ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
-<sc_dynamic_frequency>`\ で説明しています。
+<sc_dynamic_frequency>`\ で説明しています。スピン軌道の静的経路の2つのキーを
+先に示します。
+
+- ``flex_chiq``
+
+  **型 :**
+  文字列（デフォルト値は\ ``"chiq.npz"``\ 。\ ``[mode] enable_spin_orbital = true``\ の
+  ``hwave_sc``\ のみ）
+
+  **説明 :**
+  ``chi0q_mode = "flex"``\ のとき、スピン軌道 FLEX が出力したスピンフル感受率
+  :math:`\chi`\ のアーカイブ（その計算の\ ``[file.output] chiq``\ ）。
+  ``[file.input] path_to_flex_output``\ （なければ\ ``[file.output]
+  path_to_output``\ ）から読みます。キーの大文字・小文字は区別しません。アーカイブは
+  スピン軌道のタグ（\ ``chi_convention = "spin_orbital"``\ 、\ ``index_convention =
+  "spin_block"``\ ）をもつ必要があり、非スピン軌道や\ ``calc_scheme = "reduced"``\ の
+  計算の出力は拒否します。\ ``scf_converged = false``\ を記録した FLEX の出力では
+  WARNING を出します。スピン軌道モードでは\ ``flex_chi_s``\ ・\ ``flex_chi_c``\ は
+  拒否します。\ :ref:`sc_spin_orbital`\ を参照。
+
+- ``flex_chi0q``
+
+  **型 :**
+  文字列（デフォルト値は\ ``"chi0q.npz"``\ 。\ ``[mode] enable_spin_orbital = true``\ の
+  ``hwave_sc``\ のみ）
+
+  **説明 :**
+  ``chi0q_mode = "flex"``\ のとき、同じ FLEX 計算の\ :math:`\chi_0`\ のアーカイブ
+  （その計算の\ ``[file.output] chi0q``\ ）。必須で、ない場合は拒否します。この入力の
+  頂点が保存された\ :math:`\chi`\ を再現することの確認に使い、一致しない場合は
+  拒否します。キーの大文字・小文字は区別しません。
 
 - ``bond_channels``
 
