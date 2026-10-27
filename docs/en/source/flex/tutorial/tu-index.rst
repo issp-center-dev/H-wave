@@ -588,8 +588,10 @@ every target strictly between the two; when the target lies in that range
 and the search still fails, the error says that the self-energy has
 diverged. It also states how :math:`N(\mu)` misbehaves on the band window
 (the bare band range widened by :math:`1 + 10T`): flat, not finite, outside
-the physical range, or not monotonic. It says so instead of pointing at the filling (here a one-band model
-warm-started from the converged :math:`U = 2` self-energy at :math:`U = 200`):
+the physical range, or not monotonic. The message names these causes
+rather than blaming the filling. The example below is a one-band model
+warm-started from the converged :math:`U = 2` self-energy at
+:math:`U = 200`:
 
 .. code-block:: text
 
