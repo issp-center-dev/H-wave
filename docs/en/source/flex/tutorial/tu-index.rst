@@ -613,9 +613,11 @@ those of the full grid, and a single violating block is named at the same
 frequency and q-point (with several violating blocks the first one reported
 can differ, because the batches are grouped differently). With
 time-reversal symmetry (real hopping and interactions, checked on every
-map) every score at :math:`-\nu` is also one at :math:`+\nu`, so only the
-stored half is dressed and guarded, except for a batch whose score lies
-within round-off of the threshold; on the CPU,
+map), ``longitudinal_bond_guard_freqs = "all"`` and
+``flex_guard_policy = "refuse"``, every score at :math:`-\nu` is also one
+at :math:`+\nu`, so only the stored half is dressed and guarded, except for
+a batch whose score lies within round-off of the threshold (``"warn"`` and
+``"static"`` always guard the whole grid); on the CPU,
 for a two-orbital model with five bond channels on a 16 x 16 mesh, the
 dressing went from 2.1 s to 1.1 s and the whole two-map solve from 2.9 s to
 1.7 s at ``Nmat = 64`` (4.1 s to 2.2 s and 5.5 s to 3.6 s at

@@ -3215,7 +3215,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
                 guard_method="auto", stats=None, workers=1, guard_exact="always", ls=None,
-                guard_only=False, report=None):
+                guard_only=False):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3297,14 +3297,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     an exactly singular block included, before the solve), so the solve is
     skipped and ``(None, cond_min)`` is returned. Every other combination
     runs the whole batch as above (the warn path's exact-singular refusal
-    and the "static" residual need the solve) and returns ``chi``.
-
-    ``report`` (optional dict): receives ``"residual_max"``, the largest
-    solve residual of the batch under ``guard_freqs = "static"``, before
-    it is judged. Every violation record also carries ``"log"``: the
-    warning's ``(format, args, k)``, ``args[k:k + 5]`` being the location
-    ``(2 l - nmat, l, qx, qy, qz)`` -- so that a caller can report the
-    same finding at a symmetry-related location (issue #223)."""
+    and the "static" residual need the solve) and returns ``chi``."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3407,7 +3400,6 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                  smin_i, smax_i),
                 {"channel": channel, "l": int(l), "q": int(q), "kind": "conditioning",
                  "value": float(worst), "iteration": iteration}))
-            pending[-1][2]["log"] = (pending[-1][0], pending[-1][1], 1)
             return worst
         # the guard's own refusal is built from the score computed above
         # (no second decomposition, issue #198); i - i_offset is the
@@ -3480,26 +3472,24 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         r = solve_residual(mat, chi, cb)
         worst = int(xp.argmax(r))
         r_max = float(r.reshape(-1)[worst])
-        if report is not None:
-            report["residual_max"] = r_max
         if not np.isfinite(r_max) or r_max > residual_tol:
             l = _l_of(worst // nvol)
             q = worst % nvol
             qx, rem = divmod(q, Ny * Nz)
             qy, qz = divmod(rem, Nz)
             if guard_policy == "warn" and np.isfinite(r_max):
-                fmt = ("dress_batch: flex_guard_policy = \"warn\": with "
-                       "longitudinal_bond_guard_freqs = \"static\" the %s solve residual "
-                       "||mat chi - chibar||_F / max(1, ||chibar||_F) = %.3e exceeds %.1e at "
-                       "bosonic Matsubara index %d (grid index l=%d) and q-point index "
-                       "(%d, %d, %d); the unchecked slice is singular or nearly singular. "
-                       "The dressing continues with that result." + _at(iteration))
-                args = (channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz)
-                logger.warning(fmt, *args)
+                logger.warning(
+                    "dress_batch: flex_guard_policy = \"warn\": with "
+                    "longitudinal_bond_guard_freqs = \"static\" the %s solve residual "
+                    "||mat chi - chibar||_F / max(1, ||chibar||_F) = %.3e exceeds %.1e at "
+                    "bosonic Matsubara index %d (grid index l=%d) and q-point index "
+                    "(%d, %d, %d); the unchecked slice is singular or nearly singular. "
+                    "The dressing continues with that result." + _at(iteration),
+                    channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz)
                 if violations is not None:
                     violations.append({"channel": channel, "l": int(l), "q": int(q),
                                        "kind": "residual", "value": float(r_max),
-                                       "iteration": iteration, "log": (fmt, args, 3)})
+                                       "iteration": iteration})
             else:
                 raise ValueError(
                     "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
@@ -3543,17 +3533,3 @@ def relocate_refusal(exc, l_new, q_new, nmat, spatial_shape):
                                      pole=exc.pole, smin=exc.smin, smax=exc.smax,
                                      cond_tol=exc.cond_tol)
     return type(exc)(msg)
-
-
-def refusal_location(exc, spatial_shape):
-    """``(l, q)`` named by a dressing refusal (see :func:`relocate_refusal`),
-    or ``None``."""
-    if isinstance(exc, BondConditioningError) and exc.l is not None:
-        return int(exc.l), int(exc.iq)
-    import re
-    m = re.search(r"grid index l=(\d+)\) and q-point index \((\d+), (\d+), (\d+)\)", str(exc))
-    if m is None:
-        return None
-    Nx, Ny, Nz = (int(x) for x in spatial_shape)
-    qx, qy, qz = (int(m.group(i)) for i in (2, 3, 4))
-    return int(m.group(1)), (qx * Ny + qy) * Nz + qz

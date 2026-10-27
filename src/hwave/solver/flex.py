@@ -2729,7 +2729,14 @@ class FLEX(RPA):
             # changes (the relation is re-checked on every map's chibar)
             prev = getattr(self, "_bond_mirror_guarded", None)
             if prev is None or prev != res.mirror_guarded:
-                if res.mirror_guarded:
+                if res.mirror_guarded and \
+                        res.time_reversal_deviation <= _half_grid.TIME_REVERSAL_RTOL:
+                    logger.info(
+                        "longitudinal_bond_half_grid (map %d): the mirrored frequencies nu < 0 "
+                        "are guarded on their own (guard_freqs = %r, flex_guard_policy = %r; "
+                        "only \"all\" with \"refuse\" can rely on time reversal).", iteration,
+                        self.longitudinal_bond_guard_freqs, self.flex_guard_policy)
+                elif res.mirror_guarded:
                     logger.info(
                         "longitudinal_bond_half_grid (map %d): chibar(q)^T = chibar(-q) does "
                         "not hold (relative deviation %.3e > %.0e; time reversal is broken), so "

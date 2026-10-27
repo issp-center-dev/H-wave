@@ -228,9 +228,11 @@ class _OracleCase(unittest.TestCase):
         # the half run stored nmat/2+1 slices, published the provenance key
         # and the full-grid archive
         self.assertTrue(sh.longitudinal_bond_half_grid)
-        # the mirrored slices are guarded on their own exactly when time
-        # reversal is broken (complex hopping)
-        self.assertIs(sh._bond_last.mirror_guarded, case.startswith("complex_t"))
+        # the mirrored slices are guarded on their own when time reversal is
+        # broken (complex hopping), and always under "warn" or "static"
+        self.assertIs(sh._bond_last.mirror_guarded,
+                      case.startswith("complex_t") or sf.longitudinal_bond_guard_freqs != "all"
+                      or sf.flex_guard_policy != "refuse")
         self.assertNotIn("longitudinal_bond_half_grid", gf)
         self.assertTrue(bool(gh["longitudinal_bond_half_grid"]))
         if save:
@@ -1077,40 +1079,121 @@ class TestMirrorSkipWithTimeReversal(unittest.TestCase):
                               lines[0])
 
 
-class TestSkipReportsTheFullGrid(unittest.TestCase):
-    """With time reversal (the skip taken) the warn records, their count and
-    the refusal location are the full grid's (one frequency per batch, so
-    that the per-batch worst block is the same on both grids)."""
+def _count_mirror_guards():
+    """A patch counting the dress_batch calls of the mirror guard
+    (guard_only=True) and the counter."""
+    from hwave.solver import bond_channels as bc
+    real = bc.dress_batch
+    calls = {"n": 0}
+
+    def spy(*a, **k):
+        if k.get("guard_only"):
+            calls["n"] += 1
+        return real(*a, **k)
+
+    return mock.patch.object(bc, "dress_batch", spy), calls
+
+
+class TestSkipOnlyUnderRefuseAll(unittest.TestCase):
+    """With time reversal the mirror is skipped only under guard_freqs =
+    "all" with the "refuse" policy; "warn" and "static" always guard it, so
+    their records and counts are the full grid's."""
 
     def setUp(self):
         self.x, self.S, self.C = _planted_map(trs=True)
 
-    def test_warn_records_and_counts(self):
+    def _half(self, tol, **kw):
+        p, calls = _count_mirror_guards()
+        with p:
+            out = _map_run(self.x, self.S, self.C, True, tol, **kw)
+        return out, calls["n"]
+
+    def test_refuse_all_skips(self):
+        out, n = self._half(1e-7)
+        self.assertEqual(out[0], "ok")
+        self.assertFalse(out[1].mirror_guarded)
+        self.assertEqual(n, 0)
+
+    def test_warn_guards_the_mirror(self):
         for tol in (3e-5, 0.99):
             with self.subTest(tol=tol):
                 full = _map_run(self.x, self.S, self.C, False, tol, nb=1, guard_policy="warn")
-                half = _map_run(self.x, self.S, self.C, True, tol, nb=1, guard_policy="warn")
+                half, n = self._half(tol, nb=1, guard_policy="warn")
                 self.assertEqual((full[0], half[0]), ("ok", "ok"))
-                self.assertFalse(half[1].mirror_guarded)
+                self.assertTrue(half[1].mirror_guarded)
+                self.assertGreater(n, 0)
                 self.assertEqual(half[1].guard_violations, full[1].guard_violations)
                 self.assertEqual(half[2], full[2])
                 self.assertGreater(len(full[2]), 1)
 
-    def test_static_residual_warn_records(self):
+    def test_static_guards_the_mirror(self):
         from hwave.solver import bond_channels as bc
         real = bc.solve_residual
 
         def huge(mat, chi, cb):
-            return real(mat, chi, cb) * 0 + 1.0       # every block "violates", far above
+            return real(mat, chi, cb) * 0 + 1.0       # every block "violates"
 
         with mock.patch.object(bc, "solve_residual", huge):
             full = _map_run(self.x, self.S, self.C, False, 1e-7, nb=1, guard_freqs="static",
                             guard_policy="warn")
-            half = _map_run(self.x, self.S, self.C, True, 1e-7, nb=1, guard_freqs="static",
-                            guard_policy="warn")
+            half, n = self._half(1e-7, nb=1, guard_freqs="static", guard_policy="warn")
+            ref, n_ref = self._half(1e-7, nb=1, guard_freqs="static")
+        self.assertTrue(half[1].mirror_guarded)
+        self.assertGreater(n, 0)
         self.assertEqual(half[1].guard_residual_violations, full[1].guard_residual_violations)
         self.assertEqual(full[1].guard_residual_violations, 2 * _NMAT)
         self.assertEqual(half[2], full[2])
+        # "static" under "refuse": refused like the full grid (at the first
+        # batch, the static slot, which is its own mirror)
+        self.assertEqual(ref[0], "refused")
+        self.assertEqual(n_ref, 0)
+
+    def test_endpoint_worst_with_larger_batches(self):
+        """The batch worst at the static slot (nb = 3; review experiment):
+        under "warn" the mirror is guarded, so the records are those of a run
+        with the mirror guard forced; under "refuse" the decision is the
+        full grid's (the first location reported can differ)."""
+        from hwave.solver import half_grid as hg
+        x = self.x.copy()
+        W = self.S[0].real
+        x[_NMAT // 2, 0] = (1 - 1e-6) * np.linalg.inv(W)
+        forced = {"holds": False, "deviation": 1.0, "chibar_max": 1.0, "vertex_max": 1.0,
+                  "hermitian_deviation": 0.0}
+        for policy in ("warn", "refuse"):
+            with self.subTest(policy=policy):
+                full = _map_run(x, self.S, self.C, False, 3e-5, nb=3, guard_policy=policy)
+                half = _map_run(x, self.S, self.C, True, 3e-5, nb=3, guard_policy=policy)
+                with mock.patch.object(hg, "time_reversal_check", lambda *a, **k: forced):
+                    guarded = _map_run(x, self.S, self.C, True, 3e-5, nb=3,
+                                       guard_policy=policy)
+                self.assertEqual(half[0], full[0])
+                self.assertEqual(guarded[0], full[0])
+                if policy == "warn":
+                    self.assertEqual(half[2], guarded[2])
+                    self.assertIn(("spin", 2, _QP), half[2])
+                    self.assertEqual(half[1].guard_violations, guarded[1].guard_violations)
+
+
+class TestViolationRecordSchema(unittest.TestCase):
+    """A direct dress_batch caller sees the documented record keys only."""
+
+    def test_keys(self):
+        from hwave.solver import bond_channels as bc
+        keys = {"channel", "l", "q", "kind", "value", "iteration"}
+        x, S, _C = _planted_map(trs=False)
+        v = []
+        with mock.patch.object(bc.logger, "warning"):
+            bc.dress_batch(x[:3], S, "spin", l0=0, nmat=_NMAT, spatial_shape=(_NVOL, 1, 1),
+                           cond_tol=0.99, guard_policy="warn", violations=v)
+            real = bc.solve_residual
+            with mock.patch.object(bc, "solve_residual",
+                                   lambda m, c, b: real(m, c, b) * 0 + 1.0):
+                bc.dress_batch(x[:3], S, "spin", l0=0, nmat=_NMAT,
+                               spatial_shape=(_NVOL, 1, 1), guard_freqs="static",
+                               guard_policy="warn", violations=v)
+        self.assertEqual({r["kind"] for r in v}, {"conditioning", "residual"})
+        for r in v:
+            self.assertEqual(set(r), keys)
 
 
 class TestNearMissTimeReversal(unittest.TestCase):
@@ -1172,11 +1255,16 @@ class TestNearMissTimeReversal(unittest.TestCase):
 
     def test_margin_bound(self):
         from hwave.solver import half_grid as hg
-        chk = {"deviation": 5e-13, "chibar_max": 20.0, "vertex_max": 1.0}
+        chk = {"deviation": 5e-13, "chibar_max": 20.0, "vertex_max": 1.0,
+               "hermitian_deviation": 0.0}
         m = hg.decision_margin(chk, 4, 1e-3)
         self.assertAlmostEqual(m, 4 * (2 * 16 * 5e-13 * 20.0) * (1 + 1e3), delta=1e-18)
         self.assertEqual(hg.decision_margin(dict(chk, deviation=0.0), 4, 1e-3),
                          hg.DECISION_MARGIN_FLOOR)
+        # the Hermiticity deviation of the vertices enters the bound too
+        self.assertAlmostEqual(hg.decision_margin(dict(chk, deviation=0.0,
+                                                       hermitian_deviation=5e-13), 4, 1e-3), m,
+                               delta=1e-18)
 
 
 class TestMirrorGuardDecide(unittest.TestCase):

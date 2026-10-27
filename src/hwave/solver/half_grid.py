@@ -168,7 +168,18 @@ def describe_slices(nmat, s0, s1):
 # substituting k -> q - k gives chibar(-q) = chibar(q)^T on the pair matrix,
 # and the bond vertices built from real coefficients satisfy
 # V(-q) = V(q)^T. A complex (time-reversal breaking) hopping breaks (3).
-# Rather than infer (3) from the inputs, :func:`mirror_scores_are_stored`
+# The dressing relies on this only where it is exact for the DECISION: under
+# guard_freqs = "all" with the "refuse" policy, where any violation ends the
+# run, so it suffices that the minimum over the grid is below cond_tol
+# exactly when the minimum over the stored slices is (up to the margin of
+# :func:`decision_margin`). The "warn" records and the "static" residual (a
+# round-off measurement of a different solve, which can differ between
+# partners by any factor) are per-block findings with no such guarantee, so
+# those modes always guard the mirrored slices on their own. An EXACTLY
+# singular block is refused on both grids (the determinant is shared), but
+# the batch that reports it can differ.
+#
+# Rather than infer (3) from the inputs, :func:`time_reversal_check`
 # checks it directly on the stored chibar of the current map and on the
 # vertices: a deviation delta of (3) moves a singular value of D by at most
 # ||delta V|| (Weyl), so a tolerance at round-off level keeps the scores equal
@@ -197,15 +208,18 @@ def time_reversal_check(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTO
     dict: ``holds`` (every relative deviation <= ``rtol``), ``deviation``
     (the largest relative deviation: chibar's relative to max |chibar|, each
     vertex's relative to max(1, max |V|)), ``chibar_max`` (max |chibar|)
-    and ``vertex_max`` (max(1, max |V|) over S and C). The bubble is read
+    ``vertex_max`` (max(1, max |V|) over S and C) and
+    ``hermitian_deviation`` (max |V - V^dagger| / max(1, max |V|)). The bubble is read
     one slice at a time, so no temporary larger than one slice is made."""
     mq = minus_q_index(spatial_shape)
-    dev_v, vmax = 0.0, 1.0
+    dev_v, vmax, herm = 0.0, 1.0, 0.0
     for V in (S, C):
         xpv = _bk.array_module_of(V)
         scale = max(1.0, float(xpv.abs(V).max()) if V.size else 1.0)
         vmax = max(vmax, scale)
         dev_v = max(dev_v, _transpose_dev(V, mq) / scale)
+        if V.size:
+            herm = max(herm, float(xpv.abs(V - xpv.conj(V).swapaxes(-1, -2)).max()) / scale)
     xp = _bk.array_module_of(chibar_half)
     dev_abs, amax = 0.0, 0.0
     for h in range(int(chibar_half.shape[0])):
@@ -215,7 +229,7 @@ def time_reversal_check(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTO
     dev_c = dev_abs / amax if amax > 0.0 else 0.0
     dev = max(dev_v, dev_c)
     return {"holds": bool(dev <= rtol), "deviation": float(dev), "chibar_max": float(amax),
-            "vertex_max": float(vmax)}
+            "vertex_max": float(vmax), "hermitian_deviation": float(herm)}
 
 
 def mirror_scores_are_stored(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTOL):
@@ -226,20 +240,18 @@ def mirror_scores_are_stored(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSA
 
 #: the floor of the relative decision margin below
 DECISION_MARGIN_FLOOR = 1.0e-6
-#: under guard_freqs = "static" the residual of a mirrored solve is a
-#: round-off measurement of a DIFFERENT (conjugated) elimination: it equals
-#: its partner's only to within an O(1) factor, so a stored residual within
-#: this factor below the threshold (or above it) sends the batch's mirror
-#: through its own solve
-RESIDUAL_BAND = 1.0e3
-
-
 def decision_margin(check, ND, cond_tol):
     """Relative margin of the conditioning decision under the skip.
 
-    Under (3) satisfied to the relative deviation ``delta`` = ``check
-    ["deviation"]``, the mirrored denominator differs from the conjugate of
-    its stored partner by ``Delta = Delta(chibar) V + chibar Delta(V)``,
+    The skip rests on (3) and on Hermitian vertices (V(q) = conj(V(-q))
+    needs V = V^dagger as well as V(q)^T = V(-q)); the half grid refuses
+    vertices that are not Hermitian to 1e-14 at setup
+    (``FLEX._check_bond_vertices_hermitian``), and the measured Hermiticity
+    deviation is added to ``delta`` here so that the bound covers it too.
+    With (3) satisfied to the relative deviation ``delta`` = ``check
+    ["deviation"] + check["hermitian_deviation"]``, the mirrored denominator
+    differs from the conjugate of its stored partner by
+    ``Delta = Delta(chibar) V + chibar Delta(V)``,
     with ``||Delta||_2 <= eps = 2 ND^2 delta A Vm`` (entrywise bounds,
     ``||X||_2 <= ND max|X|``; ``A = max |chibar|``, ``Vm = max(1, max |V|)``).
     The score is ``s = sigma_min / max(1, sigma_max)``; Weyl's inequality
@@ -251,7 +263,8 @@ def decision_margin(check, ND, cond_tol):
     ``cond_tol`` has its mirror guarded on its own."""
     if cond_tol is None:
         return 0.0
-    eps = 2.0 * float(ND) ** 2 * check["deviation"] * check["chibar_max"] * check["vertex_max"]
+    delta = check["deviation"] + check.get("hermitian_deviation", 0.0)
+    eps = 2.0 * float(ND) ** 2 * delta * check["chibar_max"] * check["vertex_max"]
     return max(DECISION_MARGIN_FLOOR, 4.0 * eps * (1.0 + 1.0 / float(cond_tol)))
 
 

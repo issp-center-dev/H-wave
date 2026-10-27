@@ -325,10 +325,10 @@ def _sandwich(left, x, right, workers):
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
            guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1,
-           guard_exact="always", ls=None, guard_only=False, report=None):
+           guard_exact="always", ls=None, guard_only=False):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      ls=ls, guard_only=guard_only, report=report,
+                                      ls=ls, guard_only=guard_only,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
                                       guard_policy=guard_policy, violations=violations,
                                       # the warnings of a tolerated violation do not
@@ -563,16 +563,20 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     l_static = 0 if half else nmat // 2
     mirror_guard, trs_dev = None, None
     if half:
-        # the mirrored slices' own conditioning (half_grid, relations (2)-(3)):
-        # checked on the stored chibar BEFORE any W batch overwrites it
+        # the mirrored slices' own conditioning (half_grid, relations (2)-(3)).
+        # They are skipped only where that is provably exact: the guard
+        # refuses on every violation ("refuse" policy) over every frequency
+        # ("all"), and time reversal makes every mirrored score a stored one
+        # (checked on the stored chibar BEFORE any W batch overwrites it).
+        # Under "warn" and under the "static" residual the mirror is always
+        # guarded on its own.
         trs = _hg.time_reversal_check(store.get_freq_batch("chibar", 0, n_slices), S, C,
                                       spatial_shape)
         trs_dev = trs["deviation"]
-        mirror_guard = not trs["holds"]
+        mirror_guard = not (trs["holds"] and guard_freqs == "all"
+                            and guard_policy == "refuse" and cond_tol is not None)
         margin = _hg.decision_margin(trs, ND, cond_tol)
         mq = _hg.minus_q_index(spatial_shape)
-        res_tol = _bc._STATIC_RESIDUAL_TOL
-        Ny_, Nz_ = int(spatial_shape[1]), int(spatial_shape[2])
     cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
@@ -595,80 +599,44 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if cmin is not None:
             cmin.add(cm)
 
-    def _near(c, rep):
-        # a stored batch whose decision the mirror could take differently
-        # within the error of relation (3) (see half_grid.decision_margin):
-        # its minimum score within the relative margin of cond_tol, or under
-        # "static" its largest residual within RESIDUAL_BAND of the threshold
-        if cond_tol is not None and c is not None:
-            low = c.low if isinstance(c, _bc.GuardBracket) else c
-            if abs(low - cond_tol) <= margin * cond_tol or (
-                    isinstance(c, _bc.GuardBracket) and low <= cond_tol * (1.0 + margin)):
-                return True
-        r = rep.get("residual_max")
-        return r is not None and (not np.isfinite(r) or
-                                  res_tol / _hg.RESIDUAL_BAND <= r <= res_tol * _hg.RESIDUAL_BAND)
-
-    def _synthesize(n0):
-        # time reversal holds: every warned stored finding at (q, l) has the
-        # same finding at its mirror partner (-q, nmat - l) (the score is
-        # identical, relation (3)); it is reported there too, so that the
-        # records and counts are the full grid's
-        for rec in list(violations[n0:]):
-            l_, q_ = int(rec["l"]), int(rec["q"])
-            if l_ in (0, nmat // 2) or "log" not in rec:
-                continue
-            l2, q2 = nmat - l_, int(mq[q_])
-            qx, rem = divmod(q2, Ny_ * Nz_)
-            qy, qz = divmod(rem, Nz_)
-            fmt, args, k = rec["log"]
-            args2 = tuple(args[:k]) + (2 * l2 - nmat, l2, qx, qy, qz) + tuple(args[k + 5:])
-            _bc.logger.warning(fmt, *args2)
-            violations.append(dict(rec, l=l2, q=q2, log=(fmt, args2, k)))
+    def _near(score):
+        # within the Weyl margin of cond_tol (half_grid.decision_margin): the
+        # mirrored partner's score could fall on the other side
+        return score is not None and abs(score - cond_tol) <= margin * cond_tol
 
     def _stored(cb, ls, l_first, V_, ch, cmin):
-        # the stored slices of a half-grid batch, plus the mirror's
-        # diagnostics: guarded on their own when time reversal is broken
-        # (done before this call), else derived from the stored ones
+        # the stored slices of a half-grid batch; under the skip, the mirror
+        # is guarded on its own only for a batch whose minimum is within the
+        # margin of cond_tol (if the minimum clears it, every block does)
         if mirror_guard:
             chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
                             guard_freqs, guard_policy, violations, guard_method, stats,
                             workers, guard_exact, ls=ls)
             cmin.add(c)
             return chi
-        n0 = len(violations)
-        rep = {}
         try:
             chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
                             guard_freqs, guard_policy, violations, guard_method, stats,
-                            workers, guard_exact, ls=ls, report=rep)
-        except ValueError as exc:
-            loc = _bc.refusal_location(exc, spatial_shape)
-            if loc is None or loc[0] in (0, nmat // 2):
+                            workers, guard_exact, ls=ls)
+        except _bc.BondConditioningError as exc:
+            if exc.l is None or exc.l in (0, nmat // 2):
                 raise
-            if isinstance(exc, _bc.BondConditioningError):
-                near = abs(exc.worst - cond_tol) <= margin * cond_tol
-            else:
-                r = rep.get("residual_max")
-                near = r is None or not np.isfinite(r) or r <= res_tol * _hg.RESIDUAL_BAND
-            if near:
-                # the mirror's own diagnostics decide: they raise at the
-                # mirrored location if it fails there too (the full grid meets
-                # nu < 0 first); otherwise the stored refusal stands
+            if _near(exc.worst):
+                # the mirror's own guard decides: it refuses at the mirrored
+                # location if that block fails too (the full grid meets nu < 0
+                # first); otherwise the stored refusal stands
                 _mirror(cb, ls, V_, ch, None)
                 raise
-            # the mirrored partner fails with the same finding, and the full
-            # grid meets it first: report it at its TRUE location
-            new = _bc.relocate_refusal(exc, nmat - loc[0], int(mq[loc[1]]), nmat,
-                                       spatial_shape)
+            # the mirror of the stored violating block, (-q, nmat - l), has
+            # the same score and the full grid meets it first: report there
+            new = _bc.relocate_refusal(exc, nmat - exc.l, int(mq[exc.iq]), nmat, spatial_shape)
             if new is None:
                 raise
             raise new from exc
         cmin.add(c)
-        if _near(c, rep):
+        low = c.low if isinstance(c, _bc.GuardBracket) else c
+        if _near(low):
             _mirror(cb, ls, V_, ch, cmin)
-        else:
-            _synthesize(n0)
         return chi
 
     for l0 in range(0, n_slices, nb):
