@@ -468,6 +468,11 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
 
+アーカイブを種として使う前に確認するには、\ ``hwave_sigma_split --check sigma.npz``\ を
+実行します。\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+相対偏差を表示し、\ ``--asymmetry-tol``\ を超えると終了ステータス 1 を返します
+（\ :ref:`flex_bond_hf_tutorial`\ を参照）。
+
 ``calc_scheme = "general"``\ のシードは、どの2次カーネルで作られたかも記録
 しています。廃止された\ ``"takimoto"``\ カーネルのシードも初期値として警告付きで
 受け付けられます（記録が無い場合、すなわち reduced スキームのアーカイブや、本キーの導入前
@@ -621,6 +626,13 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
    hwave_sigma_split --check sigma.npz
 
 相対偏差を表示し、\ ``--asymmetry-tol``\ を超える場合は終了ステータス 1 を返します。
+``--check``\ が取るのは入力アーカイブ（と\ ``--asymmetry-tol``\ ）だけで、出力アーカイブや
+変換用のオプションを付けるとエラーになります。\ ``--asymmetry-tol``\ は、\ ``--check``\ では
+終了ステータスのしきい値、変換では拒否のしきい値になります::
+
+   hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+   hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+
 射影なしの計算は、最終的な偏差が\ :math:`10^{-6}`\ を超えると終了時に警告し、
 そのアーカイブを\ ``sigma_init``\ として読み込むと\ :math:`10^{-3}`\ を超える場合に警告します。
 

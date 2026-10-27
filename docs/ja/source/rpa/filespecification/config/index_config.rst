@@ -945,6 +945,14 @@ TOML形式
 
   **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります（\ ``flex_sigma_hermitian_projection``\ の射影を除く）。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
 
+  読み込み時に、種の\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+  相対偏差を測り、次の二つの場合を区別します。(1) 偏差が\ :math:`10^{-3}`\ を超えると、
+  ``flex_sigma_hermitian_projection``\ が有効（種を射影し、除去した偏差をログに出す）でも
+  無効（種をそのまま使う）でも警告します。(2) 射影なしでそのまま使われる、非因果的で強く
+  非対称なアーカイブは、\ ``flex_hartree_fock = true``\ では等時刻密度のエルミート性の
+  検査に失敗します。\ ``flex_guard_policy = "refuse"``\ では\ ``flex_hf_density_tol``\ で拒否され、
+  ``"warn"``\ では警告になります。事前に\ ``hwave_sigma_split --check``\ で確認できます。
+
 
 ``file.input.interaction``\ セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

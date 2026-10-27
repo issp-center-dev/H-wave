@@ -497,6 +497,11 @@ errors: ``sigma.npz`` records its ``CellShape``, so even a same-volume
 aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
 ``Nmat`` and ``CellShape`` fixed across a continuation sweep.
 
+To audit an archive before using it as a seed, run
+``hwave_sigma_split --check sigma.npz``: it prints the relative deviation
+from :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+and exits with status 1 above ``--asymmetry-tol`` (see :ref:`flex_bond_hf_tutorial`).
+
 A ``calc_scheme = "general"`` seed also records which second-order kernel
 produced it. A seed of the retired ``"takimoto"`` kernel is accepted as the
 initial value with a warning (and the solver notes it when the seed carries
@@ -663,7 +668,15 @@ derived from it) with::
    hwave_sigma_split --check sigma.npz
 
 which prints the relative deviation and exits with status 1 when it exceeds
-``--asymmetry-tol``. A run made with the projection off warns at its end
+``--asymmetry-tol``. ``--check`` takes only the input archive (and
+``--asymmetry-tol``): an output archive or any conversion option is an
+error. ``--asymmetry-tol`` sets the exit-status threshold of ``--check`` and
+the refusal threshold of a conversion::
+
+   hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+   hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+
+A run made with the projection off warns at its end
 when its final deviation exceeds :math:`10^{-6}`, and loading such an
 archive as ``sigma_init`` warns above :math:`10^{-3}`.
 

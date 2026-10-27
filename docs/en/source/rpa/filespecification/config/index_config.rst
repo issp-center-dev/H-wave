@@ -1106,6 +1106,17 @@ They specify the settings of the input and output files, respectively, on the ty
   legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
   (see :ref:`flex_bond_hf`).
 
+  The seed's relative deviation from :math:`\Sigma(\mathbf{k}, i\omega_n) =
+  \Sigma(\mathbf{k}, -i\omega_n)^\dagger` is measured on loading, and two
+  cases are distinguished. (1) A deviation above :math:`10^{-3}` produces a
+  warning, whether ``flex_sigma_hermitian_projection`` is on (the seed is
+  projected and the deviation removed is logged) or off (the seed is used
+  as is). (2) A non-causal, strongly asymmetric archive that is used as is
+  (projection off) with ``flex_hartree_fock = true`` fails the Hermiticity
+  check of the equal-time density: it is refused at ``flex_hf_density_tol``
+  under ``flex_guard_policy = "refuse"``, and gives a warning under
+  ``"warn"``. Audit an archive beforehand with ``hwave_sigma_split --check``.
+
 
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
