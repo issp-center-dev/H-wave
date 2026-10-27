@@ -729,6 +729,15 @@ class TestOracleFixtures(_OracleCase):
     def test_complex_hopping(self):
         self._sweep("complex_t")
 
+    def test_rectangular_cell(self):
+        # nx != ny pins the C-order -q map of the time-reversal check against
+        # the lattice: a wrong flattening would switch the skip off for the
+        # real-hopping fixture (asserted in _assert_equal_runs)
+        for case in ("UV", "Exchange+PairHop", "complex_t"):
+            with self.subTest(case=case):
+                self._assert_equal_runs(case, {"CellShape": [4, 3, 1],
+                                               "longitudinal_bond_output_full": True})
+
     def test_complex_hopping_with_exchange_pairhop_static_guard(self):
         # the remaining cross: complex t with the bond second order of an
         # off-site Exchange
@@ -986,9 +995,9 @@ class TestMirrorGuardBrokenTimeReversal(unittest.TestCase):
 
         def holds(*a, **k):
             calls["n"] += 1
-            return True, 0.0
+            return {"holds": True, "deviation": 0.0, "chibar_max": 1.0, "vertex_max": 1.0}
 
-        with mock.patch.object(hg, "mirror_scores_are_stored", holds):
+        with mock.patch.object(hg, "time_reversal_check", holds):
             half = _map_run(self.x, self.S, self.C, True, self.TOL)
         self.assertGreater(calls["n"], 0)
         self.assertEqual(half[0], "ok")
@@ -1041,11 +1050,14 @@ class TestMirrorSkipWithTimeReversal(unittest.TestCase):
         full = _map_run(self.x, self.S, self.C, False, tol)
         half = _map_run(self.x, self.S, self.C, True, tol)
         self.assertEqual((full[0], half[0]), ("refused", "refused"))
-        # the full grid meets the nu < 0 block first, the half grid its
-        # time-reversal partner (-q, nmat - l): the same score
+        # the full grid meets the nu < 0 block first; the half grid finds its
+        # time-reversal partner (-q, nmat - l) among the stored slices and
+        # reports the refusal at the TRUE location, with the same score
         self.assertEqual((full[1].l, full[1].iq), (2, _QP))
-        self.assertEqual((half[1].l, half[1].iq), (_LP, 3))
+        self.assertEqual((half[1].l, half[1].iq), (2, _QP))
+        self.assertEqual(half[1].q, full[1].q)
         self.assertAlmostEqual(half[1].worst, full[1].worst, delta=1e-12)
+        self.assertIn("grid index l=2) and q-point index (1, 0, 0)", str(half[1]))
         ok_f = _map_run(self.x, self.S, self.C, False, 1e-7)
         ok_h = _map_run(self.x, self.S, self.C, True, 1e-7)
         self.assertFalse(ok_h[1].mirror_guarded)
@@ -1063,6 +1075,139 @@ class TestMirrorSkipWithTimeReversal(unittest.TestCase):
                 self.assertEqual(len(lines), 1, lines)
                 self.assertIn("guarded on their own" if guarded else "not guarded separately",
                               lines[0])
+
+
+class TestSkipReportsTheFullGrid(unittest.TestCase):
+    """With time reversal (the skip taken) the warn records, their count and
+    the refusal location are the full grid's (one frequency per batch, so
+    that the per-batch worst block is the same on both grids)."""
+
+    def setUp(self):
+        self.x, self.S, self.C = _planted_map(trs=True)
+
+    def test_warn_records_and_counts(self):
+        for tol in (3e-5, 0.99):
+            with self.subTest(tol=tol):
+                full = _map_run(self.x, self.S, self.C, False, tol, nb=1, guard_policy="warn")
+                half = _map_run(self.x, self.S, self.C, True, tol, nb=1, guard_policy="warn")
+                self.assertEqual((full[0], half[0]), ("ok", "ok"))
+                self.assertFalse(half[1].mirror_guarded)
+                self.assertEqual(half[1].guard_violations, full[1].guard_violations)
+                self.assertEqual(half[2], full[2])
+                self.assertGreater(len(full[2]), 1)
+
+    def test_static_residual_warn_records(self):
+        from hwave.solver import bond_channels as bc
+        real = bc.solve_residual
+
+        def huge(mat, chi, cb):
+            return real(mat, chi, cb) * 0 + 1.0       # every block "violates", far above
+
+        with mock.patch.object(bc, "solve_residual", huge):
+            full = _map_run(self.x, self.S, self.C, False, 1e-7, nb=1, guard_freqs="static",
+                            guard_policy="warn")
+            half = _map_run(self.x, self.S, self.C, True, 1e-7, nb=1, guard_freqs="static",
+                            guard_policy="warn")
+        self.assertEqual(half[1].guard_residual_violations, full[1].guard_residual_violations)
+        self.assertEqual(full[1].guard_residual_violations, 2 * _NMAT)
+        self.assertEqual(half[2], full[2])
+
+
+class TestNearMissTimeReversal(unittest.TestCase):
+    """Relation (3) holds only to ~5e-13: the mirrored score then differs from
+    its stored partner's by a relative ~1.6e-8 (the block is nearly singular).
+    A floor placed between the two must give the full grid's decision."""
+
+    def _maps(self, q_pert=3, sign=1.0):
+        from hwave.solver import half_grid as hg
+        x, S, C = _planted_map(trs=True)
+        rng = np.random.default_rng(7)
+        z = rng.normal(size=(_ND, _ND)) + 1j * rng.normal(size=(_ND, _ND))
+        x = x.copy()
+        x[_LP, q_pert] += sign * 5e-13 * np.abs(x).max() / np.abs(z).max() * z
+        hg.fill_mirror(x, _NMAT)
+        check = hg.time_reversal_check(hg.half_from_full(x, _NMAT), S, C, (_NVOL, 1, 1))
+        self.assertTrue(check["holds"])
+        self.assertGreater(check["deviation"], 1e-13)
+        sc = _score(np.eye(_ND) - x @ S[None])
+        stored, mirror = float(sc[_LP, 3]), float(sc[2, _QP])
+        # the two scores differ (by ~1.6e-8 relative here), far more than
+        # the 1e-12 of the relation itself
+        self.assertGreater(abs(stored - mirror) / mirror, 1e-10)
+        return x, S, C, stored, mirror
+
+    def test_same_decision_both_orders(self):
+        orders = set()
+        for sign in (1.0, -1.0):
+            x, S, C, stored, mirror = self._maps(sign=sign)
+            orders.add(stored < mirror)
+            tol = 0.5 * (stored + mirror)
+            with self.subTest(stored_below=stored < mirror):
+                full = _map_run(x, S, C, False, tol)
+                half = _map_run(x, S, C, True, tol)
+                self.assertEqual(full[0], "refused")
+                self.assertEqual(half[0], full[0])
+                self.assertEqual((half[1].l, half[1].iq), (full[1].l, full[1].iq))
+                self.assertAlmostEqual(half[1].worst, full[1].worst, delta=1e-15)
+                f = _map_run(x, S, C, False, tol, nb=1, guard_policy="warn")
+                h = _map_run(x, S, C, True, tol, nb=1, guard_policy="warn")
+                self.assertEqual(h[2], f[2])
+                self.assertEqual(h[1].guard_violations, f[1].guard_violations)
+        # both orders were exercised: the floor between the two scores once
+        # catches only the stored block, once only the mirrored one
+        self.assertEqual(orders, {True, False})
+
+    def test_mutation_without_margin(self):
+        """The margin removed: the skip then decides from the stored score
+        alone and the half grid's decision differs from the full grid's."""
+        from hwave.solver import half_grid as hg
+        x, S, C, stored, mirror = self._maps()
+        tol = 0.5 * (stored + mirror)
+        full = _map_run(x, S, C, False, tol)
+        with mock.patch.object(hg, "decision_margin", lambda *a, **k: 0.0):
+            half = _map_run(x, S, C, True, tol)
+        same = half[0] == full[0] and (half[0] != "refused" or (
+            (half[1].l, half[1].iq, half[1].worst) == (full[1].l, full[1].iq, full[1].worst)))
+        self.assertFalse(same)
+
+    def test_margin_bound(self):
+        from hwave.solver import half_grid as hg
+        chk = {"deviation": 5e-13, "chibar_max": 20.0, "vertex_max": 1.0}
+        m = hg.decision_margin(chk, 4, 1e-3)
+        self.assertAlmostEqual(m, 4 * (2 * 16 * 5e-13 * 20.0) * (1 + 1e3), delta=1e-18)
+        self.assertEqual(hg.decision_margin(dict(chk, deviation=0.0), 4, 1e-3),
+                         hg.DECISION_MARGIN_FLOOR)
+
+
+class TestMirrorGuardDecide(unittest.TestCase):
+    """guard_exact = "decide" with the interval guard on the mirrored rows:
+    a batch the interval passes returns a bracket from guard_only without a
+    solve, and the map's cond_min bracket holds the exact whole-grid minimum."""
+
+    def test_bracket_and_early_return(self):
+        from hwave.solver import bond_channels as bc
+        x, S, C = _planted_map(trs=False, delta=0.5)
+        sc = np.minimum(_score(np.eye(_ND) - x @ S[None]).min(),
+                        _score(np.eye(_ND) + x @ C[None]).min())
+        solves = {"n": 0}
+        real = bc._threaded.solve
+
+        def count(*a, **k):
+            solves["n"] += 1
+            return real(*a, **k)
+
+        with mock.patch.object(bc._threaded, "solve", count):
+            out = _map_run(x, S, C, True, 1e-7, guard_method="interval", guard_exact="decide")
+        self.assertEqual(out[0], "ok")
+        res = out[1]
+        self.assertTrue(res.mirror_guarded)
+        # only the stored batches were solved (2 channels x 2 batches)
+        self.assertEqual(solves["n"], 4)
+        brackets = [b for b in (res.cond_bracket_s, res.cond_bracket_c) if b is not None]
+        self.assertTrue(brackets)
+        for low, up, _i in brackets:
+            self.assertLessEqual(low, up)
+        self.assertLessEqual(min(b[0] for b in brackets), sc + 1e-12)
 
 
 class TestSeedSymmetry(unittest.TestCase):

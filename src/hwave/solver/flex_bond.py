@@ -325,10 +325,10 @@ def _sandwich(left, x, right, workers):
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
            guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1,
-           guard_exact="always", ls=None, guard_only=False):
+           guard_exact="always", ls=None, guard_only=False, report=None):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      ls=ls, guard_only=guard_only,
+                                      ls=ls, guard_only=guard_only, report=report,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
                                       guard_policy=guard_policy, violations=violations,
                                       # the warnings of a tolerated violation do not
@@ -565,15 +565,112 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     if half:
         # the mirrored slices' own conditioning (half_grid, relations (2)-(3)):
         # checked on the stored chibar BEFORE any W batch overwrites it
-        trs, trs_dev = _hg.mirror_scores_are_stored(
-            store.get_freq_batch("chibar", 0, n_slices), S, C, spatial_shape)
-        mirror_guard = not trs
+        trs = _hg.time_reversal_check(store.get_freq_batch("chibar", 0, n_slices), S, C,
+                                      spatial_shape)
+        trs_dev = trs["deviation"]
+        mirror_guard = not trs["holds"]
+        margin = _hg.decision_margin(trs, ND, cond_tol)
+        mq = _hg.minus_q_index(spatial_shape)
+        res_tol = _bc._STATIC_RESIDUAL_TOL
+        Ny_, Nz_ = int(spatial_shape[1]), int(spatial_shape[2])
     cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
     # accumulated over both channels and every frequency batch (issue #197)
     stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
+
+    def _mirror(cb, ls, V_, ch, cmin):
+        # the dressing diagnostics of the mirrored slices l' = nmat - l of a
+        # half-grid batch (l = 0 and nmat/2 are their own mirrors: skipped)
+        sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
+        if not sel.size:
+            return
+        cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
+        ls_m = nmat - ls[sel]
+        _chi, cm = _dress(cb_m, V_, ch, int(ls_m[0]), nmat, spatial_shape, cond_tol, iteration,
+                          guard_freqs, guard_policy, violations, guard_method, None, workers,
+                          guard_exact, ls=ls_m, guard_only=True)
+        del _chi, cb_m
+        if cmin is not None:
+            cmin.add(cm)
+
+    def _near(c, rep):
+        # a stored batch whose decision the mirror could take differently
+        # within the error of relation (3) (see half_grid.decision_margin):
+        # its minimum score within the relative margin of cond_tol, or under
+        # "static" its largest residual within RESIDUAL_BAND of the threshold
+        if cond_tol is not None and c is not None:
+            low = c.low if isinstance(c, _bc.GuardBracket) else c
+            if abs(low - cond_tol) <= margin * cond_tol or (
+                    isinstance(c, _bc.GuardBracket) and low <= cond_tol * (1.0 + margin)):
+                return True
+        r = rep.get("residual_max")
+        return r is not None and (not np.isfinite(r) or
+                                  res_tol / _hg.RESIDUAL_BAND <= r <= res_tol * _hg.RESIDUAL_BAND)
+
+    def _synthesize(n0):
+        # time reversal holds: every warned stored finding at (q, l) has the
+        # same finding at its mirror partner (-q, nmat - l) (the score is
+        # identical, relation (3)); it is reported there too, so that the
+        # records and counts are the full grid's
+        for rec in list(violations[n0:]):
+            l_, q_ = int(rec["l"]), int(rec["q"])
+            if l_ in (0, nmat // 2) or "log" not in rec:
+                continue
+            l2, q2 = nmat - l_, int(mq[q_])
+            qx, rem = divmod(q2, Ny_ * Nz_)
+            qy, qz = divmod(rem, Nz_)
+            fmt, args, k = rec["log"]
+            args2 = tuple(args[:k]) + (2 * l2 - nmat, l2, qx, qy, qz) + tuple(args[k + 5:])
+            _bc.logger.warning(fmt, *args2)
+            violations.append(dict(rec, l=l2, q=q2, log=(fmt, args2, k)))
+
+    def _stored(cb, ls, l_first, V_, ch, cmin):
+        # the stored slices of a half-grid batch, plus the mirror's
+        # diagnostics: guarded on their own when time reversal is broken
+        # (done before this call), else derived from the stored ones
+        if mirror_guard:
+            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
+                            guard_freqs, guard_policy, violations, guard_method, stats,
+                            workers, guard_exact, ls=ls)
+            cmin.add(c)
+            return chi
+        n0 = len(violations)
+        rep = {}
+        try:
+            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
+                            guard_freqs, guard_policy, violations, guard_method, stats,
+                            workers, guard_exact, ls=ls, report=rep)
+        except ValueError as exc:
+            loc = _bc.refusal_location(exc, spatial_shape)
+            if loc is None or loc[0] in (0, nmat // 2):
+                raise
+            if isinstance(exc, _bc.BondConditioningError):
+                near = abs(exc.worst - cond_tol) <= margin * cond_tol
+            else:
+                r = rep.get("residual_max")
+                near = r is None or not np.isfinite(r) or r <= res_tol * _hg.RESIDUAL_BAND
+            if near:
+                # the mirror's own diagnostics decide: they raise at the
+                # mirrored location if it fails there too (the full grid meets
+                # nu < 0 first); otherwise the stored refusal stands
+                _mirror(cb, ls, V_, ch, None)
+                raise
+            # the mirrored partner fails with the same finding, and the full
+            # grid meets it first: report it at its TRUE location
+            new = _bc.relocate_refusal(exc, nmat - loc[0], int(mq[loc[1]]), nmat,
+                                       spatial_shape)
+            if new is None:
+                raise
+            raise new from exc
+        cmin.add(c)
+        if _near(c, rep):
+            _mirror(cb, ls, V_, ch, cmin)
+        else:
+            _synthesize(n0)
+        return chi
+
     for l0 in range(0, n_slices, nb):
         l1 = min(n_slices, l0 + nb)
         if half:
@@ -594,23 +691,16 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
             # statistics, which count the stored slices. The temporaries
             # (one mirrored batch and the solve's) are below the stored
             # dressing's own, which runs after them.
-            sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
-            if sel.size:
-                cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
-                ls_m = nmat - ls[sel]
-                for V_, ch, cmin in ((S, "spin", cond_s), (C, "charge", cond_c)):
-                    _chi, cm = _dress(cb_m, V_, ch, int(ls_m[0]), nmat, spatial_shape,
-                                      cond_tol, iteration, guard_freqs, guard_policy,
-                                      violations, guard_method, None, workers, guard_exact,
-                                      ls=ls_m, guard_only=True)
-                    del _chi
-                    cmin.add(cm)
-                del cb_m
+            for V_, ch, cmin in ((S, "spin", cond_s), (C, "charge", cond_c)):
+                _mirror(cb, ls, V_, ch, cmin)
         collapse0[rows] = _bk.to_host(cb[:, :, :nd, :nd])
-        chi_s_b, cs = _dress(cb, S, "spin", l_first, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
-                             guard_exact, ls=ls)
-        cond_s.add(cs)
+        if half:
+            chi_s_b = _stored(cb, ls, l_first, S, "spin", cond_s)
+        else:
+            chi_s_b, cs = _dress(cb, S, "spin", l_first, nmat, spatial_shape, cond_tol,
+                                 iteration, guard_freqs, guard_policy, violations, guard_method,
+                                 stats, workers, guard_exact, ls=ls)
+            cond_s.add(cs)
         collapse_s[rows] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
@@ -619,10 +709,13 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         chi_s_b -= cb
         W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
-        chi_c_b, cc = _dress(cb, C, "charge", l_first, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
-                             guard_exact, ls=ls)
-        cond_c.add(cc)
+        if half:
+            chi_c_b = _stored(cb, ls, l_first, C, "charge", cond_c)
+        else:
+            chi_c_b, cc = _dress(cb, C, "charge", l_first, nmat, spatial_shape, cond_tol,
+                                 iteration, guard_freqs, guard_policy, violations, guard_method,
+                                 stats, workers, guard_exact, ls=ls)
+            cond_c.add(cc)
         collapse_c[rows] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_c[...] = _bk.to_host(chi_c_b[l_static - l0])

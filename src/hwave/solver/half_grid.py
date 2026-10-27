@@ -191,28 +191,68 @@ def _transpose_dev(x, mq):
     return float(xp.abs(x.swapaxes(-1, -2) - x[..., mq, :, :]).max()) if x.size else 0.0
 
 
-def mirror_scores_are_stored(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTOL):
-    """``(holds, deviation)``: whether (3) holds for the stored slices
-    ``chibar_half`` ``(nslices, nvol, ND, ND)`` and the vertices ``S``,
-    ``C`` ``(nvol, ND, ND)``, to ``rtol`` relative to the largest entry of
-    each. ``deviation`` is the largest relative deviation found (the scan
-    stops at the first slice that fails)."""
+def time_reversal_check(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTOL):
+    """Relation (3) on the stored slices ``chibar_half`` ``(nslices, nvol,
+    ND, ND)`` and the vertices ``S``, ``C`` ``(nvol, ND, ND)``. Returns a
+    dict: ``holds`` (every relative deviation <= ``rtol``), ``deviation``
+    (the largest relative deviation: chibar's relative to max |chibar|, each
+    vertex's relative to max(1, max |V|)), ``chibar_max`` (max |chibar|)
+    and ``vertex_max`` (max(1, max |V|) over S and C). The bubble is read
+    one slice at a time, so no temporary larger than one slice is made."""
     mq = minus_q_index(spatial_shape)
-    worst = 0.0
+    dev_v, vmax = 0.0, 1.0
     for V in (S, C):
-        scale = max(1.0, float(np.abs(_bk.to_host(V)).max()) if np.size(V) else 1.0)
-        worst = max(worst, _transpose_dev(V, mq) / scale)
-        if worst > rtol:
-            return False, worst
+        xpv = _bk.array_module_of(V)
+        scale = max(1.0, float(xpv.abs(V).max()) if V.size else 1.0)
+        vmax = max(vmax, scale)
+        dev_v = max(dev_v, _transpose_dev(V, mq) / scale)
     xp = _bk.array_module_of(chibar_half)
-    scale = float(xp.abs(chibar_half).max()) if chibar_half.size else 0.0
-    if scale == 0.0:
-        return True, worst
+    dev_abs, amax = 0.0, 0.0
     for h in range(int(chibar_half.shape[0])):
-        worst = max(worst, _transpose_dev(chibar_half[h], mq) / scale)
-        if worst > rtol:
-            return False, worst
-    return True, worst
+        x = chibar_half[h]
+        amax = max(amax, float(xp.abs(x).max()) if x.size else 0.0)
+        dev_abs = max(dev_abs, _transpose_dev(x, mq))
+    dev_c = dev_abs / amax if amax > 0.0 else 0.0
+    dev = max(dev_v, dev_c)
+    return {"holds": bool(dev <= rtol), "deviation": float(dev), "chibar_max": float(amax),
+            "vertex_max": float(vmax)}
+
+
+def mirror_scores_are_stored(chibar_half, S, C, spatial_shape, rtol=TIME_REVERSAL_RTOL):
+    """``(holds, deviation)`` of :func:`time_reversal_check`."""
+    r = time_reversal_check(chibar_half, S, C, spatial_shape, rtol)
+    return r["holds"], r["deviation"]
+
+
+#: the floor of the relative decision margin below
+DECISION_MARGIN_FLOOR = 1.0e-6
+#: under guard_freqs = "static" the residual of a mirrored solve is a
+#: round-off measurement of a DIFFERENT (conjugated) elimination: it equals
+#: its partner's only to within an O(1) factor, so a stored residual within
+#: this factor below the threshold (or above it) sends the batch's mirror
+#: through its own solve
+RESIDUAL_BAND = 1.0e3
+
+
+def decision_margin(check, ND, cond_tol):
+    """Relative margin of the conditioning decision under the skip.
+
+    Under (3) satisfied to the relative deviation ``delta`` = ``check
+    ["deviation"]``, the mirrored denominator differs from the conjugate of
+    its stored partner by ``Delta = Delta(chibar) V + chibar Delta(V)``,
+    with ``||Delta||_2 <= eps = 2 ND^2 delta A Vm`` (entrywise bounds,
+    ``||X||_2 <= ND max|X|``; ``A = max |chibar|``, ``Vm = max(1, max |V|)``).
+    The score is ``s = sigma_min / max(1, sigma_max)``; Weyl's inequality
+    moves sigma_min and sigma_max by at most ``eps``, so near the threshold
+    (``s ~ cond_tol``, ``sigma_min >= s``) the relative change of the score
+    is at most ``eps (1 + 1 / cond_tol)``. The margin is four times that
+    (first order plus slack), floored at :data:`DECISION_MARGIN_FLOOR`: a
+    stored batch whose minimum score lies within ``margin * cond_tol`` of
+    ``cond_tol`` has its mirror guarded on its own."""
+    if cond_tol is None:
+        return 0.0
+    eps = 2.0 * float(ND) ** 2 * check["deviation"] * check["chibar_max"] * check["vertex_max"]
+    return max(DECISION_MARGIN_FLOOR, 4.0 * eps * (1.0 + 1.0 / float(cond_tol)))
 
 
 def seed_mirror_deviation(sigma_fluct):

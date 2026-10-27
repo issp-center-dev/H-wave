@@ -483,22 +483,34 @@ that has no effect under the current settings.
   are read: in the self-energy, in the channel-0 susceptibilities and in
   the outputs. The results agree with ``false`` to round-off (about
   :math:`10^{-13}` relative). The conditioning guard still covers the
-  whole grid: the denominator at :math:`-\nu` is
+  whole grid. The denominator at :math:`-\nu` is
   :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`, whose singular values in
-  general differ from those at :math:`+\nu`, so its refusals and
-  warnings (and those of the solve residual under
-  ``longitudinal_bond_guard_freqs = "static"``) name the same frequency
-  and q-point as with ``false``, and ``cond_min`` (log and
+  general differ from those at :math:`+\nu`, so the negative frequencies
+  are guarded on their own, through the same checks as with ``false``
+  (the conditioning guard, the exact-singular check and, under
+  ``longitudinal_bond_guard_freqs = "static"``, the solve residual). The
+  one exception is time-reversal symmetry: when the bubble and the
+  vertices satisfy :math:`\bar\chi(q)^T = \bar\chi(-q)` and
+  :math:`V(q)^T = V(-q)` (real hopping and interactions; checked on every
+  map, to :math:`10^{-12}` relative), the denominator at
+  :math:`(q, -\nu)` is the complex conjugate of the one at
+  :math:`(-q, \nu)` and has the same score, so the negative frequencies
+  are not decomposed again: their findings are reported at their own
+  location from those of the stored partner. A frequency batch whose
+  minimum score (or, under ``"static"``, largest residual) lies so close
+  to its threshold that the :math:`10^{-12}` tolerance could change the
+  decision is still guarded on its own. In both cases the decision
+  (refuse, warn or pass) is that of ``false``, a single violating block
+  is named at the same frequency and q-point, and ``cond_min`` (log and
   ``longitudinal_bond_cond_min_s`` / ``_c``) is the minimum over the
-  whole grid. When the bubble and the vertices satisfy
-  :math:`\bar\chi(q)^T = \bar\chi(-q)` and :math:`V(q)^T = V(-q)`
-  (time-reversal symmetry: real hopping and interactions), which is
-  checked on every map, each score at :math:`-\nu` equals one at
-  :math:`+\nu` (at :math:`-q`), and the negative frequencies are not
-  decomposed separately; a refusal then names that partner. The bond
-  store then takes about half the memory and the dressing with its guard
-  about half the time; with broken time reversal the store is still
-  halved but the dressing saves only about 20 %. The bubble and the
+  whole grid. When several blocks violate, the location named by a
+  refusal (the first violation met) and the blocks named by the warnings
+  (one per frequency batch and channel, as with ``false``) can differ
+  from ``false``, because the half grid's batches start at the zero
+  frequency and group the frequencies differently. With time reversal the bond store takes about half the
+  memory and the dressing with its guard about half the time; with
+  broken time reversal the store is still halved but the dressing saves
+  only about 20 %. The bubble and the
   self-energy transport are unchanged. The guard statistics
   (``longitudinal_bond_guard_blocks_per_iteration``,
   ``longitudinal_bond_guard_exact_blocks_*``) count the stored
