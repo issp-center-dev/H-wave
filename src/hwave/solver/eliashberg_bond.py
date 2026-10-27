@@ -348,7 +348,13 @@ class PairVertexAccumulator:
             raise ValueError("PairVertexAccumulator: non-finite {} contribution in the frequency "
                              "batch {}".format(channel, self._where(l0, l1)))
         idx = 0 if channel == "spin" else 1
-        Ph = _bk.to_host(P)
+        tgt_dev = False
+        if self.ir is None:
+            # a device-resident target (the FLEX device block store, issue
+            # #275) takes the contribution on the device, without a host trip
+            tgt_dev = _bk.array_module_of(
+                self._target.get_freq_batch(self._slot, l0, l0)) is not np
+        Ph = P if tgt_dev else _bk.to_host(P)
         Pr, Pm = Ph, None
         if ls is None:
             cols, cols_m = slice(l0, l1), None
@@ -370,7 +376,8 @@ class PairVertexAccumulator:
                 continue
             c = COEFF[eta][idx]
             if self.ir is None:
-                # the uniform target is the source's own (half-grid) layout
+                # the uniform target is the source's own (half-grid) layout,
+                # on the target's module (Ph is P itself for a device target)
                 self._target.get_freq_batch(self._slot, l0, l1)[...] += c * Ph
             elif not self._resid_mode:
                 sol = self._sol[eta][channel]
@@ -708,7 +715,7 @@ def block_to_rtau_uniform(blk, spatial_shape, norb, workers, xp):
     nmat = blk.shape[0]
     nvol = nx * ny * nz
     nd = norb * norb
-    b = _bk.to_device(np.ascontiguousarray(blk) if isinstance(blk, np.ndarray) else blk, xp)
+    b = _bk.to_device(np.ascontiguousarray(blk) if _bk.array_module_of(blk) is np else blk, xp)
     bt = _ms.boson_to_tau(b.reshape(nmat, nvol * nd * nd), axis=0)
     br = _bk.spatial_ifftn(bt.reshape(nmat, nx, ny, nz, nd * nd), axes=(1, 2, 3),
                            workers=workers)
@@ -934,9 +941,16 @@ class BondPairKernel:
             # full-grid array (the bare term is added to it below)
             blk = source.get_pair_full(self.vertex.slot, a, b)
         else:
-            blk = np.array(source.get_pair(self.vertex.slot, a, b), copy=True)
+            # a copy on the source's own module (a device block store keeps
+            # its vertex on the device, issue #275); the bare term below must
+            # not reach the source
+            src = source.get_pair(self.vertex.slot, a, b)
+            xs = _bk.array_module_of(src)
+            blk = np.array(src, copy=True) if xs is np else xs.ascontiguousarray(
+                xs.array(src, copy=True))
         if a == 0 and b == 0 and self.V_inst is not None:
-            blk += _vinst_as_block(self.V_inst, self.nd, self.nvol)[None]
+            blk += _bk.to_device(_vinst_as_block(self.V_inst, self.nd, self.nvol),
+                                 _bk.array_module_of(blk))[None]
         return blk
 
     def _block_rtau(self, a, b, mod):

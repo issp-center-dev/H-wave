@@ -302,7 +302,13 @@ class FLEX(RPA):
                           "longitudinal_bond_guard_exact",
                           "longitudinal_bond_pairing",
                           "longitudinal_bond_cond_tol",
-                          "longitudinal_bond_half_grid")
+                          "longitudinal_bond_half_grid",
+                          "longitudinal_bond_store")
+
+    #: where the bond block store lives (issue #275): "auto" (the device
+    #: when the device admission says it fits, else the host), "host" or
+    #: "device" (refused when it does not fit)
+    _BOND_STORE_VALUES = ("auto", "host", "device")
 
     #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
     #: ``"npz"`` (the default single-file archive) and ``"sidecar"``
@@ -463,7 +469,8 @@ class FLEX(RPA):
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all",
                        longitudinal_bond_guard_exact="decide",
-                       longitudinal_bond_half_grid=False)
+                       longitudinal_bond_half_grid=False,
+                       longitudinal_bond_store="auto")
             return out
         # step 2: domain keys that need no assembly
         nmat = param.get("Nmat", 1024)          # the solver's default grid
@@ -520,7 +527,8 @@ class FLEX(RPA):
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all",
                        longitudinal_bond_guard_exact="decide",
-                       longitudinal_bond_half_grid=False)
+                       longitudinal_bond_half_grid=False,
+                       longitudinal_bond_store="auto")
             return out
         v = param.get("longitudinal_bond_output_full", False)
         if not isinstance(v, (bool, np.bool_)):
@@ -594,6 +602,16 @@ class FLEX(RPA):
                     "[mode] enable_spin_orbital = true (the half grid rests on the symmetry "
                     "X(q, l) = X(q, Nmat - l)^dagger, which is verified for the spin-free "
                     "bond channels only).")
+        # issue #275: where the bond block store lives
+        bs = param.get("longitudinal_bond_store", "auto")
+        if not isinstance(bs, str) or bs.strip().lower() not in FLEX._BOND_STORE_VALUES:
+            raise ValueError(
+                "[mode.param] longitudinal_bond_store must be \"auto\" (the default: on the "
+                "GPU backend the bond block store is kept in device memory when the device "
+                "admission says it fits, otherwise in host memory), \"host\" (always in host "
+                "memory) or \"device\" (always in device memory; refused when it does not fit "
+                "or when the GPU backend is not active), got {!r}".format(bs))
+        out["longitudinal_bond_store"] = bs.strip().lower()
         ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
         if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
                 or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
@@ -621,6 +639,7 @@ class FLEX(RPA):
         self.longitudinal_bond_guard_exact = raw["longitudinal_bond_guard_exact"]
         self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
         self.longitudinal_bond_half_grid = raw["longitudinal_bond_half_grid"]
+        self.longitudinal_bond_store = raw["longitudinal_bond_store"]
         # the guard surface of issue #199
         self.flex_hf_density_tol = raw["flex_hf_density_tol"]
         self.longitudinal_bond_cond_tol = raw["longitudinal_bond_cond_tol"]
@@ -1761,7 +1780,8 @@ class FLEX(RPA):
                      "_bond_split", "_bond_view", "_bond_S", "_bond_C",
                      "_bond_types", "_bond_w2", "_bond_w2_xp", "_bond_w2_entries",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
-                     "_bond_xp_name", "_bond_mirror_guarded",
+                     "_bond_xp_name", "_bond_mirror_guarded", "_bond_store_resident",
+                     "_bond_est_host_store",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
                      "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
@@ -2086,22 +2106,56 @@ class FLEX(RPA):
         written against. The estimate is recomputed with the reading taken
         here, the frequency batch is re-published (the device may admit less
         than the host cap did) and the device table and the host <-> device
-        transfer volume are logged. A no-op on the numpy backend."""
+        transfer volume are logged.
+
+        It also decides where the bond block store lives (issue #275,
+        ``longitudinal_bond_store``): ``self._bond_store_resident`` becomes
+        ``"device"`` when the device-store table admits it (under ``"auto"``
+        or ``"device"``) and stays ``"host"`` otherwise; the decision and
+        its reason are logged. The host-store estimate is kept in
+        ``self._bond_est_host_store`` for the out-of-memory fallback of
+        :meth:`_solve_phase_b`. The cupy pool's free blocks are handed back
+        to the driver before the reading, so the measurement is not
+        inflated by cached blocks a store-sized request could not use.
+
+        On the numpy backend this is a no-op (the store is on the host),
+        except that ``longitudinal_bond_store = "device"`` is refused."""
+        self._bond_store_resident = "host"
+        self._bond_est_host_store = None
+        request = getattr(self, "longitudinal_bond_store", "auto")
         if xp is np:
+            if request == "device":
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_store = \"device\" needs the GPU backend "
+                    "(gpu = true with a usable CuPy / CUDA device); this run uses numpy. Use "
+                    "\"auto\" or \"host\".")
             return
         from hwave.solver import flex_bond
+        _bk.free_device_pool()
         available = _bk.device_available_bytes()
         if available is None:
+            if request == "device":
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_store = \"device\": the device memory "
+                    "could not be queried, so the device store cannot be admitted. Use "
+                    "\"auto\" or \"host\".")
             logger.warning(
                 "the GPU backend is active but the device memory could not be queried; "
                 "the bond gate keeps the frequency batch %d chosen by the host table "
-                "alone and may run out of device memory.", self._bond_nb)
+                "alone and may run out of device memory. The bond block store stays in host "
+                "memory.", self._bond_nb)
             return
-        est = flex_bond.estimate_bond_memory(device_available=int(available),
-                                             **self._bond_est_kwargs)
+        est_host = flex_bond.estimate_bond_memory(device_available=int(available),
+                                                  **self._bond_est_kwargs)
+        est = est_host
+        if request != "host":
+            est = flex_bond.estimate_bond_memory(device_available=int(available),
+                                                 store=request, **self._bond_est_kwargs)
         nb_host = int(self._bond_nb)
+        self._bond_est_host_store = est_host
         self._bond_est = est
         self._bond_nb = int(est["nb"])
+        self._bond_store_resident = est["store_resident"]
         gib = flex_bond._GIB
         # every figure below is at the SELECTED batch est["nb"] (the minimum
         # of what the host cap and the device admit); the two per-table
@@ -2112,7 +2166,25 @@ class FLEX(RPA):
             "the device alone %d)\n%s",
             est["device_need"] / gib, est["device_cap"] / gib, est["nb"], nb_host,
             est["device_nb"], est["device_table"])
+        self._log_bond_store_decision(est, request)
         self._log_bond_transfer_volume(est)
+
+    def _log_bond_store_decision(self, est, request):
+        """One INFO line: where the bond block store lives and why (issue
+        #275)."""
+        from hwave.solver import flex_bond
+        gib = flex_bond._GIB
+        if est.get("store_resident", "host") == "device":
+            logger.info(
+                "longitudinal_bond_store = %r: the bond block store is kept in DEVICE memory "
+                "(%.4f GiB); %s. Its host <-> device copies disappear; frequency batch %d.",
+                request, est["store_bytes"] / gib, est["store_reason"], est["nb"])
+        else:
+            logger.info(
+                "longitudinal_bond_store = %r: the bond block store is kept in HOST memory "
+                "(%.4f GiB): %s; frequency batch %d.", request,
+                est.get("store_bytes", 0) / gib, est.get("store_reason", "no device reading"),
+                est["nb"])
 
     def _log_bond_transfer_volume(self, est):
         """Host <-> device traffic of one SCF iteration at the selected
@@ -2146,7 +2218,12 @@ class FLEX(RPA):
         ``"static"``, the two guard copies of that same slice (the
         ``"all"`` guard instead copies the whole batch, which is the
         ``2 U`` term); ``3 C`` are the three channel-0 collapses and
-        ``G`` the self-energy the transport returns."""
+        ``G`` the self-energy the transport returns.
+
+        With the block store in DEVICE memory (issue #275) the store's own
+        traffic is gone: H2D = 0 and D2H = 2 U [guard = all] + 2 S
+        + 2 S [guard = static] + 3 C + G (the full dynamic channels of
+        ``output_full`` come to the host once, at publication)."""
         from hwave.solver import flex_bond
         gib = flex_bond._GIB
         nb, nmat = int(est["nb"]), int(est["nmat"])
@@ -2159,22 +2236,33 @@ class FLEX(RPA):
         # moves the whole (nslices, nvol, ND, ND) buffer once, whatever nb is
         u_total = nslices * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
-        h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
-        d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
-               u_total
-               + u_total * (1 + 2 * int(guard_all) + 2 * int(self.longitudinal_bond_output_full))
-               # the two static slices, plus the "static" guard's two copies of
-               # that slice ("all" copies the whole batch, counted above)
-               + 2 * int(est["S_bytes"]) * (1 if guard_all else 2)
-               + 3 * int(est["C_bytes"])
-               # the self-energy the transport returns
-               + int(est["G_bytes"]))
+        device_store = est.get("store_resident", "host") == "device"
+        # the small terms every residency has: the two static slices, plus the
+        # "static" guard's two copies of that slice ("all" copies the whole
+        # batch, counted with the guard below), the three collapses and the
+        # self-energy the transport returns
+        small = (2 * int(est["S_bytes"]) * (1 if guard_all else 2)
+                 + 3 * int(est["C_bytes"]) + int(est["G_bytes"]))
+        if device_store:
+            # issue #275: the bubble blocks, the chibar and W batches, the
+            # transport's W blocks and the output_full channels never leave
+            # the device; only the guard's copies and the small terms do
+            h2d = 0
+            d2h = u_total * 2 * int(guard_all) + small
+        else:
+            h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
+            d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
+                   u_total
+                   + u_total * (1 + 2 * int(guard_all)
+                                + 2 * int(self.longitudinal_bond_output_full))
+                   + small)
         logger.info(
             "longitudinal_bond_channels (FLEX): bond-gate transfer volume per iteration "
             "(ESTIMATE) at frequency batch %d (%d batches): host to device %.4f GiB, "
-            "device to host %.4f GiB (guard_freqs = %r, longitudinal_bond_output_full = %s)",
+            "device to host %.4f GiB (guard_freqs = %r, longitudinal_bond_output_full = %s, "
+            "block store on the %s)",
             nb, n_batches, h2d / gib, d2h / gib, self.longitudinal_bond_guard_freqs,
-            self.longitudinal_bond_output_full)
+            self.longitudinal_bond_output_full, "device" if device_store else "host")
 
     def _phase_b_active_outputs(self, info_outputfile):
         active = [k for k in ("energy", "sigma", "green") if k in info_outputfile]
@@ -2339,10 +2427,7 @@ class FLEX(RPA):
         with contextlib.ExitStack() as stack:
             store = dev = None
             if gate:
-                names, aliases = self._bond_store_layout()
-                store = stack.enter_context(flex_bond.BondBlockStore(
-                    nmat, nvol, self._bond_view.n_channels * nd, nd, names, aliases,
-                    half_grid=self.longitudinal_bond_half_grid))
+                store = stack.enter_context(self._bond_allocate_store(xp))
                 self._phase_b_prepare_vertices()
                 # The immutable bond inputs are transferred once per solve,
                 # after the memory preflight measured the device (spec 4.2);
@@ -2566,6 +2651,54 @@ class FLEX(RPA):
                                 "outputs (sigma, green, physics) of the seed state are stored.")
         logger.info("End FLEX calculations")
 
+    def _bond_allocate_store(self, xp):
+        """The bond block store of this solve, on the residency the device
+        admission chose (issue #275): ``xp`` for ``"device"``, numpy
+        otherwise.
+
+        An out-of-memory error while a DEVICE store is allocated (the
+        admission's reading can be beaten by fragmentation or by another
+        process) happens before any arithmetic, so under
+        ``longitudinal_bond_store = "auto"`` it falls back to the host store
+        with the host-store estimate and its frequency batch, and a warning
+        says so; under ``"device"`` it is logged and re-raised. An
+        out-of-memory error later, inside an iteration, is never retried
+        (:meth:`_phase_b_bond_map`)."""
+        from hwave.solver import flex_bond
+        nvol, nmat, nd = self.lattice.nvol, self.nmat, self.norb * self.norb
+        names, aliases = self._bond_store_layout()
+        ND = self._bond_view.n_channels * nd
+
+        def build(module):
+            return flex_bond.BondBlockStore(nmat, nvol, ND, nd, names, aliases,
+                                            half_grid=self.longitudinal_bond_half_grid,
+                                            xp=module)
+        if getattr(self, "_bond_store_resident", "host") != "device":
+            return build(np)
+        try:
+            return build(xp)
+        except _bk.oom_error_types() as exc:
+            gib = flex_bond._GIB
+            if self.longitudinal_bond_store == "device":
+                logger.error("longitudinal_bond_store = \"device\": allocating the bond block "
+                             "store on the device failed (device pool used %.3f GiB): %s",
+                             _bk.device_pool_used_bytes() / gib, exc)
+                raise
+            _bk.free_device_pool()
+            est = self._bond_est_host_store
+            self._bond_store_resident = "host"
+            if est is not None:
+                self._bond_est = est
+                self._bond_nb = int(est["nb"])
+            logger.warning(
+                "longitudinal_bond_store = \"auto\": allocating the bond block store on the "
+                "device failed (%s); it is kept in HOST memory instead, with the host-store "
+                "frequency batch %d. Nothing was computed yet, so the run is otherwise "
+                "unchanged.", exc, self._bond_nb)
+            if est is not None:
+                self._log_bond_transfer_volume(est)
+            return build(np)
+
     def _refuse_final_bond_guard(self):
         """Refuse a FINAL state that sits inside the instability region of
         the bond gate (GitHub issue #199).
@@ -2657,9 +2790,10 @@ class FLEX(RPA):
         every phase of the map. ``green_scf`` is used where it already
         lives -- on the GPU backend the bubble too runs on the device
         (issue #196), so nothing of the Green function crosses to the host
-        here. The block store stays host-resident either way: the bubble
-        brings back one channel-pair block at a time and the kernels move
-        one frequency batch (and one W block pair) at a time.
+        here. With a host block store the bubble brings back one
+        channel-pair block at a time and the kernels move one frequency
+        batch (and one W block pair) at a time; with a device store (issue
+        #275, ``longitudinal_bond_store``) none of these crosses.
 
         ``guard_exact`` is handed to the dressing unchanged (issue #276;
         :meth:`_bond_guard_exact_for_map` chooses it per map)."""
@@ -2710,10 +2844,14 @@ class FLEX(RPA):
             # of this solve. The phase, the iteration, the batch size and the
             # pool occupancy are logged, then the error propagates -- solve()
             # drops every partial result on the way out (spec 3.5).
+            hint = ""
+            if getattr(store, "resident", "host") == "device":
+                hint = ("; the bond block store is in device memory -- "
+                        "longitudinal_bond_store = \"host\" keeps it in host memory")
             logger.error("bond-gate device allocation failed during the %s at iteration %d "
-                         "with frequency batch %d (device pool used %.3f GiB): %s",
+                         "with frequency batch %d (device pool used %.3f GiB)%s: %s",
                          phase, iteration, self._bond_nb,
-                         _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
+                         _bk.device_pool_used_bytes() / flex_bond._GIB, hint, exc)
             raise
         self._bond_last = res
         if res.mirror_guarded is not None:
@@ -2823,6 +2961,8 @@ class FLEX(RPA):
             # half-grid run, so a full-grid run's outputs are unchanged.
             out["longitudinal_bond_half_grid"] = np.bool_(True)
         if self.longitudinal_bond_output_full:
+            # a device store's members come to the host here, once (issue
+            # #275; the identity for a host store)
             if getattr(store, "half_grid", False):
                 # the archive keeps the full grid: each dynamic channel is
                 # expanded on its own and its half-grid slot released before
@@ -2830,12 +2970,12 @@ class FLEX(RPA):
                 # members are resident at a time
                 from hwave.solver import half_grid as _hg
                 for name in ("chi_s_w", "chi_c_w"):
-                    half = store.detach(name)
+                    half = _bk.to_host(store.detach(name))
                     out["longitudinal_bond_" + name] = _hg.expand(half, self.nmat)
                     del half
             else:
-                out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
-                out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+                out["longitudinal_bond_chi_s_w"] = _bk.to_host(store.detach("chi_s_w"))
+                out["longitudinal_bond_chi_c_w"] = _bk.to_host(store.detach("chi_c_w"))
             out["longitudinal_bond_S"] = np.array(self._bond_S, copy=True)
             out["longitudinal_bond_C"] = np.array(self._bond_C, copy=True)
         green_info.update(out)
