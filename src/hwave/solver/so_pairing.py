@@ -62,7 +62,8 @@ Only on-site interactions are representable: an off-site term makes
 """
 import numpy as np
 
-__all__ = ["so_pairing_vertex", "so_pairing_vertex_parts", "so_initial_gap",
+__all__ = ["so_pairing_vertex", "so_pairing_vertex_parts",
+           "so_pairing_vertex_dynamic", "so_initial_gap", "so_frequency",
            "check_so_config", "check_so_supported", "so_spin_components",
            "so_spin_decomposition", "SPIN_COMPONENTS"]
 
@@ -145,6 +146,43 @@ def so_pairing_vertex(gam, chi, nd, spatial_shape):
     return bare + fluct
 
 
+def so_pairing_vertex_dynamic(gam, chi_w, nd, spatial_shape):
+    """The frequency-resolved spin-orbital pairing vertex (issue #284).
+
+    ``chi_w`` ``(nmat, nvol, nd^2, nd^2)`` is the spinful susceptibility at
+    every bosonic frequency ``nu_m = (2 m - nmat) pi T`` of the uniform grid
+    (bubble ``[a, c, b, d]`` layout, spin-block order). Returns ``V_w``
+    ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)``, the layout of the dynamic kernel
+    (``eliashberg_dynamic.eliashberg_kernel_dynamic``):
+
+        V_w[a, b, c, d, q, m] = V_bare[a, b, c, d] + V_fluct[a, b, c, d](q, i nu_m),
+
+    with the parts of :func:`so_pairing_vertex_parts`; the fluctuation part is
+    read at ``+q`` and the SAME bosonic index ``m`` as ``chi_w`` (the
+    orientation the exact-diagonalization gate of
+    ``tests/test_so_pairing_ed.py`` fixes at nonzero frequency; the opposite
+    reading ``V[d, c, b, a](-q)`` agrees only at ``nu = 0``). The bare part is
+    frequency independent: on the uniform grid it enters every bosonic
+    frequency, a ``delta(tau)`` in imaginary time, as in the dynamic kernel's
+    other vertices. The on-site check on ``gam`` runs once."""
+    chi_w = np.asarray(chi_w)
+    if chi_w.ndim != 4 or chi_w.shape[0] < 1:
+        raise ValueError("the dynamic spinful susceptibility must have shape "
+                         "(nmat, nvol, nd^2, nd^2), got {}".format(chi_w.shape))
+    gam, _, nd, shape = _validate(gam, chi_w[0], nd, spatial_shape)
+    nmat = chi_w.shape[0]
+    nvol = gam.shape[0]
+    g4 = gam.reshape(nvol, nd, nd, nd, nd)
+    bare = np.ascontiguousarray(np.moveaxis(
+        0.25 * (g4 + g4.transpose(0, 4, 3, 2, 1)), 0, -1)).reshape(
+            (nd,) * 4 + shape).astype(complex, copy=False)
+    out = np.empty((nd,) * 4 + shape + (nmat,), dtype=complex)
+    for m in range(nmat):
+        fluct = -(gam @ chi_w[m] @ gam).reshape(nvol, nd, nd, nd, nd)
+        out[..., m] = bare + np.moveaxis(fluct, 0, -1).reshape((nd,) * 4 + shape)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The static hwave_sc entry in spin-orbital mode: the initial gap and the
 # refusal of every combination it does not support
@@ -190,14 +228,67 @@ def _ci(mapping):
 
 
 _SO_WHAT = "[mode] enable_spin_orbital = true (hwave_sc, issue #83)"
+_SO_DYN_WHAT = ("[mode] enable_spin_orbital = true with frequency = \"dynamic\" "
+                "(hwave_sc, issue #284)")
+
+
+def so_frequency(input_dict):
+    """``[eliashberg] frequency`` of a spin-orbital run, read
+    case-insensitively (as :func:`check_so_config` reads it)."""
+    return _ci(input_dict.get("eliashberg", {})).get("frequency", "static")
+
+
+def _check_so_dynamic_config(eli):
+    """The refusals of the spin-orbital dynamic solver (issue #284) on the
+    case-insensitive ``[eliashberg]`` table ``eli``, before any file is read.
+    Supported: ``chi0q_mode = "flex"`` (a spin-orbital FLEX run with the full
+    bosonic axis) or ``"calc"``, ``matsubara_basis = "uniform"``. Refused:
+    ``chi0q_mode = "load"``, the IR basis, ``zero_chi_s`` / ``zero_chi_c``
+    (there is no spin/charge split of the spinful channel) and the bond-path
+    keys ``parity_leakage_policy`` / ``parity_leakage_tol``. (``bond_channels``,
+    ``pairing_type`` and ``eigenvalue_method`` are refused by
+    :func:`check_so_config` for every frequency; the temperature sweep refuses
+    spin-orbital mode in its preflight.)"""
+    basis = str(eli.get("matsubara_basis", "uniform")).lower()
+    if basis != "uniform":
+        raise ValueError(
+            "{}: [eliashberg] matsubara_basis = {!r} is not supported; the "
+            "spin-orbital dynamic solver runs on the uniform Matsubara grid "
+            "only (the IR basis is not available in spin-orbital mode yet). Set "
+            "matsubara_basis = \"uniform\" (or remove the key).".format(
+                _SO_DYN_WHAT, eli.get("matsubara_basis")))
+    mode = eli.get("chi0q_mode", "load")
+    if mode not in ("flex", "calc"):
+        raise ValueError(
+            "{}: [eliashberg] chi0q_mode = {!r} is not supported; use \"flex\" "
+            "(the full-frequency chiq, chi0q and green of a spin-orbital FLEX "
+            "run) or \"calc\" (the spinful chi0 is computed here at every "
+            "bosonic frequency). A loaded chi0q carries no Green function for "
+            "the pair bubble.".format(_SO_DYN_WHAT, mode))
+    for key in ("zero_chi_s", "zero_chi_c"):
+        if key in eli:
+            raise ValueError(
+                "{}: [eliashberg] {} has no meaning in spin-orbital mode: the "
+                "pairing vertex is built from the single spinful channel, which "
+                "has no spin/charge split. Remove {}.".format(_SO_DYN_WHAT, key, key))
+    for key in ("parity_leakage_policy", "parity_leakage_tol"):
+        if key in eli:
+            raise ValueError(
+                "{}: [eliashberg] {} is a key of the bond-resolved dynamic path; "
+                "the spin-orbital solver works in the fermion-antisymmetric space "
+                "directly and has no channel sector. Remove {}.".format(
+                    _SO_DYN_WHAT, key, key))
 
 
 def check_so_config(input_dict):
-    """Refuse every configuration the spin-orbital static entry does not
-    support, from the configuration alone (no file is read). Keys are looked
-    up case-insensitively; each message names the key and what to change.
+    """Refuse every configuration the spin-orbital entries do not support,
+    from the configuration alone (no file is read). Keys are looked up
+    case-insensitively; each message names the key and what to change.
 
-    Supported: ``frequency = "static"``, ``bond_channels = false``,
+    ``frequency = "dynamic"`` (issue #284) adds the refusals of
+    :func:`_check_so_dynamic_config`; everything below applies to both.
+
+    Supported: ``frequency = "static"`` or ``"dynamic"``, ``bond_channels = false``,
     ``chi0q_mode = "calc"`` or ``"load"`` with a general (4-index) chi0q, or
     ``"flex"`` with the outputs of a spin-orbital FLEX run (``flex_chiq``,
     ``flex_green``; ``flex_chi_s`` / ``flex_chi_c`` are refused),
@@ -208,11 +299,10 @@ def check_so_config(input_dict):
     from hwave.solver.backend import strict_bool
     eli = _ci(input_dict.get("eliashberg", {}))
     freq = eli.get("frequency", "static")
-    if freq != "static":
+    if freq not in ("static", "dynamic"):
         raise ValueError(
-            "{}: [eliashberg] frequency = {!r} is not supported; the spin-orbital "
-            "Eliashberg solver is static only. Set frequency = \"static\" (or remove "
-            "the key).".format(_SO_WHAT, freq))
+            "{}: [eliashberg] frequency = {!r} is not supported; use \"static\" "
+            "or \"dynamic\" (or remove the key).".format(_SO_WHAT, freq))
     bond = eli.get("bond_channels")
     if bond is not None:
         from hwave import sc
@@ -227,6 +317,8 @@ def check_so_config(input_dict):
             "mode: the gap is one general 2N x 2N spin-orbital matrix, not a "
             "singlet or a triplet channel. Remove pairing_type.".format(
                 _SO_WHAT, eli["pairing_type"]))
+    if freq == "dynamic":
+        _check_so_dynamic_config(eli)
     method = eli.get("eigenvalue_method", "arnoldi")
     if method != "arnoldi":
         raise ValueError(

@@ -907,7 +907,10 @@ def calc_g2_dynamic(green_kw, beta):
     # G2[ij, lm, site, n] = A[ij, site, n] * B[lm, site, n]  (no sum over n)
     G2 = A[:, np.newaxis, :, :] * B[np.newaxis, :, :, :]
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz, nmat)
-    return G2 / beta
+    # in place: the same values as ``G2 / beta`` without a second
+    # four-leg-sized buffer (the spin-orbital solver's memory peak, #284)
+    G2 /= beta
+    return G2
 
 
 def vertex_qw_to_rt(Vs_q_w, workers=1):
@@ -1518,6 +1521,12 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     from hwave.solver.rpa import (validate_momentum_convention,
                                   check_momentum_marker)
     check_momentum_marker(data, path)   # unconditional (round-10)
+    if "spin_orbital" in data and bool(np.asarray(data["spin_orbital"]).any()):
+        # a spin-orbital gap over N orbitals has the shape of a gap over 2N
+        # orbitals; it is not a seed of a non-spin-orbital run (issue #284)
+        raise ValueError(
+            "seed_eigenvector '{}' is a spin-orbital gap (spin_orbital = True); "
+            "it cannot seed a run without [mode] enable_spin_orbital.".format(path))
     if gap.ndim != 6:
         raise ValueError(
             "seed_eigenvector '{}' has ndim = {} but a gap file is always "
@@ -2006,9 +2015,12 @@ def solve_dynamic(input_dict):
     """
     import hwave.sc as sc
 
-    # spin-orbital mode is unsupported here exactly as on the static path;
-    # solve_dynamic is publicly callable, so guard both entries (issue #83)
-    sc.reject_spin_orbital_mode(input_dict)
+    # spin-orbital mode has its own solver (issue #284); solve_dynamic is
+    # publicly callable, so route a direct call there too (its configuration
+    # checks run first, before any file is read)
+    if sc._resolve_spin_orbital_flag(input_dict):
+        from hwave.solver import eliashberg_dynamic_so
+        return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     # shared validated conversion (round-7 review): an unchecked 1/T here

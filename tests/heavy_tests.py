@@ -205,6 +205,13 @@ HEAVY_TESTS = (
      "deliberately NOT registered: they are the only end-to-end runs of the "
      "hwave_sc bond entry, and a fast gate without them would exercise its "
      "refusals and nothing else"),
+    # --- tests/test_eliashberg_dynamic_so.py -- spin-orbital dynamic (#284)
+    ("test_eliashberg_dynamic_so", "TestKernelAgainstValidatedKernel",
+     "test_exact_interacting_green_function",
+     "the production spin-orbital dynamic operator equals the ED-validated "
+     "kernel on the exact interacting Green function of the L = 3 spin-mixing "
+     "chain (the shared ED fixture of test_so_pairing_ed, ~12 s); the free-G "
+     "sibling stays in the fast gate"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",
