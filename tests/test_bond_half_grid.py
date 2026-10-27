@@ -15,6 +15,13 @@ The guard statistics count the solved slices only and are compared
 against that count instead. The mutation tests break the bookkeeping one
 way at a time (the Nyquist slot, the transpose of the dagger, the pair
 swap, the partner index) and require the oracle to fail.
+
+The in-process pairing on the half grid (part 2 of the issue) is held to
+the same oracle: every vertex block the pairing kernel reads (uniform grid)
+or every IR coefficient (IR fit), and the kernel's matvec of a fixed vector,
+at 1e-12; the eigenvalues and gaps at the eigensolver's own reproducibility.
+Its mutations break the IR fold (the dagger, the partner, the Nyquist slot)
+and the kernel's reconstruction one at a time.
 """
 import contextlib
 import os
@@ -26,6 +33,7 @@ from unittest import mock
 import numpy as np
 
 from hwave.solver import flex_bond
+from tests.heavy_tests import heavy
 
 _IN2 = "tests/rpa/input_2orb"
 _TOL = 1.0e-12
@@ -120,12 +128,13 @@ def _solver(case, extra, half):
     return info, flex_mod.FLEX
 
 
-def _run(case, extra=None, half=True, interval=False, save=True):
-    """One gated solve; returns ``(solver, green_info, {file: {member: array}})``."""
+def _run(case, extra=None, half=True, interval=False, save=True, eli=None):
+    """One gated solve; returns ``(solver, green_info, {file: {member: array}})``.
+    ``eli`` is the ``[eliashberg]`` table of the in-process pairing."""
     from hwave.solver import bond_channels as bc
     info, FLEX = _solver(case, extra, half)
     with _input(case) as r:
-        s = FLEX(r.get_param("ham"), {}, info)
+        s = FLEX(r.get_param("ham"), {}, info, eliashberg_param=eli)
         gi = r.get_param("green")
         files = {}
         with contextlib.ExitStack() as st:
@@ -447,17 +456,16 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(out["longitudinal_bond_half_grid"])
         self.assertIn("longitudinal_bond_half_grid", "\n".join(cm.output))
 
-    def test_refused_with_pairing(self):
-        for p in ("singlet", "Triplet", "both"):
+    def test_accepted_with_pairing(self):
+        # the in-process pairing runs on the half grid (issue #223 part 2)
+        for p in ("singlet", "Triplet", "both", "None"):
             with self.subTest(pairing=p):
-                with self.assertRaisesRegex(ValueError, "does not support the in-process "
-                                                        "pairing yet"):
-                    self._raw({"longitudinal_bond_half_grid": True,
-                               "longitudinal_bond_pairing": p})
-        # pairing "none" and a half grid of false are accepted
-        self._raw({"longitudinal_bond_half_grid": True, "longitudinal_bond_pairing": "None"})
-        self._raw({"longitudinal_bond_half_grid": False, "longitudinal_bond_pairing": "singlet",
-                   "IterationMax": 1})
+                out = self._raw({"longitudinal_bond_half_grid": True,
+                                 "longitudinal_bond_pairing": p, "IterationMax": 1})
+                self.assertTrue(out["longitudinal_bond_half_grid"])
+                self.assertEqual(out["longitudinal_bond_pairing"],
+                                 {"singlet": ("singlet",), "Triplet": ("triplet",),
+                                  "both": ("singlet", "triplet"), "None": "none"}[p])
 
     def test_refused_with_spin_orbital(self):
         for key in ("enable_spin_orbital", "Enable_Spin_Orbital"):
@@ -1487,6 +1495,573 @@ class TestMutations(unittest.TestCase):
         worst, dev = self._mutated_worst(
             [mock.patch.object(hg, "half_from_full", half_from_full)], calls)
         self.assertGreater(worst, 1e-6, dev)
+
+
+# ---------------------------------------------------------------------------
+# the in-process pairing on the half grid (issue #223, part 2)
+# ---------------------------------------------------------------------------
+
+#: the [eliashberg] tables of the in-process pairing: the uniform grid and
+#: the IR fit (a small ir_wmax, so that the bosonic basis is resolved by the
+#: short uniform grids of these fixtures)
+_ELI_UNIFORM = {"solver_mode": "eigenvalue", "num_eigenvalues": 3}
+_ELI_IR = dict(_ELI_UNIFORM, matsubara_basis="ir", ir_wmax=4.0, ir_tol=1e-8,
+               ir_keep_static_chi=True)
+
+#: the eigensolver's outputs (lambda, the eigenvalue list, the gap) are
+#: compared at this relative tolerance (the gap modulo its global phase): on
+#: the IR fixtures the FULL grid alone moves them by up to 1.3e-11 relative
+#: when only the frequency batch changes (ARPACK's convergence, not the
+#: vertex). The vertex itself and the kernel's matvec are compared at _TOL.
+_EIG_TOL = 1.0e-10
+
+#: members produced by the eigensolver (the leading eigenvector and what is
+#: derived from it), compared at _EIG_TOL
+_EIG_MEMBERS = ("eigenvalue", "eigenvalues", "eigenvalues_all", "eigenvalue_match", "gap",
+                "gap_bond_projection", "gap_sector_weights")
+
+
+def _leaf(name):
+    leaf = name.split(":")[-1]
+    for eta in ("singlet", "triplet"):
+        if leaf.startswith("pairing_{}_".format(eta)):
+            return leaf[len("pairing_{}_".format(eta)):]
+    return leaf
+
+
+def _is_pairing(name):
+    return name.startswith("eliashberg_bond_") or name.startswith("green_info:pairing_")
+
+
+def _pairing_members(run):
+    """``{name: value}`` of every pairing output of one run."""
+    _, gi, files = run
+    out = {}
+    for k, v in gi.items():
+        if not k.startswith("pairing_"):
+            continue
+        if isinstance(v, dict):
+            # the meta table: one member per key (the gap's projection and
+            # sector weights follow the eigensolver)
+            out.update({"green_info:" + k[:-len("meta")] + m: x for m, x in v.items()})
+        else:
+            out["green_info:" + k] = v
+    for fn, mem in files.items():
+        if fn.startswith("eliashberg_bond_"):
+            out.update({fn + ":" + m: v for m, v in mem.items()})
+    return out
+
+
+def _pairing_dev(a, b, name):
+    """One pairing member: the eigensolver's outputs relative (the gap and
+    its bond projection modulo the gap's global phase, the sign an
+    eigensolver may flip), round-off measurements absolutely, the rest
+    exactly / relative with NaN where the full grid has NaN."""
+    leaf = _leaf(name)
+    if isinstance(a, dict) or isinstance(b, dict):
+        if not (isinstance(a, dict) and isinstance(b, dict)) or set(a) != set(b):
+            return np.inf
+        return max([_pairing_dev(a[k], b[k], name + "." + k) for k in a] or [0.0])
+    if a is None or b is None:
+        return 0.0 if a is None and b is None else np.inf
+    if isinstance(a, (str, bool, int, float, np.generic, np.ndarray)) and \
+            np.asarray(a).dtype.kind not in "fc":
+        return 0.0 if np.array_equal(np.asarray(a), np.asarray(b)) else np.inf
+    a, b = np.asarray(a), np.asarray(b)
+    if a.shape != b.shape:
+        return np.inf
+    if leaf.endswith("parity_leakage"):
+        return float(np.abs(a - b).max())
+    nan = np.isnan(a)
+    if nan.any():
+        if not np.array_equal(nan, np.isnan(b)):
+            return np.inf
+        a, b = a[~nan], b[~nan]
+    return _rel(a, b)
+
+
+@contextlib.contextmanager
+def _capture_kernels(store):
+    """Record, for every pairing kernel built: its vertex as the kernel uses
+    it (uniform: every raw ``(a, b)`` block with the bare term, i.e. through
+    ``get_pair_full``; IR: the coefficients and the retained constant) and
+    its matvec of a fixed vector."""
+    from hwave.solver import eliashberg_bond as eb
+    real = eb.BondPairKernel.__init__
+
+    def init(self, vertex, *a, **k):
+        real(self, vertex, *a, **k)
+        rec = {}
+        if self.is_ir:
+            rec["coeffs"] = np.array(vertex.coeffs)
+            rec["const"] = None if vertex.const is None else np.array(vertex.const)
+        else:
+            for x in range(self.B):
+                for y in range(self.B):
+                    rec[(x, y)] = np.array(self._raw_block_uniform(x, y))
+        rng = np.random.default_rng(223)
+        n = int(np.prod(self.gap_shape))
+        v = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        rec["matvec"] = np.array(self.matvec(v))
+        store.append(rec)
+
+    with mock.patch.object(eb.BondPairKernel, "__init__", init):
+        yield
+
+
+def _run_pairing(case, extra, half, eli, patches=()):
+    kernels = []
+    with contextlib.ExitStack() as st:
+        st.enter_context(_capture_kernels(kernels))
+        for p in patches:
+            st.enter_context(p)
+        out = _run(case, extra, half=half, eli=eli)
+    return out, kernels
+
+
+def _compare_pairing(full, half):
+    """``(flex, pairing, kernel, eig)`` deviations: everything the runs
+    publish outside the pairing step (at _TOL), the pairing outputs that do
+    not come from the eigensolver (at _TOL), the captured vertices and
+    matvecs (at _TOL), and the eigensolver outputs (at _EIG_TOL)."""
+    (rf, kf), (rh, kh) = full, half
+    flex = {k: v for k, v in _compare(rf, rh).items() if not _is_pairing(k)
+            and k != "files"}
+    if {f for f in rf[2] if not _is_pairing(f)} != {f for f in rh[2] if not _is_pairing(f)}:
+        flex["files"] = np.inf
+    pf, ph = _pairing_members(rf), _pairing_members(rh)
+    pairing, eig = {}, {}
+    for name in sorted(set(pf) | set(ph)):
+        if name not in pf or name not in ph:
+            (eig if _leaf(name) in _EIG_MEMBERS else pairing)[name] = np.inf
+            continue
+        a, b = pf[name], ph[name]
+        leaf = _leaf(name)
+        if leaf == "gap" or leaf == "gap_bond_projection":
+            gname = name[:-len(leaf)] + "gap"
+            ga, gb = np.asarray(pf.get(gname)), np.asarray(ph.get(gname))
+            if ga.shape == gb.shape and ga.dtype.kind == "c":
+                ov = np.vdot(gb.ravel(), ga.ravel())
+                if abs(ov) > 0:
+                    b = np.asarray(b) * (ov / abs(ov))
+            eig[name] = _pairing_dev(a, b, name)
+        elif leaf in _EIG_MEMBERS:
+            eig[name] = _pairing_dev(a, b, name)
+        else:
+            pairing[name] = _pairing_dev(a, b, name)
+    kern = {}
+    if len(kf) != len(kh):
+        kern["count"] = np.inf
+    for i, (a, b) in enumerate(zip(kf, kh)):
+        for key in a:
+            if a[key] is None:
+                kern["{}:{}".format(i, key)] = 0.0 if b.get(key) is None else np.inf
+            else:
+                kern["{}:{}".format(i, key)] = _rel(a[key], b[key])
+    return flex, pairing, kern, eig
+
+
+class _PairingOracle(unittest.TestCase):
+
+    def _assert_pairing(self, case, extra, eli, n_kernels):
+        extra = dict({"longitudinal_bond_output_full": True}, **extra)
+        full = _run_pairing(case, extra, False, eli)
+        half = _run_pairing(case, extra, True, eli)
+        flex, pairing, kern, eig = _compare_pairing(full, half)
+        bad = {k: v for k, v in dict(flex, **pairing, **kern).items() if not v <= _TOL}
+        self.assertEqual(bad, {}, "full vs half above {}: {}".format(_TOL, bad))
+        bad = {k: v for k, v in eig.items() if not v <= _EIG_TOL}
+        self.assertEqual(bad, {}, "eigensolver outputs above {}: {}".format(_EIG_TOL, bad))
+        (sf, gf, ff), kf = full
+        (sh, gh, fh), kh = half
+        # every requested channel produced a result on both grids
+        self.assertEqual(len(kf), n_kernels)
+        for g in (gf, gh):
+            self.assertEqual([k for k in g if k.startswith("pairing_") and k.endswith("_error")],
+                             [])
+        etas = [k for k in gf if k.startswith("pairing_") and k.endswith("_eigenvalue")]
+        self.assertEqual(len(etas), n_kernels)
+        for k in etas:
+            self.assertLessEqual(abs(gf[k] - gh[k]), _EIG_TOL * max(1e-300, abs(gf[k])), k)
+        # the pairing kept the two store slots, now of half length
+        self.assertFalse(sh._bond_w_in_place())
+        self.assertEqual(sh._bond_est["persistent_rows"]["chibar_W"], 2 * sh._bond_est["U_store"])
+        self.assertEqual(sh._bond_est["nslices"], int(sf.nmat) // 2 + 1)
+        # the archives keep the full grid
+        self.assertEqual(fh["longitudinal_bond.npz"]["chi_s_w"].shape[0], int(sf.nmat))
+        return flex, pairing, kern, eig
+
+
+class TestPairingUnits(unittest.TestCase):
+
+    def test_fold_rows(self):
+        from hwave.solver import half_grid as hg
+        for nmat in (2, 4, 8):
+            ls = hg.grid_index(nmat)
+            rows, sel, partners = hg.fold_rows(ls, nmat)
+            np.testing.assert_array_equal(rows, np.arange(ls.size))
+            # the paired rows are all but the static slice and the Nyquist slot
+            self.assertEqual(sorted(ls[sel]), list(range(nmat // 2 + 1, nmat)))
+            np.testing.assert_array_equal(partners, nmat - ls[sel])
+            # every l of the full grid exactly once
+            self.assertEqual(sorted(list(ls) + list(partners)), list(range(nmat)))
+
+    def test_folded_sum_equals_the_full_sum(self):
+        from hwave.solver import half_grid as hg
+        nmat, n = 8, 3
+        full = _hermitian_in_frequency(nmat, 2, n, seed=5)
+        f = np.random.default_rng(6).standard_normal((nmat, 4))
+        ref = np.einsum("lvij,lc->cvij", full, f)
+        half = hg.half_from_full(full, nmat)
+        ls = hg.grid_index(nmat)
+        rows, sel, partners = hg.fold_rows(ls, nmat)
+        got = np.einsum("lvij,lc->cvij", half[rows], f[ls[rows]])
+        got += np.einsum("lvij,lc->cvij", hg.dagger(half[sel]), f[partners])
+        self.assertLessEqual(_rel(ref, got), 1e-14)
+
+    def test_array_source(self):
+        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver import half_grid as hg
+        nmat, nd, B = 8, 4, 3
+        full = _hermitian_in_frequency(nmat, 2, nd * B, seed=7)
+        fs = eb.ArrayBlockSource({"W": full}, nd)
+        hs = eb.ArrayBlockSource({"W": hg.half_from_full(full, nmat)}, nd, half_grid=True,
+                                 nmat=nmat)
+        self.assertEqual((hs.nmat, hs.nslices, fs.nmat, fs.nslices), (8, 5, 8, 8))
+        np.testing.assert_array_equal(hs.grid_index(0, 5), hg.grid_index(nmat))
+        for a in range(B):
+            for b in range(B):
+                ref = fs.get_pair_full("W", a, b)
+                np.testing.assert_array_equal(ref, fs.get_pair("W", a, b))
+                self.assertTrue(ref.flags.c_contiguous)
+                self.assertLessEqual(_rel(ref, hs.get_pair_full("W", a, b)), 1e-15)
+        with self.assertRaisesRegex(ValueError, "half-grid source needs nmat"):
+            eb.ArrayBlockSource({"W": hg.half_from_full(full, nmat)}, nd, half_grid=True)
+        with self.assertRaisesRegex(ValueError, "half-grid source needs nmat"):
+            eb.ArrayBlockSource({"W": full}, nd, half_grid=True, nmat=nmat)
+
+    def test_accumulator_refuses_a_mismatched_source(self):
+        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver import half_grid as hg
+        nmat, nd, B = 8, 1, 2
+        S = np.zeros((4, B * nd, B * nd), complex)
+        ctx = flex_bond.BondDeviceContext(np, S, S)
+        full = _hermitian_in_frequency(nmat, 4, nd * B, seed=8)
+        with ctx as dev:
+            acc = eb.PairVertexAccumulator(dev, pairing_types=("singlet",), nb=2, nmat=nmat,
+                                           nvol=4, nd=nd, spatial_shape=(2, 2, 1),
+                                           half_grid=True)
+            with self.assertRaisesRegex(ValueError, "full-grid store"):
+                acc.add_dressed(eb.ArrayBlockSource({"chibar": full}, nd))
+            acc = eb.PairVertexAccumulator(dev, pairing_types=("singlet",), nb=2, nmat=nmat,
+                                           nvol=4, nd=nd, spatial_shape=(2, 2, 1))
+            with self.assertRaisesRegex(ValueError, "half-grid store"):
+                acc.add_channel("spin", eb.ArrayBlockSource(
+                    {"x": hg.half_from_full(full, nmat)}, nd, half_grid=True, nmat=nmat), "x")
+
+
+class TestPairingOracleUniform(_PairingOracle):
+    """The uniform-grid pairing: the kernel rebuilds every vertex block on
+    the full grid from the half-grid W slot (``get_pair_full``)."""
+
+    @heavy
+    def test_mixing_and_batches(self):
+        # "both" builds the singlet and the triplet vertex in turn in the W slot
+        for mixing in ("linear", "anderson"):
+            for nb in (1, 2, 3, 5):
+                with self.subTest(mixing=mixing, nb=nb):
+                    self._assert_pairing("UV", {"mixing_scheme": mixing,
+                                                "longitudinal_bond_freq_batch": nb,
+                                                "longitudinal_bond_pairing": "both"},
+                                         _ELI_UNIFORM, 2)
+
+    def test_single_channels_and_static_guard(self):
+        for p in ("singlet", "triplet"):
+            for gf in ("all", "static"):
+                with self.subTest(pairing=p, guard_freqs=gf):
+                    self._assert_pairing("UV", {"longitudinal_bond_pairing": p,
+                                                "longitudinal_bond_guard_freqs": gf},
+                                         _ELI_UNIFORM, 1)
+
+    def test_fixtures(self):
+        for case in ("U+Hund+V_tail", "Exchange+PairHop", "complex_t"):
+            for nmat, nb in ((8, 3), (16, 4)):
+                with self.subTest(case=case, nmat=nmat):
+                    self._assert_pairing(case, {"Nmat": nmat, "longitudinal_bond_freq_batch": nb,
+                                                "longitudinal_bond_pairing": "both"},
+                                         _ELI_UNIFORM, 2)
+
+
+class TestPairingOracleIR(_PairingOracle):
+    """The IR fit of the pairing vertex: the half grid folds the mirrored
+    slices into the fit (``fit[l] P + fit[nmat - l] P^dagger``)."""
+
+    @heavy
+    def test_mixing_and_batches(self):
+        for mixing in ("linear", "anderson"):
+            for nb in (1, 4, 9):
+                with self.subTest(mixing=mixing, nb=nb):
+                    self._assert_pairing("UV", {"Nmat": 16, "mixing_scheme": mixing,
+                                                "longitudinal_bond_freq_batch": nb,
+                                                "longitudinal_bond_pairing": "both"},
+                                         _ELI_IR, 2)
+
+    def test_fixtures(self):
+        for case in ("U+Hund+V_tail", "Exchange+PairHop", "complex_t"):
+            for p in ("singlet", "both"):
+                with self.subTest(case=case, pairing=p):
+                    self._assert_pairing(case, {"Nmat": 16, "longitudinal_bond_freq_batch": 3,
+                                                "longitudinal_bond_pairing": p},
+                                         _ELI_IR, 2 if p == "both" else 1)
+
+    def test_constant_dropped_and_residual_skipped(self):
+        # ir_keep_static_chi = false (the constant discarded) and
+        # ir_fit_tol = 0 (no residual replay)
+        for eli in (dict(_ELI_IR, ir_keep_static_chi=False, ir_fit_tol=10.0),
+                    dict(_ELI_IR, ir_fit_tol=0)):
+            with self.subTest(eli=eli):
+                self._assert_pairing("UV", {"Nmat": 16, "longitudinal_bond_pairing": "singlet"},
+                                     eli, 1)
+
+
+class TestPairingMemory(unittest.TestCase):
+
+    def test_two_slot_store_halves(self):
+        # the case of issue #275: ND = 36 (B = 9, norb = 2), nvol = 1024,
+        # Nmat = 1024, two store slots (the in-process pairing keeps chibar)
+        kw = dict(nmat=1024, nvol=1024, norb=2, B=9, depth=0, output_full=False,
+                  split_seed=False, n_types=1, freq_batch=1, cap_gb=1e6, mixing="linear",
+                  w_in_place=False)
+        full = flex_bond.estimate_bond_memory(**kw)
+        half = flex_bond.estimate_bond_memory(half_grid=True, **kw)
+        gib = 1024.0 ** 3
+        self.assertAlmostEqual(full["persistent_rows"]["chibar_W"] / gib, 40.5, places=9)
+        self.assertAlmostEqual(half["persistent_rows"]["chibar_W"] / gib, 40.5 * 513 / 1024,
+                               places=9)
+        self.assertEqual(round(half["persistent_rows"]["chibar_W"] / gib, 2), 20.29)
+        self.assertEqual(full["persistent"] - half["persistent"],
+                         2 * (1024 - 513) * 1024 * 36 ** 2 * 16)
+
+    def test_solver_preflight_with_pairing(self):
+        from hwave.solver import eliashberg_bond as eb
+        seen = {}
+        real = eb.estimate_pair_memory
+
+        def spy(**k):
+            seen.setdefault("nb", []).append(k.get("nb"))
+            return real(**k)
+
+        ests = {}
+        for half in (False, True):
+            with mock.patch.object(eb, "estimate_pair_memory", side_effect=spy):
+                (s, gi, _), _k = _run_pairing("UV", {"IterationMax": 1, "Nmat": 16,
+                                                    "longitudinal_bond_freq_batch": None,
+                                                    "longitudinal_bond_pairing": "singlet"},
+                                              half, _ELI_UNIFORM)
+            self.assertIn("pairing_singlet_eigenvalue", gi)
+            ests[half] = s._bond_est
+        f, h = ests[False], ests[True]
+        U = 16 * f["nvol"] * f["ND"] ** 2 * 16
+        Uh = 9 * f["nvol"] * f["ND"] ** 2 * 16
+        self.assertEqual(f["persistent_rows"]["chibar_W"], 2 * U)
+        self.assertEqual(h["persistent_rows"]["chibar_W"], 2 * Uh)
+        self.assertLess(h["peak"], f["peak"])
+        # the solve-entry pairing preflight charged the solve's own batch,
+        # which on the half grid is at most the stored axis
+        self.assertLessEqual(h["nb"], 9)
+        self.assertIn(h["nb"], seen["nb"])
+
+    def test_device_admission_with_pairing(self):
+        import types
+        import hwave.solver.flex as flex_mod
+        (s, gi, _), _k = _run_pairing("UV", {"IterationMax": 1, "longitudinal_bond_freq_batch": None,
+                                            "longitudinal_bond_pairing": "singlet"},
+                                      True, _ELI_UNIFORM)
+        fake_xp = types.SimpleNamespace(__name__="cupy")
+        with mock.patch.object(flex_mod._bk, "device_available_bytes", lambda: 2 ** 50):
+            with self.assertLogs("hwave.solver.flex", level="INFO"):
+                s._bond_device_admission(fake_xp)
+        est = s._bond_est
+        self.assertEqual(est["device_nb"], 5)
+        self.assertEqual(est["persistent_rows"]["chibar_W"], 2 * est["U_store"])
+        self.assertEqual(est["U_store"] * 8, est["U"] * 5)
+
+
+class TestPairingArchiveRoundTrip(unittest.TestCase):
+    """A half-grid run with the in-process singlet pairing (through
+    ``qlms.run``) gives the full-grid run's in-process lambda, writes a
+    FULL-grid archive, and ``hwave_sc`` pairs that archive to the full-grid
+    archive's lambda."""
+
+    def test_in_process_and_hwave_sc(self):
+        import hwave.qlms as qlms
+        import hwave.sc as sc
+        from tests.test_eliashberg_bond_entry import _IN1, _sc_input
+        lam_in, lam_sc, chi = {}, {}, {}
+        for half in (False, True):
+            flex_dir = tempfile.mkdtemp()
+            out = tempfile.mkdtemp()
+            try:
+                par = {"T": 0.5, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1],
+                       "Nmat": 32, "IterationMax": 200, "Mix": 0.3, "EPS": 8,
+                       "flex_hartree_fock": True, "longitudinal_bond_channels": True,
+                       "longitudinal_bond_output_full": True, "mixing_scheme": "linear",
+                       "longitudinal_bond_freq_batch": 4, "longitudinal_bond_half_grid": half,
+                       "longitudinal_bond_pairing": "singlet"}
+                inp = {"mode": {"mode": "FLEX", "calc_scheme": "general", "param": par},
+                       "eliashberg": dict(_ELI_UNIFORM),
+                       "file": {"input": {"path_to_input": "",
+                                          "interaction": {"path_to_input": _IN1,
+                                                          "Geometry": "geom.dat",
+                                                          "Transfer": "transfer.dat",
+                                                          "CoulombIntra": "coulombintra.dat",
+                                                          "CoulombInter": "coulombinter.dat"}},
+                                "output": {"path_to_output": flex_dir, "chiq_s": "chiq_s",
+                                           "chiq_c": "chiq_c", "green": "green",
+                                           "longitudinal_bond": "longitudinal_bond"}}}
+                qlms.run(input_dict=inp)
+                with np.load(os.path.join(flex_dir, "eliashberg_bond_singlet.npz")) as z:
+                    lam_in[half] = float(z["eigenvalue"])
+                with np.load(os.path.join(flex_dir, "longitudinal_bond.npz")) as z:
+                    self.assertEqual(z["chi_s_w"].shape[0], 32)
+                    self.assertEqual("longitudinal_bond_half_grid" in z.files, half)
+                    chi[half] = np.array(z["chi_s_w"])
+                lam_sc[half] = sc.calc_eliashberg(_sc_input(flex_dir, out, 0.5, 32, (4, 4, 1)))
+            finally:
+                shutil.rmtree(flex_dir, ignore_errors=True)
+                shutil.rmtree(out, ignore_errors=True)
+        self.assertLessEqual(_rel(chi[False], chi[True]), _TOL)
+        self.assertTrue(np.isfinite(lam_in[False]) and np.isfinite(lam_sc[False]))
+        for lam in (lam_in, lam_sc):
+            self.assertLessEqual(abs(lam[True] - lam[False]), _EIG_TOL * abs(lam[False]))
+        # the two entries agree with each other (the same vertex, G and kernel)
+        self.assertLessEqual(abs(lam_in[True] - lam_sc[True]), 1e-8 * abs(lam_sc[True]))
+
+
+class TestPairingMutations(unittest.TestCase):
+    """Each mutation of the pairing path's half-grid bookkeeping must make
+    the full-vs-half pairing oracle fail (after asserting it ran)."""
+
+    def _worst(self, eli, patches, calls, pairing="singlet"):
+        extra = {"Nmat": 16, "longitudinal_bond_output_full": True,
+                 "longitudinal_bond_freq_batch": 3, "longitudinal_bond_pairing": pairing}
+        full = _run_pairing("UV", extra, False, eli)
+        half = _run_pairing("UV", extra, True, eli, patches)
+        self.assertGreater(calls["n"], 0, "the mutation did not run")
+        flex, _pairing, kern, eig = _compare_pairing(full, half)
+        # the FLEX part is untouched by a pairing-only mutation
+        self.assertLessEqual(max(flex.values()), _TOL, flex)
+        return max(kern.values()), max(eig.values()), kern
+
+    def _fold_patch(self, kind):
+        from hwave.solver import half_grid as hg
+        real = hg.fold_rows
+        calls = {"n": 0}
+
+        def fold_rows(ls, nmat):
+            calls["n"] += 1
+            rows, sel, partners = real(ls, nmat)
+            if kind == "partner":
+                partners = (partners - 1) % nmat
+            elif kind == "nyquist":
+                rows = rows[np.asarray(ls)[rows] != 0]
+            return rows, sel, partners
+
+        return mock.patch.object(hg, "fold_rows", fold_rows), calls
+
+    @contextlib.contextmanager
+    def _during_pairing(self, patch):
+        # the mutation is active in the in-process pairing step only, so the
+        # FLEX transport (which shares the helpers) stays exact
+        from hwave.solver import eliashberg_bond_io as io
+        real = io._run_inprocess_pairing
+
+        def wrapped(*a, **k):
+            with patch:
+                return real(*a, **k)
+
+        with mock.patch.object(io, "_run_inprocess_pairing", wrapped):
+            yield
+
+    def _expand_patch(self, kind):
+        from hwave.solver import half_grid as hg
+        expand, _fill, calls = _mut_expand(kind)
+        return self._during_pairing(mock.patch.object(hg, "expand", expand)), calls
+
+    def test_control(self):
+        p, calls = self._fold_patch(None)
+        k, e, kern = self._worst(_ELI_IR, [p], calls)
+        self.assertLessEqual(k, _TOL, kern)
+        self.assertLessEqual(e, _EIG_TOL)
+        p, calls = self._expand_patch(None)
+        k, e, kern = self._worst(_ELI_UNIFORM, [p], calls)
+        self.assertLessEqual(k, _TOL, kern)
+
+    def test_ir_fold_without_the_dagger(self):
+        from hwave.solver import half_grid as hg
+        calls = {"n": 0}
+
+        def dagger(x):
+            calls["n"] += 1
+            return np.array(x)
+
+        k, e, kern = self._worst(_ELI_IR, [mock.patch.object(hg, "dagger", dagger)], calls)
+        self.assertGreater(k, 1e-6, kern)
+
+    def test_ir_fold_wrong_partner(self):
+        p, calls = self._fold_patch("partner")
+        k, e, kern = self._worst(_ELI_IR, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
+
+    def test_ir_fold_without_the_nyquist_slot(self):
+        p, calls = self._fold_patch("nyquist")
+        k, e, kern = self._worst(_ELI_IR, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
+
+    def test_kernel_wrong_partner(self):
+        p, calls = self._expand_patch("partner")
+        k, e, kern = self._worst(_ELI_UNIFORM, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
+        self.assertGreater(e, _EIG_TOL)
+
+    def test_kernel_without_the_nyquist_slot(self):
+        p, calls = self._expand_patch("nyquist")
+        k, e, kern = self._worst(_ELI_UNIFORM, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
+
+    def test_kernel_misses_the_pair_swap(self):
+        from hwave.solver import half_grid as hg
+        calls = {"n": 0}
+
+        def get_pair_full(self, name, alpha, beta, xp=None):
+            calls["n"] += 1
+            ab = self.get_pair(name, alpha, beta)
+            full = hg.expand(ab, self.nmat, ba=ab)
+            return full if xp is None else flex_bond._bk.to_device(full, xp)
+
+        p = self._during_pairing(
+            mock.patch.object(flex_bond.BondBlockStore, "get_pair_full", get_pair_full))
+        k, e, kern = self._worst(_ELI_UNIFORM, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
+
+    def test_redress_on_the_full_grid_indices(self):
+        # the re-dressing told the WRONG grid index (the slice index h instead
+        # of l(h)): the static slice is then the Nyquist row's neighbour and
+        # the "static" guard checks the wrong row -- the result must not
+        # silently pass when the wrong row is ill-conditioned; here the
+        # weaker statement: the mutated grid index map changes the vertex
+        from hwave.solver import half_grid as hg
+        calls = {"n": 0}
+        real = hg.grid_index
+
+        def grid_index(nmat, s0=0, s1=None):
+            calls["n"] += 1
+            ls = real(nmat, s0, s1)
+            return np.where(ls == 0, 1, ls)          # the Nyquist row read as l = 1
+
+        p = self._during_pairing(mock.patch.object(hg, "grid_index", grid_index))
+        k, e, kern = self._worst(_ELI_IR, [p], calls)
+        self.assertGreater(k, 1e-6, kern)
 
 
 if __name__ == "__main__":

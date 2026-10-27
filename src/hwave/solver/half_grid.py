@@ -106,6 +106,26 @@ def expand(ab, nmat, ba=None, out=None, chunk=None):
     return out
 
 
+def dagger(x):
+    """The conjugate transpose of the last two axes (the matrix of (1))."""
+    return _dagger(x)
+
+
+def fold_rows(ls, nmat):
+    """How the rows of a half-grid batch with grid indices ``ls`` enter a
+    sum over the FULL grid (the IR fit of the pairing vertex, issue #223):
+    returns ``(rows, sel, partners)``. Every row in ``rows`` (all of them)
+    contributes at its own ``l``; the rows ``sel`` -- all but the
+    self-conjugate endpoints ``l = 0`` (Nyquist) and ``l = nmat / 2``
+    (static) -- contribute again, as their dagger, at ``partners = nmat -
+    ls[sel]``. A sum ``sum_l f[l] X(l)`` over the full grid is then
+    ``sum f[ls[rows]] X[rows] + sum f[partners] X[sel]^dagger``."""
+    ls = np.asarray(ls, dtype=np.int64)
+    nmat = int(nmat)
+    sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
+    return np.arange(ls.size), sel, nmat - ls[sel]
+
+
 def fill_mirror(full, nmat):
     """In place: given a FULL-grid array whose stored slices ``l(h)`` are
     already set, write the mirrored slices ``l = 1 ... nmat/2 - 1`` as the

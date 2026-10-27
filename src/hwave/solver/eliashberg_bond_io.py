@@ -885,7 +885,10 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 spatial_shape=shape, ir=((axF, axB) if use_ir else None),
                 out_store=(None if use_ir else store), out_slot="W",
                 ir_keep_static=ctl.ir_keep_static_chi,
-                workers=getattr(solver, "fft_workers", 1))
+                workers=getattr(solver, "fft_workers", 1),
+                # issue #223: the store's half grid (the uniform target is
+                # its W slot; the IR fit folds the mirrored slices)
+                half_grid=bool(getattr(store, "half_grid", False)))
 
             def stages(a):
                 a.add_dressed(store, cond_tol=_bc._BOND_COND_FLOOR,

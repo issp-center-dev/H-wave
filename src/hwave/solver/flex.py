@@ -587,14 +587,6 @@ class FLEX(RPA):
                 "[mode.param] longitudinal_bond_half_grid must be a boolean, got {!r}".format(hg))
         out["longitudinal_bond_half_grid"] = bool(hg)
         if out["longitudinal_bond_half_grid"]:
-            if out["longitudinal_bond_pairing"] != "none":
-                raise ValueError(
-                    "[mode.param] longitudinal_bond_half_grid = true does not support the "
-                    "in-process pairing yet (longitudinal_bond_pairing = {!r}); set "
-                    "longitudinal_bond_pairing = \"none\" or longitudinal_bond_half_grid = "
-                    "false. The archive of a half-grid run is a full-grid archive, so hwave_sc "
-                    "can solve the pairing from it afterwards.".format(
-                        param.get("longitudinal_bond_pairing")))
             from hwave.solver.spin_orbital import resolve_flag
             if resolve_flag(info_mode):
                 raise ValueError(
