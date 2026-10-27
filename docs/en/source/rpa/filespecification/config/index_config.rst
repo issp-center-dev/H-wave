@@ -837,7 +837,11 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``ir_wmax``, ...) is documented in
 :ref:`the dynamic-frequency section of the Eliashberg solver tutorial
 <sc_dynamic_frequency>`. The two keys of the spin-orbital path (static and
-dynamic) are listed first.
+dynamic), ``flex_chiq`` and ``flex_chi0q``, are listed first. Both are read
+with ``chi0q_mode = "flex"`` by the static path (``frequency = "static"``) and
+by the dynamic path (``frequency = "dynamic"``) alike. The estimated peak
+memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
+(see :ref:`sc_spin_orbital_dynamic_memory`).
 
 - ``flex_chiq``
 

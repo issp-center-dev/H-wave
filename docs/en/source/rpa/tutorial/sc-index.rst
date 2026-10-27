@@ -1745,10 +1745,12 @@ Scope
 - no bond-resolved channels (``bond_channels = false``, the default);
 - ``chi0q_mode = "calc"`` (the spinful :math:`\chi_0` is computed
   internally), ``"load"`` (the general four-index chi0q written by a
-  spin-orbital RPA run) or ``"flex"`` (the outputs of a spin-orbital FLEX
-  run, which must be a ``calc_scheme = "general"`` run with
+  spin-orbital RPA run; **static only**) or ``"flex"`` (the outputs of a
+  spin-orbital FLEX run, which must be a ``calc_scheme = "general"`` run with
   ``[mode.param] flex_hartree_fock = true``; see
-  :ref:`flex_spin_orbital`);
+  :ref:`flex_spin_orbital`). The dynamic solver needs ``chi0q_mode`` set
+  explicitly to ``"flex"`` or ``"calc"``: ``"load"`` and an unset key (whose
+  default is ``"load"``) are refused;
 - ``solver_mode = "iteration"``, ``"eigenvalue"`` or ``"both"`` with
   ``eigenvalue_method = "arnoldi"``.
 
@@ -1985,7 +1987,7 @@ Practical advice
   :math:`N_\mathrm{mat} N_k (2N)^4` complex numbers, i.e.
   :math:`16\,N_\mathrm{mat} N_k (2N)^4` bytes, with :math:`N_k` the number
   of k points. For :math:`N = 4`, a :math:`32 \times 32` grid and
-  ``Nmat = 1024`` this is about 69 GB, against about 4.3 GB for a
+  ``Nmat = 1024`` this is about 64 GiB, against about 4 GiB for a
   non-spin-orbital general chi0q (:math:`N^4` orbital indices) of the same
   physical :math:`N`.
 - ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode has not
@@ -2067,6 +2069,18 @@ Scope
 """""
 
 - ``matsubara_basis = "uniform"`` (the default) only;
+- ``chi0q_mode`` set explicitly to ``"flex"`` or ``"calc"`` (never
+  ``"load"``). A minimal ``[eliashberg]`` table, to be used with
+  ``[mode] enable_spin_orbital = true``:
+
+  .. code-block:: toml
+
+     [eliashberg]
+     frequency         = "dynamic"
+     chi0q_mode        = "flex"        # or "calc"
+     solver_mode       = "eigenvalue"
+     eigenvalue_method = "arnoldi"
+
 - ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q`` and ``green`` archives of a
   spin-orbital FLEX run, on the full bosonic and fermionic grid of the
   configured ``Nmat`` (see "Reading the outputs of a spin-orbital FLEX run"
@@ -2142,9 +2156,9 @@ spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
   ``# eigenvalue_selection: LM`` (``LR`` with ``spectral_shift``,
   ``iteration`` for the power iteration, with ``_seed_overlap`` appended when
   a seed orders the eigenpairs, ``LR_retry`` as described below), the leading
-  eigenvalue, and the table. The
-  match column stays the fifth column, so ``hwave_tsweep``'s reader works
-  unchanged:
+  eigenvalue, and the table. The column layout is compatible with the table
+  of the non-spin-orbital dynamic solver: the match column is the fifth
+  column in both (``hwave_tsweep`` itself still refuses spin-orbital mode):
 
   .. code-block:: text
 
@@ -2220,6 +2234,8 @@ On the uniform grid it is at round-off level (about :math:`10^{-15}`), and a
 WARNING is logged above :math:`10^{-8}`. The solve is restricted to the
 antisymmetric space in either case.
 
+.. _sc_spin_orbital_dynamic_memory:
+
 Memory and time
 """""""""""""""
 
@@ -2247,11 +2263,11 @@ disables the guard).
      - estimate (flex)
      - estimate (calc)
    * - 2, :math:`32 \times 32`, 512
-     - 2.1 GB
+     - 2.0 GiB
      - 7.2 GiB
      - 10.0 GiB
    * - 3, :math:`32 \times 32`, 512
-     - 10.9 GB
+     - 10.1 GiB
      - 28.5 GiB
      - --
 
@@ -2266,10 +2282,9 @@ GPU
 
 ``gpu = true`` moves the vertex and the pair bubble to the device. The kernel
 is the shared, backend-independent kernel of the dynamic solver; the basis
-and the eigensolver stay on the host. A host-versus-device equality test
-(``tests/test_eliashberg_dynamic_so.py``, ``TestGPU``; skipped without CuPy)
-compares the kernel applications to :math:`10^{-12}` and the leading
-eigenvalue.
+and the eigensolver stay on the host. The host and device kernel
+applications are checked against each other to :math:`10^{-12}`, and the
+leading eigenvalue is compared as well (this check requires CuPy).
 
 Validation
 """"""""""

@@ -1662,10 +1662,12 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 - オンサイトの2体相互作用のみ;
 - ボンド分解チャネルなし（\ ``bond_channels = false``\ 、既定値）;
 - ``chi0q_mode = "calc"``\ （スピンフルな\ :math:`\chi_0`\ を内部計算）、
-  ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q）、または
+  ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q。**静的のみ**）、または
   ``"flex"``\ （スピン軌道 FLEX の出力。FLEX は\ ``calc_scheme = "general"``\ かつ
   ``[mode.param] flex_hartree_fock = true``\ で実行したものに限ります。
-  :ref:`flex_spin_orbital`\ を参照）;
+  :ref:`flex_spin_orbital`\ を参照）。動的ソルバーでは\ ``chi0q_mode``\ を
+  ``"flex"``\ または\ ``"calc"``\ に明示的に指定する必要があり、\ ``"load"``\ と
+  指定なし（既定値が\ ``"load"``\ ）は拒否されます;
 - ``solver_mode = "iteration"``\ 、\ ``"eigenvalue"``\ 、\ ``"both"``\ と
   ``eigenvalue_method = "arnoldi"``\ 。
 
@@ -1887,9 +1889,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``"load"``\ と\ ``"flex"``\ では全体を読み込みます）は
   :math:`N_\mathrm{mat} N_k (2N)^4`\ 個の複素数、すなわち
   :math:`16\,N_\mathrm{mat} N_k (2N)^4`\ バイトです（\ :math:`N_k`\ は k 点の数）。
-  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 69 GB
+  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 64 GiB
   で、同じ物理軌道数\ :math:`N`\ の非スピン軌道 general の chi0q（軌道添字
-  :math:`N^4`\ ）の約 4.3 GB と比べて大きくなります。
+  :math:`N^4`\ ）の約 4 GiB と比べて大きくなります。
 - スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は検証して
   いません（\ ``"dynamic"``\ については\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
@@ -1963,6 +1965,18 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 """"""""
 
 - ``matsubara_basis = "uniform"``\ （既定値）のみ;
+- ``chi0q_mode``\ を\ ``"flex"``\ または\ ``"calc"``\ に明示的に指定する
+  （``"load"``\ は不可）。最小の\ ``[eliashberg]``\ テーブルの例（\ ``[mode]
+  enable_spin_orbital = true``\ と併用します）:
+
+  .. code-block:: toml
+
+     [eliashberg]
+     frequency         = "dynamic"
+     chi0q_mode        = "flex"        # or "calc"
+     solver_mode       = "eigenvalue"
+     eigenvalue_method = "arnoldi"
+
 - ``chi0q_mode = "flex"``: スピン軌道 FLEX 計算の\ ``chiq``\ ・\ ``chi0q``\ ・
   ``green``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
   もつもの（上の「スピン軌道 FLEX の出力の読み込み」を参照）。この入力の頂点が保存
@@ -2029,8 +2043,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``flex_vertex_backward_error_max``\ 。その後に\ ``# eigenvalue_selection: LM``
   （\ ``spectral_shift``\ では\ ``LR``\ 、べき乗反復では\ ``iteration``\ 。seed で固有対を
   並べた場合は\ ``_seed_overlap``\ が付き、下で述べる場合は\ ``LR_retry``\ ）、主要固有値、
-  表が続きます。match の
-  列は5列目のままなので、\ ``hwave_tsweep``\ の読み取りはそのまま動きます。
+  表が続きます。列の並びは
+  非スピン軌道の動的ソルバーの表と互換で、どちらも match の列は5列目です
+  （\ ``hwave_tsweep``\ 自体は引き続きスピン軌道モードを拒否します）。
 
   .. code-block:: text
 
@@ -2100,6 +2115,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 大きさ（約\ :math:`10^{-15}`\ ）で、\ :math:`10^{-8}`\ を超えると WARNING を出します。
 どちらの場合も計算は反対称空間に制限されます。
 
+.. _sc_spin_orbital_dynamic_memory:
+
 メモリと時間
 """"""""""""
 
@@ -2125,11 +2142,11 @@ mem_limit_gb``\ （既定値は利用可能メモリの 80 %。\ ``0``\ で無�
      - 見積もり（flex）
      - 見積もり（calc）
    * - 2、\ :math:`32 \times 32`\ 、512
-     - 2.1 GB
+     - 2.0 GiB
      - 7.2 GiB
      - 10.0 GiB
    * - 3、\ :math:`32 \times 32`\ 、512
-     - 10.9 GB
+     - 10.1 GiB
      - 28.5 GiB
      - --
 
@@ -2143,9 +2160,8 @@ GPU
 
 ``gpu = true``\ では頂点とペアバブルをデバイスへ移します。カーネルは動的ソルバーで
 共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
-ます。ホストとデバイスの一致のテスト
-（\ ``tests/test_eliashberg_dynamic_so.py``\ の\ ``TestGPU``\ 。CuPy がなければ
-スキップ）は、カーネルの作用を\ :math:`10^{-12}`\ で、主要固有値も比べます。
+ます。ホストとデバイスのカーネルの作用を\ :math:`10^{-12}`\ で照合し、
+主要固有値も比べます（この確認には CuPy が必要です）。
 
 検証
 """"
