@@ -394,6 +394,7 @@ GPU 経路では、条件の良い写像で値の代わりに\ ``in bracket [low
     FLEX iteration 1/100
     FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 1.055812 at q = (0.5, 0.5, 0); charge -0.682922 at q = (0, 0, 0)
     FLEX iteration 2/100
     FLEX._find_mu_dressed: mu = -0.291966
       convergence: |dSigma|/|Sigma| = 9.876e-01
@@ -401,6 +402,7 @@ GPU 経路では、条件の良い写像で値の代わりに\ ``in bracket [low
     FLEX iteration 64/100
     FLEX._find_mu_dressed: mu = -0.249146
       convergence: |dSigma|/|Sigma| = 9.241e-07
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
     FLEX converged after 64 iterations
 
 
@@ -467,6 +469,8 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 になります。``sigma.npz``\ は\ ``CellShape``\ を記録するため、体積が同じでも
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
+U や T のスキャンの刻みの選び方と、遠すぎるシードの見分け方は
+:ref:`flex_stoner_divergence`\ を参照してください。
 
 ``calc_scheme = "general"``\ のシードは、どの2次カーネルで作られたかも記録
 しています。廃止された\ ``"takimoto"``\ カーネルのシードも初期値として警告付きで
@@ -485,6 +489,71 @@ continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定して�
       [file.input]
         path_to_input = "."
         sigma_init = "run_T0.50/output/sigma.npz"
+
+.. _flex_stoner_divergence:
+
+Stoner 因子と発散した計算
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ログには、各反復がバブルの静的不安定にどれだけ近いかが出力されます。この行は
+最初と最後の反復（および後述の発散の兆候があるとき）に INFO レベルで、それ以外の
+反復では DEBUG レベルで出力されます。
+
+.. code-block:: text
+
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
+
+各チャネルの値は
+
+.. math::
+
+   \lambda = \max_{\mathbf{q}} \max \mathrm{Re}\,
+   \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+
+です。\ :math:`\chi_0`\ はその反復の dressed Green 関数から作ったバブル、
+:math:`W`\ はそのチャネルの和\ :math:`[1 + \chi_0 W]^{-1}\chi_0`\ のバーテックスで、
+``calc_scheme = "reduced"``\ ではスピン\ :math:`W = -U_s`\ 、電荷\ :math:`+U_c`\ 、
+``"general"``\ では軌道の完全なバーテックス、スピン軌道 FLEX では反対称化した
+バーテックスによる 1 つの\ ``spinful``\ の値です。1 バンド Hubbard 模型ではスピンの値は
+:math:`U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)`\ です。\ :math:`\mathbf{q}`\ は
+逆格子ベクトル単位です。ボンド分解経路（\ ``longitudinal_bond_channels = true``\ ）では
+この行は出力されず、条件数ガードの行がその役割を担います。
+
+読み方: :math:`\lambda \ge 1`\ は、そのバブルに対してチャネルの和が静的に不安定で
+あることを意味します。収束した FLEX 解は 1 未満にとどまり、1 からの距離が不安定点への
+近さを表します。コールドスタートでは 1 を超えた値から始まって回復することがあります
+（上のサンプルは 1.056 から始まります）。warm start による U スキャンでは、最初の
+写像は新しい U と前の自己エネルギーを使うので、前の計算が\ :math:`\lambda`\ で
+終わっていればその値はおよそ\ :math:`\lambda (U + \Delta U)/U`\ です。これを 1 未満に
+保つ、すなわち\ :math:`\Delta U / U < (1 - \lambda)/\lambda`\ としてください
+（\ :math:`\lambda = 0.95`\ で約 5 %。はっきり小さい刻みを取ってください）。
+温度スキャンでも同様に最初の反復の値を確認してください。
+
+あるチャネルで\ :math:`\lambda \ge 1`\ が 3 反復続けて\ :math:`|d\Sigma|/|\Sigma| \ge 0.5`\ と
+同時に起こるか、刻みが有限でない場合、ログに一度だけ警告
+（\ ``FLEX iteration N looks divergent: ...``\ ）が出ます。この警告で計算は止まりません。
+
+自己エネルギーが発散すると、\ :math:`N(\mu)`\ が\ :math:`\mu`\ に依存しなくなるため、
+通常は化学ポテンシャル探索で計算が停止します。そのときのエラーは、フィリングではなく
+発散を指摘します（例: 1 バンド模型で、収束した\ :math:`U = 2`\ の自己エネルギーから
+:math:`U = 200`\ へ warm start した場合）。
+
+.. code-block:: text
+
+    RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
+    after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) does not
+    depend on mu over the whole bracket); this is not a problem of the
+    filling or the temperature. The last completed iteration was 1 with
+    |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
+    q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
+    too large a step in a warm-started scan (U or T; the previous
+    self-energy is far from the new fixed point), too large a mixing (Mix),
+    or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
+    start (no sigma_init).
+
+:math:`N(\mu)`\ が区間内で変化するのに目標値に届かない場合に限り、メッセージは
+``Check the target filling/Ncond and temperature``\ となります。
 
 .. _flex_bond_hf_tutorial:
 
