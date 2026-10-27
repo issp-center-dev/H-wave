@@ -41,6 +41,7 @@ from . import backend as _bk
 from . import bubble
 from . import spin_orbital
 from . import matsubara as _ms
+from . import flex_diagnostics as _diag
 
 
 def _eigvals_small(M):
@@ -1276,6 +1277,9 @@ class FLEX(RPA):
             return self._solve_restoring_host_attrs(green_info, path_to_output)
         finally:
             self._second_order_device = None
+            # the log-only iteration record is solve-scoped (issue #282)
+            self._scf_monitor = None
+            self._stoner_last = None
             # the spin-orbital vertex is solve-scoped too (it may be a device
             # array of Nvol (2 norb)^4 entries)
             self._so_vertex = None
@@ -1519,6 +1523,9 @@ class FLEX(RPA):
         n_iter_done = 0
         mixer = (_AndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
+        # log-only record of the iteration (issue #282): Stoner factor lines
+        # and the context of a failed chemical-potential search
+        self._scf_monitor = _diag.ScfMonitor(logger)
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
 
@@ -1590,6 +1597,9 @@ class FLEX(RPA):
             # Step 7: Mix and check convergence
             diff = self._calc_convergence(sigma, sigma_new)
             logger.info("  convergence: |dSigma|/|Sigma| = {:.3e}".format(diff))
+            self._scf_monitor.record(
+                iteration + 1, diff, self._stoner_last,
+                last=diff < self.eps or iteration + 1 == self.max_iter)
 
             n_iter_done = iteration + 1
             if mixer is not None:
@@ -2247,6 +2257,7 @@ class FLEX(RPA):
                            "linear mixing is known to mis-converge near the charge "
                            "instability; consider mixing_scheme='anderson'.")
         counter = PassCounter(self.eps, needed=3)
+        self._scf_monitor = _diag.ScfMonitor(logger)   # log-only (issue #282)
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
@@ -2300,6 +2311,7 @@ class FLEX(RPA):
                 # before the next map allocates theirs (spec 3.6: one set)
                 chi0q_out = chi_s = chi_c = None
                 self._bond_last = None
+                self._stoner_last = None
                 with self._traced("green_mu"):
                     sigma = xp.asarray(state.total())
                     if self.calc_mu:
@@ -2364,6 +2376,8 @@ class FLEX(RPA):
                 done, count = counter.update(res_sigma, res_g, res_comp)
                 logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
                             .format(res_sigma, res_g, res_comp, count))
+                self._scf_monitor.record(iteration + 1, res_sigma, self._stoner_last,
+                                         last=done or iteration + 1 == self.max_iter)
                 # the guard diagnostics of this map (issue #199): the values the
                 # tolerances are compared against, iteration by iteration, so that
                 # an approach to an instability is visible before it refuses
@@ -3533,11 +3547,13 @@ class FLEX(RPA):
             # catchable exception (not sys.exit) so parameter sweeps, pipelines,
             # and notebooks can handle/aggregate the failure instead of having
             # the whole interpreter torn down.
-            raise RuntimeError(
-                "FLEX._find_mu_dressed: chemical-potential root not bracketed "
-                "after expansion to [{}, {}] (N-Ncond = {}, {}). Check the "
-                "target filling/Ncond and temperature.".format(
-                    lo, hi, f_lo, f_hi))
+            # Tell a diverged self-energy (N(mu) flat or not finite) from an
+            # unreachable target (N(mu) varies but never crosses it), issue
+            # #282; the exception type is unchanged.
+            sigma_finite = bool(_bk.array_module_of(sigma).isfinite(sigma).all())
+            raise RuntimeError(_diag.mu_failure_message(
+                "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, int(w.size),
+                sigma_finite, getattr(self, "_scf_monitor", None)))
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:
@@ -3580,6 +3596,25 @@ class FLEX(RPA):
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu
 
+    _scf_monitor = None      # per-solve ScfMonitor (issue #282)
+    _stoner_last = None      # Stoner factors of the latest bubble (issue #282)
+
+    def _stoner_factors(self, chi0q, channels):
+        """``{name: (lambda, q)}`` with ``lambda = max_q max Re
+        eig[-chi0(q, i nu = 0) W(q)]`` for each ``(name, W)`` in
+        ``channels``, ``W`` being the vertex handed to ``_solve_rpa``
+        (see :mod:`hwave.solver.flex_diagnostics`). Read-only: a log value,
+        one small eigenvalue problem per q on the static slice."""
+        try:
+            il, exact = _diag.static_boson_index(self)
+            tag = "" if exact else " (i nu nearest 0)"
+            shape = tuple(int(x) for x in self.lattice.shape)
+            return {name + tag: _diag.static_instability(chi0q, w, il, shape)
+                    for name, w in channels}
+        except Exception as exc:     # a log value must never end a run
+            logger.debug("Stoner factor not computed: %s", exc)
+            return None
+
     @do_profile
     def _flex_compute_veff(self, chi0q_raw, ham_orig):
         """Inflate chi0q, decompose into spin/charge channels, and compute V_eff.
@@ -3615,6 +3650,9 @@ class FLEX(RPA):
 
         # Decompose ham into spin and charge channels
         ham_s, ham_c = self._build_spin_charge_vertices(ham)
+
+        self._stoner_last = self._stoner_factors(
+            chi0q, (("spin", ham_s), ("charge", ham_c)))
 
         # Solve RPA for spin channel: chi_s = [1 - chi0*V_s]^{-1} chi0
         chi_s = self._solve_rpa(chi0q, ham_s)
@@ -3664,6 +3702,9 @@ class FLEX(RPA):
             math.
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
+        # the vertices _solve_channels_general hands to _solve_rpa
+        self._stoner_last = self._stoner_factors(
+            chi0q, (("spin", -Us), ("charge", Uc)))
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         factors = self._second_order_device or self._second_order_factors
         v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors)
@@ -3751,6 +3792,7 @@ class FLEX(RPA):
         """
         xp = _bk.array_module_of(chi0q_raw)
         gam = self._spinful_vertex(xp)
+        self._stoner_last = self._stoner_factors(chi0q_raw, (("spinful", gam),))
         chi = self._solve_rpa(chi0q_raw, gam)
         nmat, nvol = chi0q_raw.shape[0], chi0q_raw.shape[1]
         ndx = gam.shape[-1]
