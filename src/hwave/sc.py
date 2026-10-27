@@ -1340,8 +1340,11 @@ def _preflight_refuse_so_archives(input_dict, chi0q_mode):
             continue
         try:
             data = np.load(path)
-        except (OSError, ValueError):
-            continue    # unreadable: the loader reports it
+        except (OSError, ValueError, EOFError, zipfile.BadZipFile,
+                AttributeError):
+            continue    # unreadable / not an npz: the loader reports it
+        if not hasattr(data, "files"):
+            continue    # a bare .npy under an .npz name: the loader reports it
         with data:
             _refuse_so_archive_in_non_so_mode(data, path)
 

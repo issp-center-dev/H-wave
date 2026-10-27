@@ -41,6 +41,7 @@ def _so_rpa(d, out):
     inp["mode"]["calc_scheme"] = "general"
     inp["file"]["input"]["path_to_input"] = d
     del inp["eliashberg"]
+    inp["file"]["output"]["chiq"] = "chiq"
     inp["log"] = {"print_level": 0}
     with _quiet():
         qlms.run(input_dict=inp)
@@ -202,6 +203,66 @@ class TestFlexMode(_Base):
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 eliashberg_dynamic.solve_dynamic(inp)
+
+    def test_so_rpa_chiq_marker_only_is_refused(self):
+        """A real SO RPA chiq.npz carries the marker but no chi_convention."""
+        p = os.path.join(self.rpa, "chiq.npz")
+        with np.load(p) as z:
+            self.assertTrue(bool(z["spin_orbital"]))
+            self.assertNotIn("chi_convention", z.files)
+        inp = self._flex_inp(chi=p)
+        with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+            sc._read_flex_chi_raw(inp)
+        with _quiet(), mock.patch.object(
+                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+            with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+                sc.calc_eliashberg(inp)
+
+    def _clean_and_so(self, so_is):
+        d = os.path.join(self.d, "mixed_" + so_is)
+        os.makedirs(d)
+        clean = os.path.join(d, "clean.npz")
+        _resave(os.path.join(self.flex, "chiq.npz"), clean,
+                drop=("spin_orbital",), chi_convention=np.array("myo"))
+        so = os.path.join(self.flex, "chiq.npz")
+        return (clean, so) if so_is == "c" else (so, clean)
+
+    def test_only_chi_c_is_spin_orbital(self):
+        s, c = self._clean_and_so("c")
+        inp = self._flex_inp()
+        inp["eliashberg"]["flex_chi_s"] = s
+        inp["eliashberg"]["flex_chi_c"] = c
+        with self.assertRaises(ValueError) as cm:
+            sc._read_flex_chi_raw(inp)
+        self.assertIn(c, str(cm.exception))
+        self.assertIn("spin_orbital = True", str(cm.exception))
+        with _quiet(), mock.patch.object(
+                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+            with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+                sc.calc_eliashberg(inp)
+
+    def test_ir_native_so_archive_is_refused(self):
+        d = os.path.join(self.d, "irnative")
+        os.makedirs(d)
+        p = os.path.join(d, "chiq.npz")
+        _resave(os.path.join(self.flex, "chiq.npz"), p,
+                matsubara_basis=np.array("ir"),
+                frequency_grid=np.array("sparse_ir_nodes"),
+                ir_freq_n=np.arange(4))
+        with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+            sc._read_flex_chi_raw(self._flex_inp(chi=p), allow_ir=True)
+
+    def test_preflight_leaves_unreadable_files_to_the_loader(self):
+        d = os.path.join(self.d, "unreadable")
+        os.makedirs(d)
+        np.save(os.path.join(d, "x.npy"), np.zeros(3))
+        os.rename(os.path.join(d, "x.npy"), os.path.join(d, "chi0q.npz"))
+        with open(os.path.join(d, "bad.npz"), "wb") as f:
+            f.write(b"PK\x03\x04 not really a zip")
+        inp = self._inp({"chi0q_mode": "load"}, d)
+        sc._preflight_refuse_so_archives(inp, "load")      # bare .npy
+        os.replace(os.path.join(d, "bad.npz"), os.path.join(d, "chi0q.npz"))
+        sc._preflight_refuse_so_archives(inp, "load")      # broken zip
 
     def test_convention_tag_alone_is_refused(self):
         d = os.path.join(self.d, "tagonly")
