@@ -644,13 +644,28 @@ The converter first symmetrizes the total self-energy to
 :math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
 and logs the relative deviation it removed,
 :math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
-/ \max|\Sigma|`. A converged archive carries rounding error only; an
-archive written without ``flex_sigma_hermitian_projection`` after a cold
-start past the Stoner instability may carry a remnant of about
-:math:`10^{-5}`, which the symmetrization removes. A deviation above
-``--asymmetry-tol`` (default :math:`10^{-3}`) is refused: such an archive
-is not the self-energy of a converged Hermitian problem, and symmetrizing it
-would hide that.
+/ \max|\Sigma|`. A converged archive carries rounding error only. An
+archive written without the projection (``flex_sigma_hermitian_projection
+= false``, or by a version without it) after a cold start past the bare
+Stoner instability may carry a slowly decaying remnant (about
+:math:`10^{-5}` was observed), which the symmetrization removes -- or the
+run may have CONVERGED, with no other signal, to a symmetry-broken,
+non-causal branch (relative deviation :math:`\sim 0.3`, Stoner factor above
+1, :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)` with a positive eigenvalue),
+which is not the self-energy of the Hermitian problem at all. A deviation
+above ``--asymmetry-tol`` (default :math:`10^{-3}`) is therefore refused;
+repeat such a run with the projection on.
+
+**Archives written before the projection existed.** Check every
+``sigma.npz`` of a run past the bare Stoner instability (and the results
+derived from it) with::
+
+   hwave_sigma_split --check sigma.npz
+
+which prints the relative deviation and exits with status 1 when it exceeds
+``--asymmetry-tol``. A run made with the projection off warns at its end
+when its final deviation exceeds :math:`10^{-6}`, and loading such an
+archive as ``sigma_init`` warns above :math:`10^{-3}`.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1350,11 +1365,16 @@ The FLEX solver accepts the following parameters in the
        self-energy of a Hermitian problem, and the FLEX map preserves it, so
        a symmetric run changes only at rounding level. Without the
        projection, a cold start past the bare Stoner instability amplifies
-       the rounding-level asymmetry along with the transient, and linear
-       mixing removes it only slowly (or not at all): the archive then fails
-       the density check of a ``flex_hartree_fock = true`` run that uses
+       the rounding-level asymmetry along with the transient; the run may
+       then keep a slowly decaying remnant, or CONVERGE without any other
+       signal to a symmetry-broken, non-causal branch that is not the
+       self-energy of the Hermitian problem. Such an archive is also refused
+       by the density check of a ``flex_hartree_fock = true`` run that uses
        it as ``sigma_init``. Applies on the uniform grid and on the IR
-       nodes, in every scheme. ``false`` restores the unprojected update.
+       nodes, in every scheme. ``false`` restores the unprojected update;
+       the run then warns at its end when the final deviation exceeds
+       :math:`10^{-6}`. See ``hwave_sigma_split --check`` for auditing
+       existing archives.
    * - ``matsubara_basis``
      - str
      - "uniform"

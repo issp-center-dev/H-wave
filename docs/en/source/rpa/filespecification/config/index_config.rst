@@ -833,9 +833,15 @@ that has no effect under the current settings.
   relation holds exactly for the self-energy of a Hermitian problem and the
   FLEX map preserves it, so a run that is already symmetric changes only at
   rounding level. Without it, a cold start past the bare Stoner instability
-  can leave an asymmetric remnant in ``sigma.npz`` that a
-  ``flex_hartree_fock = true`` run refuses as ``sigma_init``. ``false``
-  restores the unprojected update.
+  can leave a slowly decaying asymmetric remnant in ``sigma.npz``, or
+  converge, with no other signal, to a symmetry-broken, non-causal branch
+  that is not the self-energy of the Hermitian problem; a
+  ``flex_hartree_fock = true`` run refuses such an archive as
+  ``sigma_init``. ``false`` restores the unprojected update, and the run
+  then warns at its end when the final relative deviation exceeds
+  :math:`10^{-6}`. Archives written without the projection (including by
+  earlier versions) can be audited with ``hwave_sigma_split --check
+  sigma.npz``.
 
 
 .. _eliashberg_bond_dynamic_config:

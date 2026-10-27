@@ -323,13 +323,68 @@ def _static_from_file(static_file, total, norb, nvol, spin_major, log):
 
 #: Default refusal threshold of :func:`sigma_split_convert` for the relative
 #: deviation ``max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max |Sigma|`` of the
-#: total archive (issue #281). A converged run carries round-off (~1e-14);
-#: a cold start past a bare Stoner instability without the solver's
-#: Hermitian projection leaves a slowly decaying remnant of ~1e-5. A
-#: deviation above 1e-3 is no longer a remnant: the archive is not the
-#: self-energy of a Hermitian problem (a blown-up or wrong file), and
-#: symmetrizing it would hide that, so the conversion is refused.
+#: total archive (issue #281). A converged run carries round-off (~1e-14). A
+#: run without the solver's Hermitian projection, cold-started past the bare
+#: Stoner instability, can leave a slowly decaying remnant (~1e-5 was
+#: reported), which symmetrizing removes -- or it can have converged to a
+#: symmetry-broken, non-causal branch (relative deviation O(0.1)), which is
+#: not the self-energy of the Hermitian problem at all. Symmetrizing such an
+#: archive would hide that, so a deviation above 1e-3 is refused; the run
+#: has to be repeated with the projection on.
 SIGMA_SPLIT_ASYMMETRY_TOL = 1.0e-3
+
+
+def check_frequency_reversal(members, nfreq, label, log=None):
+    """Refuse an archive whose frequency axis is not reversal-symmetric, so
+    that reversing axis 1 is ``i w -> -i w`` (issue #281): an IR-native
+    archive needs ``ir_freq_n == -ir_freq_n[::-1]`` with ``nfreq`` nodes, a
+    uniform one the full centred grid ``freq_index == arange(nfreq)`` (what
+    every FLEX archive records). An archive without either member (a
+    hand-made one) is taken to be on the full centred uniform grid, and that
+    assumption is logged."""
+    if "ir_freq_n" in members:
+        n = np.asarray(members["ir_freq_n"]).ravel()
+        if n.size != nfreq or not np.issubdtype(n.dtype, np.integer) \
+                or not np.array_equal(n, -n[::-1]):
+            raise ValueError(
+                "{}: the IR node set ir_freq_n ({} nodes) is not reversal-symmetric for the {} "
+                "frequencies of sigma; Sigma(k, -i w) cannot be formed by reversing the "
+                "frequency axis".format(label, n.size, nfreq))
+        return "ir"
+    if "freq_index" in members:
+        fi = np.asarray(members["freq_index"]).ravel()
+        if not np.array_equal(fi, np.arange(nfreq)):
+            raise ValueError(
+                "{}: freq_index is not the full centred grid arange({}) (got {} entries); "
+                "Sigma(k, -i w) cannot be formed by reversing the frequency axis".format(
+                    label, nfreq, fi.size))
+        return "uniform"
+    if log is not None:
+        log.info("%s: no frequency metadata (freq_index / ir_freq_n); the frequency axis is "
+                 "taken to be the full centred uniform grid", label)
+    return "assumed-uniform"
+
+
+def sigma_hermitian_check(path, logger=None):
+    """``{"asymmetry", "shape", "grid"}`` of the ``sigma`` member of an
+    archive (total or split form): the relative deviation
+    ``max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max |Sigma|`` (issue #281).
+    Used by ``hwave_sigma_split --check`` to audit existing archives."""
+    import logging
+    log = logger or logging.getLogger(__name__)
+    with np.load(path) as npz:
+        members = {k: npz[k] for k in npz.files}
+    if "sigma" not in members:
+        raise ValueError("'{}' has no 'sigma' member".format(path))
+    sigma = np.asarray(members["sigma"], dtype=np.complex128)
+    if sigma.ndim != 5 or sigma.shape[-1] != sigma.shape[-2]:
+        raise ValueError("'{}': sigma must be rank 5 (nblock, nfreq, nvol, n, n), got {}".format(
+            path, sigma.shape))
+    if not np.all(np.isfinite(sigma)):
+        raise ValueError("'{}': sigma is not finite".format(path))
+    grid = check_frequency_reversal(members, sigma.shape[1], "'{}'".format(path), log)
+    from hwave.solver.flex_mixing import frequency_hermitian_deviation
+    return dict(asymmetry=frequency_hermitian_deviation(sigma)[1], shape=sigma.shape, grid=grid)
 
 
 def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=False,
@@ -379,14 +434,18 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     if not np.all(np.isfinite(sigma)):
         raise ValueError("'{}': sigma is not finite".format(total_path))
     _, nmat, nvol, norb, _ = sigma.shape
+    check_frequency_reversal(total, nmat, "'{}'".format(total_path), log)
     from hwave.solver.flex_mixing import project_frequency_hermitian
     sigma_sym, (_, asym) = project_frequency_hermitian(sigma, with_deviation=True)
     if not asym <= float(asymmetry_tol):
         raise ValueError(
             "'{}': the self-energy violates Sigma(k, i w) = Sigma(k, -i w)^dag by a relative "
             "deviation of {:.3e} > {:.1e} (max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max "
-            "|Sigma|); this is not the remnant of a converged run of a Hermitian problem, so the "
-            "archive is not symmetrized (raise --asymmetry-tol to convert it anyway)".format(
+            "|Sigma|); this is not a rounding-level remnant: a run without "
+            "flex_sigma_hermitian_projection can converge to a symmetry-broken, non-causal branch "
+            "that is not the self-energy of the Hermitian problem, so the archive is not "
+            "symmetrized. Repeat the run with the projection on (or raise --asymmetry-tol to "
+            "convert it anyway)".format(
                 total_path, asym, float(asymmetry_tol)))
     log.info("'%s': symmetrized to Sigma(k, i w) = Sigma(k, -i w)^dag (relative deviation "
              "removed %.3e)", total_path, asym)

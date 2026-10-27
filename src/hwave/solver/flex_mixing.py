@@ -171,11 +171,22 @@ class StackedAndersonMixer:
 # projection is exact there too and the densified output inherits it.
 #
 # What the map does NOT do is damp an asymmetric part that is already
-# present: past a bare Stoner instability the early iterations amplify the
-# round-off asymmetric component together with the transient, and linear
-# mixing then removes it only at the convergence rate (issue #281). The
-# projection below removes it after every update. It changes a symmetric
-# iterate only at round-off, so the fixed point is unchanged.
+# present. The map is exactly equivariant under S: Sigma -> Sigma(-i w)^dag
+# (F(S Sigma) = S F(Sigma)), so the symmetric subspace is invariant, but it
+# need not be attracting. Past a bare Stoner instability the early
+# iterations amplify the round-off asymmetric component together with the
+# transient (issue #281), and the unprojected iteration can then CONVERGE,
+# with no other signal, to a symmetry-broken fixed point (S of it is an
+# equally good one): on the two-orbital dimer of
+# tests/test_flex_sigma_hermitian.py the relative violation is 0.3, the
+# Stoner factor exceeds 1 and the anti-Hermitian part of Sigma(k, i w_n > 0)
+# has a positive eigenvalue, i.e. the solution is not causal. It is not the
+# self-energy of the Hermitian problem. In milder cases the asymmetric part
+# only decays slowly and leaves a remnant (~1e-5 relative was reported).
+# The projection below removes the asymmetric part after every update, so
+# the iteration stays on the physical, symmetric branch. It changes a
+# symmetric iterate only at round-off, so the symmetric fixed point is
+# unchanged.
 
 
 def frequency_reversed_dagger(sigma):

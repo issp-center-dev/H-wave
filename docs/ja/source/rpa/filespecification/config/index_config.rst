@@ -698,7 +698,7 @@ TOML形式
 
   **形式 :** bool型 (デフォルトは true、FLEXモードのみ)
 
-  **説明 :** SCF ループで自己エネルギーを更新するたびに（線形混合・Anderson 加速、\ ``flex_hartree_fock``\ の有無によらず）、また\ ``sigma_init``\ の初期値に対して、\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ を満たす部分へ射影します（各\ :math:`\mathbf{k}`\ で\ :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 、一様格子でも IR ノード上でも）。この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像もこれを保つため、既に対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、裸の Stoner 不安定性を超えたコールドスタートで\ ``sigma.npz``\ に非対称な残差が残り、\ ``flex_hartree_fock = true``\ の計算が\ ``sigma_init``\ として拒否することがあります。\ ``false``\ で射影しない従来の更新に戻ります。
+  **説明 :** SCF ループで自己エネルギーを更新するたびに（線形混合・Anderson 加速、\ ``flex_hartree_fock``\ の有無によらず）、また\ ``sigma_init``\ の初期値に対して、\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ を満たす部分へ射影します（各\ :math:`\mathbf{k}`\ で\ :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 、一様格子でも IR ノード上でも）。この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像もこれを保つため、既に対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、裸の Stoner 不安定性を超えたコールドスタートで\ ``sigma.npz``\ にゆっくり減衰する非対称な残差が残るか、他に何の兆候もなく、対称性の破れた非因果的な解（エルミートな問題の自己エネルギーではない）に収束することがあり、\ ``flex_hartree_fock = true``\ の計算はそのようなアーカイブを\ ``sigma_init``\ として拒否します。\ ``false``\ で射影しない従来の更新に戻り、最終的な相対偏差が\ :math:`10^{-6}`\ を超えると終了時に警告します。射影なしで（以前のバージョンを含む）書き出したアーカイブは\ ``hwave_sigma_split --check sigma.npz``\ で確認できます。
 
 
 .. _eliashberg_bond_dynamic_config:

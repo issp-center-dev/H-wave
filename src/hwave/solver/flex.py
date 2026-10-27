@@ -1313,6 +1313,7 @@ class FLEX(RPA):
         # per-solve diagnostics of the Hermitian projection (issue #281)
         self.sigma_hermitian_removed_max = 0.0
         self.sigma_seed_hermitian_deviation = None
+        self.sigma_final_hermitian_deviation = None
 
         beta = 1.0 / self.T
         nvol = self.lattice.nvol
@@ -1624,7 +1625,8 @@ class FLEX(RPA):
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
 
-        self._log_sigma_projection_summary()
+        if self.max_iter > 0:
+            self._log_sigma_projection_summary(sigma)
 
         # SCF outcome, for programmatic consumers (sweeps, tests, mixer
         # comparisons)
@@ -2437,7 +2439,7 @@ class FLEX(RPA):
                                "green={:.3e}, component={:.3e}, eps={:.3e})".format(
                                    self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
                                    self.scf_component_residual, self.eps))
-            self._log_sigma_projection_summary()
+            self._log_sigma_projection_summary(state)
             self.scf_converged = converged
             self.scf_iterations = n_iter_done
             with self._traced("post_scf"):
@@ -4715,41 +4717,79 @@ class FLEX(RPA):
 
         return sigma_kw
 
-    # Asymmetry of a seed above which the seed projection warns (issue #281):
-    # a converged archive of a Hermitian problem carries round-off, a
-    # cold-started one a slowly decaying remnant of ~1e-5; a larger value
-    # means a seed that is not the self-energy of this (Hermitian) problem.
+    # Relative deviation max|Sigma(k, i w) - Sigma(k, -i w)^dag| / max|Sigma|
+    # of a seed above which loading it warns (issue #281). A converged
+    # archive of the Hermitian problem carries round-off; one written
+    # without the projection may carry a slowly decaying remnant (~1e-5 was
+    # reported) or sit on a symmetry-broken, non-causal branch (O(0.1)).
     SIGMA_SEED_ASYMMETRY_WARN = 1.0e-3
+    # Final relative deviation of a run WITHOUT the projection above which
+    # the end of solve warns: a converged run of the Hermitian problem is
+    # symmetric to round-off, so 1e-6 is far above noise and far below the
+    # symmetry-broken branch.
+    SIGMA_UNPROJECTED_WARN = 1.0e-6
+    _BROKEN_BRANCH_NOTE = (
+        "a run without flex_sigma_hermitian_projection past the bare Stoner instability can "
+        "converge, with no other signal, to a symmetry-broken, non-causal fixed point that is "
+        "not the self-energy of this Hermitian problem")
+
+    @staticmethod
+    def _sigma_deviation(sigma):
+        from hwave.solver import flex_mixing as _fm
+        if isinstance(sigma, _fm.SplitState):
+            return max(_fm.frequency_hermitian_deviation(sigma.static)[1],
+                       _fm.frequency_hermitian_deviation(sigma.fluct)[1],
+                       _fm.frequency_hermitian_deviation(sigma.total())[1])
+        return _fm.frequency_hermitian_deviation(sigma)[1]
 
     def _project_sigma_seed(self, sigma):
         """Project a warm-start seed (an array, or a Phase B SplitState)
         onto ``Sigma(k, i w) = Sigma(k, -i w)^dag`` (issue #281). The seed
         is only the starting point of the iteration, so a large asymmetry
-        is reported loudly but not refused."""
-        if not self.flex_sigma_hermitian_projection:
-            return sigma
+        is reported loudly but not refused. With the projection off the
+        seed is used as is, and only a large asymmetry is reported."""
         from hwave.solver import flex_mixing as _fm
+        rel = self._sigma_deviation(sigma)
+        self.sigma_seed_hermitian_deviation = rel
+        far = rel > self.SIGMA_SEED_ASYMMETRY_WARN
+        if not self.flex_sigma_hermitian_projection:
+            if far:
+                logger.warning(
+                    "FLEX: sigma_init violates Sigma(k, i w) = Sigma(k, -i w)^dag by a relative "
+                    "deviation of {:.3e} (> {:.0e}) and is used as is "
+                    "(flex_sigma_hermitian_projection = false); {}".format(
+                        rel, self.SIGMA_SEED_ASYMMETRY_WARN, self._BROKEN_BRANCH_NOTE))
+            return sigma
         if isinstance(sigma, _fm.SplitState):
-            rel = max(_fm.frequency_hermitian_deviation(sigma.static)[1],
-                      _fm.frequency_hermitian_deviation(sigma.fluct)[1],
-                      _fm.frequency_hermitian_deviation(sigma.total())[1])
             out = _fm.project_split_state(sigma)
         else:
-            out, (_, rel) = _fm.project_frequency_hermitian(sigma, with_deviation=True)
+            out = _fm.project_frequency_hermitian(sigma)
         msg = ("FLEX: sigma_init projected onto Sigma(k, i w) = Sigma(k, -i w)^dag "
                "(relative deviation removed {:.3e})".format(rel))
-        if rel > self.SIGMA_SEED_ASYMMETRY_WARN:
-            logger.warning(msg + "; the seed is far from the self-energy of a Hermitian "
-                           "problem (threshold {:.0e})".format(self.SIGMA_SEED_ASYMMETRY_WARN))
+        if far:
+            logger.warning(msg + "; the seed is not the self-energy of this Hermitian problem "
+                           "(threshold {:.0e}): {}".format(self.SIGMA_SEED_ASYMMETRY_WARN,
+                                                           self._BROKEN_BRANCH_NOTE))
         else:
             logger.info(msg)
-        self.sigma_seed_hermitian_deviation = rel
         return out
 
-    def _log_sigma_projection_summary(self):
+    def _log_sigma_projection_summary(self, sigma):
+        """End-of-solve diagnostic: the largest deviation the projection
+        removed, or -- with the projection off -- a warning when the final
+        self-energy is not symmetric (issue #281)."""
         if self.flex_sigma_hermitian_projection:
             logger.info("FLEX: sigma Hermitian projection: largest relative deviation "
                         "removed in one update {:.3e}".format(self.sigma_hermitian_removed_max))
+            return
+        rel = self._sigma_deviation(sigma)
+        self.sigma_final_hermitian_deviation = rel
+        if rel > self.SIGMA_UNPROJECTED_WARN:
+            logger.warning(
+                "FLEX: the final self-energy violates Sigma(k, i w) = Sigma(k, -i w)^dag by a "
+                "relative deviation of {:.3e} (> {:.0e}); {}. Repeat the run with "
+                "flex_sigma_hermitian_projection = true.".format(
+                    rel, self.SIGMA_UNPROJECTED_WARN, self._BROKEN_BRANCH_NOTE))
 
     def _project_sigma_update(self, sigma, iteration):
         """Project the mixed self-energy (an array, or a Phase B SplitState)

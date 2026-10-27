@@ -84,6 +84,26 @@ def _rel_dev(sigma):
     return worst / scale if scale > 0 else worst
 
 
+def _max_im_eig(sigma):
+    """Largest eigenvalue of the anti-Hermitian part
+    ``(Sigma - Sigma^dag) / 2i`` of ``Sigma(k, i w_n)`` over ``w_n > 0`` (the
+    upper half of the centred grid) and every k. Causality of the
+    self-energy requires it to be <= 0."""
+    s = np.asarray(sigma)
+    pos = s[:, s.shape[1] // 2:]
+    a = (pos - np.conj(np.swapaxes(pos, -1, -2))) / 2j
+    return float(np.linalg.eigvalsh(a).max())
+
+
+def _antisymmetric(shape, amp, seed=1):
+    """A random array ``a`` with ``S a = -a`` (``S: x -> x(-i w)^dag``) and
+    ``max |a| = amp``."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    a = 0.5 * (x - fm.frequency_reversed_dagger(x))
+    return a * (amp / float(np.abs(a).max()))
+
+
 # --------------------------------------------------------------------------
 # the two-orbital dimer of the issue (two inequivalent sites, no inversion,
 # complex inter-site hopping so that no time-reversal relation helps)
@@ -235,6 +255,23 @@ class TestMapPreservesSymmetry(_TmpDir):
         self._check(s, gi)
 
     @unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
+    def test_projection_on_ir_nodes(self):
+        """Projection ON on the IR path: the node values are symmetric
+        exactly after every update (the map alone leaves round-off), and
+        the densified output inherits it."""
+        files = _write_dimer(self.d, 1.5)
+        s, gi = _dimer_solver(self.d, files, matsubara_basis="ir", ir_wmax=20.0,
+                              write_densified=False)
+        _solve(s, gi, self.d)
+        self.assertEqual(s.sigma.shape[1], s._ir_axF.n_freq)
+        self.assertGreater(s.sigma_hermitian_removed_max, 0.0)   # round-off was removed
+        self.assertEqual(_rel_dev(s.sigma), 0.0)
+        s, gi = _dimer_solver(self.d, files, matsubara_basis="ir", ir_wmax=20.0, Nmat=256)
+        _solve(s, gi, self.d)
+        self.assertEqual(s.sigma.shape[1], 256)
+        self.assertLess(_rel_dev(s.sigma), 1e-13)
+
+    @unittest.skipUnless(_HAVE_SPARSE_IR, "sparse-ir not installed")
     def test_general_ir_densified(self):
         files = _write_dimer(self.d, 1.5, V=0.4)
         s, gi = _dimer_solver(self.d, files, scheme="general", matsubara_basis="ir",
@@ -265,24 +302,33 @@ class TestColdStartReproduction(_TmpDir):
     def test_cold_start_remnant_and_split_seed(self):
         from hwave.sigma_split import main as split_main
         files = _write_dimer(self.d, _COLD_U)
-        # without the projection: the asymmetric part survives the run
+        # without the projection the run CONVERGES -- to a symmetry-broken,
+        # non-causal branch (relative violation ~0.3), with only the
+        # end-of-solve diagnostic to tell
         s_off, gi = _dimer_solver(self.d, files, flex_sigma_hermitian_projection=False, **_COLD)
-        _solve(s_off, gi, self.d)
+        with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+            s_off.solve(gi, self.d)
+        self.assertTrue(s_off.scf_converged)
         dev_off = _rel_dev(s_off.sigma)
-        self.assertGreater(dev_off, 1e-8)
+        self.assertGreater(dev_off, 0.1)
+        self.assertGreater(_max_im_eig(s_off.sigma), 0.05)
+        self.assertTrue(any("non-causal" in m for m in cm.output))
         s_off.save_results({"path_to_output": self.d, "sigma": "off.npz"}, gi)
-        # with the projection (the default): exact, and converged
+        # with the projection (the default): exact, converged and causal
         s_on, gi = _dimer_solver(self.d, files, **_COLD)
         _solve(s_on, gi, self.d)
         self.assertTrue(s_on.scf_converged)
         self.assertLessEqual(_rel_dev(s_on.sigma), 1e-14)
+        self.assertLess(_max_im_eig(s_on.sigma), 0.0)
         s_on.save_results({"path_to_output": self.d, "sigma": "on.npz"}, gi)
         with _quiet():
-            # the unprojected archive is not a converged Hermitian self-energy
-            if dev_off > 1e-3:
-                self.assertEqual(split_main([os.path.join(self.d, "off.npz"),
-                                             os.path.join(self.d, "off_split.npz"),
-                                             "--zero-static"]), 1)
+            # the unprojected archive is refused by the converter and flagged
+            # by the audit; the projected one passes both
+            self.assertEqual(split_main([os.path.join(self.d, "off.npz"),
+                                         os.path.join(self.d, "off_split.npz"),
+                                         "--zero-static"]), 1)
+            self.assertEqual(split_main(["--check", os.path.join(self.d, "off.npz")]), 1)
+            self.assertEqual(split_main(["--check", os.path.join(self.d, "on.npz")]), 0)
             self.assertEqual(split_main([os.path.join(self.d, "on.npz"),
                                          os.path.join(self.d, "seed.npz"), "--zero-static"]), 0)
         # the split seed is accepted by a flex_hartree_fock run, even with the
@@ -293,6 +339,71 @@ class TestColdStartReproduction(_TmpDir):
         gi.update(s_hf.read_init({"path_to_input": self.d, "sigma_init": "seed.npz"}))
         _solve(s_hf, gi, self.d)
         self.assertEqual(s_hf.scf_iterations, 2)
+
+
+class TestBrokenBranchLight(_TmpDir):
+    """The fast-gate twin of the cold-start case: a smaller grid and a seed
+    carrying a 1e-2 anti-symmetric part. Without the projection the run
+    converges to the symmetry-broken, non-causal branch and the end-of-solve
+    diagnostic warns; with it the same start stays symmetric and causal."""
+
+    _PAR = dict(T=0.1, CellShape=[6, 6, 1], Nmat=16, Mix=0.1, EPS=8, IterationMax=400)
+
+    def _run(self, proj):
+        files = _write_dimer(self.d, _COLD_U)
+        s, gi = _dimer_solver(self.d, files, flex_sigma_hermitian_projection=proj, **self._PAR)
+        gi["sigma_init"] = _antisymmetric((1, 16, 36, 2, 2), 1e-2)
+        with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+            s.solve(gi, self.d)
+        return s, [m for m in cm.output if m.startswith("WARNING")]
+
+    def test_unprojected_converges_to_the_broken_branch(self):
+        s, warn = self._run(False)
+        self.assertTrue(s.scf_converged)
+        self.assertGreater(_rel_dev(s.sigma), 0.1)
+        self.assertGreater(s.sigma_final_hermitian_deviation, 0.1)
+        self.assertGreater(_max_im_eig(s.sigma), 0.01)
+        # the seed warning and the end-of-solve warning, both naming the branch
+        self.assertTrue(any("sigma_init violates" in m and "non-causal" in m for m in warn))
+        self.assertTrue(any("final self-energy violates" in m and "non-causal" in m
+                            for m in warn))
+
+    def test_projected_stays_symmetric_and_causal(self):
+        s, warn = self._run(True)
+        self.assertEqual(_rel_dev(s.sigma), 0.0)
+        self.assertLess(_max_im_eig(s.sigma), 0.0)
+        self.assertFalse(any("final self-energy violates" in m for m in warn))
+
+
+class TestEquivariance(_TmpDir):
+    """F(S Sigma) = S F(Sigma) for one unprojected map step from a random
+    asymmetric seed (S: Sigma -> Sigma(k, -i w)^dag), on the dimer without
+    inversion and with complex inter-orbital hopping: the symmetric
+    subspace is invariant, and an asymmetric fixed point comes with its S
+    image."""
+
+    def _map(self, files, scheme, seed):
+        s, gi = _dimer_solver(self.d, files, scheme=scheme, IterationMax=1, Mix=1.0,
+                              flex_sigma_hermitian_projection=False)
+        gi["sigma_init"] = seed
+        _solve(s, gi, self.d)
+        return np.asarray(s.sigma)
+
+    def test_one_map_step(self):
+        for scheme, V in (("reduced", None), ("general", 0.4)):
+            with self.subTest(scheme=scheme):
+                files = _write_dimer(self.d, 1.5, V=V)
+                rng = np.random.default_rng(5)
+                shape = (1, 16, 16, 2, 2)
+                sym = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+                sym = 0.05 * fm.project_frequency_hermitian(sym) / np.abs(sym).max()
+                seed = sym + _antisymmetric(shape, 0.02, seed=9)
+                f = self._map(files, scheme, seed)
+                fs = self._map(files, scheme, fm.frequency_reversed_dagger(seed))
+                self.assertGreater(_rel_dev(f), 1e-3)          # not vacuous
+                scale = float(np.abs(f).max())
+                np.testing.assert_allclose(fs, fm.frequency_reversed_dagger(f), rtol=0,
+                                           atol=1e-12 * scale)
 
 
 class TestFixedPointUnchanged(_TmpDir):
@@ -364,8 +475,8 @@ class TestSeedProjection(_TmpDir):
         gi.update(s.read_init({"path_to_input": self.d, "sigma_init": "seed.npz"}))
         with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
             s.solve(gi, self.d)
-        self.assertTrue(any("far from the self-energy of a Hermitian problem" in m
-                            for m in cm.output))
+        self.assertTrue(any("not the self-energy of this Hermitian problem" in m
+                            and "non-causal" in m for m in cm.output))
         self.assertEqual(_rel_dev(s.sigma), 0.0)
 
 
@@ -409,6 +520,42 @@ class TestSigmaSplitSymmetrization(_TmpDir):
         self.assertFalse(os.path.exists(os.path.join(self.d, "large_out.npz")))
         summ = self._convert("large", asymmetry_tol=0.1)
         self.assertGreater(summ["asymmetry"], 0.5e-2)
+
+    def test_check_mode(self):
+        from hwave.sigma_split import main
+        with self.assertLogs("hwave_sigma_split", level="INFO") as cm:
+            self.assertEqual(main(["--check", os.path.join(self.d, "small.npz")]), 0)
+        self.assertTrue(any("relative deviation" in m and "uniform grid" in m for m in cm.output))
+        with _quiet():
+            self.assertEqual(main(["--check", os.path.join(self.d, "large.npz")]), 1)
+            self.assertEqual(main(["--check", os.path.join(self.d, "large.npz"),
+                                   "--asymmetry-tol", "0.1"]), 0)
+            # --check writes nothing and takes no conversion options
+            self.assertEqual(main(["--check", os.path.join(self.d, "small.npz"),
+                                   os.path.join(self.d, "x.npz")]), 1)
+            self.assertEqual(main(["--check", os.path.join(self.d, "small.npz"),
+                                   "--zero-static"]), 1)
+            self.assertFalse(os.path.exists(os.path.join(self.d, "x.npz")))
+
+    def test_frequency_metadata_is_checked(self):
+        data = dict(np.load(os.path.join(self.d, "small.npz")))
+        nf = data["sigma"].shape[1]
+        self.assertTrue(np.array_equal(data["freq_index"], np.arange(nf)))
+        bad = {"restricted": dict(data, freq_index=np.arange(nf - 1)),
+               "ir_asym": dict(data, ir_freq_n=np.arange(-nf + 1, nf + 1, 2) + 2)}
+        for name, members in bad.items():
+            with self.subTest(name=name):
+                np.savez(os.path.join(self.d, name + ".npz"), **members)
+                with self.assertRaisesRegex(ValueError, "reversing the frequency axis"):
+                    self._convert(name)
+        # a symmetric IR node set is accepted
+        np.savez(os.path.join(self.d, "ir_sym.npz"),
+                 **dict(data, ir_freq_n=np.arange(-nf + 1, nf + 1, 2)))
+        self._convert("ir_sym")
+        # no metadata: taken as the full centred grid
+        nometa = {k: v for k, v in data.items() if k != "freq_index"}
+        np.savez(os.path.join(self.d, "nometa.npz"), **nometa)
+        self.assertGreater(self._convert("nometa")["asymmetry"], 0.5e-5)
 
     def test_cli(self):
         from hwave.sigma_split import main
