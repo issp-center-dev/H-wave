@@ -844,13 +844,19 @@ def _release_device_store(store, *, last_group, xp):
     residency, whose matvecs are several times slower. ``chibar`` is
     released when no later pairing group re-dresses it, the remaining slots
     move to host memory -- exactly the state of a host store, so the kernel
-    is built as on the host-store path -- and the pool is emptied. A no-op
-    for a host store."""
+    is built as on the host-store path -- and the pool is emptied. chibar is
+    released after the last group also when an earlier group already moved
+    the store to the host (or the store was a host store), so it is not
+    held through the last kernel and its eigensolver."""
     from . import backend as _bk
-    if getattr(store, "resident", "host") != "device":
-        return
+    if getattr(store, "resident", None) is None:
+        return                       # not a BondBlockStore (no residency)
     if last_group:
+        # also when an earlier group already moved the store to the host:
+        # chibar is not read again (release_slot is idempotent)
         store.release_slot("chibar")
+    if store.resident != "device":
+        return
     moved = store.nbytes
     store.to_host()
     if xp is not np:

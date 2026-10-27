@@ -299,7 +299,7 @@ class TestTransportFromADeviceStore(unittest.TestCase):
 _PAIRING_MARK = []
 
 
-def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None):
+def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None, eli=None):
     """One bond-gate FLEX solve of tests/test_bond_half_grid's "UV" fixture on
     the fake device (frequency batch pinned to 3 there); returns the solver,
     green_info, the archives and the fake's transfer record. The record
@@ -320,7 +320,7 @@ def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None
             setup(cp)
         with mock.patch.object(io, "run_inprocess_pairing", marked):
             s, gi, files = _run("UV", par, half=half,
-                                eli=None if pairing == "none" else _ELI_UNIFORM)
+                                eli=None if pairing == "none" else (eli or _ELI_UNIFORM))
         return s, gi, files, list(cp.transfers)
 
 
@@ -374,15 +374,48 @@ def _assert_same_outputs(test, a, b):
                 np.testing.assert_array_equal(x, y, err_msg="{}:{}".format(fn, m))
             else:
                 test.assertTrue(np.array_equal(x, y), (fn, m))
-    for k in set(gia) | set(gib):
-        x, y = gia.get(k), gib.get(k)
-        if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
-            test.assertFalse(is_device(x) or is_device(y), k)
-            if _is_eig(str(k)):
-                ph = (_phase(gia[str(k)], gib[str(k)]) if str(k).endswith("_gap") else 1.0)
-                _close_modulo_phase(test, x, y, k, ph)
-                continue
-            np.testing.assert_array_equal(np.asarray(x), np.asarray(y), err_msg=str(k))
+    test.assertEqual(sorted(map(str, gia)), sorted(map(str, gib)))
+    for k in gia:
+        key = str(k)
+        phase = 1.0
+        if _is_eig(key):
+            gname = "pairing_{}_gap".format(key.split("_")[1]) if key.startswith("pairing_") \
+                else None
+            if gname in gia and gname in gib:
+                phase = _phase(gia[gname], gib[gname])
+        _cmp_value(test, gia[k], gib[k], key, _is_eig(key), phase)
+
+
+def _cmp_value(test, x, y, key, eig, phase):
+    """One green_info value: dicts member by member, arrays and numbers
+    bit for bit -- except, under a pairing key, the floating-point results
+    of the eigensolver (to _EIG_TOL, a gap-like member modulo the gap's
+    phase); strings, flags, integers and metadata exactly."""
+    if isinstance(x, dict) or isinstance(y, dict):
+        test.assertTrue(isinstance(x, dict) and isinstance(y, dict), key)
+        test.assertEqual(sorted(x), sorted(y), key)
+        for m in x:
+            _cmp_value(test, x[m], y[m], "{}.{}".format(key, m), eig, phase)
+        return
+    if isinstance(x, np.ndarray) or isinstance(y, np.ndarray):
+        test.assertFalse(is_device(x) or is_device(y), key)
+        x, y = np.asarray(x), np.asarray(y)
+        if eig and x.dtype.kind in "fc":
+            leaf = key.rsplit(".", 1)[-1]
+            _close_modulo_phase(test, x, y, key, phase if "gap" in leaf and
+                                "weights" not in leaf else 1.0)
+        else:
+            test.assertEqual(x.shape, y.shape, key)
+            test.assertEqual(x.dtype, y.dtype, key)
+            np.testing.assert_array_equal(x, y, err_msg=key)
+        return
+    test.assertEqual(type(x), type(y), key)
+    if eig and isinstance(x, (float, np.floating, complex, np.complexfloating)):
+        test.assertLessEqual(abs(x - y), _EIG_TOL * max(abs(x), 1e-300), key)
+    elif isinstance(x, (float, np.floating)) and np.isnan(x):
+        test.assertTrue(np.isnan(y), key)
+    else:
+        test.assertEqual(x, y, key)
 
 
 class TestEndToEnd(unittest.TestCase):
@@ -540,6 +573,116 @@ class TestStoreLeavesTheDeviceBeforeThePairingKernel(unittest.TestCase):
         # leaves the kernel no room, which is the situation the release fixes
         _kept, res_k = self._run("device", release=False)
         self.assertEqual(res_k, ["host"])
+
+
+def _store_spy():
+    """Patch the block store with a subclass that records its slot releases
+    and, at every pairing kernel's construction, the state of the store."""
+    from hwave.solver import eliashberg_bond as eb, flex_bond as fb
+    events, stores = [], []
+    real_store, real_init = fb.BondBlockStore, eb.BondPairKernel.__init__
+
+    class Spy(real_store):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            stores.append(self)
+
+        def release_slot(self, name):
+            events.append(("release", name, self.resident))
+            return super().release_slot(name)
+
+        def to_host(self):
+            events.append(("to_host", None, self.resident))
+            return super().to_host()
+
+    def init(kself, vertex, *a, **k):
+        st = stores[-1]
+
+        def alive(name):
+            try:
+                st.get_freq_batch(name, 0, 1)
+                return True
+            except KeyError:
+                return False
+        events.append(("kernel", {"chibar": alive("chibar"), "W": alive("W")}, st.resident))
+        return real_init(kself, vertex, *a, **k)
+    return events, [mock.patch.object(fb, "BondBlockStore", Spy),
+                    mock.patch.object(eb.BondPairKernel, "__init__", init)]
+
+
+class TestStoreReleaseOrder(unittest.TestCase):
+    """What the pairing reads from a device store, and when it lets go."""
+
+    def _events(self, eli, extra=None):
+        events, patches = _store_spy()
+        with contextlib.ExitStack() as st:
+            for p in patches:
+                st.enter_context(p)
+            out = _solve("device", "both", extra=extra, eli=eli)
+        self.assertFalse(any("error" in str(k) for k in out[1]), list(out[1]))
+        return events
+
+    def test_uniform_both(self):
+        """Two groups: the first kernel sees chibar kept (on the host, for the
+        second group's re-dressing) and W; after the second vertex chibar is
+        released while W, the vertex, stays."""
+        ev = self._events(None)
+        self.assertEqual(ev, [
+            ("to_host", None, "device"),
+            ("kernel", {"chibar": True, "W": True}, "host"),
+            ("release", "chibar", "host"),
+            ("kernel", {"chibar": False, "W": True}, "host")])
+
+    def test_ir_both(self):
+        """One group: W is dropped before the IR coefficients are built, then,
+        once they are, chibar is released and the (empty) store leaves the
+        device before both kernels."""
+        from tests.test_bond_half_grid import _ELI_IR
+        ev = self._events(_ELI_IR, {"Nmat": 16})
+        self.assertEqual(ev, [
+            ("release", "W", "device"),
+            ("release", "chibar", "device"),
+            ("to_host", None, "device"),
+            ("kernel", {"chibar": False, "W": False}, "host"),
+            ("kernel", {"chibar": False, "W": False}, "host")])
+
+
+class TestKernelMatvecsAgree(unittest.TestCase):
+    """The pairing kernels built from a device store and from a host store:
+    their vertex blocks (uniform) or coefficients (IR) and a deterministic
+    matvec, before any eigensolver runs -- bit for bit on the fake."""
+
+    def _kernels(self, store, pairing, half, eli, extra):
+        from tests.test_bond_half_grid import _capture_kernels
+        recs = []
+        with _capture_kernels(recs):
+            _solve(store, pairing, half, extra=extra, eli=eli)
+        return recs
+
+    def _check(self, eli, extra):
+        for pairing in ("singlet", "triplet", "both"):
+            for half in (False, True):
+                with self.subTest(pairing=pairing, half=half):
+                    h = self._kernels("host", pairing, half, eli, extra)
+                    d = self._kernels("device", pairing, half, eli, extra)
+                    self.assertEqual(len(h), 2 if pairing == "both" else 1)
+                    self.assertEqual(len(h), len(d))
+                    for a, b in zip(h, d):
+                        self.assertEqual(sorted(a, key=str), sorted(b, key=str))
+                        for k in a:
+                            if a[k] is None:
+                                self.assertIsNone(b[k])
+                            else:
+                                np.testing.assert_array_equal(np.asarray(b[k]),
+                                                              np.asarray(a[k]), err_msg=str(k))
+
+    def test_uniform(self):
+        self._check(None, None)
+
+    @heavy
+    def test_ir(self):
+        from tests.test_bond_half_grid import _ELI_IR
+        self._check(_ELI_IR, {"Nmat": 16})
 
 
 class TestOutOfMemoryFallback(unittest.TestCase):
