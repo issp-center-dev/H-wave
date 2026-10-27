@@ -926,14 +926,14 @@ TOML形式
 
   **説明 :** UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の\ ``file.output.rpa``\ に指定した出力ファイルのファイル名を指定します。
 
-  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは使われません。``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
+  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は\ ``hwave_sc``\ 自身が\ :math:`\chi_0(\mathbf{q})`\ を計算する場合、すなわち\ ``chi0q_mode = "calc"``\ またはボンド経路に限られ、\ ``chi0q_mode = "load"``\ ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは使われません。``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
 
 
 - ``green_init``
 
   **形式 :** str型
 
-  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。
+  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。\ ``green_init``\ のバンドは Hartree 項のみを含むため、Fock 項がある場合は\ ``trans_mod``\ を推奨します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。
 
 - ``sigma_init``
 

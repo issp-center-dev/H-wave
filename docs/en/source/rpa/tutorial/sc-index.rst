@@ -166,10 +166,12 @@ This section controls the Eliashberg solver. Key parameters:
      ``coeff_tail = 1.0``. The chi0q file records the value it was produced
      with, and ``hwave_sc`` warns on a mismatch when loading.
 
+  .. _sc_mean_field_band_note:
+
   .. note::
 
-     **Mean-field one-body band.** ``[file.input] trans_mod`` (the one-body
-     Hamiltonian written by UHFk) replaces the ``Transfer`` band;
+     **Mean-field one-body band: assembly.** ``[file.input] trans_mod`` (the
+     one-body Hamiltonian written by UHFk) replaces the ``Transfer`` band;
      ``green_init`` adds its Hartree term to the ``Transfer`` band; an
      ``Extern`` field (``coeff_extern`` times the table) is added on top. With
      ``chi0q_mode = "calc"`` or ``"load"`` (including
@@ -177,24 +179,45 @@ This section controls the Eliashberg solver. Key parameters:
      ``hwave_sc`` uses this assembled band for
      :math:`\chi_0(\mathbf{q})`, for the chemical potential and for the Green
      function of the pairing kernel, so all three describe the same
-     Hamiltonian. For ``"load"``, give the same ``trans_mod`` /
-     ``green_init`` / ``Extern`` as the RPA run that wrote the chi0q file. The keys are
-     case-insensitive. Only a spin-independent band is supported, because the
-     singlet/triplet pairing kernel has no spin index. A spin-dependent band
-     (a magnetic ``trans_mod`` or ``green_init``, or a finite ``Extern`` field)
-     is refused with an error before :math:`\chi_0(\mathbf{q})` is computed or
-     loaded. The check is made on the assembled one-body band (``trans_mod``,
-     or the ``Transfer`` band plus the Hartree term of ``green_init``,
-     plus ``coeff_extern`` times ``Extern``): its up-up and down-down blocks
-     may differ, and its spin-mixing blocks may be nonzero, by at most an
-     absolute :math:`10^{-10}` in energy units. All entries must be finite.
-     A band whose :math:`\max|H - H^\dagger|` exceeds
+     Hamiltonian. The keys are case-insensitive. Only a spin-independent band
+     is supported, because the singlet/triplet pairing kernel has no spin
+     index.
+
+     **Spin check and** ``spin_free_tol``. A spin-dependent band (a magnetic
+     ``trans_mod`` or ``green_init``, or a finite ``Extern`` field) is refused
+     with an error before :math:`\chi_0(\mathbf{q})` is computed or loaded.
+     The check is made on the assembled one-body band (``trans_mod``, or the
+     ``Transfer`` band plus the Hartree term of ``green_init``, plus
+     ``coeff_extern`` times ``Extern``): its up-up and down-down blocks may
+     differ, and its spin-mixing blocks may be nonzero, by at most an
+     absolute :math:`10^{-10}` in energy units. This tolerance is the default
+     of ``spin_free_tol`` (below), which can raise or lower it. All entries
+     must be finite. A band whose :math:`\max|H - H^\dagger|` exceeds
      :math:`\max(10^{-10}, 10^{-6}\max|H|)` is refused; a smaller deviation
      above :math:`10^{-10}` (for example :math:`\pm R` rows rounded
      independently) is replaced by the Hermitian part
-     :math:`(H + H^\dagger)/2`, with a warning; with ``chi0q_mode = "load"``
-     any deviation above :math:`10^{-10}` is refused instead, because the
-     loaded chi0q was computed on the raw band. The ``green_init`` band is
+     :math:`(H + H^\dagger)/2`, with a warning. The ``green_init`` Green
+     function itself must also be spin-independent in every cell (up-up equal
+     to down-down, no spin-mixing block) within
+     :math:`\max(10^{-10}, \texttt{spin\_free\_tol})` on its dimensionless
+     entries: a magnetic ``green_init`` describes a magnetic state, whatever
+     the spin direction, and is refused (issue #88). A paramagnetic UHF
+     solution converged only loosely (for example ``EPS = 6`` from a random
+     start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
+     convergence, start UHF from a spin-symmetric state, or raise
+     ``spin_free_tol``. The spin-polarized case is tracked in issue #88.
+
+     **Behaviour with** ``load``, **bond and FLEX inputs.** For ``"load"``,
+     give the same ``trans_mod`` / ``green_init`` / ``Extern`` as the RPA run
+     that wrote the chi0q file; there any deviation from Hermiticity above
+     :math:`10^{-10}` is refused instead of being replaced by the Hermitian
+     part, because the loaded chi0q was computed on the raw band. With
+     ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``, and with an
+     external ``bond_green``, these keys are not used and a warning says so:
+     the susceptibilities and the Green function come from the FLEX run or
+     from the ``bond_green`` file.
+
+     **Hartree-only** ``green_init``. The ``green_init`` band is
      :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
      term), so it differs from the ``trans_mod`` UHFk writes for the same
      solution whenever Fock terms are present: for any ``CoulombInter``,
@@ -202,22 +225,7 @@ This section controls the Eliashberg solver. Key parameters:
      (:math:`R \neq 0`, or between orbitals on different sites per
      ``[mode.param] orbital_site``), or the ``CoulombInter`` part of
      ``Coulomb``. A warning then recommends ``trans_mod``, which is the
-     preferred input. The ``green_init`` Green function itself must also be
-     spin-independent in every cell (up-up equal to down-down, no
-     spin-mixing block) within :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`
-     on its dimensionless entries: a magnetic ``green_init`` describes a
-     magnetic state, whatever the spin direction, and is refused (issue
-     #88). For a paramagnetic state, ``trans_mod`` from UHFk is the
-     consistent input.
-     A paramagnetic UHF
-     solution converged only loosely (for example ``EPS = 6`` from a random
-     start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
-     convergence, start UHF from a spin-symmetric state, or raise
-     ``spin_free_tol`` (below). The spin-polarized case is tracked in
-     issue #88. With ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``,
-     and with an external ``bond_green``, these keys are not used and a
-     warning says so: the susceptibilities and the Green function come from
-     the FLEX run or from the ``bond_green`` file.
+     preferred input and, for a paramagnetic state, the consistent one.
 
   .. warning::
 
