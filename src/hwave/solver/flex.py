@@ -41,6 +41,7 @@ from . import backend as _bk
 from . import bubble
 from . import spin_orbital
 from . import matsubara as _ms
+from . import half_grid as _half_grid
 
 
 def _eigvals_small(M):
@@ -745,6 +746,19 @@ class FLEX(RPA):
                         "when resuming from a Phase B sigma archive, or fold the mean field "
                         "into the archive's sigma_static with hwave_sigma_split".format(env.file_name))
                 static, fluct = flex_hf.validate_split_seed(env, expected_shape)
+                if getattr(self, "longitudinal_bond_half_grid", False):
+                    # issue #223: the half grid rebuilds nu < 0 from
+                    # chibar(-i nu) = chibar(i nu)^dagger, which needs
+                    # G(k, -i w) = G(k, i w)^dagger, i.e. a seed with
+                    # Sigma(k, -i w) = Sigma(k, i w)^dagger
+                    dev = _half_grid.seed_mirror_deviation(fluct)
+                    if dev > FLEX._HALF_GRID_SEED_TOL:
+                        raise ValueError(
+                            "sigma_init '{}': longitudinal_bond_half_grid = true needs a seed "
+                            "with sigma_fluct(k, -i w) = sigma_fluct(k, i w)^dagger, but the "
+                            "relative deviation is {:.3e} (tolerance {:.0e}); use a seed from a "
+                            "converged run or set longitudinal_bond_half_grid = false.".format(
+                                env.file_name, dev, FLEX._HALF_GRID_SEED_TOL))
                 diag = flex_hf.split_tail_diagnostic(fluct, nmat)
                 if diag is not None and diag[0] > 0.1 and diag[1] > 1e-8:
                     logger.warning(
@@ -1755,7 +1769,7 @@ class FLEX(RPA):
                      "_bond_split", "_bond_view", "_bond_S", "_bond_C",
                      "_bond_types", "_bond_w2", "_bond_w2_xp", "_bond_w2_entries",
                      "_bond_last", "_bond_est", "_bond_est_kwargs", "_bond_nb",
-                     "_bond_xp_name",
+                     "_bond_xp_name", "_bond_mirror_guarded",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
                      "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
@@ -2041,8 +2055,10 @@ class FLEX(RPA):
             logger.info(
                 "longitudinal_bond_half_grid = true: the bond block store keeps the %d "
                 "non-negative bosonic frequencies of Nmat = %d (the others are rebuilt from "
-                "X(q, l) = X(q, Nmat - l)^dagger); the conditioning guard, cond_min and the "
-                "guard statistics cover those solved frequencies only.",
+                "X(q, l) = X(q, Nmat - l)^dagger). The guard's refusals, warnings and cond_min "
+                "cover the whole grid (the nu < 0 denominators are guarded on their own unless "
+                "time reversal makes their scores those of nu > 0 ones); the guard statistics "
+                "count the stored frequencies.",
                 est["nslices"], est["nmat"])
         if self.longitudinal_bond_guard_freqs == "static":
             logger.warning(
@@ -2267,6 +2283,9 @@ class FLEX(RPA):
     #: (issue #223), relative to max(1, max |V|); the vertices are exactly
     #: Hermitian for every input the gate admits
     _HALF_GRID_HERMITIAN_TOL = 1.0e-14
+    #: the tolerance of Sigma(k, -i w) = Sigma(k, i w)^dagger of a sigma_init
+    #: seed under the half grid (issue #223), relative to max(1, max |Sigma|)
+    _HALF_GRID_SEED_TOL = 1.0e-10
 
     @staticmethod
     def _check_bond_vertices_hermitian(S, C):
@@ -2705,6 +2724,25 @@ class FLEX(RPA):
                          _bk.device_pool_used_bytes() / flex_bond._GIB, exc)
             raise
         self._bond_last = res
+        if res.mirror_guarded is not None:
+            # issue #223: one line on the first map and whenever the decision
+            # changes (the relation is re-checked on every map's chibar)
+            prev = getattr(self, "_bond_mirror_guarded", None)
+            if prev is None or prev != res.mirror_guarded:
+                if res.mirror_guarded:
+                    logger.info(
+                        "longitudinal_bond_half_grid (map %d): chibar(q)^T = chibar(-q) does "
+                        "not hold (relative deviation %.3e > %.0e; time reversal is broken), so "
+                        "the mirrored frequencies nu < 0 are guarded on their own.", iteration,
+                        res.time_reversal_deviation, _half_grid.TIME_REVERSAL_RTOL)
+                else:
+                    logger.info(
+                        "longitudinal_bond_half_grid (map %d): chibar(q)^T = chibar(-q) and "
+                        "V(q)^T = V(-q) hold (relative deviation %.3e <= %.0e), so every "
+                        "conditioning score at nu < 0 equals one at nu > 0 and the mirrored "
+                        "frequencies are not guarded separately.", iteration,
+                        res.time_reversal_deviation, _half_grid.TIME_REVERSAL_RTOL)
+            self._bond_mirror_guarded = res.mirror_guarded
         # the transient violations this map was allowed to pass (issue #199)
         self.flex_guard_violations += int(res.guard_violations)
         # the conditioning guard's exact-decomposition counts (issue #197):

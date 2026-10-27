@@ -413,16 +413,29 @@ TOML形式
   ``true``\ のときはブロックストアに\ ``Nmat/2 + 1``\ 個の振動数
   :math:`\nu \ge 0`\ （ゼロ振動数と格子の最後のスロットを含む）だけを
   保持し、残りは読み出す場所（自己エネルギー、チャネル 0 の感受率、
-  出力）で再構成します。ボンドストアとドレス（条件数ガードを含む）の
-  メモリと時間はおよそ半分になり、バブルと自己エネルギーの輸送は
-  変わりません。結果は\ ``false``\ と丸め誤差の範囲（相対
-  :math:`10^{-13}`\ 程度）で一致します。意味が変わる診断量が二つあります。
-  ``cond_min``\ （ログと\ ``longitudinal_bond_cond_min_s`` / ``_c``\ ）は
-  解いた振動数 :math:`\nu \ge 0`\ についての最小値になり、ガードの統計
+  出力）で再構成します。結果は\ ``false``\ と丸め誤差の範囲（相対
+  :math:`10^{-13}`\ 程度）で一致します。条件数ガードは引き続き全振動数を
+  対象とします。\ :math:`-\nu`\ での分母は
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`\ であり、その特異値は一般に
+  :math:`+\nu`\ のものと異なるため、ガードの拒否と警告（および
+  ``longitudinal_bond_guard_freqs = "static"``\ での解の残差のもの）は
+  ``false``\ のときと同じ振動数と :math:`q`\ 点を示し、\ ``cond_min``
+  （ログと\ ``longitudinal_bond_cond_min_s`` / ``_c``\ ）は全振動数に
+  ついての最小値です。バブルとバーテックスが
+  :math:`\bar\chi(q)^T = \bar\chi(-q)`\ と :math:`V(q)^T = V(-q)`\ を
+  満たす場合（時間反転対称性：実数のホッピングと相互作用。各写像で
+  検査します）は、\ :math:`-\nu`\ の各スコアが :math:`+\nu`\ （\ :math:`-q`\ ）
+  のスコアと一致するので、負の振動数を別に分解することはしません。この
+  とき拒否はその相手の位置を示します。このときボンドストアのメモリと、
+  ガードを含むドレスの時間はおよそ半分になります。時間反転対称性が
+  破れている場合もストアは半分になりますが、ドレスの節約は 2 割程度
+  です。バブルと自己エネルギーの輸送は変わりません。ガードの統計
   （\ ``longitudinal_bond_guard_blocks_per_iteration``\ 、
-  ``longitudinal_bond_guard_exact_blocks_*``\ ）はそれらの振動数だけを
+  ``longitudinal_bond_guard_exact_blocks_*``\ ）は保存した振動数だけを
   数えます。このような出力には\ ``longitudinal_bond_half_grid = true``\ が
-  記録されます。動的ボンドアーカイブ（\ ``longitudinal_bond_output_full``\ ）
+  記録されます。\ ``sigma_init``\ の種は
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`\ を満たす
+  必要があります。動的ボンドアーカイブ（\ ``longitudinal_bond_output_full``\ ）
   は全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
   bool 値のみ受け付けます。\ ``longitudinal_bond_pairing``\ が
   ``"none"``\ 以外の場合（プロセス内ペアリングはまだ半分の格子に対応して

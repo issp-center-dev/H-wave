@@ -607,18 +607,24 @@ a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
 the ``Nmat/2 + 1`` non-negative bosonic frequencies in the bond store and
 rebuilds the others from :math:`X(q, -\nu) = X(q, \nu)^\dagger` where they
 are read, so the bond buffers (and the ``longitudinal_bond_output_full``
-buffers) take about half the memory and the dressing with its conditioning
-guard about half the time; the bubble and the self-energy transport cost
-the same. On the CPU, for a two-orbital model with five bond channels on a
-16 x 16 mesh, the dressing went from 2.3 s to 1.2 s and the whole two-map
-solve from 3.0 s to 1.9 s at ``Nmat = 64`` (4.6 s to 2.3 s and 6.1 s to
-3.8 s at ``Nmat = 128``). The results agree with the full grid to
-round-off; ``cond_min`` and the guard statistics then refer to
-:math:`\nu \ge 0` only, and the outputs record
-``longitudinal_bond_half_grid = true``. The option is off by default, and
-the in-process pairing (``longitudinal_bond_pairing``) does not support it
-yet: such a run is refused. Pair the archive of a half-grid run with
-``hwave_sc`` instead, which reads it as an ordinary full-grid archive.
+buffers) take about half the memory. The conditioning guard still covers
+the whole grid: its refusals, warnings and ``cond_min`` are those of the
+full grid. With time-reversal symmetry (real hopping and interactions,
+checked on every map) every score at :math:`-\nu` is also one at
+:math:`+\nu`, so only the stored half is dressed and guarded; on the CPU,
+for a two-orbital model with five bond channels on a 16 x 16 mesh, the
+dressing went from 2.1 s to 1.1 s and the whole two-map solve from 2.9 s to
+1.7 s at ``Nmat = 64`` (4.1 s to 2.2 s and 5.5 s to 3.6 s at
+``Nmat = 128``). With broken time reversal (complex hopping) the negative
+frequencies are guarded on their own and the dressing saves about 20 %
+(4.2 s to 3.5 s at ``Nmat = 128``). The bubble and the self-energy
+transport cost the same. The results agree with the full grid to
+round-off; the guard statistics count the stored frequencies, and the
+outputs record ``longitudinal_bond_half_grid = true``. The option is off by
+default, and the in-process pairing (``longitudinal_bond_pairing``) does
+not support it yet: such a run is refused. Pair the archive of a half-grid
+run with ``hwave_sc`` instead, which reads it as an ordinary full-grid
+archive.
 
 The run is accepted only when the three residuals of the split state stay
 below ``EPS`` for three consecutive iterations; the log prints them with a

@@ -481,15 +481,30 @@ that has no effect under the current settings.
   ``Nmat/2 + 1`` frequencies :math:`\nu \ge 0` (the zero frequency and
   the last slot of the grid included) and rebuilds the others where they
   are read: in the self-energy, in the channel-0 susceptibilities and in
-  the outputs. The bond store and the dressing (with its conditioning
-  guard) take about half the memory and time; the bubble and the
-  self-energy transport are unchanged. The results agree with ``false``
-  to round-off (about :math:`10^{-13}` relative). Two diagnostics change
-  meaning: ``cond_min`` (log and ``longitudinal_bond_cond_min_s`` /
-  ``_c``) is the minimum over the solved frequencies :math:`\nu \ge 0`,
-  and the guard statistics (``longitudinal_bond_guard_blocks_per_iteration``,
-  ``longitudinal_bond_guard_exact_blocks_*``) count those frequencies
-  only; such outputs carry ``longitudinal_bond_half_grid = true``. The
+  the outputs. The results agree with ``false`` to round-off (about
+  :math:`10^{-13}` relative). The conditioning guard still covers the
+  whole grid: the denominator at :math:`-\nu` is
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`, whose singular values in
+  general differ from those at :math:`+\nu`, so its refusals and
+  warnings (and those of the solve residual under
+  ``longitudinal_bond_guard_freqs = "static"``) name the same frequency
+  and q-point as with ``false``, and ``cond_min`` (log and
+  ``longitudinal_bond_cond_min_s`` / ``_c``) is the minimum over the
+  whole grid. When the bubble and the vertices satisfy
+  :math:`\bar\chi(q)^T = \bar\chi(-q)` and :math:`V(q)^T = V(-q)`
+  (time-reversal symmetry: real hopping and interactions), which is
+  checked on every map, each score at :math:`-\nu` equals one at
+  :math:`+\nu` (at :math:`-q`), and the negative frequencies are not
+  decomposed separately; a refusal then names that partner. The bond
+  store then takes about half the memory and the dressing with its guard
+  about half the time; with broken time reversal the store is still
+  halved but the dressing saves only about 20 %. The bubble and the
+  self-energy transport are unchanged. The guard statistics
+  (``longitudinal_bond_guard_blocks_per_iteration``,
+  ``longitudinal_bond_guard_exact_blocks_*``) count the stored
+  frequencies only; such outputs carry ``longitudinal_bond_half_grid =
+  true``. A ``sigma_init`` seed must satisfy
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`. The
   dynamic bond archive (``longitudinal_bond_output_full``) still holds the
   full grid, so it is read by ``hwave_sc`` as before. Only booleans are
   accepted. Refused with ``longitudinal_bond_pairing`` other than

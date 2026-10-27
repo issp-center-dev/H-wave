@@ -228,6 +228,9 @@ class _OracleCase(unittest.TestCase):
         # the half run stored nmat/2+1 slices, published the provenance key
         # and the full-grid archive
         self.assertTrue(sh.longitudinal_bond_half_grid)
+        # the mirrored slices are guarded on their own exactly when time
+        # reversal is broken (complex hopping)
+        self.assertIs(sh._bond_last.mirror_guarded, case.startswith("complex_t"))
         self.assertNotIn("longitudinal_bond_half_grid", gf)
         self.assertTrue(bool(gh["longitudinal_bond_half_grid"]))
         if save:
@@ -778,6 +781,323 @@ class TestArchiveRoundTrip(unittest.TestCase):
         self.assertLessEqual(_rel(chi[False], chi[True]), _TOL)
         self.assertTrue(np.isfinite(lam[False]))
         self.assertLessEqual(abs(lam[True] - lam[False]), 1e-10 * max(1.0, abs(lam[False])))
+
+
+# ---------------------------------------------------------------------------
+# the mirrored slices' own conditioning (time reversal broken / preserved)
+# ---------------------------------------------------------------------------
+
+def _score(m):
+    """The guard score of a block stack, from numpy.linalg.svd (independent
+    of the production scorer): min(smin/smax, smin/max(1, smax))."""
+    sv = np.linalg.svd(m, compute_uv=False)
+    smax, smin = sv[..., 0], sv[..., -1]
+    return np.minimum(smin / smax, smin / np.maximum(1.0, smax))
+
+
+def _unitary(rng, n):
+    q, _ = np.linalg.qr(rng.normal(size=(n, n)) + 1j * rng.normal(size=(n, n)))
+    return q
+
+
+_NMAT, _NVOL, _ND = 8, 4, 4          # spatial (4, 1, 1); norb = 2, one channel
+_LP, _QP = 6, 1                       # the planted STORED block (nu > 0)
+
+
+def _planted_map(trs, delta=1e-3, seed=330):
+    """A synthetic full-grid bubble with X(q, l) = X(q, nmat - l)^dagger and a
+    real symmetric spin vertex W (V(-q) = V(q)^T). One stored block (q = 1,
+    l = 6) has the spin denominator 1 - X W = E with score ``delta``; its
+    mirror (q = 1, l = 2) is 1 - X^dagger W, whose score is ~500x smaller
+    (W has condition number ~30). ``trs``: also impose X(-q) = X(q)^T (time
+    reversal), which puts the mirror's score at the stored block (q = 3,
+    l = 6); otherwise every other block is random and small."""
+    from hwave.solver import half_grid as hg
+    rng = np.random.default_rng(seed)
+    n = _ND
+    O, _ = np.linalg.qr(rng.normal(size=(n, n)))
+    W = O @ np.diag([1.0, 0.6, 0.3, 0.03]) @ O.T                 # real symmetric
+    E = _unitary(rng, n) @ np.diag([1.0, 0.9, 0.8, delta]) @ _unitary(rng, n)
+    M = -(E - np.eye(n)) @ np.linalg.inv(W)                      # spin: 1 - M W = E
+    x = 0.02 * (rng.normal(size=(_NMAT, _NVOL, n, n)) + 1j * rng.normal(size=(_NMAT, _NVOL, n, n)))
+    mq = hg.minus_q_index((_NVOL, 1, 1))
+    stored = hg.grid_index(_NMAT)
+    for l in stored:
+        if trs:
+            x[l] = 0.5 * (x[l] + x[l][mq].swapaxes(-1, -2))
+        if l in (0, _NMAT // 2):
+            x[l] = 0.5 * (x[l] + np.conj(x[l]).swapaxes(-1, -2))
+            if trs:
+                x[l] = 0.5 * (x[l] + x[l][mq].swapaxes(-1, -2))
+    x[_LP, _QP] = M
+    if trs:
+        x[_LP, mq[_QP]] = M.T
+    hg.fill_mirror(x, _NMAT)
+    S = np.broadcast_to(W, (_NVOL, n, n)).astype(complex).copy()
+    C = np.broadcast_to(0.1 * np.eye(n), (_NVOL, n, n)).astype(complex).copy()
+    return x, S, C
+
+
+def _map_run(x, S, C, half, cond_tol, nb=3, **kw):
+    """One dress_and_build_w on a full-grid or half-grid store; returns
+    ``("ok", res, warnings)`` or ``("refused", exc)``."""
+    import types
+    from hwave.solver import bond_channels as bc
+    from hwave.solver import half_grid as hg
+    from tests.test_flex_bond_dressing import _onsite_factors
+    factors = _onsite_factors()
+    view = types.SimpleNamespace(n_channels=_ND // 4)
+    with flex_bond.BondBlockStore(_NMAT, _NVOL, _ND, 4, ("chibar",), {"W": "chibar"},
+                                  half_grid=half) as st, \
+            flex_bond.BondDeviceContext.for_view(np, S, C, view, 2) as dev:
+        st.put_freq_batch("chibar", 0, st.nslices,
+                          hg.half_from_full(x, _NMAT) if half else x)
+        try:
+            with mock.patch.object(bc.logger, "warning") as warn:
+                res = flex_bond.dress_and_build_w(
+                    st, dev, nb=nb, output_full=False, nmat=_NMAT, nvol=_NVOL, nd=4,
+                    spatial_shape=(_NVOL, 1, 1), factors=factors, cond_tol=cond_tol, **kw)
+        except (bc.BondConditioningError, ValueError) as exc:
+            return ("refused", exc)
+        recs = sorted((c.args[1], c.args[3], c.args[4]) for c in warn.call_args_list
+                      if "grid index" in c.args[0])
+        return ("ok", res, recs)
+
+
+class TestMirrorGuardBrokenTimeReversal(unittest.TestCase):
+    """The worst block sits at nu < 0 (q = 1, l = 2) and its stored partner
+    passes: the half grid must refuse / warn exactly as the full grid."""
+
+    TOL = 3e-5
+
+    def setUp(self):
+        self.x, self.S, self.C = _planted_map(trs=False)
+        x = self.x
+        mat = np.eye(_ND) - x @ self.S[None]                         # spin, every (l, q)
+        sc = _score(mat)
+        self.scores = sc
+        # preconditions of the fixture: exactly one block below TOL, at nu < 0
+        below = np.argwhere(sc < self.TOL)
+        self.assertEqual(below.tolist(), [[2, _QP]])
+        self.assertGreater(sc[_LP, _QP], 10 * self.TOL)
+        charge = _score(np.eye(_ND) + x @ self.C[None])
+        self.assertGreater(charge.min(), 0.1)
+
+    def test_refuse(self):
+        full = _map_run(self.x, self.S, self.C, False, self.TOL)
+        half = _map_run(self.x, self.S, self.C, True, self.TOL)
+        self.assertEqual(full[0], "refused")
+        self.assertEqual(half[0], "refused")
+        ef, eh = full[1], half[1]
+        self.assertEqual((eh.channel, eh.l, eh.iq), (ef.channel, ef.l, ef.iq))
+        self.assertEqual((eh.l, eh.iq), (2, _QP))
+        self.assertAlmostEqual(eh.worst, ef.worst, delta=1e-12)
+        self.assertAlmostEqual(eh.worst, float(self.scores[2, _QP]), delta=1e-12)
+        self.assertIn("bosonic Matsubara index {}".format(2 * 2 - _NMAT), str(eh))
+
+    def test_warn(self):
+        full = _map_run(self.x, self.S, self.C, False, self.TOL, guard_policy="warn")
+        half = _map_run(self.x, self.S, self.C, True, self.TOL, guard_policy="warn")
+        self.assertEqual(full[0], "ok")
+        self.assertEqual(half[0], "ok")
+        self.assertEqual(full[2], [("spin", 2, 1)])
+        self.assertEqual(half[2], full[2])
+        self.assertEqual(half[1].guard_violations, full[1].guard_violations)
+        self.assertTrue(half[1].mirror_guarded)
+        # cond_min covers the whole grid: the mirror's minimum, as on the full grid
+        self.assertAlmostEqual(half[1].cond_min_s, full[1].cond_min_s, delta=1e-12)
+        self.assertAlmostEqual(full[1].cond_min_s, float(self.scores.min()), delta=1e-12)
+        # the guard statistics count the stored slices only
+        self.assertEqual(half[1].guard_blocks * _NMAT, full[1].guard_blocks * 5)
+
+    def test_no_violation_matches(self):
+        full = _map_run(self.x, self.S, self.C, False, 1e-7)
+        half = _map_run(self.x, self.S, self.C, True, 1e-7)
+        self.assertEqual((full[0], half[0]), ("ok", "ok"))
+        self.assertAlmostEqual(half[1].cond_min_s, full[1].cond_min_s, delta=1e-12)
+        self.assertAlmostEqual(half[1].cond_min_c, full[1].cond_min_c, delta=1e-12)
+        # the minimum is NOT at the static slice
+        l, q = np.unravel_index(np.argmin(self.scores), self.scores.shape)
+        self.assertNotEqual(l, _NMAT // 2)
+
+    def test_static_residual(self):
+        """Under guard_freqs = "static" the nu < 0 slices are checked by their
+        own solve residual: the residual is scaled (only for this test) so
+        that only the largest one, the planted mirror block's, exceeds the
+        1e-6 threshold; full and half grid must refuse (or warn) there."""
+        from hwave.solver import bond_channels as bc
+        real = bc.solve_residual
+        rec = []
+
+        def record(mat, chi, cb):
+            r = real(mat, chi, cb)
+            rec.append(np.array(r))
+            return r
+
+        with mock.patch.object(bc, "solve_residual", record):
+            out = _map_run(self.x, self.S, self.C, False, self.TOL, nb=_NMAT,
+                           guard_freqs="static")
+        self.assertEqual(out[0], "ok")
+        r = rec[0].reshape(_NMAT, _NVOL)                 # spin, the one full-grid batch
+        order = np.argsort(r.ravel())[::-1]
+        self.assertEqual(np.unravel_index(order[0], r.shape), (2, _QP))
+        r1, r2 = r.ravel()[order[0]], r.ravel()[order[1]]
+        self.assertGreater(r1, 4 * r2)
+        k = 1e-6 / np.sqrt(r1 * r2)
+
+        def scaled(mat, chi, cb):
+            return real(mat, chi, cb) * k
+
+        for policy in ("refuse", "warn"):
+            with self.subTest(policy=policy):
+                with mock.patch.object(bc, "solve_residual", scaled):
+                    full = _map_run(self.x, self.S, self.C, False, self.TOL,
+                                    guard_freqs="static", guard_policy=policy)
+                    half = _map_run(self.x, self.S, self.C, True, self.TOL,
+                                    guard_freqs="static", guard_policy=policy)
+                if policy == "refuse":
+                    self.assertEqual((full[0], half[0]), ("refused", "refused"))
+                    for e in (full[1], half[1]):
+                        self.assertIn("grid index l=2) and q-point index (1, 0, 0)", str(e))
+                else:
+                    self.assertEqual((full[0], half[0]), ("ok", "ok"))
+                    self.assertEqual(half[1].guard_residual_violations, 1)
+                    self.assertEqual(full[1].guard_residual_violations, 1)
+
+    def test_every_violation_once_per_frequency(self):
+        """A floor above most scores, one frequency per batch: every slice
+        reports its worst block once, the self-mirrored l = 0 and nmat/2
+        included -- the same records and count as the full grid (they are
+        not guarded a second time as their own mirrors)."""
+        full = _map_run(self.x, self.S, self.C, False, 0.99, nb=1, guard_policy="warn")
+        half = _map_run(self.x, self.S, self.C, True, 0.99, nb=1, guard_policy="warn")
+        self.assertEqual((full[0], half[0]), ("ok", "ok"))
+        ls = sorted({r[1] for r in full[2]})
+        self.assertEqual(ls, list(range(_NMAT)))
+        self.assertEqual(half[2], full[2])
+        self.assertEqual(half[1].guard_violations, full[1].guard_violations)
+
+    def test_mutation_without_mirror_guard_passes_silently(self):
+        """Mutation: the mirror guard disabled (the relation reported as
+        holding). The half grid then passes where the full grid refuses, so
+        test_refuse above would fail."""
+        from hwave.solver import half_grid as hg
+        calls = {"n": 0}
+
+        def holds(*a, **k):
+            calls["n"] += 1
+            return True, 0.0
+
+        with mock.patch.object(hg, "mirror_scores_are_stored", holds):
+            half = _map_run(self.x, self.S, self.C, True, self.TOL)
+        self.assertGreater(calls["n"], 0)
+        self.assertEqual(half[0], "ok")
+
+
+class TestMirrorSkipWithTimeReversal(unittest.TestCase):
+    """With time reversal every mirrored score is a stored one, (q, l') <->
+    (-q, l): the skip is taken and the refusal / minimum is the same score."""
+
+    def setUp(self):
+        self.x, self.S, self.C = _planted_map(trs=True)
+
+    def test_mirror_scores_equal_stored_scores(self):
+        from hwave.solver import half_grid as hg
+        x, S, C = self.x, self.S, self.C
+        mq = hg.minus_q_index((_NVOL, 1, 1))
+        holds, dev = hg.mirror_scores_are_stored(hg.half_from_full(x, _NMAT), S, C,
+                                                 (_NVOL, 1, 1))
+        self.assertTrue(holds)
+        self.assertLessEqual(dev, 1e-15)
+        for V, sign in ((S, -1.0), (C, 1.0)):
+            sc = _score(np.eye(_ND) + sign * (x @ V[None]))
+            for l in range(1, _NMAT // 2):
+                np.testing.assert_allclose(sc[l], sc[_NMAT - l][mq], rtol=0, atol=1e-12)
+        # and the broken fixture really is broken
+        xb, Sb, Cb = _planted_map(trs=False)
+        self.assertFalse(hg.mirror_scores_are_stored(hg.half_from_full(xb, _NMAT), Sb, Cb,
+                                                     (_NVOL, 1, 1))[0])
+
+    def test_a_vertex_breaking_time_reversal_is_detected(self):
+        """chibar alone time-reversal symmetric is not enough: a complex
+        Hermitian vertex (V(q)^T != V(-q)) must switch the mirror guard on."""
+        from hwave.solver import half_grid as hg
+        x, S, C = self.x, self.S.copy(), self.C
+        S[:, 0, 1] += 0.05j
+        S[:, 1, 0] -= 0.05j
+        holds, dev = hg.mirror_scores_are_stored(hg.half_from_full(x, _NMAT), S, C,
+                                                 (_NVOL, 1, 1))
+        self.assertFalse(holds)
+        self.assertGreater(dev, 1e-3)
+        out = _map_run(x, S, C, True, 1e-7)
+        self.assertEqual(out[0], "ok")
+        self.assertTrue(out[1].mirror_guarded)
+
+    def test_skip_taken_and_same_refusal_score(self):
+        sc = _score(np.eye(_ND) - self.x @ self.S[None])
+        tol = 3e-5
+        self.assertEqual(sorted(map(tuple, np.argwhere(sc < tol).tolist())),
+                         [(2, _QP), (_LP, 3)])
+        full = _map_run(self.x, self.S, self.C, False, tol)
+        half = _map_run(self.x, self.S, self.C, True, tol)
+        self.assertEqual((full[0], half[0]), ("refused", "refused"))
+        # the full grid meets the nu < 0 block first, the half grid its
+        # time-reversal partner (-q, nmat - l): the same score
+        self.assertEqual((full[1].l, full[1].iq), (2, _QP))
+        self.assertEqual((half[1].l, half[1].iq), (_LP, 3))
+        self.assertAlmostEqual(half[1].worst, full[1].worst, delta=1e-12)
+        ok_f = _map_run(self.x, self.S, self.C, False, 1e-7)
+        ok_h = _map_run(self.x, self.S, self.C, True, 1e-7)
+        self.assertFalse(ok_h[1].mirror_guarded)
+        self.assertAlmostEqual(ok_h[1].cond_min_s, ok_f[1].cond_min_s, delta=1e-12)
+        self.assertAlmostEqual(ok_h[1].cond_min_c, ok_f[1].cond_min_c, delta=1e-12)
+
+    def test_skip_is_logged_per_solver_decision(self):
+        # solver level: real hopping skips, complex hopping guards the mirror
+        for case, guarded in (("UV", False), ("complex_t", True)):
+            with self.subTest(case=case):
+                with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                    s, _gi, _f = _run(case, {"IterationMax": 2}, half=True, save=False)
+                self.assertIs(s._bond_last.mirror_guarded, guarded)
+                lines = [m for m in cm.output if "longitudinal_bond_half_grid (map" in m]
+                self.assertEqual(len(lines), 1, lines)
+                self.assertIn("guarded on their own" if guarded else "not guarded separately",
+                              lines[0])
+
+
+class TestSeedSymmetry(unittest.TestCase):
+    """Under the half grid a sigma_init seed must satisfy
+    Sigma(k, -i w) = Sigma(k, i w)^dagger."""
+
+    def test_perturbed_seed_is_refused(self):
+        from hwave.solver.flex import FLEX
+        with tempfile.TemporaryDirectory() as tmp:
+            info, _ = _solver("UV", {}, True)
+            with _input("UV") as r:
+                s = FLEX(r.get_param("ham"), {}, info)
+                gi = r.get_param("green")
+                s.solve(gi, tmp)
+                s.save_results({"path_to_output": tmp, "sigma": "sigma.npz"}, gi)
+                path = os.path.join(tmp, "sigma.npz")
+                with np.load(path) as z:
+                    data = {k: np.array(z[k]) for k in z.files}
+                bad = dict(data)
+                pert = np.zeros_like(data["sigma_fluct"])
+                pert[:, 0] += 1e-6 * np.eye(pert.shape[-1])
+                bad["sigma_fluct"] = data["sigma_fluct"] + pert
+                bad["sigma"] = data["sigma"] + pert
+                bad_path = os.path.join(tmp, "bad.npz")
+                np.savez(bad_path, **bad)
+                expected = (1, s.nmat, s.lattice.nvol, s.norb, s.norb)
+                good_env, bad_env = s._read_sigma(path), s._read_sigma(bad_path)
+                s._assemble_static_seed({"sigma_init_envelope": good_env}, expected)
+                with self.assertRaisesRegex(ValueError, "sigma_fluct\\(k, -i w\\)"):
+                    s._assemble_static_seed({"sigma_init_envelope": bad_env}, expected)
+                # the full grid does not need the symmetry
+                info_f, _ = _solver("UV", {}, False)
+                sf = FLEX(r.get_param("ham"), {}, info_f)
+                sf._assemble_static_seed({"sigma_init_envelope": sf._read_sigma(bad_path)},
+                                         expected)
 
 
 # ---------------------------------------------------------------------------

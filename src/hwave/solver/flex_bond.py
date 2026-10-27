@@ -325,10 +325,10 @@ def _sandwich(left, x, right, workers):
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
            guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1,
-           guard_exact="always", ls=None):
+           guard_exact="always", ls=None, guard_only=False):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
-                                      ls=ls,
+                                      ls=ls, guard_only=guard_only,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
                                       guard_policy=guard_policy, violations=violations,
                                       # the warnings of a tolerated violation do not
@@ -348,6 +348,8 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
                 ratio=exc.ratio, pole=exc.pole, smin=exc.smin, smax=exc.smax,
                 cond_tol=exc.cond_tol) from exc
         raise ValueError(message) from exc
+    if chi_b is None:              # guard_only: the diagnostics alone
+        return chi_b, cond
     xp = _bk.array_module_of(chi_b)
     if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
@@ -428,6 +430,13 @@ class DressResult:
     #: upper end (``None`` when that end is an exactly decomposed batch's)
     cond_bracket_s: tuple = None
     cond_bracket_c: tuple = None
+    #: half grid only (issue #223): whether the mirrored slices were guarded
+    #: on their own in this map (``False`` when the time-reversal relation of
+    #: :mod:`hwave.solver.half_grid` held, so that every mirrored score is a
+    #: stored one), and the relation's measured relative deviation; ``None``
+    #: on the full grid
+    mirror_guarded: bool = None
+    time_reversal_deviation: float = None
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
@@ -552,6 +561,13 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     half = bool(getattr(store, "half_grid", False))
     n_slices = store.nslices if half else nmat
     l_static = 0 if half else nmat // 2
+    mirror_guard, trs_dev = None, None
+    if half:
+        # the mirrored slices' own conditioning (half_grid, relations (2)-(3)):
+        # checked on the stored chibar BEFORE any W batch overwrites it
+        trs, trs_dev = _hg.mirror_scores_are_stored(
+            store.get_freq_batch("chibar", 0, n_slices), S, C, spatial_shape)
+        mirror_guard = not trs
     cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
@@ -568,6 +584,28 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
             ls, rows, l_first = None, slice(l0, l1), l0
             where = "[{}, {})".format(l0, l1)
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
+        if mirror_guard:
+            # time reversal is broken: the mirrored slices l' = nmat - l of
+            # this batch (l = 0 and nmat/2 are their own mirrors and are not
+            # repeated) go through the same dressing diagnostics as on the
+            # full grid -- refusals, warn records, the exact-singular and the
+            # "static" residual checks name the TRUE l'. Their scores join
+            # cond_min (the minimum over the whole grid), not the guard
+            # statistics, which count the stored slices. The temporaries
+            # (one mirrored batch and the solve's) are below the stored
+            # dressing's own, which runs after them.
+            sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
+            if sel.size:
+                cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
+                ls_m = nmat - ls[sel]
+                for V_, ch, cmin in ((S, "spin", cond_s), (C, "charge", cond_c)):
+                    _chi, cm = _dress(cb_m, V_, ch, int(ls_m[0]), nmat, spatial_shape,
+                                      cond_tol, iteration, guard_freqs, guard_policy,
+                                      violations, guard_method, None, workers, guard_exact,
+                                      ls=ls_m, guard_only=True)
+                    del _chi
+                    cmin.add(cm)
+                del cb_m
         collapse0[rows] = _bk.to_host(cb[:, :, :nd, :nd])
         chi_s_b, cs = _dress(cb, S, "spin", l_first, nmat, spatial_shape, cond_tol, iteration,
                              guard_freqs, guard_policy, violations, guard_method, stats, workers,
@@ -644,7 +682,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                        guard_residual_violations=sum(1 for v in violations
                                                      if v["kind"] == "residual"),
                        guard_exact_blocks=int(stats["guard_exact_blocks"]),
-                       guard_blocks=int(stats["guard_blocks"]))
+                       guard_blocks=int(stats["guard_blocks"]),
+                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev)
 
 
 class _CondMin:

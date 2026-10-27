@@ -3214,7 +3214,8 @@ def solve_residual(mat, chi, cb):
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
-                guard_method="auto", stats=None, workers=1, guard_exact="always", ls=None):
+                guard_method="auto", stats=None, workers=1, guard_exact="always", ls=None,
+                guard_only=False):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3287,7 +3288,16 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     violation records, the bracket index) uses ``ls``, the static slice is
     the row whose ``l`` is ``nmat // 2``, and ``l0`` is only the batch's
     first ``l`` in the messages. ``None`` (the default) is the contiguous
-    batch above."""
+    batch above.
+
+    ``guard_only`` (issue #223, the mirrored slices of the half grid): the
+    caller needs only the diagnostics, not ``chi``. With ``guard_freqs =
+    "all"``, ``guard_policy = "refuse"`` and a guard (``cond_tol`` not
+    None), the guard alone decides every outcome (it refuses any violation,
+    an exactly singular block included, before the solve), so the solve is
+    skipped and ``(None, cond_min)`` is returned. Every other combination
+    runs the whole batch as above (the warn path's exact-singular refusal
+    and the "static" residual need the solve) and returns ``chi``."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3420,6 +3430,12 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     elif i_static is not None:
         i = i_static
         cond_min = _guard(mat[i].reshape(nvol, ND, ND), i * nvol)
+    if (guard_only and guard_freqs == "all" and guard_policy == "refuse"
+            and cond_tol is not None):
+        del mat
+        if cond_min is None or isinstance(cond_min, GuardBracket):
+            return None, cond_min
+        return None, float(cond_min)
     flat = mat.reshape(nb * nvol, ND, ND)
     if guard_freqs == "static":
         LinAlgError = getattr(xp.linalg, "LinAlgError", np.linalg.LinAlgError)
