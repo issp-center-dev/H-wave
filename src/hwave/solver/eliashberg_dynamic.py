@@ -2092,6 +2092,8 @@ def solve_dynamic(input_dict):
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
     sc._check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
                               sc._nonbond_site(input_dict, norb))
+    # a spin-orbital archive is refused before the k-space table is built (#271)
+    sc._preflight_refuse_so_archives(input_dict, "flex")
     inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
                                                 interactions, norb, input_dict)
 

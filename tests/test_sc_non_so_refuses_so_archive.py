@@ -106,6 +106,17 @@ class TestLoadMode(_Base):
             with self.assertRaisesRegex(ValueError, "spin_orbital"):
                 sc.calc_eliashberg(inp)
 
+    def test_refusal_precedes_diagonalization_and_green(self):
+        inp = self._inp({"chi0q_mode": "load", "solver_mode": "eigenvalue",
+                         "num_eigenvalues": 4})
+        with _quiet(), \
+                mock.patch.object(sc, "_calc_eigenvalues",
+                                  side_effect=AssertionError("heavy work")), \
+                mock.patch.object(sc, "_build_bond_green",
+                                  side_effect=AssertionError("heavy work")):
+            with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+                sc.calc_eliashberg(inp)
+
     def test_unmarked_archive_still_loads(self):
         d = os.path.join(self.d, "unmarked")
         os.makedirs(d)
@@ -167,6 +178,22 @@ class TestFlexMode(_Base):
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
+
+    def test_static_flex_refusal_precedes_diagonalization(self):
+        inp = self._flex_inp()
+        with _quiet(), \
+                mock.patch.object(sc, "_calc_eigenvalues",
+                                  side_effect=AssertionError("heavy work")):
+            with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+                sc.calc_eliashberg(inp)
+
+    def test_dynamic_refusal_precedes_interaction_build(self):
+        inp = self._flex_inp(dynamic=True)
+        with _quiet(), \
+                mock.patch.object(sc, "_build_interaction_k_for_sites",
+                                  side_effect=AssertionError("heavy work")):
+            with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
+                eliashberg_dynamic.solve_dynamic(inp)
 
     def test_dynamic_refuses_before_heavy_work(self):
         inp = self._flex_inp(dynamic=True)

@@ -1317,6 +1317,35 @@ def _refuse_so_archive_in_non_so_mode(data, file_name):
                 file_name, _SO_FLEX_CHI_CONVENTION, hint))
 
 
+def _preflight_refuse_so_archives(input_dict, chi0q_mode):
+    """Metadata-only form of :func:`_refuse_so_archive_in_non_so_mode`.
+
+    Run by the public entries before the Hamiltonian is diagonalized or any
+    Green function / interaction table is built, so a refusal costs nothing.
+    Opens each archive that the non-spin-orbital run will read (the chi0q for
+    ``chi0q_mode = "load"``, the FLEX chi_s/chi_c for ``"flex"``) and reads
+    only the scalar markers. A missing file is left to the loader, whose
+    error is the more specific one. The loader checks stay as defence in
+    depth."""
+    if chi0q_mode == "load":
+        output_info = input_dict["file"]["output"]
+        paths = [os.path.join(output_info["path_to_output"],
+                              output_info.get("chi0q", "chi0q") + ".npz")]
+    elif chi0q_mode == "flex":
+        paths = list(_resolve_flex_paths(input_dict)[:2])
+    else:
+        return
+    for path in paths:
+        if not os.path.isfile(path):
+            continue
+        try:
+            data = np.load(path)
+        except (OSError, ValueError):
+            continue    # unreadable: the loader reports it
+        with data:
+            _refuse_so_archive_in_non_so_mode(data, path)
+
+
 def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
@@ -7904,6 +7933,10 @@ def calc_eliashberg(input_dict):
                 "[eliashberg] gpu=true is ignored for bond_channels=true: the "
                 "bond-resolved kernel is CPU-only in v1 (GPU support is a "
                 "deferred follow-up).")
+
+    if not spin_orbital_mode and not use_bond_channels:
+        # a spin-orbital archive is refused before any heavy work (#271)
+        _preflight_refuse_so_archives(input_dict, chi0q_mode)
 
     # --- Step 3: Setup k-mesh ---
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
