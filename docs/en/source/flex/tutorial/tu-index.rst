@@ -610,8 +610,11 @@ a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
 *Halving the bond store.* ``longitudinal_bond_half_grid = true`` keeps only
 the ``Nmat/2 + 1`` non-negative bosonic frequencies in the bond store and
 rebuilds the others from :math:`X(q, -\nu) = X(q, \nu)^\dagger` where they
-are read, so the bond buffers (and the ``longitudinal_bond_output_full``
-buffers) take about half the memory. The conditioning guard still covers
+are read, so the bond buffers held in memory during the solve (the
+``longitudinal_bond_output_full`` buffers included) take about half the
+memory. The archive written to disk still holds the full grid: the
+dynamic channels are expanded to the full grid when the results are
+published, one channel at a time. The conditioning guard still covers
 the whole grid: the decision (refuse, warn or pass) and ``cond_min`` are
 those of the full grid, and a single violating block is named at the same
 frequency and q-point (with several violating blocks the first one reported
@@ -620,7 +623,9 @@ time-reversal symmetry (real hopping and interactions, checked on every
 map), ``longitudinal_bond_guard_freqs = "all"`` and
 ``flex_guard_policy = "refuse"``, every score at :math:`-\nu` is also one
 at :math:`+\nu`, so only the stored half is dressed and guarded, except for
-a batch whose score lies within round-off of the threshold (``"warn"`` and
+a batch whose minimum score lies closer to the threshold than the
+tolerance of the symmetry check (:math:`10^{-12}` relative) can resolve
+(``"warn"`` and
 ``"static"`` always guard the whole grid); on the CPU,
 for a two-orbital model with five bond channels on a 16 x 16 mesh, the
 dressing went from 2.1 s to 1.1 s and the whole two-map solve from 2.9 s to
