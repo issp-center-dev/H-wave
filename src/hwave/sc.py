@@ -1568,7 +1568,7 @@ def _auto_chi0q_tensor_scheme(files):
 
 
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
-                         precomputed_mu=None):
+                         precomputed_mu=None, static_only=False):
     """Compute chi0q internally using H-wave's RPA module.
 
     Instead of loading chi0q from a file, this function creates an RPA solver
@@ -1593,6 +1593,12 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         If provided, skip chemical potential determination and use this value
         directly. This avoids redundant eigenvalue decomposition and mu search
         when the caller has already computed mu (e.g. calc_eliashberg).
+    static_only : bool, optional
+        If true, compute only the ``nmat // 2`` bosonic slice (the zero
+        bosonic frequency the static Eliashberg solve reads) and return it as
+        a one-frequency axis (``nmat`` -> 1 below; read it with static index
+        0). It equals the full-grid slice to round-off; memory drops from
+        ``O(nmat * nvol * nd**4)`` to ``O(nvol * nd**4)`` (issue #272).
 
     Returns
     -------
@@ -1668,7 +1674,9 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     green0, green0_tail = solver._calc_green(beta, mu)
 
-    chi0q = solver._calc_chi0q(green0, green0_tail, beta)
+    chi0q = solver._calc_chi0q(green0, green0_tail, beta,
+                               static_only=static_only)
+    del green0, green0_tail
 
     # For spin-free mode, chi0q has shape (1, nmat, nvol, ...)
     # Remove the block index
@@ -7916,9 +7924,11 @@ def calc_eliashberg(input_dict):
             del chi_so, gam
         else:
             if chi0q_mode == "calc":
+                # only the zero bosonic frequency is read (issue #272)
                 chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
-                                                 precomputed_mu=mu)
-                static_index = None
+                                                 precomputed_mu=mu,
+                                                 static_only=True)
+                static_index = 0
             else:
                 try:
                     chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
@@ -8111,10 +8121,12 @@ def calc_eliashberg(input_dict):
 
         # Step 1: Load or compute chi0q
         if chi0q_mode == "calc":
+            # the static solve reads only the zero bosonic frequency, so only
+            # that slice is computed (one-frequency axis, issue #272)
             chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor,
-                                                precomputed_mu=mu)
-            # internally computed chi0q always carries the full frequency grid
-            static_index = None
+                                                precomputed_mu=mu,
+                                                static_only=True)
+            static_index = 0
         else:
             chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
 

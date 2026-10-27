@@ -730,6 +730,85 @@ def dense_bubble(green_kw, green0_tail, beta, *, spatial_shape, scheme,
     return _assemble_plain(prepped, scheme, beta, spatial_shape, workers)
 
 
+#: Byte budget of one imaginary-time chunk of the contracted bubble in
+#: :func:`dense_bubble_static`: the chunk length is this budget over the bytes
+#: of one tau slice (at least 1, at most ``nmat``). It bounds the working set
+#: of the static assembly independently of ``nmat``.
+STATIC_BUBBLE_CHUNK_BYTES = 8 << 20
+
+
+def _assemble_static(prepped, scheme, beta, spatial_shape, workers):
+    """The ``nmat // 2`` bosonic row of :func:`_assemble_plain`'s dense arm,
+    without the frequency axis.
+
+    The dense arm transports ``sgn * contract(...)`` (with the equal-time
+    endpoint-mean correction at tau = 0) by ``spatial fftn -> tau_to_boson
+    -> x(-1/beta)``. Every step is linear, so one output row of
+    ``tau_to_boson`` is the weighted tau sum
+    (:func:`matsubara.tau_to_boson_row_weights`) of the real-space contraction,
+    taken here chunk by chunk BEFORE the spatial FFT; the contraction, the
+    sign array, the endpoint correction and the ``-1/beta`` are the dense
+    arm's own. Working set: one ``(nblock, nvol, *pair)`` accumulator plus
+    one chunk (:data:`STATIC_BUBBLE_CHUNK_BYTES`), independent of ``nmat``.
+    """
+    xp = _bk.array_module_of(prepped.green_rt)
+    nx, ny, nz = spatial_shape
+    nblock, nt, nvol, nd, _ = prepped.green_rt.shape
+
+    contract = contract_reduced if scheme == "reduced" else contract_general
+    nd_shape = (nd, nd) if scheme == "reduced" else (nd, nd, nd, nd)
+    nds = nd * nd if scheme == "reduced" else nd ** 4
+
+    weights = _ms.tau_to_boson_row_weights(nt, nt // 2, xp) * prepped.sgn
+
+    slice_bytes = 16 * nblock * nvol * nds
+    chunk = max(1, min(nt, STATIC_BUBBLE_CHUNK_BYTES // max(1, slice_bytes)))
+
+    acc = xp.zeros((nblock, nvol) + nd_shape, dtype=xp.complex128)
+    for start in range(0, nt, chunk):
+        stop = min(start + chunk, nt)
+        part = contract(prepped.green_rt[:, start:stop],
+                        prepped.green_rev[:, start:stop])
+        if start == 0 and prepped.tail_on:
+            # mean of the two equal-time branches (sgn[0] = +1)
+            part[:, 0] = 0.5 * (
+                contract(prepped.fwd0_p, prepped.rev0_p + prepped.jump_r_rev)
+                + contract(prepped.fwd0_p + prepped.jump_f, prepped.rev0_p))
+        acc += xp.tensordot(part, weights[start:stop], axes=([1], [0]))
+        del part
+
+    chi0_q = _bk.spatial_fftn(acc.reshape(nblock, nx, ny, nz, nds),
+                              axes=(1, 2, 3), workers=workers)
+    del acc
+    return chi0_q.reshape(nblock, 1, nvol, *nd_shape) * (-1.0 / beta)
+
+
+def dense_bubble_static(green_kw, green0_tail, beta, *, spatial_shape, scheme,
+                        workers=None):
+    """The ``nmat // 2`` bosonic-frequency slice of :func:`dense_bubble`
+    (the zero bosonic frequency for an even ``nmat``) without building the
+    other frequencies.
+
+    Same inputs, validation, Green/tail contract (including the equal-time
+    endpoint-mean correction) and normalization as :func:`dense_bubble`;
+    the result equals ``dense_bubble(...)[:, nmat // 2:nmat // 2 + 1]`` to
+    floating-point round-off (the imaginary-time sum is taken before the
+    spatial FFT instead of after it). Returns ``(nblock, 1, nvol, p, p)``
+    (``"reduced"``) or ``(nblock, 1, nvol, p, p, p, p)`` (``"general"``),
+    complex128: a one-frequency axis, so a caller indexes it with static
+    index 0. Memory: ``O(nvol * p**4)`` for the result and a bounded tau
+    chunk, instead of ``O(nmat * nvol * p**4)``; the Green function itself
+    (``O(nmat * nvol * p**2)``) is still transformed whole.
+    """
+    (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
+     ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
+                                 scheme)
+
+    prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
+                             workers)
+    return _assemble_static(prepped, scheme, beta, spatial_shape, workers)
+
+
 def ir_bubble(green_kw, ax_fermi, ax_bose, *, spatial_shape, scheme,
               workers=None):
     """Sparse-IR particle-hole bubble chi0(q, iOmega_l) on the bosonic IR
