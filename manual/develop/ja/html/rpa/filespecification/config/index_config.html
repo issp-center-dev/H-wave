@@ -377,6 +377,33 @@ CPU 経路は変更されません（<code class="docutils literal notranslate">
 <code class="docutils literal notranslate"><span class="pre">gpu</span></code>に依存しません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 でない場合は警告付きで無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code></p>
+<p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code>、大文字小文字を
+区別しません。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code>)</p>
+<p><strong>説明 :</strong>
+GPU 経路で<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>の条件数ガードが
+ブロックを厳密に分解するタイミングを指定します。デフォルトの
+<code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code>では、デバイス上で計算したバウンドだけで全ブロックの
+合格が証明できる振動数バッチ（全ブロックのバウンドが有効で、スコアの
+下限の最小値が<code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">longitudinal_bond_cond_tol</span></code>（に
+<span class="math notranslate nohighlight">\(10^{-12}\)</span>程度の丸め誤差の余裕を加えた値）を上回るもの）は、
+ブロックをホストに集めることも厳密な特異値分解を行うこともなく合格と
+します。それ以外のバッチは従来どおり厳密に分解するため、拒否、
+<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code>の記録、およびすべての判定は
+<code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code>と同一であり、変わるのは反復ごとのログと記録される厳密分解のカウントだけです。ある写像の
+最小値を厳密に計算していない場合、<code class="docutils literal notranslate"><span class="pre">guards:</span></code>行には値の代わりに
+<code class="docutils literal notranslate"><span class="pre">bond</span> <span class="pre">cond_min</span> <span class="pre">spin</span> <span class="pre">in</span> <span class="pre">bracket</span> <span class="pre">[low,</span> <span class="pre">up]</span> <span class="pre">(interval</span> <span class="pre">bound,</span> <span class="pre">no</span> <span class="pre">exact</span>
+<span class="pre">SVD;</span> <span class="pre">smallest</span> <span class="pre">upper</span> <span class="pre">end</span> <span class="pre">at</span> <span class="pre">flat</span> <span class="pre">index</span> <span class="pre">i)</span></code>が出力されます。厳密な
+最小値は<code class="docutils literal notranslate"><span class="pre">[low,</span> <span class="pre">up]</span></code>の範囲にあり、<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">=</span> <span class="pre">l</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">+</span> <span class="pre">q</span></code>は上限が
+最小となる（ボソン格子インデックス, <span class="math notranslate nohighlight">\(q\)</span>点）を平坦化した位置です。
+最後の写像になり得る写像（<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code>回目の写像と、収束判定を
+満たし得る写像）では必ず厳密な分解を行うため、出力ファイルに書かれる
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>は常に厳密な値です。
+<code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code>は全ての写像で厳密に分解します（旧バージョンの挙動）。
+CPU 経路、および<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では
+この設定は何も変えません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+でない場合は警告付きで無視されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code></p>
 <p><strong>形式 :</strong> float型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">1e-3</span></code>)</p>
 <p><strong>説明 :</strong>

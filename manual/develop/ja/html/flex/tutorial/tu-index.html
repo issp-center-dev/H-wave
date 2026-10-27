@@ -286,7 +286,12 @@ Hubbard モデルの <span class="math notranslate nohighlight">\(U = 8t\)</span
 <p>この行は、等時刻密度のエルミート対称性の相対 Frobenius 偏差を
 <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>と並べて示し、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
 <span class="pre">true</span></code>の場合はさらに、その反復の写像におけるスピン・電荷 RPA 分母の
-条件数の最小値を<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>と並べて示します。</p>
+条件数の最小値を<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>と並べて示します。
+GPU 経路では、条件の良い写像で値の代わりに<code class="docutils literal notranslate"><span class="pre">in</span> <span class="pre">bracket</span> <span class="pre">[low,</span> <span class="pre">up]</span></code>が
+出力されることがあります。デバイス上のバウンドだけでどのブロックも
+不合格になり得ないことが示されたため厳密な分解を省略したもので、厳密な
+最小値はこの範囲にあります（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code>。
+最後の写像は常に厳密です）。</p>
 <p>掃引では自動実行の側はデフォルトの<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code>
 のままにし、<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code>は原因を確認した個別の点にのみ使ってください。
 後処理スクリプトでは、収束した結果を採用する前に
@@ -535,7 +540,9 @@ GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <s
 計算し、バッチ最小値になり得るブロックのみをホストで厳密に分解する
 ため、出力は全ブロック分解の場合と完全に一致したまま、コストはおよそ
 半減します）。そのため本番運用でも<code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>を既定のまま使うのが
-妥当です。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>は縮約された診断のままであり、1 反復あたり
+妥当です。さらに、デバイス上のバウンドだけで合格が証明できる振動数
+バッチは一切分解しません（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span> <span class="pre">=</span> <span class="pre">&quot;decide&quot;</span></code>、
+デフォルト）。<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>は縮約された診断のままであり、1 反復あたり
 依然として約3倍高速なので、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>で一度検査した後に<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>に切り替えるという従来の助言は、
 スループットを重視する場合には引き続き有効です。
 オンサイト<code class="docutils literal notranslate"><span class="pre">U</span></code>と最近接<code class="docutils literal notranslate"><span class="pre">V</span></code>を

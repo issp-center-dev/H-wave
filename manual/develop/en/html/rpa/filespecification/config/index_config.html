@@ -443,6 +443,36 @@ guard and is recorded in the outputs (<code class="docutils literal notranslate"
 member). The default does not depend on <code class="docutils literal notranslate"><span class="pre">gpu</span></code>. Ignored with a
 warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code></p>
+<p><strong>Type :</strong>
+String (<code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code>, case-insensitive; default value
+is <code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+When the conditioning guard of <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
+<span class="pre">&quot;all&quot;</span></code> decomposes blocks exactly on the GPU path. Under <code class="docutils literal notranslate"><span class="pre">&quot;decide&quot;</span></code>
+(default), a frequency batch whose device-side bounds already prove
+that every block passes – every block has valid bounds and the
+smallest lower bound of the score exceeds <code class="docutils literal notranslate"><span class="pre">2</span> <span class="pre">*</span> <span class="pre">longitudinal_bond_cond_tol</span></code>
+(plus a round-off allowance of order <span class="math notranslate nohighlight">\(10^{-12}\)</span>) – is passed
+without gathering its blocks to the host and without any exact
+singular-value decomposition. Otherwise the batch is decomposed
+exactly as before, so a refusal, a <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code>
+record and every decision are identical to <code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code>; only the
+per-iteration log and the recorded exact-decomposition counts change. When a map’s minimum was not computed
+exactly, the <code class="docutils literal notranslate"><span class="pre">guards:</span></code> line reports
+<code class="docutils literal notranslate"><span class="pre">bond</span> <span class="pre">cond_min</span> <span class="pre">spin</span> <span class="pre">in</span> <span class="pre">bracket</span> <span class="pre">[low,</span> <span class="pre">up]</span> <span class="pre">(interval</span> <span class="pre">bound,</span> <span class="pre">no</span> <span class="pre">exact</span>
+<span class="pre">SVD;</span> <span class="pre">smallest</span> <span class="pre">upper</span> <span class="pre">end</span> <span class="pre">at</span> <span class="pre">flat</span> <span class="pre">index</span> <span class="pre">i)</span></code> in place of the value: the
+exact minimum lies in <code class="docutils literal notranslate"><span class="pre">[low,</span> <span class="pre">up]</span></code>, and <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">=</span> <span class="pre">l</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">+</span> <span class="pre">q</span></code> is the
+flattened (bosonic grid index, q-point) position of the smallest
+upper bound. Every map that can be the last one – the map of
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span></code> and any map that can complete the convergence
+criterion – runs the exact decomposition, so the
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code> written to the outputs are
+always exact. <code class="docutils literal notranslate"><span class="pre">&quot;always&quot;</span></code> decomposes exactly in every map (the
+behaviour of previous versions). The setting changes nothing on the
+CPU path, nor with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>.
+Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code></p>
 <p><strong>Type :</strong>
 Float (default value is <code class="docutils literal notranslate"><span class="pre">1e-3</span></code>)</p>

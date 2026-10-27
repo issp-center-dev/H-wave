@@ -306,7 +306,12 @@ back below <code class="docutils literal notranslate"><span class="pre">flex_hf_
 symmetry of the equal-time density against <code class="docutils literal notranslate"><span class="pre">flex_hf_density_tol</span></code>
 and, with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, the smallest
 conditioning score of the spin and of the charge RPA denominator of
-that iteration’s map against <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>.</p>
+that iteration’s map against <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>. On the GPU
+path a well-conditioned map may report <code class="docutils literal notranslate"><span class="pre">in</span> <span class="pre">bracket</span> <span class="pre">[low,</span> <span class="pre">up]</span></code> instead
+of a value: the device-side bounds already proved that no block can
+fail, so the exact decomposition was skipped and the exact minimum lies
+in the bracket (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code>; the last map is
+always exact).</p>
 <p>In a sweep, keep the default <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code> for the
 automated runs and turn <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> on for a single point you have
 already diagnosed; a post-processing script should check that
@@ -572,7 +577,9 @@ outputs record <code class="docutils literal notranslate"><span class="pre">long
 conditioning bounds are computed on the device and only the blocks that
 can attain the batch minimum are decomposed on the host, with outputs
 identical to the full decomposition), so it is a reasonable default for
-production too. <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> remains the reduced diagnostic and is still
+production too. In addition, a frequency batch whose device-side bounds
+already prove the pass is not decomposed at all
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span> <span class="pre">=</span> <span class="pre">&quot;decide&quot;</span></code>, the default). <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> remains the reduced diagnostic and is still
 about three times faster per iteration, so the previous advice – check
 once with <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code>, then switch to <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> – still applies when
 throughput matters.
