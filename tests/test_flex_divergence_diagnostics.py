@@ -81,13 +81,53 @@ class TestDivergedWarmStart(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("not bracketed", msg)
         self.assertNotIn("Check the target filling", msg)
-        self.assertIn("does not depend on mu", msg)
+        # decided on the physical band window, not at the expanded ends
+        self.assertIn("band window", msg)
+        self.assertIn("target filling is reachable", msg)
         self.assertIn("smaller U/T step", msg)
         self.assertIn("smaller Mix", msg)
         self.assertIn("cold start", msg)
         self.assertRegex(msg, r"last completed iteration was \d+ with "
                               r"\|dSigma\|/\|Sigma\| = ")
         self.assertRegex(msg, r"Stoner factor spin [0-9.]+")
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_ir_unreachable_target_keeps_filling_advice(self):
+        """On the IR path N(mu) -> 0 at BOTH ends of the expanded bracket, so
+        a healthy self-energy and an impossible target also give equal end
+        values; the message must still blame the filling."""
+        s, gi = _make_solver({'matsubara_basis': 'ir', 'ir_wmax': 10.0,
+                              'IterationMax': 1})
+        s.solve(gi, 'tests/flex/output')
+        nb, nv, nd = s.H0_eigenvalue.shape
+        sigma = np.zeros((nb, s._ir_axF.n_freq, nv, nd, nd), dtype=np.complex128)
+        for target in (1000.0, -5.0):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(
+                        RuntimeError, "Check the target filling/Ncond") as cm:
+                    s._find_mu_dressed(sigma, 1.0 / s.T, target)
+                self.assertNotIn("diverged", str(cm.exception))
+                self.assertIn("is not inside (0, 16)", str(cm.exception))
+                # the artefact this guards against: equal expanded-end values
+                ends = re.search(r"N-Ncond = (\S+), (\S+)\)", str(cm.exception))
+                self.assertEqual(ends.group(1), ends.group(2))
+
+    def test_uniform_grid_divergence_warns(self):
+        """On the uniform grid the same kind of warm start (U = 2 -> 40,
+        Mix = 1) does not reach a failed mu search: N(mu) stays well defined
+        and the run oscillates until IterationMax. The divergence warning
+        is what reports it there."""
+        s1, g1 = _make_solver({}, U=2.0)
+        s1.solve(g1, 'tests/flex/output')
+        s2, g2 = _make_solver({'Mix': 1.0, 'IterationMax': 8}, U=40.0)
+        g2["sigma_init"] = g1["sigma"]
+        with self.assertLogs(_LOGGER, level="WARNING") as cm:
+            s2.solve(g2, 'tests/flex/output')
+        self.assertFalse(s2.scf_converged)
+        warns = [r.getMessage() for r in cm.records
+                 if "looks divergent" in r.getMessage()]
+        self.assertEqual(len(warns), 1)
+        self.assertIn("Stoner factor >= 1 for 3 iterations", warns[0])
 
     def test_non_finite_sigma_reports_diverged(self):
         s, gi = _make_solver(Nmat=32)
@@ -112,31 +152,89 @@ class TestDivergedWarmStart(unittest.TestCase):
                                     "Check the target filling/Ncond and temperature") as cm:
             s._find_mu_dressed(sigma, 1.0 / s.T, 10.0 * nstate)
         self.assertNotIn("diverged", str(cm.exception))
-        self.assertIn("varies over the bracket", str(cm.exception))
+        self.assertIn("is not inside (0, 16)", str(cm.exception))
 
 
 class TestMuFailureMessage(unittest.TestCase):
+    """The classification on its own (16 states, physical window [-5, 5])."""
+
+    W = (-5.0, 5.0)
+
+    def _msg(self, ncond, n_window, sigma_finite=True, monitor=None):
+        fw = [x - ncond for x in n_window]
+        return diag.mu_failure_message("X", -1e31, 1e31, -ncond, -ncond, ncond,
+                                       16, sigma_finite, self.W, fw, monitor)
 
     def test_flat_is_diverged(self):
-        m = diag.mu_failure_message("X", -1e31, 1e31, -8.0, -8.0, 16, True)
+        m = self._msg(8.0, [8.0] * 9)
         self.assertIn("diverged", m)
+        self.assertIn("does not depend on mu over the band window", m)
         self.assertNotIn("filling/Ncond", m)
 
-    def test_nan_n_is_diverged(self):
-        m = diag.mu_failure_message("X", -1.0, 1.0, float("nan"), 3.0, 16, True)
-        self.assertIn("N(mu) is not finite", m)
-
-    def test_varying_is_filling(self):
-        m = diag.mu_failure_message("X", -1e31, 1e31, -160.0, -144.0, 16, True)
+    def test_ends_equal_but_window_healthy_unreachable_is_filling(self):
+        """The IR artefact: equal values at the expanded ends, healthy N(mu)
+        on the band window, target above the number of states."""
+        m = self._msg(20.0, np.linspace(0.0, 16.0, 9))
         self.assertIn("filling/Ncond", m)
         self.assertNotIn("diverged", m)
+
+    def test_negative_target_is_filling(self):
+        m = self._msg(-5.0, np.linspace(0.0, 16.0, 9))
+        self.assertIn("filling/Ncond", m)
+
+    def test_unphysical_n_is_diverged(self):
+        m = self._msg(8.0, np.linspace(-3.1, -2.9, 9))
+        self.assertIn("leaves the physical range", m)
+
+    def test_non_monotonic_is_diverged(self):
+        m = self._msg(8.0, [0, 12, 3, 14, 1, 15, 2, 16, 4])
+        self.assertIn("not cross Ncond = 8 monotonically", m)
+
+    def test_nan_n_is_diverged(self):
+        m = self._msg(8.0, [float("nan")] * 9)
+        self.assertIn("N(mu) is not finite", m)
+
+    def test_nan_sigma_is_diverged_even_for_reachable_target(self):
+        m = self._msg(8.0, np.linspace(0.0, 16.0, 9), sigma_finite=False)
+        self.assertIn("self-energy is not finite", m)
 
     def test_context_from_monitor(self):
         mon = diag.ScfMonitor(logging.getLogger("test282"))
         mon.record(7, 0.93, {"spin": (1.25, (0.5, 0.5, 0.0))}, last=False)
-        m = diag.mu_failure_message("X", -1e31, 1e31, -8.0, -8.0, 16, True, mon)
+        m = self._msg(8.0, [8.0] * 9, monitor=mon)
         self.assertIn("iteration was 7 with |dSigma|/|Sigma| = 9.300e-01", m)
         self.assertIn("spin 1.250000 at q = (0.5, 0.5, 0)", m)
+
+
+class TestRealEigenvalueStoner(unittest.TestCase):
+
+    def test_complex_pair_is_not_the_stoner_factor(self):
+        """-chi0 W = diag(0.5, [[1.3, -0.4], [0.4, 1.3]]): eigenvalues 0.5
+        and 1.3 +- 0.4i. 1 + chi0 W is regular (no real eigenvalue reaches
+        1), so the Stoner factor is 0.5; the complex pair is reported apart."""
+        c = np.eye(3, dtype=complex)[None]
+        m = np.zeros((3, 3))
+        m[0, 0] = 0.5
+        m[1:, 1:] = [[1.3, -0.4], [0.4, 1.3]]
+        val, q, max_re = diag.static_instability(c, -m[None], (1, 1, 1))
+        self.assertAlmostEqual(val, 0.5, places=12)
+        self.assertAlmostEqual(max_re, 1.3, places=12)
+        txt = diag.format_stoner({"spinful": (val, q, max_re)})
+        self.assertIn("spinful 0.500000", txt)
+        self.assertIn("max Re over complex pairs 1.300000", txt)
+        # the warning reads the real value only
+        recs = []
+        lg = logging.getLogger("test282.real")
+        mon = diag.ScfMonitor(lg)
+        with self.assertLogs(lg, level="DEBUG") as cm:
+            lg.debug("start")
+            for i in range(5):
+                mon.record(i + 1, 2.0, {"spinful": (val, q, max_re)}, last=False)
+        self.assertFalse([r for r in cm.records if r.levelno >= logging.WARNING])
+
+    def test_real_spectrum_prints_no_complex_note(self):
+        txt = diag.format_stoner({"spin": (0.7, (0.5, 0.5, 0.0), 0.7)})
+        self.assertNotIn("complex", txt)
 
 
 class TestScfMonitor(unittest.TestCase):

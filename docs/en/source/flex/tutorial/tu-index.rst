@@ -539,10 +539,16 @@ For each channel the value is
 
 .. math::
 
-   \lambda = \max_{\mathbf{q}} \max \mathrm{Re}\,
-   \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right],
+   \lambda = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\},
 
-where :math:`\chi_0` is the bubble of the current dressed Green function and
+the largest REAL eigenvalue (only a real eigenvalue reaching 1 makes
+:math:`1 + \chi_0 W` singular; an eigenvalue counts as real when
+:math:`|\mathrm{Im}\,e| \le 10^{-6} \max|e|`). Should a complex eigenvalue
+pair lie further right, as can happen for a non-Hermitian product with
+spin-orbit coupling, the line adds ``(max Re over complex pairs ...)``.
+Here :math:`\chi_0` is the bubble of the current dressed Green function and
 :math:`W` is the vertex of that channel's sum
 :math:`[1 + \chi_0 W]^{-1}\chi_0`: :math:`W = -U_s` (spin) and :math:`+U_c`
 (charge) for ``calc_scheme = "reduced"``, the full orbital vertices for
@@ -557,12 +563,18 @@ How to read it: :math:`\lambda \ge 1` means that the channel's sum is
 statically unstable for that bubble. A converged FLEX solution stays below 1,
 and the distance from 1 tells how close the run is to the instability. A
 cold start may begin above 1 and recover (the sample above starts at 1.056).
-In a warm-started U scan the first map uses the new U with the previous
-self-energy, so its value is about :math:`\lambda (U + \Delta U)/U` when the
-previous run ended at :math:`\lambda`. Keep this below 1, i.e.
+For choosing the step of a warm-started U scan, a rough heuristic: the first
+map uses the new U with the previous self-energy, so if the previous run
+ended at :math:`\lambda` the first value is about
+:math:`\lambda (U + \Delta U)/U`, and keeping it below 1 means
 :math:`\Delta U / U < (1 - \lambda)/\lambda` (about 5 % at
-:math:`\lambda = 0.95`; take a clearly smaller step). For a temperature scan,
-watch the first-iteration value the same way.
+:math:`\lambda = 0.95`). This assumes that every interaction parameter of the
+channel scales with U (not so when V, U' or J are held fixed), that
+:math:`\chi_0` stays at its value for the previous self-energy, and that a
+first map below 1 suffices; none of these is guaranteed, and a first value
+below 1 does not ensure convergence. Take a clearly smaller step, and read
+the first-iteration value in the log. For a temperature scan, watch the
+first-iteration value the same way.
 
 If some channel stays at :math:`\lambda \ge 1` for three iterations in a row
 while :math:`|d\Sigma|/|\Sigma| \ge 0.5`, or the step is not finite, the log
@@ -570,17 +582,23 @@ warns once (``FLEX iteration N looks divergent: ...``). The warning does not
 stop the run.
 
 A diverged self-energy usually ends the run in the chemical-potential
-search, because :math:`N(\mu)` no longer depends on :math:`\mu`. The error
-then says so, instead of pointing at the filling (here a one-band model
+search, because :math:`N(\mu)` no longer behaves like a particle number. A
+healthy :math:`N(\mu)` runs from 0 to the number of states, so it reaches
+every target strictly between the two; when the target lies in that range
+and the search still fails, the error says that the self-energy has
+diverged. It also states how :math:`N(\mu)` misbehaves on the band window
+(the bare band range widened by :math:`1 + 10T`): flat, not finite, outside
+the physical range, or not monotonic. It says so instead of pointing at the filling (here a one-band model
 warm-started from the converged :math:`U = 2` self-energy at :math:`U = 200`):
 
 .. code-block:: text
 
     RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
     after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
-    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) does not
-    depend on mu over the whole bracket); this is not a problem of the
-    filling or the temperature. The last completed iteration was 1 with
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) leaves the
+    physical range [0, 16] over the band window [-9, 11] (from -3.12821 to
+    -2.96742)); the target filling is reachable, so this is not a problem of
+    the filling or the temperature. The last completed iteration was 1 with
     |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
     q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
     too large a step in a warm-started scan (U or T; the previous
@@ -588,8 +606,12 @@ warm-started from the converged :math:`U = 2` self-energy at :math:`U = 200`):
     or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
     start (no sigma_init).
 
-Only when :math:`N(\mu)` varies over the bracket but never reaches the target
-does the message say ``Check the target filling/Ncond and temperature``.
+Only a target outside that range (for example ``Ncond`` larger than the
+number of states) gives ``Check the target filling/Ncond and temperature``.
+The decision does not use the values at the ends of the expanded bracket:
+with ``matsubara_basis = "ir"`` :math:`N(\mu)` tends to 0 at both far ends
+whatever the self-energy is, so equal values there (``N-Ncond = -8.0,
+-8.0`` above) are not by themselves a sign of divergence.
 
 .. _flex_bond_hf_tutorial:
 

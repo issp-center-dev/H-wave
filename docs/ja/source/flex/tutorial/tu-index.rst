@@ -507,10 +507,14 @@ Stoner 因子と発散した計算
 
 .. math::
 
-   \lambda = \max_{\mathbf{q}} \max \mathrm{Re}\,
-   \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \lambda = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\}
 
-です。\ :math:`\chi_0`\ はその反復の dressed Green 関数から作ったバブル、
+で、\ **実**\ 固有値の最大値です（\ :math:`1 + \chi_0 W`\ を特異にするのは 1 に達する
+実固有値だけです。\ :math:`|\mathrm{Im}\,e| \le 10^{-6} \max|e|`\ のとき実とみなします）。
+スピン軌道相互作用を含む非エルミートな積などで複素共役対がより右にある場合は、
+行に\ ``(max Re over complex pairs ...)``\ が付きます。\ :math:`\chi_0`\ はその反復の dressed Green 関数から作ったバブル、
 :math:`W`\ はそのチャネルの和\ :math:`[1 + \chi_0 W]^{-1}\chi_0`\ のバーテックスで、
 ``calc_scheme = "reduced"``\ ではスピン\ :math:`W = -U_s`\ 、電荷\ :math:`+U_c`\ 、
 ``"general"``\ では軌道の完全なバーテックス、スピン軌道 FLEX では反対称化した
@@ -522,29 +526,37 @@ Stoner 因子と発散した計算
 読み方: :math:`\lambda \ge 1`\ は、そのバブルに対してチャネルの和が静的に不安定で
 あることを意味します。収束した FLEX 解は 1 未満にとどまり、1 からの距離が不安定点への
 近さを表します。コールドスタートでは 1 を超えた値から始まって回復することがあります
-（上のサンプルは 1.056 から始まります）。warm start による U スキャンでは、最初の
-写像は新しい U と前の自己エネルギーを使うので、前の計算が\ :math:`\lambda`\ で
-終わっていればその値はおよそ\ :math:`\lambda (U + \Delta U)/U`\ です。これを 1 未満に
-保つ、すなわち\ :math:`\Delta U / U < (1 - \lambda)/\lambda`\ としてください
-（\ :math:`\lambda = 0.95`\ で約 5 %。はっきり小さい刻みを取ってください）。
-温度スキャンでも同様に最初の反復の値を確認してください。
+（上のサンプルは 1.056 から始まります）。warm start による U スキャンの刻みの
+目安（大まかな経験則）: 最初の写像は新しい U と前の自己エネルギーを使うので、前の計算が
+:math:`\lambda`\ で終わっていれば最初の値はおよそ\ :math:`\lambda (U + \Delta U)/U`\ で、
+これを 1 未満に保つには\ :math:`\Delta U / U < (1 - \lambda)/\lambda`\ です
+（\ :math:`\lambda = 0.95`\ で約 5 %）。これは、チャネルの全ての相互作用パラメータが U と
+ともにスケールすること（V、U'、J を固定する場合は成り立ちません）、\ :math:`\chi_0`\ が
+前の自己エネルギーでの値のままであること、最初の写像で 1 未満なら十分であること、を仮定
+しています。いずれも保証されず、最初の値が 1 未満でも収束は保証されません。はっきり
+小さい刻みを取り、ログの最初の反復の値を確認してください。温度スキャンでも同様に
+最初の反復の値を確認してください。
 
 あるチャネルで\ :math:`\lambda \ge 1`\ が 3 反復続けて\ :math:`|d\Sigma|/|\Sigma| \ge 0.5`\ と
 同時に起こるか、刻みが有限でない場合、ログに一度だけ警告
 （\ ``FLEX iteration N looks divergent: ...``\ ）が出ます。この警告で計算は止まりません。
 
-自己エネルギーが発散すると、\ :math:`N(\mu)`\ が\ :math:`\mu`\ に依存しなくなるため、
-通常は化学ポテンシャル探索で計算が停止します。そのときのエラーは、フィリングではなく
-発散を指摘します（例: 1 バンド模型で、収束した\ :math:`U = 2`\ の自己エネルギーから
+自己エネルギーが発散すると、\ :math:`N(\mu)`\ が粒子数として振る舞わなくなるため、
+通常は化学ポテンシャル探索で計算が停止します。正常な\ :math:`N(\mu)`\ は 0 から状態数まで
+変化するので、その間の目標値には必ず到達します。目標値がその範囲内なのに探索が失敗した
+場合、エラーは自己エネルギーの発散を指摘し、バンド窓（裸のバンド範囲を\ :math:`1 + 10T`\ だけ
+広げた範囲）での\ :math:`N(\mu)`\ の異常（平坦、非有限、物理的範囲外、非単調）も
+示します（例: 1 バンド模型で、収束した\ :math:`U = 2`\ の自己エネルギーから
 :math:`U = 200`\ へ warm start した場合）。
 
 .. code-block:: text
 
     RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
     after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
-    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) does not
-    depend on mu over the whole bracket); this is not a problem of the
-    filling or the temperature. The last completed iteration was 1 with
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) leaves the
+    physical range [0, 16] over the band window [-9, 11] (from -3.12821 to
+    -2.96742)); the target filling is reachable, so this is not a problem of
+    the filling or the temperature. The last completed iteration was 1 with
     |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
     q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
     too large a step in a warm-started scan (U or T; the previous
@@ -552,8 +564,11 @@ Stoner 因子と発散した計算
     or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
     start (no sigma_init).
 
-:math:`N(\mu)`\ が区間内で変化するのに目標値に届かない場合に限り、メッセージは
-``Check the target filling/Ncond and temperature``\ となります。
+目標値がその範囲外の場合（例えば\ ``Ncond``\ が状態数より大きい場合）に限り、
+メッセージは\ ``Check the target filling/Ncond and temperature``\ となります。
+判定には拡張した区間の両端の値を使いません。\ ``matsubara_basis = "ir"``\ では
+自己エネルギーによらず遠方の両端で\ :math:`N(\mu)`\ が 0 に近づくため、そこでの値が
+等しいこと（上の\ ``N-Ncond = -8.0, -8.0``\ ）だけでは発散の兆候になりません。
 
 .. _flex_bond_hf_tutorial:
 

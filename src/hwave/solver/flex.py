@@ -3550,10 +3550,16 @@ class FLEX(RPA):
             # Tell a diverged self-energy (N(mu) flat or not finite) from an
             # unreachable target (N(mu) varies but never crosses it), issue
             # #282; the exception type is unchanged.
+            # The classification reads N(mu) on the physical band window
+            # (independent of Sigma), not at the expanded ends: see
+            # flex_diagnostics.mu_failure_message.
             sigma_finite = bool(_bk.array_module_of(sigma).isfinite(sigma).all())
+            window = _diag.band_window(w, beta)
+            f_window = [_delta_n(m) for m in np.linspace(window[0], window[1], 9)]
             raise RuntimeError(_diag.mu_failure_message(
-                "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, int(w.size),
-                sigma_finite, getattr(self, "_scf_monitor", None)))
+                "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, Ncond,
+                int(w.size), sigma_finite, window, f_window,
+                getattr(self, "_scf_monitor", None)))
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:
@@ -3600,8 +3606,9 @@ class FLEX(RPA):
     _stoner_last = None      # Stoner factors of the latest bubble (issue #282)
 
     def _stoner_factors(self, chi0q, channels):
-        """``{name: (lambda, q)}`` with ``lambda = max_q max Re
-        eig[-chi0(q, i nu = 0) W(q)]`` for each ``(name, W)`` in
+        """``{name: (lambda, q, max_re)}`` with ``lambda = max_q`` of the
+        largest REAL eigenvalue of ``-chi0(q, i nu = 0) W(q)`` (``max_re``:
+        over all eigenvalues) for each ``(name, W)`` in
         ``channels``, ``W`` being the vertex handed to ``_solve_rpa``
         (see :mod:`hwave.solver.flex_diagnostics`). Read-only: a log value,
         one small eigenvalue problem per q on the static slice."""
@@ -3609,7 +3616,8 @@ class FLEX(RPA):
             il, exact = _diag.static_boson_index(self)
             tag = "" if exact else " (i nu nearest 0)"
             shape = tuple(int(x) for x in self.lattice.shape)
-            return {name + tag: _diag.static_instability(chi0q, w, il, shape)
+            c = _diag.static_slice(chi0q, il)       # one host copy per call
+            return {name + tag: _diag.static_instability(c, w, shape)
                     for name, w in channels}
         except Exception as exc:     # a log value must never end a run
             logger.debug("Stoner factor not computed: %s", exc)
