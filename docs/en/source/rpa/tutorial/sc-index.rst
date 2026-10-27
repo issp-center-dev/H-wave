@@ -153,6 +153,12 @@ This section controls the Eliashberg solver. Key parameters:
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
   susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+  ``"calc"`` evaluates :math:`\chi_0(\mathbf{q})` at the zero bosonic
+  frequency only, the one frequency the static solve uses, so its memory is
+  :math:`O(N_k\,n_d^4)` instead of :math:`O(N_\mathrm{mat} N_k\,n_d^4)`
+  (:math:`N_k` k points, :math:`n_d` orbitals, :math:`2N` in spin-orbital
+  mode); the result equals the zero-frequency slice of the full-frequency
+  bubble to round-off. It writes no chi0q file.
 
   .. note::
 
@@ -1977,14 +1983,16 @@ Practical advice
   which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
 - A Zeeman term written into the Transfer file as a spin-dependent one-body
   term runs, but this case has not been validated.
-- Memory. The full-frequency spinful chi0q (computed in ``chi0q_mode =
-  "calc"``, read whole in ``"load"`` and ``"flex"``) holds
-  :math:`N_\mathrm{mat} N_k (2N)^4` complex numbers, i.e.
-  :math:`16\,N_\mathrm{mat} N_k (2N)^4` bytes, with :math:`N_k` the number
-  of k points. For :math:`N = 4`, a :math:`32 \times 32` grid and
-  ``Nmat = 1024`` this is about 69 GB, against about 4.3 GB for a
-  non-spin-orbital general chi0q (:math:`N^4` orbital indices) of the same
-  physical :math:`N`.
+- Memory. ``chi0q_mode = "calc"`` computes the spinful chi0q at the zero
+  bosonic frequency only: :math:`N_k (2N)^4` complex numbers, i.e.
+  :math:`16\,N_k (2N)^4` bytes, with :math:`N_k` the number of k points
+  (about 67 MB for :math:`N = 4` on a :math:`32 \times 32` grid). What
+  still grows with ``Nmat`` is the Green function,
+  :math:`O(N_\mathrm{mat} N_k (2N)^2)`. ``"load"`` and ``"flex"`` read the
+  full-frequency file whole, :math:`16\,N_\mathrm{mat} N_k (2N)^4` bytes:
+  about 69 GB for the same model with ``Nmat = 1024``, against about 4.3 GB
+  for a non-spin-orbital general chi0q (:math:`N^4` orbital indices) of the
+  same physical :math:`N`.
 - ``gpu = true`` in spin-orbital mode has not been validated.
 
 Validation
