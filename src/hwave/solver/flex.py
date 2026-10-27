@@ -3658,17 +3658,13 @@ class FLEX(RPA):
         the direct (ring) tensor plus the on-site exchange crossing, the
         vertex the spinful RPA resums (issue #137; validated against exact
         diagonalization there). Cached per solve."""
-        from hwave.solver.rpa import _to_bubble_pair_convention
+        from hwave.solver.rpa import spinful_bubble_vertex
         cached = getattr(self, "_so_vertex", None)
         if cached is not None and _bk.array_module_of(cached) is xp:
             return cached
         nvol, nd = self.lattice.nvol, 2 * self.norb
         ham = np.asarray(_bk.to_host(self.ham_info.ham_inter_q)).reshape(nvol, nd, nd, nd, nd)
-        exch = self.ham_info.spinful_exchange()
-        if exch is not None:
-            ham = ham + np.asarray(exch).reshape(nd, nd, nd, nd)[None, ...]
-        gam = np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
-            nvol, nd * nd, nd * nd)
+        gam = spinful_bubble_vertex(ham, self.ham_info.spinful_exchange())
         self._so_vertex = xp.asarray(gam)
         return self._so_vertex
 
@@ -4780,7 +4776,13 @@ class FLEX(RPA):
                      index_convention=spin_orbital.INDEX_CONVENTION,
                      **tail_meta,
                      **_freq_meta("B"),
-                     **_scheme_stamp(self))
+                     **_scheme_stamp(self),
+                     # #83: the spin-orbital marker, written ONLY by a
+                     # spin-orbital run (a non-spin-orbital archive keeps its
+                     # member set); hwave_sc requires it in spin-orbital
+                     # flex mode -- index_convention alone is on every file
+                     **({"spin_orbital": True}
+                        if getattr(self, "_so_spinful", False) else {}))
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -4865,6 +4867,9 @@ class FLEX(RPA):
                 # the single antisymmetrized spinful channel (#83)
                 save_dict["chiq"] = green_info["chiq"]
                 save_dict["index_convention"] = spin_orbital.INDEX_CONVENTION
+            if self._so_spinful:
+                # #83: written ONLY by a spin-orbital run (see chi0q above)
+                save_dict["spin_orbital"] = True
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
 

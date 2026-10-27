@@ -1246,6 +1246,40 @@ def _reject_ir_native(data, file_name, hint):
             "(frequency_grid=sparse_ir_nodes); {}".format(file_name, hint))
 
 
+def _require_so_chi0q_marker(data, file_name, hint=None, producer="RPA"):
+    """Refuse a chi0q that does not record ``spin_orbital = True``.
+
+    Every RPA run writes ``index_convention = "spin_block"``, so that tag does
+    not identify a spin-orbital file, and the shape cannot either: a
+    non-spin-orbital chi0q over 2N orbitals has the shape of a spin-orbital
+    one over N physical orbitals. The RPA therefore writes an explicit
+    ``spin_orbital = True`` marker, ONLY in a spin-orbital run (a
+    non-spin-orbital archive carries no such key); spin-orbital mode accepts
+    only a 0-d boolean ``True``. Checked on the open npz before the chi0q
+    array itself is read. Also used for the chi0q companion of a
+    spin-orbital FLEX run (``producer = "FLEX"``)."""
+    if hint is None:
+        hint = ("Regenerate the file with a spin-orbital RPA run "
+                "([mode] enable_spin_orbital = true, calc_scheme = \"general\") "
+                "that computes chi0q itself or reads a chi0q_init marked "
+                "spin_orbital = True.")
+    if "spin_orbital" not in data:
+        raise ValueError(
+            "chi0q file '{}' has no spin_orbital marker, so it cannot be told "
+            "from a non-spin-orbital chi0q of the same shape. {}".format(
+                file_name, hint))
+    val = np.asarray(data["spin_orbital"])
+    if val.ndim != 0 or val.dtype != np.bool_:
+        raise ValueError(
+            "chi0q file '{}': malformed spin_orbital marker ({!r}); expected a "
+            "boolean. {}".format(file_name, data["spin_orbital"], hint))
+    if not bool(val[()]):
+        raise ValueError(
+            "chi0q file '{}' records spin_orbital = False: it was not written "
+            "by a spin-orbital {} run and cannot be used with [mode] "
+            "enable_spin_orbital = true. {}".format(file_name, producer, hint))
+
+
 def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
@@ -1277,6 +1311,8 @@ def _load_chi0q(input_dict, norb=None):
         "\"ir\".")
     enable_spin_orbital = _resolve_spin_orbital_flag(input_dict)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
+    if enable_spin_orbital:
+        _require_so_chi0q_marker(data, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
 
@@ -1602,6 +1638,11 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     # Create RPA solver (sets up Lattice, Interaction, parameters)
     solver = sol_rpa.RPA(ham_info, info_log, info_mode_rpa)
+    if info_mode_rpa["enable_spin_orbital"]:
+        # the spin-orbital Eliashberg vertex needs the full spinful chi0
+        # (nd = 2 * norb spin-orbitals) even when the transfer happens to be
+        # spin-diagonal, as the spin-orbital FLEX does (#83)
+        solver._keep_spinful = True
 
     # Get green_info (may contain chi0q_init, trans_mod, green_init)
     green_info = read_io.get_param("green")
@@ -6837,7 +6878,8 @@ def _solve_shifted_bicg(Vs_q, G2, norb, Nx, Ny, Nz,
 def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_array, kz_array,
                   gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
                   eigenvalue_match=None, provenance=None,
-                  eigenvalue_note=None):
+                  eigenvalue_note=None, eigenvalue_weights=None,
+                  gap_comments=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -6871,6 +6913,16 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         silently confused with the signed ``lambda_rayleigh`` sitting in the
         provenance block above it. Additive in the same sense as
         ``provenance``: comment lines only, no numeric row changes.
+    eigenvalue_weights : ndarray, optional
+        Spin-orbital mode only: ``(n_eig, 4)`` spin weights
+        ``(psi, dx, dy, dz)`` of each eigenvector
+        (:func:`hwave.solver.so_pairing.so_spin_decomposition`), appended as
+        four columns after the ``match`` column. None (the default) leaves the
+        eigenvalue rows unchanged.
+    gap_comments : list of str, optional
+        Spin-orbital mode only: ``#`` comment lines written before the column
+        header of the gap file. None (the default) leaves the gap file
+        unchanged.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -6881,6 +6933,8 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         logger.info("Saving gap function to {}".format(filepath))
 
         with open(filepath, "w") as fw:
+            for line in (gap_comments or ()):
+                fw.write("# {}\n".format(line))
             # Header
             header_parts = ["# kx", "ky", "kz"]
             for i in range(norb):
@@ -6932,7 +6986,11 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                 # sector. The leading index/Re/Im/|ev| columns are unchanged, so
                 # position-based parsers (e.g. reading column 1 as Re) are
                 # unaffected; only the column count grows from 4 to 5.
-                if eigenvalue_match is not None:
+                if eigenvalue_weights is not None:
+                    fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
+                             "|eigenvalue|  match(1=fermion-antisymmetric)  "
+                             "w_psi  w_dx  w_dy  w_dz\n")
+                elif eigenvalue_match is not None:
                     fw.write("# index  Re(eigenvalue)  Im(eigenvalue)  "
                              "|eigenvalue|  match(1=channel-parity)\n")
                 else:
@@ -6943,6 +7001,9 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                         i, ev.real, ev.imag, abs(ev))
                     if eigenvalue_match is not None:
                         row += " {:d}".format(int(bool(eigenvalue_match[i])))
+                    if eigenvalue_weights is not None:
+                        row += "".join(" {:15.8e}".format(w)
+                                       for w in eigenvalue_weights[i])
                     fw.write(row + "\n")
 
 
@@ -7005,15 +7066,20 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 # ---------------------------------------------------------------------------
 
 def reject_spin_orbital_mode(input_dict):
-    """Raise when [mode] enable_spin_orbital is set: the Eliashberg module
-    does not support it, and until issue #83 it RAN anyway and printed
-    eigenvalues built on four internal inconsistencies (norb never halved
-    to the physical count; the internally computed chi0q in interleaved
-    order against spin-block consumers -- measured 27% off, exactly a
-    [0,2,1,3] permutation; interaction files read at the spin-orbital
-    dimension, so U landed on (orb0, up)/(orb0, down) as two 'orbitals'
-    and orbital 1 got none; paramagnetic orbital-space S/C rules applied
-    to spin-orbital indices). A silent wrong result, not an approximation.
+    """Raise when [mode] enable_spin_orbital is set, for the Eliashberg
+    entries that do not support it: the dynamic solver
+    (``eliashberg_dynamic.solve_dynamic``), the dynamic bond path and the
+    temperature sweep. The static entry (:func:`calc_eliashberg`) supports
+    spin-orbital models since issue #83 and refuses only its unsupported
+    combinations (:func:`hwave.solver.so_pairing.check_so_supported`).
+
+    Until issue #83 a spin-orbital config RAN through these entries and
+    printed eigenvalues built on four internal inconsistencies (norb never
+    halved to the physical count; the internally computed chi0q in
+    interleaved order against spin-block consumers; interaction files read
+    at the spin-orbital dimension; paramagnetic orbital-space S/C rules
+    applied to spin-orbital indices). A silent wrong result, not an
+    approximation.
 
     Resolution is strict (shared _resolve_spin_orbital_flag): recognized
     false forms proceed as non-SO, unrecognized values raise -- a user who
@@ -7022,12 +7088,572 @@ def reject_spin_orbital_mode(input_dict):
     """
     if _resolve_spin_orbital_flag(input_dict):
         raise ValueError(
-            "[mode] enable_spin_orbital = true is not supported by the "
-            "Eliashberg module (hwave_sc): the pairing vertex is "
-            "paramagnetic and the internal index/orbital-count "
-            "conventions are not spin-orbital aware, so a run would "
-            "produce silently wrong eigenvalues (issue #83). Use the "
-            "UHFk/RPA/FLEX solvers for spin-orbital models.")
+            "[mode] enable_spin_orbital = true is not supported by this "
+            "Eliashberg entry (the dynamic solver, frequency = \"dynamic\", "
+            "its bond path and the temperature sweep): it would produce "
+            "silently wrong eigenvalues (issue #83). The static solver "
+            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\", "
+            "\"load\" or \"flex\") supports spin-orbital models.")
+
+
+def _so_rpa_vertex(input_dict):
+    """The antisymmetrized spinful vertex ``Gamma`` ``(nvol, nd^2, nd^2)``
+    (:func:`hwave.solver.rpa.spinful_bubble_vertex`) of a spin-orbital
+    config, built from the interaction objects of the spin-orbital RPA
+    (``ham_inter_q`` and ``spinful_exchange()``, the tensors the RPA and FLEX
+    SO resum; interaction files in physical orbital indices)."""
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.rpa as sol_rpa
+
+    info_inputfile = dict(input_dict.get("file", {}).get("input", {}))
+    info_inputfile["path_to_input"] = info_inputfile.get("path_to_input", "")
+    info_mode_rpa = dict(input_dict.get("mode", {}))
+    info_mode_rpa["calc_scheme"] = "general"
+    info_mode_rpa["_orbital_site_reported"] = True
+    info_mode_rpa["enable_spin_orbital"] = True
+    read_io = read_input_k.QLMSkInput(info_inputfile)
+    solver = sol_rpa.RPA(read_io.get_param("ham"),
+                         {"print_level": 1, "print_step": 1}, info_mode_rpa)
+    nvol, nd = solver.lattice.nvol, 2 * solver.norb
+    ham = np.asarray(backend.to_host(solver.ham_info.ham_inter_q)).reshape(
+        nvol, nd, nd, nd, nd)
+    return sol_rpa.spinful_bubble_vertex(ham, solver.ham_info.spinful_exchange())
+
+
+def _so_gap_npz_name(gap_file):
+    """The spin-orbital gap archive: the gap file name with its extension
+    replaced by ``.npz`` (``gap.dat`` -> ``gap.npz``); a gap file that is
+    itself named ``*.npz`` gets ``.npz`` appended instead, so the two never
+    collide."""
+    name = os.path.splitext(gap_file)[0] + ".npz"
+    return gap_file + ".npz" if name == gap_file else name
+
+
+def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
+                      eigenvectors, match, kx_array, ky_array, kz_array):
+    """The spin-orbital output schema (issue #83).
+
+    Writes the gap archive (:func:`_so_gap_npz_name`, default ``gap.npz``)
+    and returns ``(provenance, weights, gap_comments)`` for
+    :func:`_save_results`:
+
+    * ``provenance`` -- the ``# key = value`` lines of ``eigenvalue.dat``
+      (``spin_orbital = true``, ``index_convention = spin_block``, the gap
+      layout, the spin decomposition and the weights of the written gap);
+    * ``weights`` -- ``(n_eig, 4)`` spin weights ``(psi, dx, dy, dz)`` of the
+      eigenvectors (:func:`hwave.solver.so_pairing.so_spin_decomposition`),
+      or None without an eigenvalue analysis;
+    * ``gap_comments`` -- the comment lines of ``gap.dat``.
+
+    The archive holds ``gap`` ``(nd, nd, Nx, Ny, Nz)`` (the gap of
+    ``gap.dat``), ``index_convention``, ``spin_orbital``, ``norb_phys``,
+    ``kx``/``ky``/``kz``, ``spin_components`` and ``gap_spin_weights``; with
+    an eigenvalue analysis also ``eigenvalues``, ``eigenvectors``
+    ``(n_eig, nd, nd, Nx, Ny, Nz)``, ``eigenvector_spin_weights`` and
+    ``eigenvalue_match``."""
+    from hwave.solver import so_pairing, spin_orbital
+    comps = so_pairing.SPIN_COMPONENTS
+    nd = 2 * int(norb_phys)
+    layout = ("Delta_AB(k), A = spin * {} + orb (spin 0 = up, spin 1 = down); "
+              "fermion-antisymmetric, Delta_AB(k) = -Delta_BA(-k)"
+              .format(norb_phys))
+    npz_name = _so_gap_npz_name(gap_file)
+    prov = {
+        "spin_orbital": "true",
+        "index_convention": spin_orbital.INDEX_CONVENTION,
+        "gap_layout": layout,
+        "gap_npz": npz_name,
+        "match_column": "1 = fermion-antisymmetric eigenvector",
+        "spin_decomposition": (
+            "Delta_ab(k) = (psi_ab(k) + d_ab(k) . sigma) i sigma_y per orbital "
+            "pair (a, b); w_X = sum_{k,a,b} |X_ab(k)|^2 / sum_{k,a,b} "
+            "(|psi_ab(k)|^2 + |d_ab(k)|^2), X = psi, dx, dy, dz"),
+        "weight_columns": "w_psi w_dx w_dy w_dz (after the match column)",
+    }
+    record = {"index_convention": np.array(spin_orbital.INDEX_CONVENTION),
+              "spin_orbital": np.array(True),
+              "norb_phys": np.array(int(norb_phys)),
+              "kx": np.asarray(kx_array), "ky": np.asarray(ky_array),
+              "kz": np.asarray(kz_array),
+              "spin_components": np.array(comps)}
+    if gap is not None:
+        gap = np.asarray(backend.to_host(gap))
+        w = so_pairing.so_spin_decomposition(gap, norb_phys)
+        prov["gap_spin_weights"] = " ".join(
+            "{}={:.8e}".format(c, w[c]) for c in comps)
+        record["gap"] = gap.reshape((nd, nd) + gap.shape[2:])
+        record["gap_spin_weights"] = np.array([w[c] for c in comps])
+    weights = None
+    if eigenvalues is not None:
+        vecs = np.stack([np.asarray(backend.to_host(v)) for v in eigenvectors])
+        weights = np.array([[so_pairing.so_spin_decomposition(v, norb_phys)[c]
+                             for c in comps] for v in vecs])
+        record["eigenvalues"] = np.asarray(eigenvalues)
+        record["eigenvectors"] = vecs
+        record["eigenvector_spin_weights"] = weights
+        if match is not None:
+            record["eigenvalue_match"] = np.asarray(match, dtype=bool)
+    gap_comments = [
+        "spin_orbital = true",
+        "index_convention = {}".format(spin_orbital.INDEX_CONVENTION),
+        "gap_layout = {}; sigma_ij below is Delta_ij".format(layout),
+    ]
+    if gap is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, npz_name)
+        logger.info("Saving the spin-orbital gap to {}".format(path))
+        np.savez(path, **record)
+    return prov, weights, gap_comments
+
+
+def _so_static_vertex_from_chi(gam, chi_static, nd, spatial_shape):
+    """The static spin-orbital pairing vertex ``Vs_q``
+    ``(nd, nd, nd, nd, Nx, Ny, Nz)`` from the spinful vertex ``gam`` and a
+    static spinful susceptibility ``chi_static`` (both ``(nvol, nd^2,
+    nd^2)``, bubble ``[a, c, b, d]`` layout, spin-block order):
+    :func:`hwave.solver.so_pairing.so_pairing_vertex`. Pure; the susceptibility
+    may come from the RPA (:func:`_so_static_vertex`) or from FLEX."""
+    from hwave.solver.so_pairing import so_pairing_vertex
+    return so_pairing_vertex(gam, chi_static, nd, spatial_shape)
+
+
+def _so_static_chi0(chi0q_raw, nd, Nx, Ny, Nz, static_index):
+    """The static spinful bubble ``(nvol, nd^2, nd^2)`` (bubble ``[a, c, b,
+    d]`` layout) of a general spinful chi0q -- raw ``(nmat, nvol, nd, nd, nd,
+    nd)`` or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- at the zero
+    bosonic frequency ``static_index`` (``nmat // 2`` when ``None``). Any other
+    layout (reduced 2-index, spin-free / spin-diagonal) is refused."""
+    nvol = Nx * Ny * Nz
+    chi0q_raw = np.asarray(chi0q_raw)
+    if chi0q_raw.ndim == 6 and chi0q_raw.shape[1:] == (nvol,) + (nd,) * 4:
+        nmat = chi0q_raw.shape[0]
+        si = nmat // 2 if static_index is None else static_index
+        chi0 = chi0q_raw[si].reshape(nvol, nd * nd, nd * nd)
+    elif chi0q_raw.ndim == 8 and chi0q_raw.shape[:7] == (nd,) * 4 + (Nx, Ny, Nz):
+        nmat = chi0q_raw.shape[-1]
+        si = nmat // 2 if static_index is None else static_index
+        chi0 = chi0q_raw[..., si].reshape(nd * nd, nd * nd, nvol).transpose(2, 0, 1)
+    else:
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the chi0q has shape {}, not the "
+            "general (4-index) spinful layout over nd = {} spin-orbitals "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}). A reduced (2-index) or a "
+            "spin-free / spin-diagonal chi0q cannot carry the spin-flip "
+            "particle-hole pairs; use chi0q_mode = \"calc\", or load the "
+            "chi0q of a spin-orbital RPA run with calc_scheme = \"general\" and a "
+            "spin-mixing transfer.".format(chi0q_raw.shape, nd, nvol, nd=nd))
+    return chi0
+
+
+def _so_static_vertex(input_dict, chi0q_raw, norb_phys, Nx, Ny, Nz,
+                      static_index):
+    """The static spin-orbital pairing vertex of the RPA paths
+    (``chi0q_mode = "calc"`` / ``"load"``): ``Gamma`` from the spin-orbital RPA
+    objects (:func:`_so_rpa_vertex`), ``chi = [1 + chi0 Gamma]^-1 chi0`` at the
+    zero bosonic frequency ``static_index`` (``nmat // 2`` when ``None``) of
+    the general spinful ``chi0q_raw`` -- raw ``(nmat, nvol, nd, nd, nd, nd)``
+    or reference ``(nd, nd, nd, nd, Nx, Ny, Nz, nmat)`` -- then
+    :func:`_so_static_vertex_from_chi`."""
+    nd = 2 * int(norb_phys)
+    chi0 = _so_static_chi0(chi0q_raw, nd, Nx, Ny, Nz, static_index)
+    chi0 = np.ascontiguousarray(chi0, dtype=complex)
+    gam = _so_rpa_vertex(input_dict)
+    eye = np.eye(nd * nd, dtype=complex)
+    chi = np.linalg.solve(eye[None] + chi0 @ gam, chi0)
+    return _so_static_vertex_from_chi(gam, chi, nd, (Nx, Ny, Nz))
+
+
+#: ``chi_convention`` of the single antisymmetrized spinful channel a
+#: spin-orbital FLEX run stores as ``chiq`` (flex.py save_results).
+_SO_FLEX_CHI_CONVENTION = "spin_orbital"
+
+#: Backward-error bound of the Gamma consistency check of
+#: :func:`_check_so_flex_vertex` (round-off of the FLEX solve is ~1e-15; an
+#: interaction that differs from the FLEX run's shows up at O(dU/U)).
+_SO_FLEX_GAMMA_TOL = 1.0e-8
+
+
+def _so_flex_static_slice(data, arr, path, nd, nvol, config_nmat, what):
+    """The zero-bosonic-frequency slice ``(nvol, nd^2, nd^2)`` of a raw
+    spinful FLEX array ``arr`` ``(nmat, nvol, nd, nd, nd, nd)`` of the open
+    npz ``data`` read from ``path``, located through the file's
+    ``freq_index`` / ``nmat`` metadata."""
+    if arr.ndim != 6 or arr.shape[1:] != (nvol,) + (nd,) * 4:
+        raise ValueError(
+            "FLEX {} in '{}' has shape {}, not the general spinful layout "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}) over nd = {nd} spin-orbitals of "
+            "this run. Re-run FLEX on the same model and grid.".format(
+                what, path, arr.shape, nvol, nd=nd))
+    fi, fn = _read_freq_meta(data)
+    pos = _static_freq_position(fi, arr.shape[0], config_nmat, path,
+                                file_nmat=fn)
+    si = arr.shape[0] // 2 if pos is None else pos
+    out = np.ascontiguousarray(arr[si].reshape(nvol, nd * nd, nd * nd),
+                               dtype=complex)
+    if not np.all(np.isfinite(out)):
+        raise ValueError(
+            "FLEX {} in '{}' contains non-finite values at the zero bosonic "
+            "frequency; re-run the producing FLEX calculation.".format(what, path))
+    return out
+
+
+def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
+    """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
+    ``[mode] enable_spin_orbital = true``) for ``chi0q_mode = "flex"``.
+
+    Returns ``(chi, green_kw, chi0, chi_path)``:
+
+    * ``chi`` ``(nvol, nd^2, nd^2)``: the stored ``chiq`` -- the single
+      antisymmetrized spinful channel ``[1 + chi0 Gamma]^-1 chi0`` in the
+      bubble ``[a, c, b, d]`` pair layout over spin-block spin-orbitals
+      (``Flex._flex_compute_veff_spinful``) -- at the zero bosonic frequency;
+    * ``green_kw`` ``(nd, nd, Nx, Ny, Nz, nmat)``: the stored dressed Green
+      function (spin-block order, as stored; no reorder);
+    * ``chi0`` ``(nvol, nd^2, nd^2)``: the stored static bubble of the same
+      map (for :func:`_check_so_flex_vertex`). The chi0q archive is REQUIRED:
+      ``chiq`` carries no fingerprint of the vertex it was resummed with, so
+      without it interaction files that differ from the FLEX run's would give
+      silently wrong eigenvalues;
+    * ``chi_path``: the chiq archive read.
+
+    The archive is identified by its TAGS, never by its shape (a one-orbital
+    spin-orbital file has nd = 2, the shape of a two-orbital non-spin-orbital
+    one): ``chi_convention = "spin_orbital"`` and ``index_convention`` equal
+    to :data:`hwave.solver.spin_orbital.INDEX_CONVENTION`. A non-spin-orbital
+    ("myo"), reduced ("kuroki") or untagged archive is refused before any
+    heavy work, and so is a Green function without the spin-block tag and a
+    chi0q without the ``spin_orbital = True`` marker (written only by a
+    spin-orbital run)."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import spin_orbital
+    from hwave.solver.rpa import (validate_momentum_convention,
+                                  check_momentum_marker)
+    eli = CaseInsensitiveDict(input_dict.get("eliashberg", {}) or {})
+    flex_dir = _resolve_flex_dir(input_dict)
+    chi_path = os.path.join(flex_dir, eli.get("flex_chiq", "chiq.npz"))
+    chi0_path = os.path.join(flex_dir, eli.get("flex_chi0q", "chi0q.npz"))
+    # the Green file name is read case-insensitively like the keys above; the
+    # shared loader below is handed a view of the config with that name
+    green_name = eli.get("flex_green", "green.npz")
+    green_path = os.path.join(flex_dir, green_name)
+    green_input = dict(input_dict)
+    green_input["eliashberg"] = dict(
+        {k: v for k, v in (input_dict.get("eliashberg", {}) or {}).items()
+         if str(k).lower() != "flex_green"}, flex_green=green_name)
+    nvol = Nx * Ny * Nz
+    config_nmat = input_dict.get("mode", {}).get("param", {}).get(
+        "Nmat", _DEFAULT_NMAT)
+    hint = ("[mode] enable_spin_orbital = true with chi0q_mode = \"flex\" reads "
+            "the outputs of a spin-orbital FLEX run (calc_scheme = \"general\", "
+            "[mode] enable_spin_orbital = true, [file.output] chiq and green)")
+
+    if not os.path.exists(chi_path):
+        raise ValueError(
+            "FLEX susceptibility archive '{}' not found. {}; set [eliashberg] "
+            "flex_chiq to the file the FLEX run wrote as [file.output] "
+            "chiq.".format(chi_path, hint))
+    if not os.path.exists(chi0_path):
+        # the stored chiq carries no fingerprint of the vertex it was resummed
+        # with; the run's chi0q is what pins Gamma (_check_so_flex_vertex)
+        raise ValueError(
+            "FLEX chi0q archive '{}' not found. {}, and also its chi0q: the "
+            "check that this run's interaction files reproduce the FLEX run's "
+            "vertex needs it. Set [file.output] chi0q in the FLEX run and "
+            "[eliashberg] flex_chi0q to that file.".format(chi0_path, hint))
+    logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
+    with np.load(chi_path) as data:
+        _reject_ir_native(data, chi_path, _STATIC_IR_HINT)
+        if "chi_convention" not in data:
+            raise ValueError(
+                "FLEX archive '{}' has no chi_convention tag: an untagged file "
+                "cannot be told from a non-spin-orbital one by its shape (one "
+                "spin-orbital orbital has the shape of two orbitals). {}.".format(
+                    chi_path, hint))
+        conv = str(data["chi_convention"])
+        if conv != _SO_FLEX_CHI_CONVENTION:
+            what = {"myo": "a non-spin-orbital general FLEX output (separate "
+                           "spin and charge channels)",
+                    "kuroki": "a reduced FLEX output (separate spin and "
+                              "charge channels)"}.get(
+                        conv.lower(), "not a spin-orbital FLEX output")
+            raise ValueError(
+                "FLEX archive '{}' carries chi_convention = {!r}: {}, which "
+                "cannot carry the spin-flip pairs of a spin-orbital model. "
+                "{}.".format(chi_path, conv, what, hint))
+        if "index_convention" not in data:
+            raise ValueError(
+                "FLEX archive '{}' has no index_convention tag; the spin-orbital "
+                "order of its axes cannot be verified. {}.".format(chi_path, hint))
+        if str(data["index_convention"]) != spin_orbital.INDEX_CONVENTION:
+            raise ValueError(
+                "FLEX archive '{}' carries index_convention = {!r}, expected {!r}. "
+                "{}.".format(chi_path, str(data["index_convention"]),
+                             spin_orbital.INDEX_CONVENTION, hint))
+        if "chiq" not in data:
+            raise ValueError(
+                "FLEX archive '{}' has no 'chiq' array (the spinful channel). "
+                "{}.".format(chi_path, hint))
+        if ("chi_orbital_layout" in data
+                and str(data["chi_orbital_layout"]) != "acbd"):
+            raise ValueError(
+                "FLEX archive '{}' declares chi_orbital_layout = {!r} but this "
+                "reader only supports 'acbd'.".format(
+                    chi_path, str(data["chi_orbital_layout"])))
+        if "scf_converged" in data and not bool(np.asarray(data["scf_converged"])):
+            logger.warning(
+                "FLEX archive '%s' records scf_converged = false: the FLEX run "
+                "did not converge, and its chiq and green may not belong to one "
+                "self-consistent state.", chi_path)
+        check_momentum_marker(data, chi_path)
+        # the chi0q companion must be a spin-orbital FLEX output: its marker
+        # is checked after the lightweight chiq metadata above, but before
+        # any array (chiq or chi0q) is materialized and before the Green
+        # function or any vertex is built (_check_so_flex_vertex still
+        # follows: the marker does not establish equal interactions)
+        with np.load(chi0_path) as d0:
+            _require_so_chi0q_marker(
+                d0, chi0_path, producer="FLEX",
+                hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
+        chiq = data["chiq"]
+        if chiq.ndim >= 2 and chiq.shape[1] == nvol:
+            validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
+        chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
+                                    "chiq")
+        del chiq
+
+    # the Green function: required (the stored chi belongs to the dressed G)
+    if not os.path.exists(green_path):
+        raise ValueError(
+            "FLEX Green archive '{}' not found. {}; set [eliashberg] flex_green "
+            "to the file the FLEX run wrote as [file.output] green.".format(
+                green_path, hint))
+    with np.load(green_path) as gdata:
+        gtag = (str(gdata["index_convention"]) if "index_convention" in gdata
+                else None)
+    if gtag != spin_orbital.INDEX_CONVENTION:
+        raise ValueError(
+            "FLEX Green archive '{}' carries index_convention = {!r}, expected "
+            "{!r} (a spin-orbital FLEX run tags it). {}.".format(
+                green_path, gtag, spin_orbital.INDEX_CONVENTION, hint))
+    green_kw = _load_flex_green(green_input, nd, Nx, Ny, Nz,
+                                interactions=interactions)
+    if green_kw is None or _resolve_flex_paths(green_input)[2] != green_path:
+        raise ValueError(
+            "internal error: the FLEX Green archive '{}' resolved to a different "
+            "path in the shared loader.".format(green_path))
+
+    with np.load(chi0_path) as d0:
+        _reject_ir_native(d0, chi0_path, _STATIC_IR_HINT)
+        validate_chi0q_index_convention(d0, True, chi0_path)
+        check_momentum_marker(d0, chi0_path)
+        chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                     config_nmat, "chi0q")
+    return chi, green_kw, chi0, chi_path
+
+
+def _check_so_flex_vertex(gam, chi, chi0, chi_path):
+    """Refuse when ``gam`` (built here from the interaction files) is not the
+    vertex the FLEX run resummed: the stored ``chi`` must solve
+    ``(1 + chi0 gam) chi = chi0`` with the stored ``chi0`` of the same map.
+    Measured as a backward error, ``|(1 + chi0 gam) chi - chi0| /
+    (|chi0| + |chi0 gam| |chi|)`` (Frobenius) PER q block, and the maximum
+    over q is compared with the tolerance: the bound does not depend on how
+    close the run is to an instability, nor on the number of q points (a
+    global norm would dilute one bad block by ``1/sqrt(nvol)``). A block of
+    zero scale (``chi0_q = 0`` and ``chi0_q gam chi_q = 0``) has error 0 if
+    its residual vanishes and infinity otherwise."""
+    c0g = chi0 @ gam
+    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
+    scale = (np.linalg.norm(chi0, axis=(-2, -1))
+             + np.linalg.norm(c0g, axis=(-2, -1))
+             * np.linalg.norm(chi, axis=(-2, -1)))
+    pos = scale > 0
+    per_q = np.where(res == 0, 0.0, np.inf)
+    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
+    # NaN in any block propagates (and is refused by the test below)
+    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
+    err = float(np.max(per_q)) if per_q.size else 0.0
+    logger.info("spin-orbital FLEX: vertex consistency backward error %.3e", err)
+    if not err <= _SO_FLEX_GAMMA_TOL:
+        raise ValueError(
+            "the interaction files of this run do not reproduce the vertex of "
+            "the FLEX run that wrote '{}' (backward error {:.3e} > {:.1e} of "
+            "(1 + chi0 Gamma) chi = chi0 at the zero bosonic frequency). Use the "
+            "same interaction files and [mode.param] as the FLEX run.".format(
+                chi_path, err, _SO_FLEX_GAMMA_TOL))
+    return err
+
+
+#: Bound on the relative antisymmetry residual ``||v - P v|| / ||v||`` of a
+#: spin-orbital gap (:func:`_so_antisymmetry_residual`). The solvers return
+#: gaps that are antisymmetric by construction (residual exactly 0, see
+#: :class:`_SOAntisymmetricBasis`); anything above round-off is refused.
+_SO_ANTISYM_TOL = 1.0e-10
+
+
+class _SOAntisymmetricBasis:
+    """Orthonormal basis of the fermion-antisymmetric spin-orbital gaps
+    ``Delta_AB(k) = -Delta_BA(-k)`` on ``shape = (nd, nd, Nx, Ny, Nz)``.
+
+    The map ``R: (A, B, k) -> (B, A, -k)`` is an involution of the flat gap
+    index. Each orbit ``{i, R i}`` with ``i != R i`` carries one coordinate,
+    the unit vector ``(e_i - e_{R i}) / sqrt(2)`` (``i`` the smaller index of
+    the orbit); a self-paired element ``i = R i`` (``A = B`` and ``k = -k``)
+    is forced to zero by the antisymmetry and carries none. ``E``
+    (:meth:`to_full`) is therefore an isometry onto range(P), ``P = (1 -
+    R) / 2``, with ``E^dagger E = 1`` and ``E E^dagger = P``; ``dim`` is
+    ``(n - n_self) / 2``. The spin-orbital eigenproblem is solved on
+    ``E^dagger K E`` (:meth:`reduce`), where no Pauli-forbidden mode exists,
+    so no shift or selection can return one."""
+
+    def __init__(self, shape):
+        self.shape = tuple(int(x) for x in shape)
+        n = int(np.prod(self.shape))
+        idx = np.arange(n).reshape(self.shape)
+        self.partner = np.ascontiguousarray(
+            _reverse_k_and_orbital(idx)).ravel()
+        flat = np.arange(n)
+        self.rep = flat[flat < self.partner]
+        self.rep_partner = self.partner[self.rep]
+        self.n_self = int(np.sum(flat == self.partner))
+        self.n = n
+        self.dim = len(self.rep)
+
+    def to_full(self, c):
+        """``E c``: reduced coordinates ``(dim,)`` or ``(dim, k)`` -> flat
+        antisymmetric gaps ``(n,)`` / ``(n, k)``."""
+        c = np.asarray(c)
+        out = np.zeros((self.n,) + c.shape[1:], dtype=complex)
+        h = c / np.sqrt(2.0)
+        out[self.rep] = h
+        out[self.rep_partner] = -h
+        return out
+
+    def to_reduced(self, v):
+        """``E^dagger v``: flat gaps ``(n,)`` / ``(n, k)`` -> reduced
+        coordinates."""
+        v = np.asarray(v)
+        return (v[self.rep] - v[self.rep_partner]) / np.sqrt(2.0)
+
+    def reduce(self, A):
+        """``E^dagger K E`` of the flat kernel operator ``A`` (``E^dagger P
+        = E^dagger``, so this is also ``E^dagger (P K) E``)."""
+        def matvec(c):
+            v = self.to_full(np.asarray(c).ravel())
+            return self.to_reduced(np.asarray(A.matvec(v)).ravel())
+
+        def matmat(C):
+            C = np.asarray(C)
+            if C.ndim == 1:
+                return matvec(C)
+            return self.to_reduced(np.asarray(A.matmat(self.to_full(C))))
+        return LinearOperator((self.dim, self.dim), matvec=matvec,
+                              matmat=matmat, dtype=complex)
+
+
+def _so_antisymmetry_residual(gap):
+    """``||v - P v|| / ||v||`` of a spin-orbital gap ``(nd, nd, Nx, Ny, Nz)``
+    with ``P`` the projection onto fermion-antisymmetric gaps; ``inf`` for a
+    zero or non-finite gap. Unlike :func:`_is_gap_parity` (a dominant-sector
+    test used by the non-spin-orbital channels) this is a round-off-scale
+    criterion: compare with :data:`_SO_ANTISYM_TOL`."""
+    gap = np.asarray(gap)
+    n = float(np.linalg.norm(gap))
+    if n == 0.0 or not np.isfinite(n):
+        return float("inf")
+    sym = 0.5 * (gap + _reverse_k_and_orbital(gap))
+    return float(np.linalg.norm(sym)) / n
+
+
+def _so_is_antisymmetric(gap):
+    return _so_antisymmetry_residual(gap) <= _SO_ANTISYM_TOL
+
+
+def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
+                        spectral_shift=None, info_out=None):
+    """The power iteration of the spin-orbital kernel on the antisymmetric
+    coordinates of ``basis`` (the shared ``_solve_leading`` driver on
+    ``E^dagger K E``); returns ``(gap, eigenvalue, converged, n_iter)`` with
+    the gap mapped back by ``E``."""
+    red = basis.reduce(A)
+    c0 = basis.to_reduced(np.asarray(sigma_init).ravel())
+    eigenvalue, c, info = _solve_leading(
+        lambda: (red, basis.dim), basis.dim, "iteration",
+        max_iter=max_iter, convergence_tol=tol, init_vec=c0, alpha=alpha,
+        project_fn=None, spectral_shift=spectral_shift)
+    if info_out is not None:
+        info_out.update(info)
+    gap = basis.to_full(c).reshape(basis.shape)
+    return gap, eigenvalue, info["converged"], info["n_iter"]
+
+
+def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
+                         spectral_shift=None):
+    """The eigenvalue analysis of the spin-orbital kernel on the
+    antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
+    the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``,
+    ordered by descending real part.
+
+    ARPACK needs ``k < dim - 1``; when ``num_eigenvalues >= dim - 1`` the
+    reduced operator (then small) is diagonalized densely instead and
+    ``min(num_eigenvalues, dim)`` eigenpairs are returned, selected as the
+    Arnoldi path selects them (largest magnitude, or largest real part with
+    a ``spectral_shift``), so no physical eigenpair is dropped at the
+    full-spectrum boundary. Only ``method = "arnoldi"`` is supported."""
+    if method != "arnoldi":
+        raise ValueError(
+            "[mode] enable_spin_orbital = true supports only "
+            "eigenvalue_method = \"arnoldi\", got {!r}.".format(method))
+    _validate_spectral_shift(spectral_shift, method)
+    red = basis.reduce(A)
+    dim = basis.dim
+    if num_eigenvalues >= dim - 1:
+        if sigma_shift is not None:
+            # the same advisory the ARPACK path (_solve_leading) gives
+            logger.warning(
+                "[eliashberg] sigma_shift is ignored for eigenvalue_method="
+                "'arnoldi' (it targets the shift-invert methods); use "
+                "spectral_shift to bias the arnoldi selection.")
+        dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
+        vals, vecs = np.linalg.eig(dense)
+        n_keep = min(max(1, int(num_eigenvalues)), dim)
+        key = -vals.real if spectral_shift is not None else -np.abs(vals)
+        sel = np.argsort(key, kind="stable")[:n_keep]
+        vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
+        logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
+                    "antisymmetric space; dense diagonalization, %d eigenpairs.",
+                    num_eigenvalues, dim - 1, n_keep)
+    else:
+        _, _, eig = _solve_leading(
+            lambda: (red, dim), dim, method,
+            num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
+            spectral_shift=spectral_shift)
+        vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+    gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
+                     for i in range(len(vals))])
+    return vals, gaps
+
+
+def _so_check_antisymmetric_eigenpairs(vals, match):
+    """Defensive check of the spin-orbital eigenpairs (``match`` from
+    :func:`_so_is_antisymmetric`): refuse when the LEADING eigenvector --
+    the gap written under the fermion-antisymmetric header -- is not
+    antisymmetric, and warn about any further pair that is not (match
+    column 0). The solvers work on antisymmetric coordinates, so this fires
+    only if that construction is broken."""
+    match = np.asarray(match, dtype=bool)
+    if match.size and not match[0]:
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the leading eigenvector is not "
+            "fermion-antisymmetric (Delta_AB(k) = -Delta_BA(-k)) to round-off; "
+            "it is Pauli-forbidden and is not written (eigenvalues {})."
+            .format(np.asarray(vals)))
+    bad = np.where(~match)[0]
+    if bad.size:
+        logger.warning(
+            "spin-orbital eigenpairs %s are not fermion-antisymmetric to "
+            "round-off (eigenvalues %s); they are written with match = 0.",
+            bad.tolist(), np.asarray(vals)[bad])
 
 
 def calc_eliashberg(input_dict):
@@ -7045,7 +7671,14 @@ def calc_eliashberg(input_dict):
         Parsed TOML configuration dictionary.
     """
     # --- Parse parameters ---
-    reject_spin_orbital_mode(input_dict)
+    # [mode] enable_spin_orbital (issue #83): the static entry solves the
+    # spin-orbital gap equation; every combination it does not support is
+    # refused here, before any file is read (check_so_config), and after the
+    # interaction files are read (check_so_supported, below).
+    spin_orbital_mode = _resolve_spin_orbital_flag(input_dict)
+    if spin_orbital_mode:
+        from hwave.solver import so_pairing
+        so_pairing.check_so_config(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)
@@ -7104,6 +7737,11 @@ def calc_eliashberg(input_dict):
 
     # Eliashberg parameters
     eli_param = input_dict.get("eliashberg", {})
+    if spin_orbital_mode:
+        # the spin-orbital checks read [eliashberg] case-insensitively, so the
+        # run must too (a key the checks see must be the key the run uses)
+        from requests.structures import CaseInsensitiveDict
+        eli_param = CaseInsensitiveDict(eli_param or {})
 
     # Dispatch to dynamic Eliashberg if requested
     if _eliashberg_frequency(input_dict) == "dynamic":
@@ -7157,6 +7795,15 @@ def calc_eliashberg(input_dict):
     eigenvalue_file = eli_param.get("output_eigenvalue", "eigenvalue.dat")
 
     output_dir = input_dict["file"]["output"]["path_to_output"]
+    if spin_orbital_mode:
+        so_npz = _so_gap_npz_name(gap_file)
+        if os.path.normpath(so_npz) == os.path.normpath(eigenvalue_file):
+            raise ValueError(
+                "[mode] enable_spin_orbital = true (hwave_sc, issue #83): the "
+                "spin-orbital gap archive '{}' (derived from [eliashberg] "
+                "output_gap = {!r}) would overwrite [eliashberg] "
+                "output_eigenvalue = {!r}. Change output_gap or "
+                "output_eigenvalue.".format(so_npz, gap_file, eigenvalue_file))
 
     logger.info("=== Linearized Eliashberg Equation Solver ===")
     logger.info("T = {}, beta = {:.4f}".format(T, beta))
@@ -7168,6 +7815,20 @@ def calc_eliashberg(input_dict):
     # --- Step 2: Read input files ---
     geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = geom_info["norb"]
+    if spin_orbital_mode:
+        # Geometry norb and the Transfer file count SPIN-ORBITALS (interleaved
+        # 2*orb+spin); the interaction files use PHYSICAL orbital indices. The
+        # gap, the Green function and the vertex run over nd = norb spin-
+        # orbitals in spin-block order (spin_orbital.INDEX_CONVENTION).
+        from hwave.solver import spin_orbital
+        norb_phys = spin_orbital.physical_norb(
+            norb, True, source="the Geometry file ({})".format(
+                input_dict["file"]["input"]["interaction"].get("Geometry", "")))
+        so_pairing.check_so_supported(
+            input_dict, interactions, _nonbond_site(input_dict, norb_phys),
+            norb_phys=norb_phys)
+        logger.info("enable_spin_orbital: %d physical orbitals, nd = %d "
+                    "spin-orbitals (spin-block order)", norb_phys, norb)
 
     if use_bond_channels:
         # Every guard raises before any susceptibility/Green data is built, so
@@ -7208,6 +7869,10 @@ def calc_eliashberg(input_dict):
     # --- Step 4: Build Hamiltonian and diagonalize ---
     logger.info("Building Hamiltonian in k-space...")
     epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+    if spin_orbital_mode:
+        # the Transfer file is interleaved; everything downstream is spin-block
+        epsilon_k = spin_orbital.interleaved_to_spinblock(
+            epsilon_k, norb_phys, axes=(0, 1))
 
     logger.info("Diagonalizing Hamiltonian...")
     eigenvalues, eigenvectors = _calc_eigenvalues(epsilon_k)
@@ -7222,7 +7887,7 @@ def calc_eliashberg(input_dict):
     # only the non-bond paths read the k-space table; the bond path builds its
     # vertices from the declarations themselves
     inter_k = None
-    if not use_bond_channels:
+    if not use_bond_channels and not spin_orbital_mode:
         _check_nonbond_offsite(interactions, "hwave_sc (bond_channels = false)",
                                _nonbond_site(input_dict, norb))
         inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array, interactions,
@@ -7234,7 +7899,50 @@ def calc_eliashberg(input_dict):
     bond_provenance = None
     bond_attribution = None
 
-    if chi0q_mode == "flex":
+    if spin_orbital_mode:
+        # --- Spin-orbital mode (issue #83): one spinful channel ---
+        if chi0q_mode == "flex":
+            # the stored chi and G of a spin-orbital FLEX run (tags checked
+            # before any heavy work); Gamma from the interaction files, checked
+            # against the run's through its (required) chi0q archive
+            chi_so, green_kw, chi0_so, chi_path = _load_flex_so(
+                input_dict, norb, Nx, Ny, Nz, interactions=interactions)
+            logger.info("Using the spin-orbital FLEX chiq and dressed Green's "
+                        "function")
+            gam = _so_rpa_vertex(input_dict)
+            _check_so_flex_vertex(gam, chi_so, chi0_so, chi_path)
+            del chi0_so
+            Vs_q = _so_static_vertex_from_chi(gam, chi_so, norb, (Nx, Ny, Nz))
+            del chi_so, gam
+        else:
+            if chi0q_mode == "calc":
+                chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
+                                                 precomputed_mu=mu)
+                static_index = None
+            else:
+                try:
+                    chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
+                except ValueError as err:
+                    raise ValueError(
+                        "{} ([mode] enable_spin_orbital = true with chi0q_mode = "
+                        "\"load\" needs the general (4-index) spinful chi0q of a "
+                        "spin-orbital RPA run over nd = {} spin-orbitals; a model the "
+                        "RPA reduces to spin-free or spin-diagonal form writes a "
+                        "physical-orbital chi0q instead -- use chi0q_mode = \"calc\" "
+                        "for it.)".format(err, norb)) from err
+                # refuse a reduced / non-spinful layout before any further work
+                # (_so_static_vertex re-checks it)
+                _so_static_chi0(chi0q_raw, norb, Nx, Ny, Nz, static_index)
+            logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
+            green_kw = _build_bond_green(
+                eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+            logger.info("Computing the spin-orbital pairing vertex...")
+            Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
+                                     Nx, Ny, Nz, static_index)
+            del chi0q_raw
+        logger.info("Spin-orbital vertex shape: {}".format(Vs_q.shape))
+
+    elif chi0q_mode == "flex":
         # --- FLEX mode: use pre-computed dressed susceptibilities ---
         logger.info("FLEX mode: loading dressed susceptibilities and Green's function")
 
@@ -7454,7 +8162,18 @@ def calc_eliashberg(input_dict):
         _warn_if_g2_indefinite(G2, norb, g2_tail)
 
     # --- Step 11: Initialize gap function ---
-    sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
+    if spin_orbital_mode:
+        sigma_init = so_pairing.so_initial_gap(
+            init_gap_mode, norb_phys, kx_array, ky_array, kz_array)
+        sigma_init = _project_gap_parity(sigma_init, "triplet")
+        if np.linalg.norm(sigma_init) == 0.0:
+            raise ValueError(
+                "[eliashberg] init_gap = {!r} has no fermion-antisymmetric "
+                "component on this k grid; choose another init_gap.".format(
+                    init_gap_mode))
+        sigma_init = sigma_init / np.linalg.norm(sigma_init)
+    else:
+        sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
 
     # GPU: park the two large invariants (pairing vertex and pair bubble) on the
     # device once; each matvec then only moves the gap vector across PCIe. The
@@ -7480,6 +8199,7 @@ def calc_eliashberg(input_dict):
     sigma_result = None
     eigenvalue_iter = None
     eigenvalues_eig = None
+    eigenvectors_eig = None
     eigenvalue_match = None
     # Live only on the iteration path; kept in scope so the output artifact can
     # record WHICH quantity the written number is and whether it converged
@@ -7500,41 +8220,83 @@ def calc_eliashberg(input_dict):
     # eigenvalue.dat may be called an eigenvalue at all.
     iteration_info = {}
 
+    if spin_orbital_mode:
+        # both solvers below work on the antisymmetric coordinates of the
+        # gap (E^dagger K E): the Pauli-forbidden sector is not in the space
+        so_basis = _SOAntisymmetricBasis((norb, norb, Nx, Ny, Nz))
+        A_so, _ = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        kernel_operator = None
+        # the gap is one spin-orbital matrix: the iteration's channel parity
+        # projection/leakage probe does not apply (P is in the operator), and
+        # the eigenpairs are tagged by fermion antisymmetry
+        pairing_type = None
+        parity_channel = "triplet"
+    else:
+        kernel_operator = bond_operator
+        parity_channel = pairing_type
+
     if solver_mode in ("iteration", "both"):
         logger.info("=== Self-consistent iteration ===")
-        sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
-            green_kw, Vs_q, G2, sigma_init, norb,
-            max_iter=max_iter, alpha=alpha, tol=tol, pairing_type=pairing_type,
-            operator=bond_operator,
-            spectral_shift=iteration_spectral_shift,
-            info_out=iteration_info,
-        )
+        if spin_orbital_mode:
+            sigma_result, eigenvalue_iter, converged, n_iter = (
+                _so_solve_iteration(
+                    A_so, so_basis, sigma_init, max_iter, alpha, tol,
+                    spectral_shift=iteration_spectral_shift,
+                    info_out=iteration_info))
+        else:
+            sigma_result, eigenvalue_iter, converged, n_iter = _solve_iteration(
+                green_kw, Vs_q, G2, sigma_init, norb,
+                max_iter=max_iter, alpha=alpha, tol=tol,
+                pairing_type=pairing_type,
+                operator=kernel_operator,
+                spectral_shift=iteration_spectral_shift,
+                info_out=iteration_info,
+            )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
+        if spin_orbital_mode and not _so_is_antisymmetric(sigma_result):
+            raise ValueError(
+                "[mode] enable_spin_orbital = true: the power iteration "
+                "returned a gap that is not fermion-antisymmetric "
+                "(Delta_AB(k) = -Delta_BA(-k)) to round-off; it is not "
+                "written.")
 
     if solver_mode in ("eigenvalue", "both"):
         logger.info("=== Eigenvalue analysis ===")
-        eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
-            Vs_q, G2, norb, Nx, Ny, Nz,
-            num_eigenvalues=num_eigenvalues,
-            method=eigenvalue_method,
-            sigma_shift=eli_param.get("sigma_shift"),
-            spectral_shift=eli_param.get("spectral_shift"),
-            operator=bond_operator,
-        )
+        if spin_orbital_mode:
+            eigenvalues_eig, eigenvectors_eig = _so_solve_eigenvalue(
+                A_so, so_basis, num_eigenvalues, eigenvalue_method,
+                sigma_shift=eli_param.get("sigma_shift"),
+                spectral_shift=eli_param.get("spectral_shift"))
+        else:
+            eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
+                Vs_q, G2, norb, Nx, Ny, Nz,
+                num_eigenvalues=num_eigenvalues,
+                method=eigenvalue_method,
+                sigma_shift=eli_param.get("sigma_shift"),
+                spectral_shift=eli_param.get("spectral_shift"),
+                operator=kernel_operator,
+            )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
         # requested channel parity (singlet even / triplet odd) so the reported
         # leading eigenpair is the physical solution for this channel.
         eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
-            eigenvalues_eig, eigenvectors_eig, pairing_type)
+            eigenvalues_eig, eigenvectors_eig, parity_channel)
         # Flag whether each eigenvector lies (dominantly) in the channel's
         # parity sector (even for singlet, odd for triplet). _is_gap_parity is a
         # threshold test, so this is "dominantly the channel parity" rather than
         # an exact label; for a centrosymmetric model parity is an exact kernel
         # symmetry and the opposite-parity modes are unphysical for the channel
         # (e.g. an even mode in the triplet kernel is Pauli-forbidden).
-        eigenvalue_match = np.array(
-            [_is_gap_parity(g, pairing_type) for g in eigenvectors_eig])
+        if spin_orbital_mode:
+            # round-off criterion, not the dominant-sector test
+            eigenvalue_match = np.array(
+                [_so_is_antisymmetric(g) for g in eigenvectors_eig])
+            _so_check_antisymmetric_eigenpairs(eigenvalues_eig,
+                                               eigenvalue_match)
+        else:
+            eigenvalue_match = np.array(
+                [_is_gap_parity(g, parity_channel) for g in eigenvectors_eig])
         logger.info("Leading eigenvalues:")
         for i, ev in enumerate(eigenvalues_eig):
             tag = "" if eigenvalue_match[i] else "  [opposite-parity sector]"
@@ -7669,13 +8431,24 @@ def calc_eliashberg(input_dict):
                          .format(bond_provenance["lambda_rayleigh"]))
             eigenvalue_note = note
 
+    so_weights = None
+    so_gap_comments = None
+    if spin_orbital_mode:
+        so_out = _so_output_record(
+            output_dir, gap_file, norb_phys, sigma_result, eigenvalues_eig,
+            eigenvectors_eig,
+            eigenvalue_match, kx_array, ky_array, kz_array)
+        bond_provenance, so_weights, so_gap_comments = so_out
+
     _save_results(
         output_dir, sigma_result, eigenvalue_iter, eigenvalues_eig,
         kx_array, ky_array, kz_array,
         gap_file=gap_file, eigenvalue_file=eigenvalue_file,
         eigenvalue_match=eigenvalue_match,
         provenance=bond_provenance,
-        eigenvalue_note=eigenvalue_note
+        eigenvalue_note=eigenvalue_note,
+        eigenvalue_weights=so_weights,
+        gap_comments=so_gap_comments,
     )
 
     logger.info("=== Done ===")

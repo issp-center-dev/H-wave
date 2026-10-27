@@ -1096,11 +1096,13 @@ class TotalNED:
     ``bond_correlator_transverse`` reuse SectorED's algorithms verbatim
     with ``(N_up, N_dn)`` tuples replaced by a bare ``int`` total N.
 
-    Only ``bond_correlator_transverse`` and the ``_build_operator``/
-    ``_lehmann_dagger`` machinery it needs are implemented here (Task 1's
-    scope) -- ``chi_connected``/``bond_correlator``/``pair_correlator``
-    analogues are not needed by this task and are left for a future task
-    to add, in the same append-only style, if Phase S needs them.
+    Implemented: ``bond_correlator_transverse`` and the
+    ``_build_operator``/``_lehmann_dagger`` machinery it needs, plus
+    ``green`` and ``pair_correlator`` with arbitrary spin labels (#83, the
+    exact-diagonalization check of the spin-orbital Eliashberg vertex; each
+    pinned to ``SectorED`` on an S_z-conserving model in
+    ``tests/test_so_pairing_ed.py``). ``chi_connected``/``bond_correlator``
+    analogues are not implemented.
 
     Hilbert-space cost: the largest TOTAL-N block (N = nmode/2) is
     STRICTLY LARGER than SectorED's largest (N_up, N_dn) block of the
@@ -1344,6 +1346,131 @@ class TotalNED:
                     val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
                     val -= fx.beta * avgA * np.conj(avgB)
                     out[qi, i, j] = val
+        return out / fx.L
+
+    # -- Green function and pair correlator (#83, spin-orbital Eliashberg) ---
+    #
+    # Both are evaluated with array operations over whole sectors rather
+    # than SectorED's per-state loops: a total-N block is larger than any
+    # (N_up, N_dn) block of the same fixture (924 versus 400 at L = 3,
+    # norb = 2), and the spin-orbital pair basis has every spin combination.
+
+    def _popcount_table(self):
+        tab = getattr(self, "_popcount", None)
+        if tab is None:
+            s = np.arange(self.fx.dim, dtype=np.int64)
+            tab = np.zeros(self.fx.dim, dtype=np.int64)
+            for p in range(self.fx.nmode):
+                tab += (s >> p) & 1
+            self._popcount = tab
+        return tab
+
+    def _position_table(self):
+        """``pos[state]`` = index of ``state`` inside its own total-N sector."""
+        pos = getattr(self, "_pos", None)
+        if pos is None:
+            pos = np.zeros(self.fx.dim, dtype=np.int64)
+            for states in self._sector_states.values():
+                pos[np.asarray(states)] = np.arange(len(states))
+            self._pos = pos
+        return pos
+
+    def _annihilate(self, states, p):
+        """``c_p`` on an array of Fock states: ``(mask, new_states, signs)``
+        with the sign rule of :func:`_apply_ops` (``mask`` marks the states
+        with mode ``p`` occupied; the other entries are meaningless)."""
+        pc = self._popcount_table()
+        mask = ((states >> p) & 1) == 1
+        sign = 1 - 2 * (pc[states & ((1 << p) - 1)] & 1)
+        return mask, states ^ (1 << p), sign
+
+    def _rotated_lowering(self, key_n, delta, mode_terms_list):
+        """``A[I] = V_m^dagger B_I V_n`` stacked over ``I``, the operator
+        ``B_I`` in the SECTOR EIGENBASIS from sector ``key_n`` to ``key_m =
+        key_n + delta``: ``B_I = sum weight * c_p c_q`` (``delta = -2``,
+        terms ``(p, q, weight)``, ``q`` applied first as in
+        :func:`_apply_pair`) or ``B_I = sum weight * c_p`` (``delta = -1``,
+        terms ``(p, weight)``). ``None`` when sector ``key_m`` is absent."""
+        key_m = key_n + delta
+        if key_m not in self._sector_states:
+            return None
+        states = np.asarray(self._sector_states[key_n], dtype=np.int64)
+        pos = self._position_table()
+        V_n, V_m = self._V[key_n], self._V[key_m]
+        W = np.zeros((len(mode_terms_list), V_m.shape[0], V_n.shape[1]), dtype=complex)
+        for i, mode_terms in enumerate(mode_terms_list):
+            for term in mode_terms:
+                if delta == -2:
+                    p, q, weight = term
+                    m1, s1, g1 = self._annihilate(states, q)
+                    m2, s2, g2 = self._annihilate(s1, p)
+                    mask, new, sign = m1 & m2, s2, g1 * g2
+                else:
+                    p, weight = term
+                    mask, new, sign = self._annihilate(states, p)
+                if not mask.any():
+                    continue
+                # c_p (c_q) maps distinct kets to distinct bras: no collisions
+                W[i][pos[new[mask]]] += (weight * sign[mask])[:, None] * V_n[mask]
+        return np.matmul(V_m.conj().T[None], W)
+
+    def green(self, iws, rows=None, cols=None):
+        """The single-particle Matsubara Green function -- the contract of
+        :meth:`SectorED.green` (the Lehmann sum over every pair of sectors
+        connected by one annihilator, the grand-canonical spectrum, ``Z``
+        over the full Fock space; output ``(len(iws), len(rows),
+        len(cols))``), except that the blocks mixing the two spins are
+        COMPUTED: an S_z-breaking ``h1`` makes them nonzero."""
+        fx = self.fx
+        iws = np.asarray(iws, dtype=complex).ravel()
+        rows = list(range(fx.nmode)) if rows is None else [int(p) for p in rows]
+        cols = list(range(fx.nmode)) if cols is None else [int(q) for q in cols]
+        modes = sorted(set(rows) | set(cols))
+        slot = {p: k for k, p in enumerate(modes)}
+        r_slot = np.asarray([slot[p] for p in rows], dtype=int)
+        c_slot = np.asarray([slot[q] for q in cols], dtype=int)
+        out = np.zeros((len(iws), len(rows), len(cols)), dtype=complex)
+        for key_n in self._sector_states:
+            A = self._rotated_lowering(key_n, -1, [[(p, 1.0)] for p in modes])
+            if A is None:
+                continue
+            key_m = key_n - 1
+            flat = A.reshape(len(modes), -1)
+            Ar, Ac = flat[r_slot], np.conj(flat[c_slot])
+            weight = (self._w[key_m][:, None] + self._w[key_n][None, :]).ravel()
+            dE = (self._ev[key_n][None, :] - self._ev[key_m][:, None]).ravel()
+            for i, iw in enumerate(iws):
+                out[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+        return out
+
+    def pair_correlator(self, pairs, qs=None):
+        """Xpp[q, i, j], connected, of the pair annihilator
+
+            Delta_{R, a, sa, b, sb}(q) = sum_j e^{iqj} c_{j+R, a, sa} c_{j, b, sb}
+
+        against ``Delta^dagger(q)`` -- the contract of
+        :meth:`SectorED.pair_correlator` (static ``<A; B^dagger>`` Lehmann
+        sum, no disconnected piece since ``<Delta> = 0`` by total-N
+        conservation, ``1/L`` normalization) with ARBITRARY spin labels:
+        ``pairs`` is ``[(R, a, sa, b, sb), ...]``, and SectorED's channel
+        ``(R, a, b)`` is ``(R, a, 1, b, 0)`` here. ``qs`` (default: every
+        ``q`` index ``0 .. L-1``, as SectorED) selects the total momenta;
+        the output is ``(len(qs), n, n)``."""
+        fx = self.fx
+        qs = list(range(fx.L)) if qs is None else [int(q) for q in qs]
+        n_i = len(pairs)
+        out = np.zeros((len(qs), n_i, n_i), dtype=complex)
+        for iq, qi in enumerate(qs):
+            terms = [[(fx.mode((j + R) % fx.L, a, sa), fx.mode(j, b, sb),
+                       np.exp(2j * np.pi * qi * j / fx.L)) for j in range(fx.L)]
+                     for (R, a, sa, b, sb) in pairs]
+            for key_n in self._sector_states:
+                A = self._rotated_lowering(key_n, -2, terms)
+                if A is None:
+                    continue
+                K = self._pair_kernel(key_n - 2, key_n)
+                flat = A.reshape(n_i, -1)
+                out[iq] += (flat * K.ravel()[None]) @ np.conj(flat).T
         return out / fx.L
 
 
