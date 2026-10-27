@@ -285,6 +285,19 @@ HEAVY_TESTS = (
     # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
     ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
      "general-scheme RPA first-order response vs ED"),
+    # --- tests/test_so_pairing_ed.py -- spin-orbital pairing vertex vs ED (#83)
+    ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
+     "test_first_and_second_order",
+     "spin-orbital pair susceptibility O(lambda), O(lambda^2) vs a spin-mixing ED"),
+    ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
+     "test_free_pair_susceptibility",
+     "free spin-orbital pair susceptibility vs ED (shares the ED fixture)"),
+    ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
+     "test_opposite_reading_is_missed",
+     "opposite reading of the fluctuation term misses at O(lambda^2)"),
+    ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
+     "test_second_order_needs_the_fluctuation_vertex",
+     "spin-orbital ladder without the fluctuation term misses at O(lambda^2)"),
     # --- tests/test_spinful_transverse_ed.py -- t_so granule campaign ----
     ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
      "test_norb2_coulombinter",

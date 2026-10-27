@@ -1,11 +1,17 @@
-"""hwave_sc rejects [mode] enable_spin_orbital (issue #83).
+"""hwave_sc and [mode] enable_spin_orbital (issue #83).
 
 Before the guard, a spin-orbital config RAN to completion and printed
 eigenvalues built on four internal inconsistencies (interleaved chi0q
 against spin-block consumers -- 27% off; interaction files read at the
 spin-orbital dimension; paramagnetic S/C rules on spin-orbital indices;
-norb never halved) -- a silent wrong result. Both public entries
-(calc_eliashberg and eliashberg_dynamic.solve_dynamic) must refuse.
+norb never halved) -- a silent wrong result.
+
+The static entry (calc_eliashberg, frequency = "static") now solves the
+spin-orbital gap equation (tests/test_sc_spin_orbital.py) and refuses only
+its unsupported combinations, before any work; the entries that do not
+support spin-orbital models (eliashberg_dynamic.solve_dynamic, the dynamic
+bond path, the temperature sweep) keep refusing it outright through
+reject_spin_orbital_mode.
 """
 
 import os
@@ -109,23 +115,22 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
 
 class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
 
-    def test_static_entry_rejects_before_any_work(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        d = tmp.name
+    def _static_input(self, d, eli):
         with open(os.path.join(d, "geom.dat"), "w") as f:
             f.write("  1.0 0.0 0.0\n  0.0 1.0 0.0\n  0.0 0.0 1.0\n"
-                    "1\n 0.0 0.0 0.0\n")
+                    "2\n 0.0 0.0 0.0\n 0.0 0.0 0.0\n")
         with open(os.path.join(d, "transfer.dat"), "w") as f:
-            f.write("Transfer\n1\n2\n 1 1\n"
+            f.write("Transfer\n2\n2\n 1 1\n"
                     "   1    0    0    1    1   1.000000   0.0\n"
-                    "  -1    0    0    1    1   1.000000   0.0\n")
+                    "  -1    0    0    1    1   1.000000   0.0\n"
+                    "   1    0    0    2    2   1.000000   0.0\n"
+                    "  -1    0    0    2    2   1.000000   0.0\n")
         with open(os.path.join(d, "coulombintra.dat"), "w") as f:
             f.write("CoulombIntra\n1\n1\n 1\n"
                     "   0    0    0    1    1   2.000000   0.0\n")
         out = os.path.join(d, "out")
         os.makedirs(out, exist_ok=True)
-        inp = {
+        return out, {
             "mode": {"enable_spin_orbital": True,
                      "param": {"T": 2.0, "filling": 0.5,
                                "CellShape": [4, 4, 1],
@@ -137,24 +142,45 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
                                                "CoulombIntra":
                                                    "coulombintra.dat"}},
                      "output": {"path_to_output": out}},
-            "eliashberg": {"chi0q_mode": "calc", "frequency": "static",
-                           "pairing_type": "singlet",
-                           "solver_mode": "eigenvalue",
-                           "num_eigenvalues": 1},
+            "eliashberg": eli,
         }
+
+    def test_static_entry_runs_spin_orbital(self):
+        """The supported combination runs and writes its results."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out, inp = self._static_input(tmp.name, {
+            "chi0q_mode": "calc", "frequency": "static",
+            "solver_mode": "eigenvalue", "num_eigenvalues": 2})
+        sc.calc_eliashberg(inp)
+        self.assertIn("eigenvalue.dat", os.listdir(out))
+
+    def test_static_entry_refuses_unsupported_before_any_work(self):
+        """An unsupported combination (here an explicit pairing_type) is
+        refused before any output is produced."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out, inp = self._static_input(tmp.name, {
+            "chi0q_mode": "calc", "frequency": "static",
+            "pairing_type": "singlet", "solver_mode": "eigenvalue",
+            "num_eigenvalues": 1})
         with self.assertRaises(ValueError) as cm:
             sc.calc_eliashberg(inp)
         self.assertIn("enable_spin_orbital", str(cm.exception))
-        # rejected before any output was produced
+        self.assertIn("pairing_type", str(cm.exception))
         self.assertEqual(os.listdir(out), [])
 
-    def test_static_entry_guard_is_the_first_operation(self):
-        """A mode section alone suffices: the guard must fire before any
-        required key (mode.param, files) is even read -- a guard moved
-        after expensive work would raise KeyError here instead."""
-        with self.assertRaises(ValueError) as cm:
-            sc.calc_eliashberg({"mode": {"Enable_Spin_Orbital": True}})
-        self.assertIn("enable_spin_orbital", str(cm.exception))
+    def test_static_entry_config_guard_is_the_first_operation(self):
+        """A mode and an eliashberg section suffice: the configuration guard
+        fires before any required key (mode.param, files) is even read -- a
+        guard moved after expensive work would raise KeyError here."""
+        for eli in ({"frequency": "dynamic"}, {"Bond_Channels": True},
+                    {"eigenvalue_method": "subspace"}):
+            with self.subTest(eli=eli):
+                with self.assertRaises(ValueError) as cm:
+                    sc.calc_eliashberg({"mode": {"Enable_Spin_Orbital": True},
+                                        "eliashberg": eli})
+                self.assertIn("enable_spin_orbital", str(cm.exception))
 
     def test_dynamic_entry_rejects_first(self):
         """solve_dynamic is publicly callable; the guard fires before any

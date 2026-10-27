@@ -301,6 +301,32 @@ def _chi0q_fingerprint(arr):
     return h.hexdigest()
 
 
+def _so_source_marker(present, value, source):
+    """Spin-orbital provenance of a chi0q that a spin-orbital run did NOT
+    compute (chi0q_init file or in-memory green_info reuse), issue #83.
+
+    Returns ``True`` for a scalar boolean ``spin_orbital = True`` marker and
+    ``None`` when there is no marker (a legacy or non-spin-orbital source:
+    the run proceeds, but its outputs are written WITHOUT the marker, so the
+    marker is never laundered onto data of unknown provenance). ``None`` is
+    returned ONLY for an absent key: a present key with any other value than
+    a scalar boolean ``True`` -- ``None`` included -- is refused."""
+    if not present:
+        return None
+    val = np.asarray(value)
+    if val.ndim != 0 or val.dtype != np.bool_:
+        raise ValueError(
+            "chi0q from {}: malformed spin_orbital marker ({!r}); expected a "
+            "boolean.".format(source, value))
+    if not bool(val[()]):
+        raise ValueError(
+            "chi0q from {} records spin_orbital = False: it was produced by a "
+            "non-spin-orbital run and cannot be used by a run with [mode] "
+            "enable_spin_orbital = true. Drop it and let the run compute "
+            "chi0q.".format(source))
+    return True
+
+
 def _validate_chi0q_provenance(meta, nfreq, source):
     """Validate and NORMALIZE a chi0q provenance mapping.
 
@@ -436,6 +462,23 @@ def _to_bubble_pair_convention(ham):
             "{}".format(ham.shape))
     lead = tuple(range(nlead))
     return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
+
+
+def spinful_bubble_vertex(ham_inter_q, exchange):
+    """The antisymmetrized spinful vertex of the spin-orbital solvers (#83).
+
+    ``ham_inter_q`` is the host ``(nvol, nd, nd, nd, nd)`` interaction in the
+    Hamiltonian slot convention and ``exchange`` the on-site exchange crossing
+    ``(nd, nd, nd, nd)`` (or ``None``).  Returns the direct tensor plus the
+    crossing in the bubble's pair convention, ``(nvol, nd^2, nd^2)`` complex
+    (issue #137).  Shared by the spin-orbital FLEX and the Eliashberg solver.
+    """
+    ham = np.asarray(ham_inter_q)
+    nvol, nd = ham.shape[0], ham.shape[1]
+    if exchange is not None:
+        ham = ham + np.asarray(exchange).reshape(nd, nd, nd, nd)[None, ...]
+    return np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
+        nvol, nd * nd, nd * nd)
 
 
 def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
@@ -2381,6 +2424,15 @@ class RPA:
                 # nonzero-tail bubble without or with an unknown marker)
                 _enforce_tail_endpoint(norm, "green_info chi0q_freq_meta")
                 self._chi0q_init_meta = dict(norm)
+                # spin-orbital provenance (#83), as on the file route
+                if self.ham_info.enable_spin_orbital:
+                    self._chi0q_init_meta["spin_orbital"] = _so_source_marker(
+                        "spin_orbital" in mem_meta,
+                        mem_meta.get("spin_orbital"),
+                        "green_info chi0q_freq_meta")
+                else:
+                    self._chi0q_init_meta["spin_orbital"] = mem_meta.get(
+                        "spin_orbital")
             elif getattr(self, "_chi0q_init_meta", None) is not None:
                 # metadata set by the chi0q_init file reader on this
                 # instance: verify it still describes THIS array before
@@ -2421,6 +2473,12 @@ class RPA:
                     "calc_scheme": self.calc_scheme,
                     "fingerprint": _chi0q_fingerprint(chi0q),
                 }
+                # spin-orbital provenance carried unchanged (a reuse never
+                # upgrades it); an unmarked source stays ABSENT, since a
+                # present key must hold a boolean (_so_source_marker)
+                if eff.get("spin_orbital") is not None:
+                    green_info["chi0q_freq_meta"]["spin_orbital"] = \
+                        eff["spin_orbital"]
             # must_fix 6 guard state: the spin-diag transverse channel needs
             # Green functions bound to THIS bubble; an externally supplied
             # chi0q has none (a same-instance green0 may belong to an older
@@ -2552,6 +2610,8 @@ class RPA:
                 # content binding: a same-shaped replacement of the array
                 # must not inherit this metadata (round-5 review)
                 "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
+                # spin-orbital provenance of this computed bubble (#83)
+                "spin_orbital": bool(self.ham_info.enable_spin_orbital),
             }
 
         if self.calc_chiq:
@@ -2927,6 +2987,50 @@ class RPA:
                 "scheme_resolution": str(res),
             }
 
+        def _spin_orbital_stamp():
+            # #83: an explicit marker of the PRODUCING run's spin-orbital
+            # mode. The index_convention tag above is written by every run,
+            # so on its own it cannot tell a spin-orbital chi0q from a
+            # non-spin-orbital one of coincident shape (2N orbitals vs N
+            # spin-orbital orbitals); hwave_sc requires this marker in
+            # spin-orbital load mode. Written ONLY by a spin-orbital run, so a
+            # non-spin-orbital archive keeps exactly its previous member set.
+            # getattr: tests drive save_results on __new__-built stubs
+            # without ham_info.
+            #
+            # Provenance is PROPAGATED, never asserted: the marker goes on
+            # only when solve() established it -- this run computed chi0q,
+            # or its chi0q_init / in-memory source itself carried
+            # spin_orbital = True -- as recorded in
+            # green_info["chi0q_freq_meta"] (bound to the array by its
+            # fingerprint). An unmarked source (legacy, or a shape-coincident
+            # non-spin-orbital file) still runs, but its outputs get no
+            # marker; so does a save without a solve.
+            ham_info = getattr(self, "ham_info", None)
+            if not bool(getattr(ham_info, "enable_spin_orbital", False)):
+                return {}
+            meta = green_info.get("chi0q_freq_meta")
+            from collections.abc import Mapping
+            if not isinstance(meta, Mapping) or meta.get("spin_orbital") is not True:
+                return {}
+            chi0q = green_info.get("chi0q")
+            if chi0q is None or meta.get("fingerprint") != _chi0q_fingerprint(chi0q):
+                return {}
+            return {"spin_orbital": True}
+
+        so_stamp = _spin_orbital_stamp()
+        if (bool(getattr(getattr(self, "ham_info", None),
+                         "enable_spin_orbital", False))
+                and not so_stamp
+                and ("chiq" in info_outputfile or "chi0q" in info_outputfile)):
+            logger.info(
+                "save_results: the supplied chi0q (chi0q_init or green_info) "
+                "carries no spin_orbital = True marker (or solve() did not "
+                "establish one), so the chiq/chi0q "
+                "archives of this spin-orbital run are written without it; "
+                "hwave_sc cannot load them in spin-orbital mode until they "
+                "are regenerated by a spin-orbital run that computes chi0q.")
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
@@ -2941,6 +3045,7 @@ class RPA:
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
+                    **so_stamp,
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -2999,6 +3104,7 @@ class RPA:
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
+                **so_stamp,
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
@@ -3309,6 +3415,14 @@ class RPA:
 
         validate_chi0q_index_convention(
             data, self.ham_info.enable_spin_orbital, file_name)
+        # spin-orbital provenance of the file (#83): refused if explicitly
+        # False / malformed; None (no marker) is carried to save_results
+        so_source = None
+        if self.ham_info.enable_spin_orbital:
+            so_source = _so_source_marker(
+                "spin_orbital" in data,
+                data["spin_orbital"] if "spin_orbital" in data else None,
+                "file '{}'".format(file_name))
 
         # Keep the frequency metadata of the file that PRODUCED this chi0q:
         # solve() passes an input chi0q through untouched, so save_results
@@ -3330,6 +3444,7 @@ class RPA:
         # info["chi0q"] with a same-shaped array before solve(), the file's
         # axis must not be inherited by the replacement (round-6 review)
         self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
+        self._chi0q_init_meta["spin_orbital"] = so_source
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
