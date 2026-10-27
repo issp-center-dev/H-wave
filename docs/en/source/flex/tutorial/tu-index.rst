@@ -595,10 +595,12 @@ warm-started from the converged :math:`U = 2` self-energy at :math:`U = 200`):
 
     RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
     after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
-    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) leaves the
-    physical range [0, 16] over the band window [-9, 11] (from -3.12821 to
-    -2.96742)); the target filling is reachable, so this is not a problem of
-    the filling or the temperature. The last completed iteration was 1 with
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged, or ir_wmax does
+    not cover the spectrum (N(mu) leaves the physical range [0, 16] over the
+    band window [-9, 11] (from -3.12821 to -2.96742)); the target filling is
+    reachable, so this is not a problem of the filling or the temperature.
+    Check ir_wmax first if the run had converged so far. The last completed
+    iteration was 1 with
     |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
     q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
     too large a step in a warm-started scan (U or T; the previous
@@ -612,6 +614,16 @@ The decision does not use the values at the ends of the expanded bracket:
 with ``matsubara_basis = "ir"`` :math:`N(\mu)` tends to 0 at both far ends
 whatever the self-energy is, so equal values there (``N-Ncond = -8.0,
 -8.0`` above) are not by themselves a sign of divergence.
+
+With ``matsubara_basis = "ir"`` the same failure can also mean that
+``ir_wmax`` does not cover the dressed spectrum (the IR :math:`N(\mu)` is a
+basis fit, valid only inside the basis bandwidth), so on that path the
+message names both causes. Before any of this, if the expanded bracket finds
+no root but :math:`N(\mu)` on the band window does cross the target (on the
+IR path the doubling can jump beyond ``ir_wmax``), the root is solved on that
+sub-interval with a warning instead of failing. A non-finite self-energy and
+a target below 0 or above the number of states are refused before the
+search starts.
 
 .. _flex_bond_hf_tutorial:
 

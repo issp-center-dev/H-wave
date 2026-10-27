@@ -3486,6 +3486,17 @@ class FLEX(RPA):
         # GPU execution, host otherwise); _number_from_eigs dispatches on it
         # and returns plain floats, so the Newton/bisection logic below is
         # backend-independent.
+        # Issue #282: refuse what no eigendecomposition can fix BEFORE doing
+        # one -- a non-finite sigma (geev raises LinAlgError on it for
+        # nd >= 3) and a target no filling can reach -- with the classified
+        # RuntimeError. Both checks only read; they change no number.
+        nstate = int(np.size(ew_ref if ew_ref is not None else self.H0_eigenvalue))
+        sigma_finite = bool(_bk.array_module_of(sigma).isfinite(sigma).all())
+        if not sigma_finite or Ncond < 0.0 or Ncond > nstate:
+            raise RuntimeError(_diag.mu_failure_message(
+                "FLEX._find_mu_dressed", None, None, None, None, Ncond,
+                nstate, sigma_finite, None, None,
+                getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
         lam, ew = self._matsubara_number_operator(sigma, beta)
         if ew_ref is not None:
             # Phase B (#181): the analytic reference is Heff = H0 + sigma_static
@@ -3543,23 +3554,39 @@ class FLEX(RPA):
             f_hi = _delta_n(hi)
         else:
             # 60 doublings span ~1e18 * initial width: a real root cannot be
-            # this far out. Fail loudly rather than return garbage. Raise a
-            # catchable exception (not sys.exit) so parameter sweeps, pipelines,
-            # and notebooks can handle/aggregate the failure instead of having
-            # the whole interpreter torn down.
-            # Tell a diverged self-energy (N(mu) flat or not finite) from an
-            # unreachable target (N(mu) varies but never crosses it), issue
-            # #282; the exception type is unchanged.
-            # The classification reads N(mu) on the physical band window
-            # (independent of Sigma), not at the expanded ends: see
-            # flex_diagnostics.mu_failure_message.
-            sigma_finite = bool(_bk.array_module_of(sigma).isfinite(sigma).all())
+            # this far out. Before failing, look on the physical band window
+            # (independent of Sigma): on the IR path N(mu) is a basis fit that
+            # falls back towards 0 once |mu| leaves ir_wmax, so the doubling
+            # can jump over a root that the window brackets (issue #282). Such
+            # a root is solved below; this only changes cases that used to
+            # raise. The probe is optional -- any error in it falls back to
+            # the unprobed message.
             window = _diag.band_window(w, beta)
-            f_window = [_delta_n(m) for m in np.linspace(window[0], window[1], 9)]
-            raise RuntimeError(_diag.mu_failure_message(
-                "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, Ncond,
-                int(w.size), sigma_finite, window, f_window,
-                getattr(self, "_scf_monitor", None)))
+            try:
+                mus = [float(m) for m in np.linspace(window[0], window[1], 9)]
+                f_window = [_delta_n(m) for m in mus]
+            except Exception:
+                f_window = None
+            sub = (None if f_window is None
+                   else _diag.window_bracket(mus, f_window))
+            if sub is None:
+                # Fail loudly rather than return garbage, with a catchable
+                # exception classified by flex_diagnostics.mu_failure_message
+                # (the type is unchanged).
+                raise RuntimeError(_diag.mu_failure_message(
+                    "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, Ncond,
+                    nstate, sigma_finite, window, f_window,
+                    getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
+            lo, f_lo, hi, f_hi = sub
+            if f_lo == 0.0:
+                return lo
+            if f_hi == 0.0:
+                return hi
+            logger.warning(
+                "FLEX._find_mu_dressed: the expanded bracket found no root; "
+                "solving on the band-window sub-interval [%.6g, %.6g] instead%s.",
+                lo, hi, " (on the IR path check that ir_wmax covers the "
+                "spectrum)" if self.use_ir else "")
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:

@@ -108,9 +108,12 @@ class TestDivergedWarmStart(unittest.TestCase):
                     s._find_mu_dressed(sigma, 1.0 / s.T, target)
                 self.assertNotIn("diverged", str(cm.exception))
                 self.assertIn("is not inside (0, 16)", str(cm.exception))
-                # the artefact this guards against: equal expanded-end values
-                ends = re.search(r"N-Ncond = (\S+), (\S+)\)", str(cm.exception))
-                self.assertEqual(ends.group(1), ends.group(2))
+                self.assertIn("search refused", str(cm.exception))
+        # the artefact the classification must not rely on: the IR N(mu)
+        # is ~0 at BOTH far ends even for this healthy (Sigma = 0) case
+        lam, _ = s._matsubara_number_operator(sigma, 1.0 / s.T)
+        for far in (-1e29, 1e29):
+            self.assertLess(abs(s._number_from_eigs_ir(lam, far)[0]), 1e-6)
 
     def test_uniform_grid_divergence_warns(self):
         """On the uniform grid the same kind of warm start (U = 2 -> 40,
@@ -128,6 +131,68 @@ class TestDivergedWarmStart(unittest.TestCase):
                  if "looks divergent" in r.getMessage()]
         self.assertEqual(len(warns), 1)
         self.assertIn("Stoner factor >= 1 for 3 iterations", warns[0])
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_ir_near_full_target_solves_on_band_window(self):
+        """Sigma = 0, ir_wmax = 10 covers the band, target 15.999 of 16:
+        the expanded bracket jumps beyond ir_wmax, where the IR N(mu) falls
+        back towards 0, and used to fail. The band-window fallback solves it
+        and agrees with the uniform grid within the IR/truncation accuracy."""
+        mus = {}
+        for basis in ("ir", "uniform"):
+            extra = ({'matsubara_basis': 'ir', 'ir_wmax': 10.0} if basis == "ir"
+                     else {})
+            s, gi = _make_solver(dict(extra, IterationMax=1))
+            s.solve(gi, 'tests/flex/output')
+            nb, nv, nd = s.H0_eigenvalue.shape
+            nf = s._ir_axF.n_freq if basis == "ir" else s.nmat
+            sigma = np.zeros((nb, nf, nv, nd, nd), dtype=np.complex128)
+            if basis == "ir":
+                with self.assertLogs(_LOGGER, level="WARNING") as cm:
+                    mus[basis] = s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+                self.assertTrue(any("band-window sub-interval" in r.getMessage()
+                                    for r in cm.records))
+                lam, _ = s._matsubara_number_operator(sigma, 1.0 / s.T)
+                n, _ = s._number_from_eigs_ir(lam, mus[basis])
+                self.assertAlmostEqual(n, 15.999, places=8)
+            else:
+                mus[basis] = s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+        self.assertAlmostEqual(mus["ir"], mus["uniform"], delta=5e-3)
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_ir_narrow_basis_names_ir_wmax(self):
+        """Sigma = 0 and a reachable target, but ir_wmax far below the band:
+        the search fails and the headline must not assert divergence alone."""
+        for wmax in (1.0, 3.0):
+            with self.subTest(ir_wmax=wmax):
+                s, gi = _make_solver({'matsubara_basis': 'ir', 'ir_wmax': wmax,
+                                      'IterationMax': 1})
+                s.solve(gi, 'tests/flex/output')
+                nb, nv, nd = s.H0_eigenvalue.shape
+                sigma = np.zeros((nb, s._ir_axF.n_freq, nv, nd, nd), complex)
+                with self.assertRaisesRegex(
+                        RuntimeError, "diverged, or ir_wmax does not cover the spectrum"):
+                    s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+
+    def test_probe_error_keeps_the_classified_error(self):
+        """An exception inside the optional band-window probe must not
+        replace the classified RuntimeError. N(mu) is made flat (as for a
+        diverged self-energy) and one window evaluation raises."""
+        s, gi = _make_solver(Nmat=32)
+        s._calc_epsilon_k(gi)
+        nb, nv, nd = s.H0_eigenvalue.shape
+        sigma = np.zeros((nb, s.nmat, nv, nd, nd), dtype=np.complex128)
+        beta = 1.0 / s.T
+        lo, hi = diag.band_window(s.H0_eigenvalue, beta)
+        bad = float(np.linspace(lo, hi, 9)[3])
+
+        def fake(lam, ew, mu, beta_, with_deriv=False):
+            if mu == bad:
+                raise FloatingPointError("divide by zero (test)")
+            return (0.0, 0.0) if with_deriv else 0.0
+        s._number_from_eigs = fake
+        with self.assertRaisesRegex(RuntimeError, "could not be evaluated"):
+            s._find_mu_dressed(sigma, beta, 8.0)
 
     def test_non_finite_sigma_reports_diverged(self):
         s, gi = _make_solver(Nmat=32)
@@ -153,6 +218,105 @@ class TestDivergedWarmStart(unittest.TestCase):
             s._find_mu_dressed(sigma, 1.0 / s.T, 10.0 * nstate)
         self.assertNotIn("diverged", str(cm.exception))
         self.assertIn("is not inside (0, 16)", str(cm.exception))
+
+
+def _three_orbital_solver(d, extra=None):
+    """A 3-orbital spin-free square-lattice model (block dimension 3, so the
+    mu search needs LAPACK geev, which raises on a non-finite matrix)."""
+    import os
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.flex as solver_flex
+    no = 3
+    with open(os.path.join(d, "geom.dat"), "w") as f:
+        f.write("1 0 0\n0 1 0\n0 0 1\n%d\n" % no + "0 0 0\n" * no)
+    rows = []
+    for a in range(no):
+        for (rx, ry) in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            rows.append((rx, ry, a + 1, a + 1, 1.0))
+        rows.append((0, 0, a + 1, a + 1, 0.3 * a))
+        if a + 1 < no:
+            rows += [(0, 0, a + 1, a + 2, 0.2), (0, 0, a + 2, a + 1, 0.2)]
+    with open(os.path.join(d, "transfer.dat"), "w") as f:
+        f.write("Transfer\n%d\n1\n 1\n" % no)
+        for rx, ry, a, b, v in rows:
+            f.write("%d %d 0 %d %d %.6f 0.0\n" % (rx, ry, a, b, v))
+    with open(os.path.join(d, "coulombintra.dat"), "w") as f:
+        f.write("CoulombIntra\n%d\n1\n 1\n" % no)
+        for a in range(no):
+            f.write("0 0 0 %d %d 2.0 0.0\n" % (a + 1, a + 1))
+    param = {'T': 0.5, 'CellShape': [4, 4, 1], 'SubShape': [1, 1, 1],
+             'Nmat': 32, 'IterationMax': 1, 'Mix': 0.3, 'Ncond': 24.0}
+    param.update(extra or {})
+    io = read_input_k.QLMSkInput({
+        'path_to_input': d, 'interaction': {
+            'path_to_input': d, 'Geometry': 'geom.dat',
+            'Transfer': 'transfer.dat', 'CoulombIntra': 'coulombintra.dat'}})
+    s = solver_flex.FLEX(io.get_param("ham"), {}, {
+        'mode': 'FLEX', 'param': param, 'calc_scheme': 'reduced'})
+    return s, io.get_param("green")
+
+
+class TestRefusedBeforeEigendecomposition(unittest.TestCase):
+
+    def _tmp(self):
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp(prefix="flex_282_")
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
+    def _check_nan(self, s, gi):
+        s.solve(gi, self._tmp())
+        nb, nv, nd = s.H0_eigenvalue.shape
+        self.assertGreaterEqual(nd, 3)
+        nf = s._ir_axF.n_freq if s._ir_axF is not None else s.nmat
+        for bad in (np.nan, np.inf):
+            sigma = np.zeros((nb, nf, nv, nd, nd), dtype=np.complex128)
+            sigma[0, 0, 0, 0, 0] = bad
+            with self.assertRaisesRegex(RuntimeError, "diverged") as cm:
+                s._find_mu_dressed(sigma, 1.0 / s.T, 0.5 * nv * nd)
+            self.assertIn("not finite", str(cm.exception))
+
+    def test_non_finite_sigma_three_orbitals_uniform(self):
+        self._check_nan(*_three_orbital_solver(self._tmp()))
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_non_finite_sigma_three_orbitals_ir(self):
+        self._check_nan(*_three_orbital_solver(
+            self._tmp(), {'matsubara_basis': 'ir', 'ir_wmax': 10.0}))
+
+    def test_non_finite_sigma_spinful(self):
+        import tests.test_flex_spin_orbital as so_mod
+        d = self._tmp()
+        s, gi = so_mod._build(d, so_mod._write_model(d, True), so=True,
+                              nmat=16, IterationMax=1)
+        self._check_nan(s, gi)
+
+    def test_target_range_spin_free_and_spinful(self):
+        """Ncond < 0 and > Nstate are refused with the filling message
+        before any work; Ncond = 0 or = Nstate either solve (a mu far out)
+        or fail with the filling message -- never with "diverged"."""
+        import tests.test_flex_spin_orbital as so_mod
+        d = self._tmp()
+        cases = {"spin-free": _make_solver(Nmat=32),
+                 "spinful": so_mod._build(d, so_mod._write_model(d, True),
+                                          so=True, nmat=16, IterationMax=1)}
+        for name, (s, gi) in cases.items():
+            s._calc_epsilon_k(gi)
+            nb, nv, nd = s.H0_eigenvalue.shape
+            nstate = nb * nv * nd
+            sigma = np.zeros((nb, s.nmat, nv, nd, nd), dtype=np.complex128)
+            for target in (-1.0, 0.0, float(nstate), nstate + 1.0):
+                with self.subTest(model=name, target=target):
+                    try:
+                        mu = s._find_mu_dressed(sigma, 1.0 / s.T, target)
+                    except RuntimeError as e:
+                        self.assertIn("Check the target filling/Ncond", str(e))
+                        self.assertNotIn("diverged", str(e))
+                        self.assertIn("is not inside (0, {})".format(nstate), str(e))
+                    else:
+                        self.assertIn(target, (0.0, float(nstate)))
+                        self.assertTrue(np.isfinite(mu))
 
 
 class TestMuFailureMessage(unittest.TestCase):
@@ -188,7 +352,34 @@ class TestMuFailureMessage(unittest.TestCase):
 
     def test_non_monotonic_is_diverged(self):
         m = self._msg(8.0, [0, 12, 3, 14, 1, 15, 2, 16, 4])
-        self.assertIn("not cross Ncond = 8 monotonically", m)
+        self.assertIn("N(mu) is not monotonic over the band window", m)
+
+    def test_monotone_crossing_is_not_called_non_monotonic(self):
+        m = self._msg(8.0, np.linspace(0.0, 16.0, 9))
+        self.assertNotIn("not monotonic", m)
+        self.assertIn("crosses Ncond = 8 inside the band window", m)
+
+    def test_monotone_not_reaching(self):
+        m = self._msg(15.999, np.linspace(1.0, 15.0, 9))
+        self.assertIn("never reaches Ncond = 15.999", m)
+
+    def test_ir_headline_names_ir_wmax(self):
+        fw = [x - 8.0 for x in np.linspace(-3.0, -2.9, 9)]
+        m = diag.mu_failure_message("X", -1e31, 1e31, -8.0, -8.0, 8.0, 16,
+                                    True, self.W, fw, is_ir=True)
+        self.assertIn("diverged, or ir_wmax does not cover the spectrum", m)
+
+    def test_probe_failure_falls_back(self):
+        m = diag.mu_failure_message("X", -1e31, 1e31, -8.0, -8.0, 8.0, 16,
+                                    True, self.W, None)
+        self.assertIn("could not be evaluated on the band window", m)
+
+    def test_window_bracket(self):
+        mus = list(np.linspace(-5.0, 5.0, 5))
+        self.assertEqual(diag.window_bracket(mus, [-3, -2, -1, 1, 2]),
+                         (mus[2], -1, mus[3], 1))
+        self.assertIsNone(diag.window_bracket(mus, [-3, -2, -1, -1, -0.5]))
+        self.assertIsNone(diag.window_bracket(mus, [-3, float("nan"), 1, 2, 3]))
 
     def test_nan_n_is_diverged(self):
         m = self._msg(8.0, [float("nan")] * 9)

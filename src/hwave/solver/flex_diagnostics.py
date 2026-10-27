@@ -215,9 +215,27 @@ def band_window(ew, beta):
     return float(ew.min()) - pad, float(ew.max()) + pad
 
 
+def window_bracket(mus, f_window):
+    """The first adjacent pair of band-window samples whose ``N - Ncond``
+    values bracket zero, as ``(lo, f_lo, hi, f_hi)``; None when none does
+    or a value is not finite."""
+    if not all(math.isfinite(x) for x in f_window):
+        return None
+    for a, fa, b, fb in zip(mus[:-1], f_window[:-1], mus[1:], f_window[1:]):
+        if fa == 0.0 or fb == 0.0 or fa * fb < 0.0:
+            return a, fa, b, fb
+    return None
+
+
+def _monotone(values, tol):
+    d = [b - a for a, b in zip(values[:-1], values[1:])]
+    return all(x >= -tol for x in d) or all(x <= tol for x in d)
+
+
 def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
-                       sigma_finite, window, f_window, monitor=None):
-    """The error text when the chemical-potential root is not bracketed.
+                       sigma_finite, window, f_window, monitor=None,
+                       is_ir=False):
+    """The error text when the chemical-potential search fails.
 
     ``ncond`` is the target and ``nstate`` the number of states it is
     counted over (both per spin for a spin-free run). A HEALTHY N(mu) is
@@ -228,34 +246,43 @@ def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
     * the target is not strictly inside ``(0, nstate)`` -> no filling can
       reach it: the filling/Ncond (and temperature) message;
     * otherwise the target was reachable and the search still failed, so
-      N(mu) itself is broken -> diverged.
+      N(mu) itself is broken: the self-energy has diverged or, on the IR
+      path, ``ir_wmax`` does not cover the spectrum (the IR N(mu) is a basis
+      fit, valid only inside the basis bandwidth).
 
-    The values at the ends of the EXPANDED bracket (``|mu|`` up to ~1e30)
-    are not used to decide: on the IR path N(mu) is the basis fit of
-    ``sum 1/(lambda + mu)`` and tends to 0 at BOTH ends whatever the
-    self-energy is. To say HOW N(mu) is broken, ``f_window = N(mu) - Ncond``
-    is read on a few points of the physical ``window`` (:func:`band_window`),
-    where both evaluations of N(mu) are valid: not finite, flat (changes by
-    less than ``FLAT_FRACTION * nstate``), outside the physical range
-    ``[0, nstate]``, or crossing the target non-monotonically.
+    The values at the ends of the EXPANDED bracket are not used to decide:
+    on the IR path N(mu) tends to 0 at BOTH ends whatever the self-energy
+    is. To say HOW N(mu) is broken, ``f_window = N(mu) - Ncond`` on a few
+    points of the physical ``window`` (:func:`band_window`) is described:
+    not finite, flat (changes by less than ``FLAT_FRACTION * nstate``),
+    outside ``[0, nstate]``, crossing the target non-monotonically, or never
+    reaching it. ``lo``/``hi``/``window``/``f_window`` may be None (the
+    search was refused before it started, or the window probe failed).
     """
-    head = ("{}: chemical-potential root not bracketed after expansion to "
-            "[{}, {}] (N-Ncond = {}, {}).".format(where, lo, hi, f_lo, f_hi))
+    if lo is None:
+        head = "{}: chemical-potential search refused.".format(where)
+    else:
+        head = ("{}: chemical-potential root not bracketed after expansion "
+                "to [{}, {}] (N-Ncond = {}, {}).".format(where, lo, hi, f_lo, f_hi))
     ctx = monitor.context() if monitor is not None else ""
     ncond, nstate = float(ncond), float(nstate)
-    fw = [float(x) for x in f_window]
-    wtxt = "[{:.6g}, {:.6g}]".format(window[0], window[1])
     if sigma_finite and not (0.0 < ncond < nstate):
         return head + (" The target Ncond = {:.6g} is not inside (0, {:.6g}), "
                        "the range of particle numbers these states can hold "
                        "(per spin for a spin-free run). Check the target "
                        "filling/Ncond and temperature.".format(ncond, nstate)) + ctx
     if not sigma_finite:
-        why = "the self-energy is not finite"
-    elif not all(math.isfinite(x) for x in fw):
+        return head + (" The self-energy has diverged (the self-energy is not "
+                       "finite); this is not a problem of the filling or the "
+                       "temperature.") + ctx + " " + ADVICE
+    wtxt = ("" if window is None
+            else "[{:.6g}, {:.6g}]".format(window[0], window[1]))
+    if f_window is None:
+        why = "N(mu) could not be evaluated on the band window {}".format(wtxt)
+    elif not all(math.isfinite(float(x)) for x in f_window):
         why = "N(mu) is not finite over the band window {}".format(wtxt)
     else:
-        n = [x + ncond for x in fw]
+        n = [float(x) + ncond for x in f_window]
         tol = FLAT_FRACTION * max(1.0, nstate)
         if max(n) - min(n) < tol:
             why = ("N(mu) does not depend on mu over the band window {}: it "
@@ -265,18 +292,23 @@ def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
             why = ("N(mu) leaves the physical range [0, {:.6g}] over the band "
                    "window {} (from {:.6g} to {:.6g})".format(
                        nstate, wtxt, min(n), max(n)))
+        elif not _monotone(n, 1e-9 * max(1.0, nstate)):
+            why = ("N(mu) is not monotonic over the band window {} (from "
+                   "{:.6g} to {:.6g})".format(wtxt, n[0], n[-1]))
         elif min(n) <= ncond <= max(n):
-            why = ("N(mu) over the band window {} runs from {:.6g} to {:.6g} "
-                   "but does not cross Ncond = {:.6g} monotonically".format(
-                       wtxt, n[0], n[-1], ncond))
+            why = ("N(mu) crosses Ncond = {:.6g} inside the band window {} "
+                   "but the root search failed".format(ncond, wtxt))
         else:
-            # a self-energy that moved spectral weight far outside the band
-            # window, or (IR path) a basis bandwidth ir_wmax that does not
-            # cover the dressed spectrum
             why = ("N(mu) stays within [{:.6g}, {:.6g}] over the band window "
-                   "{} and never reaches Ncond = {:.6g}; on the IR path also "
-                   "check that ir_wmax covers the spectrum".format(
+                   "{} and never reaches Ncond = {:.6g}".format(
                        min(n), max(n), wtxt, ncond))
-    return head + (" The self-energy has diverged ({}); the target filling is "
+    if is_ir:
+        verdict = (" The self-energy has diverged, or ir_wmax does not cover "
+                   "the spectrum ({}); the target filling is reachable, so "
+                   "this is not a problem of the filling or the temperature. "
+                   "Check ir_wmax first if the run had converged so far.".format(why))
+    else:
+        verdict = (" The self-energy has diverged ({}); the target filling is "
                    "reachable, so this is not a problem of the filling or the "
-                   "temperature.".format(why)) + ctx + " " + ADVICE
+                   "temperature.".format(why))
+    return head + verdict + ctx + " " + ADVICE

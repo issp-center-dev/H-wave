@@ -553,10 +553,12 @@ Stoner 因子と発散した計算
 
     RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
     after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
-    (N-Ncond = -8.0, -8.0). The self-energy has diverged (N(mu) leaves the
-    physical range [0, 16] over the band window [-9, 11] (from -3.12821 to
-    -2.96742)); the target filling is reachable, so this is not a problem of
-    the filling or the temperature. The last completed iteration was 1 with
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged, or ir_wmax does
+    not cover the spectrum (N(mu) leaves the physical range [0, 16] over the
+    band window [-9, 11] (from -3.12821 to -2.96742)); the target filling is
+    reachable, so this is not a problem of the filling or the temperature.
+    Check ir_wmax first if the run had converged so far. The last completed
+    iteration was 1 with
     |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
     q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
     too large a step in a warm-started scan (U or T; the previous
@@ -569,6 +571,14 @@ Stoner 因子と発散した計算
 判定には拡張した区間の両端の値を使いません。\ ``matsubara_basis = "ir"``\ では
 自己エネルギーによらず遠方の両端で\ :math:`N(\mu)`\ が 0 に近づくため、そこでの値が
 等しいこと（上の\ ``N-Ncond = -8.0, -8.0``\ ）だけでは発散の兆候になりません。
+
+``matsubara_basis = "ir"``\ では、同じ失敗は\ ``ir_wmax``\ が dressed スペクトルを
+覆っていないことも意味し得ます（IR の\ :math:`N(\mu)`\ は基底のフィットで、基底の
+帯域内でのみ有効です）。そのためこの経路ではメッセージが両方の原因を挙げます。
+また、拡張した区間で根が見つからなくてもバンド窓上の\ :math:`N(\mu)`\ が目標値を
+横切る場合（IR 経路では倍々の拡張が\ ``ir_wmax``\ を飛び越え得ます）、失敗せずに
+警告付きでその部分区間で根を求めます。有限でない自己エネルギーと、0 未満または
+状態数を超える目標値は、探索の前に拒否されます。
 
 .. _flex_bond_hf_tutorial:
 
