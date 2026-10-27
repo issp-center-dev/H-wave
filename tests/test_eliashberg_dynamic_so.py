@@ -548,6 +548,38 @@ class TestLMRetry(_FlexFixture):
         lr = eigs(red, k=6, which="LR", return_eigenvectors=False, tol=1e-12)
         self._check(cap, out, float(lr.real.max()))
 
+    def test_retry_at_num_eigenvalues_dim_minus_one(self):
+        """At num_eigenvalues = dim - 1 the dense branch keeps only the dim - 1
+        largest-magnitude eigenpairs: spectrum [-10, -9, -8, +1] (dim = 4,
+        num_eigenvalues = 3) returns only negative values, and the retry must
+        still report +1."""
+        from scipy.sparse.linalg import LinearOperator
+        rng = np.random.default_rng(8)
+        Q, _ = np.linalg.qr(rng.standard_normal((4, 4)))
+        M = Q @ np.diag([-10.0, -9.0, -8.0, 1.0]) @ Q.T
+        red = LinearOperator((4, 4), matvec=lambda c: M @ np.asarray(c).ravel(),
+                             matmat=lambda C: M @ np.asarray(C), dtype=complex)
+        out = self._out("dimm1")
+        inp = S._input(self.d, self.files, True,
+                       _dyn_eli(chi0q_mode="calc", num_eigenvalues=3),
+                       nmat=_NMAT_E2E, out=out)
+        real_init = sc._SOAntisymmetricBasis.__init__
+
+        def init(self_, shape, reverse=None):
+            real_init(self_, shape, reverse=reverse)
+            if reverse is not None:      # the dynamic basis: a 4-dim stand-in
+                self_.dim = 4
+                self_.rep, self_.rep_partner = self_.rep[:4], self_.rep_partner[:4]
+
+        with mock.patch.object(sc._SOAntisymmetricBasis, "__init__", init), \
+                mock.patch.object(sc._SOAntisymmetricBasis, "reduce",
+                                  lambda self_, A: red):
+            with _quiet():
+                lam = sc.calc_eliashberg(inp)
+        self.assertAlmostEqual(lam, 1.0, places=10)
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigenvalue_selection: LR_retry", txt)
+
     @heavy
     def test_retry_matches_the_dense_reduced_spectrum(self):
         out = self._out("lm32d")
@@ -777,14 +809,15 @@ class TestPairBubbleDtype(unittest.TestCase):
     def test_bit_identical_to_out_of_place_division(self):
         rng = np.random.default_rng(4)
         shape = (2, 2, 3, 1, 1, 4)
-        beta = 3.7
         raw = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-        for dt in (np.complex64, np.complex128, np.float32, np.float64,
-                   np.int64, np.bool_):
+        for dt, beta in ((np.complex64, 3.7), (np.complex128, 3.7),
+                         (np.float32, 3.7), (np.float64, 3.7), (np.int64, 3.7),
+                         (np.bool_, 3.7), (np.int64, 3), (np.bool_, 3),
+                         (np.float32, 3), (np.complex64, 3)):
             g = (raw.real > 0 if dt is np.bool_ else
                  (np.round(3 * raw.real) if dt is np.int64 else
                   (raw if np.dtype(dt).kind == "c" else raw.real))).astype(dt)
-            with self.subTest(dtype=np.dtype(dt).name):
+            with self.subTest(dtype=np.dtype(dt).name, beta=beta):
                 gi = dyn.reverse_fft_axes(g[..., ::-1], (2, 3, 4))
                 want = (g.reshape(4, 3, 4)[:, None] * gi.reshape(4, 3, 4)[None]
                         ).reshape(2, 2, 2, 2, 3, 1, 1, 4) / beta

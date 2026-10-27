@@ -911,7 +911,8 @@ def calc_g2_dynamic(green_kw, beta):
     # values without a second four-leg-sized buffer, the spin-orbital
     # solver's memory peak, #284); otherwise (e.g. complex64 G and a float64
     # beta, or an integer G) out of place, exactly as ``G2 / beta``
-    if G2.dtype == np.result_type(G2, beta):
+    if (np.issubdtype(G2.dtype, np.inexact)
+            and G2.dtype == np.result_type(G2, beta)):
         G2 /= beta
         return G2
     return G2 / beta

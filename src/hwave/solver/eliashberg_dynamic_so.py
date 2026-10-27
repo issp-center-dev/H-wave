@@ -756,13 +756,15 @@ def solve_dynamic_so(input_dict):
         if seed_red is not None:
             selection += "_seed_overlap"
         # As in the non-spin-orbital dynamic solver: a plain which='LM' set
-        # (no spectral_shift, no seed, not the dense full-spectrum branch)
+        # (no spectral_shift, no seed, and not every eigenpair returned)
         # whose leading eigenvalue is negative may have lost the physical
         # leading eigenvalue to large repulsive ones, which grow with Nmat;
         # re-solve ONCE with spectral_shift = "auto" (largest real part) on
         # the same reduced operator.
         if (selection == "LM" and eigenvalue_method == "arnoldi"
-                and num_eigenvalues < basis.dim - 1):
+                and num_eigenvalues < basis.dim):
+            # at dim - 1 the dense branch runs but keeps only the dim - 1
+            # largest-magnitude eigenpairs, so it can miss the leading one too
             vals_arr = np.asarray(vals)
             scale = float(np.max(np.abs(vals_arr))) if vals_arr.size else 0.0
             neg_tol = 1.0e-8 * max(1.0, scale)
