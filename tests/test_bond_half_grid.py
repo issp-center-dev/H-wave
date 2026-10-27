@@ -1148,6 +1148,37 @@ class TestSkipOnlyUnderRefuseAll(unittest.TestCase):
         self.assertEqual(ref[0], "refused")
         self.assertEqual(n_ref, 0)
 
+    def test_static_refusal_only_at_negative_frequencies(self):
+        """Under "static" with "refuse" the residual exceeds its threshold
+        only for the slices 0 < l < nmat/2 (nu < 0): the full grid refuses,
+        and so must the half grid, which can see those slices only through
+        its own mirror solves (a skip under "static" would pass)."""
+        from hwave.solver import bond_channels as bc
+        real_db, real_res = bc.dress_batch, bc.solve_residual
+
+        def db(*a, **k):
+            ls = k.get("ls")
+            l0 = k["l0"]
+            if ls is not None:
+                ls = np.asarray(ls)
+                neg = bool(np.all((ls > 0) & (ls < _NMAT // 2)))
+            else:
+                neg = 0 < l0 < _NMAT // 2
+            if neg:
+                with mock.patch.object(bc, "solve_residual",
+                                       lambda m, c, b: real_res(m, c, b) * 0 + 1.0):
+                    return real_db(*a, **k)
+            return real_db(*a, **k)
+
+        with mock.patch.object(bc, "dress_batch", db):
+            full = _map_run(self.x, self.S, self.C, False, 1e-7, nb=1, guard_freqs="static")
+            half = _map_run(self.x, self.S, self.C, True, 1e-7, nb=1, guard_freqs="static")
+        self.assertEqual(full[0], "refused")
+        self.assertEqual(half[0], "refused")
+        for out in (full, half):
+            l = int(str(out[1]).split("grid index l=")[1].split(")")[0])
+            self.assertTrue(0 < l < _NMAT // 2, str(out[1]))
+
     def test_endpoint_worst_with_larger_batches(self):
         """The batch worst at the static slot (nb = 3; review experiment):
         under "warn" the mirror is guarded, so the records are those of a run

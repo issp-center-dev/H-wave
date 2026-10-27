@@ -628,7 +628,9 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                 _mirror(cb, ls, V_, ch, None)
                 raise
             # the mirror of the stored violating block, (-q, nmat - l), has
-            # the same score and the full grid meets it first: report there
+            # the same score, so the refusal is reported at that mirror. The
+            # decision is the full grid's; with several violating blocks the
+            # location the full grid reports first can differ
             new = _bc.relocate_refusal(exc, nmat - exc.l, int(mq[exc.iq]), nmat, spatial_shape)
             if new is None:
                 raise
