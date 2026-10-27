@@ -1229,12 +1229,12 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``energy.dat``\ の\ ``Sx``\ ・\ ``Sy``\ ・\ ``Sz``\ は全スピン軌道密度から計算されます
   （UHFk と同様、\ ``Sx``\ と\ ``Sy``\ はスピン軌道計算でのみ書き出されます）。
 
-静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
+``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
 （\ ``chiq.npz``\ 、\ ``chi0q.npz``\ 、\ ``green.npz``\ 。FLEX の実行で
 ``[file.output]``\ の\ ``chiq``\ 、\ ``chi0q``\ 、\ ``green``\ を指定してください。
-FLEX は指定されたアーカイブだけを出力します）を読みます。
-:ref:`sc_spin_orbital`\ を参照してください。動的 Eliashberg ソルバーはこれらを
-受け付けません。
+FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
+（\ :ref:`sc_spin_orbital`\ を参照）でも、すべてのボソン振動数の\ :math:`\chi`\ を使う
+動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
 
 ``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。

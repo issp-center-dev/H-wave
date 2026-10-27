@@ -91,9 +91,11 @@ that has no effect under the current settings.
   - ``calc_scheme = "reduced"`` refuses spin-orbital input;
   - the static Eliashberg solver (``hwave_sc``) reads the outputs of such a
     run with ``[eliashberg] chi0q_mode = "flex"`` (write ``[file.output]
-    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. Its
-    dynamic entry and ``hwave_tsweep`` with ``run_eliashberg = true`` still
-    refuse ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
+    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. The
+    on-site dynamic solver (``frequency = "dynamic"``) reads them too (see
+    :ref:`sc_spin_orbital_dynamic`); the dynamic bond path and
+    ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
+    ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
     ``warm_start = false``.
 
   **Eliashberg solver.** ``hwave_sc`` solves the static linearized
@@ -101,7 +103,9 @@ that has no effect under the current settings.
   :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site interactions
   and ``chi0q_mode = "calc"``, ``"load"`` or ``"flex"``; the scope, the
   outputs and the refused combinations are listed in
-  :ref:`sc_spin_orbital`.
+  :ref:`sc_spin_orbital`. With ``frequency = "dynamic"`` it solves for the
+  frequency-resolved gap (uniform grid, ``chi0q_mode = "calc"`` or
+  ``"flex"``); see :ref:`sc_spin_orbital_dynamic`.
 
 .. _rpa_calc_scheme_auto:
 
@@ -832,8 +836,8 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
 ``ir_wmax``, ...) is documented in
 :ref:`the dynamic-frequency section of the Eliashberg solver tutorial
-<sc_dynamic_frequency>`. The two keys of the spin-orbital static path are
-listed first.
+<sc_dynamic_frequency>`. The two keys of the spin-orbital path (static and
+dynamic) are listed first.
 
 - ``flex_chiq``
 
