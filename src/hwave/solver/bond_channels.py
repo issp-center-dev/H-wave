@@ -51,12 +51,17 @@ _GUARD_PRUNE_MARGIN = 2.0
 _GUARD_SCALE_MIN = 1.0e-100
 _GUARD_SCALE_MAX = 1.0e+100
 #: outward-rounding term of the interval ends (spec 2.1): eps = _GUARD_ROUNDING
-#: * ND**2 * u (u = 2.0**-53) is a bound on the relative round-off of the
-#: norms, products and quotients of an ND x ND block; every lower end is
-#: multiplied by (1 - eps) and every upper end by (1 + eps) so the interval
-#: contains the reference singular values in floating point as well as in
-#: exact arithmetic (the design's factor-2 pruning margin is twelve orders
-#: of magnitude wider)
+#: * ND**2 * u (u = 2.0**-53) covers the relative round-off of the norms,
+#: products and quotients of an ND x ND block; every lower end is multiplied
+#: by (1 - eps) and every upper end by (1 + eps). It does NOT bound the
+#: round-off of the computed residual rho = ||I - A B||_F, which grows with
+#: the condition number kappa of the block (about ND**2 u kappa), nor the
+#: absolute O(ND u sigma_max) error of the reference SVD's sigma_min: for a
+#: well-conditioned block the interval contains the floating-point reference
+#: score, but for a strongly ill-conditioned (e.g. graded) block it can miss
+#: it. The two consumers carry their own pads: the pruning margin
+#: (_GUARD_PRUNE_MARGIN) and the skip threshold (interval_skip_threshold),
+#: whose absolute term bounds kappa wherever a skip is taken
 _GUARD_ROUNDING = 16.0
 #: when the exact decomposition of the interval guard runs (issue #276):
 #: ``"decide"`` skips it for a stack whose interval already proves that no
@@ -64,13 +69,15 @@ _GUARD_ROUNDING = 16.0
 #: on every stack, as before
 _GUARD_EXACT_MODES = ("decide", "always")
 #: safety factor of that skip (issue #276): the smallest lower end of the
-#: score must exceed this multiple of ``cond_tol`` (plus the absolute
-#: round-off allowance :func:`interval_skip_threshold` adds) before the
-#: exact decomposition is skipped. The same factor-2 pad as
-#: :data:`_GUARD_PRUNE_MARGIN`: it keeps the skip decision identical to the
-#: exact path's even if the round-off of the interval ends or of the
-#: reference SVD itself were many orders of magnitude larger than the
-#: documented rounding term
+#: score must exceed this multiple of ``cond_tol`` PLUS the absolute term
+#: ``_GUARD_ROUNDING * ND**2 * u`` (:func:`interval_skip_threshold`) before
+#: the exact decomposition is skipped. The absolute term is what makes the
+#: skip safe in floating point: a skipped block has score > 16 ND^2 u, i.e.
+#: kappa < 1 / (16 ND^2 u) on the pole scale, so the round-off of rho (about
+#: ND^2 u kappa) and the reference SVD's error on sigma_min (about
+#: ND u sigma_max) are each at most about 1/16 of the score, relative; this
+#: factor of 2 covers both with room to spare, so the decision is the exact
+#: path's
 _GUARD_SKIP_MARGIN = 2.0
 
 
@@ -218,13 +225,16 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
       ``[(1 - rho) / N(B), (1 + rho) / sqrt(rayleigh(B B^H))]``.
 
     The inequalities hold in exact arithmetic for the computed ``B`` and
-    vectors; the floating-point error of the norms, products and inner
-    products of a well-scaled block is of order ``ND^2 u`` relative, so
-    every end is rounded outward by that documented margin
-    (:data:`_GUARD_ROUNDING`) before it is returned, keeping the interval
-    rigorous in floating point too, not only in exact arithmetic -- twelve
-    orders of magnitude inside the caller's pruning margin
-    (:data:`_GUARD_PRUNE_MARGIN`). Never raises on singular or out-of-scale
+    vectors. The floating-point error of the norms, products and inner
+    products of a well-scaled block is of order ``ND^2 u`` relative, and
+    every end is rounded outward by that margin (:data:`_GUARD_ROUNDING`);
+    for a well-conditioned block the interval then contains the
+    floating-point reference score. The rounding does NOT cover the
+    round-off of the computed residual ``rho``, which grows with the
+    condition number ``kappa`` (about ``ND^2 u kappa``), so for a strongly
+    ill-conditioned block the interval can miss the reference score; its
+    consumers carry their own pads (:data:`_GUARD_PRUNE_MARGIN`,
+    :func:`interval_skip_threshold`). Never raises on singular or out-of-scale
     input (those blocks are ``valid = False``); the numpy per-block inverse
     retry catches any exception a single-block decomposition can raise, not
     only ``LinAlgError``, so this contract holds for every host block;
@@ -335,11 +345,14 @@ def interval_skip_threshold(cond_tol, ND):
     """The value the smallest lower end of the score must EXCEED for the
     exact decomposition to be skipped (issue #276):
     ``_GUARD_SKIP_MARGIN * cond_tol + _GUARD_ROUNDING * ND**2 * u``. The
-    first term is the safety factor :data:`_GUARD_SKIP_MARGIN`; the second
-    is an absolute allowance for the round-off of the reference SVD itself,
-    whose computed ``sigma_min`` may sit ``O(ND u sigma_max)`` from the true
-    one -- i.e. ``O(ND u)`` on the ``sigma_min / max(1, sigma_max)`` scale
-    of the score -- which matters only for a ``cond_tol`` near round-off."""
+    absolute second term caps the condition number of every skipped block
+    (score > 16 ND^2 u, i.e. kappa < 1 / (16 ND^2 u)), so the round-off of
+    the interval's residual ``rho`` (about ``ND^2 u kappa``) and the
+    reference SVD's error on ``sigma_min`` (about ``ND u sigma_max``, i.e.
+    ``ND u`` on the score scale) are each at most about 1/16 of the score,
+    relative; the factor :data:`_GUARD_SKIP_MARGIN` covers both, so a
+    skipped stack is one the exact path would also pass (see the comment
+    at :data:`_GUARD_SKIP_MARGIN`)."""
     return _GUARD_SKIP_MARGIN * float(cond_tol) + _GUARD_ROUNDING * ND * ND * (2.0 ** -53)
 
 

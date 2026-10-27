@@ -6,9 +6,14 @@ skip is exercised here on the host: ``guard_method = "interval"`` is passed
 explicitly to :func:`dress_batch`, and the end-to-end FLEX runs map the
 numpy entry of :data:`bond_channels._GUARD_AUTO` to ``"interval"`` (the
 resolution ``"auto"`` makes on a device), so no GPU is needed. The exact
-host decompositions are counted with a spy on
-:func:`bond_channels.bond_conditioning_score`, which every exact path calls.
+host work is counted by :func:`_spy` at three places: the scorer
+:func:`bond_channels.bond_conditioning_score`, the threaded host SVD
+(``_threaded.svdvals``) it calls, and every gather of a block stack to the
+host (``_bk.to_host`` on a three-dimensional array) inside bond_channels.
+The reference minimum :func:`_exact_min` is computed with
+``numpy.linalg.svd`` in this file, independently of the production scorer.
 """
+import contextlib
 import re
 import tempfile
 import unittest
@@ -20,8 +25,59 @@ from hwave.solver import bond_channels as bc
 from tests.test_flex_bond_dressing import _onsite_factors, _problem
 
 
+class _Delegate:
+    """A stand-in for a module: every attribute is the module's, except the
+    ones given as keyword overrides."""
+
+    def __init__(self, module, **overrides):
+        self._module = module
+        self.__dict__.update(overrides)
+
+    def __getattr__(self, name):
+        return getattr(self._module, name)
+
+
+class _Counts:
+    def __init__(self):
+        self.score = self.svd = self.gather = 0
+
+    @property
+    def call_count(self):
+        """The number of exact decompositions, as seen at ANY of the three
+        places: a skip that still gathers the blocks or still runs an SVD
+        counts as an exact path."""
+        return max(self.score, self.svd, self.gather)
+
+
+@contextlib.contextmanager
 def _spy():
-    return mock.patch.object(bc, "bond_conditioning_score", wraps=bc.bond_conditioning_score)
+    """Count the exact host work of the guard (see the module docstring).
+    Only bond_channels' own references are replaced, so the gathers of the
+    collapses in flex_bond (also 3-D to_host calls) are not counted."""
+    c = _Counts()
+    real_score, real_svd, real_to_host = (bc.bond_conditioning_score, bc._threaded.svdvals,
+                                          bc._bk.to_host)
+
+    def score(*a, **k):
+        c.score += 1
+        return real_score(*a, **k)
+
+    def svd(*a, **k):
+        c.svd += 1
+        return real_svd(*a, **k)
+
+    def to_host(x, *a, **k):
+        if getattr(x, "ndim", 0) == 3:
+            c.gather += 1
+        return real_to_host(x, *a, **k)
+
+    with mock.patch.object(bc, "bond_conditioning_score", score), \
+            mock.patch.object(bc, "_threaded", _Delegate(bc._threaded, svdvals=svd)), \
+            mock.patch.object(bc, "_bk", _Delegate(bc._bk, to_host=to_host)):
+        yield c
+    # every exact path goes through all three: a mismatch means the spy
+    # missed a route
+    assert c.score == c.svd, (c.score, c.svd)
 
 
 def _solve_matrix(cb, W, channel):
@@ -32,8 +88,18 @@ def _solve_matrix(cb, W, channel):
 
 
 def _exact_min(flat):
-    """The exact score minimum of a flattened stack, from the full SVD."""
-    return bc.bond_conditioning_score(flat.reshape(-1, 1, 1, flat.shape[-1], flat.shape[-1]))
+    """``(worst, i)``: the guard score minimum of a flattened stack and the
+    first index attaining it, from ``numpy.linalg.svd`` (an oracle
+    independent of the production scorer): the score is
+    ``min(sigma_min / sigma_max, sigma_min / max(1, sigma_max))``, 0 for a
+    zero block."""
+    sv = np.linalg.svd(flat, compute_uv=False)
+    smax, smin = sv[:, 0], sv[:, -1]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(smax > 0, smin / smax, 0.0)
+    score = np.minimum(ratio, smin / np.maximum(1.0, smax))
+    i = int(np.argmin(score))
+    return float(score[i]), i
 
 
 def _run(cb, W, channel, exact, **kw):
@@ -125,7 +191,9 @@ class TestResolverSkip(unittest.TestCase):
         with _spy() as spy:
             out = bc.resolve_conditioning_guard(flat, np, 1e-3, exact="always")
         self.assertEqual(spy.call_count, 1)
-        self.assertEqual(out[:6], _exact_min(flat))
+        ref = _exact_min(flat)
+        self.assertAlmostEqual(out[0], ref[0], delta=1e-13)
+        self.assertEqual(out[1], ref[1])
 
 
 class TestDressBatchDecisions(unittest.TestCase):
@@ -147,6 +215,9 @@ class TestDressBatchDecisions(unittest.TestCase):
         self.assertEqual(a[3], d[3])                  # warn records
         self.assertEqual(a[4], d[4])                  # warn log lines
         self.assertIsInstance(a[2], float)
+        # the production minimum against the independent numpy.linalg.svd oracle
+        ref = _exact_min(_solve_matrix(cb, W, channel))[0]
+        self.assertAlmostEqual(a[2], ref, delta=1e-12 * max(1.0, ref))
         if isinstance(d[2], bc.GuardBracket):
             self.assertEqual(n_d, 0)
             self.assertEqual(a[3], [])
@@ -338,6 +409,57 @@ class TestFlexEndToEnd(unittest.TestCase):
         lines = [m.groups() for m in (_COND_RE.search(x) for x in cm.output) if m]
         return s, gi, lines, spy.call_count
 
+    def test_publish_refuses_a_bracketed_last_map(self):
+        # the invariant behind the archived cond_min: with the per-map
+        # choice broken so that the LAST map is bracketed too, the publish
+        # step refuses instead of writing a NaN minimum
+        from hwave.solver.flex import FLEX
+        with mock.patch.object(FLEX, "_bond_guard_exact_for_map",
+                               lambda self, it, passes, needed: "decide"):
+            with self.assertRaises(RuntimeError) as cm:
+                self._solve({"IterationMax": 2})
+        self.assertIn("not computed exactly", str(cm.exception))
+
+    def test_warn_final_violation_after_skipped_maps_is_exact(self):
+        # flex_guard_policy = "warn": maps 1-2 pass on the interval (bracketed),
+        # then the floor is raised (iteration hook) so that map 3 -- the last --
+        # violates the guard. The final refusal must quote the exact minima,
+        # identical to the "always" run's
+        from tests.test_flex_bond_gate import _flex
+        outs = {}
+        for exact in ("always", "decide"):
+            s, r = _flex({"IterationMax": 3, "flex_guard_policy": "warn",
+                          "longitudinal_bond_guard_exact": exact})
+
+            def hook(payload, s=s):
+                if payload["iteration"] == 2:
+                    s.longitudinal_bond_cond_tol = 0.9
+
+            s._iteration_hook = hook
+            gi = r.get_param("green")
+            with mock.patch.dict(bc._GUARD_AUTO, {"numpy": "interval"}), \
+                    tempfile.TemporaryDirectory() as out, \
+                    self.assertLogs("hwave.solver.flex", level="INFO") as cm:
+                with self.assertRaises(ValueError) as err:
+                    s.solve(gi, out)
+            lines = [m.groups() for m in (_COND_RE.search(x) for x in cm.output) if m]
+            # a refused solve drops its partial results (_bond_last included),
+            # so the evidence is the refusal and the per-map log lines
+            outs[exact] = (str(err.exception), lines)
+        msg_a, lines_a = outs["always"]
+        msg_d, lines_d = outs["decide"]
+        self.assertIn("LAST FLEX map violated the bond guard", msg_d)
+        self.assertEqual(msg_d, msg_a)                 # counts and minima alike
+        m = re.search(r"cond_min spin (\S+) / charge (\S+)\)", msg_d)
+        self.assertIsNotNone(m)
+        # the earlier maps were really bracketed, the last one exact, and
+        # the refusal quotes exactly the last map's exact minima
+        self.assertEqual([_parse(t)[0] for t in lines_d[0] + lines_d[1]], ["bracket"] * 4)
+        self.assertEqual(lines_d[2], lines_a[2])
+        self.assertEqual([_parse(t) for t in lines_d[2]],
+                         [("exact", float(m.group(1))), ("exact", float(m.group(2)))])
+        self.assertLessEqual(float(m.group(1)), 0.9)
+
     def test_decide_matches_always_and_archives_the_exact_minimum(self):
         s_a, gi_a, lines_a, n_a = self._solve({"IterationMax": 3,
                                                "longitudinal_bond_guard_exact": "always"})
@@ -412,6 +534,80 @@ class TestFlexEndToEnd(unittest.TestCase):
         self.assertEqual(outs[0][2], outs[1][2])
         for k in ("sigma", "green", "longitudinal_bond_cond_min_s", "longitudinal_bond_cond_min_c"):
             np.testing.assert_array_equal(np.asarray(outs[1][0][k]), np.asarray(outs[0][0][k]))
+
+
+class TestRealBlocksTakeTheExactPath(unittest.TestCase):
+    """Solver-level pins with real blocks (``W = 1``, so the spin solve
+    matrix of block (l, q) is ``1 - cb[l, q]``): a singular block, an
+    out-of-scale block and blocks whose lower end lies in
+    ``(cond_tol, 2 cond_tol]`` all take the exact path under "decide"."""
+
+    ND = 3
+
+    def _batch(self, diag):
+        """cb with solve-matrix blocks ``d * 1`` for the given d per block;
+        shape (nb=2, nvol=2)."""
+        d = np.asarray(diag, dtype=float).reshape(2, 2)
+        cb = (1.0 - d)[:, :, None, None] * np.eye(self.ND)
+        W = np.broadcast_to(np.eye(self.ND, dtype=complex), (2, self.ND, self.ND)).copy()
+        return cb.astype(complex), W
+
+    def _both(self, cb, W, cond_tol, **kw):
+        res = {}
+        for exact in ("always", "decide"):
+            with _spy() as spy:
+                try:
+                    chi, cond = bc.dress_batch(cb, W, "spin", l0=0, nmat=2,
+                                               spatial_shape=(2, 1, 1), cond_tol=cond_tol,
+                                               guard_method="interval", guard_exact=exact, **kw)
+                    out = ("ok", chi, cond)
+                except bc.BondConditioningError as e:
+                    out = ("refused", str(e), e.iq, e.l, e.worst)
+            res[exact] = (out, spy.call_count, spy.gather)
+        return res
+
+    def test_singular_block_is_decomposed_and_refused_identically(self):
+        cb, W = self._batch([0.9, 0.9, 0.0, 0.9])     # block (l=1, q=0) is the zero matrix
+        iv = bc.bond_conditioning_interval(
+            np.eye(self.ND) - cb.reshape(-1, self.ND, self.ND), np)
+        self.assertFalse(iv.valid[2])
+        res = self._both(cb, W, 1e-3)
+        self.assertEqual(res["decide"][0][0], "refused")
+        self.assertEqual(res["decide"][0], res["always"][0])
+        self.assertEqual(res["decide"][1:], (1, 1))
+
+    def test_out_of_scale_block_is_decomposed(self):
+        cb, W = self._batch([0.9, 1e150, 0.9, 0.9])   # a block far outside the scale guard
+        iv = bc.bond_conditioning_interval(
+            np.eye(self.ND) - cb.reshape(-1, self.ND, self.ND), np)
+        self.assertFalse(iv.valid[1])
+        self.assertTrue(iv.valid[[0, 2, 3]].all())
+        res = self._both(cb, W, 1e-3)
+        self.assertEqual(res["decide"][0][0], "ok")
+        self.assertEqual(res["decide"][1:], (1, 1))
+        self.assertEqual(res["decide"][0][2], res["always"][0][2])
+        np.testing.assert_array_equal(res["decide"][0][1], res["always"][0][1])
+
+    def test_lower_end_between_tol_and_twice_tol_is_decomposed(self):
+        tol = 0.4
+        cb, W = self._batch([0.7, 0.95, 0.9, 0.85])   # smallest score 0.7 in (tol, 2 tol]
+        iv = bc.bond_conditioning_interval(
+            np.eye(self.ND) - cb.reshape(-1, self.ND, self.ND), np)
+        low = float(np.min(iv.score_low))
+        self.assertGreater(low, tol)
+        self.assertLessEqual(low, 2 * tol)
+        res = self._both(cb, W, tol)
+        self.assertEqual(res["decide"][0][0], "ok")
+        self.assertEqual(res["decide"][1:], (1, 1))
+        self.assertIsInstance(res["decide"][0][2], float)
+        self.assertEqual(res["decide"][0][2], res["always"][0][2])
+        self.assertAlmostEqual(res["decide"][0][2], 0.7, delta=1e-14)
+        # the same blocks lifted just above 2 tol: skipped, nothing gathered
+        cb, W = self._batch([0.81, 0.95, 0.9, 0.85])
+        res = self._both(cb, W, tol)
+        self.assertIsInstance(res["decide"][0][2], bc.GuardBracket)
+        self.assertEqual(res["decide"][1:], (0, 0))
+        self.assertLessEqual(res["decide"][0][2].low, res["always"][0][2])
 
 
 class TestMapMode(unittest.TestCase):
