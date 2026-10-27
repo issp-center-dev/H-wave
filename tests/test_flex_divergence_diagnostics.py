@@ -159,15 +159,17 @@ class TestDivergedWarmStart(unittest.TestCase):
                 mus[basis] = s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
         self.assertAlmostEqual(mus["ir"], mus["uniform"], delta=5e-3)
 
-    def _ir_fallback_with_fault(self, fault):
+    def _ir_fallback_with_fault(self, fault, where="last"):
         """Run the healthy IR fallback case (target 15.999, see above) with
-        ``fault`` applied to the LAST N(mu) evaluation only -- the
-        post-solve validation of the fallback root."""
+        ``fault`` applied to ONE N(mu) evaluation of the fallback: ``"first"``
+        (its first Newton evaluation), ``"interior"`` (a later one inside
+        the loop) or ``"last"`` (the post-solve validation)."""
         s, gi = _make_solver({'matsubara_basis': 'ir', 'ir_wmax': 10.0,
                               'IterationMax': 1})
         s.solve(gi, 'tests/flex/output')
         nb, nv, nd = s.H0_eigenvalue.shape
         sigma = np.zeros((nb, s._ir_axF.n_freq, nv, nd, nd), dtype=np.complex128)
+        beta = 1.0 / s.T
         orig = s._number_from_eigs_ir
         calls = []
 
@@ -176,13 +178,18 @@ class TestDivergedWarmStart(unittest.TestCase):
             return orig(lam, mu)
         s._number_from_eigs_ir = counting
         with self.assertLogs(_LOGGER, level="WARNING"):
-            s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+            s._find_mu_dressed(sigma, beta, 15.999)
+        # the fallback starts right after the nine band-window samples
+        w_last = float(np.linspace(*diag.band_window(s.H0_eigenvalue, beta), 9)[-1])
+        first = max(i for i, m in enumerate(calls) if m == w_last) + 1
         last = len(calls) - 1
+        target = {"first": first, "interior": first + 2, "last": last}[where]
+        self.assertLess(first + 2, last)
         seen = []
 
         def faulty(lam, mu):
             seen.append(mu)
-            if len(seen) - 1 == last:
+            if len(seen) - 1 == target:
                 return fault(orig(lam, mu))
             return orig(lam, mu)
         s._number_from_eigs_ir = faulty
@@ -190,8 +197,8 @@ class TestDivergedWarmStart(unittest.TestCase):
         s._scf_monitor.record(3, 0.25, {"spin": (0.9, (0.5, 0.5, 0.0))}, last=False)
         with self.assertRaises(RuntimeError) as cm, \
                 self.assertLogs(_LOGGER, level="WARNING"):
-            s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
-        self.assertEqual(len(seen), last + 1)
+            s._find_mu_dressed(sigma, beta, 15.999)
+        self.assertGreater(len(seen), target)
         msg = str(cm.exception)
         self.assertIn("not bracketed after expansion", msg)        # classified
         self.assertIn("band-window fallback on", msg)
@@ -200,17 +207,41 @@ class TestDivergedWarmStart(unittest.TestCase):
         self.assertIn("last completed iteration was 3", msg)       # SCF context
         return msg
 
+    @staticmethod
+    def _boom(nd):
+        raise FloatingPointError("divide by zero (test)")
+
     @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
     def test_fallback_bad_residual_is_classified(self):
         msg = self._ir_fallback_with_fault(lambda nd: (nd[0] + 1.0, nd[1]))
         self.assertIn("with N-Ncond = ", msg)
 
     @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_fallback_non_finite_residual_is_classified(self):
+        msg = self._ir_fallback_with_fault(lambda nd: (float("nan"), nd[1]))
+        self.assertIn("with N-Ncond = nan", msg)
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_fallback_mu_outside_interval_is_classified(self):
+        """A non-finite derivative at the first Newton evaluation sends the
+        iterate out of the saved sub-interval (to nan); the validation must
+        refuse it with the classified error."""
+        with np.errstate(invalid="ignore"):
+            msg = self._ir_fallback_with_fault(lambda nd: (nd[0], float("nan")),
+                                               where="first")
+        self.assertIn("ended at mu = nan", msg)
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
     def test_fallback_validation_error_does_not_escape(self):
-        def boom(nd):
-            raise FloatingPointError("divide by zero (test)")
-        msg = self._ir_fallback_with_fault(boom)
+        msg = self._ir_fallback_with_fault(self._boom)
         self.assertIn("N(mu) could not be evaluated: divide by zero (test)", msg)
+
+    @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
+    def test_fallback_newton_errors_do_not_escape(self):
+        for where in ("first", "interior"):
+            with self.subTest(where=where):
+                msg = self._ir_fallback_with_fault(self._boom, where=where)
+                self.assertIn("N(mu) could not be evaluated: divide by zero (test)", msg)
 
     @unittest.skipUnless(HAVE_SPARSE_IR, "needs the optional sparse-ir package")
     def test_ir_narrow_basis_names_ir_wmax(self):

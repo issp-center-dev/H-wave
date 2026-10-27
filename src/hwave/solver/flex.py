@@ -3597,6 +3597,28 @@ class FLEX(RPA):
                 lo, hi, " (on the IR path check that ir_wmax covers the "
                 "spectrum)" if self.use_ir else "")
 
+        def _fallback_fail(mu_end, why):
+            # every failure of the band-window fallback is classified like a
+            # failure of the expanded search, with the fallback as a note
+            e_lo, e_hi, e_flo, e_fhi, e_win, e_fwin = expanded
+            raise RuntimeError(_diag.mu_failure_message(
+                "FLEX._find_mu_dressed", e_lo, e_hi, e_flo, e_fhi, Ncond,
+                nstate, sigma_finite, e_win, e_fwin,
+                getattr(self, "_scf_monitor", None), is_ir=self.use_ir,
+                note=" The band-window fallback on [{}, {}] ended at mu = "
+                     "{} with {}, which is not a reliable root.".format(
+                         fallback[0], fallback[1], mu_end, why)))
+
+        def _eval(mu_t):
+            # the normal bracket path calls _delta_n unwrapped; only the
+            # fallback turns an evaluation error into the classified error
+            if fallback is None:
+                return _delta_n(mu_t, with_deriv=True)
+            try:
+                return _delta_n(mu_t, with_deriv=True)
+            except Exception as exc:
+                _fallback_fail(mu_t, "N(mu) could not be evaluated: {}".format(exc))
+
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:
             lo, hi = hi, lo
@@ -3604,7 +3626,7 @@ class FLEX(RPA):
         mu = 0.5 * (lo + hi)
         dmu_old = abs(hi - lo)
         dmu = dmu_old
-        f, df = _delta_n(mu, with_deriv=True)
+        f, df = _eval(mu)
 
         xtol = 1.0e-12
         for _ in range(100):
@@ -3628,7 +3650,7 @@ class FLEX(RPA):
             if abs(dmu) < xtol:
                 break
 
-            f, df = _delta_n(mu, with_deriv=True)
+            f, df = _eval(mu)
             # keep the sign-change bracket [lo, hi] around the root
             if f < 0.0:
                 lo = mu
@@ -3648,14 +3670,7 @@ class FLEX(RPA):
             if not (f_mu is not None and np.isfinite(f_mu)
                     and fallback[0] <= mu <= fallback[1]
                     and abs(f_mu) <= 1.0e-8 * max(1.0, float(nstate))):
-                e_lo, e_hi, e_flo, e_fhi, e_win, e_fwin = expanded
-                raise RuntimeError(_diag.mu_failure_message(
-                    "FLEX._find_mu_dressed", e_lo, e_hi, e_flo, e_fhi, Ncond,
-                    nstate, sigma_finite, e_win, e_fwin,
-                    getattr(self, "_scf_monitor", None), is_ir=self.use_ir,
-                    note=" The band-window fallback on [{}, {}] ended at mu = "
-                         "{} with {}, which is not a reliable root.".format(
-                             fallback[0], fallback[1], mu, why)))
+                _fallback_fail(mu, why)
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu
 
