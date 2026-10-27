@@ -455,12 +455,17 @@ TOML形式
   :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`\ を満たす
   必要があります。動的ボンドアーカイブ（\ ``longitudinal_bond_output_full``\ ）
   は全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
-  bool 値のみ受け付けます。\ ``longitudinal_bond_pairing``\ が
-  ``"none"``\ 以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
-  いません。半分の格子で得たアーカイブは\ ``hwave_sc``\ でペアリング
-  計算できます）と、\ ``[mode] enable_spin_orbital = true``\ の場合は
-  拒否されます。\ ``longitudinal_bond_channels = true``\ でない場合は
-  警告付きで無視されます。
+  プロセス内ペアリング（\ ``longitudinal_bond_pairing``\ ）も半分の格子で
+  動作します。ペアリングバーテックスも同じ関係を満たすので、保存した
+  振動数だけを再びドレスして足し合わせ、残りはカーネルで再構成します
+  （IR フィットでは折り返して取り込みます）。ペアリングのために残す
+  ストアの 2 つのスロット（バブルと、バーテックスを受け取るスロット）も
+  半分になり、\ ``ND`` = 36、\ ``nvol`` = 1024、\ ``Nmat`` = 1024 では
+  40.5 GiB が 20.3 GiB になります。ペアリングの結果は、バーテックスが
+  ``false``\ と丸め誤差の範囲で一致し、固有値とギャップは固有値ソルバの
+  収束の範囲で一致します。bool 値のみ受け付けます。
+  ``[mode] enable_spin_orbital = true``\ の場合は拒否されます。
+  ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_pairing``
 

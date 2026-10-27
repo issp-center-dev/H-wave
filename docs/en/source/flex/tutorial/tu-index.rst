@@ -627,10 +627,12 @@ frequencies are guarded on their own and the dressing saves about 20 %
 transport cost the same. The results agree with the full grid to
 round-off; the guard statistics count the stored frequencies, and the
 outputs record ``longitudinal_bond_half_grid = true``. The option is off by
-default, and the in-process pairing (``longitudinal_bond_pairing``) does
-not support it yet: such a run is refused. Pair the archive of a half-grid
-run with ``hwave_sc`` instead, which reads it as an ordinary full-grid
-archive.
+default. It also applies to the in-process pairing
+(``longitudinal_bond_pairing``): the pairing keeps two store slots, the
+bubble and the slot that receives the pairing vertex, and both are halved
+(see :ref:`the memory table of the pairing section
+<flex_bond_pairing_tutorial>`). The archive of a half-grid run is an
+ordinary full-grid archive, so ``hwave_sc`` reads it as before.
 
 The run is accepted only when the three residuals of the split state stay
 below ``EPS`` for three consecutive iterations; the log prints them with a
@@ -810,6 +812,15 @@ Worked numbers for two representative models (CuO2-type: :math:`B=5`, ``norb`` =
        (one archive member + the IR coefficients)
      - ~39
      - < 1
+
+With ``[mode.param] longitudinal_bond_half_grid = true`` the FLEX block
+store keeps only the ``Nmat/2 + 1`` non-negative bosonic frequencies. The
+in-process pairing keeps two slots of that store alive until the end of the
+solve: the bubble and the slot that receives the uniform-grid vertex. Both
+are halved, and the kernel rebuilds the other frequencies of every vertex
+block when it reads it. For ``ND`` = 36, ``nvol`` = 1024 and ``Nmat`` =
+1024 the two slots take 20.3 GiB instead of 40.5 GiB. The archive, the
+hoisted kernel blocks and the IR coefficients are unchanged.
 
 GB here means :math:`10^9` bytes; the cap key ``bond_memory_cap_gb`` is in
 binary GiB (:math:`1024^3` bytes, about 7 % larger), so set it from these
