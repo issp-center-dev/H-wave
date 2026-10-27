@@ -227,6 +227,26 @@ def window_bracket(mus, f_window):
     return None
 
 
+#: Tolerance (fraction of the number of states) of the window health check:
+#: how far N(mu) may stray below 0 / above Nstate, or decrease, on the band
+#: window before the window is judged distorted (IR fit outside its basis
+#: bandwidth, or a broken self-energy).
+HEALTH_TOL = 1.0e-4
+
+
+def window_healthy(f_window, ncond, nstate):
+    """True when ``N = f_window + ncond`` on the band window is finite,
+    within ``[0, nstate]`` and non-decreasing, all up to
+    ``HEALTH_TOL * nstate``. Only such a window may supply a fallback bracket."""
+    if not all(math.isfinite(float(x)) for x in f_window):
+        return False
+    n = [float(x) + float(ncond) for x in f_window]
+    tol = HEALTH_TOL * max(1.0, float(nstate))
+    if min(n) < -tol or max(n) > float(nstate) + tol:
+        return False
+    return all(b - a >= -tol for a, b in zip(n[:-1], n[1:]))
+
+
 def _monotone(values, tol):
     d = [b - a for a, b in zip(values[:-1], values[1:])]
     return all(x >= -tol for x in d) or all(x <= tol for x in d)
@@ -288,11 +308,12 @@ def mu_failure_message(where, lo, hi, f_lo, f_hi, ncond, nstate,
             why = ("N(mu) does not depend on mu over the band window {}: it "
                    "changes by {:.3g} of {:.6g} states".format(
                        wtxt, max(n) - min(n), nstate))
-        elif min(n) < -tol or max(n) > nstate + tol:
+        elif (min(n) < -HEALTH_TOL * max(1.0, nstate)
+              or max(n) > nstate + HEALTH_TOL * max(1.0, nstate)):
             why = ("N(mu) leaves the physical range [0, {:.6g}] over the band "
                    "window {} (from {:.6g} to {:.6g})".format(
                        nstate, wtxt, min(n), max(n)))
-        elif not _monotone(n, 1e-9 * max(1.0, nstate)):
+        elif not _monotone(n, HEALTH_TOL * max(1.0, nstate)):
             why = ("N(mu) is not monotonic over the band window {} (from "
                    "{:.6g} to {:.6g})".format(wtxt, n[0], n[-1]))
         elif min(n) <= ncond <= max(n):

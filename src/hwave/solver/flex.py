@@ -3540,6 +3540,7 @@ class FLEX(RPA):
         hi = float(w.max()) + pad
         f_lo = _delta_n(lo)
         f_hi = _delta_n(hi)
+        fallback = None             # the band-window sub-interval, if used
         for _ in range(60):
             if f_lo == 0.0:
                 return lo
@@ -3567,7 +3568,12 @@ class FLEX(RPA):
                 f_window = [_delta_n(m) for m in mus]
             except Exception:
                 f_window = None
+            # A window bracket is trusted only when the window itself is a
+            # healthy N(mu) (finite, inside [0, Nstate], monotonic): on an IR
+            # basis that does not cover the spectrum N(mu) is distorted and a
+            # crossing found there gives a biased mu.
             sub = (None if f_window is None
+                   or not _diag.window_healthy(f_window, Ncond, nstate)
                    else _diag.window_bracket(mus, f_window))
             if sub is None:
                 # Fail loudly rather than return garbage, with a catchable
@@ -3578,6 +3584,7 @@ class FLEX(RPA):
                     nstate, sigma_finite, window, f_window,
                     getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
             lo, f_lo, hi, f_hi = sub
+            fallback = (min(lo, hi), max(lo, hi))
             if f_lo == 0.0:
                 return lo
             if f_hi == 0.0:
@@ -3626,6 +3633,18 @@ class FLEX(RPA):
             else:
                 hi = mu
 
+        if fallback is not None:
+            # the fallback root must be a real root inside its sub-interval
+            f_mu = _delta_n(mu)
+            if not (fallback[0] <= mu <= fallback[1]
+                    and abs(f_mu) <= 1.0e-8 * max(1.0, float(nstate))):
+                raise RuntimeError(
+                    "FLEX._find_mu_dressed: the band-window fallback search "
+                    "ended at mu = {} with N-Ncond = {} (sub-interval [{}, {}]); "
+                    "no reliable root.{}".format(
+                        mu, f_mu, fallback[0], fallback[1],
+                        " On the IR path check that ir_wmax covers the spectrum."
+                        if self.use_ir else ""))
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu
 

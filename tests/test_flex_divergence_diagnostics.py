@@ -163,8 +163,14 @@ class TestDivergedWarmStart(unittest.TestCase):
     def test_ir_narrow_basis_names_ir_wmax(self):
         """Sigma = 0 and a reachable target, but ir_wmax far below the band:
         the search fails and the headline must not assert divergence alone."""
-        for wmax in (1.0, 3.0):
-            with self.subTest(ir_wmax=wmax):
+        # (1, 15.999), (3, 15.999): no bracket anywhere. (3, 15.9), (5, 15.99):
+        # the band window DOES bracket the target, but the window is not a
+        # healthy N(mu) (below 0 / decreasing), so the fallback must refuse
+        # it -- solving there gave a biased mu (7.4596 vs 7.3029 uniform at
+        # ir_wmax = 5).
+        for wmax, target in ((1.0, 15.999), (3.0, 15.999), (3.0, 15.9),
+                             (5.0, 15.99)):
+            with self.subTest(ir_wmax=wmax, target=target):
                 s, gi = _make_solver({'matsubara_basis': 'ir', 'ir_wmax': wmax,
                                       'IterationMax': 1})
                 s.solve(gi, 'tests/flex/output')
@@ -172,7 +178,7 @@ class TestDivergedWarmStart(unittest.TestCase):
                 sigma = np.zeros((nb, s._ir_axF.n_freq, nv, nd, nd), complex)
                 with self.assertRaisesRegex(
                         RuntimeError, "diverged, or ir_wmax does not cover the spectrum"):
-                    s._find_mu_dressed(sigma, 1.0 / s.T, 15.999)
+                    s._find_mu_dressed(sigma, 1.0 / s.T, target)
 
     def test_probe_error_keeps_the_classified_error(self):
         """An exception inside the optional band-window probe must not
@@ -294,29 +300,50 @@ class TestRefusedBeforeEigendecomposition(unittest.TestCase):
 
     def test_target_range_spin_free_and_spinful(self):
         """Ncond < 0 and > Nstate are refused with the filling message
-        before any work; Ncond = 0 or = Nstate either solve (a mu far out)
-        or fail with the filling message -- never with "diverged"."""
+        before any work. The edges Ncond = 0 and = Nstate are pinned to the
+        behaviour that predates issue #282 (only an asymptote of N(mu)):
+        the uniform grid returns a mu below / above the band, the IR path
+        returns a finite mu at Ncond = 0 (N(mu) of the IR fit reaches 0
+        exactly at a finite mu) and fails at Ncond = Nstate with the filling
+        message -- never with "diverged"."""
         import tests.test_flex_spin_orbital as so_mod
         d = self._tmp()
         cases = {"spin-free": _make_solver(Nmat=32),
                  "spinful": so_mod._build(d, so_mod._write_model(d, True),
                                           so=True, nmat=16, IterationMax=1)}
+        if HAVE_SPARSE_IR:
+            cases["spin-free IR"] = _make_solver(
+                {'matsubara_basis': 'ir', 'ir_wmax': 10.0, 'IterationMax': 1})
         for name, (s, gi) in cases.items():
-            s._calc_epsilon_k(gi)
+            ir = name.endswith("IR")
+            if ir:
+                s.solve(gi, 'tests/flex/output')
+            else:
+                s._calc_epsilon_k(gi)
             nb, nv, nd = s.H0_eigenvalue.shape
             nstate = nb * nv * nd
-            sigma = np.zeros((nb, s.nmat, nv, nd, nd), dtype=np.complex128)
+            nf = s._ir_axF.n_freq if ir else s.nmat
+            sigma = np.zeros((nb, nf, nv, nd, nd), dtype=np.complex128)
+            emin = float(s.H0_eigenvalue.min())
+            emax = float(s.H0_eigenvalue.max())
             for target in (-1.0, 0.0, float(nstate), nstate + 1.0):
                 with self.subTest(model=name, target=target):
-                    try:
-                        mu = s._find_mu_dressed(sigma, 1.0 / s.T, target)
-                    except RuntimeError as e:
-                        self.assertIn("Check the target filling/Ncond", str(e))
-                        self.assertNotIn("diverged", str(e))
-                        self.assertIn("is not inside (0, {})".format(nstate), str(e))
+                    fails = (target < 0 or target > nstate
+                             or (ir and target == nstate))
+                    if fails:
+                        with self.assertRaisesRegex(
+                                RuntimeError, "Check the target filling/Ncond") as cm:
+                            s._find_mu_dressed(sigma, 1.0 / s.T, target)
+                        self.assertNotIn("diverged", str(cm.exception))
+                        self.assertIn("is not inside (0, {})".format(nstate),
+                                      str(cm.exception))
+                        continue
+                    mu = s._find_mu_dressed(sigma, 1.0 / s.T, target)
+                    self.assertTrue(np.isfinite(mu))
+                    if target == 0.0:
+                        self.assertLess(mu, emin)
                     else:
-                        self.assertIn(target, (0.0, float(nstate)))
-                        self.assertTrue(np.isfinite(mu))
+                        self.assertGreater(mu, emax)
 
 
 class TestMuFailureMessage(unittest.TestCase):
@@ -373,6 +400,15 @@ class TestMuFailureMessage(unittest.TestCase):
         m = diag.mu_failure_message("X", -1e31, 1e31, -8.0, -8.0, 8.0, 16,
                                     True, self.W, None)
         self.assertIn("could not be evaluated on the band window", m)
+
+    def test_window_healthy(self):
+        ok = [x - 8.0 for x in np.linspace(0.0, 16.0, 9)]
+        self.assertTrue(diag.window_healthy(ok, 8.0, 16))
+        below = [x - 8.0 for x in [-0.0094, 0.2, 5, 10, 14.8, 15.9, 15.99, 15.993, 15.976]]
+        self.assertFalse(diag.window_healthy(below, 8.0, 16))
+        dec = [x - 8.0 for x in [0.0, 0.2, 5, 10, 14.8, 15.9, 15.99, 15.993, 15.976]]
+        self.assertFalse(diag.window_healthy(dec, 8.0, 16))
+        self.assertFalse(diag.window_healthy([float("nan")] * 9, 8.0, 16))
 
     def test_window_bracket(self):
         mus = list(np.linspace(-5.0, 5.0, 5))

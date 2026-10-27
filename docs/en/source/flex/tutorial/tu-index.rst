@@ -621,7 +621,9 @@ basis fit, valid only inside the basis bandwidth), so on that path the
 message names both causes. Before any of this, if the expanded bracket finds
 no root but :math:`N(\mu)` on the band window does cross the target (on the
 IR path the doubling can jump beyond ``ir_wmax``), the root is solved on that
-sub-interval with a warning instead of failing. A non-finite self-energy and
+sub-interval with a warning instead of failing -- but only when :math:`N(\mu)`
+on the window is healthy (finite, inside the physical range and increasing);
+a distorted window gives the error above. A non-finite self-energy and
 a target below 0 or above the number of states are refused before the
 search starts.
 
