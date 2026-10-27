@@ -361,6 +361,35 @@ TOML形式
   ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
 
+- ``longitudinal_bond_guard_exact``
+
+  **形式 :** str型 (\ ``"decide"``\ または\ ``"always"``\ 、大文字小文字を
+  区別しません。デフォルトは\ ``"decide"``)
+
+  **説明 :**
+  GPU 経路で\ ``longitudinal_bond_guard_freqs = "all"``\ の条件数ガードが
+  ブロックを厳密に分解するタイミングを指定します。デフォルトの
+  ``"decide"``\ では、デバイス上で計算したバウンドだけで全ブロックの
+  合格が証明できる振動数バッチ（全ブロックのバウンドが有効で、スコアの
+  下限の最小値が\ ``2 * longitudinal_bond_cond_tol``\ （に
+  :math:`10^{-12}`\ 程度の丸め誤差の余裕を加えた値）を上回るもの）は、
+  ブロックをホストに集めることも厳密な特異値分解を行うこともなく合格と
+  します。それ以外のバッチは従来どおり厳密に分解するため、拒否、
+  ``flex_guard_policy = "warn"``\ の記録、およびすべての判定は
+  ``"always"``\ と同一であり、変わるのは反復ごとのログと記録される厳密分解のカウントだけです。ある写像の
+  最小値を厳密に計算していない場合、\ ``guards:``\ 行には値の代わりに
+  ``bond cond_min spin in bracket [low, up] (interval bound, no exact
+  SVD; smallest upper end at flat index i)``\ が出力されます。厳密な
+  最小値は\ ``[low, up]``\ の範囲にあり、\ ``i = l * nvol + q``\ は上限が
+  最小となる（ボソン格子インデックス, :math:`q`\ 点）を平坦化した位置です。
+  最後の写像になり得る写像（\ ``IterationMax``\ 回目の写像と、収束判定を
+  満たし得る写像）では必ず厳密な分解を行うため、出力ファイルに書かれる
+  ``longitudinal_bond_cond_min_s`` / ``_c``\ は常に厳密な値です。
+  ``"always"``\ は全ての写像で厳密に分解します（旧バージョンの挙動）。
+  CPU 経路、および\ ``longitudinal_bond_guard_freqs = "static"``\ では
+  この設定は何も変えません。\ ``longitudinal_bond_channels = true``
+  でない場合は警告付きで無視されます。
+
 - ``longitudinal_bond_cond_tol``
 
   **形式 :** float型 (デフォルトは\ ``1e-3``)

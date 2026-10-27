@@ -51,13 +51,34 @@ _GUARD_PRUNE_MARGIN = 2.0
 _GUARD_SCALE_MIN = 1.0e-100
 _GUARD_SCALE_MAX = 1.0e+100
 #: outward-rounding term of the interval ends (spec 2.1): eps = _GUARD_ROUNDING
-#: * ND**2 * u (u = 2.0**-53) is a bound on the relative round-off of the
-#: norms, products and quotients of an ND x ND block; every lower end is
-#: multiplied by (1 - eps) and every upper end by (1 + eps) so the interval
-#: contains the reference singular values in floating point as well as in
-#: exact arithmetic (the design's factor-2 pruning margin is twelve orders
-#: of magnitude wider)
+#: * ND**2 * u (u = 2.0**-53) covers the relative round-off of the norms,
+#: products and quotients of an ND x ND block; every lower end is multiplied
+#: by (1 - eps) and every upper end by (1 + eps). It does NOT bound the
+#: round-off of the computed residual rho = ||I - A B||_F, which grows with
+#: the condition number kappa of the block (about ND**2 u kappa), nor the
+#: absolute O(ND u sigma_max) error of the reference SVD's sigma_min: for a
+#: well-conditioned block the interval contains the floating-point reference
+#: score, but for a strongly ill-conditioned (e.g. graded) block it can miss
+#: it. The two consumers carry their own pads: the pruning margin
+#: (_GUARD_PRUNE_MARGIN) and the skip threshold (interval_skip_threshold),
+#: whose absolute term bounds kappa wherever a skip is taken
 _GUARD_ROUNDING = 16.0
+#: when the exact decomposition of the interval guard runs (issue #276):
+#: ``"decide"`` skips it for a stack whose interval already proves that no
+#: block can fail (see :func:`interval_decides_pass`); ``"always"`` runs it
+#: on every stack, as before
+_GUARD_EXACT_MODES = ("decide", "always")
+#: safety factor of that skip (issue #276): the smallest lower end of the
+#: score must exceed this multiple of ``cond_tol`` PLUS the absolute term
+#: ``_GUARD_ROUNDING * ND**2 * u`` (:func:`interval_skip_threshold`) before
+#: the exact decomposition is skipped. The absolute term is what makes the
+#: skip safe in floating point: a skipped block has score > 16 ND^2 u, i.e.
+#: kappa < 1 / (16 ND^2 u) on the pole scale, so the round-off of rho (about
+#: ND^2 u kappa) and the reference SVD's error on sigma_min (about
+#: ND u sigma_max) are each at most about 1/16 of the score, relative; this
+#: factor of 2 covers both with room to spare, so the decision is the exact
+#: path's
+_GUARD_SKIP_MARGIN = 2.0
 
 
 def bond_conditioning_score(mat, workers=None):
@@ -204,13 +225,16 @@ def bond_conditioning_interval(mat_flat, xp, *, k=_GUARD_POWER_ITERATIONS):
       ``[(1 - rho) / N(B), (1 + rho) / sqrt(rayleigh(B B^H))]``.
 
     The inequalities hold in exact arithmetic for the computed ``B`` and
-    vectors; the floating-point error of the norms, products and inner
-    products of a well-scaled block is of order ``ND^2 u`` relative, so
-    every end is rounded outward by that documented margin
-    (:data:`_GUARD_ROUNDING`) before it is returned, keeping the interval
-    rigorous in floating point too, not only in exact arithmetic -- twelve
-    orders of magnitude inside the caller's pruning margin
-    (:data:`_GUARD_PRUNE_MARGIN`). Never raises on singular or out-of-scale
+    vectors. The floating-point error of the norms, products and inner
+    products of a well-scaled block is of order ``ND^2 u`` relative, and
+    every end is rounded outward by that margin (:data:`_GUARD_ROUNDING`);
+    for a well-conditioned block the interval then contains the
+    floating-point reference score. The rounding does NOT cover the
+    round-off of the computed residual ``rho``, which grows with the
+    condition number ``kappa`` (about ``ND^2 u kappa``), so for a strongly
+    ill-conditioned block the interval can miss the reference score; its
+    consumers carry their own pads (:data:`_GUARD_PRUNE_MARGIN`,
+    :func:`interval_skip_threshold`). Never raises on singular or out-of-scale
     input (those blocks are ``valid = False``); the numpy per-block inverse
     retry catches any exception a single-block decomposition can raise, not
     only ``LinAlgError``, so this contract holds for every host block;
@@ -303,16 +327,81 @@ def select_exact_blocks(interval, margin=_GUARD_PRUNE_MARGIN):
     return np.nonzero(keep)[0].astype(np.int64)
 
 
+@dataclass(frozen=True)
+class GuardBracket:
+    """A conditioning guard that PASSED on the strength of the interval
+    alone (issue #276): no exact decomposition ran. ``low`` / ``up`` bracket
+    the exact minimum score of the stack (``low <= min score <= up``),
+    ``index`` is the FLATTENED index of the first block attaining the
+    smallest upper end ``up`` and ``n_blocks`` the number of blocks
+    guarded."""
+    low: float
+    up: float
+    index: int
+    n_blocks: int
+
+
+def interval_skip_threshold(cond_tol, ND):
+    """The value the smallest lower end of the score must EXCEED for the
+    exact decomposition to be skipped (issue #276):
+    ``_GUARD_SKIP_MARGIN * cond_tol + _GUARD_ROUNDING * ND**2 * u``. The
+    absolute second term caps the condition number of every skipped block
+    (score > 16 ND^2 u, i.e. kappa < 1 / (16 ND^2 u)), so the round-off of
+    the interval's residual ``rho`` (about ``ND^2 u kappa``) and the
+    reference SVD's error on ``sigma_min`` (about ``ND u sigma_max``, i.e.
+    ``ND u`` on the score scale) are each at most about 1/16 of the score,
+    relative; the factor :data:`_GUARD_SKIP_MARGIN` covers both, so a
+    skipped stack is one the exact path would also pass (see the comment
+    at :data:`_GUARD_SKIP_MARGIN`)."""
+    return _GUARD_SKIP_MARGIN * float(cond_tol) + _GUARD_ROUNDING * ND * ND * (2.0 ** -53)
+
+
+def interval_decides_pass(interval, cond_tol, ND):
+    """A :class:`GuardBracket` when the interval alone proves that every
+    block of the stack passes the guard at ``cond_tol`` -- EVERY block has a
+    valid interval and the smallest lower end of the score exceeds
+    :func:`interval_skip_threshold` -- else ``None`` (the exact path must
+    decide: the interval straddles the threshold, some block has no valid
+    interval, or the stack is empty). The lower end ``score_low =
+    sigma_min_low / max(1, sigma_max_up)`` bounds the pole distance from
+    below, and the pole distance is never above the ratio
+    ``sigma_min / sigma_max`` (``max(1, s) >= s``), so it bounds the guard
+    score ``min(ratio, pole)`` from below."""
+    valid = interval.valid
+    if valid.shape[0] == 0 or not bool(np.all(valid)):
+        return None
+    low = interval.score_low
+    lo = float(np.min(low))
+    if not (np.isfinite(lo) and lo > interval_skip_threshold(cond_tol, ND)):
+        return None
+    up = interval.score_up
+    i = int(np.argmin(up))
+    return GuardBracket(low=lo, up=float(up[i]), index=i, n_blocks=int(valid.shape[0]))
+
+
 def resolve_conditioning_guard(mat_flat, xp, cond_tol, *, k=_GUARD_POWER_ITERATIONS,
-                               margin=_GUARD_PRUNE_MARGIN, workers=None):
+                               margin=_GUARD_PRUNE_MARGIN, workers=None, exact="always"):
     """The tuple :func:`bond_conditioning_score` returns for the stack
     ``mat_flat`` `(n, ND, ND)` on ``xp`` -- ``(worst, i, ratio_i, pole_i,
     smin_i, smax_i)`` with ``i`` the FLATTENED index of the first minimum --
     plus ``(n_exact, n_blocks)``, obtained by decomposing on the host only
-    the blocks of :func:`select_exact_blocks` (spec 2.2). ``cond_tol`` is
-    accepted for symmetry with the callers and not used: the decision is
-    the caller's, from ``worst``."""
+    the blocks of :func:`select_exact_blocks` (spec 2.2).
+
+    ``exact`` (issue #276): ``"always"`` (the default) is the behaviour
+    above, and ``cond_tol`` is not used (the decision is the caller's, from
+    ``worst``). Under ``"decide"`` the interval is first tested with
+    :func:`interval_decides_pass` at ``cond_tol``; when it already proves
+    that no block can fail, NOTHING is gathered or decomposed and the
+    :class:`GuardBracket` is returned instead of the tuple. Otherwise the
+    exact path above runs unchanged on the same interval."""
+    if exact not in _GUARD_EXACT_MODES:
+        raise ValueError("resolve_conditioning_guard: exact must be one of {}, got {!r}"
+                         .format(list(_GUARD_EXACT_MODES), exact))
     interval = bond_conditioning_interval(mat_flat, xp, k=k)
+    if exact == "decide":
+        bracket = interval_decides_pass(interval, cond_tol, int(mat_flat.shape[-1]))
+        if bracket is not None:
+            return bracket
     idx = select_exact_blocks(interval, margin=margin)
     gathered = _bk.to_host(mat_flat[idx])
     n_e = int(idx.shape[0])
@@ -3125,7 +3214,7 @@ def solve_residual(mat, chi, cb):
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
-                guard_method="auto", stats=None, workers=1):
+                guard_method="auto", stats=None, workers=1, guard_exact="always"):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3178,7 +3267,19 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     selects ``"svd"``. When ``stats`` is a dict, ``stats["guard_exact_blocks"]``
     and ``stats["guard_blocks"]`` are incremented by the number of blocks
     decomposed exactly and the number of blocks guarded, for every guarded
-    slice."""
+    slice.
+
+    ``guard_exact`` (issue #276): ``"always"`` (the default) is the
+    behaviour above. ``"decide"`` matters only where the guard resolves to
+    ``"interval"`` with ``guard_freqs = "all"``: when the interval of the
+    whole batch already proves that no block can fail
+    (:func:`interval_decides_pass`), the exact host decomposition is
+    skipped, ``stats["guard_exact_blocks"]`` is not incremented and the
+    returned ``cond_min`` is a :class:`GuardBracket` (its ``index``
+    flattened over the FULL ``(nmat, nvol)`` grid, ``l * nvol + q``)
+    instead of a float. Every other case -- a straddling interval, a block
+    without a valid interval -- runs the exact path unchanged, so a refusal
+    or a warn record always rests on exact singular values."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3190,6 +3291,9 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     if guard_method not in _GUARD_METHODS:
         raise ValueError("dress_batch: guard_method must be one of {}, got {!r}"
                          .format(list(_GUARD_METHODS), guard_method))
+    if guard_exact not in _GUARD_EXACT_MODES:
+        raise ValueError("dress_batch: guard_exact must be one of {}, got {!r}"
+                         .format(list(_GUARD_EXACT_MODES), guard_exact))
     sign = _DRESS_CHANNELS[channel]
     xp = _bk.array_module_of(chi_bar_b)
     # array-like inputs are coerced once the module is known (the identity for
@@ -3225,8 +3329,19 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
             return None
         n = int(mat_d.shape[0])
         if guard_method == "interval":
-            worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = \
-                resolve_conditioning_guard(mat_d, xp, cond_tol, workers=workers)
+            out = resolve_conditioning_guard(
+                mat_d, xp, cond_tol, workers=workers,
+                exact=guard_exact if guard_freqs == "all" else "always")
+            if isinstance(out, GuardBracket):
+                # the interval alone proved the pass (issue #276): nothing
+                # was decomposed, so nothing can be refused or warned about
+                if stats is not None:
+                    stats["guard_exact_blocks"] = stats.get("guard_exact_blocks", 0)
+                    stats["guard_blocks"] = stats.get("guard_blocks", 0) + n
+                return GuardBracket(low=out.low, up=out.up,
+                                    index=l0 * nvol + i_offset + out.index,
+                                    n_blocks=out.n_blocks)
+            worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = out
         else:
             blocks = _bk.to_host(mat_d).reshape(-1, 1, 1, ND, ND)
             worst, i, ratio_i, pole_i, smin_i, smax_i = bond_conditioning_score(blocks, workers=workers)
@@ -3343,4 +3458,6 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                     "locate it, or reduce the interaction / raise the temperature."
                     .format(channel, r_max, residual_tol, 2 * l - nmat, l, qx, qy, qz))
     del mat, flat
-    return chi, (None if cond_min is None else float(cond_min))
+    if cond_min is None or isinstance(cond_min, GuardBracket):
+        return chi, cond_min
+    return chi, float(cond_min)
