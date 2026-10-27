@@ -528,7 +528,14 @@ class TestNonHermitianVertexRefused(unittest.TestCase):
 class TestBitIdentityWhenOff(unittest.TestCase):
     """``longitudinal_bond_half_grid = false`` (and the key absent) never
     reaches the half-grid code: every helper of :mod:`half_grid` raises if
-    called, and the two runs are bit-identical."""
+    called, and the two runs agree.
+
+    The two runs execute the same code, so they are compared to round-off,
+    not bitwise: threaded FFT/BLAS reductions are not guaranteed to be
+    bit-reproducible between two runs in one process (observed at 1e-16
+    under pytest with coverage in CI).  Bit identity of the key-false path
+    against the previous revision is checked separately on archived
+    outputs."""
 
     def test_off_never_touches_the_half_grid(self):
         from hwave.solver import half_grid as hg
@@ -546,7 +553,11 @@ class TestBitIdentityWhenOff(unittest.TestCase):
         self.assertEqual(sorted(ga), sorted(go))
         for k in ga:
             if isinstance(ga[k], np.ndarray):
-                np.testing.assert_array_equal(ga[k], go[k], err_msg=k)
+                if np.issubdtype(ga[k].dtype, np.inexact):
+                    np.testing.assert_allclose(ga[k], go[k], rtol=1e-12,
+                                               atol=1e-14, err_msg=k)
+                else:
+                    np.testing.assert_array_equal(ga[k], go[k], err_msg=k)
         self.assertEqual(sorted(fa), sorted(fo))
         for fn in fa:
             self.assertEqual(sorted(fa[fn]), sorted(fo[fn]))
