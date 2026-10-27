@@ -3214,7 +3214,7 @@ def solve_residual(mat, chi, cb):
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
-                guard_method="auto", stats=None, workers=1, guard_exact="always"):
+                guard_method="auto", stats=None, workers=1, guard_exact="always", ls=None):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
     over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
@@ -3279,7 +3279,15 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     flattened over the FULL ``(nmat, nvol)`` grid, ``l * nvol + q``)
     instead of a float. Every other case -- a straddling interval, a block
     without a valid interval -- runs the exact path unchanged, so a refusal
-    or a warn record always rests on exact singular values."""
+    or a warn record always rests on exact singular values.
+
+    ``ls`` (issue #223): the grid index ``l`` of every row of the batch,
+    for a batch of the half bosonic grid, whose rows are not the contiguous
+    ``l0 ... l0 + nb - 1``. When given, every reported location (messages,
+    violation records, the bracket index) uses ``ls``, the static slice is
+    the row whose ``l`` is ``nmat // 2``, and ``l0`` is only the batch's
+    first ``l`` in the messages. ``None`` (the default) is the contiguous
+    batch above."""
     if channel not in _DRESS_CHANNELS:
         raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
     if guard_freqs not in _GUARD_FREQS:
@@ -3304,6 +3312,16 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         raise ValueError("dress_batch: chi_bar_b must be (nb, nvol, ND, ND) and W (nvol, ND, ND); got {} and {}"
                          .format(cb.shape, W.shape))
     nb, nvol, ND = cb.shape[0], cb.shape[1], cb.shape[2]
+    if ls is not None:
+        ls = np.asarray(ls, dtype=np.int64).reshape(-1)
+        if ls.shape[0] != nb:
+            raise ValueError("dress_batch: ls must give the grid index of each of the {} rows "
+                             "of the batch, got {}".format(nb, ls.shape[0]))
+
+    def _l_of(row):
+        # the grid index of batch row ``row``
+        return l0 + row if ls is None else int(ls[row])
+
     Nx, Ny, Nz = (int(x) for x in spatial_shape)
     if Nx * Ny * Nz != nvol:
         raise ValueError("dress_batch: prod(spatial_shape) != nvol")
@@ -3338,8 +3356,10 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 if stats is not None:
                     stats["guard_exact_blocks"] = stats.get("guard_exact_blocks", 0)
                     stats["guard_blocks"] = stats.get("guard_blocks", 0) + n
+                k = i_offset + out.index
                 return GuardBracket(low=out.low, up=out.up,
-                                    index=l0 * nvol + i_offset + out.index,
+                                    index=(l0 * nvol + k if ls is None
+                                           else _l_of(k // nvol) * nvol + k % nvol),
                                     n_blocks=out.n_blocks)
             worst, i, ratio_i, pole_i, smin_i, smax_i, n_exact, _n = out
         else:
@@ -3352,7 +3372,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         if worst > cond_tol:
             return worst
         i += i_offset
-        l = l0 + i // nvol
+        l = _l_of(i // nvol)
         q = i % nvol
         qx, rem = divmod(q, Ny * Nz)
         qy, qz = divmod(rem, Nz)
@@ -3390,10 +3410,15 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
 
     l_static = nmat // 2
     cond_min = None
+    if ls is None:
+        i_static = l_static - l0 if l0 <= l_static < l0 + nb else None
+    else:
+        hit = np.nonzero(ls == l_static)[0]
+        i_static = int(hit[0]) if hit.size else None
     if guard_freqs == "all":
         cond_min = _guard(mat.reshape(nb * nvol, ND, ND), 0)
-    elif l0 <= l_static < l0 + nb:
-        i = l_static - l0
+    elif i_static is not None:
+        i = i_static
         cond_min = _guard(mat[i].reshape(nvol, ND, ND), i * nvol)
     flat = mat.reshape(nb * nvol, ND, ND)
     if guard_freqs == "static":
@@ -3405,7 +3430,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 "dress_batch: with longitudinal_bond_guard_freqs = \"static\" the {} solve "
                 "failed ({}): an unchecked slice of the frequency batch starting at grid index "
                 "l={} is exactly singular. Use guard_freqs = \"all\" to locate it, or reduce the "
-                "interaction / raise the temperature.".format(channel, exc, l0)) from exc
+                "interaction / raise the temperature.".format(channel, exc, _l_of(0))) from exc
     elif guard_policy == "warn":
         # the conditioning guard no longer stops an amplified solve, so the
         # exactly singular case reaches xp.linalg.solve here; name it
@@ -3418,7 +3443,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 "starting at grid index l={} is EXACTLY singular, which flex_guard_policy = "
                 "\"warn\" cannot continue from (it tolerates a nearly singular denominator, "
                 "not a singular one). Reduce the interaction strength or raise the "
-                "temperature.".format(channel, exc, l0)) from exc
+                "temperature.".format(channel, exc, _l_of(0))) from exc
     else:
         chi = _solve(flat, cb.reshape(nb * nvol, ND, ND)).reshape(nb, nvol, ND, ND)
     # the solve returned: the conditioning findings held back above describe a
@@ -3432,7 +3457,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         worst = int(xp.argmax(r))
         r_max = float(r.reshape(-1)[worst])
         if not np.isfinite(r_max) or r_max > residual_tol:
-            l = l0 + worst // nvol
+            l = _l_of(worst // nvol)
             q = worst % nvol
             qx, rem = divmod(q, Ny * Nz)
             qy, qz = divmod(rem, Nz)

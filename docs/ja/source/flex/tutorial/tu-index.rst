@@ -549,6 +549,7 @@ GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartr
      # longitudinal_bond_freq_batch = 64      # 振動数バッチの自動選択を上書き
      # longitudinal_bond_guard_freqs = "all"  # "static" ならゼロ振動数のみ特異値分解で検査
      # longitudinal_bond_output_full = true   # 動的 chi_s_w / chi_c_w のアーカイブ（ボンドバッファ2つ分のメモリ増）
+     # longitudinal_bond_half_grid = true     # ボンドストアに nu >= 0 だけを保持（後述）
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -568,6 +569,23 @@ GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartr
 このような計算では\ ``[file.output] chiq``\ を指定してください。指定がないと、両チャネルの
 静的ボンドキーが\ ``chiq_s.npz``\ に書き出されます。\ ``.npz``\ 拡張子のない出力名には、
 他の\ ``.npz``\ 出力と同様に拡張子が付加されます。
+
+*ボンドストアを半分にする。*\ ``longitudinal_bond_half_grid = true``\ とすると、
+ボンドストアには非負のボソン振動数\ ``Nmat/2 + 1``\ 個だけを保持し、残りは
+:math:`X(q, -\nu) = X(q, \nu)^\dagger`\ を用いて読み出す場所で再構成します。
+このためボンドバッファ（および\ ``longitudinal_bond_output_full``\ のバッファ）の
+メモリはおよそ半分に、条件数ガードを含むドレスの時間もおよそ半分になります。
+バブルと自己エネルギーの輸送のコストは変わりません。CPU で、5 つのボンド
+チャネルを持つ 2 軌道模型（16 x 16 メッシュ）では、\ ``Nmat = 64``\ でドレスが
+2.3 秒から 1.2 秒に、2 回の写像を含む計算全体が 3.0 秒から 1.9 秒になりました
+（\ ``Nmat = 128``\ ではそれぞれ 4.6 秒から 2.3 秒、6.1 秒から 3.8 秒）。
+結果は全振動数での計算と丸め誤差の範囲で一致します。このとき\ ``cond_min``\ と
+ガードの統計は :math:`\nu \ge 0`\ だけを対象とし、出力には
+``longitudinal_bond_half_grid = true``\ が記録されます。このオプションは
+デフォルトでは無効です。プロセス内ペアリング（\ ``longitudinal_bond_pairing``\ ）は
+まだ対応しておらず、併用すると拒否されます。半分の格子で得たアーカイブは
+通常の全振動数アーカイブとして読めるので、ペアリングは\ ``hwave_sc``\ で
+計算してください。
 
 計算は、分割状態の3つの残差が3反復連続で\ ``EPS``\ を下回ったときにのみ収束と
 みなされます。ログには\ ``[pass k/3]``\ カウンタとともに残差が出力され、全ての

@@ -466,6 +466,38 @@ that has no effect under the current settings.
   dominated by amplified round-off. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_half_grid``
+
+  **Type :**
+  Boolean (default value is ``false``; FLEX mode only)
+
+  **Description :**
+  Store and dress only the non-negative half of the bosonic Matsubara
+  grid in the bond-resolved FLEX. Every bosonic object of the bond map
+  (the bubble, the dressed spin and charge channels, the effective
+  interaction and the channel-0 collapses) satisfies
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger` on the bond pair matrix at the
+  same :math:`q`, so with ``true`` the block store keeps the
+  ``Nmat/2 + 1`` frequencies :math:`\nu \ge 0` (the zero frequency and
+  the last slot of the grid included) and rebuilds the others where they
+  are read: in the self-energy, in the channel-0 susceptibilities and in
+  the outputs. The bond store and the dressing (with its conditioning
+  guard) take about half the memory and time; the bubble and the
+  self-energy transport are unchanged. The results agree with ``false``
+  to round-off (about :math:`10^{-13}` relative). Two diagnostics change
+  meaning: ``cond_min`` (log and ``longitudinal_bond_cond_min_s`` /
+  ``_c``) is the minimum over the solved frequencies :math:`\nu \ge 0`,
+  and the guard statistics (``longitudinal_bond_guard_blocks_per_iteration``,
+  ``longitudinal_bond_guard_exact_blocks_*``) count those frequencies
+  only; such outputs carry ``longitudinal_bond_half_grid = true``. The
+  dynamic bond archive (``longitudinal_bond_output_full``) still holds the
+  full grid, so it is read by ``hwave_sc`` as before. Only booleans are
+  accepted. Refused with ``longitudinal_bond_pairing`` other than
+  ``"none"`` (the in-process pairing does not support the half grid yet;
+  the archive of a half-grid run can be paired with ``hwave_sc``) and with
+  ``[mode] enable_spin_orbital = true``. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``longitudinal_bond_pairing``
 
   **Type :**

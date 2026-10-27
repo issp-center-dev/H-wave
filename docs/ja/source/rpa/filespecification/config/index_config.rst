@@ -400,6 +400,37 @@ TOML形式
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで
   無視されます。
 
+- ``longitudinal_bond_half_grid``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 、FLEX モードのみ)
+
+  **説明 :**
+  ボンド分解 FLEX で、ボソン松原振動数のうち非負の半分だけを保存・
+  ドレスします。ボンド写像のボソン量（バブル、ドレスされたスピン・電荷
+  チャネル、有効相互作用、チャネル 0 への縮約）はすべて、同じ
+  :math:`q`\ でボンドペア行列について
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger`\ を満たします。そこで
+  ``true``\ のときはブロックストアに\ ``Nmat/2 + 1``\ 個の振動数
+  :math:`\nu \ge 0`\ （ゼロ振動数と格子の最後のスロットを含む）だけを
+  保持し、残りは読み出す場所（自己エネルギー、チャネル 0 の感受率、
+  出力）で再構成します。ボンドストアとドレス（条件数ガードを含む）の
+  メモリと時間はおよそ半分になり、バブルと自己エネルギーの輸送は
+  変わりません。結果は\ ``false``\ と丸め誤差の範囲（相対
+  :math:`10^{-13}`\ 程度）で一致します。意味が変わる診断量が二つあります。
+  ``cond_min``\ （ログと\ ``longitudinal_bond_cond_min_s`` / ``_c``\ ）は
+  解いた振動数 :math:`\nu \ge 0`\ についての最小値になり、ガードの統計
+  （\ ``longitudinal_bond_guard_blocks_per_iteration``\ 、
+  ``longitudinal_bond_guard_exact_blocks_*``\ ）はそれらの振動数だけを
+  数えます。このような出力には\ ``longitudinal_bond_half_grid = true``\ が
+  記録されます。動的ボンドアーカイブ（\ ``longitudinal_bond_output_full``\ ）
+  は全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
+  bool 値のみ受け付けます。\ ``longitudinal_bond_pairing``\ が
+  ``"none"``\ 以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
+  いません。半分の格子で得たアーカイブは\ ``hwave_sc``\ でペアリング
+  計算できます）と、\ ``[mode] enable_spin_orbital = true``\ の場合は
+  拒否されます。\ ``longitudinal_bond_channels = true``\ でない場合は
+  警告付きで無視されます。
+
 - ``longitudinal_bond_pairing``
 
   **形式 :** str型 (``"none"``\ ・\ ``"singlet"``\ ・\ ``"triplet"``\ ・

@@ -300,7 +300,8 @@ class FLEX(RPA):
                           "longitudinal_bond_guard_freqs",
                           "longitudinal_bond_guard_exact",
                           "longitudinal_bond_pairing",
-                          "longitudinal_bond_cond_tol")
+                          "longitudinal_bond_cond_tol",
+                          "longitudinal_bond_half_grid")
 
     #: the on-disk layouts of the bond archive (spec 4.2, issue #205):
     #: ``"npz"`` (the default single-file archive) and ``"sidecar"``
@@ -460,7 +461,8 @@ class FLEX(RPA):
                        longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all",
-                       longitudinal_bond_guard_exact="decide")
+                       longitudinal_bond_guard_exact="decide",
+                       longitudinal_bond_half_grid=False)
             return out
         # step 2: domain keys that need no assembly
         nmat = param.get("Nmat", 1024)          # the solver's default grid
@@ -516,7 +518,8 @@ class FLEX(RPA):
                        longitudinal_bond_freq_batch=None,
                        longitudinal_bond_max_shells=None, longitudinal_bond_memory_cap_gb=8.0,
                        longitudinal_bond_guard_freqs="all",
-                       longitudinal_bond_guard_exact="decide")
+                       longitudinal_bond_guard_exact="decide",
+                       longitudinal_bond_half_grid=False)
             return out
         v = param.get("longitudinal_bond_output_full", False)
         if not isinstance(v, (bool, np.bool_)):
@@ -576,6 +579,28 @@ class FLEX(RPA):
                 "guarded block that could be the minimum is decomposed exactly in every "
                 "iteration), got {!r}".format(ge))
         out["longitudinal_bond_guard_exact"] = ge.strip().lower()
+        # issue #223: store only the non-negative half of the bosonic grid
+        hg = param.get("longitudinal_bond_half_grid", False)
+        if not isinstance(hg, (bool, np.bool_)):
+            raise ValueError(
+                "[mode.param] longitudinal_bond_half_grid must be a boolean, got {!r}".format(hg))
+        out["longitudinal_bond_half_grid"] = bool(hg)
+        if out["longitudinal_bond_half_grid"]:
+            if out["longitudinal_bond_pairing"] != "none":
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_half_grid = true does not support the "
+                    "in-process pairing yet (longitudinal_bond_pairing = {!r}); set "
+                    "longitudinal_bond_pairing = \"none\" or longitudinal_bond_half_grid = "
+                    "false. The archive of a half-grid run is a full-grid archive, so hwave_sc "
+                    "can solve the pairing from it afterwards.".format(
+                        param.get("longitudinal_bond_pairing")))
+            from hwave.solver.spin_orbital import resolve_flag
+            if resolve_flag(info_mode):
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_half_grid = true does not support "
+                    "[mode] enable_spin_orbital = true (the half grid rests on the symmetry "
+                    "X(q, l) = X(q, Nmat - l)^dagger, which is verified for the spin-free "
+                    "bond channels only).")
         ct = param.get("longitudinal_bond_cond_tol", FLEX._GUARD_BOND_COND_TOL)
         if (isinstance(ct, bool) or not isinstance(ct, numbers.Real)
                 or not np.isfinite(ct) or not (0.0 < float(ct) < 1.0)):
@@ -602,6 +627,7 @@ class FLEX(RPA):
         self.longitudinal_bond_guard_freqs = raw["longitudinal_bond_guard_freqs"]
         self.longitudinal_bond_guard_exact = raw["longitudinal_bond_guard_exact"]
         self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
+        self.longitudinal_bond_half_grid = raw["longitudinal_bond_half_grid"]
         # the guard surface of issue #199
         self.flex_hf_density_tol = raw["flex_hf_density_tol"]
         self.longitudinal_bond_cond_tol = raw["longitudinal_bond_cond_tol"]
@@ -2000,7 +2026,8 @@ class FLEX(RPA):
             w2_triples=self._bond_w2_ntriples(),
             guard_freqs=self.longitudinal_bond_guard_freqs,
             guard_enabled=self.longitudinal_bond_cond_tol is not None,
-            w_in_place=self._bond_w_in_place())
+            w_in_place=self._bond_w_in_place(),
+            half_grid=self.longitudinal_bond_half_grid)
         est = flex_bond.estimate_bond_memory(**self._bond_est_kwargs)
         gib = flex_bond._GIB
         logger.info(
@@ -2010,6 +2037,13 @@ class FLEX(RPA):
             B, [tuple(int(x) for x in r) for r in np.asarray(topo.delta_r)], est["ND"],
             est["nvol"], est["nmat"], est["nb"], est["persistent"] / gib, est["peak"] / gib,
             est["cap_bytes"] / gib, est["table"])
+        if self.longitudinal_bond_half_grid:
+            logger.info(
+                "longitudinal_bond_half_grid = true: the bond block store keeps the %d "
+                "non-negative bosonic frequencies of Nmat = %d (the others are rebuilt from "
+                "X(q, l) = X(q, Nmat - l)^dagger); the conditioning guard, cond_min and the "
+                "guard statistics cover those solved frequencies only.",
+                est["nslices"], est["nmat"])
         if self.longitudinal_bond_guard_freqs == "static":
             logger.warning(
                 "longitudinal_bond_guard_freqs = \"static\": the conditioning guard inspects "
@@ -2108,10 +2142,14 @@ class FLEX(RPA):
         from hwave.solver import flex_bond
         gib = flex_bond._GIB
         nb, nmat = int(est["nb"]), int(est["nmat"])
-        n_batches = -(-nmat // nb)             # ceil; the last one may be short
+        # the stored frequency slices: nmat, or nmat // 2 + 1 under the half
+        # grid (issue #223), where the bubble, the dressing and the guard move
+        # only the stored slices; the transport still moves full-grid blocks
+        nslices = int(est.get("nslices", nmat))
+        n_batches = -(-nslices // nb)          # ceil; the last one may be short
         # the batches tile the frequency axis exactly, so one pass over them
-        # moves the whole (nmat, nvol, ND, ND) buffer once, whatever nb is
-        u_total = nmat * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
+        # moves the whole (nslices, nvol, ND, ND) buffer once, whatever nb is
+        u_total = nslices * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
         h2d = u_total + int(est["B"]) ** 2 * int(est["C_bytes"])
         d2h = (# the bubble's B^2 channel-pair blocks, one per put_pair
@@ -2222,6 +2260,32 @@ class FLEX(RPA):
         del S0, C0
         if not (np.all(np.isfinite(self._bond_S)) and np.all(np.isfinite(self._bond_C))):
             raise _hf.NonFiniteError("non-finite bond vertices S/C")
+        if self.longitudinal_bond_half_grid:
+            self._check_bond_vertices_hermitian(self._bond_S, self._bond_C)
+
+    #: the Hermiticity tolerance of the bond vertices under the half grid
+    #: (issue #223), relative to max(1, max |V|); the vertices are exactly
+    #: Hermitian for every input the gate admits
+    _HALF_GRID_HERMITIAN_TOL = 1.0e-14
+
+    @staticmethod
+    def _check_bond_vertices_hermitian(S, C):
+        """Refuse ``longitudinal_bond_half_grid`` when a bond vertex is not
+        Hermitian at some q: the half grid rebuilds the negative bosonic
+        frequencies from ``X(q, l) = X(q, Nmat - l)^dagger``, which needs
+        ``S(q)`` and ``C(q)`` Hermitian (issue #223)."""
+        for label, V in (("S", S), ("C", C)):
+            V = np.asarray(V)
+            dev = float(np.abs(V - np.conj(V).swapaxes(-1, -2)).max()) if V.size else 0.0
+            scale = max(1.0, float(np.abs(V).max()) if V.size else 0.0)
+            if not dev <= FLEX._HALF_GRID_HERMITIAN_TOL * scale:
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_half_grid = true needs Hermitian bond "
+                    "vertices, but max_q |{0}(q) - {0}(q)^dagger| = {1:.3e} (relative to "
+                    "max(1, max|{0}|) = {2:.3e}, tolerance {3:.0e}); the symmetry "
+                    "X(q, l) = X(q, Nmat - l)^dagger the half grid rests on does not hold. "
+                    "Set longitudinal_bond_half_grid = false.".format(
+                        label, dev, scale, FLEX._HALF_GRID_HERMITIAN_TOL))
 
     def _solve_phase_b(self, green_info, beta, mu, Ncond_target, xp,
                        green0_tail, green_tail_w, ham_orig):
@@ -2266,7 +2330,8 @@ class FLEX(RPA):
             if gate:
                 names, aliases = self._bond_store_layout()
                 store = stack.enter_context(flex_bond.BondBlockStore(
-                    nmat, nvol, self._bond_view.n_channels * nd, nd, names, aliases))
+                    nmat, nvol, self._bond_view.n_channels * nd, nd, names, aliases,
+                    half_grid=self.longitudinal_bond_half_grid))
                 self._phase_b_prepare_vertices()
                 # The immutable bond inputs are transferred once per solve,
                 # after the memory preflight measured the device (spec 4.2);
@@ -2715,9 +2780,25 @@ class FLEX(RPA):
             "longitudinal_bond_guard_exact_blocks_max": np.int64(self._bond_guard_exact_max),
             "longitudinal_bond_guard_blocks_per_iteration": np.int64(self._bond_guard_blocks),
         }
+        if self.longitudinal_bond_half_grid:
+            # provenance (issue #223): cond_min and the guard statistics above
+            # cover the solved non-negative frequencies only. Added only on a
+            # half-grid run, so a full-grid run's outputs are unchanged.
+            out["longitudinal_bond_half_grid"] = np.bool_(True)
         if self.longitudinal_bond_output_full:
-            out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
-            out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
+            if getattr(store, "half_grid", False):
+                # the archive keeps the full grid: each dynamic channel is
+                # expanded on its own and its half-grid slot released before
+                # the next one is expanded, so at most one half and two full
+                # members are resident at a time
+                from hwave.solver import half_grid as _hg
+                for name in ("chi_s_w", "chi_c_w"):
+                    half = store.detach(name)
+                    out["longitudinal_bond_" + name] = _hg.expand(half, self.nmat)
+                    del half
+            else:
+                out["longitudinal_bond_chi_s_w"] = store.detach("chi_s_w")
+                out["longitudinal_bond_chi_c_w"] = store.detach("chi_c_w")
             out["longitudinal_bond_S"] = np.array(self._bond_S, copy=True)
             out["longitudinal_bond_C"] = np.array(self._bond_C, copy=True)
         green_info.update(out)

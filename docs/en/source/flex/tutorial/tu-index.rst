@@ -582,6 +582,7 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
      # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
      # longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD
      # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (+2 full bond buffers of memory)
+     # longitudinal_bond_half_grid = true     # keep only nu >= 0 in the bond store (see below)
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -601,6 +602,23 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
 Set ``[file.output] chiq`` in such runs: without it the static bond keys of
 BOTH channels are written into ``chiq_s.npz``. Output archive names without
 a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
+
+*Halving the bond store.* ``longitudinal_bond_half_grid = true`` keeps only
+the ``Nmat/2 + 1`` non-negative bosonic frequencies in the bond store and
+rebuilds the others from :math:`X(q, -\nu) = X(q, \nu)^\dagger` where they
+are read, so the bond buffers (and the ``longitudinal_bond_output_full``
+buffers) take about half the memory and the dressing with its conditioning
+guard about half the time; the bubble and the self-energy transport cost
+the same. On the CPU, for a two-orbital model with five bond channels on a
+16 x 16 mesh, the dressing went from 2.3 s to 1.2 s and the whole two-map
+solve from 3.0 s to 1.9 s at ``Nmat = 64`` (4.6 s to 2.3 s and 6.1 s to
+3.8 s at ``Nmat = 128``). The results agree with the full grid to
+round-off; ``cond_min`` and the guard statistics then refer to
+:math:`\nu \ge 0` only, and the outputs record
+``longitudinal_bond_half_grid = true``. The option is off by default, and
+the in-process pairing (``longitudinal_bond_pairing``) does not support it
+yet: such a run is refused. Pair the archive of a half-grid run with
+``hwave_sc`` instead, which reads it as an ordinary full-grid archive.
 
 The run is accepted only when the three residuals of the split state stay
 below ``EPS`` for three consecutive iterations; the log prints them with a
