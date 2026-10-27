@@ -1670,18 +1670,30 @@ def _compare_pairing(full, half):
                 continue
             if a[key] is None:
                 kern["{}:{}".format(i, key)] = 0.0 if b.get(key) is None else np.inf
-            elif key in ("coeffs", "const"):
+            elif key == "coeffs":
                 kern["{}:{}".format(i, key)] = _blockwise_rel(a[key], b[key], a["_nd"])
+            elif key == "const":
+                # the retained constant is one more column of the SAME
+                # least-squares fit as the coefficients, so its round-off
+                # follows the fit's data -- the block's coefficients -- and
+                # not its own size: in a bond block the constant can be a
+                # near-cancellation (measured: 5e-13 relative to itself
+                # here, 1.05e-12 on another BLAS, but 1.6e-15 relative to
+                # the block's coefficients)
+                kern["{}:{}".format(i, key)] = _blockwise_rel(a[key], b[key], a["_nd"],
+                                                             ref=a["coeffs"])
             else:
                 kern["{}:{}".format(i, key)] = _rel(a[key], b[key])
     return flex, pairing, kern, eig
 
 
-def _blockwise_rel(a, b, nd):
+def _blockwise_rel(a, b, nd, ref=None):
     """The IR coefficients (or constant) per ``(alpha, beta)`` channel block,
     each relative to its OWN scale (a small bond block is not hidden under
     the on-site block's), with an absolute floor of 1e-14 x the global scale
-    for blocks that are zero up to round-off."""
+    for blocks that are zero up to round-off. With ``ref`` (the
+    coefficients, when ``a`` is the retained constant) a block's scale is
+    the larger of its own and that of the same block of ``ref``."""
     a, b = np.asarray(a), np.asarray(b)
     if a.shape != b.shape:
         return np.inf
@@ -1694,6 +1706,8 @@ def _blockwise_rel(a, b, nd):
         for y in range(B):
             sl = (Ellipsis, slice(x * nd, (x + 1) * nd), slice(y * nd, (y + 1) * nd))
             scale = max(float(np.abs(a[sl]).max()), floor)
+            if ref is not None:
+                scale = max(scale, float(np.abs(np.asarray(ref)[sl]).max()))
             worst = max(worst, float(np.abs(a[sl] - b[sl]).max()) / scale)
     return worst
 
