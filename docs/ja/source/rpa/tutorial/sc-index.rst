@@ -1859,6 +1859,14 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 ``frequency = "dynamic"``\ の\ ``hwave_sc``\ と、\ ``run_eliashberg = true``\ の
 ``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。
 
+逆に、\ ``enable_spin_orbital``\ を指定しない\ ``hwave_sc``\ は、
+``spin_orbital = True``\ をもつ chi0q または FLEX のアーカイブ（FLEX では
+``chi_convention = "spin_orbital"``\ も）や不正なマーカーをもつファイルを、
+計算前に拒否します。そのままでは\ :math:`2N`\ 軌道の非スピン軌道ファイルと誤って
+解釈されるためです。\ ``[mode] enable_spin_orbital``\ を有効にするか、非スピン
+軌道の計算でアーカイブを作り直してください。マーカーのないアーカイブはこれまで
+どおり読み込まれます。
+
 実用上の注意
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

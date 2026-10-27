@@ -1280,6 +1280,43 @@ def _require_so_chi0q_marker(data, file_name, hint=None, producer="RPA"):
             "enable_spin_orbital = true. {}".format(file_name, producer, hint))
 
 
+def _refuse_so_archive_in_non_so_mode(data, file_name):
+    """Refuse a spin-orbital susceptibility archive in a non-spin-orbital run.
+
+    A spin-orbital archive over N physical orbitals has nd = 2N and so the
+    shape of a non-spin-orbital general archive over 2N orbitals; read as the
+    latter it would be solved with the wrong index interpretation and no
+    error. Spin-orbital RPA/FLEX producers write the scalar bool
+    ``spin_orbital = True`` (and a FLEX chiq the tag ``chi_convention =
+    "spin_orbital"``); non-spin-orbital archives carry neither, so they load
+    unchanged. A marker that is not a scalar bool is refused too (the
+    spin-orbital side does the same). Checked on the open npz, before any
+    array is read."""
+    hint = ("Enable [mode] enable_spin_orbital = true, or regenerate the "
+            "archive with a non-spin-orbital run.")
+    if "spin_orbital" in data:
+        val = np.asarray(data["spin_orbital"])
+        if val.ndim != 0 or val.dtype != np.bool_:
+            raise ValueError(
+                "susceptibility file '{}': malformed spin_orbital marker "
+                "({!r}); expected a boolean. {}".format(
+                    file_name, data["spin_orbital"], hint))
+        if bool(val[()]):
+            raise ValueError(
+                "susceptibility file '{}' was written by a spin-orbital run "
+                "(spin_orbital = True) and cannot be used without [mode] "
+                "enable_spin_orbital = true: its shape would be misread as a "
+                "non-spin-orbital file over twice as many orbitals. {}".format(
+                    file_name, hint))
+    if ("chi_convention" in data
+            and str(data["chi_convention"]) == _SO_FLEX_CHI_CONVENTION):
+        raise ValueError(
+            "FLEX file '{}' is tagged chi_convention = {!r} (a spin-orbital "
+            "FLEX output) and cannot be used without [mode] "
+            "enable_spin_orbital = true. {}".format(
+                file_name, _SO_FLEX_CHI_CONVENTION, hint))
+
+
 def _load_chi0q(input_dict, norb=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
@@ -1313,6 +1350,8 @@ def _load_chi0q(input_dict, norb=None):
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
     if enable_spin_orbital:
         _require_so_chi0q_marker(data, file_name)
+    else:
+        _refuse_so_archive_in_non_so_mode(data, file_name)
     chi0q = data["chi0q"]
     logger.info("chi0q shape: {}".format(chi0q.shape))
 
@@ -3555,6 +3594,9 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
 
     logger.info("Loading FLEX chi_s from: {}".format(chi_s_path))
     data_s = np.load(chi_s_path)
+    _non_so = not _resolve_spin_orbital_flag(input_dict)
+    if _non_so:
+        _refuse_so_archive_in_non_so_mode(data_s, chi_s_path)
     if not allow_ir:
         _reject_ir_native(data_s, chi_s_path, _STATIC_IR_HINT)
     chi_s_raw = data_s["chiq_s"] if "chiq_s" in data_s else data_s["chiq"]
@@ -3590,6 +3632,8 @@ def _read_flex_chi_raw(input_dict, allow_ir=False, interactions=None):
 
     logger.info("Loading FLEX chi_c from: {}".format(chi_c_path))
     data_c = np.load(chi_c_path)
+    if _non_so:
+        _refuse_so_archive_in_non_so_mode(data_c, chi_c_path)
     if not allow_ir:
         _reject_ir_native(data_c, chi_c_path, _STATIC_IR_HINT)
     chi_c_raw = data_c["chiq_c"] if "chiq_c" in data_c else data_c["chiq"]
