@@ -15,8 +15,12 @@ import unittest
 import numpy as np
 
 from tests.heavy_tests import heavy
+from tests.isolated_trace import run_isolated
 
 _IN2 = "tests/rpa/input_2orb"
+#: this module under the name the isolated child imports it by (unittest
+#: discovery from tests/ imports it without the package prefix)
+_THIS = "tests.test_flex_bond_memory"
 
 
 def _kw(**over):
@@ -128,7 +132,13 @@ def _coverage_paused():
     margin of ``post_scf`` (about 15 KB without coverage, on Linux and macOS
     alike), so the develop tree itself failed the invariant when this test
     ran alone. Every line the traced solve executes has already run in an
-    untraced solve or another test, so nothing goes uncovered."""
+    untraced solve or another test, so nothing goes uncovered.
+
+    Since issue #266 the traced solves run in a fresh process started
+    without the coverage hand-over variables (``tests/isolated_trace.py``),
+    so normally no coverage measurement is running there; the pause stays
+    as a guard for a child that starts one anyway (e.g. through a
+    ``COVERAGE_PROCESS_START``-style site hook)."""
     try:
         import coverage
         cov = coverage.Coverage.current()
@@ -188,72 +198,112 @@ class TestSolverPreflight(unittest.TestCase):
         self.assertIn("dense", text)
         self.assertIn("transport", text)
 
-    def _run_traced(self, param_extra, green_extra=None):
-        s, r = _solver(param_extra)
-        gi = r.get_param("green")
-        gi.update(green_extra or {})
-        _preimport()
-        tracer = _Tracer()
-        s._phase_tracer = tracer
-        with _coverage_paused():
-            # an identical untraced solve first, with coverage paused too:
-            # code that so far ran only under the coverage tracer allocates
-            # the interpreter's specialization caches on its first untraced
-            # run (a few hundred bytes), which must not land in the peaks
-            w, rw = _solver(param_extra)
-            gw = rw.get_param("green")
-            gw.update(green_extra or {})
-            with tempfile.TemporaryDirectory() as out:
-                w.solve(gw, out)
-            del w, rw, gw
-            tracemalloc.start()
-            try:
-                with tempfile.TemporaryDirectory() as out:
-                    tracer.base = tracemalloc.get_traced_memory()[0]
-                    s.solve(gi, out)
-            finally:
-                tracemalloc.stop()
-        return s, tracer
+    def _assert_phase_bounds(self, res, label=""):
+        self.assertTrue(res["peaks"], "no phase was traced")
+        for name, measured in res["peaks"].items():
+            self.assertIn(name, res["phase_rows"])
+            bound = res["persistent"] + res["phase_rows"][name]
+            self.assertLessEqual(measured, bound,
+                                 "{}phase {} peak since solve entry {} > persistent {} + row {}".format(
+                                     label, name, measured, res["persistent"], res["phase_rows"][name]))
 
     def test_preflight_rows_match_tracemalloc_per_phase(self):
         for mixing in ("linear", "anderson"):
             with self.subTest(mixing=mixing):
-                s, tracer = self._run_traced({"mixing_scheme": mixing, "anderson_depth": 3,
-                                              "longitudinal_bond_output_full": True})
-                est = s._bond_est
-                self.assertTrue(tracer.peaks, "no phase was traced")
-                for name, measured in tracer.peaks.items():
-                    self.assertIn(name, est["phase_rows"])
-                    bound = est["persistent"] + est["phase_rows"][name]
-                    self.assertLessEqual(measured, bound,
-                                         "phase {} peak since solve entry {} > persistent {} + row {}".format(
-                                             name, measured, est["persistent"], est["phase_rows"][name]))
-                self.assertGreaterEqual(len(tracer.peaks), 7)
+                res = run_isolated(_THIS, "_traced_solve",
+                                   {"mixing_scheme": mixing, "anderson_depth": 3,
+                                    "longitudinal_bond_output_full": True})
+                self._assert_phase_bounds(res)
+                self.assertGreaterEqual(len(res["peaks"]), 7)
+
+    def test_test_process_state_does_not_reach_the_measurement(self):
+        """Issue #266: the traced solve used to run in the test process, so
+        whatever earlier tests left behind counted as solve memory -- e.g. a
+        logger level lowered and not restored makes the solver emit DEBUG
+        records, which pytest's capture handlers keep (``pytest
+        --log-level=DEBUG`` alone pushed the Anderson ``mixing`` phase 1.2 %
+        over its bound). Lower the level and attach a record-keeping handler
+        here: the isolated solve must see neither, and must still meet the
+        bounds."""
+        with self.assertLogs("hwave", level="DEBUG"):
+            logging.getLogger("hwave.solver.flex").debug("keep records from here on")
+            res = run_isolated(_THIS, "_traced_solve",
+                               {"mixing_scheme": "anderson", "anderson_depth": 3,
+                                "longitudinal_bond_output_full": True})
+        self.assertEqual(res["flex_log_level"], logging.WARNING)
+        self.assertEqual(res["root_handlers"], 0)
+        self._assert_phase_bounds(res)
 
     def test_tracer_invariant_split_warm_start(self):
-        import hwave.solver.flex as flex_mod
-        s, r = _solver({"IterationMax": 1})
-        gi = r.get_param("green")
-        with tempfile.TemporaryDirectory() as out, _coverage_paused():
-            # the seed solve also runs with coverage paused (see _run_traced)
-            s.solve(gi, out)
-            s.save_results({"path_to_output": out, "sigma": "sigma.npz"}, gi)
-            s2, r2 = _solver({"IterationMax": 1})
-            gi2 = r2.get_param("green")
-            gi2.update(s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"}))
-            _preimport()
-            tracer = _Tracer()
-            s2._phase_tracer = tracer
-            tracemalloc.start()
-            try:
+        res = run_isolated(_THIS, "_traced_warm_start")
+        self.assertEqual(res["persistent_rows"]["seed_envelope"] > 0, True)
+        self._assert_phase_bounds(res, "split warm start: ")
+
+
+def _traced_result(solver, tracer):
+    est = solver._bond_est
+    return {"peaks": tracer.peaks, "persistent": est["persistent"],
+            "phase_rows": est["phase_rows"], "persistent_rows": est["persistent_rows"],
+            # the logging state the measured solve saw (issue #266 regression test)
+            "flex_log_level": logging.getLogger("hwave.solver.flex").getEffectiveLevel(),
+            "root_handlers": len(logging.getLogger().handlers)}
+
+
+def _traced_solve(param_extra):
+    """The per-phase tracemalloc measurement behind
+    ``TestSolverPreflight.test_preflight_rows_match_tracemalloc_per_phase``.
+    It runs in a fresh process (:func:`tests.isolated_trace.run_isolated`,
+    issue #266); calling it in the test process would let state left by
+    earlier tests leak into the peaks."""
+    s, r = _solver(param_extra)
+    gi = r.get_param("green")
+    _preimport()
+    tracer = _Tracer()
+    s._phase_tracer = tracer
+    with _coverage_paused():
+        # an identical untraced solve first, with coverage paused too:
+        # code that so far ran only under the coverage tracer allocates
+        # the interpreter's specialization caches on its first untraced
+        # run (a few hundred bytes), which must not land in the peaks;
+        # first-use allocations of the solve itself are likewise made here
+        w, rw = _solver(param_extra)
+        gw = rw.get_param("green")
+        with tempfile.TemporaryDirectory() as out:
+            w.solve(gw, out)
+        del w, rw, gw
+        tracemalloc.start()
+        try:
+            with tempfile.TemporaryDirectory() as out:
                 tracer.base = tracemalloc.get_traced_memory()[0]
-                s2.solve(gi2, out)
-            finally:
-                tracemalloc.stop()
-        est = s2._bond_est
-        self.assertEqual(est["persistent_rows"]["seed_envelope"] > 0, True)
-        for name, measured in tracer.peaks.items():
-            self.assertLessEqual(measured, est["persistent"] + est["phase_rows"][name], name)
+                s.solve(gi, out)
+        finally:
+            tracemalloc.stop()
+    return _traced_result(s, tracer)
+
+
+def _traced_warm_start():
+    """The traced split warm start behind
+    ``TestSolverPreflight.test_tracer_invariant_split_warm_start``; runs in
+    a fresh process like :func:`_traced_solve`."""
+    s, r = _solver({"IterationMax": 1})
+    gi = r.get_param("green")
+    with tempfile.TemporaryDirectory() as out, _coverage_paused():
+        # the seed solve also runs with coverage paused (see _traced_solve)
+        s.solve(gi, out)
+        s.save_results({"path_to_output": out, "sigma": "sigma.npz"}, gi)
+        s2, r2 = _solver({"IterationMax": 1})
+        gi2 = r2.get_param("green")
+        gi2.update(s2.read_init({"path_to_input": out, "sigma_init": "sigma.npz"}))
+        _preimport()
+        tracer = _Tracer()
+        s2._phase_tracer = tracer
+        tracemalloc.start()
+        try:
+            tracer.base = tracemalloc.get_traced_memory()[0]
+            s2.solve(gi2, out)
+        finally:
+            tracemalloc.stop()
+    return _traced_result(s2, tracer)
 
 
 _RSS_SCRIPT = r"""
