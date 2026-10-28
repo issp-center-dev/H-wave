@@ -223,7 +223,8 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <p class="admonition-title">注釈</p>
 <p><strong>平均場の一体バンド: 組み立て。</strong> <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span></code>（UHFk が出力する
 一体ハミルトニアン）は<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドを置き換えます。
-<code class="docutils literal notranslate"><span class="pre">green_init</span></code>は<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドに Hartree 項を加え、
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>は<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドにその Green 関数の
+Hartree-Fock 平均場を加え、
 <code class="docutils literal notranslate"><span class="pre">Extern</span></code>場（<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍のテーブル）はさらにその上に加わります。
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>の場合（外部の
 <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定しない<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を含む）、
@@ -237,7 +238,7 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <code class="docutils literal notranslate"><span class="pre">Extern</span></code>場）は、<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>の計算や読み込みの前に
 エラーとして拒否されます。判定は組み立てた一体バンド
 （<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>、または<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドに<code class="docutils literal notranslate"><span class="pre">green_init</span></code>の
-Hartree 項を加えたもの、さらに<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍の<code class="docutils literal notranslate"><span class="pre">Extern</span></code>）
+Hartree-Fock 項を加えたもの、さらに<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍の<code class="docutils literal notranslate"><span class="pre">Extern</span></code>）
 に対して行います。上向き・下向きスピンのブロックの差とスピン混成ブロックの
 大きさは、エネルギーの単位で絶対値<span class="math notranslate nohighlight">\(10^{-10}\)</span>まで許されます。
 この許容誤差は後述の<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>の既定値で、<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>で
@@ -264,15 +265,19 @@ UHF の収束を厳しくする、スピン対称な初期状態から UHF を�
 <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、および外部の<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定した場合は、
 これらのキーは使われず、その旨の警告が出ます。感受率と Green 関数は
 FLEX 計算または<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>のファイルから読み込まれるためです。</p>
-<p><strong>Hartree 項のみの</strong> <code class="docutils literal notranslate"><span class="pre">green_init</span></code>。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>のバンドは
-<span class="math notranslate nohighlight">\(T + \mathrm{Hartree}[G]\)</span>（RPA の組み立てで、Fock 項を含みません）
-です。そのため Fock 項がある場合、つまり<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
-<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>の行、オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の行
-（<span class="math notranslate nohighlight">\(R \neq 0\)</span>、または<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>で異なるサイトに
-ある軌道間）、または<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>部分がある場合は、
-同じ解から UHFk が出力する<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と異なります。このとき
-<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>を勧める警告が出ます。<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>が推奨される入力で、
-常磁性状態にはこれが整合した入力です。</p>
+<p><code class="docutils literal notranslate"><span class="pre">green_init</span></code> <strong>と</strong> <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>のバンドは
+<span class="math notranslate nohighlight">\(T + \Sigma_{\rm HF}[G]\)</span>で、すべての相互作用の Hartree 項と
+Fock 項を UHFk が平均場ハミルトニアンを作るのと同じ方法
+（<code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>）で組み立てます。したがって<code class="docutils literal notranslate"><span class="pre">green_init</span></code>と、
+<code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>（既定値）の UHFk 計算が同じ解に対して出力する
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>は同じバンドを与えます。<code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">false</span></code>で得た
+UHFk 解には、その<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>（Hartree 項のみのバンド）を使って
+ください。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>では Fock 項が加わります。元の格子の並進対称性を
+破る<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>の UHFk 状態では、保存された<code class="docutils literal notranslate"><span class="pre">green</span></code>も
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>も、読み戻したときに収束したバンドを再現しません
+（issue #294）。
+（issue #278 より前は<code class="docutils literal notranslate"><span class="pre">green_init</span></code>のバンドに Fock 項が含まれず、
+Fock 項をもつ相互作用があると<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が警告を出していました）。</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>

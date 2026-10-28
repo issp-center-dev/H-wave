@@ -225,7 +225,8 @@ with, and <code class="docutils literal notranslate"><span class="pre">hwave_sc<
 <p class="admonition-title">Note</p>
 <p><strong>Mean-field one-body band: assembly.</strong> <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span></code> (the
 one-body Hamiltonian written by UHFk) replaces the <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band;
-<code class="docutils literal notranslate"><span class="pre">green_init</span></code> adds its Hartree term to the <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band; an
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code> adds the Hartree-Fock mean field of its Green function to
+the <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band; an
 <code class="docutils literal notranslate"><span class="pre">Extern</span></code> field (<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> times the table) is added on top. With
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (including
 <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> without an external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>),
@@ -239,7 +240,7 @@ index.</p>
 <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> or <code class="docutils literal notranslate"><span class="pre">green_init</span></code>, or a finite <code class="docutils literal notranslate"><span class="pre">Extern</span></code> field) is refused
 with an error before <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> is computed or loaded.
 The check is made on the assembled one-body band (<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>, or the
-<code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band plus the Hartree term of <code class="docutils literal notranslate"><span class="pre">green_init</span></code>, plus
+<code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band plus the Hartree-Fock term of <code class="docutils literal notranslate"><span class="pre">green_init</span></code>, plus
 <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> times <code class="docutils literal notranslate"><span class="pre">Extern</span></code>): its up-up and down-down blocks may
 differ, and its spin-mixing blocks may be nonzero, by at most an
 absolute <span class="math notranslate nohighlight">\(10^{-10}\)</span> in energy units. This tolerance is the default
@@ -267,15 +268,19 @@ part, because the loaded chi0q was computed on the raw band. With
 external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>, these keys are not used and a warning says so:
 the susceptibilities and the Green function come from the FLEX run or
 from the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> file.</p>
-<p><strong>Hartree-only</strong> <code class="docutils literal notranslate"><span class="pre">green_init</span></code>. The <code class="docutils literal notranslate"><span class="pre">green_init</span></code> band is
-<span class="math notranslate nohighlight">\(T + \mathrm{Hartree}[G]\)</span> (RPA’s assembly, without the Fock
-term), so it differs from the <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> UHFk writes for the same
-solution whenever Fock terms are present: for any <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
-<code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> or <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> row, an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> row
-(<span class="math notranslate nohighlight">\(R \neq 0\)</span>, or between orbitals on different sites per
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>), or the <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> part of
-<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>. A warning then recommends <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>, which is the
-preferred input and, for a paramagnetic state, the consistent one.</p>
+<p><code class="docutils literal notranslate"><span class="pre">green_init</span></code> <strong>and</strong> <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>. The <code class="docutils literal notranslate"><span class="pre">green_init</span></code> band is
+<span class="math notranslate nohighlight">\(T + \Sigma_{\rm HF}[G]\)</span>, the Hartree and Fock terms of every
+interaction built exactly as UHFk builds its mean-field Hamiltonian
+(with <code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>), so <code class="docutils literal notranslate"><span class="pre">green_init</span></code> and the <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>
+that a UHFk run with <code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (the default) writes for the
+same solution define the same band. For a UHFk solution obtained with
+<code class="docutils literal notranslate"><span class="pre">flag_fock</span> <span class="pre">=</span> <span class="pre">false</span></code>, use its <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> (a Hartree-only band):
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code> would add the Fock term. For a <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> UHFk state
+that breaks the translation symmetry of the original lattice, neither
+the saved <code class="docutils literal notranslate"><span class="pre">green</span></code> nor the saved <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> reproduces the converged
+band when read back (issue #294). (Before issue #278 the <code class="docutils literal notranslate"><span class="pre">green_init</span></code>
+band left out the Fock term, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> warned when a
+Fock-carrying interaction was present.)</p>
 </div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
