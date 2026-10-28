@@ -116,6 +116,21 @@ class TestParallelCopy(unittest.TestCase):
                                side_effect=AttributeError), \
                 mock.patch.object(staging.os, "cpu_count", return_value=2):
             self.assertEqual(staging.default_copy_workers(), 2)
+        with mock.patch.object(staging.os, "sched_getaffinity", create=True,
+                               side_effect=OSError("no affinity")), \
+                mock.patch.object(staging.os, "cpu_count", return_value=None):
+            self.assertEqual(staging.default_copy_workers(), 1)
+        saved = getattr(staging.os, "sched_getaffinity", None)
+        try:
+            if saved is not None:
+                del staging.os.sched_getaffinity      # absent, as on macOS
+            with mock.patch.object(staging.os, "cpu_count", return_value=5):
+                self.assertEqual(staging.default_copy_workers(), 5)
+            with mock.patch.object(staging.os, "cpu_count", return_value=None):
+                self.assertEqual(staging.default_copy_workers(), 1)
+        finally:
+            if saved is not None:
+                staging.os.sched_getaffinity = saved
 
     def test_shape_mismatch_refused(self):
         from hwave.solver import staging
@@ -213,11 +228,19 @@ class TestPinnedStager(unittest.TestCase):
             self.assertEqual(st.chunks, 24)
             self.assertEqual(cp.pinned_allocs, [3 * 4 * 16])
             self.assertLessEqual(st.nbytes, 200)
-            # a buffer smaller than one element: element by element
+            self.assertTrue(all(n <= 200 for n in cp.pinned_allocs))
+            # a buffer smaller than one element (8 < 16 bytes): the unstaged
+            # path, no pinned memory at all
+            cp.pinned_allocs.clear()
             st1 = staging.PinnedStager(cp, max_bytes=8)
             np.testing.assert_array_equal(st1.to_host(d), x)
-            self.assertEqual(st1.chunks, x.size)
-            self.assertEqual(st1.nbytes, 16)
+            dst = np.zeros((3, 2, 4, 8), complex)
+            st1.copy_to_host(d, dst[..., ::2])
+            np.testing.assert_array_equal(dst[..., ::2], x)
+            np.testing.assert_array_equal(_host(st1.to_device(dst[..., ::2])), x)
+            self.assertEqual(st1.chunks, 0)
+            self.assertEqual(st1.nbytes, 0)
+            self.assertEqual(cp.pinned_allocs, [])
 
     def test_concurrent_callers_share_one_stager(self):
         """The stager's lock: threads moving different arrays through one
@@ -246,6 +269,53 @@ class TestPinnedStager(unittest.TestCase):
             for x, (h, d) in zip(xs, out):
                 np.testing.assert_array_equal(h, x)
                 np.testing.assert_array_equal(d, x)
+
+    def test_release_during_threaded_shared_copies(self):
+        """Copies through the global worker pool (threshold 0) on one shared
+        stager while another thread keeps releasing its buffer: no deadlock,
+        every byte right (release waits for the copy in flight)."""
+        import threading
+        from hwave.solver import staging
+        with fake_cupy() as cp, _threaded_tiny_copies():
+            xs = [_rand((8, 2, 4, 4), 40 + i) for i in range(4)]
+            ds = [cp.asarray(x) for x in xs]
+            cp.deferred = True
+            st = staging.PinnedStager(cp, max_bytes=3 * 2 * 4 * 4 * 16, workers=3)
+            errors, stop = [], threading.Event()
+            real = staging._executor
+            used = []
+
+            def spy():
+                used.append(1)
+                return real()
+
+            def run(i):
+                try:
+                    for _ in range(8):
+                        np.testing.assert_array_equal(st.to_host(ds[i]), xs[i])
+                        big = np.zeros((8, 2, 4, 8), complex)
+                        st.copy_to_host(ds[i], big[..., 1::2])
+                        np.testing.assert_array_equal(big[..., 1::2], xs[i])
+                        np.testing.assert_array_equal(_host(st.to_device(big[..., 1::2])), xs[i])
+                except Exception as exc:          # noqa: BLE001
+                    errors.append(exc)
+
+            def releaser():
+                while not stop.is_set():
+                    st.release()
+            with mock.patch.object(staging, "_executor", spy):
+                ts = [threading.Thread(target=run, args=(i,)) for i in range(4)]
+                r = threading.Thread(target=releaser)
+                r.start()
+                for t in ts:
+                    t.start()
+                for t in ts:
+                    t.join(timeout=60)
+                stop.set()
+                r.join(timeout=60)
+            self.assertFalse(any(t.is_alive() for t in ts) or r.is_alive(), "deadlock")
+            self.assertEqual(errors, [])
+            self.assertTrue(used)                 # the copies used the worker pool
 
     def test_failed_pinned_allocation_takes_the_plain_path(self):
         from hwave.solver import staging
@@ -484,11 +554,16 @@ class TestRealCupyStreams(unittest.TestCase):
                     cp.cuda.Stream(non_blocking=True) as s:
                 d = st.to_device(x[:, :, :, ::-1])
                 host = st.to_host(d)
+                strided = np.zeros((n, 64, 16, 32), complex)
+                st.copy_to_host(d, strided[:, :, :, 1::2])        # non-contiguous dst
                 s.synchronize()
             self.assertLessEqual(st.nbytes, row // 3)
             self.assertGreaterEqual(st.chunks, 2 * 3 * n)
             for i in range(n):
                 np.testing.assert_array_equal(host[i], x[i, :, :, ::-1], err_msg="slice %d" % i)
+                np.testing.assert_array_equal(strided[i, :, :, 1::2], x[i, :, :, ::-1],
+                                              err_msg="strided slice %d" % i)
+                self.assertEqual(np.count_nonzero(strided[i, :, :, 0::2]), 0)
         finally:
             st.release()
 

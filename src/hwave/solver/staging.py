@@ -9,8 +9,10 @@ Two helpers move bytes without changing any of them:
   (``put_pair`` / ``get_pair_full``) no longer run on one core. Small copies
   stay a single assignment.
 * :class:`PinnedStager` -- host <-> device copies through ONE reusable
-  page-locked (pinned) staging buffer of bounded size, in chunks along the
-  leading axis. A copy from pageable memory is staged by the driver through
+  page-locked (pinned) staging buffer of bounded size, in chunks: ranges
+  along the leading axis, or -- when one leading-axis slice is larger than
+  the buffer -- along the first later axis whose sub-arrays fit, with the
+  axes before it fixed. A copy from pageable memory is staged by the driver through
   its own small pinned buffers (and ``cupy.asnumpy`` of a whole store slot
   also allocates and first-touches a full-size pageable result in one
   thread); a chunk at a time through a pinned buffer runs at the bus rate,
@@ -18,9 +20,10 @@ Two helpers move bytes without changing any of them:
   writes straight into its destination, so no full-size temporary is made.
 
 When the pinned buffer cannot be allocated (or the module has no pinned
-allocator) the stager says so once at debug level and every copy takes the
-previous path (``asnumpy`` / ``asarray`` of the whole array). The bytes that
-arrive are the same either way.
+allocator), or one array element is larger than the buffer, THAT copy takes
+the previous path (``asnumpy`` / ``asarray`` of the whole array), with a
+debug message for a failed allocation; the next copy tries again. The bytes
+that arrive are the same either way.
 """
 import logging
 import os
@@ -101,7 +104,7 @@ def parallel_copy(dst, src, workers=None, min_bytes=None):
 
 class PinnedStager:
     """Host <-> device copies through one reusable pinned buffer of at most
-    ``max_bytes`` bytes (at least one array element; allocated on first use,
+    ``max_bytes`` bytes (allocated on first use,
     grown only up to ``max_bytes``, freed by :meth:`release`).
 
     ``xp`` is the DEVICE module (cupy, or a test double): the buffer comes
@@ -189,6 +192,8 @@ class PinnedStager:
         while k < nd - 1 and int(np.prod(shape[k + 1:], dtype=np.int64)) * item > self.max_bytes:
             k += 1
         inner = int(np.prod(shape[k + 1:], dtype=np.int64)) * item
+        if inner > self.max_bytes:
+            return None, None            # not even one element fits: unstaged
         per = max(1, min(shape[k], self.max_bytes // inner))
         buf = self._buffer(per * inner)
         if buf is None:
