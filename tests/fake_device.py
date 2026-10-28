@@ -24,6 +24,7 @@ are caught by the transfer accounting (no ``asnumpy`` is recorded for them)
 and by the real-GPU tests of ``tests/test_flex_bond_gpu.py``.
 """
 import contextlib
+import time
 import types
 from unittest import mock
 
@@ -217,6 +218,8 @@ class FakeCupy(_Namespace):
     def issue(self, stream, pinned, copy):
         if self.deferred and pinned:
             (stream if stream is not None else self.stream).pending.append(copy)
+            # let another host thread run while the "DMA" is in flight
+            time.sleep(1e-4)
         else:
             copy()
 

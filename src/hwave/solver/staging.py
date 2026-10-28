@@ -48,8 +48,19 @@ _pool = None
 _pool_lock = threading.Lock()
 
 
+def _usable_cpus():
+    """CPUs this process may run on: its affinity mask where the platform
+    reports one (a batch job's cpuset), else ``os.cpu_count()``."""
+    try:
+        return len(os.sched_getaffinity(0)) or 1
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
+
+
 def default_copy_workers():
-    return max(1, min(COPY_WORKERS, os.cpu_count() or 1))
+    """``min(COPY_WORKERS, usable CPUs)``: a job given few CPUs is not
+    oversubscribed."""
+    return max(1, min(COPY_WORKERS, _usable_cpus()))
 
 
 def _executor():
@@ -90,21 +101,27 @@ def parallel_copy(dst, src, workers=None, min_bytes=None):
 
 class PinnedStager:
     """Host <-> device copies through one reusable pinned buffer of at most
-    ``max(max_bytes, one leading-axis row)`` bytes (allocated on first use,
-    grown only when a row is larger, freed by :meth:`release`).
+    ``max_bytes`` bytes (at least one array element; allocated on first use,
+    grown only up to ``max_bytes``, freed by :meth:`release`).
 
     ``xp`` is the DEVICE module (cupy, or a test double): the buffer comes
     from ``xp.cuda.alloc_pinned_memory``, a device chunk moves to the host by
-    ``chunk.get(out=buffer)`` and back by ``chunk.set(buffer)``. Chunks run
-    along axis 0 of the array, so the device side of each chunk is a
-    contiguous slice of a contiguous array and the host side may be any
-    strided view (a channel-pair block of a host store).
+    ``chunk.get(out=buffer)`` and back by ``chunk.set(buffer)``. A chunk is a
+    range along one axis ``k`` with every axis before it fixed, ``k`` being
+    the first axis whose sub-arrays fit in ``max_bytes`` (axis 0 unless one
+    frequency slice is larger than the buffer). For a contiguous device
+    array the device side of each chunk is therefore contiguous; the host
+    side may be any strided view (a channel-pair block of a host store).
 
     Every chunk copy is issued on the CURRENT stream (captured per call and
     passed explicitly) and that stream is synchronized after it, before the
     staging buffer is read (device -> host) or overwritten or released
     (host -> device): with a pinned source, ``set`` is truly asynchronous,
-    and ``get`` is non-blocking on older CuPy or other streams."""
+    and ``get`` is non-blocking on older CuPy or other streams.
+
+    A failed pinned allocation sends THAT call down the unstaged path (with a
+    debug message); the next call tries again. The copies hold a lock, so
+    concurrent callers sharing one stager take turns with the buffer."""
 
     def __init__(self, xp, max_bytes=None, workers=None):
         self.xp = xp
@@ -115,7 +132,8 @@ class PinnedStager:
         self._mem = None
         self._owner = None
         self._nbytes = 0
-        self._failed = False
+        self._failed = False     # the LAST allocation attempt failed
+        self._lock = threading.RLock()
         self.chunks = 0          # chunk copies made (for tests and logs)
 
     @property
@@ -125,27 +143,23 @@ class PinnedStager:
 
     @property
     def available(self):
+        """False when the last pinned allocation failed (it is retried)."""
         return not self._failed
 
     def release(self):
         """Drop the pinned buffer and hand cached pinned blocks back."""
-        held = self._mem is not None
-        self._mem = self._owner = None
-        self._nbytes = 0
-        if held:
-            try:
-                self.xp.get_default_pinned_memory_pool().free_all_blocks()
-            except Exception:            # noqa: BLE001 - only a cache hint
-                pass
-
-    def _rows(self, shape, dtype):
-        row = int(np.prod(shape[1:], dtype=np.int64)) * np.dtype(dtype).itemsize
-        return max(1, row), max(1, self.max_bytes // max(1, row))
+        with self._lock:
+            held = self._mem is not None
+            self._mem = self._owner = None
+            self._nbytes = 0
+            if held:
+                try:
+                    self.xp.get_default_pinned_memory_pool().free_all_blocks()
+                except Exception:            # noqa: BLE001 - only a cache hint
+                    pass
 
     def _buffer(self, nbytes):
         """A pinned uint8 buffer of at least ``nbytes``, or None (fallback)."""
-        if self._failed:
-            return None
         if self._mem is not None and self._nbytes >= nbytes:
             return self._mem
         self.release()
@@ -154,25 +168,40 @@ class PinnedStager:
             buf = np.ndarray((int(nbytes),), dtype=np.uint8, buffer=mem)
         except Exception as exc:         # noqa: BLE001 - any failure: old path
             self._failed = True
-            logger.debug("pinned staging buffer of %d bytes unavailable (%s: %s); host <-> "
-                         "device copies of the bond block store take the unstaged path",
+            logger.debug("pinned staging buffer of %d bytes unavailable (%s: %s); this host "
+                         "<-> device copy of the bond block store takes the unstaged path",
                          int(nbytes), type(exc).__name__, exc)
             return None
+        self._failed = False
         # keep the allocation alive with the view
         self._mem, self._nbytes, self._owner = buf, int(nbytes), mem
         return buf
 
     def _plan(self, shape, dtype):
-        n = int(shape[0]) if len(shape) else 0
-        row, per = self._rows(shape, dtype)
-        per = min(per, max(1, n))
-        buf = self._buffer(per * row) if n else None
-        return n, per, buf
+        """``(chunks, buf)``: the index tuples of the chunks (None for an
+        empty array) and the buffer (None: the unstaged path)."""
+        shape = tuple(int(x) for x in shape)
+        item = np.dtype(dtype).itemsize
+        if not shape or 0 in shape:
+            return None, None
+        nd = len(shape)
+        k = 0
+        while k < nd - 1 and int(np.prod(shape[k + 1:], dtype=np.int64)) * item > self.max_bytes:
+            k += 1
+        inner = int(np.prod(shape[k + 1:], dtype=np.int64)) * item
+        per = max(1, min(shape[k], self.max_bytes // inner))
+        buf = self._buffer(per * inner)
+        if buf is None:
+            return None, None
+        chunks = [prefix + (slice(i0, min(shape[k], i0 + per)),)
+                  for prefix in np.ndindex(*shape[:k])
+                  for i0 in range(0, shape[k], per)]
+        return chunks, buf
 
     @staticmethod
-    def _view(buf, n, shape, dtype):
-        cnt = n * int(np.prod(shape[1:], dtype=np.int64))
-        return buf[:cnt * np.dtype(dtype).itemsize].view(dtype).reshape((n,) + tuple(shape[1:]))
+    def _view(buf, shape, dtype):
+        cnt = int(np.prod(shape, dtype=np.int64))
+        return buf[:cnt * np.dtype(dtype).itemsize].view(dtype).reshape(shape)
 
     def copy_to_host(self, src, dst):
         """``dst[...] = src`` for a DEVICE ``src`` and a HOST ``dst`` (any
@@ -183,47 +212,50 @@ class PinnedStager:
         if src.ndim == 0:
             dst[...] = _bk.to_host(src)
             return dst
-        n, per, buf = self._plan(src.shape, src.dtype)
-        if buf is None:
-            parallel_copy(dst, _bk.to_host(src), self.workers)
+        with self._lock:
+            chunks, buf = self._plan(src.shape, src.dtype)
+            if buf is None:
+                parallel_copy(dst, _bk.to_host(src), self.workers)
+                return dst
+            stream = self.xp.cuda.get_current_stream()
+            for idx in chunks:
+                part = src[idx]
+                stage = self._view(buf, part.shape, src.dtype)
+                part.get(stream=stream, out=stage)
+                stream.synchronize()             # the chunk has landed in stage
+                parallel_copy(dst[idx], stage, self.workers)
+                self.chunks += 1
             return dst
-        stream = self.xp.cuda.get_current_stream()
-        for i0 in range(0, n, per):
-            i1 = min(n, i0 + per)
-            stage = self._view(buf, i1 - i0, src.shape, src.dtype)
-            src[i0:i1].get(stream=stream, out=stage)
-            stream.synchronize()             # the chunk has landed in stage
-            parallel_copy(dst[i0:i1], stage, self.workers)
-            self.chunks += 1
-        return dst
 
     def to_host(self, src):
         """A new host array equal to the device array ``src``."""
         if src.ndim == 0:
             return _bk.to_host(src)
-        _n, _per, buf = self._plan(src.shape, src.dtype)
-        if buf is None:
-            return _bk.to_host(src)          # no full-size double on the old path
-        dst = np.empty(src.shape, dtype=src.dtype)
-        return self.copy_to_host(src, dst)
+        with self._lock:
+            _chunks, buf = self._plan(src.shape, src.dtype)
+            if buf is None:
+                return _bk.to_host(src)          # no full-size double on the old path
+            dst = np.empty(src.shape, dtype=src.dtype)
+            return self.copy_to_host(src, dst)
 
     def to_device(self, src):
         """A new contiguous device array equal to the host array ``src`` (any
         strides): each chunk is gathered into the pinned buffer and set into
-        its slice of the result."""
+        its part of the result."""
         xp = self.xp
         if src.ndim == 0:
             return xp.asarray(src)
-        n, per, buf = self._plan(src.shape, src.dtype)
-        if buf is None:
-            return xp.asarray(np.ascontiguousarray(src))
-        dst = xp.empty(src.shape, dtype=src.dtype)
-        stream = xp.cuda.get_current_stream()
-        for i0 in range(0, n, per):
-            i1 = min(n, i0 + per)
-            stage = self._view(buf, i1 - i0, src.shape, src.dtype)
-            parallel_copy(stage, src[i0:i1], self.workers)
-            dst[i0:i1].set(stage, stream=stream)
-            stream.synchronize()             # stage may be overwritten / freed now
-            self.chunks += 1
-        return dst
+        with self._lock:
+            chunks, buf = self._plan(src.shape, src.dtype)
+            if buf is None:
+                return xp.asarray(np.ascontiguousarray(src))
+            dst = xp.empty(src.shape, dtype=src.dtype)
+            stream = xp.cuda.get_current_stream()
+            for idx in chunks:
+                part = src[idx]
+                stage = self._view(buf, part.shape, src.dtype)
+                parallel_copy(stage, part, self.workers)
+                dst[idx].set(stage, stream=stream)
+                stream.synchronize()             # stage may be overwritten / freed now
+                self.chunks += 1
+            return dst

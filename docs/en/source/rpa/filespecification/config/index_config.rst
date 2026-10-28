@@ -613,16 +613,16 @@ that has no effect under the current settings.
 
   Copies of the store between host and device memory (every iteration with
   a host store; once, before the pairing kernel, with a device store) go in
-  chunks through one reusable page-locked (pinned) staging buffer of
-  256 MiB, or one frequency slice of the array when that is larger; this
-  buffer adds to the host memory in use. Host copies of 16 MiB or more (the
-  host side of each chunk, and the channel-pair strided copies of a host
-  store) run on up to 8 threads, on the GPU path only; a CPU run copies in
-  one thread, as before. All of this is automatic; there is no key to set.
-  If the pinned buffer cannot be allocated (for example under a
-  locked-memory limit, ``ulimit -l``), the copies take the unstaged path and
-  a debug-level log message says so. The copied values are the same either
-  way.
+  chunks through one reusable page-locked (pinned) staging buffer of at
+  most 256 MiB (a frequency slice larger than that is copied in parts);
+  this buffer adds to the host memory in use. Host copies of 16 MiB or more
+  (the host side of each chunk, and the channel-pair strided copies of a
+  host store) run on up to 8 threads (at most the CPUs the process may use),
+  on the GPU path only; a CPU run copies in one thread, as before. All of
+  this is automatic; there is no key to set. If the pinned buffer cannot be
+  allocated (for example under a locked-memory limit, ``ulimit -l``), that
+  copy takes the unstaged path and a debug-level log message says so; the
+  next copy tries again. The copied values are the same either way.
 
   Results: only where the store lives changes, not the arithmetic. At the
   same frequency batch (``longitudinal_bond_freq_batch`` pinned), the

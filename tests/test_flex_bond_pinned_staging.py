@@ -103,6 +103,20 @@ class TestParallelCopy(unittest.TestCase):
             t.join()
         self.assertEqual(errors, [])
 
+    def test_default_workers_follow_the_affinity_mask(self):
+        from hwave.solver import staging
+        with mock.patch.object(staging.os, "sched_getaffinity", create=True,
+                               return_value={0, 1, 2}), \
+                mock.patch.object(staging.os, "cpu_count", return_value=64):
+            self.assertEqual(staging.default_copy_workers(), 3)
+        with mock.patch.object(staging.os, "sched_getaffinity", create=True,
+                               return_value=set(range(32))):
+            self.assertEqual(staging.default_copy_workers(), staging.COPY_WORKERS)
+        with mock.patch.object(staging.os, "sched_getaffinity", create=True,
+                               side_effect=AttributeError), \
+                mock.patch.object(staging.os, "cpu_count", return_value=2):
+            self.assertEqual(staging.default_copy_workers(), 2)
+
     def test_shape_mismatch_refused(self):
         from hwave.solver import staging
         with self.assertRaises(ValueError):
@@ -177,14 +191,61 @@ class TestPinnedStager(unittest.TestCase):
             self.assertEqual(other.syncs, 4)
             np.testing.assert_array_equal(_host(back), x[::-1])
 
-    def test_a_row_larger_than_the_buffer_is_one_chunk(self):
+    def test_a_slice_larger_than_the_buffer_is_cut_within(self):
+        """One frequency slice (512 bytes) larger than the buffer (200): the
+        chunks run along the first axis whose sub-arrays fit (axis 2, rows
+        of 64 bytes, 3 per chunk) and the pinned buffer stays within
+        max_bytes; copies deferred to the stream, host side strided."""
         from hwave.solver import staging
         x = _rand((3, 2, 4, 4), 3)
+        with fake_cupy() as cp, _threaded_tiny_copies():
+            d = cp.asarray(x)
+            cp.deferred = True
+            st = staging.PinnedStager(cp, max_bytes=200, workers=2)
+            cp.reset()
+            big = np.zeros((3, 2, 8, 4), complex)
+            st.copy_to_host(d, big[:, :, 2:6])
+            np.testing.assert_array_equal(big[:, :, 2:6], x)
+            self.assertEqual(np.count_nonzero(big[:, :, :2]) + np.count_nonzero(big[:, :, 6:]), 0)
+            self.assertEqual([s for _d, s, _n in cp.transfers], [(3, 4), (1, 4)] * 6)
+            back = st.to_device(big[:, :, 2:6])
+            np.testing.assert_array_equal(_host(back), x)
+            self.assertEqual(st.chunks, 24)
+            self.assertEqual(cp.pinned_allocs, [3 * 4 * 16])
+            self.assertLessEqual(st.nbytes, 200)
+            # a buffer smaller than one element: element by element
+            st1 = staging.PinnedStager(cp, max_bytes=8)
+            np.testing.assert_array_equal(st1.to_host(d), x)
+            self.assertEqual(st1.chunks, x.size)
+            self.assertEqual(st1.nbytes, 16)
+
+    def test_concurrent_callers_share_one_stager(self):
+        """The stager's lock: threads moving different arrays through one
+        buffer (deferred copies, several chunks each) all get their bytes."""
+        import threading
+        from hwave.solver import staging
         with fake_cupy() as cp:
-            st = staging.PinnedStager(cp, max_bytes=16)
-            np.testing.assert_array_equal(st.to_host(cp.asarray(x)), x)
-            self.assertEqual(st.chunks, 3)
-            self.assertEqual(cp.pinned_allocs, [2 * 4 * 4 * 16])
+            xs = [_rand((6, 2, 4, 4), 30 + i) for i in range(6)]
+            ds = [cp.asarray(x) for x in xs]
+            cp.deferred = True
+            st = staging.PinnedStager(cp, max_bytes=2 * 2 * 4 * 4 * 16)
+            out, errors = [None] * 6, []
+
+            def run(i):
+                try:
+                    for _ in range(10):
+                        out[i] = (st.to_host(ds[i]), _host(st.to_device(xs[i])))
+                except Exception as exc:          # noqa: BLE001
+                    errors.append(exc)
+            ts = [threading.Thread(target=run, args=(i,)) for i in range(6)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            self.assertEqual(errors, [])
+            for x, (h, d) in zip(xs, out):
+                np.testing.assert_array_equal(h, x)
+                np.testing.assert_array_equal(d, x)
 
     def test_failed_pinned_allocation_takes_the_plain_path(self):
         from hwave.solver import staging
@@ -209,6 +270,17 @@ class TestPinnedStager(unittest.TestCase):
             self.assertEqual([(t, s) for t, s, _n in cp.transfers],
                              [("d2h", x.shape), ("d2h", x.shape), ("h2d", x.shape)])
             self.assertFalse(st.available)
+            # each call tries again (and says so)
+            with self.assertLogs("qlms.solver.staging", logging.DEBUG) as log:
+                st.copy_to_host(d, dst)
+                st.to_device(x)
+            self.assertEqual(sum("unstaged path" in r.getMessage() for r in log.records), 2)
+            # once pinned memory is available again, the next call is staged
+            cp.fail_pinned = False
+            np.testing.assert_array_equal(st.to_host(d), x)
+            self.assertTrue(st.available)
+            self.assertGreater(st.chunks, 0)
+            self.assertTrue(all(p for _d, p in cp.pinned_io))
 
 
 class TestStoreStaging(unittest.TestCase):
@@ -271,9 +343,10 @@ class TestStoreStaging(unittest.TestCase):
                     v = new.get_freq_batch_on("chibar", 1, 3, np)
                     self.assertTrue(np.shares_memory(v, new._arr("chibar")))
                     self.assertTrue(all(p for _d, p in cp.pinned_io))
-                    self.assertEqual(len(cp.pinned_allocs), 1)
-                    # bounded by max(staging_bytes, one frequency row of a batch)
-                    self.assertEqual(new.stager(cp).nbytes, max(2 * row_pair, B * B * row_pair))
+                    # bounded by staging_bytes, although a batch's frequency
+                    # slice (4 * row_pair) is larger
+                    self.assertLessEqual(new.stager(cp).nbytes, 2 * row_pair)
+                    self.assertTrue(all(n <= 2 * row_pair for n in cp.pinned_allocs))
                     # the cast / broadcast path is the plain assignment
                     new.put_freq_batch("W", 0, 1, 0.5)
                     self.assertTrue(np.all(new._arr("W")[0] == 0.5))
@@ -348,6 +421,8 @@ class TestCopyWorkersFollowTheBackend(unittest.TestCase):
             with fake_cupy():
                 _run("UV", {"gpu": True, "longitudinal_bond_store": "host"}, half=False)
         self.assertEqual(cpu, [(1, "host")])
+        # the store's own default is the single plain assignment
+        self.assertEqual(real(2, 1, 2, 1, ("W",)).copy_workers, 1)
         self.assertEqual(seen, [(None, "host")])
 
 
@@ -394,6 +469,26 @@ class TestRealCupyStreams(unittest.TestCase):
                 np.testing.assert_array_equal(host[i], x[i], err_msg="d2h %d" % i)
                 np.testing.assert_array_equal(strided[i, :, :, 4:20], x[i],
                                               err_msg="strided d2h %d" % i)
+        finally:
+            st.release()
+
+    def test_slices_larger_than_the_buffer_on_a_non_default_stream(self):
+        from hwave.solver import staging
+        cp = self.cp
+        n, rest = 5, (64, 16, 16)                        # 256 KiB per slice
+        row = int(np.prod(rest)) * 16
+        x = _rand((n,) + rest, 8)
+        st = staging.PinnedStager(cp, max_bytes=row // 3, workers=4)
+        try:
+            with mock.patch.object(staging, "PARALLEL_COPY_MIN_BYTES", 0), \
+                    cp.cuda.Stream(non_blocking=True) as s:
+                d = st.to_device(x[:, :, :, ::-1])
+                host = st.to_host(d)
+                s.synchronize()
+            self.assertLessEqual(st.nbytes, row // 3)
+            self.assertGreaterEqual(st.chunks, 2 * 3 * n)
+            for i in range(n):
+                np.testing.assert_array_equal(host[i], x[i, :, :, ::-1], err_msg="slice %d" % i)
         finally:
             st.release()
 

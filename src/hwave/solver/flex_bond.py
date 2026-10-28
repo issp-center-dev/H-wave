@@ -61,13 +61,15 @@ class BondBlockStore:
     and leave for the device (``get_pair_full`` / :meth:`get_freq_batch_on`),
     in chunks through one pinned staging buffer of at most
     ``staging_bytes`` (default :data:`staging.PINNED_STAGING_BYTES`), and the
-    pair-strided host copies are split over ``copy_workers`` threads. A
+    pair-strided host copies are split over ``copy_workers`` threads (default
+    1, the plain single assignment; None picks
+    :func:`staging.default_copy_workers`, as the GPU solve does). A
     DEVICE store leaves the device (:meth:`to_host`) through the same
     buffer. Only the route of the bytes changes, never a byte.
     """
 
     def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False, xp=np,
-                 staging_bytes=None, copy_workers=None):
+                 staging_bytes=None, copy_workers=1):
         names = tuple(names)
         if len(set(names)) != len(names):
             raise ValueError("BondBlockStore: duplicate array names {}".format(names))
