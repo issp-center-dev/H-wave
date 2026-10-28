@@ -1990,8 +1990,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   比べて大きくなります。\ ``frequency = "dynamic"``\ は全振動数を必要とします
   （\ :ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
 - スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は、A100 GPU
-  上で\ ``gpu = false``\ と照合済みです。SU(2) 模型の全スペクトル、複素 SOC 模型の
-  Arnoldi 法と反復法の解は、固有値が\ :math:`10^{-10}`\ で一致します
+  上で\ ``gpu = false``\ と照合済みです。SU(2) 模型の全スペクトルと複素 SOC 模型の
+  Arnoldi 法の解は固有値が\ :math:`10^{-10}`\ で一致し、反復法の解は収束時の残差の
+  範囲で一致します
   （\ ``tests/test_sc_spin_orbital_gpu.py``\ 。\ ``"dynamic"``\ については
   \ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
@@ -2262,8 +2263,8 @@ GPU
 共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
 ます。ホストとデバイスのカーネルの作用を\ :math:`10^{-12}`\ で照合し、
 主要固有値も比べます（この確認には CuPy が必要です）。A100 GPU 上で、
-``gpu = true``\ の全スペクトル、Arnoldi 法、反復法の解は\ ``gpu = false``\ と固有値が
-:math:`10^{-10}`\ で一致します。主要固有値が縮退している場合、ギャップは部分空間
+``gpu = true``\ の全スペクトルと Arnoldi 法の解は\ ``gpu = false``\ と固有値が
+:math:`10^{-10}`\ で一致し、反復法の解は収束時の残差の範囲で一致します。主要固有値が縮退している場合、ギャップは部分空間
 として比べます（\ ``tests/test_sc_spin_orbital_gpu.py``\ ）。
 
 検証
