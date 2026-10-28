@@ -611,6 +611,15 @@ that has no effect under the current settings.
   the error. An out-of-memory error during an iteration is not retried;
   its message suggests ``"host"`` when the store is on the device.
 
+  Copies of the store between host and device memory (every iteration with
+  a host store; once, before the pairing kernel, with a device store) go in
+  chunks through one reusable page-locked (pinned) staging buffer of
+  256 MiB, or one frequency slice of the array when that is larger. The
+  host side of each chunk, and the pair-strided copies of a host store, run
+  on up to 8 threads. If the pinned buffer cannot be allocated, the copies
+  take the unstaged path (logged at debug level). The copied values are the
+  same either way.
+
   Results: only where the store lives changes, not the arithmetic. At the
   same frequency batch (``longitudinal_bond_freq_batch`` pinned), the
   device store gives the results of the host store, bit for bit or, when

@@ -276,7 +276,7 @@ class PairVertexAccumulator:
                                   None, guard_freqs, ls=ls, guard_only=guard_only)
         try:
             for l0, l1, ls in self._batches():
-                cb = _bk.to_device(source.get_freq_batch("chibar", l0, l1), xp)
+                cb = _fb.freq_batch_on(source, "chibar", l0, l1, xp)
                 if hgd is None:
                     chi_s_b, _ = _fb._dress(cb, S, "spin", l0, self.nmat, self.shape, cond_tol,
                                             None, guard_freqs)
@@ -312,7 +312,7 @@ class PairVertexAccumulator:
         V = self.dev.S if channel == "spin" else self.dev.C
         try:
             for l0, l1, ls in self._batches():
-                chi_b = _bk.to_device(source.get_freq_batch(name, l0, l1), self.xp)
+                chi_b = _fb.freq_batch_on(source, name, l0, l1, self.xp)
                 # finiteness of the RAW member batch, before the V @ chi_b @ V
                 # contraction (issue #205): the sidecar member() returns a
                 # memmap and skips the whole-array scan, so the per-batch scan

@@ -12,6 +12,7 @@ from . import bubble as _bubble
 from . import second_order as _so
 from . import threaded as _threaded
 from . import half_grid as _hg
+from . import staging as _staging
 
 
 class BondBlockStore:
@@ -54,9 +55,19 @@ class BondBlockStore:
     device store the dressing's frequency batch is therefore a VIEW of the
     slot, exactly as on the CPU path, and the per-iteration host <-> device
     copies of the store disappear. ``detach`` returns an array of ``xp``.
+
+    A HOST store on the GPU path (issue #275, part 2) moves its bytes
+    through :mod:`hwave.solver.staging`: device blocks and batches arrive,
+    and leave for the device (``get_pair_full`` / :meth:`get_freq_batch_on`),
+    in chunks through one pinned staging buffer of at most
+    ``staging_bytes`` (default :data:`staging.PINNED_STAGING_BYTES`), and the
+    pair-strided host copies are split over ``copy_workers`` threads. A
+    DEVICE store leaves the device (:meth:`to_host`) through the same
+    buffer. Only the route of the bytes changes, never a byte.
     """
 
-    def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False, xp=np):
+    def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False, xp=np,
+                 staging_bytes=None, copy_workers=None):
         names = tuple(names)
         if len(set(names)) != len(names):
             raise ValueError("BondBlockStore: duplicate array names {}".format(names))
@@ -75,6 +86,9 @@ class BondBlockStore:
         self.xp = np if xp is None else xp
         self._arrays = {}
         self._released_slots = set()
+        self._staging_bytes = staging_bytes
+        self.copy_workers = copy_workers
+        self._stager = None
         try:
             for name in names:
                 self._arrays[name] = self.xp.zeros((self.nslices, self.nvol, self.ND, self.ND),
@@ -116,10 +130,36 @@ class BondBlockStore:
             raise KeyError("BondBlockStore: slot {!r} was released".format(name))
         return self._arrays[name]
 
+    def stager(self, xp_dev):
+        """The store's pinned stager for the device module ``xp_dev``
+        (created on first use, dropped by :meth:`release`)."""
+        if self._stager is None or self._stager.xp is not xp_dev:
+            if self._stager is not None:
+                self._stager.release()
+            self._stager = _staging.PinnedStager(xp_dev, self._staging_bytes,
+                                                 self.copy_workers)
+        return self._stager
+
+    def _put(self, dst, x):
+        # dst: a view of a slot; x: a block or batch of either module
+        if self.xp is not np:
+            dst[...] = self._to_store(x)
+            return
+        xp_x = _bk.array_module_of(x)
+        if tuple(getattr(x, "shape", ())) != tuple(dst.shape) or \
+                getattr(x, "dtype", None) != dst.dtype:
+            dst[...] = _bk.to_host(x)      # broadcasting / casting: the plain path
+        elif xp_x is np:
+            _staging.parallel_copy(dst, x, self.copy_workers)
+        else:
+            # a device block into a host store: chunked through the pinned
+            # buffer straight into the (strided) slot view
+            self.stager(xp_x).copy_to_host(x, dst)
+
     def put_pair(self, name, alpha, beta, block):
         a = self._arr(name)
         nd = self.nd
-        a[:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd] = self._to_store(block)
+        self._put(a[:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd], block)
 
     def get_pair(self, name, alpha, beta):
         a = self._arr(name)
@@ -143,11 +183,39 @@ class BondBlockStore:
         the mirror run on the store's module (a device kernel on a device
         store); only a module change crosses host <-> device."""
         ab = self.get_pair(name, alpha, beta)
+        cross = not (xp is None or xp is self.xp)
         if not self.half_grid:
-            full = self.xp.ascontiguousarray(ab)
+            if self.xp is not np:
+                full = self.xp.ascontiguousarray(ab)
+            elif cross:
+                # host store -> device: gathered chunk by chunk into the
+                # pinned buffer, no host temporary of the whole block
+                return self.stager(xp).to_device(ab)
+            else:
+                full = _staging.parallel_copy(np.empty(ab.shape, dtype=ab.dtype), ab,
+                                              self.copy_workers)
         else:
             full = _hg.expand(ab, self.nmat, ba=self.get_pair(name, beta, alpha))
-        return full if (xp is None or xp is self.xp) else _bk.to_device(full, xp)
+        if not cross:
+            return full
+        return self._cross(full, xp)
+
+    def _cross(self, x, xp):
+        """``x`` (of the store's module) on module ``xp`` through the stager."""
+        if self.xp is np:
+            return self.stager(xp).to_device(x)
+        if xp is np:
+            return self.stager(self.xp).to_host(x)
+        return _bk.to_device(x, xp)
+
+    def get_freq_batch_on(self, name, l0, l1, xp):
+        """:meth:`get_freq_batch` on module ``xp``: the view itself when
+        ``xp`` is the store's module (on a device store the dressing then
+        works on the slot, as on the CPU path), otherwise a staged copy."""
+        batch = self.get_freq_batch(name, l0, l1)
+        if xp is None or xp is self.xp:
+            return batch
+        return self._cross(batch, xp)
 
     def grid_index(self, s0, s1):
         """The grid index ``l`` of the stored slices ``s0 ... s1 - 1``."""
@@ -171,7 +239,7 @@ class BondBlockStore:
         return _hg.expand(a, self.nmat, out=out, chunk=chunk)
 
     def put_freq_batch(self, name, l0, l1, batch):
-        self._arr(name)[l0:l1] = self._to_store(batch)
+        self._put(self._arr(name)[l0:l1], batch)
 
     def get_freq_batch(self, name, l0, l1):
         return self._arr(name)[l0:l1]
@@ -181,11 +249,17 @@ class BondBlockStore:
         SCF the in-process pairing reads the store only to build its vertex
         and the kernel blocks, and the device memory is better spent on the
         pairing kernel. Slot by slot, so at most one slot is held twice; the
-        store's module becomes numpy. The identity for a host store."""
+        store's module becomes numpy. The identity for a host store.
+
+        Each slot comes over in chunks through the store's pinned staging
+        buffer straight into its new host array (issue #275, part 2: one
+        ``asnumpy`` of a 10 GiB slot ran far below the bus rate); without a
+        pinned buffer it is the plain ``asnumpy``."""
         if self.xp is np:
             return
+        st = self.stager(self.xp)
         for name in list(self._arrays):
-            self._arrays[name] = _bk.to_host(self._arrays[name])
+            self._arrays[name] = st.to_host(self._arrays[name])
         self.xp = np
 
     def _refuse_alias(self, name, what):
@@ -218,10 +292,23 @@ class BondBlockStore:
     def release(self):
         self._arrays.clear()
         self._released = True
+        if self._stager is not None:
+            self._stager.release()
+            self._stager = None
 
     @property
     def released(self):
         return self._released
+
+
+def freq_batch_on(source, name, l0, l1, xp):
+    """``source.get_freq_batch(name, l0, l1)`` on module ``xp``: through
+    :meth:`BondBlockStore.get_freq_batch_on` (staged, or the view itself on
+    the store's module) when the source has it, else ``to_device``."""
+    get_on = getattr(source, "get_freq_batch_on", None)
+    if get_on is not None:
+        return get_on(name, l0, l1, xp)
+    return _bk.to_device(source.get_freq_batch(name, l0, l1), xp)
 
 
 class BondDeviceContext:
@@ -733,7 +820,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         # 1 H2D from a host store; on a device store (issue #275) the identity:
         # cb is then a VIEW of the slot that the W batch below overwrites
         # (with "W" aliased onto "chibar"), as on the CPU path
-        cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)
+        cb = freq_batch_on(store, "chibar", l0, l1, xp)
         if mirror_guard:
             # time reversal is broken: the mirrored slices l' = nmat - l of
             # this batch (l = 0 and nmat/2 are their own mirrors and are not

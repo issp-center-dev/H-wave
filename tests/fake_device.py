@@ -12,7 +12,8 @@ kernels are bitwise comparable; what the fake adds is the BOUNDARY:
 * every host <-> device copy is recorded in :attr:`FakeCupy.transfers`
   (``asarray`` / ``array`` / ``ascontiguousarray`` of a host array, and a
   host array assigned into a device array, are host-to-device;
-  ``asnumpy`` is device-to-host);
+  ``asnumpy`` is device-to-host; ``DevArray.get`` / ``DevArray.set``, the
+  chunk copies of the pinned staging, are recorded the same way);
 * a host ``ndarray`` (of at least one dimension) mixed into a ufunc or a
   module function with device arrays raises ``TypeError``, as cupy does.
 
@@ -48,8 +49,42 @@ class DevArray(np.ndarray):
             _MODULE.record("h2d", value)
         np.ndarray.__setitem__(self, key, value)
 
+    # cupy.ndarray.get / set: what the pinned staging (hwave.solver.staging)
+    # calls, chunk by chunk
+    def get(self, stream=None, order="C", out=None):
+        _MODULE.record("d2h", self)
+        if out is None:
+            return np.array(self.view(np.ndarray), copy=True)
+        if isinstance(out, DevArray) or tuple(out.shape) != tuple(self.shape) or \
+                out.dtype != self.dtype or not out.flags.c_contiguous:
+            raise ValueError("fake cupy: get(out=) needs a C-contiguous host array of the "
+                             "same shape and dtype")
+        _MODULE.pinned_io.append(("d2h", _is_pinned(out)))
+        np.copyto(out, self.view(np.ndarray))
+        return out
+
+    def set(self, arr, stream=None):
+        if isinstance(arr, DevArray) or tuple(arr.shape) != tuple(self.shape) or \
+                arr.dtype != self.dtype:
+            raise ValueError("fake cupy: set() needs a host array of the same shape and dtype")
+        if not self.flags.c_contiguous:
+            raise RuntimeError("fake cupy: cannot set to a non-contiguous array")
+        _MODULE.record("h2d", arr)
+        _MODULE.pinned_io.append(("h2d", _is_pinned(arr)))
+        np.ndarray.__setitem__(self, Ellipsis, arr)
+
 
 DevArray.__module__ = "cupy._fake_device"
+
+
+class _PinnedMemory(bytearray):
+    """The fake ``cupy.cuda.alloc_pinned_memory`` result (a buffer)."""
+
+
+def _is_pinned(x):
+    while isinstance(x, np.ndarray):
+        x = x.base
+    return isinstance(x, _PinnedMemory)
 
 
 def _is_host(x):
@@ -139,11 +174,33 @@ class FakeCupy(_Namespace):
         self.fail_zeros = 0
         self.fail_zeros_min = 0
         self.zeros_calls = []
+        #: sizes of the pinned allocations; ``fail_pinned`` makes them raise
+        self.pinned_allocs = []
+        self.fail_pinned = False
+        self.pinned_frees = 0
+        #: (direction, staged-through-pinned?) of every get(out=) / set()
+        self.pinned_io = []
         runtime = types.SimpleNamespace(getDeviceCount=lambda: 1,
                                         memGetInfo=lambda: (self.free, 2 * self.free))
         memory = types.SimpleNamespace(OutOfMemoryError=_OutOfMemoryError)
-        self.cuda = types.SimpleNamespace(runtime=runtime, memory=memory)
+        self.cuda = types.SimpleNamespace(runtime=runtime, memory=memory,
+                                          alloc_pinned_memory=self._alloc_pinned)
         self._pool = _Pool(self)
+
+    def _alloc_pinned(self, nbytes):
+        if self.fail_pinned:
+            raise RuntimeError("fake cupy: cudaErrorMemoryAllocation (pinned {} bytes)"
+                               .format(nbytes))
+        self.pinned_allocs.append(int(nbytes))
+        return _PinnedMemory(int(nbytes))
+
+    def get_default_pinned_memory_pool(self):
+        mod = self
+
+        class _PinnedPool:
+            def free_all_blocks(self):
+                mod.pinned_frees += 1
+        return _PinnedPool()
 
     def get_default_memory_pool(self):
         return self._pool
