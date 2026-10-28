@@ -11,6 +11,7 @@ from . import matsubara as _ms
 from . import bubble as _bubble
 from . import second_order as _so
 from . import threaded as _threaded
+from . import half_grid as _hg
 
 
 class BondBlockStore:
@@ -30,9 +31,20 @@ class BondBlockStore:
     over the ``chibar`` batch it has just consumed (issue #222), with
     ``aliases={"W": "chibar"}``. An alias cannot be detached or released
     on its own.
+
+    ``half_grid`` (issue #223): store only the non-negative half of the
+    uniform bosonic grid, ``nslices = nmat // 2 + 1`` slices per array, slice
+    ``h`` holding the grid index ``l(h) = (h + nmat // 2) mod nmat``
+    (:mod:`hwave.solver.half_grid`). ``nmat`` keeps its meaning (the
+    solver's full grid); frequency-batch access is in SLICE index (``h``
+    under ``half_grid``, ``l`` otherwise; :meth:`grid_index` names the
+    ``l`` of each slice), and ``get_pair`` is a view on the stored slices.
+    :meth:`get_pair_full` and :meth:`expand_full` rebuild the full grid
+    from the symmetry ``X(q, l) = X(q, nmat - l)^dagger``. On the full grid
+    every one of them is the identity it replaces.
     """
 
-    def __init__(self, nmat, nvol, ND, nd, names, aliases=None):
+    def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False):
         names = tuple(names)
         if len(set(names)) != len(names):
             raise ValueError("BondBlockStore: duplicate array names {}".format(names))
@@ -46,11 +58,13 @@ class BondBlockStore:
             raise ValueError("BondBlockStore: ND={} is not a multiple of nd={}".format(ND, nd))
         self.nmat, self.nvol, self.ND, self.nd = int(nmat), int(nvol), int(ND), int(nd)
         self.B = self.ND // self.nd
+        self.half_grid = bool(half_grid)
+        self.nslices = _hg.nslices(self.nmat) if self.half_grid else self.nmat
         self._arrays = {}
         self._released_slots = set()
         try:
             for name in names:
-                self._arrays[name] = np.zeros((self.nmat, self.nvol, self.ND, self.ND),
+                self._arrays[name] = np.zeros((self.nslices, self.nvol, self.ND, self.ND),
                                               dtype=np.complex128)
         except MemoryError:
             self._arrays.clear()
@@ -81,6 +95,46 @@ class BondBlockStore:
         a = self._arr(name)
         nd = self.nd
         return a[:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd]
+
+    def put_pair_fullgrid(self, name, alpha, beta, block_full):
+        """Store a FULL-grid ``(nmat, nvol, nd, nd)`` pair block: its slices
+        ``l(h)`` under ``half_grid``, the whole block otherwise."""
+        if self.half_grid:
+            block_full = _hg.half_from_full(block_full, self.nmat)
+        self.put_pair(name, alpha, beta, block_full)
+
+    def get_pair_full(self, name, alpha, beta, xp=None):
+        """The pair block ``(alpha, beta)`` on the FULL grid as a contiguous
+        ``(nmat, nvol, nd, nd)`` array of module ``xp`` (default: the
+        store's own). Under ``half_grid`` the slices ``l in (0, nmat/2)``
+        are the conjugate transposes of the stored slices of the transposed
+        pair ``(beta, alpha)``; on the full grid this is exactly
+        ``to_device(ascontiguousarray(get_pair(...)), xp)``."""
+        ab = self.get_pair(name, alpha, beta)
+        if not self.half_grid:
+            if xp is None:
+                return _bk.array_module_of(ab).ascontiguousarray(ab)
+            return _bk.to_device(np.ascontiguousarray(ab), xp)
+        full = _hg.expand(ab, self.nmat, ba=self.get_pair(name, beta, alpha))
+        return full if xp is None else _bk.to_device(full, xp)
+
+    def grid_index(self, s0, s1):
+        """The grid index ``l`` of the stored slices ``s0 ... s1 - 1``."""
+        if self.half_grid:
+            return _hg.grid_index(self.nmat, s0, s1)
+        return np.arange(int(s0), int(s1), dtype=np.int64)
+
+    def expand_full(self, name, out=None, chunk=None):
+        """The whole array ``name`` on the full grid ``(nmat, nvol, ND, ND)``
+        (``out`` may be a memory map); the stored array itself on the full
+        grid when ``out`` is None."""
+        a = self._arr(name)
+        if not self.half_grid:
+            if out is None:
+                return a
+            out[...] = a
+            return out
+        return _hg.expand(a, self.nmat, out=out, chunk=chunk)
 
     def put_freq_batch(self, name, l0, l1, batch):
         self._arr(name)[l0:l1] = batch
@@ -223,9 +277,22 @@ def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, wo
                 "to be on that same module (transfer it once per solve, e.g. through "
                 "BondDeviceContext(green0_tail=...))".format(
                     getattr(xp_t, "__name__", xp_t), getattr(xp_g, "__name__", xp_g)))
+    half = bool(getattr(store, "half_grid", False))
     for (alpha, beta_), block in _bubble._iter_bond_dynamic(
             green_scf, green0_tail, beta, view, spatial_shape=tuple(spatial_shape),
             workers=workers):
+        if half:
+            # issue #223: only the stored slices l(h) cross to the host (on
+            # the device the selection runs before the transfer); the whole
+            # block is checked for finiteness first, so a non-finite slice
+            # the half grid would drop is still refused
+            xp_b = _bk.array_module_of(block)
+            if not bool(xp_b.all(xp_b.isfinite(block))):
+                raise NonFiniteError("non-finite bond bubble block ({}, {})".format(alpha, beta_))
+            block = _bk.to_host(_hg.half_from_full(block, store.nmat))
+            store.put_pair("chibar", alpha, beta_, block)
+            del block
+            continue
         block = _bk.to_host(block)
         if not np.all(np.isfinite(block)):
             raise NonFiniteError("non-finite bond bubble block ({}, {})".format(alpha, beta_))
@@ -258,9 +325,10 @@ def _sandwich(left, x, right, workers):
 
 def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_freqs="all",
            guard_policy="refuse", violations=None, guard_method="auto", stats=None, workers=1,
-           guard_exact="always"):
+           guard_exact="always", ls=None, guard_only=False):
     try:
         chi_b, cond = _bc.dress_batch(cb, V, channel, l0=l0, nmat=nmat, spatial_shape=spatial_shape,
+                                      ls=ls, guard_only=guard_only,
                                       cond_tol=cond_tol, guard_freqs=guard_freqs,
                                       guard_policy=guard_policy, violations=violations,
                                       # the warnings of a tolerated violation do not
@@ -280,6 +348,8 @@ def _dress(cb, V, channel, l0, nmat, spatial_shape, cond_tol, iteration, guard_f
                 ratio=exc.ratio, pole=exc.pole, smin=exc.smin, smax=exc.smax,
                 cond_tol=exc.cond_tol) from exc
         raise ValueError(message) from exc
+    if chi_b is None:              # guard_only: the diagnostics alone
+        return chi_b, cond
     xp = _bk.array_module_of(chi_b)
     if not bool(xp.all(xp.isfinite(chi_b))):
         raise _NonFiniteError("non-finite dressed {} channel in the frequency batch starting "
@@ -360,6 +430,13 @@ class DressResult:
     #: upper end (``None`` when that end is an exactly decomposed batch's)
     cond_bracket_s: tuple = None
     cond_bracket_c: tuple = None
+    #: half grid only (issue #223): whether the mirrored slices were guarded
+    #: on their own in this map (``False`` when the time-reversal relation of
+    #: :mod:`hwave.solver.half_grid` held, so that every mirrored score is a
+    #: stored one), and the relation's measured relative deviation; ``None``
+    #: on the full grid
+    mirror_guarded: bool = None
+    time_reversal_deviation: float = None
 
 
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
@@ -477,22 +554,124 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     collapse_c = np.empty_like(collapse0)
     static_s = np.zeros((nvol, ND, ND), dtype=np.complex128)
     static_c = np.zeros((nvol, ND, ND), dtype=np.complex128)
-    l_static = nmat // 2
+    # issue #223: under the store's half grid the batches run over the
+    # stored slices h = 0 ... nmat/2 (the static slice is h = 0), the
+    # dressing reports the true grid index l(h), and the collapses are
+    # mirrored onto the full grid before return
+    half = bool(getattr(store, "half_grid", False))
+    n_slices = store.nslices if half else nmat
+    l_static = 0 if half else nmat // 2
+    mirror_guard, trs_dev = None, None
+    if half:
+        # the mirrored slices' own conditioning (half_grid, relations (2)-(3)).
+        # They are skipped only where that is provably exact: the guard
+        # refuses on every violation ("refuse" policy) over every frequency
+        # ("all"), and time reversal makes every mirrored score a stored one
+        # (checked on the stored chibar BEFORE any W batch overwrites it).
+        # Under "warn" and under the "static" residual the mirror is always
+        # guarded on its own.
+        trs = _hg.time_reversal_check(store.get_freq_batch("chibar", 0, n_slices), S, C,
+                                      spatial_shape)
+        trs_dev = trs["deviation"]
+        mirror_guard = not (trs["holds"] and guard_freqs == "all"
+                            and guard_policy == "refuse" and cond_tol is not None)
+        margin = _hg.decision_margin(trs, ND, cond_tol)
+        mq = _hg.minus_q_index(spatial_shape)
     cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
     # accumulated over both channels and every frequency batch (issue #197)
     stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
-    for l0 in range(0, nmat, nb):
-        l1 = min(nmat, l0 + nb)
+
+    def _mirror(cb, ls, V_, ch, cmin):
+        # the dressing diagnostics of the mirrored slices l' = nmat - l of a
+        # half-grid batch (l = 0 and nmat/2 are their own mirrors: skipped)
+        sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
+        if not sel.size:
+            return
+        cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
+        ls_m = nmat - ls[sel]
+        _chi, cm = _dress(cb_m, V_, ch, int(ls_m[0]), nmat, spatial_shape, cond_tol, iteration,
+                          guard_freqs, guard_policy, violations, guard_method, None, workers,
+                          guard_exact, ls=ls_m, guard_only=True)
+        del _chi, cb_m
+        if cmin is not None:
+            cmin.add(cm)
+
+    def _near(score):
+        # within the Weyl margin of cond_tol (half_grid.decision_margin): the
+        # mirrored partner's score could fall on the other side
+        return score is not None and abs(score - cond_tol) <= margin * cond_tol
+
+    def _stored(cb, ls, l_first, V_, ch, cmin):
+        # the stored slices of a half-grid batch; under the skip, the mirror
+        # is guarded on its own only for a batch whose minimum is within the
+        # margin of cond_tol (if the minimum clears it, every block does)
+        if mirror_guard:
+            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
+                            guard_freqs, guard_policy, violations, guard_method, stats,
+                            workers, guard_exact, ls=ls)
+            cmin.add(c)
+            return chi
+        try:
+            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
+                            guard_freqs, guard_policy, violations, guard_method, stats,
+                            workers, guard_exact, ls=ls)
+        except _bc.BondConditioningError as exc:
+            if exc.l is None or exc.l in (0, nmat // 2):
+                raise
+            if _near(exc.worst):
+                # the mirror's own guard decides: it refuses at the mirrored
+                # location if that block fails too (the full grid meets nu < 0
+                # first); otherwise the stored refusal stands
+                _mirror(cb, ls, V_, ch, None)
+                raise
+            # the mirror of the stored violating block, (-q, nmat - l), has
+            # the same score, so the refusal is reported at that mirror. The
+            # decision is the full grid's; with several violating blocks the
+            # location the full grid reports first can differ
+            new = _bc.relocate_refusal(exc, nmat - exc.l, int(mq[exc.iq]), nmat, spatial_shape)
+            if new is None:
+                raise
+            raise new from exc
+        cmin.add(c)
+        low = c.low if isinstance(c, _bc.GuardBracket) else c
+        if _near(low):
+            _mirror(cb, ls, V_, ch, cmin)
+        return chi
+
+    for l0 in range(0, n_slices, nb):
+        l1 = min(n_slices, l0 + nb)
+        if half:
+            ls = store.grid_index(l0, l1)
+            rows, l_first = ls, int(ls[0])
+            where = _hg.describe_slices(nmat, l0, l1)
+        else:
+            ls, rows, l_first = None, slice(l0, l1), l0
+            where = "[{}, {})".format(l0, l1)
         cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
-        collapse0[l0:l1] = _bk.to_host(cb[:, :, :nd, :nd])
-        chi_s_b, cs = _dress(cb, S, "spin", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
-                             guard_exact)
-        cond_s.add(cs)
-        collapse_s[l0:l1] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
+        if mirror_guard:
+            # time reversal is broken: the mirrored slices l' = nmat - l of
+            # this batch (l = 0 and nmat/2 are their own mirrors and are not
+            # repeated) go through the same dressing diagnostics as on the
+            # full grid -- refusals, warn records, the exact-singular and the
+            # "static" residual checks name the TRUE l'. Their scores join
+            # cond_min (the minimum over the whole grid), not the guard
+            # statistics, which count the stored slices. The temporaries
+            # (one mirrored batch and the solve's) are below the stored
+            # dressing's own, which runs after them.
+            for V_, ch, cmin in ((S, "spin", cond_s), (C, "charge", cond_c)):
+                _mirror(cb, ls, V_, ch, cmin)
+        collapse0[rows] = _bk.to_host(cb[:, :, :nd, :nd])
+        if half:
+            chi_s_b = _stored(cb, ls, l_first, S, "spin", cond_s)
+        else:
+            chi_s_b, cs = _dress(cb, S, "spin", l_first, nmat, spatial_shape, cond_tol,
+                                 iteration, guard_freqs, guard_policy, violations, guard_method,
+                                 stats, workers, guard_exact, ls=ls)
+            cond_s.add(cs)
+        collapse_s[rows] = _bk.to_host(chi_s_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
         if output_full:
@@ -500,11 +679,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         chi_s_b -= cb
         W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
-        chi_c_b, cc = _dress(cb, C, "charge", l0, nmat, spatial_shape, cond_tol, iteration,
-                             guard_freqs, guard_policy, violations, guard_method, stats, workers,
-                             guard_exact)
-        cond_c.add(cc)
-        collapse_c[l0:l1] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
+        if half:
+            chi_c_b = _stored(cb, ls, l_first, C, "charge", cond_c)
+        else:
+            chi_c_b, cc = _dress(cb, C, "charge", l_first, nmat, spatial_shape, cond_tol,
+                                 iteration, guard_freqs, guard_policy, violations, guard_method,
+                                 stats, workers, guard_exact, ls=ls)
+            cond_c.add(cc)
+        collapse_c[rows] = _bk.to_host(chi_c_b[:, :, :nd, :nd])
         if l0 <= l_static < l1:
             static_c[...] = _bk.to_host(chi_c_b[l_static - l0])
         if output_full:
@@ -523,7 +705,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                 del T
             if not bool(xp.all(xp.isfinite(W_b))):
                 raise _NonFiniteError("non-finite effective interaction W in the frequency "
-                                      "batch [{}, {}){}".format(l0, l1, _at(iteration)))
+                                      "batch {}{}".format(where, _at(iteration)))
             store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
             del W_b, cb
             continue
@@ -545,11 +727,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         del A
         if not bool(xp.all(xp.isfinite(W_b))):
             raise _NonFiniteError("non-finite effective interaction W in the frequency batch "
-                                  "[{}, {}){}".format(l0, l1, _at(iteration)))
+                                  "{}{}".format(where, _at(iteration)))
         # written ONCE, last: when "W" aliases "chibar" (issue #222) this
         # overwrites the batch just consumed, and nothing above reads it again
         store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
         del W_b, cb
+    if half:
+        for coll in (collapse0, collapse_s, collapse_c):
+            _hg.fill_mirror(coll, nmat)
     cond_min_s, bracket_s = cond_s.result()
     cond_min_c, bracket_c = cond_c.result()
     return DressResult(collapse0=collapse0, collapse_s=collapse_s, collapse_c=collapse_c,
@@ -560,7 +745,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                        guard_residual_violations=sum(1 for v in violations
                                                      if v["kind"] == "residual"),
                        guard_exact_blocks=int(stats["guard_exact_blocks"]),
-                       guard_blocks=int(stats["guard_blocks"]))
+                       guard_blocks=int(stats["guard_blocks"]),
+                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev)
 
 
 class _CondMin:
@@ -655,6 +841,7 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=
         axes=(1, 2, 3), workers=workers).reshape(nmat, nx, ny, nz, P, P)
     Sigma_rt = xp.zeros((nmat, nvol, P, P), dtype=xp.complex128)
     axes = (1, 2, 3)
+    get_full = getattr(store, "get_pair_full", None)
     for alpha in range(B):
         Ra = np.asarray(view.delta_r[alpha], dtype=int)
         for bt in range(B):
@@ -664,7 +851,13 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=
                 G_sh = G_rt.reshape(nmat, nvol, P, P)
             else:
                 G_sh = xp.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
-            blk = _bk.to_device(np.ascontiguousarray(store.get_pair("W", alpha, bt)), xp)   # 1 H2D per pair
+            if get_full is None:
+                blk = _bk.to_device(np.ascontiguousarray(store.get_pair("W", alpha, bt)), xp)
+            else:
+                # 1 H2D per pair; under the store's half grid (issue #223) the
+                # full-grid block is rebuilt from the stored slices of (alpha,
+                # beta) and the mirror of those of (beta, alpha)
+                blk = get_full("W", alpha, bt, xp=xp)
             blk_qt = _ms.boson_to_tau(blk.reshape(nmat, nvol * nd * nd), axis=0)
             del blk
             Wab_rt = _bk.spatial_ifftn(blk_qt.reshape(nmat, nx, ny, nz, nd * nd),
@@ -724,7 +917,7 @@ def transport_ops(B, nmat, nvol, norb):
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
                          guard_freqs="all", guard_enabled=True, w_in_place=False,
-                         w2_triples=0):
+                         w2_triples=0, half_grid=False):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -817,13 +1010,26 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     the finished channel-pair block on its way into the store, so the
     host ``bubble`` row becomes ``C``. The first, host-only preflight
     call runs before the backend is known and keeps the CPU expression,
-    which is the conservative reading of the two."""
+    which is the conservative reading of the two.
+
+    ``half_grid`` (issue #223): the block store keeps ``nslices = nmat // 2
+    + 1`` frequency slices instead of ``nmat``, so the store rows
+    (``chibar_W``, ``chi_sc_w``) and the dressing operation count scale by
+    ``nslices / nmat`` and the batch is chosen in ``[1, nslices]``. The
+    transport still rebuilds one full-grid pair block at a time (its row is
+    unchanged), and with ``output_full`` the publish step expands the two
+    dynamic channels to the full grid one member at a time, so
+    ``post_scf`` holds ``2 U - U_store`` (both full members, plus the half
+    of the second while it is expanded) over the persistent rows."""
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
     P = norb * norb
     ND = B * P
     U = nmat * nvol * ND * ND * it
+    # the frequency slices the block store keeps (issue #223)
+    nslices = (nmat // 2 + 1) if half_grid else nmat
+    U_store = nslices * nvol * ND * ND * it
     G = nmat * nvol * P * it
     C = nmat * nvol * P * P * it
     S = nvol * ND * ND * it
@@ -833,8 +1039,8 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     # slices and the Green-function copies; re-deriving it is a follow-up)
     V = 5 * S
     persistent_rows = {
-        "chibar_W": (1 if w_in_place else 2) * U,
-        "chi_sc_w": 2 * U if output_full else 0,
+        "chibar_W": (1 if w_in_place else 2) * U_store,
+        "chi_sc_w": 2 * U_store if output_full else 0,
         "vertices_static": V,
         "state": G + H,
         "seed_envelope": (2 * G + H) if split_seed else 0,
@@ -872,7 +1078,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             # anderson: residual + output (the history and work stacks are
             # persistent); linear: the difference, the scaled step, the new pair
             "mixing": 4 * G if mixing == "anderson" else 3 * G + H,
-            "post_scf": G + (U if output_full else C),
+            "post_scf": G + ((2 * U - U_store if half_grid else U) if output_full else C),
         }
 
     def _peak(nb):
@@ -892,6 +1098,8 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
         if not 1 <= nb <= nmat:
             raise ValueError("longitudinal_bond_freq_batch must be in [1, Nmat={}], got {}"
                              .format(nmat, nb))
+        # a batch is never longer than the stored frequency axis
+        nb = min(nb, nslices)
         if _peak(nb) > cap_bytes:
             raise ValueError(
                 "[mode.param] longitudinal_bond_freq_batch = {} gives an estimated peak of "
@@ -911,7 +1119,7 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
                 "longitudinal_bond_output_full, lower the Anderson depth, or raise the cap."
                 .format(_peak(1) / _GIB, cap_bytes / _GIB, B, ND, nvol, nmat, _table(1)))
         nb = 1
-        for cand in range(nmat, 0, -1):
+        for cand in range(nslices, 0, -1):
             if _peak(cand) <= cap_bytes:
                 nb = cand
                 break
@@ -958,15 +1166,15 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
                 "the k mesh or Nmat, drop declared-zero outer shells with "
                 "longitudinal_bond_max_shells, or run with gpu=false.".format(
                     _dev_need(1) / _GIB, phase, dev_cap / _GIB, _dev_table(1)))
-        if freq_batch is not None and _dev_need(int(freq_batch)) > dev_cap:
+        if freq_batch is not None and _dev_need(nb) > dev_cap:
             raise ValueError(
                 "[mode.param] longitudinal_bond_freq_batch = {} gives an estimated device need of "
                 "{:.4f} GiB above 0.9 * the available device memory {:.4f} GiB (host peak {:.4f} GiB "
                 "against the host cap {:.4f} GiB); the device rows are\n{}".format(
-                    int(freq_batch), _dev_need(int(freq_batch)) / _GIB, dev_cap / _GIB,
-                    _peak(int(freq_batch)) / _GIB, cap_bytes / _GIB, _dev_table(int(freq_batch))))
+                    int(freq_batch), _dev_need(nb) / _GIB, dev_cap / _GIB,
+                    _peak(nb) / _GIB, cap_bytes / _GIB, _dev_table(nb)))
         device_nb = 1
-        for cand in range(nmat, 0, -1):
+        for cand in range(nslices, 0, -1):
             if _dev_need(cand) <= dev_cap:
                 device_nb = cand
                 break
@@ -978,7 +1186,8 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     return dict(persistent_rows=persistent_rows, phase_rows=phase_rows, persistent=persistent,
                 nb=nb, peak=_peak(nb), cap_bytes=cap_bytes, U=U, G_bytes=G, C_bytes=C,
                 S_bytes=S, H_bytes=H, B=B, ND=ND, nvol=nvol, nmat=nmat, table=_table(nb),
-                dressing_ops=dressing_ops(nmat, nvol, ND, w2_triples),
+                nslices=nslices, U_store=U_store, half_grid=bool(half_grid),
+                dressing_ops=dressing_ops(nslices, nvol, ND, w2_triples),
                 transport_ops=transport_ops(B, nmat, nvol, norb),
                 **device)
 

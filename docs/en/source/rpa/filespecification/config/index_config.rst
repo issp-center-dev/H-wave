@@ -480,6 +480,70 @@ that has no effect under the current settings.
   dominated by amplified round-off. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_half_grid``
+
+  **Type :**
+  Boolean (default value is ``false``; FLEX mode only)
+
+  **Description :**
+  Store and dress only the non-negative half of the bosonic Matsubara
+  grid in the bond-resolved FLEX. Every bosonic object of the bond map
+  (the bubble, the dressed spin and charge channels, the effective
+  interaction and the channel-0 collapses) satisfies
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger` on the bond pair matrix at the
+  same :math:`q`, so with ``true`` the block store keeps the
+  ``Nmat/2 + 1`` frequencies :math:`\nu \ge 0` (the zero frequency and
+  the last slot of the grid included) and rebuilds the others where they
+  are read: in the self-energy, in the channel-0 susceptibilities and in
+  the outputs. The results agree with ``false`` to round-off (about
+  :math:`10^{-13}` relative). The conditioning guard still covers the
+  whole grid. The denominator at :math:`-\nu` is
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`, whose singular values in
+  general differ from those at :math:`+\nu`, so the negative frequencies
+  are guarded on their own, through the same checks as with ``false``
+  (the conditioning guard, the exact-singular check and, under
+  ``longitudinal_bond_guard_freqs = "static"``, the solve residual). This
+  is always the case with ``flex_guard_policy = "warn"`` and with
+  ``"static"``. The one exception is ``longitudinal_bond_guard_freqs =
+  "all"`` with ``flex_guard_policy = "refuse"`` under time-reversal
+  symmetry: when the bubble and the vertices satisfy
+  :math:`\bar\chi(q)^T = \bar\chi(-q)` and :math:`V(q)^T = V(-q)` (real
+  hopping and interactions; checked on every map, to :math:`10^{-12}`
+  relative), the denominator at :math:`(q, -\nu)` is the complex
+  conjugate of the one at :math:`(-q, \nu)` and has the same score, so the
+  negative frequencies are not decomposed again; a frequency batch whose
+  minimum score lies closer to the threshold than the tolerance of that
+  symmetry check (:math:`10^{-12}` relative) can resolve is still guarded
+  on its own, and a refusal is reported at the
+  mirror of the stored violating block. In every case the decision
+  (refuse, warn or pass) is that of ``false``, and ``cond_min`` (log and
+  ``longitudinal_bond_cond_min_s`` / ``_c``) is the minimum over the whole
+  grid. When several blocks violate, the location a refusal names (the
+  first violation met) can differ from ``false``, and so can the blocks
+  the warnings name (one per frequency batch and channel), because the
+  half grid's batches start at the zero frequency and group the
+  frequencies differently; an exactly singular denominator is refused on
+  both grids, possibly from a different batch. With time reversal the bond store takes about half the
+  memory and the dressing with its guard about half the time; with
+  broken time reversal the store is still halved but the dressing saves
+  only about 20 %. The bubble and the
+  self-energy transport are unchanged. The guard statistics
+  (``longitudinal_bond_guard_blocks_per_iteration``,
+  ``longitudinal_bond_guard_exact_blocks_*``) count the stored
+  frequencies only; such outputs carry ``longitudinal_bond_half_grid =
+  true``. A ``sigma_init`` seed must satisfy
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`. With
+  ``longitudinal_bond_output_full`` the in-memory dynamic buffers
+  (``chi_s_w``, ``chi_c_w``) hold the stored half during the solve; they
+  are expanded to the full grid when the results are published, so the
+  archive written to disk still holds the full grid and is read by
+  ``hwave_sc`` as before. Only booleans are
+  accepted. Refused with ``longitudinal_bond_pairing`` other than
+  ``"none"`` (the in-process pairing does not support the half grid yet;
+  the archive of a half-grid run can be paired with ``hwave_sc``) and with
+  ``[mode] enable_spin_orbital = true``. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``longitudinal_bond_pairing``
 
   **Type :**
@@ -505,7 +569,9 @@ that has no effect under the current settings.
   bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
   ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing has no
   ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
-  for how multi-orbital results are validated (issue #239).
+  for how multi-orbital results are validated (issue #239). Combining
+  any pairing other than ``"none"`` with ``longitudinal_bond_half_grid =
+  true`` is refused in this version.
 
 - ``flex_hartree_fock``
 
