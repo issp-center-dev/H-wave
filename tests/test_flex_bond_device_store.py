@@ -227,6 +227,29 @@ def _dress(cp, store_xp, half, *, aliased, nb=3, output_full=False, bond_w2=Fals
     return W, res, moved, extra, ND
 
 
+class TestSameFloats(unittest.TestCase):
+    """The round-off comparison of the host/device store tests."""
+
+    def _fails(self, x, y):
+        with self.assertRaises(AssertionError):
+            _same_floats(self, x, y, "x")
+
+    def test_contract(self):
+        _same_floats(self, np.zeros((0, 2)), np.zeros((0, 2)), "empty")
+        _same_floats(self, 1.0, 1.0 + 1e-15, "scalar")
+        _same_floats(self, 1j, 1j * (1 + 1e-15), "complex scalar")
+        _same_floats(self, np.array([np.inf, -np.inf, 1.0]),
+                     np.array([np.inf, -np.inf, 1.0]), "signed infinities")
+        _same_floats(self, np.array([np.nan + 1j]), np.array([np.nan + 1j]), "nan")
+        _same_floats(self, np.array([3, 4]), np.array([3, 4]), "integers")
+        self._fails(np.array([np.inf]), np.array([-np.inf]))
+        self._fails(np.array([np.nan + 1j]), np.array([np.nan + 999j]))
+        self._fails(np.array([1 + np.nan * 1j]), np.array([np.nan + 1j]))
+        self._fails(np.array([1.0, 2.0]), np.array([1.0, 2.0 + 1e-9]))
+        self._fails(np.array([1.0]), np.array([1.0], np.float32))
+        self._fails(np.array([3]), np.array([4]))
+
+
 class TestDressingWithADeviceStore(unittest.TestCase):
 
     def _compare(self, **kw):
@@ -241,11 +264,15 @@ class TestDressingWithADeviceStore(unittest.TestCase):
                         _same_floats(self, getattr(r_d, name), getattr(r_h, name), name)
                     self.assertEqual((r_d.guard_exact_blocks, r_d.mirror_guarded),
                                      (r_h.guard_exact_blocks, r_h.mirror_guarded))
+                    # (low, up or exact, index or None): the bounds to
+                    # round-off, the index exactly
                     if r_h.cond_bracket_s is None:
                         self.assertIsNone(r_d.cond_bracket_s)
                     else:
-                        _same_floats(self, r_d.cond_bracket_s, r_h.cond_bracket_s,
-                                     "cond_bracket_s")
+                        bd, bh = r_d.cond_bracket_s, r_h.cond_bracket_s
+                        self.assertEqual(len(bd), len(bh))
+                        _same_floats(self, bd[:2], bh[:2], "cond_bracket_s bounds")
+                        self.assertEqual(bd[2:], bh[2:], "cond_bracket_s index")
                     for n in ex_h:
                         _same_floats(self, ex_d[n], ex_h[n], n)
                     # the host store moves every chibar batch in and every W
@@ -343,18 +370,30 @@ _ROUND_TOL = 1.0e-12
 
 
 def _same_floats(test, x, y, label):
-    """Two floating-point arrays (or scalars): same shape, dtype and NaN
-    pattern, and equal to _ROUND_TOL relative to the larger magnitude."""
+    """Two arrays (or scalars) of the same shape and dtype. Floating-point
+    ones: per real and imaginary component, the same NaN and infinity
+    pattern (signed infinities equal) and the finite entries equal to
+    _ROUND_TOL relative to the larger finite magnitude. Anything else
+    (integers, flags, objects) exactly."""
     x, y = np.asarray(x), np.asarray(y)
     test.assertEqual(x.shape, y.shape, label)
     test.assertEqual(x.dtype, y.dtype, label)
-    nx, ny = np.isnan(x), np.isnan(y)
-    test.assertTrue(np.array_equal(nx, ny), label)
-    x, y = x[~nx], y[~ny]
-    if x.size == 0:
+    if x.dtype.kind not in "fc":
+        test.assertTrue(np.array_equal(x, y), label)
         return
-    scale = max(float(np.max(np.abs(x))), float(np.max(np.abs(y))), 1e-300)
-    test.assertLessEqual(float(np.max(np.abs(x - y))), _ROUND_TOL * scale, label)
+    parts = ((x.real, y.real), (x.imag, y.imag)) if x.dtype.kind == "c" else ((x, y),)
+    fin = [(a[np.isfinite(a)], b[np.isfinite(b)]) for a, b in parts]
+    scale = max([float(np.max(np.abs(v))) for a, b in fin for v in (a, b) if v.size]
+                + [1e-300])
+    for a, b in parts:
+        test.assertTrue(np.array_equal(np.isnan(a), np.isnan(b)), label)
+        inf = np.isinf(a)
+        test.assertTrue(np.array_equal(inf, np.isinf(b)), label)
+        test.assertTrue(np.array_equal(a[inf], b[inf]), label)
+        ok = np.isfinite(a)
+        if ok.any():
+            test.assertLessEqual(float(np.max(np.abs(a[ok] - b[ok]))),
+                                 _ROUND_TOL * scale, label)
 
 
 def _is_eig(name):

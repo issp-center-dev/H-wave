@@ -317,6 +317,40 @@ class TestPinnedStager(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertTrue(used)                 # the copies used the worker pool
 
+    def test_release_waits_for_the_copy_in_flight(self):
+        """Deterministically: a copy holding the stager is paused inside its
+        host-side copy; release() started meanwhile must not complete until
+        the copy finishes, and the copied bytes are right."""
+        import threading
+        from hwave.solver import staging
+        with fake_cupy() as cp:
+            x = _rand((6, 2, 4, 4), 50)
+            d = cp.asarray(x)
+            st = staging.PinnedStager(cp, max_bytes=2 * 2 * 4 * 4 * 16, workers=1)
+            inside, go = threading.Event(), threading.Event()
+            real = staging.parallel_copy
+            out = {}
+
+            def paused(dst, src, *a, **k):
+                if not inside.is_set():
+                    inside.set()
+                    go.wait(timeout=30)
+                return real(dst, src, *a, **k)
+
+            with mock.patch.object(staging, "parallel_copy", paused):
+                c = threading.Thread(target=lambda: out.setdefault("h", st.to_host(d)))
+                c.start()
+                self.assertTrue(inside.wait(timeout=30))
+                r = threading.Thread(target=st.release)
+                r.start()
+                r.join(timeout=0.2)
+                self.assertTrue(r.is_alive(), "release did not wait for the copy")
+                go.set()
+                c.join(timeout=30)
+                r.join(timeout=30)
+            self.assertFalse(c.is_alive() or r.is_alive(), "deadlock")
+            np.testing.assert_array_equal(out["h"], x)
+
     def test_failed_pinned_allocation_takes_the_plain_path(self):
         from hwave.solver import staging
         x = _rand((5, 2, 4, 4), 4)
