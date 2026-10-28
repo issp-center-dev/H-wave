@@ -822,6 +822,31 @@ that has no effect under the current settings.
   History depth of the Anderson acceleration. Memory grows by 2*depth
   sigma-sized arrays (kept on the device under GPU execution).
 
+- ``flex_sigma_hermitian_projection``
+
+  **Type :**
+  Boolean (default value is true; FLEX mode only)
+
+  **Description :**
+  Projects the self-energy onto
+  :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+  after every update of the SCF loop (linear or Anderson mixing, with or
+  without ``flex_hartree_fock``) and on a ``sigma_init`` seed:
+  :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`
+  at every :math:`\mathbf{k}`, on the uniform grid or the IR nodes. The
+  relation holds exactly for the self-energy of a Hermitian problem and the
+  FLEX map preserves it, so a run that is already symmetric changes only at
+  rounding level. Without it, a cold start past the bare Stoner instability
+  can leave a slowly decaying asymmetric remnant in ``sigma.npz``, or
+  converge, with no other signal, to a symmetry-broken, non-causal branch
+  that is not the self-energy of the Hermitian problem; a
+  ``flex_hartree_fock = true`` run refuses such an archive as
+  ``sigma_init``. ``false`` restores the unprojected update, and the run
+  then warns at its end when the final relative deviation exceeds
+  :math:`10^{-6}`. Archives written without the projection (including by
+  earlier versions) can be audited with ``hwave_sigma_split --check
+  sigma.npz``.
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -1085,10 +1110,22 @@ They specify the settings of the input and output files, respectively, on the ty
   loop" for the sweep workflow. With ``flex_hartree_fock = true`` only a
   ``sigma.npz`` written by such a run (``sigma_convention = "split"``,
   carrying ``sigma_static`` and ``sigma_fluct``) is accepted, the two
-  components seed the loop exactly as stored, and a mean field
+  components seed the loop as stored (apart from the projection of
+  ``flex_sigma_hermitian_projection``), and a mean field
   (``trans_mod`` / ``green_init``) given at the same time is refused; a
   legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
   (see :ref:`flex_bond_hf`).
+
+  The seed's relative deviation from :math:`\Sigma(\mathbf{k}, i\omega_n) =
+  \Sigma(\mathbf{k}, -i\omega_n)^\dagger` is measured on loading, and two
+  cases are distinguished. (1) A deviation above :math:`10^{-3}` produces a
+  warning, whether ``flex_sigma_hermitian_projection`` is on (the seed is
+  projected and the deviation removed is logged) or off (the seed is used
+  as is). (2) A non-causal, strongly asymmetric archive that is used as is
+  (projection off) with ``flex_hartree_fock = true`` fails the Hermiticity
+  check of the equal-time density: it is refused at ``flex_hf_density_tol``
+  under ``flex_guard_policy = "refuse"``, and gives a warning under
+  ``"warn"``. Audit an archive beforehand with ``hwave_sigma_split --check``.
 
 
 ``file.input.interaction`` section

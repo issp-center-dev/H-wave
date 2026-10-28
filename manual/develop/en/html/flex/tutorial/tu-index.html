@@ -525,6 +525,10 @@ the same <code class="docutils literal notranslate"><span class="pre">CellShape<
 errors: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> records its <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, so even a same-volume
 aspect-ratio change like <code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> vs <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> is caught), so keep
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> fixed across a continuation sweep.</p>
+<p>To audit an archive before using it as a seed, run
+<code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span> <span class="pre">--check</span> <span class="pre">sigma.npz</span></code>: it prints the relative deviation
+from <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger\)</span>
+and exits with status 1 above <code class="docutils literal notranslate"><span class="pre">--asymmetry-tol</span></code> (see <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>).</p>
 <p>A <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> seed also records which second-order kernel
 produced it. A seed of the retired <code class="docutils literal notranslate"><span class="pre">&quot;takimoto&quot;</span></code> kernel is accepted as the
 initial value with a warning (and the solver notes it when the seed carries
@@ -641,7 +645,9 @@ magnetically ordered <code class="docutils literal notranslate"><span class="pre
 FLEX is spin-free.</p>
 <p><em>Restarting from a previous run.</em> A <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> written with
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> carries the split components and seeds a new
-run exactly as stored (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>). Remove (or comment
+run as stored (<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">sigma_init</span></code>; only the projection of
+<code class="docutils literal notranslate"><span class="pre">flex_sigma_hermitian_projection</span></code> is applied, which changes a converged
+archive at rounding level). Remove (or comment
 out) <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> from <code class="docutils literal notranslate"><span class="pre">[file.input]</span></code> in that case:
 the archive already contains the static part, and a mean field given at
 the same time is refused. A <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> from a run without
@@ -658,6 +664,39 @@ hwave_sigma_split total.npz seed.npz --uhfk-trans-mod trans_mod.npz --bare-trans
 archive and the run’s bare Transfer input (the archive is Fourier-transformed
 with the solver’s convention, the bare transfer is subtracted and the result
 is reduced to the spin-free block). <code class="docutils literal notranslate"><span class="pre">--force</span></code> overwrites an existing output.</p>
+<p>The converter first symmetrizes the total self-energy to
+<span class="math notranslate nohighlight">\([\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2\)</span>
+and logs the relative deviation it removed,
+<span class="math notranslate nohighlight">\(\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|\)</span>. A converged archive carries rounding error only. An
+archive written without the projection (<code class="docutils literal notranslate"><span class="pre">flex_sigma_hermitian_projection</span>
+<span class="pre">=</span> <span class="pre">false</span></code>, or by a version without it) after a cold start past the bare
+Stoner instability may carry a slowly decaying remnant (about
+<span class="math notranslate nohighlight">\(10^{-5}\)</span> was observed), which the symmetrization removes – or the
+run may have CONVERGED, with no other signal, to a symmetry-broken,
+non-causal branch (relative deviation <span class="math notranslate nohighlight">\(\sim 0.3\)</span>, Stoner factor above
+1, <span class="math notranslate nohighlight">\(\mathrm{Im}\,\Sigma(i\omega_n&gt;0)\)</span> with a positive eigenvalue),
+which is not the self-energy of the Hermitian problem at all. A deviation
+above <code class="docutils literal notranslate"><span class="pre">--asymmetry-tol</span></code> (default <span class="math notranslate nohighlight">\(10^{-3}\)</span>) is therefore refused;
+repeat such a run with the projection on.</p>
+<p><strong>Archives written before the projection existed.</strong> Check every
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> of a run past the bare Stoner instability (and the results
+derived from it) with:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>hwave_sigma_split --check sigma.npz
+</pre></div>
+</div>
+<p>which prints the relative deviation and exits with status 1 when it exceeds
+<code class="docutils literal notranslate"><span class="pre">--asymmetry-tol</span></code>. <code class="docutils literal notranslate"><span class="pre">--check</span></code> takes only the input archive (and
+<code class="docutils literal notranslate"><span class="pre">--asymmetry-tol</span></code>): an output archive or any conversion option is an
+error. <code class="docutils literal notranslate"><span class="pre">--asymmetry-tol</span></code> sets the exit-status threshold of <code class="docutils literal notranslate"><span class="pre">--check</span></code> and
+the refusal threshold of a conversion:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+</pre></div>
+</div>
+<p>A run made with the projection off warns at its end
+when its final deviation exceeds <span class="math notranslate nohighlight">\(10^{-6}\)</span>, and loading such an
+archive as <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> warns above <span class="math notranslate nohighlight">\(10^{-3}\)</span>.</p>
 <p><strong>Spin susceptibility</strong> <span class="math notranslate nohighlight">\(\chi_s(\mathbf{q}, i\nu_0)\)</span>:</p>
 <figure class="align-center" id="id23">
 <a class="reference internal image-reference" href="../../_images/chi_s.png"><img alt="../../_images/chi_s.png" src="../../_images/chi_s.png" style="width: 60%;" />
@@ -1398,7 +1437,31 @@ automatically if the history becomes degenerate.</p></td>
 <span class="math notranslate nohighlight">\(2m\)</span> sigma-sized arrays (kept on the device under GPU
 execution).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">flex_sigma_hermitian_projection</span></code></p></td>
+<td><p>bool</p></td>
+<td><p>true</p></td>
+<td><p>After every self-energy update (and on a <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed),
+project onto
+<span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n) =
+\Sigma(\mathbf{k}, -i\omega_n)^\dagger\)</span>, i.e.
+<span class="math notranslate nohighlight">\(\Sigma \leftarrow [\Sigma(i\omega_n) +
+\Sigma(-i\omega_n)^\dagger]/2\)</span> at every
+<span class="math notranslate nohighlight">\(\mathbf{k}\)</span>. The relation holds exactly for every
+self-energy of a Hermitian problem, and the FLEX map preserves it, so
+a symmetric run changes only at rounding level. Without the
+projection, a cold start past the bare Stoner instability amplifies
+the rounding-level asymmetry along with the transient; the run may
+then keep a slowly decaying remnant, or CONVERGE without any other
+signal to a symmetry-broken, non-causal branch that is not the
+self-energy of the Hermitian problem. Such an archive is also refused
+by the density check of a <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> run that uses
+it as <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>. Applies on the uniform grid and on the IR
+nodes, in every scheme. <code class="docutils literal notranslate"><span class="pre">false</span></code> restores the unprojected update;
+the run then warns at its end when the final deviation exceeds
+<span class="math notranslate nohighlight">\(10^{-6}\)</span>. See <code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span> <span class="pre">--check</span></code> for auditing
+existing archives.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code></p></td>
 <td><p>str</p></td>
 <td><p>“uniform”</p></td>
 <td><p>Matsubara-axis representation: <code class="docutils literal notranslate"><span class="pre">&quot;uniform&quot;</span></code> (default, unchanged) or
@@ -1414,12 +1477,12 @@ search becomes the basis evaluation of
 <span class="math notranslate nohighlight">\(n = -\mathrm{Tr}\,G(\tau=\beta^-)\)</span>, and <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> is
 unnecessary (ignored).</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ir_tol</span></code></p></td>
 <td><p>float</p></td>
 <td><p>1e-8</p></td>
 <td><p>IR basis cutoff accuracy.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code></p></td>
 <td><p>float</p></td>
 <td><p>auto</p></td>
 <td><p>Real-frequency bandwidth of the IR basis (same energy units as the
@@ -1434,14 +1497,14 @@ FLEX -&gt; Eliashberg pair lands on the same basis. (Earlier releases used
 <code class="docutils literal notranslate"><span class="pre">3*(2*max|eps|</span> <span class="pre">+</span> <span class="pre">interaction)</span></code>, which double-counted an on-site
 energy offset; runs that set <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> explicitly are unaffected.)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sigma_init_on_error</span></code></p></td>
 <td><p>str</p></td>
 <td><p>“warn”</p></td>
 <td><p>Behavior when the IR fit residual of a (uniform-grid) <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>
 exceeds 100x <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> (use it, warn), <code class="docutils literal notranslate"><span class="pre">&quot;abort&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;zero&quot;</span></code> (fall back to the zero start).</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">write_densified</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">write_densified</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>true</p></td>
 <td><p>IR runs only. <code class="docutils literal notranslate"><span class="pre">true</span></code> (default): all output files are densified
@@ -1455,7 +1518,7 @@ chaining into another IR FLEX run) read them directly. Uniform-only
 readers (static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>, legacy scripts)
 reject such files with an explicit error. See the note below.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p></td>
 <td><p>str</p></td>
 <td><p>“local”</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> only. Second-order kernel of the
@@ -1465,7 +1528,7 @@ interaction term. <code class="docutils literal notranslate"><span class="pre">&
 expression of H-wave 2.0.0 and earlier) is retired and refused. See
 <a class="reference internal" href="#flex-second-order-tutorial"><span class="std std-ref">Second order of the effective interaction (flex_second_order)</span></a> and the configuration reference.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code></p></td>
 <td><p>bool</p></td>
 <td><p>false</p></td>
 <td><p>Set <code class="docutils literal notranslate"><span class="pre">true</span></code> to run the SCF loop (dressed G, chi0q, chiq, V_eff, and
@@ -1480,7 +1543,7 @@ this ordinary GPU path; with <code class="docutils literal notranslate"><span cl
 the bond-resolved GPU path described in
 <a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a> applies instead.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fft_workers</span></code></p></td>
 <td><p>int</p></td>
 <td><p>1</p></td>
 <td><p>Number of worker threads for the spatial FFTs (parallelized via
