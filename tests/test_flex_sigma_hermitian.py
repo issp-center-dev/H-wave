@@ -380,7 +380,14 @@ class TestBrokenBranchLight(_TmpDir):
     chosen so that the projected run crosses the pole in one mild step: it
     then converges in the same number of iterations under relative changes
     of U up to 1e-6, on Accelerate and OpenBLAS alike, while the unprojected
-    run still reaches the broken branch."""
+    run still reaches the broken branch.
+
+    Before changing ``_PAR``, ``_GAMMA`` or ``_COLD_U``, re-validate the
+    margin: repeat both runs under relative changes of U up to 1e-6 (and, for
+    the BLAS, with one and several threads); every projected run must
+    converge with max Im eig < 0, and every unprojected run must converge
+    (``scf_converged``) on the broken branch with the deviations asserted
+    below. The same applies to ``_COLD`` for the heavy twin."""
 
     _PAR = dict(T=0.1, CellShape=[6, 6, 1], Nmat=16, Mix=0.1075, EPS=8, IterationMax=400)
     _GAMMA = 0.0875
@@ -410,9 +417,12 @@ class TestBrokenBranchLight(_TmpDir):
 
     def test_projected_stays_symmetric_and_causal(self):
         s, warn = self._run(True)
-        self.assertTrue(s.scf_converged)
+        # on failure, say whether the run did not converge or ended non-causal
+        state = "scf_converged={} after {} iterations, max Im eig {:.3e}; warnings: {}".format(
+            s.scf_converged, s.scf_iterations, _max_im_eig(s.sigma), warn)
+        self.assertTrue(s.scf_converged, state)
         self.assertEqual(_rel_dev(s.sigma), 0.0)
-        self.assertLess(_max_im_eig(s.sigma), 0.0)
+        self.assertLess(_max_im_eig(s.sigma), 0.0, state)
         self.assertFalse(any("final self-energy violates" in m for m in warn))
 
 
