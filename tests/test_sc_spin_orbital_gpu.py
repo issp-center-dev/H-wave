@@ -296,13 +296,45 @@ def _phase_aligned_distance(a, b):
 # the cases (shared by the fake and the real device)
 # ---------------------------------------------------------------------------
 
+@contextlib.contextmanager
+def _spy_iteration(cap):
+    """Record every ``sc._so_solve_iteration`` call in ``cap["iter"]``: the
+    operator and basis, the UNCHANGED return tuple ``(gap, eigenvalue,
+    converged, n_iter)`` and a copy of the ``info_out`` record the solver
+    filled (``eigenvalue_validated``, ``rayleigh_residual``, ... of a shifted
+    iteration). The wrapper returns the original tuple, so the production
+    logging / validation / output path after the call is untouched."""
+    real = sc._so_solve_iteration
+
+    def spy(A, basis, *a, **kw):
+        out = real(A, basis, *a, **kw)
+        info = kw.get("info_out")
+        cap.setdefault("iter", []).append(
+            {"A": A, "basis": basis, "out": out,
+             "info": dict(info) if info is not None else None})
+        return out
+
+    with mock.patch.object(sc, "_so_solve_iteration", side_effect=spy):
+        yield cap
+
+
+def _static_run(inp):
+    """:func:`tests.test_sc_spin_orbital._run` plus the iteration record of
+    :func:`_spy_iteration`."""
+    cap = {}
+    with _spy_iteration(cap):
+        seen = S._run(inp)
+    seen.update(cap)
+    return seen
+
+
 def _dyn_run(inp):
     """``calc_eliashberg`` on the dynamic spin-orbital path with the solver
     results captured: eigenvalue leg ``vals`` / ``vecs`` (reduced
-    coordinates, columns), iteration leg ``gap`` / ``lam``, and the basis."""
+    coordinates, columns) and the basis; the iteration leg as in
+    :func:`_spy_iteration`."""
     cap = {}
     real_eig = sc._so_solve_eigenvalue
-    real_it = sc._so_solve_iteration
 
     def eig(A, basis, *a, **kw):
         out = real_eig(A, basis, *a, **kw)
@@ -310,16 +342,35 @@ def _dyn_run(inp):
         cap["vals"], cap["vecs"] = out
         return out
 
-    def it(A, basis, *a, **kw):
-        out = real_it(A, basis, *a, **kw)
-        cap["basis"] = basis
-        cap["gap"], cap["it_lam"] = out[0], out[1]
-        return out
-
     with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=eig), \
-            mock.patch.object(sc, "_so_solve_iteration", side_effect=it):
+            _spy_iteration(cap):
         cap["lam"] = sc.calc_eliashberg(inp)
     return cap
+
+
+def _leading_eigenspace(A, basis, k=8):
+    """The leading (largest real part, what the shifted power iteration
+    targets) eigenvalue cluster of ``E^dagger K E``: ``(lambda_1, Q, delta)``
+    with ``Q`` an orthonormal basis of the cluster's eigenvectors mapped back
+    to full gaps (columns), and ``delta`` a lower bound on the distance from
+    ``lambda_1`` to every eigenvalue OUTSIDE the cluster -- the distance to
+    the other computed largest-real eigenvalues, and at most
+    ``Re lambda_1 - Re lambda_k`` for the rest. The cluster is the
+    eigenvalues within ``1e-8 |lambda_1|``; a degenerate leading eigenvalue
+    gives a ``Q`` with several columns."""
+    from scipy.sparse.linalg import eigs
+    vals, vecs = eigs(basis.reduce(A), k=k, which="LR", tol=1e-12)
+    order = np.argsort(-vals.real)
+    vals, vecs = vals[order], vecs[:, order]
+    lead = vals[0]
+    inside = np.abs(vals - lead) <= 1e-8 * abs(lead)
+    if inside.sum() >= k - 1:
+        raise AssertionError("leading cluster not resolved by k = {}".format(k))
+    outside = vals[~inside]
+    delta = min(float(np.min(np.abs(outside - lead))),
+                float(lead.real - vals.real.min()))
+    Q, _ = np.linalg.qr(basis.to_full(vecs[:, inside]))
+    return lead, Q, delta
 
 
 class _Cases:
@@ -328,8 +379,9 @@ class _Cases:
     tolerances: ``EV_RTOL`` (eigenvalues, relative to the spectral scale),
     ``SPAN_TOL`` (sine of the largest principal angle between the two
     runs' eigenspaces), ``GAP_TOL`` (phase-aligned
-    leading gap, unit norm), ``ITER_RTOL`` / ``ITER_GAP_TOL`` (power
-    iteration)."""
+    leading gap, unit norm), and for the power iteration the round-off
+    floors ``ITER_RTOL`` / ``ITER_GAP_TOL`` plus ``ITER_RESIDUAL_FACTOR``
+    (see :meth:`_compare_iterations`)."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="sc_so_gpu_")
@@ -350,7 +402,7 @@ class _Cases:
 
         def make_input(files, gpu, out):
             return S._input(self.d, files, True, dict(eli, **gpu), out=out)
-        return self._both(write, make_input, S._run)
+        return self._both(write, make_input, _static_run)
 
     def _dynamic(self, eli, cell=S.CELL):
         def write(d):
@@ -364,6 +416,60 @@ class _Cases:
                             CellShape=list(cell))
         return self._both(write, make_input, _dyn_run)
 
+    def _compare_iterations(self, cpu, dev):
+        """Compare the two power iterations, after asserting that each one
+        converged and that its shifted value was VALIDATED as an eigenvalue
+        (Rayleigh check), so two equal unfinished iterates cannot pass.
+
+        The comparison is degeneracy-safe. With ``r`` a run's Rayleigh
+        residual ``||K v - lambda v||`` and ``delta`` the separation of the
+        leading eigenvalue cluster from the rest of the spectrum
+        (:func:`_leading_eigenspace`, asserted non-negligible), each run's
+        eigenvalue is within O(r) of the cluster's and its gap within
+        O(r / delta) of the cluster's eigenspace; both are asserted with the
+        factor 10 (margin for the non-normal kernel). Within a degenerate
+        cluster the iterate is any vector of the eigenspace (fixed by the
+        start vector, not by the operator), so the two runs' gaps are
+        compared directly only when the cluster is one-dimensional -- or on
+        the fake device, whose arithmetic is the host's, so the iterates are
+        the same vector. The cross-run tolerances are
+        ``ITER_RTOL |lambda| + ITER_RESIDUAL_FACTOR (r_cpu + r_dev)`` and
+        ``ITER_GAP_TOL + ITER_RESIDUAL_FACTOR (r_cpu + r_dev) / delta``."""
+        recs = []
+        for label, run in (("cpu", cpu), ("device", dev)):
+            self.assertEqual(len(run.get("iter", ())), 1, label)
+            rec = run["iter"][0]
+            gap, lam, converged, n_iter = rec["out"]
+            info = rec["info"]
+            self.assertTrue(bool(converged),
+                            "{}: not converged after {} steps".format(label, n_iter))
+            self.assertTrue(bool(info["converged"]), label)
+            self.assertIs(info.get("eigenvalue_validated"), True,
+                          "{}: eigenvalue not validated".format(label))
+            self.assertIs(info.get("shift_sufficient"), True, label)
+            recs.append((np.asarray(gap).ravel(), float(np.real(lam)),
+                         float(info["rayleigh_residual"])))
+        lead, Q, delta = _leading_eigenspace(cpu["iter"][0]["A"],
+                                             cpu["iter"][0]["basis"])
+        self.assertGreater(delta, 1e-3 * abs(lead))       # isolated cluster
+        for label, (gap, lam, r1) in zip(("cpu", "device"), recs):
+            with self.subTest(run=label):
+                # the iterate is the leading eigenpair (cluster)
+                self.assertLessEqual(abs(lam - lead.real),
+                                     10.0 * r1 + 1e-8 * abs(lead))
+                g = gap / np.linalg.norm(gap)
+                self.assertLessEqual(np.linalg.norm(g - Q @ (Q.conj().T @ g)),
+                                     10.0 * r1 / delta + 1e-8)
+        (gap_c, lam_c, r_c), (gap_d, lam_d, r_d) = recs
+        r = r_c + r_d
+        self.assertLessEqual(
+            abs(lam_d - lam_c),
+            self.ITER_RTOL * abs(lam_c) + self.ITER_RESIDUAL_FACTOR * r)
+        if Q.shape[1] == 1 or self.ITER_RESIDUAL_FACTOR == 0.0:
+            self.assertLessEqual(
+                _phase_aligned_distance(gap_c, gap_d),
+                self.ITER_GAP_TOL + self.ITER_RESIDUAL_FACTOR * r / delta)
+        return Q.shape[1], r, delta
 
 class _StaticCases(_Cases):
     """The static spin-orbital solver (#269)."""
@@ -410,10 +516,10 @@ class _StaticCases(_Cases):
             {"soc": 0.3}, {"chi0q_mode": "calc", "solver_mode": "iteration",
                            "convergence_tol": 1e-10, "max_iter": 20000,
                            "spectral_shift": "auto"})
-        self.assertLessEqual(abs(dev["ev"] - cpu["ev"]),
-                             self.ITER_RTOL * abs(cpu["ev"]))
-        self.assertLessEqual(_phase_aligned_distance(cpu["gap"], dev["gap"]),
-                             self.ITER_GAP_TOL)
+        self._compare_iterations(cpu, dev)
+        # the written eigenvalue is the validated one of the returned tuple
+        self.assertEqual(cpu["ev"], cpu["iter"][0]["out"][1])
+        self.assertEqual(dev["ev"], dev["iter"][0]["out"][1])
 
 
 class _DynamicCases(_Cases):
@@ -451,10 +557,9 @@ class _DynamicCases(_Cases):
                                        "spectral_shift": "auto",
                                        "max_iter": 3000,
                                        "convergence_tol": 1e-10})
-        self.assertLessEqual(abs(dev["lam"] - cpu["lam"]),
-                             self.ITER_RTOL * abs(cpu["lam"]))
-        self.assertLessEqual(_phase_aligned_distance(cpu["gap"], dev["gap"]),
-                             self.ITER_GAP_TOL)
+        self._compare_iterations(cpu, dev)
+        self.assertEqual(cpu["lam"], float(np.real(cpu["iter"][0]["out"][1])))
+        self.assertEqual(dev["lam"], float(np.real(dev["iter"][0]["out"][1])))
 
 
 class _FakeDevice:
@@ -466,6 +571,8 @@ class _FakeDevice:
     GAP_TOL = 1e-10
     ITER_RTOL = 1e-12
     ITER_GAP_TOL = 1e-10
+    #: the fake repeats the host arithmetic exactly: no residual allowance
+    ITER_RESIDUAL_FACTOR = 0.0
 
     @contextlib.contextmanager
     def _device(self):
@@ -512,13 +619,20 @@ class TestFakeDeviceDynamic(_FakeDevice, _DynamicCases, unittest.TestCase):
 class _RealDevice:
     """CPU vs an actual CUDA device: cuFFT / cuBLAS against pocketfft /
     host BLAS, so the agreement is to round-off amplified by the eigensolver;
-    the power iteration agrees to its convergence tolerance."""
+    the power iteration agrees to its measured residual (below)."""
 
     EV_RTOL = 1e-10
     SPAN_TOL = 1e-7
     GAP_TOL = 1e-8
-    ITER_RTOL = 1e-8
-    ITER_GAP_TOL = 1e-4
+    #: power iteration: round-off floors as above, plus the residual
+    #: allowance of _Cases._compare_iterations -- each run's eigenvalue is
+    #: within O(r) and its gap within O(r / delta) of the exact eigenpair,
+    #: with r the Rayleigh residual and delta the isolation of the leading
+    #: eigenvalue (both measured in the test); 10 is the margin for the
+    #: non-normal kernel
+    ITER_RTOL = 1e-10
+    ITER_GAP_TOL = 1e-8
+    ITER_RESIDUAL_FACTOR = 10.0
 
     @classmethod
     def setUpClass(cls):
