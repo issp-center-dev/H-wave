@@ -278,6 +278,13 @@ HEAVY_TESTS = (
      "test_c_gate_on_reproduces_the_full_oracle",
      "G2 (c): with the bond gate on the second order is the FULL oracle for "
      "off-site CoulombInter; the off-site Hund/Ising outcome is recorded"),
+    ("test_flex_sigma_hermitian", "TestColdStartReproduction",
+     "test_cold_start_remnant_and_split_seed",
+     "issue #281: two cold-started FLEX runs of the dimer past the Stoner "
+     "instability (6x6, Nmat 32, up to 1000 linear-mixing iterations each), "
+     "with and without the Hermitian projection, then the split conversion "
+     "and a flex_hartree_fock run on the seed -- 4.3 s measured, at the rule; "
+     "the fast gate keeps the deterministic seeded tests of the same module"),
     # --- tests/test_flex_spin_orbital_ed.py -- #83 spin-orbital FLEX --
     ("test_flex_spin_orbital_ed", "TestSecondOrderWithSOC",
      "test_every_type",

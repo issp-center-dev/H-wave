@@ -497,6 +497,11 @@ errors: ``sigma.npz`` records its ``CellShape``, so even a same-volume
 aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
 ``Nmat`` and ``CellShape`` fixed across a continuation sweep.
 
+To audit an archive before using it as a seed, run
+``hwave_sigma_split --check sigma.npz``: it prints the relative deviation
+from :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+and exits with status 1 above ``--asymmetry-tol`` (see :ref:`flex_bond_hf_tutorial`).
+
 A ``calc_scheme = "general"`` seed also records which second-order kernel
 produced it. A seed of the retired ``"takimoto"`` kernel is accepted as the
 initial value with a warning (and the solver notes it when the seed carries
@@ -620,7 +625,9 @@ FLEX is spin-free.
 
 *Restarting from a previous run.* A ``sigma.npz`` written with
 ``flex_hartree_fock = true`` carries the split components and seeds a new
-run exactly as stored (``[file.input] sigma_init``). Remove (or comment
+run as stored (``[file.input] sigma_init``; only the projection of
+``flex_sigma_hermitian_projection`` is applied, which changes a converged
+archive at rounding level). Remove (or comment
 out) ``trans_mod`` and ``green_init`` from ``[file.input]`` in that case:
 the archive already contains the static part, and a mean field given at
 the same time is refused. A ``sigma.npz`` from a run without
@@ -637,6 +644,41 @@ The last form builds the static correction from a native UHFk ``trans_mod``
 archive and the run's bare Transfer input (the archive is Fourier-transformed
 with the solver's convention, the bare transfer is subtracted and the result
 is reduced to the spin-free block). ``--force`` overwrites an existing output.
+
+The converter first symmetrizes the total self-energy to
+:math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
+and logs the relative deviation it removed,
+:math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|`. A converged archive carries rounding error only. An
+archive written without the projection (``flex_sigma_hermitian_projection
+= false``, or by a version without it) after a cold start past the bare
+Stoner instability may carry a slowly decaying remnant (about
+:math:`10^{-5}` was observed), which the symmetrization removes -- or the
+run may have CONVERGED, with no other signal, to a symmetry-broken,
+non-causal branch (relative deviation :math:`\sim 0.3`, Stoner factor above
+1, :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)` with a positive eigenvalue),
+which is not the self-energy of the Hermitian problem at all. A deviation
+above ``--asymmetry-tol`` (default :math:`10^{-3}`) is therefore refused;
+repeat such a run with the projection on.
+
+**Archives written before the projection existed.** Check every
+``sigma.npz`` of a run past the bare Stoner instability (and the results
+derived from it) with::
+
+   hwave_sigma_split --check sigma.npz
+
+which prints the relative deviation and exits with status 1 when it exceeds
+``--asymmetry-tol``. ``--check`` takes only the input archive (and
+``--asymmetry-tol``): an output archive or any conversion option is an
+error. ``--asymmetry-tol`` sets the exit-status threshold of ``--check`` and
+the refusal threshold of a conversion::
+
+   hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+   hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+
+A run made with the projection off warns at its end
+when its final deviation exceeds :math:`10^{-6}`, and loading such an
+archive as ``sigma_init`` warns above :math:`10^{-3}`.
 
 **Spin susceptibility** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1324,6 +1366,29 @@ The FLEX solver accepts the following parameters in the
      - History depth :math:`m` of the Anderson acceleration. Memory grows by
        :math:`2m` sigma-sized arrays (kept on the device under GPU
        execution).
+   * - ``flex_sigma_hermitian_projection``
+     - bool
+     - true
+     - After every self-energy update (and on a ``sigma_init`` seed),
+       project onto
+       :math:`\Sigma(\mathbf{k}, i\omega_n) =
+       \Sigma(\mathbf{k}, -i\omega_n)^\dagger`, i.e.
+       :math:`\Sigma \leftarrow [\Sigma(i\omega_n) +
+       \Sigma(-i\omega_n)^\dagger]/2` at every
+       :math:`\mathbf{k}`. The relation holds exactly for every
+       self-energy of a Hermitian problem, and the FLEX map preserves it, so
+       a symmetric run changes only at rounding level. Without the
+       projection, a cold start past the bare Stoner instability amplifies
+       the rounding-level asymmetry along with the transient; the run may
+       then keep a slowly decaying remnant, or CONVERGE without any other
+       signal to a symmetry-broken, non-causal branch that is not the
+       self-energy of the Hermitian problem. Such an archive is also refused
+       by the density check of a ``flex_hartree_fock = true`` run that uses
+       it as ``sigma_init``. Applies on the uniform grid and on the IR
+       nodes, in every scheme. ``false`` restores the unprojected update;
+       the run then warns at its end when the final deviation exceeds
+       :math:`10^{-6}`. See ``hwave_sigma_split --check`` for auditing
+       existing archives.
    * - ``matsubara_basis``
      - str
      - "uniform"

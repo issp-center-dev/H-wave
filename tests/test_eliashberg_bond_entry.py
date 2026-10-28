@@ -1773,7 +1773,14 @@ def _bond_compat_input(out_dir):
                                "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
                                "mixing_scheme": "linear",
                                "longitudinal_bond_channels": True,
-                               "longitudinal_bond_output_full": True}},
+                               "longitudinal_bond_output_full": True,
+                               # the reference revision predates the Hermitian
+                               # projection of the self-energy (issue #281),
+                               # which changes a symmetric run at round-off
+                               # only (tests/test_flex_sigma_hermitian.py);
+                               # switched off so that this bit-for-bit
+                               # comparison stays about the pairing flag
+                               "flex_sigma_hermitian_projection": False}},
             "file": {"input": {"path_to_input": "",
                                "interaction": {"path_to_input": _IN1, "Geometry": "geom.dat",
                                                "Transfer": "transfer.dat",

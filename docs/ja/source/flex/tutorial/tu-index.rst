@@ -468,6 +468,11 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
 
+アーカイブを種として使う前に確認するには、\ ``hwave_sigma_split --check sigma.npz``\ を
+実行します。\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+相対偏差を表示し、\ ``--asymmetry-tol``\ を超えると終了ステータス 1 を返します
+（\ :ref:`flex_bond_hf_tutorial`\ を参照）。
+
 ``calc_scheme = "general"``\ のシードは、どの2次カーネルで作られたかも記録
 しています。廃止された\ ``"takimoto"``\ カーネルのシードも初期値として警告付きで
 受け付けられます（記録が無い場合、すなわち reduced スキームのアーカイブや、本キーの導入前
@@ -583,7 +588,9 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 スピンフリーのため）。
 
 *以前の計算から再開する。* ``flex_hartree_fock = true``\ で出力された\ ``sigma.npz``\ は
-分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ ）。
+分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ 。
+``flex_sigma_hermitian_projection``\ の射影のみが適用され、収束したアーカイブは丸め誤差の
+範囲でしか変わりません）。
 その場合は\ ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ を削除（またはコメント
 アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
 ``flex_hartree_fock``\ なしの計算の\ ``sigma.npz``\ （や手作りの全自己エネルギー）は
@@ -598,6 +605,36 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 最後の形式は、UHFk の\ ``trans_mod``\ アーカイブと計算の裸の Transfer 入力から静的補正を
 作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
 ブロックに縮約します）。\ ``--force``\ で既存の出力を上書きします。
+
+変換ツールはまず全自己エネルギーを
+:math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
+に対称化し、除去した相対偏差
+:math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|`\ をログに出力します。収束したアーカイブには丸め誤差しか含まれません。
+射影なし（\ ``flex_sigma_hermitian_projection = false``\ 、または射影のないバージョン）で
+裸の Stoner 不安定性を超えたコールドスタートから書き出したアーカイブには、ゆっくり減衰する
+残差（\ :math:`10^{-5}`\ 程度が観測されています）が残ることがあり、対称化でこれを除去します。
+しかし計算が、他に何の兆候もなく、対称性の破れた非因果的な解（相対偏差\ :math:`\sim 0.3`\ 、
+Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が正の固有値を持つ）に
+**収束** してしまっている場合もあり、これはエルミートな問題の自己エネルギーではありません。
+そのため偏差が\ ``--asymmetry-tol``\ （デフォルト\ :math:`10^{-3}`\ ）を超える場合は拒否します。
+そのような計算は射影を有効にしてやり直してください。
+
+**射影の導入以前に書き出したアーカイブ。** 裸の Stoner 不安定性を超えた計算の
+``sigma.npz``\ （およびそこから導いた結果）は、次のコマンドで確認してください::
+
+   hwave_sigma_split --check sigma.npz
+
+相対偏差を表示し、\ ``--asymmetry-tol``\ を超える場合は終了ステータス 1 を返します。
+``--check``\ が取るのは入力アーカイブ（と\ ``--asymmetry-tol``\ ）だけで、出力アーカイブや
+変換用のオプションを付けるとエラーになります。\ ``--asymmetry-tol``\ は、\ ``--check``\ では
+終了ステータスのしきい値、変換では拒否のしきい値になります::
+
+   hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+   hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+
+射影なしの計算は、最終的な偏差が\ :math:`10^{-6}`\ を超えると終了時に警告し、
+そのアーカイブを\ ``sigma_init``\ として読み込むと\ :math:`10^{-3}`\ を超える場合に警告します。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1283,6 +1320,24 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
      - 5
      - Anderson 加速の履歴の深さ\ :math:`m`\ 。メモリは\ :math:`\Sigma`\ サイズの
        配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
+   * - ``flex_sigma_hermitian_projection``
+     - bool
+     - true
+     - 自己エネルギーを更新するたびに（および\ ``sigma_init``\ の初期値に対して）、
+       :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+       を満たす部分へ射影します。すなわち各\ :math:`\mathbf{k}`\ で
+       :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 。
+       この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像も
+       これを保つため、対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、
+       裸の Stoner 不安定性を超えたコールドスタートでは丸め誤差程度の非対称成分が
+       過渡的な発散とともに増幅されます。計算はゆっくり減衰する残差を残すか、
+       他に何の兆候もなく、対称性の破れた非因果的な解（エルミートな問題の
+       自己エネルギーではない）に収束することがあります。そのようなアーカイブは
+       ``sigma_init``\ に使う\ ``flex_hartree_fock = true``\ の計算の密度チェックでも
+       拒否されます。一様格子と IR ノードの両方、すべてのスキームで適用されます。
+       ``false``\ で射影しない従来の更新に戻り、最終的な偏差が\ :math:`10^{-6}`\ を
+       超えると終了時に警告します。既存のアーカイブの確認には
+       ``hwave_sigma_split --check``\ を使います。
    * - ``matsubara_basis``
      - str
      - "uniform"
