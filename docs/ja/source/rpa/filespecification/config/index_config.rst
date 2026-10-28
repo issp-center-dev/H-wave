@@ -976,7 +976,7 @@ TOML形式
 ``file.input``\ セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-キー\ ``chi0q_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ は大文字・小文字を区別しません（\ ``Trans_Mod``\ は\ ``trans_mod``\ として読まれます）。同じキーを綴りを変えて2回指定するとエラーになります。
+キー\ ``chi0q_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ 、\ ``sigma_init``\ (FLEXモード)は大文字・小文字を区別しません（\ ``Trans_Mod``\ は\ ``trans_mod``\ として読まれます）。同じキーを綴りを変えて2回指定するとエラーになります。
 
 - ``path_to_input``
 

@@ -1443,6 +1443,21 @@ class LongitudinalBondResults:
     types: tuple
 
 
+def _case_insensitive_file_input(info_inputfile, keys):
+    """``[file.input]`` as a ``CaseInsensitiveDict`` (issue #279): a
+    ``Trans_Mod`` must not be ignored silently (hwave_sc has read these keys
+    case-insensitively since #277). Two spellings of one of ``keys`` are
+    refused."""
+    for key in keys:
+        spellings = [k for k in info_inputfile if str(k).lower() == key]
+        if len(spellings) > 1:
+            raise ValueError(
+                "[file.input] {} is given more than once with different "
+                "spellings ({}); keys are case-insensitive.".format(
+                    key, ", ".join(repr(k) for k in spellings)))
+    return CaseInsensitiveDict(info_inputfile)
+
+
 class RPA:
     """
     RPA calculation
@@ -3184,16 +3199,8 @@ class RPA:
     @do_profile
     def read_init(self, info_inputfile):
         logger.info("RPA read initial configs")
-        # [file.input] keys are case-insensitive (issue #279; hwave_sc has
-        # done so since #277): a `Trans_Mod` must not be ignored silently.
-        for _key in ("trans_mod", "green_init", "chi0q_init"):
-            _spell = [k for k in info_inputfile if str(k).lower() == _key]
-            if len(_spell) > 1:
-                raise ValueError(
-                    "[file.input] {} is given more than once with different "
-                    "spellings ({}); keys are case-insensitive.".format(
-                        _key, ", ".join(repr(k) for k in _spell)))
-        info_inputfile = CaseInsensitiveDict(info_inputfile)
+        info_inputfile = _case_insensitive_file_input(
+            info_inputfile, ("trans_mod", "green_init", "chi0q_init"))
         # #167: resolve BEFORE _read_chi0q materialises the array. The two
         # presence flags are read_init's own branch conditions below, so
         # they equal the eventual green_info presence (qlms.py merges the
