@@ -3820,11 +3820,17 @@ class RPA:
         # tables are built from the (folded) declarations with the physical
         # orbital count; spin-orbital mode uses the same spin-block frame
         # UHFk's spin-orbital mode runs the kernel in (_so_to_virtual_green).
-        try:
-            tables = hartree_fock.build_interaction_tables(
-                self.ham_info.param_ham, norb, (nx, ny, nz))
-        except ValueError as exc:
-            raise ValueError("green_init: {}".format(exc)) from None
+        # (An aggregate Coulomb together with CoulombIntra/CoulombInter, which
+        # the table builder refuses, never reaches here: Interaction exits on
+        # it at construction.)
+        tables = hartree_fock.build_interaction_tables(
+            self.ham_info.param_ham, norb, (nx, ny, nz))
+        if not getattr(self, "_green_init_fock_reported", False):
+            logger.info("green_init: the one-body band is T + Hartree + Fock "
+                        "of the Green function (UHFk's mean field with "
+                        "flag_fock = true; before issue #278 it was T + "
+                        "Hartree only)")
+            self._green_init_fock_reported = True
         hartree_fock.accumulate_hf(
             H0, gab_r, tables.inter_table, tables.spin_table, (nx, ny, nz),
             include_fock=True)

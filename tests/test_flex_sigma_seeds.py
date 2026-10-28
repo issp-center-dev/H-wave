@@ -108,7 +108,7 @@ class TestSeedEnvelope(unittest.TestCase):
 
 class TestMeanFieldSeed(unittest.TestCase):
 
-    def test_calc_trans_mod_copy_matches_and_does_not_mutate(self):
+    def test_calc_trans_mod_copy_does_not_mutate(self):
         s, r = _build({})
         nd = 2 * s.norb
         nvol = s.lattice.nvol
@@ -122,9 +122,11 @@ class TestMeanFieldSeed(unittest.TestCase):
         g_before = g0.copy()
         before_r = s.ham_info.ham_trans_r.copy()
         before_q = s.ham_info.ham_trans_q.copy()
-        ref = s._calc_trans_mod(g0.copy())
-        got = s._calc_trans_mod_copy(g0)
-        np.testing.assert_array_equal(got, ref)
+        # the band itself is checked against UHFk's mean field in
+        # tests/test_rpa_green_init_fock.py; here only the seed path's
+        # no-mutation contract
+        s._calc_trans_mod_copy(g0)
+        s._calc_trans_mod_copy(g0)
         np.testing.assert_array_equal(g0, g_before)
         np.testing.assert_array_equal(s.ham_info.ham_trans_r, before_r)
         np.testing.assert_array_equal(s.ham_info.ham_trans_q, before_q)

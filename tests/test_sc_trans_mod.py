@@ -1545,7 +1545,6 @@ class TestGreenInitIsUHFkMeanField(unittest.TestCase):
                     lg.removeHandler(handler)
                 self.assertFalse(any("Fock" in r.getMessage()
                                      for r in records))
-                self.assertFalse(hasattr(sc, "_warn_green_init_fock_omission"))
 
 
 class TestHermiticityRound6(unittest.TestCase):

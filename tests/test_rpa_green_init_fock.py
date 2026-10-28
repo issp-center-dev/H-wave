@@ -372,5 +372,114 @@ class TestEpsilonKUsesTheBand(unittest.TestCase):
             self.assertLess(_max_diff(h_gi, r.H0_k), TOL)
 
 
+class TestComplexBondOrientation(unittest.TestCase):
+    """Orientation of the Fock term on a complex, R-asymmetric bond: a
+    complex transfer t on (R, a, b) = (R, 0, 1) (and its Hermitian partner
+    at (-R, 1, 0)) with a CoulombInter (or Hund) row on the same (R, a, b),
+    G from a converged UHFk run. The Fock correction of the green_init band
+    sits on exactly the entries the transfer occupies -- the same bond, not
+    the reversed one -- and equals UHFk's mean field of the same G. A real,
+    R-symmetric G could not tell the two orientations apart."""
+
+    CELL = (5, 4, 1)
+
+    def _case(self, t, R, V, typ):
+        import hwave.qlms as qlms
+        nvol, nd = self.CELL[0] * self.CELL[1], 4
+        Rm = (-R[0], -R[1])
+        with tempfile.TemporaryDirectory() as d:
+            _write_geometry(os.path.join(d, "geom.dat"), 2)
+            _write_table(os.path.join(d, "transfer.dat"), "transfer", 2,
+                         [(0, 0, 0, 0, 0.1), (0, 0, 1, 1, -0.1),
+                          (R[0], R[1], 0, 1, t), (Rm[0], Rm[1], 1, 0, np.conj(t))])
+            _write_table(os.path.join(d, "v.dat"), typ, 2,
+                         [(R[0], R[1], 0, 1, V), (Rm[0], Rm[1], 1, 0, V)])
+            inter = {"path_to_input": d, "Geometry": "geom.dat",
+                     "Transfer": "transfer.dat", typ: "v.dat"}
+            out = os.path.join(d, "out")
+            qlms.run(input_dict={
+                "log": {"print_level": 0, "print_step": 1000},
+                "mode": {"mode": "UHFk", "flag_fock": True,
+                         "param": {"Ncond": 20, "IterationMax": 3000,
+                                   "EPS": 12, "Mix": 0.5, "RndSeed": 3,
+                                   "T": 0.05, "CellShape": list(self.CELL),
+                                   "SubShape": [1, 1, 1]}},
+                "file": {"input": {"path_to_input": "", "interaction": inter},
+                         "output": {"path_to_output": out, "green": "green"}}})
+            fin = {"path_to_input": out, "green_init": "green.npz",
+                   "interaction": inter}
+            r = _rpa({"path_to_input": d, "interaction": inter}, self.CELL)
+            G = r.read_init(fin)["green_init"]
+            band = r._calc_trans_mod(G)
+            bare = r._calc_trans_mod(np.zeros_like(G))
+            u = _uhfk({"path_to_input": d, "interaction": inter}, self.CELL)
+            u.Green = G.reshape(nvol, 2, 2, 2, 2).copy()
+            u._make_ham()
+            self.assertLess(_max_diff(band, u.ham), TOL)
+
+        def to_r(hk):
+            return (np.fft.fftn(np.asarray(hk).reshape(*self.CELL, nd, nd),
+                                axes=(0, 1, 2)) / nvol).reshape(*self.CELL, nd, nd)
+        t_r, f_r = to_r(bare), to_r(band - bare)
+        support = lambda x: {tuple(int(i) for i in idx) for idx in
+                             zip(*np.nonzero(np.abs(x) > 1e-8))
+                             if tuple(idx[:3]) != (0, 0, 0)}
+        t_sup, f_sup = support(t_r), support(f_r)
+        self.assertTrue(f_sup)
+        self.assertLessEqual(f_sup, t_sup)       # same bond entries as t
+        # the declared (R, 0, 1) entry, spin up, carries both
+        key = (R[0] % self.CELL[0], R[1] % self.CELL[1], 0, 0, 1)
+        self.assertIn(key, t_sup)
+        self.assertIn(key, f_sup)
+
+    def test_coulombinter_r10(self):
+        self._case(0.4 + 0.3j, (1, 0), 0.5, "CoulombInter")
+
+    def test_coulombinter_r11(self):
+        self._case(0.2 - 0.45j, (1, 1), 0.7, "CoulombInter")
+
+    def test_hund_r10(self):
+        self._case(0.4 + 0.3j, (1, 0), 0.5, "Hund")
+
+
+class TestRPAOffsitePairHopVertexDrop(unittest.TestCase):
+    """RPA's own vertex (not the band): PairHop rows that are off-site --
+    declared R != 0, or R = 0 between orbitals of different sites per
+    orbital_site -- are reported and dropped from the vertex (issue #157),
+    judged on the DECLARED rows."""
+
+    def _vertex(self, rows, site=None):
+        import logging
+        with tempfile.TemporaryDirectory() as d:
+            fin = _model(d, {"PairHop": rows})
+            records = []
+            handler = logging.Handler()
+            handler.emit = records.append
+            lg = logging.getLogger("hwave.solver.rpa")
+            lg.addHandler(handler)
+            try:
+                r = _rpa(fin, CELL, orbital_site=site)
+            finally:
+                lg.removeHandler(handler)
+        dropped = any("PairHop declares" in rec.getMessage() for rec in records)
+        return dropped, float(np.max(np.abs(r.ham_info.ham_inter_q)))
+
+    def test_locality(self):
+        onsite = [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)]
+        # on-site: kept
+        dropped, w = self._vertex(onsite)
+        self.assertFalse(dropped)
+        self.assertGreater(w, 1e-3)
+        # same rows, orbitals on different sites: dropped
+        dropped, w = self._vertex(onsite, site=(0, 1))
+        self.assertTrue(dropped)
+        self.assertEqual(w, 0.0)
+        # declared R = (Nx, 0): off-site although it folds onto R = 0
+        dropped, w = self._vertex([(CELL[0], 0, 0, 1, 0.3),
+                                   (-CELL[0], 0, 1, 0, 0.3)])
+        self.assertTrue(dropped)
+        self.assertEqual(w, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
