@@ -487,11 +487,19 @@ class TestRefusals(_TmpDir):
         out = inp["file"]["output"]["path_to_output"]
         self.assertFalse(os.path.exists(out) and os.listdir(out))
 
-    def test_dynamic(self):
-        self._refused(r"frequency", {"frequency": "dynamic", "chi0q_mode": "flex"})
+    def test_unknown_frequency(self):
+        self._refused(r"frequency", {"frequency": "dynamik"})
+
+    def test_dynamic_unsupported_basis(self):
+        # frequency = "dynamic" is supported (issue #284; the refusals of the
+        # dynamic solver are in tests/test_eliashberg_dynamic_so.py); the IR
+        # basis is not
+        self._refused(r"matsubara_basis", {"frequency": "dynamic",
+                                           "matsubara_basis": "ir"})
 
     def test_dynamic_case_insensitive_key(self):
-        self._refused(r"frequency", {"Frequency": "dynamic"})
+        self._refused(r"matsubara_basis", {"Frequency": "dynamic",
+                                           "Matsubara_Basis": "ir"})
 
     def test_bond_channels(self):
         self._refused(r"bond_channels", {"bond_channels": True})
@@ -740,9 +748,11 @@ class TestRefusals(_TmpDir):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
 
-    def test_dynamic_entry_still_refuses(self):
+    def test_dynamic_entry_checks_the_configuration_first(self):
+        """A direct solve_dynamic call reaches the spin-orbital dynamic solver,
+        whose configuration checks run before anything else is read."""
         from hwave.solver import eliashberg_dynamic
-        with self.assertRaisesRegex(ValueError, "enable_spin_orbital"):
+        with self.assertRaisesRegex(ValueError, "enable_spin_orbital.*chi0q_mode"):
             eliashberg_dynamic.solve_dynamic({"mode": {"enable_spin_orbital": True}})
 
 

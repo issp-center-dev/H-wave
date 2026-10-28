@@ -80,15 +80,19 @@ TOML形式
   - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は\ ``[eliashberg] chi0q_mode =
     "flex"``\ でこの計算の出力を読みます（\ ``[file.output]``\ の\ ``chiq``\ ・
     ``chi0q``\ ・\ ``green``\ を指定してください）。\ :ref:`sc_spin_orbital`\ を参照。
-    その動的エントリと\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
+    オンサイトの動的ソルバー（\ ``frequency = "dynamic"``\ ）もこれを読みます
+    （\ :ref:`sc_spin_orbital_dynamic`\ を参照）。動的なボンド分解の経路と
+    ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
     ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
-    ``warm_start = false``\ で実行できます
+    ``warm_start = false``\ で実行できます。
 
   **Eliashberg ソルバー。** ``hwave_sc``\ はスピン軌道模型の静的な線形化
   Eliashberg 方程式を、ひとつの\ :math:`2N \times 2N`\ ギャップ行列（\ ``pairing_type``\ なし）、
   オンサイト相互作用、\ ``chi0q_mode = "calc"``\ ・\ ``"load"``\ ・\ ``"flex"``\ で
   解きます。適用範囲、出力、拒否される組み合わせは\ :ref:`sc_spin_orbital`\ に
-  まとめています。
+  まとめています。\ ``frequency = "dynamic"``\ では振動数に依存するギャップを
+  求めます（一様格子、\ ``chi0q_mode = "calc"``\ または\ ``"flex"``\ ）。
+  :ref:`sc_spin_orbital_dynamic`\ を参照してください。
 
 .. _rpa_calc_scheme_auto:
 
@@ -708,8 +712,12 @@ TOML形式
 テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
 :ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
-<sc_dynamic_frequency>`\ で説明しています。スピン軌道の静的経路の2つのキーを
-先に示します。
+<sc_dynamic_frequency>`\ で説明しています。スピン軌道の経路（静的・動的）の
+2つのキー（\ ``flex_chiq``\ と\ ``flex_chi0q``\ ）を先に示します。どちらも静的な経路
+（\ ``frequency = "static"``\ ）と動的な経路（\ ``frequency = "dynamic"``\ ）の両方が
+``chi0q_mode = "flex"``\ のときに読みます。動的な経路のピークメモリの見積もりは
+``[eliashberg] mem_limit_gb``\ と比較されます
+（:ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
 
 - ``flex_chiq``
 

@@ -7625,11 +7625,12 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 
 def reject_spin_orbital_mode(input_dict):
     """Raise when [mode] enable_spin_orbital is set, for the Eliashberg
-    entries that do not support it: the dynamic solver
-    (``eliashberg_dynamic.solve_dynamic``), the dynamic bond path and the
-    temperature sweep. The static entry (:func:`calc_eliashberg`) supports
-    spin-orbital models since issue #83 and refuses only its unsupported
-    combinations (:func:`hwave.solver.so_pairing.check_so_supported`).
+    entries that do not support it: the dynamic bond path
+    (``eliashberg_bond_io.solve_dynamic_bond``) and the temperature sweep.
+    The static entry (:func:`calc_eliashberg`, issue #83) and the on-site
+    dynamic solver (``frequency = "dynamic"``, issue #284) support
+    spin-orbital models and refuse only their unsupported combinations
+    (:func:`hwave.solver.so_pairing.check_so_supported`).
 
     Until issue #83 a spin-orbital config RAN through these entries and
     printed eigenvalues built on four internal inconsistencies (norb never
@@ -7647,11 +7648,12 @@ def reject_spin_orbital_mode(input_dict):
     if _resolve_spin_orbital_flag(input_dict):
         raise ValueError(
             "[mode] enable_spin_orbital = true is not supported by this "
-            "Eliashberg entry (the dynamic solver, frequency = \"dynamic\", "
-            "its bond path and the temperature sweep): it would produce "
-            "silently wrong eigenvalues (issue #83). The static solver "
-            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\", "
-            "\"load\" or \"flex\") supports spin-orbital models.")
+            "Eliashberg entry (the dynamic bond path, bond_channels = true, "
+            "and the temperature sweep): it would produce silently wrong "
+            "eigenvalues (issue #83). hwave_sc supports spin-orbital models "
+            "with frequency = \"static\" (chi0q_mode = \"calc\", \"load\" "
+            "or \"flex\") and with frequency = \"dynamic\" (chi0q_mode = "
+            "\"calc\" or \"flex\", on-site interactions).")
 
 
 def _so_rpa_vertex(input_dict):
@@ -7855,9 +7857,56 @@ def _so_flex_static_slice(data, arr, path, nd, nvol, config_nmat, what):
     return out
 
 
-def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
+#: IR-native refusal hint of the spin-orbital dynamic reader (issue #284)
+_SO_DYNAMIC_IR_HINT = (
+    "the spin-orbital dynamic Eliashberg solver reads uniform-grid files only "
+    "(the IR basis is not supported in spin-orbital mode yet). Re-run FLEX "
+    "with [mode.param] write_densified = true.")
+
+
+def _so_flex_full_axis(data, arr, path, nd, nvol, config_nmat, what):
+    """The whole bosonic axis ``(nmat, nvol, nd^2, nd^2)`` of a raw spinful
+    FLEX array ``arr`` ``(nmat, nvol, nd, nd, nd, nd)`` for the dynamic
+    solver (issue #284): the stored axis must be the full uniform grid of the
+    configured ``Nmat`` (``freq_index``, when recorded, ``0 .. Nmat - 1``;
+    ``nmat``, when recorded, ``Nmat``), with bosonic index ``m`` at
+    ``nu_m = (2 m - Nmat) pi T``."""
+    if arr.ndim != 6 or arr.shape[1:] != (nvol,) + (nd,) * 4:
+        raise ValueError(
+            "FLEX {} in '{}' has shape {}, not the general spinful layout "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}) over nd = {nd} spin-orbitals of "
+            "this run. Re-run FLEX on the same model and grid.".format(
+                what, path, arr.shape, nvol, nd=nd))
+    fi, fn = _read_freq_meta(data)
+    nmat = int(config_nmat)
+    full = (arr.shape[0] == nmat and (fn is None or int(fn) == nmat)
+            and (fi is None or np.array_equal(np.asarray(fi).ravel(),
+                                              np.arange(nmat))))
+    if not full:
+        raise ValueError(
+            "FLEX {} in '{}' does not hold the full bosonic grid of [mode.param] "
+            "Nmat = {} (stored axis {}, recorded nmat {}): frequency = "
+            "\"dynamic\" needs the susceptibility at every bosonic frequency of "
+            "the run's grid. Re-run FLEX with the same Nmat.".format(
+                what, path, nmat, arr.shape[0], fn))
+    out = np.ascontiguousarray(arr.reshape(nmat, nvol, nd * nd, nd * nd),
+                               dtype=complex)
+    for m in range(nmat):
+        if not np.all(np.isfinite(out[m])):
+            raise ValueError(
+                "FLEX {} in '{}' contains non-finite values at bosonic index {}; "
+                "re-run the producing FLEX calculation.".format(what, path, m))
+    return out
+
+
+def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
     """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
     ``[mode] enable_spin_orbital = true``) for ``chi0q_mode = "flex"``.
+
+    ``full = True`` (the dynamic solver, issue #284) returns ``chi`` and
+    ``chi0`` on the whole bosonic axis, ``(nmat, nvol, nd^2, nd^2)``
+    (:func:`_so_flex_full_axis`), and requires the Green function on the
+    configured Nmat; the tag checks are the same.
 
     Returns ``(chi, green_kw, chi0, chi_path)``:
 
@@ -7918,9 +7967,10 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
             "check that this run's interaction files reproduce the FLEX run's "
             "vertex needs it. Set [file.output] chi0q in the FLEX run and "
             "[eliashberg] flex_chi0q to that file.".format(chi0_path, hint))
+    ir_hint = _SO_DYNAMIC_IR_HINT if full else _STATIC_IR_HINT
     logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
     with np.load(chi_path) as data:
-        _reject_ir_native(data, chi_path, _STATIC_IR_HINT)
+        _reject_ir_native(data, chi_path, ir_hint)
         if "chi_convention" not in data:
             raise ValueError(
                 "FLEX archive '{}' has no chi_convention tag: an untagged file "
@@ -7975,8 +8025,12 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
         chiq = data["chiq"]
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
-        chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
-                                    "chiq")
+        if full:
+            chi = _so_flex_full_axis(data, chiq, chi_path, nd, nvol, config_nmat,
+                                     "chiq")
+        else:
+            chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol,
+                                        config_nmat, "chiq")
         del chiq
 
     # the Green function: required (the stored chi belongs to the dressed G)
@@ -7999,14 +8053,43 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
         raise ValueError(
             "internal error: the FLEX Green archive '{}' resolved to a different "
             "path in the shared loader.".format(green_path))
+    if full and green_kw.shape[-1] != int(config_nmat):
+        raise ValueError(
+            "FLEX Green archive '{}' holds {} fermionic frequencies, but "
+            "[mode.param] Nmat = {}: frequency = \"dynamic\" needs the Green "
+            "function on the run's grid. Re-run FLEX with the same Nmat.".format(
+                green_path, green_kw.shape[-1], int(config_nmat)))
 
     with np.load(chi0_path) as d0:
-        _reject_ir_native(d0, chi0_path, _STATIC_IR_HINT)
+        _reject_ir_native(d0, chi0_path, ir_hint)
         validate_chi0q_index_convention(d0, True, chi0_path)
         check_momentum_marker(d0, chi0_path)
-        chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
-                                     config_nmat, "chi0q")
+        if full:
+            chi0 = _so_flex_full_axis(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                      config_nmat, "chi0q")
+        else:
+            chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                         config_nmat, "chi0q")
     return chi, green_kw, chi0, chi_path
+
+
+def _so_flex_backward_error(gam, chi, chi0):
+    """The backward error of :func:`_check_so_flex_vertex`: the maximum over
+    the q blocks of ``|(1 + chi0 gam) chi - chi0| / (|chi0| + |chi0 gam|
+    |chi|)`` (Frobenius per block; a zero-scale block counts 0 if its residual
+    vanishes and infinity otherwise; NaN propagates). ``chi`` and ``chi0`` are
+    ``(..., nd^2, nd^2)`` with any leading axes."""
+    c0g = chi0 @ gam
+    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
+    scale = (np.linalg.norm(chi0, axis=(-2, -1))
+             + np.linalg.norm(c0g, axis=(-2, -1))
+             * np.linalg.norm(chi, axis=(-2, -1)))
+    pos = scale > 0
+    per_q = np.where(res == 0, 0.0, np.inf)
+    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
+    # NaN in any block propagates (and is refused by the callers)
+    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
+    return float(np.max(per_q)) if per_q.size else 0.0
 
 
 def _check_so_flex_vertex(gam, chi, chi0, chi_path):
@@ -8020,17 +8103,7 @@ def _check_so_flex_vertex(gam, chi, chi0, chi_path):
     global norm would dilute one bad block by ``1/sqrt(nvol)``). A block of
     zero scale (``chi0_q = 0`` and ``chi0_q gam chi_q = 0``) has error 0 if
     its residual vanishes and infinity otherwise."""
-    c0g = chi0 @ gam
-    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
-    scale = (np.linalg.norm(chi0, axis=(-2, -1))
-             + np.linalg.norm(c0g, axis=(-2, -1))
-             * np.linalg.norm(chi, axis=(-2, -1)))
-    pos = scale > 0
-    per_q = np.where(res == 0, 0.0, np.inf)
-    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
-    # NaN in any block propagates (and is refused by the test below)
-    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
-    err = float(np.max(per_q)) if per_q.size else 0.0
+    err = _so_flex_backward_error(gam, chi, chi0)
     logger.info("spin-orbital FLEX: vertex consistency backward error %.3e", err)
     if not err <= _SO_FLEX_GAMMA_TOL:
         raise ValueError(
@@ -8062,14 +8135,25 @@ class _SOAntisymmetricBasis:
     R) / 2``, with ``E^dagger E = 1`` and ``E E^dagger = P``; ``dim`` is
     ``(n - n_self) / 2``. The spin-orbital eigenproblem is solved on
     ``E^dagger K E`` (:meth:`reduce`), where no Pauli-forbidden mode exists,
-    so no shift or selection can return one."""
+    so no shift or selection can return one.
 
-    def __init__(self, shape):
+    ``reverse`` is the involution ``R`` as a map on index arrays of
+    ``shape``; the default is the static ``(A, B, k) -> (B, A, -k)``
+    (:func:`_reverse_k_and_orbital`). The dynamic solver (issue #284) passes
+    ``eliashberg_dynamic._reverse_kw_and_orbital`` on ``(nd, nd, Nx, Ny, Nz,
+    nmat)``, ``(A, B, k, n) -> (B, A, -k, nmat - 1 - n)``: a fermionic
+    frequency is never zero, so that map has no self-paired element."""
+
+    def __init__(self, shape, reverse=None):
         self.shape = tuple(int(x) for x in shape)
         n = int(np.prod(self.shape))
         idx = np.arange(n).reshape(self.shape)
-        self.partner = np.ascontiguousarray(
-            _reverse_k_and_orbital(idx)).ravel()
+        rev = _reverse_k_and_orbital if reverse is None else reverse
+        self.partner = np.ascontiguousarray(rev(idx)).ravel()
+        if self.partner.shape != (n,) or not np.array_equal(
+                self.partner[self.partner], np.arange(n)):
+            raise ValueError("the reverse map of the antisymmetric basis must "
+                             "be an involution of the flat gap index")
         flat = np.arange(n)
         self.rep = flat[flat < self.partner]
         self.rep_partner = self.partner[self.rep]
@@ -8146,11 +8230,19 @@ def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
 
 
 def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
-                         spectral_shift=None):
+                         spectral_shift=None, seed_vec=None, map_back=True):
     """The eigenvalue analysis of the spin-orbital kernel on the
     antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
     the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``,
     ordered by descending real part.
+
+    ``seed_vec`` (reduced coordinates, optional): an eigenvector-continuation
+    seed, used as the ARPACK start vector and to order the eigenpairs by
+    their overlap with it (``_solve_leading``; on the dense branch the
+    selected eigenpairs are ordered the same way). ``map_back = False``
+    returns the reduced eigenvectors as columns ``(dim, n_ev)`` instead of
+    the gaps (the dynamic solver maps them back one at a time: each gap is
+    ``nd^2 Nk nmat`` long). The defaults are the static solver's call.
 
     ARPACK needs ``k < dim - 1``; when ``num_eigenvalues >= dim - 1`` the
     reduced operator (then small) is diagonalized densely instead and
@@ -8178,6 +8270,8 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
         key = -vals.real if spectral_shift is not None else -np.abs(vals)
         sel = np.argsort(key, kind="stable")[:n_keep]
         vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
+        if seed_vec is not None:
+            vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
         logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
                     "antisymmetric space; dense diagonalization, %d eigenpairs.",
                     num_eigenvalues, dim - 1, n_keep)
@@ -8185,8 +8279,10 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
         _, _, eig = _solve_leading(
             lambda: (red, dim), dim, method,
             num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
-            spectral_shift=spectral_shift)
+            spectral_shift=spectral_shift, seed_vec=seed_vec)
         vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+    if not map_back:
+        return vals, vecs
     gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
                      for i in range(len(vals))])
     return vals, gaps
@@ -8237,6 +8333,11 @@ def calc_eliashberg(input_dict):
     if spin_orbital_mode:
         from hwave.solver import so_pairing
         so_pairing.check_so_config(input_dict)
+        if so_pairing.so_frequency(input_dict) == "dynamic":
+            # the spin-orbital dynamic solver (issue #284); [eliashberg] is
+            # read case-insensitively there, as the checks above read it
+            from hwave.solver import eliashberg_dynamic_so
+            return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)

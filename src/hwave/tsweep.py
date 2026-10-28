@@ -107,10 +107,10 @@ def preflight(base, cont):
                 "eigenpair from the eigenvalue-analysis block, which is only "
                 "written for solver_mode 'eigenvalue' or 'both'. Set "
                 "[eliashberg] solver_mode = \"eigenvalue\"." % smode)
-        # The temperature sweep (and the dynamic Eliashberg solver) rejects
-        # spin-orbital mode (#83; only the static hwave_sc entry supports
-        # it); fail in preflight rather than after every expensive FLEX rung
-        # has run
+        # The temperature sweep rejects spin-orbital mode (#83; the static
+        # and the on-site dynamic hwave_sc entries support it, the sweep's
+        # seed chaining does not yet, #284); fail in preflight rather than
+        # after every expensive FLEX rung has run
         # (with keep_going, ALL rungs would run before ALL rejections).
         # FLEX-only sweeps (run_eliashberg = false) stay allowed.
         from hwave.sc import reject_spin_orbital_mode
