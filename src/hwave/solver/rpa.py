@@ -2027,6 +2027,7 @@ class RPA:
                                       "longitudinal_bond_output_full",
                                       "longitudinal_bond_freq_batch",
                                       "longitudinal_bond_half_grid",
+                                      "longitudinal_bond_store",
                                       "flex_second_order")
                           if k in self.param_mod]
             if _flex_only:
@@ -3785,57 +3786,72 @@ class RPA:
         return green_sub
 
     def _calc_trans_mod_copy(self, g0):
-        """``_calc_trans_mod`` on a COPY of ``ham_trans_r`` (the legacy
-        helper adds into a view of the shared array): the HF-on seed path
-        of the FLEX solver (#181 Phase B) uses this so that neither
-        ``ham_trans_r`` nor the user's arrays are mutated. Same arithmetic
-        and result as the legacy helper."""
-        nx, ny, nz = self.lattice.shape
-        nvol = self.lattice.nvol
-        nd = self.nd
-        norb = self.norb
-        gg = np.asarray(g0)[0]
-        ww = self.ham_info.ham_inter_r.reshape(nvol, nd, nd, nd, nd)
-        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
-        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
-        hh3 = np.sum(hh1 + hh2, axis=0) / 2
-        if self.ham_info.enable_spin_orbital:
-            H0r = np.array(self.ham_info.ham_trans_r, copy=True).reshape(nvol, nd, nd)
-        else:
-            H0r = np.einsum('kab,st->ksatb',
-                            np.asarray(self.ham_info.ham_trans_r).reshape(nvol, norb, norb),
-                            np.eye(2)).reshape(nvol, nd, nd)
-        H0r[0] += hh3
-        H0 = (np.fft.ifftn(H0r.reshape(nx, ny, nz, nd, nd), axes=(0, 1, 2))
-              * nvol).reshape(nvol, nd, nd)
-        return H0
+        """The ``green_init`` band (:meth:`_calc_trans_mod`); kept under its
+        historical name for the HF-on seed path of the FLEX solver (#181
+        Phase B), which relies on neither ``ham_trans_r`` nor the user's
+        arrays being mutated -- :meth:`_calc_trans_mod` guarantees that
+        itself since issue #278."""
+        return self._calc_trans_mod(g0)
 
     def _calc_trans_mod(self, g0):
+        """One-body band ``H0(k) = T(k) + Sigma_HF[G](k)`` of a ``green_init``
+        Green function (issue #278).
+
+        ``g0`` is the real-space Green function as :meth:`_read_green`
+        returns it, ``(nvol, nd, nd)`` in spin-block order (in spin-orbital
+        mode too), ``g0[r, (s,a), (t,b)] = <c^dag_{sa}(r) c_{tb}(0)>`` --
+        UHFk's ``Green``. The mean field is UHFk's: the shared kernel
+        ``hartree_fock.build_interaction_tables`` + ``accumulate_hf`` with
+        the Fock term, on the (folded) interaction tables of this solver,
+        i.e. the construction UHFk's ``_make_ham`` applies to the same G.
+        ``green_init`` and the ``trans_mod`` UHFk writes for the same G
+        therefore define the same band (before #278 the Fock term was left
+        out). No input array is modified; the result is a new array."""
         logger.debug(">>> RPA._calc_trans_mod")
+        from . import hartree_fock
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
         nd = self.nd
         norb = self.norb
 
-        gg = g0[0]
-        ww = self.ham_info.ham_inter_r.reshape(nvol,nd,nd,nd,nd)
+        gg = np.asarray(g0)
+        if gg.shape != (nvol, nd, nd):
+            raise ValueError(
+                "green_init: Green function shape {} does not match "
+                "(nvol, nd, nd) = {}".format(gg.shape, (nvol, nd, nd)))
+        gab_r = np.array(gg, dtype=np.complex128).reshape(nvol, 2, norb, 2, norb)
 
-        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
-        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
-        hh3 = np.sum(hh1+hh2, axis=0)/2
-
+        # transfer term T(k), e^{+ikR} (issue #133), consistent with
+        # _make_ham_trans (spin-block order in spin-orbital mode)
         if self.ham_info.enable_spin_orbital:
-            H0r = self.ham_info.ham_trans_r.reshape(nvol,nd,nd)
+            H0r = np.array(self.ham_info.ham_trans_r, dtype=np.complex128,
+                           copy=True).reshape(nvol,nd,nd)
         else:
             H0r = np.einsum('kab,st->ksatb',
-                            self.ham_info.ham_trans_r.reshape(nvol,norb,norb),
+                            np.asarray(self.ham_info.ham_trans_r).reshape(nvol,norb,norb),
                             np.eye(2)).reshape(nvol,nd,nd)
-        H0r[0] += hh3
-
-        # e^{+ikR} (issue #133), consistent with _make_ham_trans
         H0 = (np.fft.ifftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
               * nvol).reshape(nvol,nd,nd)
+
+        # Hartree + Fock of every interaction type, by UHFk's kernel. The
+        # tables are built from the (folded) declarations with the physical
+        # orbital count; spin-orbital mode uses the same spin-block frame
+        # UHFk's spin-orbital mode runs the kernel in (_so_to_virtual_green).
+        # (An aggregate Coulomb together with CoulombIntra/CoulombInter, which
+        # the table builder refuses, never reaches here: Interaction exits on
+        # it at construction.)
+        tables = hartree_fock.build_interaction_tables(
+            self.ham_info.param_ham, norb, (nx, ny, nz))
+        if not getattr(self, "_green_init_fock_reported", False):
+            logger.info("green_init: the one-body band is T + Hartree + Fock "
+                        "of the Green function (UHFk's mean field with "
+                        "flag_fock = true; before issue #278 it was T + "
+                        "Hartree only)")
+            self._green_init_fock_reported = True
+        hartree_fock.accumulate_hf(
+            H0, gab_r, tables.inter_table, tables.spin_table, (nx, ny, nz),
+            include_fock=True)
         return H0
 
     @do_profile

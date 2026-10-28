@@ -178,7 +178,8 @@ This section controls the Eliashberg solver. Key parameters:
 
      **Mean-field one-body band: assembly.** ``[file.input] trans_mod`` (the
      one-body Hamiltonian written by UHFk) replaces the ``Transfer`` band;
-     ``green_init`` adds its Hartree term to the ``Transfer`` band; an
+     ``green_init`` adds the Hartree-Fock mean field of its Green function to
+     the ``Transfer`` band; an
      ``Extern`` field (``coeff_extern`` times the table) is added on top. With
      ``chi0q_mode = "calc"`` or ``"load"`` (including
      ``bond_channels = true`` without an external ``bond_green``),
@@ -193,7 +194,7 @@ This section controls the Eliashberg solver. Key parameters:
      ``trans_mod`` or ``green_init``, or a finite ``Extern`` field) is refused
      with an error before :math:`\chi_0(\mathbf{q})` is computed or loaded.
      The check is made on the assembled one-body band (``trans_mod``, or the
-     ``Transfer`` band plus the Hartree term of ``green_init``, plus
+     ``Transfer`` band plus the Hartree-Fock term of ``green_init``, plus
      ``coeff_extern`` times ``Extern``): its up-up and down-down blocks may
      differ, and its spin-mixing blocks may be nonzero, by at most an
      absolute :math:`10^{-10}` in energy units. This tolerance is the default
@@ -223,15 +224,19 @@ This section controls the Eliashberg solver. Key parameters:
      the susceptibilities and the Green function come from the FLEX run or
      from the ``bond_green`` file.
 
-     **Hartree-only** ``green_init``. The ``green_init`` band is
-     :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
-     term), so it differs from the ``trans_mod`` UHFk writes for the same
-     solution whenever Fock terms are present: for any ``CoulombInter``,
-     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row
-     (:math:`R \neq 0`, or between orbitals on different sites per
-     ``[mode.param] orbital_site``), or the ``CoulombInter`` part of
-     ``Coulomb``. A warning then recommends ``trans_mod``, which is the
-     preferred input and, for a paramagnetic state, the consistent one.
+     ``green_init`` **and** ``trans_mod``. The ``green_init`` band is
+     :math:`T + \Sigma_{\rm HF}[G]`, the Hartree and Fock terms of every
+     interaction built exactly as UHFk builds its mean-field Hamiltonian
+     (with ``flag_fock = true``), so ``green_init`` and the ``trans_mod``
+     that a UHFk run with ``flag_fock = true`` (the default) writes for the
+     same solution define the same band. For a UHFk solution obtained with
+     ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band):
+     ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state
+     that breaks the translation symmetry of the original lattice, neither
+     the saved ``green`` nor the saved ``trans_mod`` reproduces the converged
+     band when read back (issue #294). (Before issue #278 the ``green_init``
+     band left out the Fock term, and ``hwave_sc`` warned when a
+     Fock-carrying interaction was present.)
 
   .. warning::
 
@@ -2089,8 +2094,12 @@ Practical advice
   4 GiB for a non-spin-orbital general chi0q (:math:`N^4` orbital indices) of
   the same physical :math:`N`. ``frequency = "dynamic"`` needs every
   frequency; see :ref:`sc_spin_orbital_dynamic_memory`.
-- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode has not
-  been validated (for ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`).
+- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode is
+  validated against ``gpu = false`` on an A100 GPU: the full spectrum of an
+  SU(2) model and the Arnoldi solve of a complex-SOC model agree to
+  :math:`10^{-10}` in the eigenvalues, and the power-iteration solve agrees
+  within its converged residual (``tests/test_sc_spin_orbital_gpu.py``; for
+  ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`).
 
 Validation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2383,7 +2392,12 @@ GPU
 is the shared, backend-independent kernel of the dynamic solver; the basis
 and the eigensolver stay on the host. The host and device kernel
 applications are checked against each other to :math:`10^{-12}`, and the
-leading eigenvalue is compared as well (this check requires CuPy).
+leading eigenvalue is compared as well (this check requires CuPy). On an
+A100 GPU the full-spectrum and Arnoldi solves with ``gpu = true`` agree with
+``gpu = false`` to :math:`10^{-10}` in the eigenvalues, and the power-iteration
+solve agrees within its converged residual; for a degenerate leading
+eigenvalue the gaps are compared as subspaces
+(``tests/test_sc_spin_orbital_gpu.py``).
 
 Validation
 """"""""""

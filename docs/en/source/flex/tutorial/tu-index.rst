@@ -657,8 +657,12 @@ the bubble assembly what crosses to the host per map is its result alone
 -- one block per channel pair. The dressing and the self-energy transport
 move their own data as before (the frequency batches of the effective
 interaction, then the collapses and the static slices).
-The bond arrays themselves stay in host memory and are transferred one
-frequency batch at a time; the batch is chosen against both the host cap
+The bond block store (the bubble and the effective interaction of every
+frequency and channel pair) is kept in device memory when it fits there
+(``longitudinal_bond_store = "auto"``, the default), so that none of it
+crosses to the host during the iterations; otherwise it stays in host
+memory and is transferred one frequency batch at a time. The log says
+which, and why. The batch is chosen against both the host cap
 (``longitudinal_bond_memory_cap_gb``) and the free device memory, whose
 table carries a ``bubble`` row beside ``dressing`` and ``transport``
 (``longitudinal_bond_freq_batch`` overrides both and is refused when it

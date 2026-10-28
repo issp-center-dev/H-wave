@@ -42,9 +42,21 @@ class BondBlockStore:
     :meth:`get_pair_full` and :meth:`expand_full` rebuild the full grid
     from the symmetry ``X(q, l) = X(q, nmat - l)^dagger``. On the full grid
     every one of them is the identity it replaces.
+
+    ``xp`` (issue #275): the array module every slot is allocated on --
+    numpy (the default, the host store) or cupy (the DEVICE store, chosen by
+    the device admission when the store fits). The store owns placement:
+    ``put_pair`` / ``put_freq_batch`` convert their argument to ``xp`` once
+    (:func:`backend.to_device`, which is the identity for an argument already
+    on ``xp`` and the host copy ``to_host`` for a device argument of a host
+    store), while ``get_pair`` / ``get_freq_batch`` return views of ``xp``
+    and ``get_pair_full`` a contiguous array of the module asked for. On a
+    device store the dressing's frequency batch is therefore a VIEW of the
+    slot, exactly as on the CPU path, and the per-iteration host <-> device
+    copies of the store disappear. ``detach`` returns an array of ``xp``.
     """
 
-    def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False):
+    def __init__(self, nmat, nvol, ND, nd, names, aliases=None, *, half_grid=False, xp=np):
         names = tuple(names)
         if len(set(names)) != len(names):
             raise ValueError("BondBlockStore: duplicate array names {}".format(names))
@@ -60,16 +72,34 @@ class BondBlockStore:
         self.B = self.ND // self.nd
         self.half_grid = bool(half_grid)
         self.nslices = _hg.nslices(self.nmat) if self.half_grid else self.nmat
+        self.xp = np if xp is None else xp
         self._arrays = {}
         self._released_slots = set()
         try:
             for name in names:
-                self._arrays[name] = np.zeros((self.nslices, self.nvol, self.ND, self.ND),
-                                              dtype=np.complex128)
-        except MemoryError:
+                self._arrays[name] = self.xp.zeros((self.nslices, self.nvol, self.ND, self.ND),
+                                                   dtype=np.complex128)
+        except (MemoryError,) + tuple(_bk.oom_error_types()):
+            # a partial allocation is rolled back (a device store hands its
+            # blocks back to the pool) before the error propagates
             self._arrays.clear()
             raise
         self._released = False
+
+    @property
+    def resident(self):
+        """``"host"`` (numpy slots) or ``"device"`` (any other module)."""
+        return "host" if self.xp is np else "device"
+
+    @property
+    def nbytes(self):
+        """Bytes of the slots currently allocated (aliases counted once)."""
+        return int(sum(int(a.nbytes) for a in self._arrays.values()))
+
+    def _to_store(self, x):
+        # the one conversion point of the store (issue #275): the identity
+        # for an argument already on the store's module
+        return _bk.to_device(x, self.xp)
 
     def __enter__(self):
         return self
@@ -89,7 +119,7 @@ class BondBlockStore:
     def put_pair(self, name, alpha, beta, block):
         a = self._arr(name)
         nd = self.nd
-        a[:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd] = block
+        a[:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd] = self._to_store(block)
 
     def get_pair(self, name, alpha, beta):
         a = self._arr(name)
@@ -109,14 +139,15 @@ class BondBlockStore:
         store's own). Under ``half_grid`` the slices ``l in (0, nmat/2)``
         are the conjugate transposes of the stored slices of the transposed
         pair ``(beta, alpha)``; on the full grid this is exactly
-        ``to_device(ascontiguousarray(get_pair(...)), xp)``."""
+        ``to_device(ascontiguousarray(get_pair(...)), xp)``. The gather and
+        the mirror run on the store's module (a device kernel on a device
+        store); only a module change crosses host <-> device."""
         ab = self.get_pair(name, alpha, beta)
         if not self.half_grid:
-            if xp is None:
-                return _bk.array_module_of(ab).ascontiguousarray(ab)
-            return _bk.to_device(np.ascontiguousarray(ab), xp)
-        full = _hg.expand(ab, self.nmat, ba=self.get_pair(name, beta, alpha))
-        return full if xp is None else _bk.to_device(full, xp)
+            full = self.xp.ascontiguousarray(ab)
+        else:
+            full = _hg.expand(ab, self.nmat, ba=self.get_pair(name, beta, alpha))
+        return full if (xp is None or xp is self.xp) else _bk.to_device(full, xp)
 
     def grid_index(self, s0, s1):
         """The grid index ``l`` of the stored slices ``s0 ... s1 - 1``."""
@@ -127,8 +158,11 @@ class BondBlockStore:
     def expand_full(self, name, out=None, chunk=None):
         """The whole array ``name`` on the full grid ``(nmat, nvol, ND, ND)``
         (``out`` may be a memory map); the stored array itself on the full
-        grid when ``out`` is None."""
+        grid when ``out`` is None. An ``out`` of another array module than
+        the store's receives a converted copy."""
         a = self._arr(name)
+        if out is not None and _bk.array_module_of(out) is not self.xp:
+            a = _bk.to_device(a, _bk.array_module_of(out))
         if not self.half_grid:
             if out is None:
                 return a
@@ -137,10 +171,22 @@ class BondBlockStore:
         return _hg.expand(a, self.nmat, out=out, chunk=chunk)
 
     def put_freq_batch(self, name, l0, l1, batch):
-        self._arr(name)[l0:l1] = batch
+        self._arr(name)[l0:l1] = self._to_store(batch)
 
     def get_freq_batch(self, name, l0, l1):
         return self._arr(name)[l0:l1]
+
+    def to_host(self):
+        """Move every remaining slot to host memory (issue #275): after the
+        SCF the in-process pairing reads the store only to build its vertex
+        and the kernel blocks, and the device memory is better spent on the
+        pairing kernel. Slot by slot, so at most one slot is held twice; the
+        store's module becomes numpy. The identity for a host store."""
+        if self.xp is np:
+            return
+        for name in list(self._arrays):
+            self._arrays[name] = _bk.to_host(self._arrays[name])
+        self.xp = np
 
     def _refuse_alias(self, name, what):
         if name in self._aliases:
@@ -281,21 +327,18 @@ def assemble_bubble(store, green_scf, green0_tail, beta, view, spatial_shape, wo
     for (alpha, beta_), block in _bubble._iter_bond_dynamic(
             green_scf, green0_tail, beta, view, spatial_shape=tuple(spatial_shape),
             workers=workers):
-        if half:
-            # issue #223: only the stored slices l(h) cross to the host (on
-            # the device the selection runs before the transfer); the whole
-            # block is checked for finiteness first, so a non-finite slice
-            # the half grid would drop is still refused
-            xp_b = _bk.array_module_of(block)
-            if not bool(xp_b.all(xp_b.isfinite(block))):
-                raise NonFiniteError("non-finite bond bubble block ({}, {})".format(alpha, beta_))
-            block = _bk.to_host(_hg.half_from_full(block, store.nmat))
-            store.put_pair("chibar", alpha, beta_, block)
-            del block
-            continue
-        block = _bk.to_host(block)
-        if not np.all(np.isfinite(block)):
+        # the whole block is checked for finiteness on its own module, before
+        # the half grid (issue #223) drops the mirrored slices, so a
+        # non-finite slice the half grid would drop is still refused
+        xp_b = _bk.array_module_of(block)
+        if not bool(xp_b.all(xp_b.isfinite(block))):
             raise NonFiniteError("non-finite bond bubble block ({}, {})".format(alpha, beta_))
+        if half:
+            # only the stored slices l(h) are kept; on the device the
+            # selection runs before any transfer
+            block = _hg.half_from_full(block, store.nmat)
+        # the store converts (issue #275): a host copy for a host store, the
+        # block itself for a device store on the block's module
         store.put_pair("chibar", alpha, beta_, block)
         del block
 
@@ -567,11 +610,13 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
 
     ``dev`` is the :class:`BondDeviceContext` owning the vertices (spec
     2026-09-17 section 4.2): each frequency batch is moved from the store
-    (host) onto ``dev.xp`` once (``_bk.to_device``), dressed and reduced to
-    ``W`` entirely on that module, then the collapses, the static slices
-    and ``W`` itself are copied back to the host (``_bk.to_host``) before
-    the ONE store write of the batch. On numpy (``dev.xp is np``) every
-    transfer is the identity, so this is byte-for-byte the host loop.
+    onto ``dev.xp`` once (``_bk.to_device``; the identity for a device store,
+    issue #275), dressed and reduced to ``W`` entirely on that module, then
+    the collapses and the static slices are copied back to the host
+    (``_bk.to_host``) and ``W`` is handed to the ONE store write of the
+    batch, which converts it to the store's module. On numpy (``dev.xp is
+    np``) every transfer is the identity, so this is byte-for-byte the host
+    loop.
 
     ``cond_tol`` is the conditioning floor handed to every
     :func:`~hwave.solver.bond_channels.dress_batch` call and
@@ -685,7 +730,10 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         else:
             ls, rows, l_first = None, slice(l0, l1), l0
             where = "[{}, {})".format(l0, l1)
-        cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)     # 1 H2D
+        # 1 H2D from a host store; on a device store (issue #275) the identity:
+        # cb is then a VIEW of the slot that the W batch below overwrites
+        # (with "W" aliased onto "chibar"), as on the CPU path
+        cb = _bk.to_device(store.get_freq_batch("chibar", l0, l1), xp)
         if mirror_guard:
             # time reversal is broken: the mirrored slices l' = nmat - l of
             # this batch (l = 0 and nmat/2 are their own mirrors and are not
@@ -710,7 +758,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if l0 <= l_static < l1:
             static_s[...] = _bk.to_host(chi_s_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_s_w", l0, l1, _bk.to_host(chi_s_b))
+            store.put_freq_batch("chi_s_w", l0, l1, chi_s_b)
         chi_s_b -= cb
         W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
@@ -725,7 +773,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         if l0 <= l_static < l1:
             static_c[...] = _bk.to_host(chi_c_b[l_static - l0])
         if output_full:
-            store.put_freq_batch("chi_c_w", l0, l1, _bk.to_host(chi_c_b))
+            store.put_freq_batch("chi_c_w", l0, l1, chi_c_b)
         chi_c_b -= cb
         W_b += 0.5 * _sandwich(C, chi_c_b, C, workers)
         del chi_c_b
@@ -741,7 +789,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
             if not bool(xp.all(xp.isfinite(W_b))):
                 raise _NonFiniteError("non-finite effective interaction W in the frequency "
                                       "batch {}{}".format(where, _at(iteration)))
-            store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
+            store.put_freq_batch("W", l0, l1, W_b)
             del W_b, cb
             continue
         # second-order term: A / Bc carry the mixed blocks
@@ -765,7 +813,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                                   "{}{}".format(where, _at(iteration)))
         # written ONCE, last: when "W" aliases "chibar" (issue #222) this
         # overwrites the batch just consumed, and nothing above reads it again
-        store.put_freq_batch("W", l0, l1, _bk.to_host(W_b))
+        store.put_freq_batch("W", l0, l1, W_b)
         del W_b, cb
     if half:
         for coll in (collapse0, collapse_s, collapse_c):
@@ -858,8 +906,8 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=
 
     ``xp`` selects the array module the accumulation runs in (numpy or
     cupy; default numpy). ``green_kw`` may be host or device -- it is moved
-    to ``xp`` here via :func:`_bk.to_device`, as is each host ``W`` block
-    read from ``store``. The returned ``sigma`` is an ``xp`` array; the
+    to ``xp`` here via :func:`_bk.to_device`, as is each ``W`` block read
+    from a host ``store`` (a device store hands its blocks over in place). The returned ``sigma`` is an ``xp`` array; the
     caller moves it to the host. With ``xp is np`` this is the previous
     code, line for line."""
     if not (xp is np or (hasattr(xp, "zeros") and _bk.array_module_of(xp.zeros(1)) is xp)):
@@ -887,9 +935,11 @@ def calc_self_energy_bond(store, green_kw, beta, view, shape, norb, workers, xp=
             else:
                 G_sh = xp.roll(G_rt, shift, axis=axes).reshape(nmat, nvol, P, P)
             if get_full is None:
-                blk = _bk.to_device(np.ascontiguousarray(store.get_pair("W", alpha, bt)), xp)
+                src = store.get_pair("W", alpha, bt)
+                blk = _bk.to_device(_bk.array_module_of(src).ascontiguousarray(src), xp)
             else:
-                # 1 H2D per pair; under the store's half grid (issue #223) the
+                # 1 H2D per pair from a host store, none from a device store
+                # (issue #275); under the store's half grid (issue #223) the
                 # full-grid block is rebuilt from the stored slices of (alpha,
                 # beta) and the mirror of those of (beta, alpha)
                 blk = get_full("W", alpha, bt, xp=xp)
@@ -923,6 +973,15 @@ _TRANSPORT_OPS_WARN = 1.0e11
 _GIB = float(1024 ** 3)
 
 
+#: the batch floor of the device-store admission under
+#: ``longitudinal_bond_store = "auto"`` (issue #275): the store goes on the
+#: device only if a frequency batch of at least ``ceil(this / nvol)`` slices
+#: (capped by the host table's batch) still fits next to it -- below that a
+#: batched solve underfills the device and the host store with a larger
+#: batch may be the faster choice. A provisional value, to be revisited with
+#: measurements.
+DEVICE_STORE_MIN_BLOCKS = 4096
+
 #: the device phase rows, in the order a refusal names them when two of
 #: them are exactly equal
 _DEV_PHASE_ORDER = ("bubble", "dressing", "transport")
@@ -952,7 +1011,7 @@ def transport_ops(B, nmat, nvol, norb):
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
                          guard_freqs="all", guard_enabled=True, w_in_place=False,
-                         w2_triples=0, half_grid=False):
+                         w2_triples=0, half_grid=False, store="host", pairing=False):
     """The named-buffer lifetime table of spec 3.6 (every row raw), the
     batch selection and the admission decision against ``cap_gb`` (binary
     GiB). Returns a dict with ``persistent_rows``, ``phase_rows`` (at the
@@ -1055,7 +1114,36 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     unchanged), and with ``output_full`` the publish step expands the two
     dynamic channels to the full grid one member at a time, so
     ``post_scf`` holds ``2 U - U_store`` (both full members, plus the half
-    of the second while it is expanded) over the persistent rows."""
+    of the second while it is expanded) over the persistent rows.
+
+    ``store`` (issue #275, with ``device_available`` only): where the bond
+    block store lives -- ``"host"`` (the table above, unchanged), ``"device"``
+    or ``"auto"``. A DEVICE store adds its slots as a persistent device row,
+    ``block_store = n_slots * U_store`` (``n_slots`` = 1 with ``W`` in place,
+    2 with the pairing's separate ``W``, plus 2 with ``output_full``), so the
+    device need becomes ``1.25 * (persistent rows + block_store + max(bubble,
+    dressing + guard, transport))`` against the same ``0.9 *
+    device_available``. ``"auto"`` takes the device store when that need fits
+    at the batch floor ``min(host-table nb, ceil(DEVICE_STORE_MIN_BLOCKS /
+    nvol))`` (at the pinned ``freq_batch`` when one is given) and the host
+    store otherwise; ``"device"`` takes it whenever the need fits at ``nb =
+    1`` (or at the pinned batch) and raises ``ValueError`` with the device
+    rows otherwise. The dict gains ``store_resident`` (``"host"`` /
+    ``"device"``), ``store_bytes``, ``store_reason`` (one line for the log),
+    ``device_nb_store`` (the largest batch the device-store table admits, 0
+    when none) and, for a device store, ``device_rows["block_store"]``; the
+    ``device_*`` keys then describe the device-store table. The host table
+    is not changed by the residency (the host preflight runs before the
+    backend is known, so it keeps charging the store on the host: a
+    deliberately conservative reading).
+
+    ``pairing`` (in-process pairing on): a device store also charges the
+    pairing's re-dressing, ``pairing_redress = norb^4 nvol Nmat 16 + 2 nb
+    nvol ND^2 16`` (the pair bubble plus two batch temporaries), a device
+    row of the device-store table only."""
+    if store not in ("host", "device", "auto"):
+        raise ValueError("estimate_bond_memory: store must be 'host', 'device' or 'auto', "
+                         "got {!r}".format(store))
     nmat, nvol, norb, B = int(nmat), int(nvol), int(norb), int(B)
     depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
     it = 16
@@ -1213,9 +1301,81 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
             if _dev_need(cand) <= dev_cap:
                 device_nb = cand
                 break
-        nb = min(nb, device_nb)
-        device = dict(device_rows=_dev_rows(nb), device_need=_dev_need(nb), device_cap=dev_cap,
-                      device_nb=device_nb, device_table=_dev_table(nb))
+        # the device-resident block store (issue #275): every slot of the
+        # store is one persistent device row on top of the host-store table
+        n_slots = (1 if w_in_place else 2) + (2 if output_full else 0)
+        store_bytes = n_slots * U_store
+
+        def _pair_redress(n):
+            # the in-process pairing's re-dressing (issue #275): with a host
+            # store it ran next to the device memory the store left free; with
+            # the store resident it is charged here -- the pair bubble G2
+            # (norb^4 nvol nmat, the uniform grid's frequency count, an upper
+            # bound for the IR nodes) plus two batch temporaries (the S chi S
+            # contribution and its scaled copy) on top of the dressing row
+            if not pairing:
+                return 0
+            return norb ** 4 * nvol * nmat * it + 2 * n * nvol * ND * ND * it
+
+        def _dev_rows_store(n):
+            rows = _dev_rows(n)
+            rows["block_store"] = store_bytes
+            if pairing:
+                rows["pairing_redress"] = _pair_redress(n)
+            return rows
+
+        def _dev_need_store(n):
+            return _dev_need(n) + 1.25 * (store_bytes + _pair_redress(n))
+
+        def _dev_table_store(n):
+            return "\n".join("  device     {:>18s}: {:10.4f} GiB".format(k, v / _GIB)
+                              for k, v in _dev_rows_store(n).items())
+        device_nb_store = 0
+        for cand in range(nslices, 0, -1):
+            if _dev_need_store(cand) <= dev_cap:
+                device_nb_store = cand
+                break
+        nb_host_store = min(nb, device_nb)
+        resident, reason = "host", None
+        if store == "host":
+            reason = "longitudinal_bond_store = \"host\""
+        else:
+            if freq_batch is not None:
+                at = nb
+            elif store == "device":
+                at = 1
+            else:
+                at = min(nb, max(1, -(-DEVICE_STORE_MIN_BLOCKS // nvol)))
+            fits = _dev_need_store(at) <= dev_cap
+            what = ("{:.4f} GiB = 1.25 * (persistent rows + block_store {:.4f} GiB + max phase) "
+                    "at frequency batch {} against 0.9 * available {:.4f} GiB".format(
+                        _dev_need_store(at) / _GIB, store_bytes / _GIB, at, dev_cap / _GIB))
+            if fits:
+                resident = "device"
+                reason = "the device need with the store resident is " + what
+            elif store == "device":
+                raise ValueError(
+                    "[mode.param] longitudinal_bond_store = \"device\": the bond block store "
+                    "({:.4f} GiB, {} slot(s) of {:.4f} GiB) does not fit on the device: the "
+                    "estimated device need is {}; the device rows are\n{}\nUse "
+                    "longitudinal_bond_store = \"auto\" or \"host\", enable "
+                    "longitudinal_bond_half_grid, or reduce the k mesh or Nmat.".format(
+                        store_bytes / _GIB, n_slots, U_store / _GIB, what,
+                        _dev_table_store(at)))
+            else:
+                reason = "the store does not fit on the device: the need with it resident " \
+                         "would be " + what
+        if resident == "device":
+            nb = min(nb, device_nb_store)
+            device = dict(device_rows=_dev_rows_store(nb), device_need=_dev_need_store(nb),
+                          device_cap=dev_cap, device_nb=device_nb_store,
+                          device_table=_dev_table_store(nb))
+        else:
+            nb = nb_host_store
+            device = dict(device_rows=_dev_rows(nb), device_need=_dev_need(nb),
+                          device_cap=dev_cap, device_nb=device_nb, device_table=_dev_table(nb))
+        device.update(store_resident=resident, store_bytes=store_bytes, store_reason=reason,
+                      device_nb_store=device_nb_store)
 
     phase_rows = _phase_rows(nb)
     return dict(persistent_rows=persistent_rows, phase_rows=phase_rows, persistent=persistent,

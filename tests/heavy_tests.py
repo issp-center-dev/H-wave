@@ -227,6 +227,11 @@ HEAVY_TESTS = (
      "the which='LM' retry of the spin-orbital dynamic solver against the dense "
      "reduced spectrum at Nmat = 32 (a 4096 x 4096 dense eigenproblem, ~22 s); "
      "the ARPACK-referenced sibling stays in the fast gate"),
+    # --- tests/test_flex_bond_device_store.py -- device block store (#275) -
+    ("test_flex_bond_device_store", "TestKernelMatvecsAgree", "test_ir",
+     "twelve bond-gate FLEX solves with the in-process IR pairing on the fake "
+     "device (host vs device store; singlet, triplet, both; full and half "
+     "grid), 6.2 s measured; the uniform-grid sibling stays in the fast gate"),
     # --- tests/test_flex_bond_gpu.py -- CPU vs GPU equivalence -----------
     ("test_flex_bond_gpu", "TestEndToEndEquivalence",
      "test_two_orbital_bond_chain",
