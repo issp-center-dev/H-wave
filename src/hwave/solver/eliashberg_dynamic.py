@@ -907,6 +907,14 @@ def calc_g2_dynamic(green_kw, beta):
     # G2[ij, lm, site, n] = A[ij, site, n] * B[lm, site, n]  (no sum over n)
     G2 = A[:, np.newaxis, :, :] * B[np.newaxis, :, :, :]
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+    # in place when that keeps the dtype ``G2 / beta`` would have (the same
+    # values without a second four-leg-sized buffer, the spin-orbital
+    # solver's memory peak, #284); otherwise (e.g. complex64 G and a float64
+    # beta, or an integer G) out of place, exactly as ``G2 / beta``
+    if (np.issubdtype(G2.dtype, np.inexact)
+            and G2.dtype == np.result_type(G2, beta)):
+        G2 /= beta
+        return G2
     return G2 / beta
 
 
@@ -1518,6 +1526,12 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     from hwave.solver.rpa import (validate_momentum_convention,
                                   check_momentum_marker)
     check_momentum_marker(data, path)   # unconditional (round-10)
+    if "spin_orbital" in data and bool(np.asarray(data["spin_orbital"]).any()):
+        # a spin-orbital gap over N orbitals has the shape of a gap over 2N
+        # orbitals; it is not a seed of a non-spin-orbital run (issue #284)
+        raise ValueError(
+            "seed_eigenvector '{}' is a spin-orbital gap (spin_orbital = True); "
+            "it cannot seed a run without [mode] enable_spin_orbital.".format(path))
     if gap.ndim != 6:
         raise ValueError(
             "seed_eigenvector '{}' has ndim = {} but a gap file is always "
@@ -2006,9 +2020,12 @@ def solve_dynamic(input_dict):
     """
     import hwave.sc as sc
 
-    # spin-orbital mode is unsupported here exactly as on the static path;
-    # solve_dynamic is publicly callable, so guard both entries (issue #83)
-    sc.reject_spin_orbital_mode(input_dict)
+    # spin-orbital mode has its own solver (issue #284); solve_dynamic is
+    # publicly callable, so route a direct call there too (its configuration
+    # checks run first, before any file is read)
+    if sc._resolve_spin_orbital_flag(input_dict):
+        from hwave.solver import eliashberg_dynamic_so
+        return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     # shared validated conversion (round-7 review): an unchecked 1/T here
@@ -2092,6 +2109,8 @@ def solve_dynamic(input_dict):
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
     sc._check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
                               sc._nonbond_site(input_dict, norb))
+    # a spin-orbital archive is refused before the k-space table is built (#271)
+    sc._preflight_refuse_so_archives(input_dict, "flex")
     inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
                                                 interactions, norb, input_dict)
 

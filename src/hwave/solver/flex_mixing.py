@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from hwave.solver import backend as _bk
+
 _GEMV_CHUNK = 1 << 20
 
 
@@ -123,6 +125,173 @@ class StackedAndersonMixer:
         self._xs.append(x)
         self._rs.append(r)
         return self._unstack(x + self.mix * r, state)
+
+
+# ---------------------------------------------------------------------------
+# Frequency-reversal Hermitian symmetry of the self-energy (issue #281)
+# ---------------------------------------------------------------------------
+#
+# For a Hamiltonian H that is Hermitian -- a Hermitian one-body part H0(k)
+# (plus a Hermitian static mean field) and Hermitian two-body terms -- with
+# a real chemical potential, the imaginary-time Green function obeys
+#
+#     G_ab(k, tau)^* = G_ba(k, tau),   0 < tau < beta,
+#
+# (take the complex conjugate of -Tr[e^{-(beta-tau)K} c_ka e^{-tau K} c_kb^dag]/Z
+# with K = H - mu N Hermitian), i.e. G(k, tau) is a Hermitian matrix at
+# every k. On the Matsubara axis this reads
+#
+#     G_ab(k, i w_n)^* = G_ba(k, -i w_n),   i.e.  G(k, i w) = G(k, -i w)^dag,
+#
+# and the same holds for the self-energy, since
+# Sigma(k, i w) = (i w + mu) - H0(k) - G(k, i w)^{-1}. The relation is at
+# FIXED k: no time reversal or inversion is involved.
+#
+# The FLEX map preserves it exactly in exact arithmetic. In (k, tau) space
+# every step is a product of matrices that are Hermitian in their index
+# pairs: the bubble chi0_{ab,cd}(q, tau) ~ G_ca(k+q, tau) G_bd(k, -tau)
+# satisfies chi0_{ab,cd}^* = chi0_{ba,dc}; the RPA/FLEX ladders sum it with
+# the bare vertex, which has the same pair symmetry exactly when the
+# interaction is Hermitian (the k-space reader rejects a declaration table
+# that is not Hermitian-closed, issue #93); and the self-energy contraction
+# Sigma_ab(k, tau) ~ sum_q V_{..}(q, tau) G_{..}(k - q, tau) maps such
+# products back to a Hermitian G-like object. The Hartree-Fock term
+# (Phase B) is a frequency-independent Hermitian matrix. This covers the
+# reduced, general and spin-orbital vertices, the bond-gate blocks, and a
+# trans_mod / green_init mean field (which only changes the Hermitian H0
+# that the solver diagonalises with ``eigh`` -- the Green function is
+# rebuilt from those eigenpairs, so it is Hermitian by construction).
+#
+# The discretised maps keep the relation as well: the uniform grid
+# i w_j = (2 j + 1 - Nmat) pi / beta is symmetric (index j <-> Nmat - 1 - j),
+# the bosonic grid likewise, and the cyclic FFT convolutions commute with
+# the reversal. On the IR basis the fermionic node set is integer-symmetric
+# (asserted in ir_axis.IRAxis), and because the basis functions u_l(tau) are
+# real, uhat_l(-i w) = uhat_l(i w)^*: projecting the NODE values is the same
+# as taking the Hermitian part of every expansion coefficient rho_l (the fit
+# matrix P = pinv(E) satisfies P R = conj(P) for the reversal R), so the
+# projection is exact there too and the densified output inherits it.
+#
+# What the map does NOT do is damp an asymmetric part that is already
+# present. The map is exactly equivariant under S: Sigma -> Sigma(-i w)^dag
+# (F(S Sigma) = S F(Sigma)), so the symmetric subspace is invariant, but it
+# need not be attracting. Past a bare Stoner instability the early
+# iterations amplify the round-off asymmetric component together with the
+# transient (issue #281), and the unprojected iteration can then CONVERGE,
+# with no other signal, to a symmetry-broken fixed point (S of it is an
+# equally good one): on the two-orbital dimer of
+# tests/test_flex_sigma_hermitian.py the relative violation is 0.3, the
+# Stoner factor exceeds 1 and the anti-Hermitian part of Sigma(k, i w_n > 0)
+# has a positive eigenvalue, i.e. the solution is not causal. It is not the
+# self-energy of the Hermitian problem. In milder cases the asymmetric part
+# only decays slowly and leaves a remnant (~1e-5 relative was reported).
+# The projection below removes the asymmetric part after every update, so
+# the iteration stays on the physical, symmetric branch. It changes a
+# symmetric iterate only at round-off, so the symmetric fixed point is
+# unchanged.
+
+
+def frequency_reversed_dagger(sigma):
+    """``Sigma(k, -i w)^dag`` of a ``(nblock, nfreq, nvol, n, n)`` array
+    whose frequency axis (axis 1) is symmetric under reversal (the centered
+    uniform grid, the IR node set, or a singleton static axis). Works on
+    numpy and cupy arrays."""
+    return sigma[:, ::-1].swapaxes(-1, -2).conj()
+
+
+# The helpers below work one frequency PAIR (n, nfreq - 1 - n) at a time,
+# so that their temporaries are a few single-frequency slices
+# (1/nfreq of Sigma) instead of Sigma-sized arrays: the projection runs
+# after every update and the diagnostics at the end of a converged solve,
+# where a memory-tight (GPU) run must not fail for want of workspace.
+# The maxima are accumulated as device scalars and read back once.
+
+
+def _dagger(x):
+    return x.swapaxes(-1, -2).conj()
+
+
+def _pairs(nfreq):
+    return ((n, nfreq - 1 - n) for n in range((nfreq + 1) // 2))
+
+
+def _finish(dmax, smax):
+    if dmax is None:
+        return 0.0, 0.0
+    a, scale = float(dmax), float(smax)
+    return a, (a / scale if scale > 0.0 else a)
+
+
+def _acc(cur, val):
+    if cur is None:
+        return val
+    return _bk.array_module_of(val).maximum(cur, val)
+
+
+def frequency_hermitian_deviation(sigma, static=None):
+    """``(abs, rel)``: ``max |Sigma(k, i w) - Sigma(k, -i w)^dag|`` and its
+    ratio to ``max |Sigma|`` (``abs`` itself when ``Sigma`` vanishes). With
+    ``static`` (``(nblock, 1, nvol, n, n)``) the deviation of
+    ``sigma + static`` (the total of a split state), formed slice by slice.
+    The pair (n, m) covers both frequencies: ``|a - b^dag|`` and
+    ``|b - a^dag|`` have the same maximum."""
+    if not sigma.size:
+        return 0.0, 0.0
+    dmax = smax = None
+    for n, m in _pairs(sigma.shape[1]):
+        a, b = sigma[:, n], sigma[:, m]
+        if static is not None:
+            a, b = a + static[:, 0], b + static[:, 0]
+        dmax = _acc(dmax, abs(a - _dagger(b)).max())
+        smax = _acc(smax, abs(a).max())
+        smax = _acc(smax, abs(b).max())
+    return _finish(dmax, smax)
+
+
+def project_frequency_hermitian_inplace(sigma, with_deviation=False):
+    """Replace ``sigma`` IN PLACE by ``(Sigma(k, i w) + Sigma(k, -i w)^dag)
+    / 2``, one frequency pair at a time (the same arithmetic, element by
+    element, as the out-of-place formula). Returns ``sigma``, and with
+    ``with_deviation`` also the ``(abs, rel)`` deviation of the input."""
+    dmax = smax = None
+    for n, m in _pairs(sigma.shape[1]):
+        a = sigma[:, n].copy()
+        if n == m:
+            if with_deviation:
+                dmax = _acc(dmax, abs(a - _dagger(a)).max())
+                smax = _acc(smax, abs(a).max())
+            sigma[:, n] = 0.5 * (a + _dagger(a))
+            continue
+        b = sigma[:, m]
+        if with_deviation:
+            dmax = _acc(dmax, abs(a - _dagger(b)).max())
+            smax = _acc(smax, abs(a).max())
+            smax = _acc(smax, abs(b).max())
+        new_n = 0.5 * (a + _dagger(b))
+        sigma[:, m] = 0.5 * (b + _dagger(a))
+        sigma[:, n] = new_n
+    if with_deviation:
+        return sigma, (_finish(dmax, smax) if sigma.size else (0.0, 0.0))
+    return sigma
+
+
+def project_frequency_hermitian(sigma, with_deviation=False):
+    """``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` as a new array; with
+    ``with_deviation`` also the ``(abs, rel)`` deviation of the INPUT."""
+    return project_frequency_hermitian_inplace(sigma.copy(), with_deviation)
+
+
+def project_split_state(state, inplace=False):
+    """Both components of a :class:`SplitState` projected; the singleton
+    static axis makes the static projection ``(S + S^dag) / 2``. With
+    ``inplace`` the arrays of ``state`` are overwritten and ``state`` is
+    returned."""
+    if inplace:
+        project_frequency_hermitian_inplace(state.static)
+        project_frequency_hermitian_inplace(state.fluct)
+        return state
+    return SplitState(static=project_frequency_hermitian(state.static),
+                      fluct=project_frequency_hermitian(state.fluct))
 
 
 def residuals(state, new, G_state, G_new, eps_den=1e-300):

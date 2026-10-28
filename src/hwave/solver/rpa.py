@@ -4097,7 +4097,7 @@ class RPA:
         return green, green_tail
 
     @do_profile
-    def _calc_chi0q(self, green_kw, green0_tail, beta):
+    def _calc_chi0q(self, green_kw, green0_tail, beta, static_only=False):
         """Calculate the bare susceptibility chi0q.
 
         Parameters
@@ -4113,6 +4113,13 @@ class RPA:
             High-frequency tail correction for Green's function.
         beta : float
             Inverse temperature.
+        static_only : bool, optional
+            If true, return only the ``nmat // 2`` bosonic slice (the zero
+            bosonic frequency for an even ``nmat``) as a one-frequency axis,
+            ``chi0q[:, nmat // 2:nmat // 2 + 1]`` to round-off, through
+            ``bubble.dense_bubble_static`` (memory ``O(nvol * nd**4)``
+            instead of ``O(nmat * nvol * nd**4)``). Used by hwave_sc's static
+            ``chi0q_mode = "calc"`` (issue #272). Default false.
 
         Returns
         -------
@@ -4185,7 +4192,9 @@ class RPA:
         # green0_tail is forwarded AS-IS -- an all-zero tail is not
         # special-cased here; the kernel's own data-driven tail gate
         # (mirroring the legacy _tail_on predicate) handles it.
-        return bubble.dense_bubble(
+        kernel = (bubble.dense_bubble_static if static_only
+                  else bubble.dense_bubble)
+        return kernel(
             green_kw, green0_tail, beta,
             spatial_shape=(nx, ny, nz),
             scheme="reduced" if self.enable_reduced else "general",

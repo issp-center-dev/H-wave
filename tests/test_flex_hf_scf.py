@@ -13,6 +13,7 @@ HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so they RUN there and a missing or
 unusable reference fails rather than skips. Locally they skip with a
 reason when no such checkout is at hand."""
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,20 @@ def _build(param_extra=None, path=_IN2, interactions=None, mixing="linear"):
     return flex_mod.FLEX(r.get_param("ham"), {}, info), r
 
 
+_ISSUE282_DIAGNOSTICS = re.compile(
+    r"^hwave\.solver\.flex (?:INFO|DEBUG) {3}Stoner factor max_q eig\[U chi0\(q, i nu = 0\)\]: .*\n"
+    r"|^hwave\.solver\.flex DEBUG Stoner factor not computed: .*\n"
+    r"|^hwave\.solver\.flex WARNING FLEX iteration \d+ looks divergent: .*\n",
+    re.MULTILINE)
+
+
+def _strip_issue282_diagnostics(log_text):
+    """Remove the additive diagnostic lines of issue #282 (see the
+    develop-comparison test below) from a log in this module's
+    "%(name)s %(levelname)s %(message)s" format."""
+    return _ISSUE282_DIAGNOSTICS.sub("", log_text)
+
+
 _G0_SCRIPT = r'''
 import os, sys, json, logging, numpy as np
 sys.path.insert(0, sys.argv[1] + "/src"); sys.path.insert(0, sys.argv[1])
@@ -56,7 +71,12 @@ par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], 
        "flex_second_order": "local",
        # both orbitals on one site: the behaviour of the reference revision,
        # which ignores the key, stated so that no #234 warning enters the log
-       "orbital_site": [0, 0]}
+       "orbital_site": [0, 0],
+       # the reference revision predates the Hermitian projection of the
+       # self-energy (issue #281), which changes a symmetric run at round-off
+       # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
+       # that this byte-identity comparison stays about the code it names
+       "flex_sigma_hermitian_projection": False}
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"})
 gi = r.get_param("green")
 s.solve(gi, out)
@@ -222,6 +242,14 @@ class TestG0Off(unittest.TestCase):
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             with open(os.path.join(a, "log.txt")) as fh:
                 la = fh.read().replace(here, "<root>").replace(a, "<out>")
+            # Issue #282 added documented, purely additive diagnostic lines
+            # that the reference revision cannot write: the per-iteration
+            # Stoner factor line (INFO on the first and last iteration,
+            # DEBUG otherwise; DEBUG "Stoner factor not computed" if its
+            # evaluation fails) and the one-off "looks divergent" WARNING of
+            # the iteration monitor. Only those lines are removed, from this
+            # side only; every other line must still match byte for byte.
+            la = _strip_issue282_diagnostics(la)
             with open(os.path.join(b, "log.txt")) as fh:
                 lb = fh.read().replace(develop, "<root>").replace(b, "<out>")
             # the whole stream, nothing filtered: the reference revision is

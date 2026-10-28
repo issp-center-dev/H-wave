@@ -550,21 +550,24 @@ class TestBitIdentityWhenOff(unittest.TestCase):
         sa, ga, fa = absent
         so, go, fo = off
         self.assertFalse(so.longitudinal_bond_half_grid)
+        def same(a, b, msg):
+            a, b = np.asarray(a), np.asarray(b)
+            if np.issubdtype(a.dtype, np.inexact):
+                np.testing.assert_allclose(a, b, rtol=1e-12, atol=1e-14, err_msg=msg)
+            else:
+                np.testing.assert_array_equal(a, b, err_msg=msg)
+
         self.assertEqual(sorted(ga), sorted(go))
         for k in ga:
             if isinstance(ga[k], np.ndarray):
-                if np.issubdtype(ga[k].dtype, np.inexact):
-                    np.testing.assert_allclose(ga[k], go[k], rtol=1e-12,
-                                               atol=1e-14, err_msg=k)
-                else:
-                    np.testing.assert_array_equal(ga[k], go[k], err_msg=k)
+                same(ga[k], go[k], k)
         self.assertEqual(sorted(fa), sorted(fo))
         for fn in fa:
             self.assertEqual(sorted(fa[fn]), sorted(fo[fn]))
             self.assertNotIn("longitudinal_bond_half_grid", fa[fn])
             for m in fa[fn]:
-                np.testing.assert_array_equal(fa[fn][m], fo[fn][m], err_msg=fn + ":" + m)
-        self.assertEqual(float(sa.mu), float(so.mu))
+                same(fa[fn][m], fo[fn][m], fn + ":" + m)
+        same(float(sa.mu), float(so.mu), "mu")
 
 
 class TestMemory(unittest.TestCase):
