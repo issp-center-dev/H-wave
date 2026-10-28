@@ -1005,7 +1005,7 @@ TOML形式
 
   **形式 :** str型
 
-  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。\ ``green_init``\ のバンドは Hartree 項のみを含むため、Fock 項がある場合は\ ``trans_mod``\ を推奨します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。
+  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。一体バンドは\ ``Transfer``\ のバンドに Green 関数の Hartree-Fock 平均場（すべての相互作用の Hartree 項と Fock 項。UHFk が\ ``flag_fock = true``\ で平均場ハミルトニアンを作るのと同じ方法で組み立てます）を加えたもので、同じ解から UHFk が出力する\ ``trans_mod``\ のバンドと一致します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。issue #278 より前は Fock 項が含まれていませんでした。
 
 - ``sigma_init``
 

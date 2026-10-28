@@ -1160,7 +1160,7 @@ They specify the settings of the input and output files, respectively, on the ty
   String
 
   **Description :**
-  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The ``green_init`` band contains the Hartree term only; when Fock terms are present, ``trans_mod`` is recommended (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`).
+  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The one-body band is the ``Transfer`` band plus the Hartree-Fock mean field of the Green function (Hartree and Fock terms of every interaction, built as UHFk builds its mean-field Hamiltonian with ``flag_fock = true``), so it equals the band of the ``trans_mod`` UHFk writes for the same solution (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`). Before issue #278 the Fock term was left out.
 
 - ``sigma_init``
 
