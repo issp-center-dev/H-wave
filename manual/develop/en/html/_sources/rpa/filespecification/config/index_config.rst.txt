@@ -1131,6 +1131,8 @@ They specify the settings of the input and output files, respectively, on the ty
 ``file.input`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The keys ``chi0q_init``, ``trans_mod``, ``green_init`` and ``sigma_init`` (FLEX mode) are case-insensitive (``Trans_Mod`` is read as ``trans_mod``); giving one of them twice with different spellings is an error.
+
 - ``path_to_input``
 
   **Type :**
