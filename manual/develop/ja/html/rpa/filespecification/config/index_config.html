@@ -133,15 +133,19 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 <li><p>静的な Eliashberg ソルバー（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span>
 <span class="pre">&quot;flex&quot;</span></code>でこの計算の出力を読みます（<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>を指定してください）。<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照。
-その動的エントリと<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き
+オンサイトの動的ソルバー（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）もこれを読みます
+（<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。動的なボンド分解の経路と
+<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は
-<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます</p></li>
+<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます。</p></li>
 </ul>
 <p><strong>Eliashberg ソルバー。</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はスピン軌道模型の静的な線形化
 Eliashberg 方程式を、ひとつの<span class="math notranslate nohighlight">\(2N \times 2N\)</span>ギャップ行列（<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>なし）、
 オンサイト相互作用、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>で
 解きます。適用範囲、出力、拒否される組み合わせは<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>に
-まとめています。</p>
+まとめています。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では振動数に依存するギャップを
+求めます（一様格子、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>）。
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照してください。</p>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -679,8 +683,12 @@ SCF の経路は変わり得ます。2軌道の自己無撞着
 <strong>動的</strong> ペアリング経路に固有のキーのみを説明します。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>
 テーブルの全体（<code class="docutils literal notranslate"><span class="pre">frequency</span></code>・<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>・<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>・
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>など）は
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Eliashberg ソルバーのチュートリアルの動的振動数の節</span></a>で説明しています。スピン軌道の静的経路の2つのキーを
-先に示します。</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">Eliashberg ソルバーのチュートリアルの動的振動数の節</span></a>で説明しています。スピン軌道の経路（静的・動的）の
+2つのキー（<code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>）を先に示します。どちらも静的な経路
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>）と動的な経路（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）の両方が
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>のときに読みます。動的な経路のピークメモリの見積もりは
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>と比較されます
+（<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic-memory"><span class="std std-ref">メモリと時間</span></a>を参照）。</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p>
 <p><strong>型 :</strong>

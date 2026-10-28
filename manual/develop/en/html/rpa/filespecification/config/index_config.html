@@ -143,9 +143,11 @@ grid, no sublattice, no external field, even <code class="docutils literal notra
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> refuses spin-orbital input;</p></li>
 <li><p>the static Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the outputs of such a
 run with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
-<span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. Its
-dynamic entry and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still
-refuse <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
+<span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The
+on-site dynamic solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>); the dynamic bond path and
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
 </ul>
 <p><strong>Eliashberg solver.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> solves the static linearized
@@ -153,7 +155,9 @@ Eliashberg equation for a spin-orbital model with one
 <span class="math notranslate nohighlight">\(2N \times 2N\)</span> gap matrix (no <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>), on-site interactions
 and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>; the scope, the
 outputs and the refused combinations are listed in
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>.</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> it solves for the
+frequency-resolved gap (uniform grid, <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or
+<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>); see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>.</p>
 </li>
 </ul>
 <ul id="rpa-calc-scheme-auto">
@@ -808,8 +812,12 @@ Only the keys specific to the bond-resolved DYNAMIC pairing path are
 documented here; the full <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table (<code class="docutils literal notranslate"><span class="pre">frequency</span></code>,
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>, <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>,
 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, …) is documented in
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section of the Eliashberg solver tutorial</span></a>. The two keys of the spin-orbital static path are
-listed first.</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-dynamic-frequency"><span class="std std-ref">the dynamic-frequency section of the Eliashberg solver tutorial</span></a>. The two keys of the spin-orbital path (static and
+dynamic), <code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>, are listed first. Both are read
+with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> by the static path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>) and
+by the dynamic path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) alike. The estimated peak
+memory of the dynamic path is checked against <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">mem_limit_gb</span></code>
+(see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic-memory"><span class="std std-ref">Memory and time</span></a>).</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p>
 <p><strong>Type :</strong>

@@ -1288,12 +1288,12 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <li><p><code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Sx</span></code>・<code class="docutils literal notranslate"><span class="pre">Sy</span></code>・<code class="docutils literal notranslate"><span class="pre">Sz</span></code>は全スピン軌道密度から計算されます
 （UHFk と同様、<code class="docutils literal notranslate"><span class="pre">Sx</span></code>と<code class="docutils literal notranslate"><span class="pre">Sy</span></code>はスピン軌道計算でのみ書き出されます）。</p></li>
 </ul>
-<p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>でこれらのアーカイブ
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>でこれらのアーカイブ
 （<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>。FLEX の実行で
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">green</span></code>を指定してください。
-FLEX は指定されたアーカイブだけを出力します）を読みます。
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照してください。動的 Eliashberg ソルバーはこれらを
-受け付けません。</p>
+FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
+（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも、すべてのボソン振動数の<span class="math notranslate nohighlight">\(\chi\)</span>を使う
+動的なソルバー（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）でも使えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の入力としても使用できます。詳細は<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>
 </section>

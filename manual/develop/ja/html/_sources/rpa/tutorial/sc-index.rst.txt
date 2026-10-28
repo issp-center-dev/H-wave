@@ -1707,10 +1707,12 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
 
 - **スピン軌道表現**\ （``mode.enable_spin_orbital = true``\ 。
   ハミルトニアンがどのスピンモードに分類されるかによらず---スピン対角や
-  スピン自由な模型もこの表現で書けます）--- \ **静的ソルバーでサポートされます。**
+  スピン自由な模型もこの表現で書けます）--- \ **静的ソルバーとオンサイトの動的
+  ソルバー（**\ ``frequency = "dynamic"``\ **）でサポートされます。**
   ギャップ関数はスピン行列として扱い、スピンフルな（電荷・縦スピン・横スピンの）
-  感受率を用います。適用範囲は\ :ref:`sc_spin_orbital`\ を参照してください。
-  動的エントリ（\ ``frequency = "dynamic"``\ ）は引き続き設定を即座に拒否し、
+  感受率を用います。適用範囲は\ :ref:`sc_spin_orbital`\ と
+  :ref:`sc_spin_orbital_dynamic`\ を参照してください。動的なボンド分解の経路
+  （\ ``bond_channels = true``\ ）は設定を即座に拒否し、
   ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は FLEX rung の実行前に preflight で
   拒否します（FLEX のみの掃引は\ ``warm_start = false``\ で実行できます）。
 
@@ -1725,7 +1727,7 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 スピン軌道模型（\ ``enable_spin_orbital``\ ）
 --------------------------------------------------
 
-``[mode] enable_spin_orbital = true``\ のとき、静的ソルバーはギャップを一重項・
+``[mode] enable_spin_orbital = true``\ のとき、ソルバーはギャップを一重項・
 三重項の別々のチャネルではなく、\ :math:`2N`\ 個のスピン軌道（\ :math:`N`\ は物理
 軌道の数）にわたるひとつの一般的な行列\ :math:`\Delta_{AB}(\mathbf{k})`\ として
 扱います。Transfer ファイル中のスピン軌道相互作用などのスピン混成一体項は厳密に
@@ -1734,14 +1736,17 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 適用範囲
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- 静的な pairing vertex のみ（\ ``frequency = "static"``\ 、既定値）;
+- ``frequency = "static"``\ （既定値。この節）または\ ``"dynamic"``\ （振動数に
+  依存するギャップ。\ :ref:`sc_spin_orbital_dynamic`\ を参照）;
 - オンサイトの2体相互作用のみ;
 - ボンド分解チャネルなし（\ ``bond_channels = false``\ 、既定値）;
 - ``chi0q_mode = "calc"``\ （スピンフルな\ :math:`\chi_0`\ を内部計算）、
-  ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q）、または
+  ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q。**静的のみ**）、または
   ``"flex"``\ （スピン軌道 FLEX の出力。FLEX は\ ``calc_scheme = "general"``\ かつ
   ``[mode.param] flex_hartree_fock = true``\ で実行したものに限ります。
-  :ref:`flex_spin_orbital`\ を参照）;
+  :ref:`flex_spin_orbital`\ を参照）。動的ソルバーでは\ ``chi0q_mode``\ を
+  ``"flex"``\ または\ ``"calc"``\ に明示的に指定する必要があり、\ ``"load"``\ と
+  指定なし（既定値が\ ``"load"``\ ）は拒否されます;
 - ``solver_mode = "iteration"``\ 、\ ``"eigenvalue"``\ 、\ ``"both"``\ と
   ``eigenvalue_method = "arnoldi"``\ 。
 
@@ -1899,7 +1904,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 
 次のいずれも、計算の前に、変更すべきキーやファイルを示すエラーになります。
 
-- ``frequency = "dynamic"``;
+- ``"static"``\ ・\ ``"dynamic"``\ 以外の\ ``frequency``\ （\ ``"dynamic"``\ に固有の
+  拒否は\ :ref:`sc_spin_orbital_dynamic`\ にまとめています）;
 - ``bond_channels = true``;
 - オフサイトの2体項の行（\ :math:`\mathbf{R} \neq 0`\ ）、\ ``[mode.param]
   orbital_site``\ のもとで異なるサイトの軌道間の\ :math:`\mathbf{R} = 0`\ の行、
@@ -1935,8 +1941,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   まだサポートされていません。issue #273 を参照）;
 - ``[mode.param] spinful_vertex_exchange = false``\ 。
 
-``frequency = "dynamic"``\ の\ ``hwave_sc``\ と、\ ``run_eliashberg = true``\ の
-``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。
+``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き（どちらの振動数でも）
+``enable_spin_orbital``\ を拒否します。
 
 実用上の注意
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1962,10 +1968,11 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``"load"``\ と\ ``"flex"``\ では全体を読み込みます）は
   :math:`N_\mathrm{mat} N_k (2N)^4`\ 個の複素数、すなわち
   :math:`16\,N_\mathrm{mat} N_k (2N)^4`\ バイトです（\ :math:`N_k`\ は k 点の数）。
-  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 69 GB
+  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 64 GiB
   で、同じ物理軌道数\ :math:`N`\ の非スピン軌道 general の chi0q（軌道添字
-  :math:`N^4`\ ）の約 4.3 GB と比べて大きくなります。
-- スピン軌道モードでの\ ``gpu = true``\ は検証していません。
+  :math:`N^4`\ ）の約 4 GiB と比べて大きくなります。
+- スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は検証して
+  いません（\ ``"dynamic"``\ については\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
 検証
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1993,6 +2000,263 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
 ``Hund``\ と\ ``Exchange``\ ）では両チャネルとも一致します。
 
+
+.. _sc_spin_orbital_dynamic:
+
+振動数に依存するギャップ（\ ``frequency = "dynamic"``\ ）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``[eliashberg] frequency = "dynamic"``\ では、スピン軌道のギャップはフェルミオン
+松原振動数ももちます。一様格子
+:math:`\omega_n = (2n + 1 - N_\mathrm{mat})\pi T`\ 、
+:math:`n = 0, \ldots, N_\mathrm{mat} - 1`\ の上の
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n)`\ を求め、pairing vertex はすべてのボソン
+振動数\ :math:`\nu_m = (2m - N_\mathrm{mat})\pi T`\ で使います。
+
+.. math::
+
+   V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+   \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .
+
+裸の部分\ :math:`\tfrac{1}{2}\Gamma`\ は振動数によりません。揺らぎの部分は
+:math:`+\mathbf{q}`\ と、\ :math:`\chi`\ と同じボソン添字で読みます。これは厳密対角化が
+有限振動数で決める向きです。逆向きの読み方は\ :math:`\nu = 0`\ でしか一致しません。
+カーネルは、非スピン軌道の動的ソルバー（\ :ref:`sc_dynamic_frequency`\ を参照）の
+振動数分解カーネルを\ :math:`2N`\ 個のスピン軌道で使ったものです。
+
+**Pauli 射影。** ギャップは
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n) = -\Delta_{BA}(-\mathbf{k},
+-i\omega_n)`\ を満たす必要があります。\ :math:`-i\omega_n`\ は添字
+:math:`N_\mathrm{mat} - 1 - n`\ です。フェルミオン振動数は決してゼロにならないので、
+自分自身と組になる要素はなく、反対称空間の次元はギャップの次元
+:math:`(2N)^2 N_k N_\mathrm{mat}`\ のちょうど半分です。ソルバーは静的ソルバーと
+同じく、この空間の正規直交基底で計算します。
+
+**振動数の偶奇の両方をまとめて解きます。** 非スピン軌道の動的ソルバーは
+振動数について偶の一重項または三重項のチャネルを選びます。スピン軌道モードには
+一重項・三重項のラベルがなく、振動数パリティ
+:math:`\Delta(i\omega_n) \to \Delta(-i\omega_n)`\ は一般にはカーネルの対称性では
+ありません（反転対称性がない場合やスピン軌道相互作用がある場合）。そのため
+スペクトルは振動数について偶と奇のギャップを含み、各固有ベクトルの偶・奇の
+成分は選択せずに出力します。
+
+適用範囲
+""""""""
+
+- ``matsubara_basis = "uniform"``\ （既定値）のみ;
+- ``chi0q_mode``\ を\ ``"flex"``\ または\ ``"calc"``\ に明示的に指定する
+  （``"load"``\ は不可）。最小の\ ``[eliashberg]``\ テーブルの例（\ ``[mode]
+  enable_spin_orbital = true``\ と併用します）:
+
+  .. code-block:: toml
+
+     [eliashberg]
+     frequency         = "dynamic"
+     chi0q_mode        = "flex"        # or "calc"
+     solver_mode       = "eigenvalue"
+     eigenvalue_method = "arnoldi"
+
+- ``chi0q_mode = "flex"``: スピン軌道 FLEX 計算の\ ``chiq``\ ・\ ``chi0q``\ ・
+  ``green``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
+  もつもの（上の「スピン軌道 FLEX の出力の読み込み」を参照）。この入力の頂点が保存
+  された\ :math:`\chi`\ を再現すること、\ :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ 、の
+  確認は\ :math:`\nu = 0`\ だけでなく\ **すべての**\ ボソン振動数で行います;
+- ``chi0q_mode = "calc"``: 裸の Green 関数のスピンフルなバブルをすべてのボソン
+  振動数で計算し、\ :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`\ とします;
+- オンサイト相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;
+- 偶数の\ ``Nmat``;
+- ``eigenvalue_method = "arnoldi"``\ での\ ``solver_mode = "iteration"``\ または
+  ``"eigenvalue"``\ 。\ ``"both"``\ は非スピン軌道の動的ソルバーと同じく固有値の
+  計算だけを行います。\ ``spectral_shift``\ と\ ``seed_eigenvector``\ （同じ格子での
+  別のスピン軌道動的計算の\ ``gap_dynamic.npz``\ ）を使えます。
+
+拒否される組み合わせ
+""""""""""""""""""""
+
+上の静的な場合の拒否（\ ``bond_channels``\ 、オフサイトの行、\ ``pairing_type``\ 、
+``"arnoldi"``\ 以外の\ ``eigenvalue_method``\ など）に加えて、次のものはファイルを
+読む前に拒否します。どのエラーもキーを示します。
+
+- ``matsubara_basis = "ir"``\ （スピン軌道モードではまだ IR 基底を使えません）;
+- ``chi0q_mode = "load"``\ と、\ ``chi0q_mode``\ の指定なし（既定値が\ ``"load"``\ の
+  ため）;
+- ``zero_chi_s = true``\ と\ ``zero_chi_c = true``\ （\ ``false``\ は受け付けます）。
+  頂点はひとつのスピンフルなチャネルから作り、スピン・電荷への分解がありません;
+- ``parity_leakage_policy``\ と\ ``parity_leakage_tol``\ （ボンド分解の動的経路の
+  キーです）;
+- 奇数の\ ``Nmat``\ と、格子の異なる FLEX アーカイブ;
+- ``spin_orbital = True``\ のマーカーをもたない\ ``seed_eigenvector``\ 。
+  :math:`2N`\ 軌道の非スピン軌道のギャップは同じ形をもつためです。逆に、
+  スピン軌道のギャップは非スピン軌道の計算の seed としては拒否します;
+- ``[eliashberg] mem_limit_gb``\ を超えるピークメモリの見積もり（下の「メモリと
+  時間」を参照。\ ``MemoryError``\ になります）。
+
+``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続きスピン軌道モードを拒否
+します。
+
+初期ギャップ
+""""""""""""
+
+べき乗反復（\ ``solver_mode = "iteration"``\ ）の既定の初期値は
+``init_gap = "random"``\ です。すべての\ :math:`(A, B, \mathbf{k}, \omega_n)`\ に
+わたる固定シードの乱数ギャップを反対称空間へ射影したもので、振動数の偶奇の両方を
+含みます。名前付きの形状因子（\ ``"cos"``\ 、\ ``"p_x"``\ など）は、静的なスピン
+軌道の初期値をすべての振動数に写したものになり、振動数について純粋に偶です。
+カーネルがたまたま振動数パリティを保存する場合（たとえばスピン軌道相互作用の
+ない反転対称な模型）、そこから始めたべき乗反復は振動数について奇の主要状態に
+到達できません。特定の偶振動数の状態を追う場合を除き、乱数の既定値を使って
+ください。Arnoldi 法は\ ``init_gap``\ を使いません。
+
+出力
+""""
+
+ファイル名は動的ソルバーと同じ\ ``eigenvalue.dat``\ ・\ ``gap.dat``\ ・
+``gap_dynamic.npz``\ です。規約は静的なスピン軌道ソルバーのもの（spin-block 順、
+``index_convention = spin_block``\ 、\ ``pairing_type``\ なし）です。
+
+- ``eigenvalue.dat``: 1行目は\ ``# Dynamic Eliashberg leading eigenvalue``\ です。
+  続いて\ ``# key = value``\ の行が並びます: ``spin_orbital = true``\ 、
+  ``index_convention``\ 、ギャップの配置、重みの定義、\ ``gap_spin_weights``\ 、
+  ``gap_frequency_parity_weights``\ 、\ ``gap_spin_frequency_weights``\ （下の
+  :math:`4 \times 2`\ の表）、\ ``pauli_leakage``\ 、\ ``chi0q_mode``\ 、flex モードでは
+  ``flex_vertex_backward_error_max``\ 。その後に\ ``# eigenvalue_selection: LM``
+  （\ ``spectral_shift``\ では\ ``LR``\ 、べき乗反復では\ ``iteration``\ 。seed で固有対を
+  並べた場合は\ ``_seed_overlap``\ が付き、下で述べる場合は\ ``LR_retry``\ ）、主要固有値、
+  表が続きます。列の並びは
+  非スピン軌道の動的ソルバーの表と互換で、どちらも match の列は5列目です
+  （\ ``hwave_tsweep``\ 自体は引き続きスピン軌道モードを拒否します）。
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz  w_even_w  w_odd_w
+
+  ``w_psi`` ... ``w_dz``\ は静的ソルバーのスピンの重みを振動数についても和を
+  とったもの、\ :math:`w_X = \sum_{n,\mathbf{k},a,b} |X_{ab}(\mathbf{k}, i\omega_n)|^2 / W`
+  です。\ ``w_even_w``\ と\ ``w_odd_w``\ は偶・奇の半分
+  :math:`\Delta^{(\pm)} = [\Delta(i\omega_n) \pm \Delta(-i\omega_n)]/2`\ の重み
+  :math:`\|\Delta^{(\pm)}\|^2 / \|\Delta\|^2`\ です。反対称空間では運動量のパリティは
+  振動数のパリティの符号を反転したものなので、セクターはこの2つだけです。
+
+- ``gap.dat``: :math:`n_0 = N_\mathrm{mat}/2`\ （正で最小の\ :math:`\omega_n`\ ）の
+  スライスです。1行目は動的ソルバーの見出し
+  ``# frequency=dynamic index=... iomega_n=... eigenvalue=... T=...``\ で、
+  その後に静的なスピン軌道ソルバーのコメント行が続きます。
+
+- ``gap_dynamic.npz``:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 34 66
+
+     * - キー
+       - 内容
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k}, i\omega_n)`\ 、形状
+         ``(2N, 2N, Nx, Ny, Nz, Nmat)``\ 、spin-block 順。規格化し、全体の位相を
+         固定したもの
+     * - ``iomega``\ 、\ ``T``\ 、\ ``frequency``\ 、\ ``eigenvalue``\ 、
+         ``axis_order``\ 、\ ``normalization``\ 、\ ``momentum_convention``
+       - 非スピン軌道の動的ソルバーと同じ（\ ``pairing_type``\ はなし）
+     * - ``spin_orbital``\ 、\ ``index_convention``\ 、\ ``norb_phys``\ 、\ ``kx``\ 、
+         ``ky``\ 、\ ``kz``\ 、\ ``spin_components``
+       - 静的な\ ``gap.npz``\ と同じ
+     * - ``gap_spin_weights``
+       - ``(4,)``: 重み\ :math:`w_\psi, w_{d_x}, w_{d_y}, w_{d_z}`
+     * - ``gap_spin_weights_w``
+       - ``(Nmat, 4)``: 振動数ごとの同じ重み。同じ\ :math:`W`\ で規格化しているので、
+         配列全体の和が1になります
+     * - ``gap_frequency_parity_labels``\ 、\ ``gap_frequency_parity_weights``
+       - ``["even_w", "odd_w"]``\ とその重み\ ``(2,)``
+     * - ``gap_spin_frequency_weights``
+       - ``(4, 2)``: 偶・奇の半分それぞれのスピンの重み（和は1）。SU(2) 極限では
+         :math:`(\psi, \text{偶})`\ が振動数について偶の一重項、
+         :math:`(\mathbf{d}, \text{偶})`\ が偶の三重項で、\ :math:`(\psi, \text{奇})`\ と
+         :math:`(\mathbf{d}, \text{奇})`\ が2つの奇振動数の状態です
+     * - ``eigenvalues``\ 、\ ``eigenvector_spin_weights``\ 、
+         ``eigenvector_frequency_parity_weights``\ 、\ ``eigenvalue_match``
+       - 固有値計算をした場合: 固有値と、固有対ごとの重み\ ``(n, 4)``\ と\ ``(n, 2)``\ 。
+         各固有ベクトルは\ ``gap``\ と同じ大きさなので、固有ベクトル自体は
+         **保存しません**\ 。主要なものだけを\ ``gap``\ として書きます
+     * - ``eigenvalue_selection``\ 、\ ``pauli_leakage``
+       - ``eigenvalue.dat``\ と同じ
+
+**絶対値最大の選択。** ``spectral_shift``\ を指定しない Arnoldi 法は、絶対値の
+大きい\ ``num_eigenvalues``\ 個の固有値を選びます。斥力的（負）な動的固有値は
+``Nmat``\ とともに大きくなり、この集合を埋めることがあります。非スピン軌道の
+動的ソルバーと同じく、その集合の主要固有値が負のとき（seed がない場合）は
+``spectral_shift = "auto"``\ （実部最大）で一度だけ解き直し、WARNING を出して
+``eigenvalue.dat``\ に\ ``eigenvalue_selection: LR_retry``\ と注記を書きます。
+余分な求解を避けるには\ ``spectral_shift = "auto"``\ を自分で指定してください。
+
+``pauli_leakage``\ は、カーネルが反対称なギャップを反対称空間の外へどれだけ写す
+かを測ります。固定した3つの乱数プローブについての
+:math:`\|\mathrm{sym}(K E c)\| / \|K E c\|`\ の最大値です。一様格子では丸め誤差の
+大きさ（約\ :math:`10^{-15}`\ ）で、\ :math:`10^{-8}`\ を超えると WARNING を出します。
+どちらの場合も計算は反対称空間に制限されます。
+
+.. _sc_spin_orbital_dynamic_memory:
+
+メモリと時間
+""""""""""""
+
+4脚のテンソル（\ :math:`\chi`\ 、\ :math:`\chi_0`\ 、頂点、その
+:math:`(\mathbf{r}, \tau)`\ 表示、ペアバブル）はそれぞれ
+:math:`T_4 = 16\,(2N)^4 N_k N_\mathrm{mat}`\ バイトで、同じ\ :math:`N`\ の非スピン
+軌道のテンソルの16倍です。ソルバーは各テンソルを使い終わり次第解放し、頂点の
+変換を軌道対のスラブごとに行うので、同時に存在するのはたかだか2つです。例外は
+``chi0q_mode = "calc"``\ の内部のバブル計算で、ピークは約\ :math:`4.5\,T_4`\ です。
+ソルバーは何も読む前にピークを見積もります。見積もりは各段階（入力、頂点、変換、
+ペアバブル、求解）の最大で、求解の段階には ARPACK の基底、つまり
+``num_eigenvalues``\ :math:`= k`\ に対してギャップの半分の長さのベクトル
+:math:`(\max(2k+1, 20) + 4)`\ 本を含めます。見積もりが\ ``[eliashberg]
+mem_limit_gb``\ （既定値は利用可能メモリの 80 %。\ ``0``\ で無効）を超えると
+計算を拒否します。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 15 15
+
+   * - :math:`N`\ 、格子、\ ``Nmat``
+     - :math:`T_4`
+     - 見積もり（flex）
+     - 見積もり（calc）
+   * - 2、\ :math:`32 \times 32`\ 、512
+     - 2.0 GiB
+     - 7.2 GiB
+     - 10.0 GiB
+   * - 3、\ :math:`32 \times 32`\ 、512
+     - 10.1 GiB
+     - 28.5 GiB
+     - --
+
+1行目の場合（\ ``num_eigenvalues = 10``\ 、\ ``chi0q_mode = "calc"``\ 、10コアの
+CPU、\ ``fft_workers = -1``\ ）、計算全体は 81 秒（うち Arnoldi の求解が 68 秒）
+で、実測のピーク常駐メモリは見積もり 10.0 GiB に対して 7.8 GiB でした。見積もりが
+大きすぎる場合は\ ``Nmat``\ か k 点の格子を小さくしてください。
+
+GPU
+"""
+
+``gpu = true``\ では頂点とペアバブルをデバイスへ移します。カーネルは動的ソルバーで
+共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
+ます。ホストとデバイスのカーネルの作用を\ :math:`10^{-12}`\ で照合し、
+主要固有値も比べます（この確認には CuPy が必要です）。
+
+検証
+""""
+
+- **厳密対角化との比較。** 静的な検証と同じスピン混成のある鎖で、本番の演算子は、
+  ペア感受率が相互作用の1次・2次で厳密対角化と一致するカーネルの作用に、丸め誤差
+  の範囲で一致します。
+- **SU(2) 極限。** スピンに依存しないホッピングと回転不変な相互作用では、反対称
+  空間でのスペクトルは、非スピン軌道の動的な一重項カーネルの各固有値が1回、
+  三重項カーネルの各固有値が3回（それぞれ振動数の偶奇の両方を含む combined-parity
+  セクター）で、それ以外は現れません。
+- **静的極限。** 振動数によらない\ :math:`\chi`\ は、静的なスピン軌道ソルバー
+  （\ ``g2_tail = false``\ ）のスペクトルを、振動数によらないギャップとともに再現
+  します。
+- **入力。** ``"flex"``\ は保存されたアーカイブから直接作ったスペクトルを、
+  ``"calc"``\ は同じ Green 関数の独立なバブルから作ったスペクトルを再現します。
 
 Tips
 ----------------------------

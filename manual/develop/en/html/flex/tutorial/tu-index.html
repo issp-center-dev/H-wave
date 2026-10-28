@@ -1332,11 +1332,12 @@ chi0q archive.</p></li>
 spin-orbital density (<code class="docutils literal notranslate"><span class="pre">Sx</span></code> and <code class="docutils literal notranslate"><span class="pre">Sy</span></code> are written only in spin-orbital
 runs, as in UHFk).</p></li>
 </ul>
-<p>The static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads these archives with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads these archives with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
 (<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>; write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>,
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> in the FLEX run, which writes each archive only when
-it is requested); see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The dynamic
-Eliashberg solver does not accept them.</p>
+it is requested), both in the static solver (see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
+in the dynamic one, which uses <span class="math notranslate nohighlight">\(\chi\)</span> at every bosonic frequency (see
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p>
 <p>The output files of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> can also be used
 as input for the Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
 superconducting instabilities. See <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a> for details.</p>
