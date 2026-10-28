@@ -1005,7 +1005,7 @@ TOML形式
 
   **形式 :** str型
 
-  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。一体バンドは\ ``Transfer``\ のバンドに Green 関数の Hartree-Fock 平均場（すべての相互作用の Hartree 項と Fock 項。UHFk が\ ``flag_fock = true``\ で平均場ハミルトニアンを作るのと同じ方法で組み立てます）を加えたもので、同じ解から UHFk が出力する\ ``trans_mod``\ のバンドと一致します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。issue #278 より前は Fock 項が含まれていませんでした。
+  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。一体バンドは\ ``Transfer``\ のバンドに Green 関数の Hartree-Fock 平均場（すべての相互作用の Hartree 項と Fock 項。UHFk が\ ``flag_fock = true``\ で平均場ハミルトニアンを作るのと同じ方法で組み立てます）を加えたもので、``flag_fock = true``\ （既定値）の UHFk 計算が同じ解に対して出力する\ ``trans_mod``\ のバンドと一致します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。\ ``flag_fock = false``\ で得た UHFk 解には、その\ ``trans_mod``\ （Hartree 項のみのバンド）を使ってください。\ ``green_init``\ では Fock 項が加わります。元の格子の並進対称性を破る\ ``SubShape``\ の UHFk 状態では、保存された\ ``green``\ も\ ``trans_mod``\ も、読み戻したときに収束したバンドを再現しません（issue #294）。issue #278 より前は Fock 項が含まれていませんでした。
 
 - ``sigma_init``
 

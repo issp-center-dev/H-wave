@@ -228,9 +228,15 @@ This section controls the Eliashberg solver. Key parameters:
      :math:`T + \Sigma_{\rm HF}[G]`, the Hartree and Fock terms of every
      interaction built exactly as UHFk builds its mean-field Hamiltonian
      (with ``flag_fock = true``), so ``green_init`` and the ``trans_mod``
-     UHFk writes for the same solution define the same band. (Before issue
-     #278 the ``green_init`` band left out the Fock term, and ``hwave_sc``
-     warned when a Fock-carrying interaction was present.)
+     that a UHFk run with ``flag_fock = true`` (the default) writes for the
+     same solution define the same band. For a UHFk solution obtained with
+     ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band):
+     ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state
+     that breaks the translation symmetry of the original lattice, neither
+     the saved ``green`` nor the saved ``trans_mod`` reproduces the converged
+     band when read back (issue #294). (Before issue #278 the ``green_init``
+     band left out the Fock term, and ``hwave_sc`` warned when a
+     Fock-carrying interaction was present.)
 
   .. warning::
 

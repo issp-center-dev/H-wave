@@ -224,7 +224,13 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      :math:`T + \Sigma_{\rm HF}[G]`\ で、すべての相互作用の Hartree 項と
      Fock 項を UHFk が平均場ハミルトニアンを作るのと同じ方法
      （``flag_fock = true``\ ）で組み立てます。したがって\ ``green_init``\ と、
-     同じ解から UHFk が出力する\ ``trans_mod``\ は同じバンドを与えます
+     ``flag_fock = true``\ （既定値）の UHFk 計算が同じ解に対して出力する
+     ``trans_mod``\ は同じバンドを与えます。\ ``flag_fock = false``\ で得た
+     UHFk 解には、その\ ``trans_mod``\ （Hartree 項のみのバンド）を使って
+     ください。\ ``green_init``\ では Fock 項が加わります。元の格子の並進対称性を
+     破る\ ``SubShape``\ の UHFk 状態では、保存された\ ``green``\ も
+     ``trans_mod``\ も、読み戻したときに収束したバンドを再現しません
+     （issue #294）。
      （issue #278 より前は\ ``green_init``\ のバンドに Fock 項が含まれず、
      Fock 項をもつ相互作用があると\ ``hwave_sc``\ が警告を出していました）。
 
