@@ -1879,7 +1879,7 @@ def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
 
 
 # Absolute tolerance (energy units) of the spin-independence test of the
-# ASSEMBLED one-body band H0(k) -- trans_mod, or T + Hartree[green_init], plus
+# ASSEMBLED one-body band H0(k) -- trans_mod, or T + Sigma_HF[green_init], plus
 # coeff_extern * Extern (issue #273). Its up-up and down-down blocks may
 # differ, and its spin-mixing blocks may be nonzero, by at most this much.
 # It only absorbs convergence round-off of a paramagnetic UHF solution; it
@@ -1946,9 +1946,10 @@ class _AssembledH0Ready(Exception):
 
 
 # Interaction/Hamiltonian arrays of the RPA solver that _calc_epsilon_k can
-# modify in place (the spin-orbital green_init branch of _calc_trans_mod adds
-# the Hartree term into a view of ham_trans_r; the trans_mod branch adds Extern
-# into the green_info array). The check pass restores all of them.
+# modify in place (the trans_mod branch adds Extern into the green_info
+# array; the spin-orbital green_init branch of _calc_trans_mod used to add its
+# mean field into a view of ham_trans_r, before issue #278). The check pass
+# restores all of them.
 _EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
                      "ham_extern_q")
 
@@ -1959,7 +1960,7 @@ def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL,
     block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
 
     The assembly is RPA's own ``_calc_epsilon_k`` (trans_mod, or T +
-    Hartree[green_init], plus coeff_extern * Extern), run with the solver's
+    Sigma_HF[green_init], plus coeff_extern * Extern), run with the solver's
     ``_keep_spinful`` switch so the two spin blocks stay uncollapsed (RPA's
     own collapse is a RELATIVE ``np.allclose`` test, which a large common
     offset defeats), and stopped before the eigendecomposition. The pass is
@@ -2111,100 +2112,17 @@ def _load_band_into_solver(solver, up):
             "chi0q on a different band.".format(solver.spin_mode, H0.shape))
 
 
-# Which declarations carry a Fock term that RPA's green_init assembly
-# (``RPA._calc_trans_mod``: T + Hartree[G], from the R = 0 Green function)
-# leaves out. Derived by comparing UHFk's mean-field Hamiltonian (Hartree +
-# Fock) with that assembly for a spin-diagonal G, per interaction type and
-# per row kind (on-site intra-orbital, on-site inter-orbital, off-site,
-# and inter-site at R = 0 under [mode.param] orbital_site): the two differ
-# for EVERY row of CoulombInter / Hund / Ising / Exchange (on-site
-# intra-orbital rows included), for OFF-SITE rows of PairHop (off-site in
-# RPA's sense: declared R != 0, or orbitals on different sites),
-# and never for CoulombIntra or PairLift. tests/test_sc_trans_mod.py
-# (TestGreenInitFockOmission) recomputes that comparison and pins this
-# table against it.
-#
-# The collinear (spin-diagonal G) assumption of that derivation holds by
-# construction: _check_green_init_spin_free refuses a green_init whose G is
-# spin-dependent or spin-mixing before the band is assembled.
-_GREEN_INIT_FOCK_ANY_ROW = ("coulombinter", "hund", "ising", "exchange")
-_GREEN_INIT_FOCK_OFFSITE_ROW = ("pairhop",)
-_NON_INTERACTION_KEYS = ("geometry", "transfer", "extern", "path_to_input")
-
-
-def _fold_rows(table, shape):
-    """Nonzero rows of a declaration table after folding R onto the
-    periodic grid ``shape`` the way the readers accumulate them (R mod N
-    per axis); ``shape=None`` keeps R as declared."""
-    acc = {}
-    for (irvec, orbvec), v in table.items():
-        r = tuple(int(x) for x in irvec)
-        if shape is not None:
-            r = tuple(x % int(n) for x, n in zip(r, shape))
-        key = (r, (int(orbvec[0]), int(orbvec[1])))
-        acc[key] = acc.get(key, 0.0) + v
-    return [key for key, v in acc.items() if v != 0]
-
-
-def _green_init_fock_omissions(ham_param, site=None, shape=None):
-    """Declarations whose Fock term the green_init band leaves out (see the
-    table above). ``Coulomb`` is split as the readers split it
-    (``wan90.split_coulomb``) and counts through its CoulombInter part.
-
-    PairHop locality is decided exactly as RPA decides it: on the DECLARED
-    (pre-fold) R and orbital labels, with ``sites.is_onsite`` and the
-    parsed ``orbital_site`` ``site`` -- a row declared at R = (Nx, 0, 0) is
-    off-site for RPA (and dropped) even though it folds onto R = 0. The
-    grid ``shape`` is used only to detect rows that cancel once folded
-    (they contribute nothing to either band)."""
-    from hwave.solver.sites import is_onsite
-    reasons = []
-    for key, table in (ham_param or {}).items():
-        k = str(key).lower()
-        if k in _NON_INTERACTION_KEYS or not isinstance(table, dict):
-            continue
-        if k == "coulomb":
-            _intra, inter = wan90.split_coulomb(table)
-            if _fold_rows(inter, shape):
-                reasons.append("{} (its CoulombInter part)".format(key))
-            continue
-        if k in _GREEN_INIT_FOCK_ANY_ROW:
-            if _fold_rows(table, shape):
-                reasons.append(str(key))
-        elif k in _GREEN_INIT_FOCK_OFFSITE_ROW:
-            # RPA's rule: locality of each DECLARED row (pre-fold R)
-            offsite = {(r, o): v for (r, o), v in table.items()
-                       if v != 0 and not is_onsite(r, o, site)}
-            if _fold_rows(offsite, shape):
-                reasons.append("off-site {}".format(key))
-    return sorted(set(reasons))
-
-
-def _warn_green_init_fock_omission(ham_param, site=None, shape=None):
-    """WARNING when the green_init band (T + Hartree[G], RPA's assembly,
-    no Fock term) differs from the T + Hartree + Fock band UHFk writes as
-    trans_mod for the same solution."""
-    reasons = _green_init_fock_omissions(ham_param, site, shape)
-    if reasons:
-        logger.warning(
-            "hwave_sc: green_init is combined with %s. The green_init band "
-            "is T + Hartree[G] (RPA's assembly, without the Fock term), so "
-            "with these interactions it differs from the trans_mod UHFk "
-            "writes for the same solution. Prefer [file.input] trans_mod.",
-            ", ".join(reasons))
-
-
 def _check_green_init_spin_free(g, norb, spin_free_tol):
     """Refuse a spin-dependent green_init Green function.
 
     ``g``: the green_init array as RPA read it, ``(nvol, 2*norb, 2*norb)``
     in spin-block order. A magnetic G describes a magnetic state whatever
-    RPA's Hartree-only assembly makes of it (an in-plane moment, for
-    instance, leaves the Hartree band spin-free while the true mean field
-    has a spin-mixing Fock term), so G itself must be spin-independent in
+    band its mean field happens to give for the declared interactions (with
+    no interaction acting on the moment, for instance, T + Sigma_HF[G] is
+    spin-free although G is not), so G itself must be spin-independent in
     every cell: up-up equal to down-down and no spin-off-diagonal block,
     within max(SPIN_FREE_ATOL, spin_free_tol) on the dimensionless G
-    entries.
+    entries. The assembled band is checked separately (:func:`_checked_band`).
     """
     g = np.asarray(g)
     if not np.all(np.isfinite(g)):
@@ -2231,8 +2149,9 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
 
     The band is built exactly as the internal chi0q builds it --
     ``QLMSkInput`` + ``RPA.read_init`` + ``RPA._calc_epsilon_k`` -- so that
-    trans_mod (T + Sigma_HF written by UHFk), T + Hartree[green_init] and the
-    Extern field define the SAME H0(k) for chi0q, the chemical potential
+    trans_mod (T + Sigma_HF written by UHFk), T + Sigma_HF[green_init] (UHFk's
+    Hartree + Fock mean field of G, issue #278) and the Extern field define
+    the SAME H0(k) for chi0q, the chemical potential
     and the kernel Green function.
 
     Only a spin-independent band is accepted: the singlet/triplet kernel
@@ -2288,14 +2207,9 @@ def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
     green_info = read_io.get_param("green")
     green_info.update(solver.read_init(info_inputfile))
     if "green_init" in green_info and "trans_mod" not in green_info:
-        # G-level refusal first (also makes the warning table's collinear
-        # assumption hold), then the Fock-omission warning
+        # G-level refusal, before the band is assembled
         _check_green_init_spin_free(green_info["green_init"], solver.norb,
                                     spin_free_tol)
-        _warn_green_init_fock_omission(
-            read_io.get_param("ham"),
-            site=getattr(solver.ham_info, "orbital_site", None),
-            shape=tuple(solver.lattice.shape))
 
     # Assemble the band ONCE, check it (spin independence, finiteness),
     # before any diagonalization and before any chi0q / pair-bubble /

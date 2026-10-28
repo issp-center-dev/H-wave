@@ -1,7 +1,8 @@
 """hwave_sc on a mean-field one-body band (issue #273).
 
 ``[file.input] trans_mod`` (the T + Sigma_HF that UHFk writes), ``green_init``
-(T + Hartree[G], RPA's assembly) and an ``Extern`` field replace the bare Transfer band in
+(T + Sigma_HF[G], UHFk's Hartree + Fock mean field of G, assembled by RPA; issue
+#278) and an ``Extern`` field replace the bare Transfer band in
 the RPA H0 assembly that the internal chi0q is built on. hwave_sc used to
 take the chemical potential and every kernel Green function from the BARE
 Transfer band anyway, so chi0q was evaluated at the wrong filling and the
@@ -373,12 +374,11 @@ class TestGreenInit(unittest.TestCase):
     """A UHFk solution supplied as green_init defines the same band as the
     trans_mod UHFk saved with it.
 
-    CoulombIntra only: the RPA reader turns green_init into T + Hartree[G]
-    (no Fock term), which agrees with UHFk's T + Hartree + Fock only for
-    interactions without a Fock contribution (see
-    TestGreenInitFockOmission); with e.g. CoulombInter the two inputs
-    define different bands, in RPA as well. Two orbitals, so the orbital-dependent Hartree shift
-    changes the band beyond a constant that mu would absorb.
+    The RPA reader turns green_init into UHFk's T + Hartree + Fock of G
+    (issue #278; the per-type comparison is TestGreenInitIsUHFkMeanField
+    and tests/test_rpa_green_init_fock.py). CoulombIntra here. Two orbitals,
+    so the orbital-dependent Hartree shift changes the band beyond a
+    constant that mu would absorb.
     """
 
     def test_green_init_matches_saved_trans_mod(self):
@@ -762,29 +762,34 @@ class TestAssembledBandCheck(unittest.TestCase):
             return sc._mean_field_band(inp, sources, "general",
                                        (NX, NY, 1), norb)
 
-    def test_green_init_band_is_rpa_onsite_assembly(self):
-        """RPA-ASSEMBLY BEHAVIOUR, NOT PHYSICS.
-
-        Spin-free G with a nonzero cell 1 = R (0, 1), a CoulombInter bond of
-        this model. RPA's green_init assembly is T + Hartree[G] (g0[0]
-        only, no Fock term), so the band is T + Hartree; a UHF band would
-        also carry the bond's Fock term. hwave_sc warns about this
-        combination and recommends trans_mod.
-        """
+    def test_green_init_band_is_the_uhf_band(self):
+        """Spin-free G with nonzero cells R = (0, +-1), a CoulombInter bond
+        of this model. RPA's green_init assembly is UHFk's T + Hartree +
+        Fock of G (issue #278): the bond's Fock term -V G(R) is in the band,
+        and no warning is emitted."""
         g = np.zeros((NX * NY, 2, 1, 2, 1), dtype=complex)
         g[0, 0, 0, 0, 0] = g[0, 1, 0, 1, 0] = FILLING
-        g[1, 0, 0, 0, 0] = g[1, 1, 0, 1, 0] = 0.2
-        with self.assertLogs("hwave_sc", level="WARNING") as logs:
+        g[1, 0, 0, 0, 0] = g[1, 1, 0, 1, 0] = 0.2              # R = (0, 1)
+        g[NY - 1, 0, 0, 0, 0] = g[NY - 1, 1, 0, 1, 0] = 0.2     # R = (0, -1)
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        lg = logging.getLogger("hwave_sc")
+        lg.addHandler(handler)
+        try:
             band = self._band(extra_file={"green_init": "g.npz"},
                               files={"g.npz": {"green": g}})
-        self.assertTrue(any("green_init is combined with" in m_
-                            and "CoulombInter" in m_ and "trans_mod" in m_
-                            for m_ in logs.output), logs.output)
-        # and it is T + Hartree: U n + z V (2n), z = 4 bonds, n per spin
+        finally:
+            lg.removeHandler(handler)
+        self.assertFalse(any("Fock" in r.getMessage() for r in records))
+        # T + Hartree + Fock: U n + z V (2n), z = 4 bonds, n per spin; the
+        # Fock term of the R = (0, +-1) bonds is -V G(R) on those bonds
         eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
         hartree = 1.4 * FILLING + 4 * 0.25 * 2 * FILLING
-        self.assertLess(np.abs(eps - (_band_k(_bare_hr(1)) + hartree)).max(),
-                        1e-12)
+        fock = np.zeros((NX, NY, 1, 1), dtype=complex)
+        fock[0, 1, 0, 0] = fock[0, NY - 1, 0, 0] = -0.25 * 0.2
+        self.assertLess(np.abs(eps - (_band_k(_bare_hr(1)) + hartree
+                                      + _band_k(fock))).max(), 1e-12)
 
     def test_green_init_spin_dependent_in_another_cell_is_refused(self):
         # G-level check: a moment in cell 1 is refused even though RPA's
@@ -1280,8 +1285,8 @@ class TestBandGuards(unittest.TestCase):
 class TestGreenInitLoadOracle(unittest.TestCase):
     """green_init on the LOAD path: chi0q written by an RPA run with
     green_init, loaded by hwave_sc with the same green_init, gives the
-    lambda of a run whose Transfer IS T + Hartree[G] (U only: the on-site
-    Hartree shift U n_a per orbital, spin-free G)."""
+    lambda of a run whose Transfer IS T + Sigma_HF[G] (U only: the on-site
+    Hartree shift U n_a per orbital; no Fock term for a spin-free G)."""
 
     def test_load_green_init_equals_transfer_oracle(self):
         import hwave.qlms as qlms
@@ -1349,27 +1354,6 @@ class TestRound5(unittest.TestCase):
                 self.assertTrue(any("spin-averaged" in m_
                                     for m_ in logs.output))
 
-    def test_green_init_without_offsite_interaction_does_not_warn(self):
-        g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
-        for s_ in range(2):
-            g[0, s_, 0, s_, 0] = 0.6
-            g[0, s_, 1, s_, 1] = 0.3
-        records = []
-        handler = logging.Handler()
-        handler.emit = records.append
-        lg = logging.getLogger("hwave_sc")
-        lg.addHandler(handler)
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                _write_model(d, 2, inter=False)
-                np.savez(os.path.join(d, "g.npz"), green=g)
-                _run(_input(d, os.path.join(d, "o"), coulomb_inter=False,
-                            extra_file={"green_init": "g.npz"}))
-        finally:
-            lg.removeHandler(handler)
-        self.assertFalse(any("green_init is combined with" in r.getMessage()
-                             for r in records))
-
     def _transfer_with_asymmetry(self, d, eps):
         h = _bare_hr(1).copy()
         h[1, 0, 0, 0] += eps          # R = (1, 0) without its -R partner
@@ -1400,9 +1384,9 @@ class TestRound5(unittest.TestCase):
 def _green_init_vs_uhfk_difference(typ, rows, G, orbital_site=None):
     """max |H_UHFk - H_green_init| over the real-space one-body table:
     UHFk's mean-field Hamiltonian (Hartree + Fock) of G against the band RPA
-    assembles from green_init (T + Hartree[G], the production
-    ``RPA._calc_trans_mod`` on copies of the solver's arrays); two
-    orbitals. Returns (difference, ham_param, parsed orbital_site, grid)."""
+    assembles from green_init (the production ``RPA._calc_trans_mod`` on
+    copies of the solver's arrays); two orbitals. Returns (difference,
+    ham_param, parsed orbital_site, grid)."""
     from hwave.qlmsio import read_input_k
     import hwave.solver.uhfk as uhfk
     import hwave.solver.rpa as rpa
@@ -1454,11 +1438,11 @@ def _green_init_vs_uhfk_difference(typ, rows, G, orbital_site=None):
     return float(np.abs(to_r(u.ham) - to_r(h_rpa)).max()), ham, site, grid
 
 
-class TestGreenInitFockOmission(unittest.TestCase):
-    """The green_init warning is pinned by COMPUTATION: for every
-    interaction type and row kind the reader accepts, it fires exactly when
-    UHFk's T + Hartree + Fock band of a spin-diagonal G differs from the
-    T + Hartree[G] band RPA assembles from green_init."""
+class TestGreenInitIsUHFkMeanField(unittest.TestCase):
+    """Issue #278: for every interaction type and row kind the reader
+    accepts (with and without orbital_site), the band RPA assembles from
+    green_init equals UHFk's T + Hartree + Fock band of the same G. (Before
+    #278 the Fock term was left out and hwave_sc warned about it.)"""
 
     ROW_KINDS = {
         "onsite_intra": [(0, 0, 0, 0, 0.7), (0, 0, 1, 1, 0.7)],
@@ -1482,27 +1466,21 @@ class TestGreenInitFockOmission(unittest.TestCase):
             G[(NX - 1) * NY, s_, :, s_, :] = x.conj().T  # R = (-1, 0)
         return G
 
-    def test_warning_matches_the_computed_fock_omission(self):
+    def test_band_equals_uhfk_mean_field(self):
         G = self._green()
-        checked = {True: 0, False: 0}
+        checked = 0
         for typ in self.TYPES:
             for kind, rows in self.ROW_KINDS.items():
                 for site in (None, (0, 1)):
                     try:
-                        diff, ham, psite, grid = \
+                        diff, _ham, _psite, _grid = \
                             _green_init_vs_uhfk_difference(typ, rows, G, site)
                     except ValueError:
                         continue        # declaration refused by the reader
-                    with self.subTest(type=typ, rows=kind, site=site,
-                                      diff=diff):
-                        differs = diff > 1e-10
-                        reasons = sc._green_init_fock_omissions(
-                            ham, site=psite, shape=grid)
-                        self.assertEqual(bool(reasons), differs, reasons)
-                        checked[differs] += 1
-        # both outcomes are exercised
-        self.assertGreater(checked[True], 10)
-        self.assertGreater(checked[False], 4)
+                    with self.subTest(type=typ, rows=kind, site=site):
+                        self.assertLess(diff, 1e-12)
+                    checked += 1
+        self.assertGreater(checked, 50)
 
     def test_spin_flip_green_is_refused_for_every_type(self):
         """A spin-flip (in-plane) G is no longer a warning case: the
@@ -1532,88 +1510,27 @@ class TestGreenInitFockOmission(unittest.TestCase):
                 self.assertIn("green_init describes a spin-dependent state",
                               str(cm.exception))
 
-    @staticmethod
-    def _rpa_drops_offsite_pairhop(rows, site=None):
-        """Whether RPA itself reports (and drops) off-site PairHop rows for
-        this declaration (two orbitals)."""
-        from hwave.qlmsio import read_input_k
-        import hwave.solver.rpa as rpa
-        with tempfile.TemporaryDirectory() as d:
-            _write_model(d, 2, inter=False)
-            with open(os.path.join(d, "x.dat"), "w") as f:
-                f.write("PairHop\n2\n{}\n{}\n".format(
-                    len(rows), " ".join("1" for _ in rows)))
-                for (rx, ry, a, b, v) in rows:
-                    f.write("{} {} 0 {} {} {!r} 0.0\n".format(
-                        rx, ry, a + 1, b + 1, v))
-            fin = {"path_to_input": d,
-                   "interaction": {"path_to_input": d,
-                                   "Geometry": "geom.dat",
-                                   "Transfer": "transfer.dat",
-                                   "PairHop": "x.dat"}}
-            param = {"T": 0.1, "CellShape": [NX, NY, 1],
-                     "SubShape": [1, 1, 1], "Nmat": 8, "filling": 0.5}
-            if site is not None:
-                param["orbital_site"] = list(site)
-            records = []
-            handler = logging.Handler()
-            handler.emit = records.append
-            lg = logging.getLogger("hwave.solver.rpa")
-            lg.addHandler(handler)
-            try:
-                ham = read_input_k.QLMSkInput(fin).get_param("ham")
-                rpa.RPA(ham, {"print_level": 0},
-                        {"mode": "RPA", "calc_scheme": "general",
-                         "param": param})
-            finally:
-                lg.removeHandler(handler)
-        dropped = any("PairHop declares" in r.getMessage() for r in records)
-        return dropped, ham
-
-    def test_pairhop_locality_matches_rpa(self):
-        """PairHop locality is RPA's: the DECLARED R and orbital labels
-        (with orbital_site), not the folded grid."""
-        cases = [
-            # (rows, orbital_site, RPA drops, our warning)
-            ([(NX, 0, 0, 1, 0.3), (-NX, 0, 1, 0, 0.3)], None, True, True),
-            ([(1, 0, 0, 1, 0.3), (-1, 0, 1, 0, 0.3)], None, True, True),
-            ([(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], None, False, False),
-            ([(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], (0, 1), True, True),
-            # declared off-site rows that cancel once folded: RPA drops
-            # them, UHFk folds them to zero -- neither band has them, so
-            # there is nothing to warn about
-            ([(1, 0, 0, 1, 0.3), (1 - NX, 0, 0, 1, -0.3),
-              (-1, 0, 1, 0, 0.3), (NX - 1, 0, 1, 0, -0.3)],
-             None, True, False),
-        ]
-        for rows, site, rpa_drops, warns in cases:
-            with self.subTest(rows=rows, site=site):
-                dropped, ham = self._rpa_drops_offsite_pairhop(rows, site)
-                self.assertEqual(dropped, rpa_drops)
-                reasons = sc._green_init_fock_omissions(
-                    ham, site=site, shape=(NX, NY, 1))
-                self.assertEqual(bool(reasons), warns, reasons)
-        # rows of an any-row type one cell length apart that cancel
-        tbl = {((1, 0, 0), (0, 0)): 0.3, ((1 - NX, 0, 0), (0, 0)): -0.3}
-        self.assertEqual(sc._green_init_fock_omissions(
-            {"CoulombInter": tbl}, shape=(NX, NY, 1)), [])
-
-    def test_orbital_site_pairhop_warns_through_the_full_path(self):
+    def test_no_fock_warning_through_the_full_path(self):
+        """The green_init band carries the Fock term, so hwave_sc no longer
+        warns about Fock-carrying interactions (Hund, off-site PairHop)."""
         g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
         for s_ in range(2):
             g[0, s_, 0, s_, 0] = 0.6
             g[0, s_, 1, s_, 1] = 0.3
             g[0, s_, 0, s_, 1] = g[0, s_, 1, s_, 0] = 0.1
-        for site, expect in ((None, False), ([0, 1], True)):
-            with self.subTest(site=site), tempfile.TemporaryDirectory() as d:
+        for typ, rows, site in (
+                ("Hund", [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], None),
+                ("PairHop", [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], [0, 1])):
+            with self.subTest(type=typ), tempfile.TemporaryDirectory() as d:
                 _write_model(d, 2, inter=False)
                 w = np.zeros((NX, NY, 2, 2), complex)
-                w[0, 0, 0, 1] = w[0, 0, 1, 0] = 0.3
-                _write_w90(os.path.join(d, "x.dat"), "PairHop", w)
+                for (rx, ry, a, b, v) in rows:
+                    w[rx % NX, ry % NY, a, b] += v
+                _write_w90(os.path.join(d, "x.dat"), typ, w)
                 np.savez(os.path.join(d, "g.npz"), green=g)
                 inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
                              extra_file={"green_init": "g.npz"})
-                inp["file"]["input"]["interaction"]["PairHop"] = "x.dat"
+                inp["file"]["input"]["interaction"][typ] = "x.dat"
                 if site is not None:
                     inp["mode"]["param"]["orbital_site"] = site
                 records = []
@@ -1626,43 +1543,9 @@ class TestGreenInitFockOmission(unittest.TestCase):
                                         (NX, NY, 1), 2)
                 finally:
                     lg.removeHandler(handler)
-                fired = any("off-site PairHop" in r.getMessage()
-                            for r in records)
-                self.assertEqual(fired, expect)
-
-    def test_warning_reaches_the_log(self):
-        g = np.zeros((NX * NY, 2, 2, 2, 2), dtype=complex)
-        for s_ in range(2):
-            g[0, s_, 0, s_, 0] = 0.6
-            g[0, s_, 1, s_, 1] = 0.3
-            g[0, s_, 0, s_, 1] = g[0, s_, 1, s_, 0] = 0.1
-        for typ, rows, expect in (
-                ("Hund", [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], True),
-                ("PairLift", [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], False),
-                ("PairHop", [(0, 0, 0, 1, 0.3), (0, 0, 1, 0, 0.3)], False)):
-            with self.subTest(type=typ), tempfile.TemporaryDirectory() as d:
-                _write_model(d, 2, inter=False)
-                w = np.zeros((NX, NY, 2, 2), complex)
-                for (rx, ry, a, b, v) in rows:
-                    w[rx % NX, ry % NY, a, b] += v
-                _write_w90(os.path.join(d, "x.dat"), typ, w)
-                np.savez(os.path.join(d, "g.npz"), green=g)
-                inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
-                             extra_file={"green_init": "g.npz"})
-                inp["file"]["input"]["interaction"][typ] = "x.dat"
-                records = []
-                handler = logging.Handler()
-                handler.emit = records.append
-                lg = logging.getLogger("hwave_sc")
-                lg.addHandler(handler)
-                try:
-                    sc._mean_field_band(inp, ("green_init",), "general",
-                                        (NX, NY, 1), 2)
-                finally:
-                    lg.removeHandler(handler)
-                fired = any("green_init is combined with" in r.getMessage()
-                            for r in records)
-                self.assertEqual(fired, expect)
+                self.assertFalse(any("Fock" in r.getMessage()
+                                     for r in records))
+                self.assertFalse(hasattr(sc, "_warn_green_init_fock_omission"))
 
 
 class TestHermiticityRound6(unittest.TestCase):
