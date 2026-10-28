@@ -387,7 +387,8 @@ class TestRealCupyStreams(unittest.TestCase):
                 strided = np.zeros((n, 64, 16, 32), complex)
                 st.copy_to_host(d2, strided[:, :, :, 4:20])
                 s.synchronize()
-            self.assertGreater(st.chunks, 3 * (n // 3))
+            # three transfers of n rows, at most three rows per chunk
+            self.assertGreaterEqual(st.chunks, 3 * -(-n // 3))
             for i in range(n):
                 np.testing.assert_array_equal(cp.asnumpy(d[i]), x[i], err_msg="h2d %d" % i)
                 np.testing.assert_array_equal(host[i], x[i], err_msg="d2h %d" % i)
