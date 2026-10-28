@@ -193,11 +193,13 @@ class _Capture:
             return orig(green_kw, *a, **k)
 
         def chi0(orig, input_dict, chi0q_tensor="auto", precomputed_mu=None,
-                 prepared=None):
+                 prepared=None, static_only=False):
             self.data["mu_chi0"] = precomputed_mu
             self.data["prepared"] = prepared
+            self.data["static_only"] = static_only
             r = orig(input_dict, chi0q_tensor=chi0q_tensor,
-                     precomputed_mu=precomputed_mu, prepared=prepared)
+                     precomputed_mu=precomputed_mu, prepared=prepared,
+                     static_only=static_only)
             self.data["chi0q"] = np.array(r)
             return r
 
@@ -303,6 +305,10 @@ class TestTransModOracle(unittest.TestCase):
         self.assertIsNotNone(band)
         # the chi0q solver runs the requested scheme
         self.assertEqual(band.solver.calc_scheme, chi0q_tensor)
+        # the static solve computes only the zero bosonic frequency on the
+        # band path too (issue #272)
+        self.assertTrue(res["static_only"])
+        self.assertEqual(res["chi0q"].shape[0], 1)
 
         # mu handed to chi0q == the root of sum_k,n f(e_n(k) - mu) =
         # filling * norb * Nk, by plain bisection on an independent band

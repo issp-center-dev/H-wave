@@ -150,6 +150,12 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   ``"calc"``\ は内部で計算します。
   ``"flex"``\ はFLEX計算の dressed 感受率を読み込みます
   （``frequency = "dynamic"``\ に必須）。
+  ``"calc"``\ は静的計算が使う唯一の振動数であるボソン振動数ゼロでのみ
+  :math:`\chi_0(\mathbf{q})`\ を計算するため、メモリは
+  :math:`O(N_\mathrm{mat} N_k\,n_d^4)`\ ではなく\ :math:`O(N_k\,n_d^4)`\ です
+  （\ :math:`N_k`\ は k 点数、\ :math:`n_d`\ は軌道数で、スピン軌道モードでは
+  :math:`2N`\ ）。結果は全振動数のバブルのゼロ振動数スライスと丸め誤差の範囲で
+  一致します。chi0q ファイルは書き出しません。
 
   .. note::
 
@@ -1972,13 +1978,17 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ``"random"``\ は全スピンブロックを含みます）を使ってください。
 - Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
   この場合は検証していません。
-- メモリ。全振動数のスピンを含む chi0q（\ ``chi0q_mode = "calc"``\ で計算し、
-  ``"load"``\ と\ ``"flex"``\ では全体を読み込みます）は
-  :math:`N_\mathrm{mat} N_k (2N)^4`\ 個の複素数、すなわち
-  :math:`16\,N_\mathrm{mat} N_k (2N)^4`\ バイトです（\ :math:`N_k`\ は k 点の数）。
-  :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子、\ ``Nmat = 1024``\ では約 64 GiB
-  で、同じ物理軌道数\ :math:`N`\ の非スピン軌道 general の chi0q（軌道添字
-  :math:`N^4`\ ）の約 4 GiB と比べて大きくなります。
+- メモリ。\ ``frequency = "static"``\ では、\ ``chi0q_mode = "calc"``\ はスピンを
+  含む chi0q をボソン振動数ゼロでのみ計算します。大きさは
+  :math:`N_k (2N)^4`\ 個の複素数、すなわち\ :math:`16\,N_k (2N)^4`\ バイトです
+  （\ :math:`N_k`\ は k 点の数。\ :math:`N = 4`\ 、\ :math:`32 \times 32`\ の格子で
+  約 64 MiB）。\ ``Nmat``\ とともに増えるのはグリーン関数の
+  :math:`O(N_\mathrm{mat} N_k (2N)^2)`\ だけです。\ ``"load"``\ と\ ``"flex"``\ は
+  全振動数のファイルを全体として読み込み、\ :math:`16\,N_\mathrm{mat} N_k (2N)^4`
+  バイトを要します。同じ模型で\ ``Nmat = 1024``\ では約 64 GiB で、同じ物理軌道数
+  :math:`N`\ の非スピン軌道 general の chi0q（軌道添字\ :math:`N^4`\ ）の約 4 GiB と
+  比べて大きくなります。\ ``frequency = "dynamic"``\ は全振動数を必要とします
+  （\ :ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
 - スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は検証して
   いません（\ ``"dynamic"``\ については\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
