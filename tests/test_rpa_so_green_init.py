@@ -282,8 +282,12 @@ class TestRPAGreenInit5DLayout(unittest.TestCase):
             self.output_dir,
             green_init_file=il5d_path,
         )
+        # The mislabelled green carries spin-mixing entries; since the
+        # green_init band includes the Fock term (issue #278) they make the
+        # band spinful, so chi0q may not even have the same shape.
         self.assertFalse(
-            np.allclose(g_nonso["chi0q"], g_wrong["chi0q"], atol=1e-10),
+            g_nonso["chi0q"].shape == g_wrong["chi0q"].shape
+            and np.allclose(g_nonso["chi0q"], g_wrong["chi0q"], atol=1e-10),
             "interleaved green consumed as spin-block must NOT match (teeth)",
         )
 

@@ -178,7 +178,8 @@ This section controls the Eliashberg solver. Key parameters:
 
      **Mean-field one-body band: assembly.** ``[file.input] trans_mod`` (the
      one-body Hamiltonian written by UHFk) replaces the ``Transfer`` band;
-     ``green_init`` adds its Hartree term to the ``Transfer`` band; an
+     ``green_init`` adds the Hartree-Fock mean field of its Green function to
+     the ``Transfer`` band; an
      ``Extern`` field (``coeff_extern`` times the table) is added on top. With
      ``chi0q_mode = "calc"`` or ``"load"`` (including
      ``bond_channels = true`` without an external ``bond_green``),
@@ -193,7 +194,7 @@ This section controls the Eliashberg solver. Key parameters:
      ``trans_mod`` or ``green_init``, or a finite ``Extern`` field) is refused
      with an error before :math:`\chi_0(\mathbf{q})` is computed or loaded.
      The check is made on the assembled one-body band (``trans_mod``, or the
-     ``Transfer`` band plus the Hartree term of ``green_init``, plus
+     ``Transfer`` band plus the Hartree-Fock term of ``green_init``, plus
      ``coeff_extern`` times ``Extern``): its up-up and down-down blocks may
      differ, and its spin-mixing blocks may be nonzero, by at most an
      absolute :math:`10^{-10}` in energy units. This tolerance is the default
@@ -223,15 +224,19 @@ This section controls the Eliashberg solver. Key parameters:
      the susceptibilities and the Green function come from the FLEX run or
      from the ``bond_green`` file.
 
-     **Hartree-only** ``green_init``. The ``green_init`` band is
-     :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
-     term), so it differs from the ``trans_mod`` UHFk writes for the same
-     solution whenever Fock terms are present: for any ``CoulombInter``,
-     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row
-     (:math:`R \neq 0`, or between orbitals on different sites per
-     ``[mode.param] orbital_site``), or the ``CoulombInter`` part of
-     ``Coulomb``. A warning then recommends ``trans_mod``, which is the
-     preferred input and, for a paramagnetic state, the consistent one.
+     ``green_init`` **and** ``trans_mod``. The ``green_init`` band is
+     :math:`T + \Sigma_{\rm HF}[G]`, the Hartree and Fock terms of every
+     interaction built exactly as UHFk builds its mean-field Hamiltonian
+     (with ``flag_fock = true``), so ``green_init`` and the ``trans_mod``
+     that a UHFk run with ``flag_fock = true`` (the default) writes for the
+     same solution define the same band. For a UHFk solution obtained with
+     ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band):
+     ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state
+     that breaks the translation symmetry of the original lattice, neither
+     the saved ``green`` nor the saved ``trans_mod`` reproduces the converged
+     band when read back (issue #294). (Before issue #278 the ``green_init``
+     band left out the Fock term, and ``hwave_sc`` warned when a
+     Fock-carrying interaction was present.)
 
   .. warning::
 
