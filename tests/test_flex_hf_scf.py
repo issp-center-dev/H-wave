@@ -13,6 +13,7 @@ HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so they RUN there and a missing or
 unusable reference fails rather than skips. Locally they skip with a
 reason when no such checkout is at hand."""
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,20 @@ def _build(param_extra=None, path=_IN2, interactions=None, mixing="linear"):
     par.update(param_extra or {})
     info = {"mode": "FLEX", "param": par, "enable_spin_orbital": False, "calc_scheme": "general"}
     return flex_mod.FLEX(r.get_param("ham"), {}, info), r
+
+
+_ISSUE282_DIAGNOSTICS = re.compile(
+    r"^hwave\.solver\.flex (?:INFO|DEBUG) {3}Stoner factor max_q eig\[U chi0\(q, i nu = 0\)\]: .*\n"
+    r"|^hwave\.solver\.flex DEBUG Stoner factor not computed: .*\n"
+    r"|^hwave\.solver\.flex WARNING FLEX iteration \d+ looks divergent: .*\n",
+    re.MULTILINE)
+
+
+def _strip_issue282_diagnostics(log_text):
+    """Remove the additive diagnostic lines of issue #282 (see the
+    develop-comparison test below) from a log in this module's
+    "%(name)s %(levelname)s %(message)s" format."""
+    return _ISSUE282_DIAGNOSTICS.sub("", log_text)
 
 
 _G0_SCRIPT = r'''
@@ -227,6 +242,14 @@ class TestG0Off(unittest.TestCase):
                     self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
             with open(os.path.join(a, "log.txt")) as fh:
                 la = fh.read().replace(here, "<root>").replace(a, "<out>")
+            # Issue #282 added documented, purely additive diagnostic lines
+            # that the reference revision cannot write: the per-iteration
+            # Stoner factor line (INFO on the first and last iteration,
+            # DEBUG otherwise; DEBUG "Stoner factor not computed" if its
+            # evaluation fails) and the one-off "looks divergent" WARNING of
+            # the iteration monitor. Only those lines are removed, from this
+            # side only; every other line must still match byte for byte.
+            la = _strip_issue282_diagnostics(la)
             with open(os.path.join(b, "log.txt")) as fh:
                 lb = fh.read().replace(develop, "<root>").replace(b, "<out>")
             # the whole stream, nothing filtered: the reference revision is
