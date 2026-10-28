@@ -1934,6 +1934,13 @@ chi0q ファイル、<code class="docutils literal notranslate"><span class="pre
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き（どちらの振動数でも）
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。</p>
+<p>逆に、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を指定しない<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>をもつ chi0q または FLEX のアーカイブ（FLEX では
+<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>も）や不正なマーカーをもつファイルを、
+計算前に拒否します。そのままでは<span class="math notranslate nohighlight">\(2N\)</span>軌道の非スピン軌道ファイルと誤って
+解釈されるためです。<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span></code>を有効にするか、非スピン
+軌道の計算でアーカイブを作り直してください。マーカーのないアーカイブはこれまで
+どおり読み込まれます。</p>
 </section>
 <section id="id41">
 <h3>実用上の注意<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>

@@ -2037,6 +2037,13 @@ supported yet; see issue #273);</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuses
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> (for both frequencies).</p>
+<p>Conversely, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> refuses a chi0q or
+FLEX archive that carries <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code> (or a FLEX
+<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>) or a malformed marker, before any work:
+its shape would otherwise be misread as a non-spin-orbital file over
+<span class="math notranslate nohighlight">\(2N\)</span> orbitals. Enable <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span></code> or regenerate the
+archive with a non-spin-orbital run; archives without the marker load as
+before.</p>
 </section>
 <section id="practical-advice">
 <h3>Practical advice<a class="headerlink" href="#practical-advice" title="Link to this heading">¶</a></h3>
