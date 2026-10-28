@@ -757,10 +757,11 @@ frequencies are guarded on their own and the dressing saves about 20 %
 transport cost the same. The results agree with the full grid to
 round-off; the guard statistics count the stored frequencies, and the
 outputs record <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>. The option is off by
-default, and the in-process pairing (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>) does
-not support it in this version: such a run is refused. Pair the archive of a half-grid
-run with <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> instead, which reads it as an ordinary full-grid
-archive.</p>
+default. It also applies to the in-process pairing
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>): the pairing keeps two store slots, the
+bubble and the slot that receives the pairing vertex, and both are halved
+(see <a class="reference internal" href="#flex-bond-pairing-tutorial"><span class="std std-ref">the memory table of the pairing section</span></a>). The archive of a half-grid run is an
+ordinary full-grid archive, so <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads it as before.</p>
 <p>The run is accepted only when the three residuals of the split state stay
 below <code class="docutils literal notranslate"><span class="pre">EPS</span></code> for three consecutive iterations; the log prints them with a
 <code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code> counter, and every archive records <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> and the
@@ -978,6 +979,14 @@ seconds)</p></td>
 </tr>
 </tbody>
 </table>
+<p>With <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code> the FLEX block
+store keeps only the <code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code> non-negative bosonic frequencies. The
+in-process pairing keeps two slots of that store alive until the end of the
+solve: the bubble and the slot that receives the uniform-grid vertex. Both
+are halved, and the kernel rebuilds the other frequencies of every vertex
+block when it reads it. For <code class="docutils literal notranslate"><span class="pre">ND</span></code> = 36, <code class="docutils literal notranslate"><span class="pre">nvol</span></code> = 1024 and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> =
+1024 the two slots take 20.3 GiB instead of 40.5 GiB. The archive, the
+hoisted kernel blocks and the IR coefficients are unchanged.</p>
 <p>GB here means <span class="math notranslate nohighlight">\(10^9\)</span> bytes; the cap key <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> is in
 binary GiB (<span class="math notranslate nohighlight">\(1024^3\)</span> bytes, about 7 % larger), so set it from these
 numbers with that margin in mind.</p>

@@ -472,12 +472,17 @@ CPU 経路、および<code class="docutils literal notranslate"><span class="pr
 動的バッファ（<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>、<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>）は保存した半分だけを保持し、
 結果の出力時に全振動数へ展開されます。ディスクに書き出すアーカイブは
 全振動数を保持するので、従来どおり<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で読めます。
-bool 値のみ受け付けます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>が
-<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
-いません。半分の格子で得たアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>でペアリング
-計算できます）と、<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は
-拒否されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は
-警告付きで無視されます。</p>
+プロセス内ペアリング（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）も半分の格子で
+動作します。ペアリングバーテックスも同じ関係を満たすので、保存した
+振動数だけを再びドレスして足し合わせ、残りはカーネルで再構成します
+（IR フィットでは折り返して取り込みます）。ペアリングのために残す
+ストアの 2 つのスロット（バブルと、バーテックスを受け取るスロット）も
+半分になり、<code class="docutils literal notranslate"><span class="pre">ND</span></code> = 36、<code class="docutils literal notranslate"><span class="pre">nvol</span></code> = 1024、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> = 1024 では
+40.5 GiB が 20.3 GiB になります。ペアリングの結果は、バーテックスが
+<code class="docutils literal notranslate"><span class="pre">false</span></code>と丸め誤差の範囲で一致し、固有値とギャップは固有値ソルバの
+収束の範囲で一致します。bool 値のみ受け付けます。
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は拒否されます。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>・
@@ -507,8 +512,8 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を設定してください。
 ボンド分解した対形成は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません。多軌道の結果の検証方法は
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">適用範囲の記述</span></a>を参照してください（issue #239）。
-<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外のペアリングと<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>の
-併用は、このバージョンでは拒否されます。</p>
+ペアリングと<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>の併用に対応して
+います（そのキーを参照）。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>

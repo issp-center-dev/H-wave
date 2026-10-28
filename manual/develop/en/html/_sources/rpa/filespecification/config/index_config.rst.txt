@@ -537,10 +537,16 @@ that has no effect under the current settings.
   (``chi_s_w``, ``chi_c_w``) hold the stored half during the solve; they
   are expanded to the full grid when the results are published, so the
   archive written to disk still holds the full grid and is read by
-  ``hwave_sc`` as before. Only booleans are
-  accepted. Refused with ``longitudinal_bond_pairing`` other than
-  ``"none"`` (the in-process pairing does not support the half grid yet;
-  the archive of a half-grid run can be paired with ``hwave_sc``) and with
+  ``hwave_sc`` as before. The in-process
+  pairing (``longitudinal_bond_pairing``) works on the half grid too: the
+  pairing vertex satisfies the same relation, so only the stored
+  frequencies are dressed again and accumulated, and the kernel rebuilds
+  the others (the IR fit folds them in). The two store slots that the
+  pairing keeps (the bubble and the slot that receives the vertex) are then
+  halved as well: for ``ND`` = 36, ``nvol`` = 1024 and ``Nmat`` = 1024 they
+  take 20.3 GiB instead of 40.5 GiB. The pairing results agree with
+  ``false`` to round-off for the vertex; the eigenvalues and gaps agree to
+  the eigensolver's convergence. Only booleans are accepted. Refused with
   ``[mode] enable_spin_orbital = true``. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
@@ -570,8 +576,8 @@ that has no effect under the current settings.
   ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing has no
   ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
   for how multi-orbital results are validated (issue #239). Combining
-  any pairing other than ``"none"`` with ``longitudinal_bond_half_grid =
-  true`` is refused in this version.
+  any pairing with ``longitudinal_bond_half_grid = true`` is supported
+  (see that key).
 
 - ``flex_hartree_fock``
 

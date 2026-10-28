@@ -700,10 +700,12 @@ GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <s
 輸送のコストは変わりません。結果は全振動数での計算と丸め誤差の範囲で
 一致します。ガードの統計は保存した振動数だけを数え、出力には
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>が記録されます。このオプションは
-デフォルトでは無効です。プロセス内ペアリング（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）は
-このバージョンでは対応しておらず、併用すると拒否されます。半分の格子で得たアーカイブは
-通常の全振動数アーカイブとして読めるので、ペアリングは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で
-計算してください。</p>
+デフォルトでは無効です。プロセス内ペアリング（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）にも
+適用されます。ペアリングはストアの 2 つのスロット（バブルと、ペアリング
+バーテックスを受け取るスロット）を残しますが、その両方が半分になります
+（<a class="reference internal" href="#flex-bond-pairing-tutorial"><span class="std std-ref">ペアリングの節のメモリの表</span></a>を参照）。
+半分の格子で得たアーカイブは通常の全振動数アーカイブなので、従来どおり
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で読めます。</p>
 <p>計算は、分割状態の3つの残差が3反復連続で<code class="docutils literal notranslate"><span class="pre">EPS</span></code>を下回ったときにのみ収束と
 みなされます。ログには<code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code>カウンタとともに残差が出力され、全ての
 アーカイブに<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>と最後の残差が記録されます（出力ファイルの説明を参照）。
@@ -914,6 +916,14 @@ INFO ログとともに無視されます -- 対形成ステップは再読み�
 </tr>
 </tbody>
 </table>
+<p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>とすると、FLEX のブロック
+ストアは非負のボソン振動数<code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code>個だけを保持します。プロセス内
+ペアリングはこのストアの 2 つのスロット（バブルと、一様グリッドのバーテックスを
+受け取るスロット）を計算の最後まで残しますが、その両方が半分になり、カーネルは
+各バーテックスブロックを読み出すときに残りの振動数を再構成します。<code class="docutils literal notranslate"><span class="pre">ND</span></code> = 36、
+<code class="docutils literal notranslate"><span class="pre">nvol</span></code> = 1024、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> = 1024 では、2 つのスロットは 40.5 GiB ではなく
+20.3 GiB になります。アーカイブ、事前変換したカーネルブロック、IR 係数は
+変わりません。</p>
 <p>ここでの GB は<span class="math notranslate nohighlight">\(10^9\)</span>バイトを意味します。一方、上限を指定する
 キー<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>は2進の GiB（<span class="math notranslate nohighlight">\(1024^3\)</span>バイト。
 約7%大きい単位）です。上の数値からこのキーを設定する際は、その差を

@@ -462,12 +462,17 @@ TOML形式
   動的バッファ（\ ``chi_s_w``\ 、\ ``chi_c_w``\ ）は保存した半分だけを保持し、
   結果の出力時に全振動数へ展開されます。ディスクに書き出すアーカイブは
   全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
-  bool 値のみ受け付けます。\ ``longitudinal_bond_pairing``\ が
-  ``"none"``\ 以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
-  いません。半分の格子で得たアーカイブは\ ``hwave_sc``\ でペアリング
-  計算できます）と、\ ``[mode] enable_spin_orbital = true``\ の場合は
-  拒否されます。\ ``longitudinal_bond_channels = true``\ でない場合は
-  警告付きで無視されます。
+  プロセス内ペアリング（\ ``longitudinal_bond_pairing``\ ）も半分の格子で
+  動作します。ペアリングバーテックスも同じ関係を満たすので、保存した
+  振動数だけを再びドレスして足し合わせ、残りはカーネルで再構成します
+  （IR フィットでは折り返して取り込みます）。ペアリングのために残す
+  ストアの 2 つのスロット（バブルと、バーテックスを受け取るスロット）も
+  半分になり、\ ``ND`` = 36、\ ``nvol`` = 1024、\ ``Nmat`` = 1024 では
+  40.5 GiB が 20.3 GiB になります。ペアリングの結果は、バーテックスが
+  ``false``\ と丸め誤差の範囲で一致し、固有値とギャップは固有値ソルバの
+  収束の範囲で一致します。bool 値のみ受け付けます。
+  ``[mode] enable_spin_orbital = true``\ の場合は拒否されます。
+  ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_pairing``
 
@@ -499,8 +504,8 @@ TOML形式
   ``[eliashberg] matsubara_basis = "ir"``\ を設定してください。
   ボンド分解した対形成は\ ``norb``\ を制限しません。多軌道の結果の検証方法は
   :ref:`適用範囲の記述 <sc_bond_channels_static>`\ を参照してください（issue #239）。
-  ``"none"``\ 以外のペアリングと\ ``longitudinal_bond_half_grid = true``\ の
-  併用は、このバージョンでは拒否されます。
+  ペアリングと\ ``longitudinal_bond_half_grid = true``\ の併用に対応して
+  います（そのキーを参照）。
 
 - ``flex_hartree_fock``
 
