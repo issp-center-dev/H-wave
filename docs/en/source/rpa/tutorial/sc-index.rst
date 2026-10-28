@@ -2094,8 +2094,12 @@ Practical advice
   4 GiB for a non-spin-orbital general chi0q (:math:`N^4` orbital indices) of
   the same physical :math:`N`. ``frequency = "dynamic"`` needs every
   frequency; see :ref:`sc_spin_orbital_dynamic_memory`.
-- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode has not
-  been validated (for ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`).
+- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode is
+  validated against ``gpu = false`` on an A100 GPU: the full spectrum of an
+  SU(2) model and the Arnoldi solve of a complex-SOC model agree to
+  :math:`10^{-10}` in the eigenvalues, and the power-iteration solve agrees
+  within its converged residual (``tests/test_sc_spin_orbital_gpu.py``; for
+  ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`).
 
 Validation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2388,7 +2392,12 @@ GPU
 is the shared, backend-independent kernel of the dynamic solver; the basis
 and the eigensolver stay on the host. The host and device kernel
 applications are checked against each other to :math:`10^{-12}`, and the
-leading eigenvalue is compared as well (this check requires CuPy).
+leading eigenvalue is compared as well (this check requires CuPy). On an
+A100 GPU the full-spectrum and Arnoldi solves with ``gpu = true`` agree with
+``gpu = false`` to :math:`10^{-10}` in the eigenvalues, and the power-iteration
+solve agrees within its converged residual; for a degenerate leading
+eigenvalue the gaps are compared as subspaces
+(``tests/test_sc_spin_orbital_gpu.py``).
 
 Validation
 """"""""""
