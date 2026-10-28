@@ -1072,10 +1072,11 @@ SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は�
 - ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
   Hartree-Fock 状態から始まります）
 
-reduced スキームはスピン軌道入力を拒否します。静的な Eliashberg ソルバー
-（\ ``hwave_sc``\ ）はスピン軌道 FLEX の出力を読みます（\ :ref:`sc_spin_orbital`\ を
-参照）。その動的エントリと\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
-``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
+reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
+（\ ``hwave_sc``\ ）は\ ``frequency = "static"``\ （\ :ref:`sc_spin_orbital`\ を参照）でも
+``frequency = "dynamic"``\ （\ :ref:`sc_spin_orbital_dynamic`\ を参照）でもスピン軌道
+FLEX の出力を読みます。動的なボンド分解の経路と\ ``run_eliashberg = true``\ の
+``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
 ``warm_start = false``\ で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

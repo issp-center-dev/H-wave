@@ -58,7 +58,12 @@ idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.da
 idict.update(inter)
 r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 16,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12,
+       # the reference revision predates the Hermitian projection of the
+       # self-energy (issue #281), which changes a symmetric run at round-off
+       # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
+       # that this byte-identity comparison stays about the code it names
+       "flex_sigma_hermitian_projection": False}
 par.update(json.loads(extra_json))
 if so != "absent":
     par["flex_second_order"] = so

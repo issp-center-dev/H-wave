@@ -153,6 +153,12 @@ This section controls the Eliashberg solver. Key parameters:
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
   susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+  ``"calc"`` evaluates :math:`\chi_0(\mathbf{q})` at the zero bosonic
+  frequency only, the one frequency the static solve uses, so its memory is
+  :math:`O(N_k\,n_d^4)` instead of :math:`O(N_\mathrm{mat} N_k\,n_d^4)`
+  (:math:`N_k` k points, :math:`n_d` orbitals, :math:`2N` in spin-orbital
+  mode); the result equals the zero-frequency slice of the full-frequency
+  bubble to round-off. It writes no chi0q file.
 
   .. note::
 
@@ -165,6 +171,67 @@ This section controls the Eliashberg solver. Key parameters:
      can be poorly converged; production RPA/FLEX runs typically use
      ``coeff_tail = 1.0``. The chi0q file records the value it was produced
      with, and ``hwave_sc`` warns on a mismatch when loading.
+
+  .. _sc_mean_field_band_note:
+
+  .. note::
+
+     **Mean-field one-body band: assembly.** ``[file.input] trans_mod`` (the
+     one-body Hamiltonian written by UHFk) replaces the ``Transfer`` band;
+     ``green_init`` adds its Hartree term to the ``Transfer`` band; an
+     ``Extern`` field (``coeff_extern`` times the table) is added on top. With
+     ``chi0q_mode = "calc"`` or ``"load"`` (including
+     ``bond_channels = true`` without an external ``bond_green``),
+     ``hwave_sc`` uses this assembled band for
+     :math:`\chi_0(\mathbf{q})`, for the chemical potential and for the Green
+     function of the pairing kernel, so all three describe the same
+     Hamiltonian. The keys are case-insensitive. Only a spin-independent band
+     is supported, because the singlet/triplet pairing kernel has no spin
+     index.
+
+     **Spin check and** ``spin_free_tol``. A spin-dependent band (a magnetic
+     ``trans_mod`` or ``green_init``, or a finite ``Extern`` field) is refused
+     with an error before :math:`\chi_0(\mathbf{q})` is computed or loaded.
+     The check is made on the assembled one-body band (``trans_mod``, or the
+     ``Transfer`` band plus the Hartree term of ``green_init``, plus
+     ``coeff_extern`` times ``Extern``): its up-up and down-down blocks may
+     differ, and its spin-mixing blocks may be nonzero, by at most an
+     absolute :math:`10^{-10}` in energy units. This tolerance is the default
+     of ``spin_free_tol`` (below), which can raise or lower it. All entries
+     must be finite. A band whose :math:`\max|H - H^\dagger|` exceeds
+     :math:`\max(10^{-10}, 10^{-6}\max|H|)` is refused; a smaller deviation
+     above :math:`10^{-10}` (for example :math:`\pm R` rows rounded
+     independently) is replaced by the Hermitian part
+     :math:`(H + H^\dagger)/2`, with a warning. The ``green_init`` Green
+     function itself must also be spin-independent in every cell (up-up equal
+     to down-down, no spin-mixing block) within
+     :math:`\max(10^{-10}, \texttt{spin\_free\_tol})` on its dimensionless
+     entries: a magnetic ``green_init`` describes a magnetic state, whatever
+     the spin direction, and is refused (issue #88). A paramagnetic UHF
+     solution converged only loosely (for example ``EPS = 6`` from a random
+     start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
+     convergence, start UHF from a spin-symmetric state, or raise
+     ``spin_free_tol``. The spin-polarized case is tracked in issue #88.
+
+     **Behaviour with** ``load``, **bond and FLEX inputs.** For ``"load"``,
+     give the same ``trans_mod`` / ``green_init`` / ``Extern`` as the RPA run
+     that wrote the chi0q file; there any deviation from Hermiticity above
+     :math:`10^{-10}` is refused instead of being replaced by the Hermitian
+     part, because the loaded chi0q was computed on the raw band. With
+     ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``, and with an
+     external ``bond_green``, these keys are not used and a warning says so:
+     the susceptibilities and the Green function come from the FLEX run or
+     from the ``bond_green`` file.
+
+     **Hartree-only** ``green_init``. The ``green_init`` band is
+     :math:`T + \mathrm{Hartree}[G]` (RPA's assembly, without the Fock
+     term), so it differs from the ``trans_mod`` UHFk writes for the same
+     solution whenever Fock terms are present: for any ``CoulombInter``,
+     ``Hund``, ``Ising`` or ``Exchange`` row, an off-site ``PairHop`` row
+     (:math:`R \neq 0`, or between orbitals on different sites per
+     ``[mode.param] orbital_site``), or the ``CoulombInter`` part of
+     ``Coulomb``. A warning then recommends ``trans_mod``, which is the
+     preferred input and, for a paramagnetic state, the consistent one.
 
   .. warning::
 
@@ -211,6 +278,27 @@ This section controls the Eliashberg solver. Key parameters:
   largest-real eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``spin_free_tol``: absolute tolerance, in energy units, of the
+  spin-independence check of the mean-field one-body band (see the
+  ``chi0q_mode`` note above; default ``1e-10``, a finite number
+  :math:`\geq 0`). When the measured up/down difference or spin mixing lies
+  above ``1e-10`` but within ``spin_free_tol``, ``hwave_sc`` uses the
+  spin-averaged band :math:`(H_\uparrow + H_\downarrow)/2`, drops the
+  spin-mixing blocks, and logs a warning with both discarded magnitudes.
+  Above ``spin_free_tol`` the band is refused. The spin-averaged band is
+  available only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself
+  (``chi0q_mode = "calc"``, or ``bond_channels = true``); with
+  ``chi0q_mode = "load"`` a band beyond ``1e-10`` is refused, because the
+  loaded chi0q was computed by the RPA run on its own band (use
+  ``"calc"``, or regenerate chi0q from a spin-symmetric band). A value
+  below ``1e-10`` (for example ``0``) tightens this band check.
+  ``spin_free_tol`` has a second use with ``green_init``: the Green function
+  itself is checked on its dimensionless entries with the tolerance
+  :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`, so the G check is
+  floored at ``1e-10`` and is never tightened below it. A ``green_init``
+  within that tolerance can still give a band whose spin splitting exceeds
+  the band tolerance at large interaction strengths; such a band is refused
+  with the band-level message.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an
@@ -1708,12 +1796,13 @@ full ``spinful`` form; see :ref:`flex_spin_orbital`).
 - **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
   whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
   or even spin-free model can be written in this representation) --
-  **supported by the static solver**, with a full spin-matrix gap function
-  and the spinful (charge, longitudinal and transverse spin) susceptibility;
-  see :ref:`sc_spin_orbital` for its scope. The dynamic entry
-  (``frequency = "dynamic"``) still rejects the configuration up front, and
-  ``hwave_tsweep`` with ``run_eliashberg = true`` rejects it in preflight
-  before any FLEX rung runs (a FLEX-only sweep runs it, with
+  **supported by the static solver and by the on-site dynamic solver**
+  (``frequency = "dynamic"``), with a full spin-matrix gap function and the
+  spinful (charge, longitudinal and transverse spin) susceptibility; see
+  :ref:`sc_spin_orbital` and :ref:`sc_spin_orbital_dynamic` for the scope.
+  The dynamic bond path (``bond_channels = true``) rejects the configuration
+  up front, and ``hwave_tsweep`` with ``run_eliashberg = true`` rejects it in
+  preflight before any FLEX rung runs (a FLEX-only sweep runs it, with
   ``warm_start = false``).
 
 Supporting a spin-polarized model in the singlet/triplet channels would
@@ -1728,7 +1817,7 @@ spin-orbital representation above is the route for spin-mixing models.
 Spin-orbital models (``enable_spin_orbital``)
 --------------------------------------------------
 
-With ``[mode] enable_spin_orbital = true`` the static solver treats the gap
+With ``[mode] enable_spin_orbital = true`` the solver treats the gap
 as one general matrix :math:`\Delta_{AB}(\mathbf{k})` over the :math:`2N`
 spin-orbitals (:math:`N` physical orbitals) instead of separate singlet and
 triplet channels. Spin-orbit coupling and other spin-mixing one-body terms in
@@ -1738,15 +1827,18 @@ components of the gap mix as the model dictates.
 Scope
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-- static pairing vertex only (``frequency = "static"``, the default);
+- ``frequency = "static"`` (the default; this section) or ``"dynamic"``
+  (the frequency-resolved gap of :ref:`sc_spin_orbital_dynamic`);
 - on-site two-body interactions only;
 - no bond-resolved channels (``bond_channels = false``, the default);
 - ``chi0q_mode = "calc"`` (the spinful :math:`\chi_0` is computed
   internally), ``"load"`` (the general four-index chi0q written by a
-  spin-orbital RPA run) or ``"flex"`` (the outputs of a spin-orbital FLEX
-  run, which must be a ``calc_scheme = "general"`` run with
+  spin-orbital RPA run; **static only**) or ``"flex"`` (the outputs of a
+  spin-orbital FLEX run, which must be a ``calc_scheme = "general"`` run with
   ``[mode.param] flex_hartree_fock = true``; see
-  :ref:`flex_spin_orbital`);
+  :ref:`flex_spin_orbital`). The dynamic solver needs ``chi0q_mode`` set
+  explicitly to ``"flex"`` or ``"calc"``: ``"load"`` and an unset key (whose
+  default is ``"load"``) are refused;
 - ``solver_mode = "iteration"``, ``"eigenvalue"`` or ``"both"`` with
   ``eigenvalue_method = "arnoldi"``.
 
@@ -1914,7 +2006,8 @@ Refused combinations
 Each of the following raises an error that names the key or file to change,
 before any calculation:
 
-- ``frequency = "dynamic"``;
+- a ``frequency`` other than ``"static"`` or ``"dynamic"`` (the refusals
+  specific to ``"dynamic"`` are listed in :ref:`sc_spin_orbital_dynamic`);
 - ``bond_channels = true``;
 - any off-site two-body row (:math:`\mathbf{R} \neq 0`), an
   :math:`\mathbf{R} = 0` row between orbitals of different sites under
@@ -1953,8 +2046,16 @@ before any calculation:
   supported yet; see issue #273);
 - ``[mode.param] spinful_vertex_exchange = false``.
 
-``hwave_sc`` with ``frequency = "dynamic"`` and ``hwave_tsweep`` with
-``run_eliashberg = true`` still refuse ``enable_spin_orbital``.
+``hwave_tsweep`` with ``run_eliashberg = true`` still refuses
+``enable_spin_orbital`` (for both frequencies).
+
+Conversely, ``hwave_sc`` without ``enable_spin_orbital`` refuses a chi0q or
+FLEX archive that carries ``spin_orbital = True`` (or a FLEX
+``chi_convention = "spin_orbital"``) or a malformed marker, before any work:
+its shape would otherwise be misread as a non-spin-orbital file over
+:math:`2N` orbitals. Enable ``[mode] enable_spin_orbital`` or regenerate the
+archive with a non-spin-orbital run; archives without the marker load as
+before.
 
 Practical advice
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1977,15 +2078,19 @@ Practical advice
   which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
 - A Zeeman term written into the Transfer file as a spin-dependent one-body
   term runs, but this case has not been validated.
-- Memory. The full-frequency spinful chi0q (computed in ``chi0q_mode =
-  "calc"``, read whole in ``"load"`` and ``"flex"``) holds
-  :math:`N_\mathrm{mat} N_k (2N)^4` complex numbers, i.e.
-  :math:`16\,N_\mathrm{mat} N_k (2N)^4` bytes, with :math:`N_k` the number
-  of k points. For :math:`N = 4`, a :math:`32 \times 32` grid and
-  ``Nmat = 1024`` this is about 69 GB, against about 4.3 GB for a
-  non-spin-orbital general chi0q (:math:`N^4` orbital indices) of the same
-  physical :math:`N`.
-- ``gpu = true`` in spin-orbital mode has not been validated.
+- Memory. With ``frequency = "static"``, ``chi0q_mode = "calc"`` computes
+  the spinful chi0q at the zero bosonic frequency only:
+  :math:`N_k (2N)^4` complex numbers, i.e. :math:`16\,N_k (2N)^4` bytes,
+  with :math:`N_k` the number of k points (about 64 MiB for :math:`N = 4` on
+  a :math:`32 \times 32` grid). What still grows with ``Nmat`` is the Green
+  function, :math:`O(N_\mathrm{mat} N_k (2N)^2)`. ``"load"`` and ``"flex"``
+  read the full-frequency file whole, :math:`16\,N_\mathrm{mat} N_k (2N)^4`
+  bytes: about 64 GiB for the same model with ``Nmat = 1024``, against about
+  4 GiB for a non-spin-orbital general chi0q (:math:`N^4` orbital indices) of
+  the same physical :math:`N`. ``frequency = "dynamic"`` needs every
+  frequency; see :ref:`sc_spin_orbital_dynamic_memory`.
+- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode has not
+  been validated (for ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`).
 
 Validation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2018,6 +2123,286 @@ non-spin-orbital run for such models; the equal-spin triplet agrees.
 Rotation-invariant combinations (for example ``Hund`` and ``Exchange`` in
 the Kanamori form) agree in both channels.
 
+
+.. _sc_spin_orbital_dynamic:
+
+Frequency-resolved gap (``frequency = "dynamic"``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``[eliashberg] frequency = "dynamic"`` the spin-orbital gap carries the
+fermionic Matsubara frequency as well,
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n)` on the uniform grid
+:math:`\omega_n = (2n + 1 - N_\mathrm{mat})\pi T`,
+:math:`n = 0, \ldots, N_\mathrm{mat} - 1`, and the pairing vertex is used at
+every bosonic frequency :math:`\nu_m = (2m - N_\mathrm{mat})\pi T`:
+
+.. math::
+
+   V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+   \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .
+
+The bare part :math:`\tfrac{1}{2}\Gamma` does not depend on frequency. The
+fluctuation part is read at :math:`+\mathbf{q}` and at the same bosonic index
+as :math:`\chi`. This is the orientation that exact diagonalization fixes at
+nonzero frequency; the opposite reading agrees only at :math:`\nu = 0`. The
+kernel is the frequency-resolved kernel of the non-spin-orbital dynamic
+solver (see :ref:`sc_dynamic_frequency`) at :math:`2N` spin-orbitals.
+
+**Pauli projection.** A gap must satisfy
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n) = -\Delta_{BA}(-\mathbf{k},
+-i\omega_n)`, where :math:`-i\omega_n` is the index
+:math:`N_\mathrm{mat} - 1 - n`. A fermionic frequency is never zero, so no
+element is paired with itself, and the antisymmetric space has exactly half
+the dimension :math:`(2N)^2 N_k N_\mathrm{mat}` of the gap. The solver works
+in an orthonormal basis of that space, as the static solver does.
+
+**Both frequency parities are solved together.** The non-spin-orbital
+dynamic solver selects the even-frequency singlet or triplet channel. In
+spin-orbital mode there is no singlet/triplet label, and the frequency parity
+:math:`\Delta(i\omega_n) \to \Delta(-i\omega_n)` is not a symmetry of the
+kernel in general (without inversion symmetry or with spin-orbit coupling).
+The spectrum therefore contains even- and odd-frequency gaps, and the
+even/odd content of every eigenvector is reported, not selected.
+
+Scope
+"""""
+
+- ``matsubara_basis = "uniform"`` (the default) only;
+- ``chi0q_mode`` set explicitly to ``"flex"`` or ``"calc"`` (never
+  ``"load"``). A minimal ``[eliashberg]`` table, to be used with
+  ``[mode] enable_spin_orbital = true``:
+
+  .. code-block:: toml
+
+     [eliashberg]
+     frequency         = "dynamic"
+     chi0q_mode        = "flex"        # or "calc"
+     solver_mode       = "eigenvalue"
+     eigenvalue_method = "arnoldi"
+
+- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q`` and ``green`` archives of a
+  spin-orbital FLEX run, on the full bosonic and fermionic grid of the
+  configured ``Nmat`` (see "Reading the outputs of a spin-orbital FLEX run"
+  above). The check that the vertex of this input reproduces the stored
+  :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`, runs at **every**
+  bosonic frequency, not only at :math:`\nu = 0`;
+- ``chi0q_mode = "calc"``: the spinful bubble of the bare Green function is
+  computed at every bosonic frequency, and
+  :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`;
+- on-site interactions, no bond channels (as in the static case);
+- an even ``Nmat``;
+- ``solver_mode = "iteration"`` or ``"eigenvalue"`` with
+  ``eigenvalue_method = "arnoldi"``. ``"both"`` runs the eigenvalue leg only,
+  as in the non-spin-orbital dynamic solver. ``spectral_shift`` and
+  ``seed_eigenvector`` (a ``gap_dynamic.npz`` of another spin-orbital dynamic
+  run on the same grid) are supported.
+
+Refused combinations
+""""""""""""""""""""
+
+In addition to the static refusals above (``bond_channels``, off-site rows,
+``pairing_type``, ``eigenvalue_method`` other than ``"arnoldi"``, ...), the
+following are refused before any file is read. Each error names the key:
+
+- ``matsubara_basis = "ir"`` (the IR basis is not available in spin-orbital
+  mode yet);
+- ``chi0q_mode = "load"`` and a missing ``chi0q_mode`` (its default is
+  ``"load"``);
+- ``zero_chi_s = true`` and ``zero_chi_c = true`` (``false`` is accepted).
+  The vertex is built from the single spinful channel, which has no
+  spin/charge split;
+- ``parity_leakage_policy`` and ``parity_leakage_tol``, which are keys of the
+  bond-resolved dynamic path;
+- an odd ``Nmat``, and FLEX archives on a different grid;
+- a ``seed_eigenvector`` without the ``spin_orbital = True`` marker. A
+  non-spin-orbital gap over :math:`2N` orbitals has the same shape. Likewise a
+  spin-orbital gap is refused as the seed of a non-spin-orbital run;
+- an estimated peak memory above ``[eliashberg] mem_limit_gb`` (see
+  *Memory* below; this raises ``MemoryError``).
+
+``hwave_tsweep`` with ``run_eliashberg = true`` still refuses spin-orbital
+mode.
+
+Initial gap
+"""""""""""
+
+The power iteration (``solver_mode = "iteration"``) starts by default from
+``init_gap = "random"``: a fixed-seed random gap over every
+:math:`(A, B, \mathbf{k}, \omega_n)`, projected onto the antisymmetric space,
+so both frequency parities are present. A named form factor (``"cos"``,
+``"p_x"``, ...) gives the static spin-orbital seed copied to every frequency.
+That seed is purely even in frequency. If the kernel happens to conserve the
+frequency parity (for example a centrosymmetric model without spin-orbit
+coupling), a power iteration started there cannot reach an odd-frequency
+leading state. Keep the random default unless you want to follow a specific
+even-frequency state. The Arnoldi solver does not use ``init_gap``.
+
+Outputs
+"""""""
+
+The file names are those of the dynamic solver: ``eigenvalue.dat``,
+``gap.dat`` and ``gap_dynamic.npz``. The conventions are those of the static
+spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
+``pairing_type``).
+
+- ``eigenvalue.dat``: the first line is
+  ``# Dynamic Eliashberg leading eigenvalue``. It is followed by
+  ``# key = value`` lines: ``spin_orbital = true``, ``index_convention``, the
+  gap layout, the definition of the weights, ``gap_spin_weights``,
+  ``gap_frequency_parity_weights``, ``gap_spin_frequency_weights`` (the
+  :math:`4 \times 2` table below), ``pauli_leakage``, ``chi0q_mode`` and, in
+  flex mode, ``flex_vertex_backward_error_max``. Then come
+  ``# eigenvalue_selection: LM`` (``LR`` with ``spectral_shift``,
+  ``iteration`` for the power iteration, with ``_seed_overlap`` appended when
+  a seed orders the eigenpairs, ``LR_retry`` as described below), the leading
+  eigenvalue, and the table. The column layout is compatible with the table
+  of the non-spin-orbital dynamic solver: the match column is the fifth
+  column in both (``hwave_tsweep`` itself still refuses spin-orbital mode):
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz  w_even_w  w_odd_w
+
+  ``w_psi`` ... ``w_dz`` are the spin weights of the static solver, summed
+  over frequency as well:
+  :math:`w_X = \sum_{n,\mathbf{k},a,b} |X_{ab}(\mathbf{k}, i\omega_n)|^2 / W`.
+  ``w_even_w`` and ``w_odd_w`` are the weights
+  :math:`\|\Delta^{(\pm)}\|^2 / \|\Delta\|^2` of the even and odd halves
+  :math:`\Delta^{(\pm)} = [\Delta(i\omega_n) \pm \Delta(-i\omega_n)]/2`.
+  On the antisymmetric space the momentum parity is minus the frequency
+  parity, so these two sectors are the only ones.
+
+- ``gap.dat``: the slice at :math:`n_0 = N_\mathrm{mat}/2` (the smallest
+  positive :math:`\omega_n`). Its first line is the dynamic header
+  ``# frequency=dynamic index=... iomega_n=... eigenvalue=... T=...``,
+  followed by the spin-orbital comment lines of the static solver.
+
+- ``gap_dynamic.npz``:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 34 66
+
+     * - key
+       - content
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k}, i\omega_n)`, shape
+         ``(2N, 2N, Nx, Ny, Nz, Nmat)``, spin-block order, normalized with a
+         fixed global phase
+     * - ``iomega``, ``T``, ``frequency``, ``eigenvalue``, ``axis_order``,
+         ``normalization``, ``momentum_convention``
+       - as in the non-spin-orbital dynamic solver (no ``pairing_type``)
+     * - ``spin_orbital``, ``index_convention``, ``norb_phys``, ``kx``,
+         ``ky``, ``kz``, ``spin_components``
+       - as in the static ``gap.npz``
+     * - ``gap_spin_weights``
+       - ``(4,)``: the weights :math:`w_\psi, w_{d_x}, w_{d_y}, w_{d_z}`
+     * - ``gap_spin_weights_w``
+       - ``(Nmat, 4)``: the same weights per frequency, normalized by the
+         same :math:`W`, so that the whole array sums to 1
+     * - ``gap_frequency_parity_labels``, ``gap_frequency_parity_weights``
+       - ``["even_w", "odd_w"]`` and their weights ``(2,)``
+     * - ``gap_spin_frequency_weights``
+       - ``(4, 2)``: the spin weights of the even and odd halves (sums to 1).
+         In the SU(2) limit, :math:`(\psi, \text{even})` is the
+         even-frequency singlet, :math:`(\mathbf{d}, \text{even})` the
+         even-frequency triplet, and :math:`(\psi, \text{odd})` and
+         :math:`(\mathbf{d}, \text{odd})` are the two odd-frequency states
+     * - ``eigenvalues``, ``eigenvector_spin_weights``,
+         ``eigenvector_frequency_parity_weights``, ``eigenvalue_match``
+       - with an eigenvalue analysis: the eigenvalues and the per-eigenpair
+         weights ``(n, 4)`` and ``(n, 2)``. The eigenvectors themselves are
+         **not** stored, because each one is as large as ``gap``; only the
+         leading one is written, as ``gap``
+     * - ``eigenvalue_selection``, ``pauli_leakage``
+       - as in ``eigenvalue.dat``
+
+**Largest-magnitude selection.** Without ``spectral_shift`` the Arnoldi
+solver selects the ``num_eigenvalues`` eigenvalues of largest magnitude. The
+repulsive (negative) dynamic eigenvalues grow with ``Nmat`` and can fill that
+set. As in the non-spin-orbital dynamic solver, when the leading eigenvalue
+of that set is negative (and no seed is given), the solver re-solves once
+with ``spectral_shift = "auto"`` (largest real part), logs a WARNING, writes
+``eigenvalue_selection: LR_retry`` and a note in ``eigenvalue.dat``. Set
+``spectral_shift = "auto"`` yourself to avoid the extra solve.
+
+``pauli_leakage`` measures how far the kernel maps antisymmetric gaps out of
+the antisymmetric space. It is the largest
+:math:`\|\mathrm{sym}(K E c)\| / \|K E c\|` over three fixed random probes.
+On the uniform grid it is at round-off level (about :math:`10^{-15}`), and a
+WARNING is logged above :math:`10^{-8}`. The solve is restricted to the
+antisymmetric space in either case.
+
+.. _sc_spin_orbital_dynamic_memory:
+
+Memory and time
+"""""""""""""""
+
+Every four-leg tensor (:math:`\chi`, :math:`\chi_0`, the vertex, its
+:math:`(\mathbf{r}, \tau)` form and the pair bubble) holds
+:math:`T_4 = 16\,(2N)^4 N_k N_\mathrm{mat}` bytes, 16 times the
+non-spin-orbital tensor of the same :math:`N`. The solver frees each one as
+soon as it is used, and transforms the vertex one orbital-pair slab at a
+time, so that at most two such tensors are alive at once. The exception is
+the internal bubble of ``chi0q_mode = "calc"``, which peaks at about
+:math:`4.5\,T_4`. Before reading anything, the solver estimates the peak.
+The estimate is the largest of the stages (input, vertex, transform, pair
+bubble, solve), and the solve stage includes the ARPACK basis,
+:math:`(\max(2k+1, 20) + 4)` vectors of half the gap length for
+``num_eigenvalues`` :math:`= k`. The run is refused when the estimate exceeds
+``[eliashberg] mem_limit_gb`` (default: 80 % of the available memory; ``0``
+disables the guard).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 15 15
+
+   * - :math:`N`, grid, ``Nmat``
+     - :math:`T_4`
+     - estimate (flex)
+     - estimate (calc)
+   * - 2, :math:`32 \times 32`, 512
+     - 2.0 GiB
+     - 7.2 GiB
+     - 10.0 GiB
+   * - 3, :math:`32 \times 32`, 512
+     - 10.1 GiB
+     - 28.5 GiB
+     - --
+
+For the first row (``num_eigenvalues = 10``, ``chi0q_mode = "calc"``, a
+10-core CPU, ``fft_workers = -1``) the whole run took 81 s, 68 s of them in
+the Arnoldi solve, and the measured peak resident memory was 7.8 GiB against
+the estimate of 10.0 GiB. Reduce ``Nmat`` or the k grid when the estimate is
+too large.
+
+GPU
+"""
+
+``gpu = true`` moves the vertex and the pair bubble to the device. The kernel
+is the shared, backend-independent kernel of the dynamic solver; the basis
+and the eigensolver stay on the host. The host and device kernel
+applications are checked against each other to :math:`10^{-12}`, and the
+leading eigenvalue is compared as well (this check requires CuPy).
+
+Validation
+""""""""""
+
+- **Against exact diagonalization.** On the spin-mixing chain of the static
+  validation, the production operator equals, to round-off, the kernel
+  application whose pair susceptibility agrees with exact diagonalization at
+  first and second order in the interaction.
+- **SU(2) limit.** With spin-independent hopping and a rotation-invariant
+  interaction, the spectrum on the antisymmetric space is every eigenvalue of
+  the non-spin-orbital dynamic singlet kernel once and every eigenvalue of
+  the triplet kernel three times, each in its combined-parity sector (which
+  contains both frequency parities), and nothing else.
+- **Static limit.** A frequency-independent :math:`\chi` reproduces the
+  spectrum of the static spin-orbital solver (with ``g2_tail = false``),
+  with frequency-independent gaps.
+- **Inputs.** ``"flex"`` reproduces the spectrum built directly from the
+  stored archives, and ``"calc"`` the spectrum built from an independent
+  bubble of the same Green function.
 
 Tips
 ----------------------------
