@@ -1634,6 +1634,113 @@ def _run_pairing(case, extra, half, eli, patches=()):
     return out, kernels
 
 
+def _matched_dev(a, b):
+    """The largest distance of a one-to-one matching of ``a`` onto ``b``
+    (order free, multiplicity kept)."""
+    from scipy.optimize import linear_sum_assignment
+    cost = np.abs(a[:, None] - b[None, :])
+    r, c = linear_sum_assignment(cost)
+    return float(cost[r, c].max())
+
+
+def _conjugate_pair_leading(pf, ph, eig):
+    """A leading eigenvalue that is one member of a complex-conjugate pair
+    (equal real parts, the kernel's antiunitary symmetry) is not determined
+    by the kernel: which member the eigensolver lists first is decided by
+    round-off, so the half grid may list the partner. Then (and only then:
+    the half-grid leading must be the CONJUGATE of the full-grid one) the
+    eigenvalues are compared as a set, and the gap and its bond projection
+    -- the partner's eigenvector, not stored -- are left out."""
+    for eta in ("singlet", "triplet"):
+        evf = pf.get("green_info:pairing_{}_eigenvalues".format(eta))
+        evh = ph.get("green_info:pairing_{}_eigenvalues".format(eta))
+        if evf is None or evh is None:
+            continue
+        evf, evh = np.atleast_1d(evf), np.atleast_1d(evh)
+        if evf.shape != evh.shape or evf.size < 2 or evf.dtype.kind != "c":
+            continue
+        scale = float(np.abs(evf).max())
+        f0, h0 = evf[0], evh[0]
+        if abs(f0.imag) <= 1e-8 * scale or abs(h0 - np.conj(f0)) > _EIG_TOL * scale:
+            continue
+        # the full set holds the partner too, so this is a genuine pair
+        if np.abs(evf - np.conj(f0)).min() > _EIG_TOL * scale:
+            continue
+        for name in list(eig):
+            if "_{}".format(eta) not in name:
+                continue
+            leaf = _leaf(name)
+            if leaf in ("eigenvalues", "eigenvalues_all"):
+                a = np.atleast_1d(pf[name])
+                b = np.atleast_1d(ph[name])
+                eig[name] = (np.inf if a.shape != b.shape else
+                             _matched_dev(a, b) / scale)
+            elif leaf in ("gap", "gap_bond_projection"):
+                del eig[name]
+
+
+class TestConjugatePairLeading(unittest.TestCase):
+    """The relaxation of the eigensolver comparison fires only for a
+    conjugate-pair flip of the leading eigenvalue, and only in that
+    channel."""
+
+    A, B = 0.047 + 0.0013j, 0.062 + 0.0j
+
+    def _members(self, eta, ev, gap):
+        return {"green_info:pairing_{}_eigenvalues".format(eta): np.array(ev),
+                "eliashberg_bond_{}.npz:eigenvalues_all".format(eta): np.array(ev),
+                "green_info:pairing_{}_gap".format(eta): np.array(gap),
+                "eliashberg_bond_{}.npz:gap".format(eta): np.array(gap),
+                "eliashberg_bond_{}.npz:gap_bond_projection".format(eta): np.array(gap),
+                "eliashberg_bond_{}.npz:gap_sector_weights".format(eta): np.array([1.0])}
+
+    def _run(self, evf, evh):
+        pf = dict(self._members("triplet", evf, [1.0 + 0j, 2.0]),
+                  **self._members("singlet", [self.A, self.A.conjugate()], [1.0 + 0j]))
+        ph = dict(self._members("triplet", evh, [2.0 + 0j, 1.0]),
+                  **self._members("singlet", [self.A.conjugate(), self.A], [3.0 + 0j]))
+        eig = {k: 1.0 for k in pf}
+        _conjugate_pair_leading(pf, ph, eig)
+        return eig
+
+    def test_conjugate_flip_relaxed(self):
+        a, b = self.A, self.B
+        eig = self._run([a, a.conjugate(), b], [a.conjugate(), a, b])
+        self.assertEqual(eig["green_info:pairing_triplet_eigenvalues"], 0.0)
+        self.assertEqual(eig["eliashberg_bond_triplet.npz:eigenvalues_all"], 0.0)
+        for k in ("green_info:pairing_triplet_gap", "eliashberg_bond_triplet.npz:gap",
+                  "eliashberg_bond_triplet.npz:gap_bond_projection"):
+            self.assertNotIn(k, eig)
+        # the eigenvector-derived weights are still compared
+        self.assertEqual(eig["eliashberg_bond_triplet.npz:gap_sector_weights"], 1.0)
+
+    def test_not_relaxed(self):
+        a, b = self.A, self.B
+        cases = {"non-conjugate leader": ([a, a.conjugate(), b], [b, a, a.conjugate()]),
+                 "partner missing": ([a, b, b], [a.conjugate(), b, b]),
+                 "real leader": ([b, a, a.conjugate()], [b, a.conjugate(), a])}
+        for label, (evf, evh) in cases.items():
+            with self.subTest(label):
+                eig = self._run(evf, evh)
+                self.assertEqual(eig["green_info:pairing_triplet_eigenvalues"], 1.0)
+                self.assertIn("eliashberg_bond_triplet.npz:gap", eig)
+
+    def test_multiplicity_kept(self):
+        a, b = self.A, self.B
+        eig = self._run([a, a.conjugate(), b, b], [a.conjugate(), a, a.conjugate(), b])
+        self.assertGreater(eig["green_info:pairing_triplet_eigenvalues"], 1e-3)
+
+    def test_other_channel_independent(self):
+        # the singlet flip is relaxed on its own; a triplet that does not
+        # flip is left exactly as compared
+        a, b = self.A, self.B
+        eig = self._run([b, a, a.conjugate()], [b, a, a.conjugate()])
+        self.assertEqual(eig["green_info:pairing_singlet_eigenvalues"], 0.0)
+        self.assertNotIn("green_info:pairing_singlet_gap", eig)
+        self.assertEqual(eig["green_info:pairing_triplet_eigenvalues"], 1.0)
+        self.assertIn("green_info:pairing_triplet_gap", eig)
+
+
 def _compare_pairing(full, half):
     """``(flex, pairing, kernel, eig)`` deviations: everything the runs
     publish outside the pairing step (at _TOL), the pairing outputs that do
@@ -1664,6 +1771,7 @@ def _compare_pairing(full, half):
             eig[name] = _pairing_dev(a, b, name)
         else:
             pairing[name] = _pairing_dev(a, b, name)
+    _conjugate_pair_leading(pf, ph, eig)
     kern = {}
     if len(kf) != len(kh):
         kern["count"] = np.inf
