@@ -35,7 +35,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
-                  PAIRLIFT_INERT_WARNING, canonical_scheme_name)
+                  _case_insensitive_file_input, PAIRLIFT_INERT_WARNING, canonical_scheme_name)
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
@@ -588,14 +588,6 @@ class FLEX(RPA):
                 "[mode.param] longitudinal_bond_half_grid must be a boolean, got {!r}".format(hg))
         out["longitudinal_bond_half_grid"] = bool(hg)
         if out["longitudinal_bond_half_grid"]:
-            if out["longitudinal_bond_pairing"] != "none":
-                raise ValueError(
-                    "[mode.param] longitudinal_bond_half_grid = true does not support the "
-                    "in-process pairing yet (longitudinal_bond_pairing = {!r}); set "
-                    "longitudinal_bond_pairing = \"none\" or longitudinal_bond_half_grid = "
-                    "false. The archive of a half-grid run is a full-grid archive, so hwave_sc "
-                    "can solve the pairing from it afterwards.".format(
-                        param.get("longitudinal_bond_pairing")))
             from hwave.solver.spin_orbital import resolve_flag
             if resolve_flag(info_mode):
                 raise ValueError(
@@ -1151,6 +1143,9 @@ class FLEX(RPA):
         ``Sigma = 0`` is often decisive for convergence near a magnetic
         instability, where the zero-start transient makes the SCF oscillate.
         """
+        info_inputfile = _case_insensitive_file_input(
+            info_inputfile,
+            ("sigma_init", "trans_mod", "green_init", "chi0q_init"))
         info = super().read_init(info_inputfile)
         if "sigma_init" in info_inputfile:
             path_to_input = info_inputfile.get("path_to_input", "")
