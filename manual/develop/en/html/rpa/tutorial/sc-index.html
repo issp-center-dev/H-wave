@@ -2088,8 +2088,12 @@ bytes: about 64 GiB for the same model with <code class="docutils literal notran
 4 GiB for a non-spin-orbital general chi0q (<span class="math notranslate nohighlight">\(N^4\)</span> orbital indices) of
 the same physical <span class="math notranslate nohighlight">\(N\)</span>. <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> needs every
 frequency; see <a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">Memory and time</span></a>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> in spin-orbital mode has not
-been validated (for <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> see <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> in spin-orbital mode is
+validated against <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code> on an A100 GPU: the full spectrum of an
+SU(2) model and the Arnoldi solve of a complex-SOC model agree to
+<span class="math notranslate nohighlight">\(10^{-10}\)</span> in the eigenvalues, and the power-iteration solve agrees
+within its converged residual (<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>; for
+<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> see <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p></li>
 </ul>
 </section>
 <section id="validation">
@@ -2387,7 +2391,12 @@ too large.</p>
 is the shared, backend-independent kernel of the dynamic solver; the basis
 and the eigensolver stay on the host. The host and device kernel
 applications are checked against each other to <span class="math notranslate nohighlight">\(10^{-12}\)</span>, and the
-leading eigenvalue is compared as well (this check requires CuPy).</p>
+leading eigenvalue is compared as well (this check requires CuPy). On an
+A100 GPU the full-spectrum and Arnoldi solves with <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> agree with
+<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code> to <span class="math notranslate nohighlight">\(10^{-10}\)</span> in the eigenvalues, and the power-iteration
+solve agrees within its converged residual; for a degenerate leading
+eigenvalue the gaps are compared as subspaces
+(<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>).</p>
 </section>
 <section id="id10">
 <h4>Validation<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h4>

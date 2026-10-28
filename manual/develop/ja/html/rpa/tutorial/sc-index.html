@@ -1984,8 +1984,12 @@ i\sigma_y\)</span>）の初期値です。反転対称な模型ではべき乗�
 <span class="math notranslate nohighlight">\(N\)</span>の非スピン軌道 general の chi0q（軌道添字<span class="math notranslate nohighlight">\(N^4\)</span>）の約 4 GiB と
 比べて大きくなります。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>は全振動数を必要とします
 （<a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">メモリと時間</span></a>を参照）。</p></li>
-<li><p>スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は検証して
-いません（<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>については<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
+<li><p>スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は、A100 GPU
+上で<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code>と照合済みです。SU(2) 模型の全スペクトルと複素 SOC 模型の
+Arnoldi 法の解は固有値が<span class="math notranslate nohighlight">\(10^{-10}\)</span>で一致し、反復法の解は収束時の残差の
+範囲で一致します
+（<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>。<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>については
+<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
 </ul>
 </section>
 <section id="id42">
@@ -2258,7 +2262,10 @@ CPU、<code class="docutils literal notranslate"><span class="pre">fft_workers</
 <p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>では頂点とペアバブルをデバイスへ移します。カーネルは動的ソルバーで
 共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
 ます。ホストとデバイスのカーネルの作用を<span class="math notranslate nohighlight">\(10^{-12}\)</span>で照合し、
-主要固有値も比べます（この確認には CuPy が必要です）。</p>
+主要固有値も比べます（この確認には CuPy が必要です）。A100 GPU 上で、
+<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の全スペクトルと Arnoldi 法の解は<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code>と固有値が
+<span class="math notranslate nohighlight">\(10^{-10}\)</span>で一致し、反復法の解は収束時の残差の範囲で一致します。主要固有値が縮退している場合、ギャップは部分空間
+として比べます（<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>）。</p>
 </section>
 <section id="id49">
 <h4>検証<a class="headerlink" href="#id49" title="Link to this heading">¶</a></h4>
