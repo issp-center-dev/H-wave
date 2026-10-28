@@ -202,7 +202,13 @@ and <span class="math notranslate nohighlight">\(\chi(\mathbf{q})\)</span>.</p><
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi eigenvalue analysis), or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> reads <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> from the RPA output
 file; <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> computes it internally; <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> reads the dressed
-susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).</p>
+susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>).
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> evaluates <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> at the zero bosonic
+frequency only, the one frequency the static solve uses, so its memory is
+<span class="math notranslate nohighlight">\(O(N_k\,n_d^4)\)</span> instead of <span class="math notranslate nohighlight">\(O(N_\mathrm{mat} N_k\,n_d^4)\)</span>
+(<span class="math notranslate nohighlight">\(N_k\)</span> k points, <span class="math notranslate nohighlight">\(n_d\)</span> orbitals, <span class="math notranslate nohighlight">\(2N\)</span> in spin-orbital
+mode); the result equals the zero-frequency slice of the full-frequency
+bubble to round-off. It writes no chi0q file.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> recomputes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> with the parameters in
@@ -2066,14 +2072,17 @@ cannot reach a triplet-led state from this seed. Use <code class="docutils liter
 which gives the <span class="math notranslate nohighlight">\(d_z\)</span> triplet; <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code> spans every spin block).</p></li>
 <li><p>A Zeeman term written into the Transfer file as a spin-dependent one-body
 term runs, but this case has not been validated.</p></li>
-<li><p>Memory. The full-frequency spinful chi0q (computed in <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
-<span class="pre">&quot;calc&quot;</span></code>, read whole in <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>) holds
-<span class="math notranslate nohighlight">\(N_\mathrm{mat} N_k (2N)^4\)</span> complex numbers, i.e.
-<span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span> bytes, with <span class="math notranslate nohighlight">\(N_k\)</span> the number
-of k points. For <span class="math notranslate nohighlight">\(N = 4\)</span>, a <span class="math notranslate nohighlight">\(32 \times 32\)</span> grid and
-<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code> this is about 64 GiB, against about 4 GiB for a
-non-spin-orbital general chi0q (<span class="math notranslate nohighlight">\(N^4\)</span> orbital indices) of the same
-physical <span class="math notranslate nohighlight">\(N\)</span>.</p></li>
+<li><p>Memory. With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> computes
+the spinful chi0q at the zero bosonic frequency only:
+<span class="math notranslate nohighlight">\(N_k (2N)^4\)</span> complex numbers, i.e. <span class="math notranslate nohighlight">\(16\,N_k (2N)^4\)</span> bytes,
+with <span class="math notranslate nohighlight">\(N_k\)</span> the number of k points (about 64 MiB for <span class="math notranslate nohighlight">\(N = 4\)</span> on
+a <span class="math notranslate nohighlight">\(32 \times 32\)</span> grid). What still grows with <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> is the Green
+function, <span class="math notranslate nohighlight">\(O(N_\mathrm{mat} N_k (2N)^2)\)</span>. <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>
+read the full-frequency file whole, <span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span>
+bytes: about 64 GiB for the same model with <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>, against about
+4 GiB for a non-spin-orbital general chi0q (<span class="math notranslate nohighlight">\(N^4\)</span> orbital indices) of
+the same physical <span class="math notranslate nohighlight">\(N\)</span>. <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> needs every
+frequency; see <a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">Memory and time</span></a>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> in spin-orbital mode has not
 been validated (for <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> see <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p></li>
 </ul>

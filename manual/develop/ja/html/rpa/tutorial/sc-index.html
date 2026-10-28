@@ -200,7 +200,13 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を読み込みます。
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は内部で計算します。
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>はFLEX計算の dressed 感受率を読み込みます
-（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>に必須）。</p>
+（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>に必須）。
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は静的計算が使う唯一の振動数であるボソン振動数ゼロでのみ
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算するため、メモリは
+<span class="math notranslate nohighlight">\(O(N_\mathrm{mat} N_k\,n_d^4)\)</span>ではなく<span class="math notranslate nohighlight">\(O(N_k\,n_d^4)\)</span>です
+（<span class="math notranslate nohighlight">\(N_k\)</span>は k 点数、<span class="math notranslate nohighlight">\(n_d\)</span>は軌道数で、スピン軌道モードでは
+<span class="math notranslate nohighlight">\(2N\)</span>）。結果は全振動数のバブルのゼロ振動数スライスと丸め誤差の範囲で
+一致します。chi0q ファイルは書き出しません。</p>
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は <strong>この</strong> 入力ファイルの<code class="docutils literal notranslate"><span class="pre">mode.param</span></code>の設定で
@@ -1962,13 +1968,17 @@ i\sigma_y\)</span>）の初期値です。反転対称な模型ではべき乗�
 <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>は全スピンブロックを含みます）を使ってください。</p></li>
 <li><p>Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
 この場合は検証していません。</p></li>
-<li><p>メモリ。全振動数のスピンを含む chi0q（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>で計算し、
-<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では全体を読み込みます）は
-<span class="math notranslate nohighlight">\(N_\mathrm{mat} N_k (2N)^4\)</span>個の複素数、すなわち
-<span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span>バイトです（<span class="math notranslate nohighlight">\(N_k\)</span>は k 点の数）。
-<span class="math notranslate nohighlight">\(N = 4\)</span>、<span class="math notranslate nohighlight">\(32 \times 32\)</span>の格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>では約 64 GiB
-で、同じ物理軌道数<span class="math notranslate nohighlight">\(N\)</span>の非スピン軌道 general の chi0q（軌道添字
-<span class="math notranslate nohighlight">\(N^4\)</span>）の約 4 GiB と比べて大きくなります。</p></li>
+<li><p>メモリ。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>はスピンを
+含む chi0q をボソン振動数ゼロでのみ計算します。大きさは
+<span class="math notranslate nohighlight">\(N_k (2N)^4\)</span>個の複素数、すなわち<span class="math notranslate nohighlight">\(16\,N_k (2N)^4\)</span>バイトです
+（<span class="math notranslate nohighlight">\(N_k\)</span>は k 点の数。<span class="math notranslate nohighlight">\(N = 4\)</span>、<span class="math notranslate nohighlight">\(32 \times 32\)</span>の格子で
+約 64 MiB）。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>とともに増えるのはグリーン関数の
+<span class="math notranslate nohighlight">\(O(N_\mathrm{mat} N_k (2N)^2)\)</span>だけです。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>は
+全振動数のファイルを全体として読み込み、<span class="math notranslate nohighlight">\(16\,N_\mathrm{mat} N_k (2N)^4\)</span>
+バイトを要します。同じ模型で<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>では約 64 GiB で、同じ物理軌道数
+<span class="math notranslate nohighlight">\(N\)</span>の非スピン軌道 general の chi0q（軌道添字<span class="math notranslate nohighlight">\(N^4\)</span>）の約 4 GiB と
+比べて大きくなります。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>は全振動数を必要とします
+（<a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">メモリと時間</span></a>を参照）。</p></li>
 <li><p>スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は検証して
 いません（<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>については<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
 </ul>
