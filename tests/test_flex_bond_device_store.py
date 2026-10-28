@@ -235,16 +235,19 @@ class TestDressingWithADeviceStore(unittest.TestCase):
                 with self.subTest(half=half, aliased=aliased, **kw), fake_cupy() as cp:
                     W_h, r_h, moved_h, ex_h, ND = _dress(cp, np, half, aliased=aliased, **kw)
                     W_d, r_d, moved_d, ex_d, _ = _dress(cp, cp, half, aliased=aliased, **kw)
-                    np.testing.assert_array_equal(W_d, W_h)
+                    _same_floats(self, W_d, W_h, "W")
                     for name in ("collapse0", "collapse_s", "collapse_c", "static_s",
-                                 "static_c"):
-                        np.testing.assert_array_equal(getattr(r_d, name), getattr(r_h, name))
-                    self.assertEqual((r_d.cond_min_s, r_d.cond_min_c, r_d.cond_bracket_s,
-                                      r_d.guard_exact_blocks, r_d.mirror_guarded),
-                                     (r_h.cond_min_s, r_h.cond_min_c, r_h.cond_bracket_s,
-                                      r_h.guard_exact_blocks, r_h.mirror_guarded))
+                                 "static_c", "cond_min_s", "cond_min_c"):
+                        _same_floats(self, getattr(r_d, name), getattr(r_h, name), name)
+                    self.assertEqual((r_d.guard_exact_blocks, r_d.mirror_guarded),
+                                     (r_h.guard_exact_blocks, r_h.mirror_guarded))
+                    if r_h.cond_bracket_s is None:
+                        self.assertIsNone(r_d.cond_bracket_s)
+                    else:
+                        _same_floats(self, r_d.cond_bracket_s, r_h.cond_bracket_s,
+                                     "cond_bracket_s")
                     for n in ex_h:
-                        np.testing.assert_array_equal(ex_d[n], ex_h[n])
+                        _same_floats(self, ex_d[n], ex_h[n], n)
                     # the host store moves every chibar batch in and every W
                     # batch out; the device store moves none of them
                     big_h = [t for t in moved_h if len(t[1]) == 4 and t[1][-2:] == (ND, ND)]
@@ -331,6 +334,29 @@ def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None
 _EIG_TOL = 1.0e-10
 
 
+#: host store vs device store on the fake: the arithmetic is the same, but
+#: the differently placed (aligned) arrays can take other SIMD/BLAS paths of
+#: NumPy, so floating-point results agree to round-off, not always bit for
+#: bit (measured: up to 7e-15 relative to the array's scale on an x86 host,
+#: intermittently; a transfer defect shows up at O(1))
+_ROUND_TOL = 1.0e-12
+
+
+def _same_floats(test, x, y, label):
+    """Two floating-point arrays (or scalars): same shape, dtype and NaN
+    pattern, and equal to _ROUND_TOL relative to the larger magnitude."""
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    test.assertEqual(x.dtype, y.dtype, label)
+    nx, ny = np.isnan(x), np.isnan(y)
+    test.assertTrue(np.array_equal(nx, ny), label)
+    x, y = x[~nx], y[~ny]
+    if x.size == 0:
+        return
+    scale = max(float(np.max(np.abs(x))), float(np.max(np.abs(y))), 1e-300)
+    test.assertLessEqual(float(np.max(np.abs(x - y))), _ROUND_TOL * scale, label)
+
+
 def _is_eig(name):
     return name.startswith("eliashberg_bond_") or name.startswith("pairing_") or \
         name.startswith("eigenvalue_bond_") or name.startswith("gap_bond_")
@@ -355,7 +381,8 @@ def _phase(x, y):
 
 
 def _assert_same_outputs(test, a, b):
-    """Every archive member and every array of green_info, bit for bit."""
+    """Every archive member and every array of green_info: floating-point
+    values to round-off (_same_floats), everything else exactly."""
     (_sa, gia, fa, _ta), (_sb, gib, fb, _tb) = a, b
     test.assertEqual(sorted(fa), sorted(fb))
     for fn in fa:
@@ -371,7 +398,7 @@ def _assert_same_outputs(test, a, b):
             x, y = fa[fn][m], fb[fn][m]
             test.assertEqual(x.shape, y.shape, (fn, m))
             if x.dtype.kind in "fc":
-                np.testing.assert_array_equal(x, y, err_msg="{}:{}".format(fn, m))
+                _same_floats(test, x, y, "{}:{}".format(fn, m))
             else:
                 test.assertTrue(np.array_equal(x, y), (fn, m))
     test.assertEqual(sorted(map(str, gia)), sorted(map(str, gib)))
@@ -387,10 +414,10 @@ def _assert_same_outputs(test, a, b):
 
 
 def _cmp_value(test, x, y, key, eig, phase):
-    """One green_info value: dicts member by member, arrays and numbers
-    bit for bit -- except, under a pairing key, the floating-point results
-    of the eigensolver (to _EIG_TOL, a gap-like member modulo the gap's
-    phase); strings, flags, integers and metadata exactly."""
+    """One green_info value: dicts member by member, floating-point arrays
+    and numbers to round-off (_same_floats) -- under a pairing key, the
+    floating-point results of the eigensolver to _EIG_TOL, a gap-like member
+    modulo the gap's phase; strings, flags, integers and metadata exactly."""
     if isinstance(x, dict) or isinstance(y, dict):
         test.assertTrue(isinstance(x, dict) and isinstance(y, dict), key)
         test.assertEqual(sorted(x), sorted(y), key)
@@ -404,6 +431,8 @@ def _cmp_value(test, x, y, key, eig, phase):
             leaf = key.rsplit(".", 1)[-1]
             _close_modulo_phase(test, x, y, key, phase if "gap" in leaf and
                                 "weights" not in leaf else 1.0)
+        elif x.dtype.kind in "fc":
+            _same_floats(test, x, y, key)
         else:
             test.assertEqual(x.shape, y.shape, key)
             test.assertEqual(x.dtype, y.dtype, key)
@@ -412,8 +441,8 @@ def _cmp_value(test, x, y, key, eig, phase):
     test.assertEqual(type(x), type(y), key)
     if eig and isinstance(x, (float, np.floating, complex, np.complexfloating)):
         test.assertLessEqual(abs(x - y), _EIG_TOL * max(abs(x), 1e-300), key)
-    elif isinstance(x, (float, np.floating)) and np.isnan(x):
-        test.assertTrue(np.isnan(y), key)
+    elif isinstance(x, (float, np.floating, complex, np.complexfloating)):
+        _same_floats(test, x, y, key)
     else:
         test.assertEqual(x, y, key)
 
@@ -650,8 +679,8 @@ class TestStoreReleaseOrder(unittest.TestCase):
 class TestKernelMatvecsAgree(unittest.TestCase):
     """The pairing kernels built from a device store and from a host store:
     their vertex blocks (uniform) or coefficients (IR) and a deterministic
-    matvec, before any eigensolver runs -- bit for bit on the fake for the
-    uniform grid, to round-off for the IR fit."""
+    matvec, before any eigensolver runs -- to round-off (_ROUND_TOL; the IR
+    fit per channel block)."""
 
     def _kernels(self, store, pairing, half, eli, extra):
         from tests.test_bond_half_grid import _capture_kernels
@@ -690,8 +719,7 @@ class TestKernelMatvecsAgree(unittest.TestCase):
                                     dev = _rel(a[k], b[k])
                                 self.assertLessEqual(dev, _TOL, msg=str(k))
                             else:
-                                np.testing.assert_array_equal(np.asarray(b[k]),
-                                                              np.asarray(a[k]), err_msg=str(k))
+                                _same_floats(self, b[k], a[k], str(k))
 
     def test_uniform(self):
         self._check(None, None)
