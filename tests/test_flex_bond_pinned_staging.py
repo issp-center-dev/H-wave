@@ -319,14 +319,31 @@ class TestPinnedStager(unittest.TestCase):
 
     def test_release_waits_for_the_copy_in_flight(self):
         """Deterministically: a copy holding the stager is paused inside its
-        host-side copy; release() started meanwhile must not complete until
-        the copy finishes, and the copied bytes are right."""
+        host-side copy; release() from another thread demonstrably tries the
+        stager's lock meanwhile and must not complete until the copy
+        finishes; the copied bytes are right."""
         import threading
         from hwave.solver import staging
+
+        class _Watched:
+            """The stager's RLock, signalling when the release thread tries it."""
+
+            def __init__(self, lock):
+                self.lock, self.owner, self.tried = lock, None, threading.Event()
+
+            def __enter__(self):
+                if threading.current_thread() is self.owner:
+                    self.tried.set()
+                return self.lock.__enter__()
+
+            def __exit__(self, *exc):
+                return self.lock.__exit__(*exc)
+
         with fake_cupy() as cp:
             x = _rand((6, 2, 4, 4), 50)
             d = cp.asarray(x)
             st = staging.PinnedStager(cp, max_bytes=2 * 2 * 4 * 4 * 16, workers=1)
+            st._lock = watched = _Watched(st._lock)
             inside, go = threading.Event(), threading.Event()
             real = staging.parallel_copy
             out = {}
@@ -339,15 +356,21 @@ class TestPinnedStager(unittest.TestCase):
 
             with mock.patch.object(staging, "parallel_copy", paused):
                 c = threading.Thread(target=lambda: out.setdefault("h", st.to_host(d)))
-                c.start()
-                self.assertTrue(inside.wait(timeout=30))
                 r = threading.Thread(target=st.release)
-                r.start()
-                r.join(timeout=0.2)
-                self.assertTrue(r.is_alive(), "release did not wait for the copy")
-                go.set()
-                c.join(timeout=30)
-                r.join(timeout=30)
+                watched.owner = r
+                try:
+                    c.start()
+                    self.assertTrue(inside.wait(timeout=30))
+                    r.start()
+                    self.assertTrue(watched.tried.wait(timeout=30),
+                                    "release did not try the stager's lock")
+                    r.join(timeout=0.2)
+                    waited = r.is_alive()
+                finally:
+                    go.set()
+                    c.join(timeout=30)
+                    r.join(timeout=30)
+            self.assertTrue(waited, "release did not wait for the copy")
             self.assertFalse(c.is_alive() or r.is_alive(), "deadlock")
             np.testing.assert_array_equal(out["h"], x)
 
