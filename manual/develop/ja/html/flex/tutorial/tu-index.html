@@ -617,8 +617,12 @@ GPU（<code class="docutils literal notranslate"><span class="pre">gpu</span> <s
 組み立てに関して1回のマップでホストへ渡るのはその結果（チャネル対ごとに
 1ブロック）だけです。ドレッシングと自己エネルギーの転送は従来どおり
 それぞれのデータ（有効相互作用の振動数バッチ、続いて縮約と静的スライス）を
-やり取りします。ボンド配列自体はホストメモリに置かれたまま振動数
-バッチを1つずつ転送します。バッチ幅はホスト側の上限（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>）とデバイスの空きメモリの両方に照らして選ばれ、デバイス側の表には
+やり取りします。ボンドのブロックストア（全振動数・全チャネル対のバブルと
+有効相互作用）は、デバイスに収まる場合はデバイスメモリに置かれ
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>、デフォルト）、反復中にホストへ
+渡ることはありません。収まらない場合はホストメモリに置かれ、振動数
+バッチを1つずつ転送します。どちらになったかとその理由はログに出力されます。
+バッチ幅はホスト側の上限（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>）とデバイスの空きメモリの両方に照らして選ばれ、デバイス側の表には
 <code class="docutils literal notranslate"><span class="pre">dressing</span></code>・<code class="docutils literal notranslate"><span class="pre">transport</span></code>と並んで<code class="docutils literal notranslate"><span class="pre">bubble</span></code>の行が現れます
 （<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定すると両方に優先し、いずれかを超えると拒否されます）。結果は丸め誤差の
 範囲で CPU 実行と一致します。出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_device</span></code>と

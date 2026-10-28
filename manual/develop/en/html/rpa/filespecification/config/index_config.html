@@ -563,6 +563,73 @@ the eigensolver’s convergence. Only booleans are accepted. Refused with
 <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>. Ignored with a warning unless
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span></code></p>
+<p><strong>Type :</strong>
+String (<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>, case-insensitive; default
+value is <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Where the bond block store of the bond-resolved FLEX lives on the GPU
+path (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>). The store holds the bubble and the effective
+interaction of every frequency and channel pair (with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> a second slot for the pairing vertex, with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> two more for the dynamic channels). In
+host memory, every iteration copies the whole store between host and
+device several times (the bubble’s blocks out, the frequency batches in,
+the effective interaction out and back in); in device memory these copies
+disappear and only small arrays (the channel-0 collapses, the static
+slices, the self-energy) come back. <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> (default) keeps the store
+on the device when it fits there and on the host otherwise; <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code>
+always keeps it on the host (the behaviour of previous versions);
+<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code> always keeps it on the device and is refused when it does
+not fit or when the GPU backend is not active (with <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code>
+already when the input is read).</p>
+<p>The admission is the device table of the bond gate with the store added
+as a persistent row: the store fits when
+<code class="docutils literal notranslate"><span class="pre">1.25</span> <span class="pre">*</span> <span class="pre">(persistent</span> <span class="pre">device</span> <span class="pre">rows</span> <span class="pre">+</span> <span class="pre">store</span> <span class="pre">+</span> <span class="pre">largest</span> <span class="pre">phase)</span> <span class="pre">&lt;=</span> <span class="pre">0.9</span> <span class="pre">*</span>
+<span class="pre">available</span> <span class="pre">device</span> <span class="pre">memory</span></code>, where the largest phase is
+<code class="docutils literal notranslate"><span class="pre">max(bubble,</span> <span class="pre">dressing</span> <span class="pre">+</span> <span class="pre">guard,</span> <span class="pre">transport)</span></code> at a frequency batch. Under
+<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> the batch is at least <code class="docutils literal notranslate"><span class="pre">ceil(4096</span> <span class="pre">/</span> <span class="pre">nvol)</span></code> frequencies (but
+not more than the host table admits), so that the store does not push
+the batch so small that the batched solves underfill the device;
+<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code> needs the store to fit at batch 1; a pinned
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> is checked as given. With
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> the device-store need also charges the
+pairing’s re-dressing (the pair bubble <code class="docutils literal notranslate"><span class="pre">norb^4</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">Nmat</span> <span class="pre">*</span> <span class="pre">16</span></code>
+bytes plus two frequency batches), which a host store left room for.
+After the self-consistency the store leaves device memory before the
+pairing kernel is admitted (the bubble slot is released, or moved to
+host memory when a second pairing channel still needs it, and the vertex
+slot moves to host memory), so the kernel can still keep
+its blocks on the device.
+The memory pool’s
+cached blocks are released before the free device memory is measured.
+The decision and its reason are logged with the device table. The store
+takes <code class="docutils literal notranslate"><span class="pre">n_slots</span> <span class="pre">*</span> <span class="pre">Nmat_s</span> <span class="pre">*</span> <span class="pre">nvol</span> <span class="pre">*</span> <span class="pre">ND^2</span> <span class="pre">*</span> <span class="pre">16</span></code> bytes, with <code class="docutils literal notranslate"><span class="pre">Nmat_s</span> <span class="pre">=</span>
+<span class="pre">Nmat</span></code> (<code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code> with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>),
+<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">*</span> <span class="pre">norb^2</span></code> and <code class="docutils literal notranslate"><span class="pre">n_slots</span></code> = 1 without pairing, 2 with it, plus
+2 with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>. For example, with <code class="docutils literal notranslate"><span class="pre">ND</span></code> = 36,
+<code class="docutils literal notranslate"><span class="pre">nvol</span></code> = 1024 and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> = 1024 one slot is 20.3 GiB on the full
+grid and 10.1 GiB on the half grid, so a singlet pairing run (two
+slots) fits a 40 GB device only with the half grid. The host memory
+table (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>) is not reduced when the store
+goes to the device.</p>
+<p>If allocating the store on the device runs out of memory despite the
+admission (fragmentation, another process), <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> logs a warning and
+continues with the store in host memory and the host-store frequency
+batch; nothing has been computed at that point. <code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code> stops with
+the error. An out-of-memory error during an iteration is not retried;
+its message suggests <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> when the store is on the device.</p>
+<p>Results: only where the store lives changes, not the arithmetic. At the
+same frequency batch (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> pinned), the
+device store gives the results of the host store, bit for bit or, when
+the GPU libraries pick different kernels for the differently aligned
+arrays, to round-off. Under <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> the device store can come with a
+smaller frequency batch than the host store (the store takes device
+memory the batch would otherwise use), and a different batch changes
+the results at round-off level. The CPU path is unchanged (the store is
+always in host memory there). Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>Type :</strong>
 String (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>;

@@ -668,8 +668,12 @@ the bubble assembly what crosses to the host per map is its result alone
 – one block per channel pair. The dressing and the self-energy transport
 move their own data as before (the frequency batches of the effective
 interaction, then the collapses and the static slices).
-The bond arrays themselves stay in host memory and are transferred one
-frequency batch at a time; the batch is chosen against both the host cap
+The bond block store (the bubble and the effective interaction of every
+frequency and channel pair) is kept in device memory when it fits there
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>, the default), so that none of it
+crosses to the host during the iterations; otherwise it stays in host
+memory and is transferred one frequency batch at a time. The log says
+which, and why. The batch is chosen against both the host cap
 (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>) and the free device memory, whose
 table carries a <code class="docutils literal notranslate"><span class="pre">bubble</span></code> row beside <code class="docutils literal notranslate"><span class="pre">dressing</span></code> and <code class="docutils literal notranslate"><span class="pre">transport</span></code>
 (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> overrides both and is refused when it
