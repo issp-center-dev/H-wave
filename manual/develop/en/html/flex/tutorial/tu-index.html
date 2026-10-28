@@ -707,6 +707,7 @@ lists the four bonds <code class="docutils literal notranslate"><span class="pre
 <span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 64      # override the automatic frequency batch</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD</span>
 <span class="w">  </span><span class="c1"># longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (+2 full bond buffers of memory)</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_half_grid = true     # keep only nu &gt;= 0 in the bond store (see below)</span>
 <span class="k">[file.input]</span>
 <span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
 <span class="k">[file.input.interaction]</span>
@@ -727,6 +728,39 @@ lists the four bonds <code class="docutils literal notranslate"><span class="pre
 <p>Set <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code> in such runs: without it the static bond keys of
 BOTH channels are written into <code class="docutils literal notranslate"><span class="pre">chiq_s.npz</span></code>. Output archive names without
 a <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix get one appended, as for every other <code class="docutils literal notranslate"><span class="pre">.npz</span></code> output.</p>
+<p><em>Halving the bond store.</em> <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code> keeps only
+the <code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code> non-negative bosonic frequencies in the bond store and
+rebuilds the others from <span class="math notranslate nohighlight">\(X(q, -\nu) = X(q, \nu)^\dagger\)</span> where they
+are read, so the bond buffers held in memory during the solve (the
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> buffers included) take about half the
+memory. The archive written to disk still holds the full grid: the
+dynamic channels are expanded to the full grid when the results are
+published, one channel at a time. The conditioning guard still covers
+the whole grid: the decision (refuse, warn or pass) and <code class="docutils literal notranslate"><span class="pre">cond_min</span></code> are
+those of the full grid, and a single violating block is named at the same
+frequency and q-point (with several violating blocks the first one reported
+can differ, because the batches are grouped differently). With
+time-reversal symmetry (real hopping and interactions, checked on every
+map), <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code>, every score at <span class="math notranslate nohighlight">\(-\nu\)</span> is also one
+at <span class="math notranslate nohighlight">\(+\nu\)</span>, so only the stored half is dressed and guarded, except for
+a batch whose minimum score lies closer to the threshold than the
+tolerance of the symmetry check (<span class="math notranslate nohighlight">\(10^{-12}\)</span> relative) can resolve
+(<code class="docutils literal notranslate"><span class="pre">&quot;warn&quot;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> always guard the whole grid); on the CPU,
+for a two-orbital model with five bond channels on a 16 x 16 mesh, the
+dressing went from 2.1 s to 1.1 s and the whole two-map solve from 2.9 s to
+1.7 s at <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">64</span></code> (4.1 s to 2.2 s and 5.5 s to 3.6 s at
+<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">128</span></code>). With broken time reversal (complex hopping) the negative
+frequencies are guarded on their own and the dressing saves about 20 %
+(4.2 s to 3.5 s at <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">128</span></code>). The bubble and the self-energy
+transport cost the same. The results agree with the full grid to
+round-off; the guard statistics count the stored frequencies, and the
+outputs record <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>. The option is off by
+default, and the in-process pairing (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>) does
+not support it in this version: such a run is refused. Pair the archive of a half-grid
+run with <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> instead, which reads it as an ordinary full-grid
+archive.</p>
 <p>The run is accepted only when the three residuals of the split state stay
 below <code class="docutils literal notranslate"><span class="pre">EPS</span></code> for three consecutive iterations; the log prints them with a
 <code class="docutils literal notranslate"><span class="pre">[pass</span> <span class="pre">k/3]</span></code> counter, and every archive records <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> and the

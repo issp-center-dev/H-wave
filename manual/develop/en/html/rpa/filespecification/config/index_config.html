@@ -495,6 +495,68 @@ deliberately stiff regime: below the floor the dressed vertices are
 dominated by amplified round-off. Ignored with a warning unless
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span></code></p>
+<p><strong>Type :</strong>
+Boolean (default value is <code class="docutils literal notranslate"><span class="pre">false</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+Store and dress only the non-negative half of the bosonic Matsubara
+grid in the bond-resolved FLEX. Every bosonic object of the bond map
+(the bubble, the dressed spin and charge channels, the effective
+interaction and the channel-0 collapses) satisfies
+<span class="math notranslate nohighlight">\(X(q, \nu_l) = X(q, -\nu_l)^\dagger\)</span> on the bond pair matrix at the
+same <span class="math notranslate nohighlight">\(q\)</span>, so with <code class="docutils literal notranslate"><span class="pre">true</span></code> the block store keeps the
+<code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code> frequencies <span class="math notranslate nohighlight">\(\nu \ge 0\)</span> (the zero frequency and
+the last slot of the grid included) and rebuilds the others where they
+are read: in the self-energy, in the channel-0 susceptibilities and in
+the outputs. The results agree with <code class="docutils literal notranslate"><span class="pre">false</span></code> to round-off (about
+<span class="math notranslate nohighlight">\(10^{-13}\)</span> relative). The conditioning guard still covers the
+whole grid. The denominator at <span class="math notranslate nohighlight">\(-\nu\)</span> is
+<span class="math notranslate nohighlight">\(1 \mp \bar\chi(q, \nu)^\dagger V(q)\)</span>, whose singular values in
+general differ from those at <span class="math notranslate nohighlight">\(+\nu\)</span>, so the negative frequencies
+are guarded on their own, through the same checks as with <code class="docutils literal notranslate"><span class="pre">false</span></code>
+(the conditioning guard, the exact-singular check and, under
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, the solve residual). This
+is always the case with <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code> and with
+<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>. The one exception is <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
+<span class="pre">&quot;all&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code> under time-reversal
+symmetry: when the bubble and the vertices satisfy
+<span class="math notranslate nohighlight">\(\bar\chi(q)^T = \bar\chi(-q)\)</span> and <span class="math notranslate nohighlight">\(V(q)^T = V(-q)\)</span> (real
+hopping and interactions; checked on every map, to <span class="math notranslate nohighlight">\(10^{-12}\)</span>
+relative), the denominator at <span class="math notranslate nohighlight">\((q, -\nu)\)</span> is the complex
+conjugate of the one at <span class="math notranslate nohighlight">\((-q, \nu)\)</span> and has the same score, so the
+negative frequencies are not decomposed again; a frequency batch whose
+minimum score lies closer to the threshold than the tolerance of that
+symmetry check (<span class="math notranslate nohighlight">\(10^{-12}\)</span> relative) can resolve is still guarded
+on its own, and a refusal is reported at the
+mirror of the stored violating block. In every case the decision
+(refuse, warn or pass) is that of <code class="docutils literal notranslate"><span class="pre">false</span></code>, and <code class="docutils literal notranslate"><span class="pre">cond_min</span></code> (log and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>) is the minimum over the whole
+grid. When several blocks violate, the location a refusal names (the
+first violation met) can differ from <code class="docutils literal notranslate"><span class="pre">false</span></code>, and so can the blocks
+the warnings name (one per frequency batch and channel), because the
+half grid’s batches start at the zero frequency and group the
+frequencies differently; an exactly singular denominator is refused on
+both grids, possibly from a different batch. With time reversal the bond store takes about half the
+memory and the dressing with its guard about half the time; with
+broken time reversal the store is still halved but the dressing saves
+only about 20 %. The bubble and the
+self-energy transport are unchanged. The guard statistics
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code>,
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_*</span></code>) count the stored
+frequencies only; such outputs carry <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span>
+<span class="pre">true</span></code>. A <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> seed must satisfy
+<span class="math notranslate nohighlight">\(\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger\)</span>. With
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code> the in-memory dynamic buffers
+(<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>) hold the stored half during the solve; they
+are expanded to the full grid when the results are published, so the
+archive written to disk still holds the full grid and is read by
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> as before. Only booleans are
+accepted. Refused with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> other than
+<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> (the in-process pairing does not support the half grid yet;
+the archive of a half-grid run can be paired with <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) and with
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>. Ignored with a warning unless
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>Type :</strong>
 String (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>;
@@ -518,7 +580,9 @@ to it). Memory: see <a class="reference internal" href="../../../flex/tutorial/t
 bond-resolved vertex</span></a>; for large models set
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>. The bond-resolved pairing has no
 <code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction; see <a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">the scope note</span></a>
-for how multi-orbital results are validated (issue #239).</p>
+for how multi-orbital results are validated (issue #239). Combining
+any pairing other than <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span>
+<span class="pre">true</span></code> is refused in this version.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>Type :</strong>

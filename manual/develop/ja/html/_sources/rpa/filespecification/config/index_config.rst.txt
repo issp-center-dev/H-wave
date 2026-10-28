@@ -413,6 +413,62 @@ TOML形式
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで
   無視されます。
 
+- ``longitudinal_bond_half_grid``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 、FLEX モードのみ)
+
+  **説明 :**
+  ボンド分解 FLEX で、ボソン松原振動数のうち非負の半分だけを保存・
+  ドレスします。ボンド写像のボソン量（バブル、ドレスされたスピン・電荷
+  チャネル、有効相互作用、チャネル 0 への縮約）はすべて、同じ
+  :math:`q`\ でボンドペア行列について
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger`\ を満たします。そこで
+  ``true``\ のときはブロックストアに\ ``Nmat/2 + 1``\ 個の振動数
+  :math:`\nu \ge 0`\ （ゼロ振動数と格子の最後のスロットを含む）だけを
+  保持し、残りは読み出す場所（自己エネルギー、チャネル 0 の感受率、
+  出力）で再構成します。結果は\ ``false``\ と丸め誤差の範囲（相対
+  :math:`10^{-13}`\ 程度）で一致します。条件数ガードは引き続き全振動数を
+  対象とします。\ :math:`-\nu`\ での分母は
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`\ であり、その特異値は一般に
+  :math:`+\nu`\ のものと異なるため、負の振動数は\ ``false``\ と同じ検査
+  （条件数ガード、厳密な特異性の検査、\ ``longitudinal_bond_guard_freqs =
+  "static"``\ では解の残差）で別に検査します。\ ``flex_guard_policy =
+  "warn"``\ と\ ``"static"``\ では常にそうします。唯一の例外は、時間反転
+  対称性のもとでの\ ``longitudinal_bond_guard_freqs = "all"``\ かつ
+  ``flex_guard_policy = "refuse"``\ の場合です。バブルとバーテックスが
+  :math:`\bar\chi(q)^T = \bar\chi(-q)`\ と :math:`V(q)^T = V(-q)`\ を満たす
+  とき（実数のホッピングと相互作用。各写像で相対 :math:`10^{-12}`\ で
+  検査します）、\ :math:`(q, -\nu)`\ の分母は :math:`(-q, \nu)`\ の分母の
+  複素共役で同じスコアを持つので、負の振動数は改めて分解しません。最小
+  スコアがしきい値に、この対称性の検査の許容誤差（相対 :math:`10^{-12}`\ ）で
+  判別できる範囲より近いバッチは別に検査し、拒否は
+  保存した違反ブロックの鏡像の位置で報告します。いずれの場合も判定
+  （拒否・警告・通過）は\ ``false``\ と同じで、\ ``cond_min``\ （ログと
+  ``longitudinal_bond_cond_min_s`` / ``_c``\ ）は全振動数についての最小値
+  です。複数のブロックが違反する場合は、拒否が示す位置（最初に見つかった
+  違反）と警告が示すブロック（振動数バッチとチャネルごとに一つ）が
+  ``false``\ と異なることがあります。半分の格子のバッチはゼロ振動数から
+  始まり、振動数のまとめ方が異なるためです。厳密に特異な分母はどちらでも
+  拒否されますが、報告するバッチが異なることがあります。時間反転対称性がある場合、ボンドストアのメモリと、
+  ガードを含むドレスの時間はおよそ半分になります。時間反転対称性が
+  破れている場合もストアは半分になりますが、ドレスの節約は 2 割程度
+  です。バブルと自己エネルギーの輸送は変わりません。ガードの統計
+  （\ ``longitudinal_bond_guard_blocks_per_iteration``\ 、
+  ``longitudinal_bond_guard_exact_blocks_*``\ ）は保存した振動数だけを
+  数えます。このような出力には\ ``longitudinal_bond_half_grid = true``\ が
+  記録されます。\ ``sigma_init``\ の種は
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`\ を満たす
+  必要があります。\ ``longitudinal_bond_output_full``\ では、計算中のメモリ上の
+  動的バッファ（\ ``chi_s_w``\ 、\ ``chi_c_w``\ ）は保存した半分だけを保持し、
+  結果の出力時に全振動数へ展開されます。ディスクに書き出すアーカイブは
+  全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
+  bool 値のみ受け付けます。\ ``longitudinal_bond_pairing``\ が
+  ``"none"``\ 以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
+  いません。半分の格子で得たアーカイブは\ ``hwave_sc``\ でペアリング
+  計算できます）と、\ ``[mode] enable_spin_orbital = true``\ の場合は
+  拒否されます。\ ``longitudinal_bond_channels = true``\ でない場合は
+  警告付きで無視されます。
+
 - ``longitudinal_bond_pairing``
 
   **形式 :** str型 (``"none"``\ ・\ ``"singlet"``\ ・\ ``"triplet"``\ ・
@@ -443,6 +499,8 @@ TOML形式
   ``[eliashberg] matsubara_basis = "ir"``\ を設定してください。
   ボンド分解した対形成は\ ``norb``\ を制限しません。多軌道の結果の検証方法は
   :ref:`適用範囲の記述 <sc_bond_channels_static>`\ を参照してください（issue #239）。
+  ``"none"``\ 以外のペアリングと\ ``longitudinal_bond_half_grid = true``\ の
+  併用は、このバージョンでは拒否されます。
 
 - ``flex_hartree_fock``
 

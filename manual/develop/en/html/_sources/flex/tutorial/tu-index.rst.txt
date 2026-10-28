@@ -699,6 +699,7 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
      # longitudinal_bond_freq_batch = 64      # override the automatic frequency batch
      # longitudinal_bond_guard_freqs = "all"  # "static" checks only the zero frequency by SVD
      # longitudinal_bond_output_full = true   # dynamic chi_s_w / chi_c_w archive (+2 full bond buffers of memory)
+     # longitudinal_bond_half_grid = true     # keep only nu >= 0 in the bond store (see below)
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -718,6 +719,40 @@ lists the four bonds ``(+-1, 0, 0)``, ``(0, +-1, 0)``):
 Set ``[file.output] chiq`` in such runs: without it the static bond keys of
 BOTH channels are written into ``chiq_s.npz``. Output archive names without
 a ``.npz`` suffix get one appended, as for every other ``.npz`` output.
+
+*Halving the bond store.* ``longitudinal_bond_half_grid = true`` keeps only
+the ``Nmat/2 + 1`` non-negative bosonic frequencies in the bond store and
+rebuilds the others from :math:`X(q, -\nu) = X(q, \nu)^\dagger` where they
+are read, so the bond buffers held in memory during the solve (the
+``longitudinal_bond_output_full`` buffers included) take about half the
+memory. The archive written to disk still holds the full grid: the
+dynamic channels are expanded to the full grid when the results are
+published, one channel at a time. The conditioning guard still covers
+the whole grid: the decision (refuse, warn or pass) and ``cond_min`` are
+those of the full grid, and a single violating block is named at the same
+frequency and q-point (with several violating blocks the first one reported
+can differ, because the batches are grouped differently). With
+time-reversal symmetry (real hopping and interactions, checked on every
+map), ``longitudinal_bond_guard_freqs = "all"`` and
+``flex_guard_policy = "refuse"``, every score at :math:`-\nu` is also one
+at :math:`+\nu`, so only the stored half is dressed and guarded, except for
+a batch whose minimum score lies closer to the threshold than the
+tolerance of the symmetry check (:math:`10^{-12}` relative) can resolve
+(``"warn"`` and
+``"static"`` always guard the whole grid); on the CPU,
+for a two-orbital model with five bond channels on a 16 x 16 mesh, the
+dressing went from 2.1 s to 1.1 s and the whole two-map solve from 2.9 s to
+1.7 s at ``Nmat = 64`` (4.1 s to 2.2 s and 5.5 s to 3.6 s at
+``Nmat = 128``). With broken time reversal (complex hopping) the negative
+frequencies are guarded on their own and the dressing saves about 20 %
+(4.2 s to 3.5 s at ``Nmat = 128``). The bubble and the self-energy
+transport cost the same. The results agree with the full grid to
+round-off; the guard statistics count the stored frequencies, and the
+outputs record ``longitudinal_bond_half_grid = true``. The option is off by
+default, and the in-process pairing (``longitudinal_bond_pairing``) does
+not support it in this version: such a run is refused. Pair the archive of a half-grid
+run with ``hwave_sc`` instead, which reads it as an ordinary full-grid
+archive.
 
 The run is accepted only when the three residuals of the split state stay
 below ``EPS`` for three consecutive iterations; the log prints them with a

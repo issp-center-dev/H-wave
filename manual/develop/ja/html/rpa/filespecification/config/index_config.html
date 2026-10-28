@@ -425,6 +425,60 @@ CPU 経路、および<code class="docutils literal notranslate"><span class="pr
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は警告付きで
 無視されます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span></code></p>
+<p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>、FLEX モードのみ)</p>
+<p><strong>説明 :</strong>
+ボンド分解 FLEX で、ボソン松原振動数のうち非負の半分だけを保存・
+ドレスします。ボンド写像のボソン量（バブル、ドレスされたスピン・電荷
+チャネル、有効相互作用、チャネル 0 への縮約）はすべて、同じ
+<span class="math notranslate nohighlight">\(q\)</span>でボンドペア行列について
+<span class="math notranslate nohighlight">\(X(q, \nu_l) = X(q, -\nu_l)^\dagger\)</span>を満たします。そこで
+<code class="docutils literal notranslate"><span class="pre">true</span></code>のときはブロックストアに<code class="docutils literal notranslate"><span class="pre">Nmat/2</span> <span class="pre">+</span> <span class="pre">1</span></code>個の振動数
+<span class="math notranslate nohighlight">\(\nu \ge 0\)</span>（ゼロ振動数と格子の最後のスロットを含む）だけを
+保持し、残りは読み出す場所（自己エネルギー、チャネル 0 の感受率、
+出力）で再構成します。結果は<code class="docutils literal notranslate"><span class="pre">false</span></code>と丸め誤差の範囲（相対
+<span class="math notranslate nohighlight">\(10^{-13}\)</span>程度）で一致します。条件数ガードは引き続き全振動数を
+対象とします。<span class="math notranslate nohighlight">\(-\nu\)</span>での分母は
+<span class="math notranslate nohighlight">\(1 \mp \bar\chi(q, \nu)^\dagger V(q)\)</span>であり、その特異値は一般に
+<span class="math notranslate nohighlight">\(+\nu\)</span>のものと異なるため、負の振動数は<code class="docutils literal notranslate"><span class="pre">false</span></code>と同じ検査
+（条件数ガード、厳密な特異性の検査、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span>
+<span class="pre">&quot;static&quot;</span></code>では解の残差）で別に検査します。<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span>
+<span class="pre">&quot;warn&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>では常にそうします。唯一の例外は、時間反転
+対称性のもとでの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;all&quot;</span></code>かつ
+<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;refuse&quot;</span></code>の場合です。バブルとバーテックスが
+<span class="math notranslate nohighlight">\(\bar\chi(q)^T = \bar\chi(-q)\)</span>と <span class="math notranslate nohighlight">\(V(q)^T = V(-q)\)</span>を満たす
+とき（実数のホッピングと相互作用。各写像で相対 <span class="math notranslate nohighlight">\(10^{-12}\)</span>で
+検査します）、<span class="math notranslate nohighlight">\((q, -\nu)\)</span>の分母は <span class="math notranslate nohighlight">\((-q, \nu)\)</span>の分母の
+複素共役で同じスコアを持つので、負の振動数は改めて分解しません。最小
+スコアがしきい値に、この対称性の検査の許容誤差（相対 <span class="math notranslate nohighlight">\(10^{-12}\)</span>）で
+判別できる範囲より近いバッチは別に検査し、拒否は
+保存した違反ブロックの鏡像の位置で報告します。いずれの場合も判定
+（拒否・警告・通過）は<code class="docutils literal notranslate"><span class="pre">false</span></code>と同じで、<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>（ログと
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code>）は全振動数についての最小値
+です。複数のブロックが違反する場合は、拒否が示す位置（最初に見つかった
+違反）と警告が示すブロック（振動数バッチとチャネルごとに一つ）が
+<code class="docutils literal notranslate"><span class="pre">false</span></code>と異なることがあります。半分の格子のバッチはゼロ振動数から
+始まり、振動数のまとめ方が異なるためです。厳密に特異な分母はどちらでも
+拒否されますが、報告するバッチが異なることがあります。時間反転対称性がある場合、ボンドストアのメモリと、
+ガードを含むドレスの時間はおよそ半分になります。時間反転対称性が
+破れている場合もストアは半分になりますが、ドレスの節約は 2 割程度
+です。バブルと自己エネルギーの輸送は変わりません。ガードの統計
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code>、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_*</span></code>）は保存した振動数だけを
+数えます。このような出力には<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>が
+記録されます。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>の種は
+<span class="math notranslate nohighlight">\(\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger\)</span>を満たす
+必要があります。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>では、計算中のメモリ上の
+動的バッファ（<code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>、<code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>）は保存した半分だけを保持し、
+結果の出力時に全振動数へ展開されます。ディスクに書き出すアーカイブは
+全振動数を保持するので、従来どおり<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>で読めます。
+bool 値のみ受け付けます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>が
+<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外の場合（プロセス内ペアリングはまだ半分の格子に対応して
+いません。半分の格子で得たアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>でペアリング
+計算できます）と、<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合は
+拒否されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない場合は
+警告付きで無視されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p>
 <p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>。大文字小文字を区別しません。デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>。
@@ -452,7 +506,9 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 ください。大規模な系では
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>を設定してください。
 ボンド分解した対形成は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません。多軌道の結果の検証方法は
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">適用範囲の記述</span></a>を参照してください（issue #239）。</p>
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">適用範囲の記述</span></a>を参照してください（issue #239）。
+<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外のペアリングと<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+併用は、このバージョンでは拒否されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">false</span></code>。FLEXモードのみ)</p>
