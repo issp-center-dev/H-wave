@@ -65,7 +65,7 @@ class TestFileInputCase(unittest.TestCase):
         lower = self._chiq("lower", {lower_key: value})
         mixed = self._chiq("mixed", {mixed_key: value})
         bare = self._chiq("bare", {})
-        np.testing.assert_allclose(mixed, lower, atol=1e-12)
+        np.testing.assert_allclose(mixed, lower, rtol=0, atol=1e-12)
         self.assertGreater(np.max(np.abs(lower - bare)), 1e-6)
 
     def test_mixed_case_trans_mod_is_honoured(self):
@@ -118,7 +118,7 @@ class TestFlexFileInputCase(unittest.TestCase):
         lower = sig(self._flex("lower", {"sigma_init": seed}, one))
         mixed = sig(self._flex("mixed", {"Sigma_Init": seed}, one))
         cold = sig(self._flex("cold", {}, one))
-        np.testing.assert_allclose(mixed, lower, atol=1e-12)
+        np.testing.assert_allclose(mixed, lower, rtol=0, atol=1e-12)
         self.assertGreater(np.max(np.abs(lower - cold)), 1e-6)
 
     def test_duplicate_sigma_init_refused(self):
