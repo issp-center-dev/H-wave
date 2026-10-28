@@ -730,7 +730,12 @@ par = {"T": 2.0, "mu": 0.0, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat
        # changed the FLEX auto ir_wmax default (mu-aware), so leaving it out
        # would compare two different bases rather than the kernel this test is
        # about (the reference revision's auto value is the old one).
-       "ir_wmax": 20.0}
+       "ir_wmax": 20.0,
+       # the reference revision predates the Hermitian projection of the
+       # self-energy (issue #281), which changes a symmetric run at round-off
+       # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
+       # that this byte-identity comparison stays about the code it names
+       "flex_sigma_hermitian_projection": False}
 if so != "absent":
     par["flex_second_order"] = so
 s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,

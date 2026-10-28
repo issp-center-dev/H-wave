@@ -321,12 +321,105 @@ def _static_from_file(static_file, total, norb, nvol, spin_major, log):
     return np.array(st, dtype=np.complex128, copy=True)
 
 
+#: Default refusal threshold of :func:`sigma_split_convert` for the relative
+#: deviation ``max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max |Sigma|`` of the
+#: total archive (issue #281). A converged run carries round-off (~1e-14). A
+#: run without the solver's Hermitian projection, cold-started past the bare
+#: Stoner instability, can leave a slowly decaying remnant (~1e-5 was
+#: reported), which symmetrizing removes -- or it can have converged to a
+#: symmetry-broken, non-causal branch (relative deviation O(0.1)), which is
+#: not the self-energy of the Hermitian problem at all. Symmetrizing such an
+#: archive would hide that, so a deviation above 1e-3 is refused; the run
+#: has to be repeated with the projection on.
+SIGMA_SPLIT_ASYMMETRY_TOL = 1.0e-3
+
+
+def check_frequency_reversal(members, nfreq, label, log=None):
+    """Refuse an archive whose frequency axis is not reversal-symmetric, so
+    that reversing axis 1 is ``i w -> -i w`` (issue #281).
+
+    IR-native data is recognised by the canonical discriminator
+    :func:`hwave.solver.ir_axis.is_ir_native` (which already refuses an
+    incomplete set of sparse-node markers); it must carry fermionic nodes
+    with ``ir_freq_n == -ir_freq_n[::-1]``, ``nfreq`` of them, and no
+    uniform-grid ``freq_index`` beside them. A uniform archive needs the
+    full centred grid ``freq_index == arange(nfreq)`` (what every FLEX
+    archive records). An archive with neither (a hand-made one) is taken
+    to be on the full centred uniform grid, and that assumption is logged."""
+    from hwave.solver.ir_axis import is_ir_native, ir_native_meta
+    try:
+        native = is_ir_native(members)
+    except ValueError as exc:
+        raise ValueError("{}: {}".format(label, exc)) from None
+    if native:
+        if "freq_index" in members:
+            raise ValueError(
+                "{}: the archive carries both IR-native node metadata and a uniform-grid "
+                "freq_index; its frequency axis is ambiguous".format(label))
+        try:
+            meta = ir_native_meta(members)
+        except (ValueError, KeyError) as exc:
+            raise ValueError("{}: inconsistent IR-native metadata ({})".format(label, exc)) from None
+        if meta["statistics"] != "F":
+            raise ValueError("{}: a self-energy needs fermionic IR nodes, the archive records "
+                             "ir_statistics={!r}".format(label, meta["statistics"]))
+        n = meta["freq_n"]
+        if n.size != nfreq or not np.array_equal(n, -n[::-1]):
+            raise ValueError(
+                "{}: the IR node set ir_freq_n ({} nodes) is not reversal-symmetric for the {} "
+                "frequencies of sigma; Sigma(k, -i w) cannot be formed by reversing the "
+                "frequency axis".format(label, n.size, nfreq))
+        return "ir"
+    if "freq_index" in members:
+        fi = np.asarray(members["freq_index"]).ravel()
+        if not np.array_equal(fi, np.arange(nfreq)):
+            raise ValueError(
+                "{}: freq_index is not the full centred grid arange({}) (got {} entries); "
+                "Sigma(k, -i w) cannot be formed by reversing the frequency axis".format(
+                    label, nfreq, fi.size))
+        return "uniform"
+    if log is not None:
+        log.info("%s: no frequency metadata (freq_index / ir_freq_n); the frequency axis is "
+                 "taken to be the full centred uniform grid", label)
+    return "assumed-uniform"
+
+
+def sigma_hermitian_check(path, logger=None):
+    """``{"asymmetry", "shape", "grid"}`` of the ``sigma`` member of an
+    archive (total or split form): the relative deviation
+    ``max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max |Sigma|`` (issue #281).
+    Used by ``hwave_sigma_split --check`` to audit existing archives."""
+    import logging
+    log = logger or logging.getLogger(__name__)
+    with np.load(path) as npz:
+        members = {k: npz[k] for k in npz.files}
+    if "sigma" not in members:
+        raise ValueError("'{}' has no 'sigma' member".format(path))
+    sigma = np.asarray(members["sigma"], dtype=np.complex128)
+    if sigma.ndim != 5 or sigma.shape[-1] != sigma.shape[-2]:
+        raise ValueError("'{}': sigma must be rank 5 (nblock, nfreq, nvol, n, n), got {}".format(
+            path, sigma.shape))
+    if not np.all(np.isfinite(sigma)):
+        raise ValueError("'{}': sigma is not finite".format(path))
+    grid = check_frequency_reversal(members, sigma.shape[1], "'{}'".format(path), log)
+    from hwave.solver.flex_mixing import frequency_hermitian_deviation
+    return dict(asymmetry=frequency_hermitian_deviation(sigma)[1], shape=sigma.shape, grid=grid)
+
+
 def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=False,
                         uhfk_trans_mod=None, bare_transfer=None, uhfk_spin_major=False,
-                        force=False, logger=None):
+                        force=False, logger=None, asymmetry_tol=SIGMA_SPLIT_ASYMMETRY_TOL):
     """Write a ``"split"`` self-energy archive from a total-form one (spec
     2.3). Exactly one static source: ``static_path`` (the static.npz
     contract), ``zero_static`` or ``uhfk_trans_mod`` + ``bare_transfer``.
+
+    The total self-energy is first symmetrized to
+    ``(Sigma(k, i w) + Sigma(k, -i w)^dag) / 2`` (issue #281), the relation
+    every self-energy of a Hermitian problem satisfies and the equal-time
+    density guard of a ``flex_hartree_fock`` run checks; the relative
+    deviation removed is logged and returned as ``asymmetry``. A deviation
+    above ``asymmetry_tol`` is refused.
+
     Returns a summary dict; raises ``ValueError`` / ``FileExistsError`` on
     any refusal (nothing is written then)."""
     import logging
@@ -360,6 +453,22 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     if not np.all(np.isfinite(sigma)):
         raise ValueError("'{}': sigma is not finite".format(total_path))
     _, nmat, nvol, norb, _ = sigma.shape
+    check_frequency_reversal(total, nmat, "'{}'".format(total_path), log)
+    from hwave.solver.flex_mixing import project_frequency_hermitian
+    sigma_sym, (_, asym) = project_frequency_hermitian(sigma, with_deviation=True)
+    if not asym <= float(asymmetry_tol):
+        raise ValueError(
+            "'{}': the self-energy violates Sigma(k, i w) = Sigma(k, -i w)^dag by a relative "
+            "deviation of {:.3e} > {:.1e} (max |Sigma(k, i w) - Sigma(k, -i w)^dag| / max "
+            "|Sigma|); this is not a rounding-level remnant: a run without "
+            "flex_sigma_hermitian_projection can converge to a symmetry-broken, non-causal branch "
+            "that is not the self-energy of the Hermitian problem, so the archive is not "
+            "symmetrized. Repeat the run with the projection on (or raise --asymmetry-tol to "
+            "convert it anyway)".format(
+                total_path, asym, float(asymmetry_tol)))
+    log.info("'%s': symmetrized to Sigma(k, i w) = Sigma(k, -i w)^dag (relative deviation "
+             "removed %.3e)", total_path, asym)
+    sigma = sigma_sym
     if "cell_shape" in total:
         cs = tuple(int(x) for x in total["cell_shape"])
         if int(np.prod(cs)) != nvol:
@@ -394,4 +503,5 @@ def sigma_split_convert(total_path, out_path, *, static_path=None, zero_static=F
     with np.load(out_path) as data:
         validate_split_seed(make_seed_envelope(data, out_path, data["sigma"], None), sigma.shape)
     return dict(out=out_path, nmat=nmat, nvol=nvol, norb=norb,
-                static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))))
+                static_max=float(np.max(np.abs(static))), fluct_max=float(np.max(np.abs(fluct))),
+                asymmetry=asym)

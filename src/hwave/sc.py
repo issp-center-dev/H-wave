@@ -1568,7 +1568,8 @@ def _auto_chi0q_tensor_scheme(files):
 
 
 def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
-                         precomputed_mu=None, static_only=False):
+                         precomputed_mu=None, prepared=None,
+                         static_only=False):
     """Compute chi0q internally using H-wave's RPA module.
 
     Instead of loading chi0q from a file, this function creates an RPA solver
@@ -1593,12 +1594,20 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         If provided, skip chemical potential determination and use this value
         directly. This avoids redundant eigenvalue decomposition and mu search
         when the caller has already computed mu (e.g. calc_eliashberg).
+    prepared : _MeanFieldBand, optional
+        A band already assembled by :func:`_mean_field_band` (issue #273).
+        Its RPA solver -- input read once, ``_calc_epsilon_k`` already run --
+        is reused, so chi0q is built on exactly the H0(k) the caller used
+        for mu and the kernel Green function. ``chi0q_tensor`` is then
+        ignored (the solver was constructed with the matching scheme).
     static_only : bool, optional
         If true, compute only the ``nmat // 2`` bosonic slice (the zero
         bosonic frequency the static Eliashberg solve reads) and return it as
         a one-frequency axis (``nmat`` -> 1 below; read it with static index
         0). It equals the full-grid slice to round-off; memory drops from
         ``O(nmat * nvol * nd**4)`` to ``O(nvol * nd**4)`` (issue #272).
+        Applies to the ``prepared`` band path too. Dynamic callers must leave
+        it false: they need every bosonic frequency.
 
     Returns
     -------
@@ -1607,6 +1616,14 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
         - reduced: (nmat, nvol, norb, norb)
         - general: (nmat, nvol, norb, norb, norb, norb)
     """
+    if prepared is not None:
+        solver = prepared.solver
+        logger.info("Computing chi0q internally on the mean-field one-body "
+                    "band ({}; calc_scheme={})...".format(
+                        ", ".join(prepared.sources), solver.calc_scheme))
+        return _chi0q_from_prepared_solver(solver, precomputed_mu,
+                                           static_only=static_only)
+
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.rpa as sol_rpa
 
@@ -1619,12 +1636,8 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
     info_log["print_step"] = info_log.get("print_step", 1)
 
     # Determine calc_scheme from chi0q_tensor option
-    if chi0q_tensor == "auto":
-        calc_scheme = _auto_chi0q_tensor_scheme(info_inputfile.get("interaction", {}))
-    elif chi0q_tensor == "general":
-        calc_scheme = "general"
-    else:
-        calc_scheme = "reduced"
+    calc_scheme = _chi0q_tensor_scheme(chi0q_tensor,
+                                       info_inputfile.get("interaction", {}))
 
     info_mode_rpa = dict(info_mode)
     info_mode_rpa["calc_scheme"] = calc_scheme
@@ -1690,6 +1703,557 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
 
     logger.info("chi0q computed internally, shape: {}".format(chi0q.shape))
     return chi0q
+
+
+def _chi0q_tensor_scheme(chi0q_tensor, interaction_files):
+    """RPA ``calc_scheme`` for an ``[eliashberg] chi0q_tensor`` value:
+    ``"auto"`` follows :func:`_auto_chi0q_tensor_scheme`, ``"general"`` is
+    general, anything else is reduced (the historical rule)."""
+    if chi0q_tensor == "auto":
+        return _auto_chi0q_tensor_scheme(interaction_files)
+    if chi0q_tensor == "general":
+        return "general"
+    return "reduced"
+
+
+def _chi0q_from_prepared_solver(solver, precomputed_mu, static_only=False):
+    """chi0q of an RPA solver whose ``_calc_epsilon_k`` has already run.
+
+    Same arithmetic as the tail of :func:`_calc_chi0q_internal`; only the
+    spin-free layout reaches here (:func:`_mean_field_band` refuses the
+    others), so the block axis is always length 1.
+    """
+    beta = 1.0 / solver.T
+    if precomputed_mu is not None:
+        mu = precomputed_mu
+        logger.info("Using precomputed mu = {}".format(mu))
+    elif solver.calc_mu:
+        dist, mu = solver._find_mu(solver.Ncond / 2, solver.T)
+    else:
+        mu = solver.mu_value
+    green0, green0_tail = solver._calc_green(beta, mu)
+    chi0q = solver._calc_chi0q(green0, green0_tail, beta,
+                               static_only=static_only)
+    del green0, green0_tail
+    assert chi0q.shape[0] == 1
+    chi0q = chi0q[0]
+    logger.info("chi0q computed internally, shape: {}".format(chi0q.shape))
+    return chi0q
+
+
+# [file.input] keys that replace the bare Transfer band (RPA read_init).
+_ONE_BODY_FILE_KEYS = ("trans_mod", "green_init")
+
+
+class _MeanFieldBand(NamedTuple):
+    """The one-body band of an hwave_sc run whose input carries
+    ``trans_mod`` / ``green_init`` / an active ``Extern`` (issue #273).
+
+    Attributes
+    ----------
+    epsilon_k : ndarray, shape (norb, norb, Nx, Ny, Nz)
+        The RPA solver's assembled H0(k), in sc.py's layout.
+    solver : RPA or None
+        The RPA solver that assembled it (``_calc_epsilon_k`` already run),
+        reused for chi0q in ``chi0q_mode = "calc"``; ``None`` once released.
+    sources : tuple of str
+        Which inputs define the band (for messages).
+    same_as_bare : bool
+        True when the assembled H0(k) is bit-for-bit the RPA reader's bare
+        Transfer band (e.g. a trans_mod written for U = 0). The caller then
+        keeps its own Transfer construction, so such a run is bit-identical
+        to the run without the extra input.
+    """
+    epsilon_k: np.ndarray
+    solver: object
+    sources: tuple
+    same_as_bare: bool = False
+
+
+def _one_body_band_sources(input_dict):
+    """Inputs that make the one-body band differ from the bare Transfer.
+
+    ``trans_mod`` / ``green_init`` in ``[file.input]`` and an ``Extern``
+    table in ``[file.input.interaction]``, whatever ``coeff_extern`` is: the
+    RPA reader turns a declared Extern into a two-block H0 even at a zero
+    coefficient, so that band has to go through the same assembly and
+    check (a zero field then simply yields the Transfer band). Keys are
+    matched case-insensitively.
+    """
+    from requests.structures import CaseInsensitiveDict
+    fin = (input_dict.get("file", {}) or {}).get("input", {}) or {}
+    lowered = {str(k).lower() for k in fin}
+    sources = [key for key in _ONE_BODY_FILE_KEYS if key in lowered]
+    inter = CaseInsensitiveDict(fin.get("interaction", {}) or {})
+    if "Extern" in inter:
+        sources.append("Extern")
+    return tuple(sources)
+
+
+_FLEX_BAND_REASON = ("the susceptibilities and the Green function are read "
+                     "from the FLEX output, which already includes the "
+                     "one-body band of that run")
+
+
+def _warn_one_body_band_ignored(input_dict, where, reason=_FLEX_BAND_REASON):
+    """WARNING for the paths whose chi and G do not come from hwave_sc's own
+    band: the FLEX paths (the band of the FLEX run is already inside its
+    outputs) and the bond path with an external ``bond_green``. A
+    ``trans_mod`` / ``green_init`` / ``Extern`` in the hwave_sc input is not
+    applied there (issue #273)."""
+    sources = _one_body_band_sources(input_dict)
+    if sources:
+        logger.warning("%s is ignored by hwave_sc for %s: %s.",
+                       " / ".join(sources), where, reason)
+
+
+# Absolute tolerance (energy units) of the spin-independence test of the
+# ASSEMBLED one-body band H0(k) -- trans_mod, or T + Hartree[green_init], plus
+# coeff_extern * Extern (issue #273). Its up-up and down-down blocks may
+# differ, and its spin-mixing blocks may be nonzero, by at most this much.
+# It only absorbs convergence round-off of a paramagnetic UHF solution; it
+# is absolute so that a large common energy offset cannot hide a finite
+# splitting (a relative test would).
+SPIN_FREE_ATOL = 1.0e-10
+
+# Hermiticity of the assembled band: max |H(k) - H(k)^dagger| above
+# max(HERMITIAN_ATOL, HERMITIAN_RTOL * max |H|) is refused; between
+# HERMITIAN_ATOL and that bound the Hermitian part is used, with a warning.
+HERMITIAN_ATOL = 1.0e-10
+HERMITIAN_RTOL = 1.0e-6
+
+
+def _spin_dependence(arr, norb):
+    """``(splitting, mixing)`` of a ``(..., 2*norb, 2*norb)`` spin-block
+    array: max |up-up - down-down| and max |spin-mixing block|."""
+    a = np.asarray(arr).reshape(-1, 2, norb, 2, norb)
+    split = float(np.max(np.abs(a[:, 0, :, 0, :] - a[:, 1, :, 1, :])))
+    mix = float(max(np.max(np.abs(a[:, 0, :, 1, :])),
+                    np.max(np.abs(a[:, 1, :, 0, :]))))
+    return split, mix
+
+
+def _refuse_spin_dependent(what, detail, tol=SPIN_FREE_ATOL):
+    raise ValueError(
+        "hwave_sc: the one-body band defined by {} is spin-dependent ({}; "
+        "[eliashberg] spin_free_tol = {:g}). The singlet/triplet pairing "
+        "kernel of hwave_sc carries no spin index. If the field is meant to "
+        "be paramagnetic, tighten the UHF convergence ([mode.param] EPS), "
+        "start UHF from a spin-symmetric initial state, or raise "
+        "[eliashberg] spin_free_tol (the band is then spin-averaged). A "
+        "genuinely magnetic (spin-diagonal with unequal spins, or "
+        "spin-mixing) mean field, or a finite Extern field, needs the "
+        "spin-polarized treatment of issue #88.".format(what, detail, tol))
+
+
+def _read_spin_free_tol(eli_param):
+    """``[eliashberg] spin_free_tol`` (case-insensitive): finite float >= 0,
+    default :data:`SPIN_FREE_ATOL`."""
+    import numbers
+    from requests.structures import CaseInsensitiveDict
+    raw = CaseInsensitiveDict(eli_param or {}).get("spin_free_tol")
+    if raw is None:
+        return SPIN_FREE_ATOL
+    # type-strict (the _resolve_bond_coeff_tail pattern): a boolean would
+    # become 1.0 and a quoted number would be coerced -- both silently
+    # change the tolerance, so both are refused
+    if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real):
+        raise ValueError(
+            "[eliashberg] spin_free_tol must be a real number, got "
+            "{!r}.".format(raw))
+    tol = float(raw)
+    if not np.isfinite(tol) or tol < 0.0:
+        raise ValueError(
+            "[eliashberg] spin_free_tol must be a finite number >= 0; got "
+            "{!r}.".format(raw))
+    return float(tol)
+
+
+class _AssembledH0Ready(Exception):
+    """Internal sentinel: stops the check pass of :func:`_checked_band`
+    once H0(k) is assembled, before RPA diagonalizes it."""
+
+
+# Interaction/Hamiltonian arrays of the RPA solver that _calc_epsilon_k can
+# modify in place (the spin-orbital green_init branch of _calc_trans_mod adds
+# the Hartree term into a view of ham_trans_r; the trans_mod branch adds Extern
+# into the green_info array). The check pass restores all of them.
+_EPS_K_HAM_ARRAYS = ("ham_trans_r", "ham_trans_q", "ham_extern_r",
+                     "ham_extern_q")
+
+
+def _checked_band(solver, green_info, sources, spin_free_tol=SPIN_FREE_ATOL,
+                  allow_average=True, allow_hermitize=True):
+    """Assemble the one-body H0(k) ONCE, check it, and return its spin-free
+    block ``(nvol, norb, norb)`` -- the band that is then used everywhere.
+
+    The assembly is RPA's own ``_calc_epsilon_k`` (trans_mod, or T +
+    Hartree[green_init], plus coeff_extern * Extern), run with the solver's
+    ``_keep_spinful`` switch so the two spin blocks stay uncollapsed (RPA's
+    own collapse is a RELATIVE ``np.allclose`` test, which a large common
+    offset defeats), and stopped before the eigendecomposition. The pass is
+    transactional: ``green_info`` is copied and every Hamiltonian array the
+    assembly can modify is restored afterwards.
+
+    The checked H0 must be finite and Hermitian (:data:`HERMITIAN_ATOL`).
+    Its up-up and down-down blocks are compared and its spin-mixing blocks
+    measured (absolute values):
+
+    * both within :data:`SPIN_FREE_ATOL`: the up-up block is returned
+      (Extern included) -- the strict default;
+    * either above ``spin_free_tol`` (``[eliashberg] spin_free_tol``,
+      default :data:`SPIN_FREE_ATOL`): ``ValueError``;
+    * otherwise (between the two): the spin-averaged block
+      ``(H_up + H_down)/2`` is returned, the mixing blocks are discarded,
+      and a WARNING reports both discarded magnitudes.
+    """
+    ham = solver.ham_info
+    snapshot = {}
+    for name in _EPS_K_HAM_ARRAYS:
+        val = getattr(ham, name, None)
+        snapshot[name] = None if val is None else np.array(val, copy=True)
+    gi = green_info.copy()
+    for key in ("trans_mod", "green_init"):
+        if key in gi:
+            gi[key] = np.array(gi[key], copy=True)
+
+    def _stop(*args, **kwargs):
+        raise _AssembledH0Ready()
+
+    solver._keep_spinful = True
+    solver._find_block_diagonal = _stop      # instance override, removed below
+    try:
+        # non-finite inputs are reported explicitly below
+        with np.errstate(invalid="ignore", over="ignore"):
+            solver._calc_epsilon_k(gi)
+    except _AssembledH0Ready:
+        pass
+    finally:
+        del solver._find_block_diagonal
+        solver._keep_spinful = False
+        for name, val in snapshot.items():
+            setattr(ham, name, val)
+    H0 = np.array(solver.H0_k, dtype=np.complex128, copy=True)
+    norb = solver.norb
+    what = " / ".join(sources)
+
+    if not np.all(np.isfinite(H0)):
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} has non-finite "
+            "(NaN or Inf) entries. Check [mode.param] coeff_extern, the "
+            "Extern file and the trans_mod / green_init file.".format(what))
+    herm = float(np.max(np.abs(H0 - np.conj(np.swapaxes(H0, -1, -2)))))
+    herm_bound = max(HERMITIAN_ATOL,
+                     HERMITIAN_RTOL * float(np.max(np.abs(H0))))
+    if herm > herm_bound:
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} is not Hermitian "
+            "(max |H(k) - H(k)^dagger| = {:.3e} > {:.3e} = max({:g}, {:g} * "
+            "max |H|)). Check the trans_mod / green_init file and the "
+            "Transfer / Extern tables (each R entry needs its conjugate "
+            "partner at -R).".format(what, herm, herm_bound, HERMITIAN_ATOL,
+                                     HERMITIAN_RTOL))
+    if herm > HERMITIAN_ATOL and not allow_hermitize:
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} is not exactly "
+            "Hermitian (max |H(k) - H(k)^dagger| = {:.3e} > {:g}). With "
+            "chi0q_mode = 'load' the band is not replaced by its Hermitian "
+            "part: the loaded chi0q was computed by the RPA run on the raw "
+            "band, so mu and G would not match it. Use chi0q_mode = 'calc', "
+            "or fix the band (each R entry of trans_mod / Transfer / Extern "
+            "needs its conjugate partner at -R).".format(
+                what, herm, HERMITIAN_ATOL))
+    if herm > HERMITIAN_ATOL:
+        # round-off-level asymmetry (e.g. +-R rows rounded independently)
+        logger.warning(
+            "hwave_sc: the one-body band assembled from %s is not exactly "
+            "Hermitian (max |H(k) - H(k)^dagger| = %.3e, within %.3e); using "
+            "its Hermitian part (H + H^dagger)/2.", what, herm, herm_bound)
+        H0 = 0.5 * (H0 + np.conj(np.swapaxes(H0, -1, -2)))
+
+    if H0.shape[0] == 2:                       # Extern on the Transfer band
+        up, dn = H0[0], H0[1]
+        split, mix = float(np.max(np.abs(up - dn))), 0.0
+    elif H0.shape[-1] == 2 * norb:             # (1, nvol, 2norb, 2norb)
+        split, mix = _spin_dependence(H0[0], norb)
+        blk = H0[0].reshape(-1, 2, norb, 2, norb)
+        up, dn = blk[:, 0, :, 0, :], blk[:, 1, :, 1, :]
+    else:                                      # already one spin-free block
+        up = dn = H0[0]
+        split, mix = 0.0, 0.0
+    if not (np.isfinite(split) and np.isfinite(mix)):
+        raise ValueError(
+            "hwave_sc: the spin comparison of the band assembled from {} is "
+            "not finite. Check [mode.param] coeff_extern, the Extern file "
+            "and the trans_mod / green_init file.".format(what))
+    detail = ("assembled H0(k): max |H_up - H_down| = {:.3e}, max "
+              "|spin-mixing| = {:.3e}".format(split, mix))
+    if split > spin_free_tol or mix > spin_free_tol:
+        _refuse_spin_dependent(what, detail, spin_free_tol)
+    if not allow_average and (split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL):
+        raise ValueError(
+            "hwave_sc: the one-body band from {} is spin-dependent beyond "
+            "SPIN_FREE_ATOL = {:g} ({}). chi0q_mode = 'load' reads a chi0q "
+            "that an external RPA run computed on its own band, which cannot "
+            "be the spin-averaged band; the spin-averaged band "
+            "([eliashberg] spin_free_tol) is available only when hwave_sc "
+            "computes chi0q itself (chi0q_mode = 'calc', or the bond_channels "
+            "path). Use chi0q_mode = 'calc', or regenerate the chi0q file "
+            "from a spin-symmetric band (tighter UHF convergence or a "
+            "spin-symmetric UHF start).".format(what, SPIN_FREE_ATOL, detail))
+    if split > SPIN_FREE_ATOL or mix > SPIN_FREE_ATOL:
+        # within the user's spin_free_tol: spin-average, drop the mixing
+        logger.warning(
+            "hwave_sc: the one-body band from %s is spin-dependent beyond "
+            "SPIN_FREE_ATOL = %g but within [eliashberg] spin_free_tol = %g "
+            "(%s). Using the spin-averaged band (H_up + H_down)/2 and "
+            "DISCARDING the spin-mixing blocks: discarded max |H_up - H_down|"
+            "/2 = %.3e, discarded max |spin-mixing| = %.3e.",
+            what, SPIN_FREE_ATOL, spin_free_tol, detail, split / 2.0, mix)
+        return np.ascontiguousarray(0.5 * (up + dn))
+    return np.ascontiguousarray(up)
+
+
+def _load_band_into_solver(solver, up):
+    """Make ``solver`` diagonalize exactly ``up`` (the checked band) for
+    chi0q: it is handed to RPA's own ``_calc_epsilon_k`` as an explicitly
+    spin-free trans_mod (both spin blocks equal to ``up``, no mixing), with
+    the Extern term switched off for that call because it is already inside
+    ``up``. RPA's H0_k must then equal ``up`` exactly."""
+    nvol, norb, _ = up.shape
+    tm = np.zeros((nvol, 2 * norb, 2 * norb), dtype=np.complex128)
+    tm[:, :norb, :norb] = up
+    tm[:, norb:, norb:] = up
+    ham = solver.ham_info
+    saved_extern = ham.ham_extern_q
+    ham.ham_extern_q = None
+    try:
+        solver._calc_epsilon_k({"trans_mod": tm})
+    finally:
+        ham.ham_extern_q = saved_extern
+    H0 = np.asarray(solver.H0_k)
+    if (solver.spin_mode != "spin-free" or H0.shape != (1,) + up.shape
+            or not np.array_equal(H0[0], up)):
+        raise RuntimeError(
+            "hwave_sc: the RPA solver did not reproduce the checked "
+            "one-body band (spin_mode={}, shape {}); refusing to compute "
+            "chi0q on a different band.".format(solver.spin_mode, H0.shape))
+
+
+# Which declarations carry a Fock term that RPA's green_init assembly
+# (``RPA._calc_trans_mod``: T + Hartree[G], from the R = 0 Green function)
+# leaves out. Derived by comparing UHFk's mean-field Hamiltonian (Hartree +
+# Fock) with that assembly for a spin-diagonal G, per interaction type and
+# per row kind (on-site intra-orbital, on-site inter-orbital, off-site,
+# and inter-site at R = 0 under [mode.param] orbital_site): the two differ
+# for EVERY row of CoulombInter / Hund / Ising / Exchange (on-site
+# intra-orbital rows included), for OFF-SITE rows of PairHop (off-site in
+# RPA's sense: declared R != 0, or orbitals on different sites),
+# and never for CoulombIntra or PairLift. tests/test_sc_trans_mod.py
+# (TestGreenInitFockOmission) recomputes that comparison and pins this
+# table against it.
+#
+# The collinear (spin-diagonal G) assumption of that derivation holds by
+# construction: _check_green_init_spin_free refuses a green_init whose G is
+# spin-dependent or spin-mixing before the band is assembled.
+_GREEN_INIT_FOCK_ANY_ROW = ("coulombinter", "hund", "ising", "exchange")
+_GREEN_INIT_FOCK_OFFSITE_ROW = ("pairhop",)
+_NON_INTERACTION_KEYS = ("geometry", "transfer", "extern", "path_to_input")
+
+
+def _fold_rows(table, shape):
+    """Nonzero rows of a declaration table after folding R onto the
+    periodic grid ``shape`` the way the readers accumulate them (R mod N
+    per axis); ``shape=None`` keeps R as declared."""
+    acc = {}
+    for (irvec, orbvec), v in table.items():
+        r = tuple(int(x) for x in irvec)
+        if shape is not None:
+            r = tuple(x % int(n) for x, n in zip(r, shape))
+        key = (r, (int(orbvec[0]), int(orbvec[1])))
+        acc[key] = acc.get(key, 0.0) + v
+    return [key for key, v in acc.items() if v != 0]
+
+
+def _green_init_fock_omissions(ham_param, site=None, shape=None):
+    """Declarations whose Fock term the green_init band leaves out (see the
+    table above). ``Coulomb`` is split as the readers split it
+    (``wan90.split_coulomb``) and counts through its CoulombInter part.
+
+    PairHop locality is decided exactly as RPA decides it: on the DECLARED
+    (pre-fold) R and orbital labels, with ``sites.is_onsite`` and the
+    parsed ``orbital_site`` ``site`` -- a row declared at R = (Nx, 0, 0) is
+    off-site for RPA (and dropped) even though it folds onto R = 0. The
+    grid ``shape`` is used only to detect rows that cancel once folded
+    (they contribute nothing to either band)."""
+    from hwave.solver.sites import is_onsite
+    reasons = []
+    for key, table in (ham_param or {}).items():
+        k = str(key).lower()
+        if k in _NON_INTERACTION_KEYS or not isinstance(table, dict):
+            continue
+        if k == "coulomb":
+            _intra, inter = wan90.split_coulomb(table)
+            if _fold_rows(inter, shape):
+                reasons.append("{} (its CoulombInter part)".format(key))
+            continue
+        if k in _GREEN_INIT_FOCK_ANY_ROW:
+            if _fold_rows(table, shape):
+                reasons.append(str(key))
+        elif k in _GREEN_INIT_FOCK_OFFSITE_ROW:
+            # RPA's rule: locality of each DECLARED row (pre-fold R)
+            offsite = {(r, o): v for (r, o), v in table.items()
+                       if v != 0 and not is_onsite(r, o, site)}
+            if _fold_rows(offsite, shape):
+                reasons.append("off-site {}".format(key))
+    return sorted(set(reasons))
+
+
+def _warn_green_init_fock_omission(ham_param, site=None, shape=None):
+    """WARNING when the green_init band (T + Hartree[G], RPA's assembly,
+    no Fock term) differs from the T + Hartree + Fock band UHFk writes as
+    trans_mod for the same solution."""
+    reasons = _green_init_fock_omissions(ham_param, site, shape)
+    if reasons:
+        logger.warning(
+            "hwave_sc: green_init is combined with %s. The green_init band "
+            "is T + Hartree[G] (RPA's assembly, without the Fock term), so "
+            "with these interactions it differs from the trans_mod UHFk "
+            "writes for the same solution. Prefer [file.input] trans_mod.",
+            ", ".join(reasons))
+
+
+def _check_green_init_spin_free(g, norb, spin_free_tol):
+    """Refuse a spin-dependent green_init Green function.
+
+    ``g``: the green_init array as RPA read it, ``(nvol, 2*norb, 2*norb)``
+    in spin-block order. A magnetic G describes a magnetic state whatever
+    RPA's Hartree-only assembly makes of it (an in-plane moment, for
+    instance, leaves the Hartree band spin-free while the true mean field
+    has a spin-mixing Fock term), so G itself must be spin-independent in
+    every cell: up-up equal to down-down and no spin-off-diagonal block,
+    within max(SPIN_FREE_ATOL, spin_free_tol) on the dimensionless G
+    entries.
+    """
+    g = np.asarray(g)
+    if not np.all(np.isfinite(g)):
+        raise ValueError("hwave_sc: the green_init Green function has "
+                         "non-finite (NaN or Inf) entries.")
+    split, mix = _spin_dependence(g, norb)
+    tol = max(SPIN_FREE_ATOL, spin_free_tol)
+    if split > tol or mix > tol:
+        raise ValueError(
+            "hwave_sc: green_init describes a spin-dependent state (max "
+            "|G_up - G_down| = {:.3e}, max |spin-mixing G| = {:.3e}; "
+            "tolerance max(1e-10, [eliashberg] spin_free_tol) = {:g} on the "
+            "dimensionless Green-function entries). The singlet/triplet "
+            "pairing kernel of hwave_sc carries no spin index; a magnetic "
+            "state needs the spin-polarized treatment of issue #88. For a "
+            "paramagnetic state, the trans_mod written by UHFk is the "
+            "consistent input.".format(split, mix, tol))
+
+
+def _mean_field_band(input_dict, sources, calc_scheme, spatial_shape, norb,
+                     spin_free_tol=SPIN_FREE_ATOL, allow_average=True,
+                     allow_hermitize=True):
+    """Assemble the one-body band through the RPA machinery (issue #273).
+
+    The band is built exactly as the internal chi0q builds it --
+    ``QLMSkInput`` + ``RPA.read_init`` + ``RPA._calc_epsilon_k`` -- so that
+    trans_mod (T + Sigma_HF written by UHFk), T + Hartree[green_init] and the
+    Extern field define the SAME H0(k) for chi0q, the chemical potential
+    and the kernel Green function.
+
+    Only a spin-independent band is accepted: the singlet/triplet kernel
+    carries no spin index, so a spin-diagonal or spin-mixing mean field
+    cannot be represented. The band is assembled ONCE by RPA
+    (:func:`_checked_band`: finiteness, then the absolute tolerance
+    :data:`SPIN_FREE_ATOL`), after the input files are read by the RPA
+    readers and before H0 is diagonalized -- so before any chi0q, pair
+    bubble or kernel is built, and before a chi0q file is loaded. The
+    checked band (its up-up block, Extern included) is the band used for
+    epsilon(k), mu, the kernel Green function and -- through
+    :func:`_load_band_into_solver`, which verifies RPA reproduces it
+    exactly -- chi0q.
+    """
+    from requests.structures import CaseInsensitiveDict
+    import hwave.qlmsio.read_input_k as read_input_k
+    import hwave.solver.rpa as sol_rpa
+
+    fin = (input_dict.get("file", {}) or {}).get("input", {}) or {}
+    for key in _ONE_BODY_FILE_KEYS:
+        spellings = [k for k in fin if str(k).lower() == key]
+        if len(spellings) > 1:
+            raise ValueError(
+                "[file.input] {} is given more than once with different "
+                "spellings ({}); keys are case-insensitive.".format(
+                    key, ", ".join(repr(k) for k in spellings)))
+    ci = CaseInsensitiveDict(fin)
+    # Only the keys the band needs: chi0q_init / UHF initial files are not
+    # read here (an RPA read_init would otherwise load a chi0q_init array).
+    # The lower-case spelling is what RPA.read_init looks up.
+    info_inputfile = {"path_to_input": ci.get("path_to_input", ""),
+                      "interaction": ci.get("interaction", {})}
+    for key in _ONE_BODY_FILE_KEYS:
+        if key in ci:
+            info_inputfile[key] = ci[key]
+
+    info_log = dict(input_dict.get("log", {}) or {})
+    info_log.setdefault("print_level", 1)
+    info_log.setdefault("print_step", 1)
+    import copy
+    # deep copy: the RPA constructor normalizes [mode.param] in place, and
+    # the caller's dict has to stay as the user wrote it
+    info_mode_rpa = copy.deepcopy(dict(input_dict.get("mode", {}) or {}))
+    info_mode_rpa["calc_scheme"] = calc_scheme
+    info_mode_rpa["_orbital_site_reported"] = True
+    info_mode_rpa["enable_spin_orbital"] = _resolve_spin_orbital_flag(
+        input_dict)
+
+    logger.info("One-body band from {} (RPA H0 assembly; used for chi0q, "
+                "mu and the kernel Green function)".format(", ".join(sources)))
+    read_io = read_input_k.QLMSkInput(info_inputfile)
+    solver = sol_rpa.RPA(read_io.get_param("ham"), info_log, info_mode_rpa)
+    green_info = read_io.get_param("green")
+    green_info.update(solver.read_init(info_inputfile))
+    if "green_init" in green_info and "trans_mod" not in green_info:
+        # G-level refusal first (also makes the warning table's collinear
+        # assumption hold), then the Fock-omission warning
+        _check_green_init_spin_free(green_info["green_init"], solver.norb,
+                                    spin_free_tol)
+        _warn_green_init_fock_omission(
+            read_io.get_param("ham"),
+            site=getattr(solver.ham_info, "orbital_site", None),
+            shape=tuple(solver.lattice.shape))
+
+    # Assemble the band ONCE, check it (spin independence, finiteness),
+    # before any diagonalization and before any chi0q / pair-bubble /
+    # kernel work; the checked band is the band that is used.
+    up = _checked_band(solver, green_info, sources, spin_free_tol,
+                       allow_average=allow_average,
+                       allow_hermitize=allow_hermitize)
+
+    Nx, Ny, Nz = spatial_shape
+    if up.shape != (Nx * Ny * Nz, norb, norb):
+        raise ValueError(
+            "hwave_sc: the one-body band assembled from {} has shape {}, "
+            "expected {} for the {}x{}x{} grid with norb={}.".format(
+                " / ".join(sources), up.shape,
+                (Nx * Ny * Nz, norb, norb), Nx, Ny, Nz, norb))
+    # chi0q is computed by this solver on exactly the checked band
+    _load_band_into_solver(solver, up)
+    H0 = up[np.newaxis]
+    # RPA (1, nvol, a, b) with nvol in C order over (Nx, Ny, Nz) -- the same
+    # flattening as _green_sc_to_canonical -- to sc.py's (a, b, Nx, Ny, Nz).
+    epsilon_k = np.ascontiguousarray(
+        H0[0].reshape(Nx, Ny, Nz, norb, norb).transpose(3, 4, 0, 1, 2),
+        dtype=np.complex128)
+    bare_q = getattr(solver.ham_info, "ham_trans_q", None)
+    same_as_bare = (bare_q is not None
+                    and np.shape(bare_q) == H0[0].shape
+                    and np.array_equal(H0[0], bare_q))
+    return _MeanFieldBand(epsilon_k=epsilon_k, solver=solver,
+                          sources=tuple(sources), same_as_bare=same_as_bare)
 
 
 def _read_interaction_files(input_dict):
@@ -7075,11 +7639,12 @@ def _convert_chi0q_to_ref_format(chi0q, norb, Nx, Ny, Nz):
 
 def reject_spin_orbital_mode(input_dict):
     """Raise when [mode] enable_spin_orbital is set, for the Eliashberg
-    entries that do not support it: the dynamic solver
-    (``eliashberg_dynamic.solve_dynamic``), the dynamic bond path and the
-    temperature sweep. The static entry (:func:`calc_eliashberg`) supports
-    spin-orbital models since issue #83 and refuses only its unsupported
-    combinations (:func:`hwave.solver.so_pairing.check_so_supported`).
+    entries that do not support it: the dynamic bond path
+    (``eliashberg_bond_io.solve_dynamic_bond``) and the temperature sweep.
+    The static entry (:func:`calc_eliashberg`, issue #83) and the on-site
+    dynamic solver (``frequency = "dynamic"``, issue #284) support
+    spin-orbital models and refuse only their unsupported combinations
+    (:func:`hwave.solver.so_pairing.check_so_supported`).
 
     Until issue #83 a spin-orbital config RAN through these entries and
     printed eigenvalues built on four internal inconsistencies (norb never
@@ -7097,11 +7662,12 @@ def reject_spin_orbital_mode(input_dict):
     if _resolve_spin_orbital_flag(input_dict):
         raise ValueError(
             "[mode] enable_spin_orbital = true is not supported by this "
-            "Eliashberg entry (the dynamic solver, frequency = \"dynamic\", "
-            "its bond path and the temperature sweep): it would produce "
-            "silently wrong eigenvalues (issue #83). The static solver "
-            "(hwave_sc with frequency = \"static\", chi0q_mode = \"calc\", "
-            "\"load\" or \"flex\") supports spin-orbital models.")
+            "Eliashberg entry (the dynamic bond path, bond_channels = true, "
+            "and the temperature sweep): it would produce silently wrong "
+            "eigenvalues (issue #83). hwave_sc supports spin-orbital models "
+            "with frequency = \"static\" (chi0q_mode = \"calc\", \"load\" "
+            "or \"flex\") and with frequency = \"dynamic\" (chi0q_mode = "
+            "\"calc\" or \"flex\", on-site interactions).")
 
 
 def _so_rpa_vertex(input_dict):
@@ -7305,9 +7871,56 @@ def _so_flex_static_slice(data, arr, path, nd, nvol, config_nmat, what):
     return out
 
 
-def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
+#: IR-native refusal hint of the spin-orbital dynamic reader (issue #284)
+_SO_DYNAMIC_IR_HINT = (
+    "the spin-orbital dynamic Eliashberg solver reads uniform-grid files only "
+    "(the IR basis is not supported in spin-orbital mode yet). Re-run FLEX "
+    "with [mode.param] write_densified = true.")
+
+
+def _so_flex_full_axis(data, arr, path, nd, nvol, config_nmat, what):
+    """The whole bosonic axis ``(nmat, nvol, nd^2, nd^2)`` of a raw spinful
+    FLEX array ``arr`` ``(nmat, nvol, nd, nd, nd, nd)`` for the dynamic
+    solver (issue #284): the stored axis must be the full uniform grid of the
+    configured ``Nmat`` (``freq_index``, when recorded, ``0 .. Nmat - 1``;
+    ``nmat``, when recorded, ``Nmat``), with bosonic index ``m`` at
+    ``nu_m = (2 m - Nmat) pi T``."""
+    if arr.ndim != 6 or arr.shape[1:] != (nvol,) + (nd,) * 4:
+        raise ValueError(
+            "FLEX {} in '{}' has shape {}, not the general spinful layout "
+            "(nmat, {}, {nd}, {nd}, {nd}, {nd}) over nd = {nd} spin-orbitals of "
+            "this run. Re-run FLEX on the same model and grid.".format(
+                what, path, arr.shape, nvol, nd=nd))
+    fi, fn = _read_freq_meta(data)
+    nmat = int(config_nmat)
+    full = (arr.shape[0] == nmat and (fn is None or int(fn) == nmat)
+            and (fi is None or np.array_equal(np.asarray(fi).ravel(),
+                                              np.arange(nmat))))
+    if not full:
+        raise ValueError(
+            "FLEX {} in '{}' does not hold the full bosonic grid of [mode.param] "
+            "Nmat = {} (stored axis {}, recorded nmat {}): frequency = "
+            "\"dynamic\" needs the susceptibility at every bosonic frequency of "
+            "the run's grid. Re-run FLEX with the same Nmat.".format(
+                what, path, nmat, arr.shape[0], fn))
+    out = np.ascontiguousarray(arr.reshape(nmat, nvol, nd * nd, nd * nd),
+                               dtype=complex)
+    for m in range(nmat):
+        if not np.all(np.isfinite(out[m])):
+            raise ValueError(
+                "FLEX {} in '{}' contains non-finite values at bosonic index {}; "
+                "re-run the producing FLEX calculation.".format(what, path, m))
+    return out
+
+
+def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
     """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
     ``[mode] enable_spin_orbital = true``) for ``chi0q_mode = "flex"``.
+
+    ``full = True`` (the dynamic solver, issue #284) returns ``chi`` and
+    ``chi0`` on the whole bosonic axis, ``(nmat, nvol, nd^2, nd^2)``
+    (:func:`_so_flex_full_axis`), and requires the Green function on the
+    configured Nmat; the tag checks are the same.
 
     Returns ``(chi, green_kw, chi0, chi_path)``:
 
@@ -7368,9 +7981,10 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
             "check that this run's interaction files reproduce the FLEX run's "
             "vertex needs it. Set [file.output] chi0q in the FLEX run and "
             "[eliashberg] flex_chi0q to that file.".format(chi0_path, hint))
+    ir_hint = _SO_DYNAMIC_IR_HINT if full else _STATIC_IR_HINT
     logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
     with np.load(chi_path) as data:
-        _reject_ir_native(data, chi_path, _STATIC_IR_HINT)
+        _reject_ir_native(data, chi_path, ir_hint)
         if "chi_convention" not in data:
             raise ValueError(
                 "FLEX archive '{}' has no chi_convention tag: an untagged file "
@@ -7425,8 +8039,12 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
         chiq = data["chiq"]
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
-        chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol, config_nmat,
-                                    "chiq")
+        if full:
+            chi = _so_flex_full_axis(data, chiq, chi_path, nd, nvol, config_nmat,
+                                     "chiq")
+        else:
+            chi = _so_flex_static_slice(data, chiq, chi_path, nd, nvol,
+                                        config_nmat, "chiq")
         del chiq
 
     # the Green function: required (the stored chi belongs to the dressed G)
@@ -7449,14 +8067,43 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None):
         raise ValueError(
             "internal error: the FLEX Green archive '{}' resolved to a different "
             "path in the shared loader.".format(green_path))
+    if full and green_kw.shape[-1] != int(config_nmat):
+        raise ValueError(
+            "FLEX Green archive '{}' holds {} fermionic frequencies, but "
+            "[mode.param] Nmat = {}: frequency = \"dynamic\" needs the Green "
+            "function on the run's grid. Re-run FLEX with the same Nmat.".format(
+                green_path, green_kw.shape[-1], int(config_nmat)))
 
     with np.load(chi0_path) as d0:
-        _reject_ir_native(d0, chi0_path, _STATIC_IR_HINT)
+        _reject_ir_native(d0, chi0_path, ir_hint)
         validate_chi0q_index_convention(d0, True, chi0_path)
         check_momentum_marker(d0, chi0_path)
-        chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
-                                     config_nmat, "chi0q")
+        if full:
+            chi0 = _so_flex_full_axis(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                      config_nmat, "chi0q")
+        else:
+            chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
+                                         config_nmat, "chi0q")
     return chi, green_kw, chi0, chi_path
+
+
+def _so_flex_backward_error(gam, chi, chi0):
+    """The backward error of :func:`_check_so_flex_vertex`: the maximum over
+    the q blocks of ``|(1 + chi0 gam) chi - chi0| / (|chi0| + |chi0 gam|
+    |chi|)`` (Frobenius per block; a zero-scale block counts 0 if its residual
+    vanishes and infinity otherwise; NaN propagates). ``chi`` and ``chi0`` are
+    ``(..., nd^2, nd^2)`` with any leading axes."""
+    c0g = chi0 @ gam
+    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
+    scale = (np.linalg.norm(chi0, axis=(-2, -1))
+             + np.linalg.norm(c0g, axis=(-2, -1))
+             * np.linalg.norm(chi, axis=(-2, -1)))
+    pos = scale > 0
+    per_q = np.where(res == 0, 0.0, np.inf)
+    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
+    # NaN in any block propagates (and is refused by the callers)
+    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
+    return float(np.max(per_q)) if per_q.size else 0.0
 
 
 def _check_so_flex_vertex(gam, chi, chi0, chi_path):
@@ -7470,17 +8117,7 @@ def _check_so_flex_vertex(gam, chi, chi0, chi_path):
     global norm would dilute one bad block by ``1/sqrt(nvol)``). A block of
     zero scale (``chi0_q = 0`` and ``chi0_q gam chi_q = 0``) has error 0 if
     its residual vanishes and infinity otherwise."""
-    c0g = chi0 @ gam
-    res = np.linalg.norm(chi + c0g @ chi - chi0, axis=(-2, -1))
-    scale = (np.linalg.norm(chi0, axis=(-2, -1))
-             + np.linalg.norm(c0g, axis=(-2, -1))
-             * np.linalg.norm(chi, axis=(-2, -1)))
-    pos = scale > 0
-    per_q = np.where(res == 0, 0.0, np.inf)
-    per_q = np.where(pos, res / np.where(pos, scale, 1.0), per_q)
-    # NaN in any block propagates (and is refused by the test below)
-    per_q = np.where(np.isnan(res) | np.isnan(scale), np.nan, per_q)
-    err = float(np.max(per_q)) if per_q.size else 0.0
+    err = _so_flex_backward_error(gam, chi, chi0)
     logger.info("spin-orbital FLEX: vertex consistency backward error %.3e", err)
     if not err <= _SO_FLEX_GAMMA_TOL:
         raise ValueError(
@@ -7512,14 +8149,25 @@ class _SOAntisymmetricBasis:
     R) / 2``, with ``E^dagger E = 1`` and ``E E^dagger = P``; ``dim`` is
     ``(n - n_self) / 2``. The spin-orbital eigenproblem is solved on
     ``E^dagger K E`` (:meth:`reduce`), where no Pauli-forbidden mode exists,
-    so no shift or selection can return one."""
+    so no shift or selection can return one.
 
-    def __init__(self, shape):
+    ``reverse`` is the involution ``R`` as a map on index arrays of
+    ``shape``; the default is the static ``(A, B, k) -> (B, A, -k)``
+    (:func:`_reverse_k_and_orbital`). The dynamic solver (issue #284) passes
+    ``eliashberg_dynamic._reverse_kw_and_orbital`` on ``(nd, nd, Nx, Ny, Nz,
+    nmat)``, ``(A, B, k, n) -> (B, A, -k, nmat - 1 - n)``: a fermionic
+    frequency is never zero, so that map has no self-paired element."""
+
+    def __init__(self, shape, reverse=None):
         self.shape = tuple(int(x) for x in shape)
         n = int(np.prod(self.shape))
         idx = np.arange(n).reshape(self.shape)
-        self.partner = np.ascontiguousarray(
-            _reverse_k_and_orbital(idx)).ravel()
+        rev = _reverse_k_and_orbital if reverse is None else reverse
+        self.partner = np.ascontiguousarray(rev(idx)).ravel()
+        if self.partner.shape != (n,) or not np.array_equal(
+                self.partner[self.partner], np.arange(n)):
+            raise ValueError("the reverse map of the antisymmetric basis must "
+                             "be an involution of the flat gap index")
         flat = np.arange(n)
         self.rep = flat[flat < self.partner]
         self.rep_partner = self.partner[self.rep]
@@ -7596,11 +8244,19 @@ def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
 
 
 def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
-                         spectral_shift=None):
+                         spectral_shift=None, seed_vec=None, map_back=True):
     """The eigenvalue analysis of the spin-orbital kernel on the
     antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
     the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``,
     ordered by descending real part.
+
+    ``seed_vec`` (reduced coordinates, optional): an eigenvector-continuation
+    seed, used as the ARPACK start vector and to order the eigenpairs by
+    their overlap with it (``_solve_leading``; on the dense branch the
+    selected eigenpairs are ordered the same way). ``map_back = False``
+    returns the reduced eigenvectors as columns ``(dim, n_ev)`` instead of
+    the gaps (the dynamic solver maps them back one at a time: each gap is
+    ``nd^2 Nk nmat`` long). The defaults are the static solver's call.
 
     ARPACK needs ``k < dim - 1``; when ``num_eigenvalues >= dim - 1`` the
     reduced operator (then small) is diagonalized densely instead and
@@ -7628,6 +8284,8 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
         key = -vals.real if spectral_shift is not None else -np.abs(vals)
         sel = np.argsort(key, kind="stable")[:n_keep]
         vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
+        if seed_vec is not None:
+            vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
         logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
                     "antisymmetric space; dense diagonalization, %d eigenpairs.",
                     num_eigenvalues, dim - 1, n_keep)
@@ -7635,8 +8293,10 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
         _, _, eig = _solve_leading(
             lambda: (red, dim), dim, method,
             num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
-            spectral_shift=spectral_shift)
+            spectral_shift=spectral_shift, seed_vec=seed_vec)
         vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+    if not map_back:
+        return vals, vecs
     gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
                      for i in range(len(vals))])
     return vals, gaps
@@ -7687,6 +8347,11 @@ def calc_eliashberg(input_dict):
     if spin_orbital_mode:
         from hwave.solver import so_pairing
         so_pairing.check_so_config(input_dict)
+        if so_pairing.so_frequency(input_dict) == "dynamic":
+            # the spin-orbital dynamic solver (issue #284); [eliashberg] is
+            # read case-insensitively there, as the checks above read it
+            from hwave.solver import eliashberg_dynamic_so
+            return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     beta = _coerce_run_beta(T)
@@ -7754,6 +8419,7 @@ def calc_eliashberg(input_dict):
     # Dispatch to dynamic Eliashberg if requested
     if _eliashberg_frequency(input_dict) == "dynamic":
         _validate_dynamic_prereqs(input_dict)
+        _warn_one_body_band_ignored(input_dict, 'frequency = "dynamic"')
         if _bond_bool_option(eli_param, "bond_channels", False):
             # bond-resolved dynamic pairing kernel, fed by the FLEX run's
             # bond archive (the on-site solver below reads chiq_s/chiq_c)
@@ -7855,6 +8521,9 @@ def calc_eliashberg(input_dict):
             "references.",
             ("the EXTERNAL Green function '{}' ([eliashberg] bond_green)"
              .format(bond_green) if bond_green else
+             "the Green function of the mean-field one-body band ({})"
+             .format(" / ".join(_one_body_band_sources(input_dict)))
+             if _one_body_band_sources(input_dict) else
              "the BARE Green function built from the transfer Hamiltonian "
              "(set [eliashberg] bond_green to feed an external/FLEX green)"))
         logger.warning(
@@ -7869,18 +8538,70 @@ def calc_eliashberg(input_dict):
                 "bond-resolved kernel is CPU-only in v1 (GPU support is a "
                 "deferred follow-up).")
 
+    # --- One-body band (issue #273) ---
+    # trans_mod / green_init / an active Extern replace the bare Transfer
+    # band. The internal chi0q has always been built on that band; mu and
+    # every kernel Green function must come from the SAME band, or the run
+    # mixes two Hamiltonians. Built (and a spin-dependent band refused)
+    # before any chi0q is computed or loaded. The FLEX path takes chi and G
+    # from the FLEX run, whose outputs already include its one-body band.
+    band = None
+    spin_free_tol = _read_spin_free_tol(eli_param)
+    if chi0q_mode == "flex":
+        _warn_one_body_band_ignored(input_dict, "chi0q_mode = 'flex'")
+    elif use_bond_channels and bond_green is not None:
+        # the external Green function replaces the band entirely: the bond
+        # path builds its bubble and kernel from bond_green
+        _warn_one_body_band_ignored(
+            input_dict, "bond_channels with an external bond_green",
+            "the Green function of the pairing kernel and of the bond bubble "
+            "is read from bond_green = '{}'".format(bond_green))
+    else:
+        band_sources = _one_body_band_sources(input_dict)
+        if band_sources:
+            if chi0q_mode == "calc" and not use_bond_channels:
+                # the same solver computes chi0q below
+                band_scheme = _chi0q_tensor_scheme(
+                    chi0q_tensor,
+                    input_dict["file"]["input"].get("interaction", {}))
+            else:
+                # band only; 'general' keeps the RPA reader from issuing its
+                # reduced-scheme advisory for a chi0q that is never built
+                band_scheme = "general"
+            # spin averaging and hermitization need hwave_sc to build chi0q
+            # itself (calc, or the bond path's own bubble); a loaded chi0q
+            # was built by an external RPA run on the raw band
+            own_chi0q = (chi0q_mode == "calc") or use_bond_channels
+            band = _mean_field_band(input_dict, band_sources, band_scheme,
+                                    (Nx, Ny, Nz), norb,
+                                    spin_free_tol=spin_free_tol,
+                                    allow_average=own_chi0q,
+                                    allow_hermitize=own_chi0q)
+            if chi0q_mode != "calc" or use_bond_channels:
+                band = band._replace(solver=None)
+
     # --- Step 3: Setup k-mesh ---
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
     ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
 
     # --- Step 4: Build Hamiltonian and diagonalize ---
-    logger.info("Building Hamiltonian in k-space...")
-    epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
-    if spin_orbital_mode:
-        # the Transfer file is interleaved; everything downstream is spin-block
-        epsilon_k = spin_orbital.interleaved_to_spinblock(
-            epsilon_k, norb_phys, axes=(0, 1))
+    if band is None or band.same_as_bare:
+        if band is not None:
+            logger.info("The one-body band from {} equals the Transfer band "
+                        "exactly".format(", ".join(band.sources)))
+        logger.info("Building Hamiltonian in k-space...")
+        epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
+        if spin_orbital_mode:
+            # the Transfer file is interleaved; everything downstream is
+            # spin-block (spin-orbital mode refuses trans_mod / green_init /
+            # Extern, so it never takes the mean-field band below)
+            epsilon_k = spin_orbital.interleaved_to_spinblock(
+                epsilon_k, norb_phys, axes=(0, 1))
+    else:
+        logger.info("Using the mean-field one-body band ({}) as the "
+                    "Hamiltonian in k-space".format(", ".join(band.sources)))
+        epsilon_k = band.epsilon_k
 
     logger.info("Diagonalizing Hamiltonian...")
     eigenvalues, eigenvectors = _calc_eigenvalues(epsilon_k)
@@ -8125,7 +8846,9 @@ def calc_eliashberg(input_dict):
             # that slice is computed (one-frequency axis, issue #272)
             chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor=chi0q_tensor,
                                                 precomputed_mu=mu,
+                                                prepared=band,
                                                 static_only=True)
+            band = None
             static_index = 0
         else:
             chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
