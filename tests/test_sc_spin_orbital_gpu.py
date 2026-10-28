@@ -452,6 +452,19 @@ class _Cases:
         lead, Q, delta = _leading_eigenspace(cpu["iter"][0]["A"],
                                              cpu["iter"][0]["basis"])
         self.assertGreater(delta, 1e-3 * abs(lead))       # isolated cluster
+        # Caps on the residual-derived allowances. eigenvalue_validated only
+        # needs r <= ~1e-6 (|lambda| + 1), which would let the allowances
+        # below grow to ~1e-5 (eigenvalue) and ~4e-4 (subspace, delta =
+        # 0.025) without any test noticing. Measured on these models (CPU,
+        # fake and A100 alike): r ~ 1.3e-10 - 2.5e-10 per run, delta ~ 0.088
+        # (static SOC) and ~ 0.025 (dynamic), i.e. a realized subspace
+        # allowance 10 r / delta ~ 3e-8 - 1e-7. The caps (r <= 1e-8, 10 r /
+        # delta <= 1e-6) leave a ~40x / ~10x margin over those values while
+        # keeping the comparison sharp.
+        for label, (_, _, r1) in zip(("cpu", "device"), recs):
+            self.assertLessEqual(r1, 1e-8, "{}: Rayleigh residual".format(label))
+            self.assertLessEqual(10.0 * r1 / delta, 1e-6,
+                                 "{}: subspace allowance".format(label))
         for label, (gap, lam, r1) in zip(("cpu", "device"), recs):
             with self.subTest(run=label):
                 # the iterate is the leading eigenpair (cluster)
@@ -469,7 +482,8 @@ class _Cases:
             self.assertLessEqual(
                 _phase_aligned_distance(gap_c, gap_d),
                 self.ITER_GAP_TOL + self.ITER_RESIDUAL_FACTOR * r / delta)
-        return Q.shape[1], r, delta
+        self.assertLessEqual(10.0 * r, 2e-8)     # eigenvalue allowance cap
+        return lead, Q.shape[1], r, delta
 
 class _StaticCases(_Cases):
     """The static spin-orbital solver (#269)."""
@@ -516,7 +530,11 @@ class _StaticCases(_Cases):
             {"soc": 0.3}, {"chi0q_mode": "calc", "solver_mode": "iteration",
                            "convergence_tol": 1e-10, "max_iter": 20000,
                            "spectral_shift": "auto"})
-        self._compare_iterations(cpu, dev)
+        lead, dim, _, _ = self._compare_iterations(cpu, dev)
+        # non-degenerate leading eigenvalue (measured 0.17373): the gaps are
+        # compared directly
+        self.assertEqual(dim, 1)
+        self.assertAlmostEqual(lead.real, 0.17373, delta=1e-3)
         # the written eigenvalue is the validated one of the returned tuple
         self.assertEqual(cpu["ev"], cpu["iter"][0]["out"][1])
         self.assertEqual(dev["ev"], dev["iter"][0]["out"][1])
@@ -557,7 +575,11 @@ class _DynamicCases(_Cases):
                                        "spectral_shift": "auto",
                                        "max_iter": 3000,
                                        "convergence_tol": 1e-10})
-        self._compare_iterations(cpu, dev)
+        lead, dim, _, _ = self._compare_iterations(cpu, dev)
+        # the leading eigenvalue is twofold degenerate (measured 0.12491): the
+        # comparison must take the eigenspace branch, not the 1-D direct one
+        self.assertEqual(dim, 2)
+        self.assertAlmostEqual(lead.real, 0.12491, delta=1e-3)
         self.assertEqual(cpu["lam"], float(np.real(cpu["iter"][0]["out"][1])))
         self.assertEqual(dev["lam"], float(np.real(dev["iter"][0]["out"][1])))
 
