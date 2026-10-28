@@ -51,6 +51,11 @@ class DevArray(np.ndarray):
 
     # cupy.ndarray.get / set: what the pinned staging (hwave.solver.staging)
     # calls, chunk by chunk
+    # With ``FakeCupy.deferred`` a copy from / to PINNED host memory is only
+    # queued on its stream and runs at that stream's ``synchronize()``,
+    # reading its source then -- as an asynchronous DMA does: a caller that
+    # reads the staging buffer before the copy finished, or overwrites it
+    # while the copy is in flight, gets wrong bytes.
     def get(self, stream=None, order="C", out=None):
         _MODULE.record("d2h", self)
         if out is None:
@@ -59,8 +64,10 @@ class DevArray(np.ndarray):
                 out.dtype != self.dtype or not out.flags.c_contiguous:
             raise ValueError("fake cupy: get(out=) needs a C-contiguous host array of the "
                              "same shape and dtype")
-        _MODULE.pinned_io.append(("d2h", _is_pinned(out)))
-        np.copyto(out, self.view(np.ndarray))
+        pinned = _is_pinned(out)
+        _MODULE.pinned_io.append(("d2h", pinned))
+        src = self.view(np.ndarray)
+        _MODULE.issue(stream, pinned, lambda: np.copyto(out, src))
         return out
 
     def set(self, arr, stream=None):
@@ -70,11 +77,26 @@ class DevArray(np.ndarray):
         if not self.flags.c_contiguous:
             raise RuntimeError("fake cupy: cannot set to a non-contiguous array")
         _MODULE.record("h2d", arr)
-        _MODULE.pinned_io.append(("h2d", _is_pinned(arr)))
-        np.ndarray.__setitem__(self, Ellipsis, arr)
+        pinned = _is_pinned(arr)
+        _MODULE.pinned_io.append(("h2d", pinned))
+        _MODULE.issue(stream, pinned, lambda: np.ndarray.__setitem__(self, Ellipsis, arr))
 
 
 DevArray.__module__ = "cupy._fake_device"
+
+
+class _Stream:
+    """A fake ``cupy.cuda.Stream``: queued copies run at ``synchronize``."""
+
+    def __init__(self, module):
+        self._m = module
+        self.pending = []
+        self.syncs = 0
+
+    def synchronize(self):
+        self.syncs += 1
+        while self.pending:
+            self.pending.pop(0)()
 
 
 class _PinnedMemory(bytearray):
@@ -183,9 +205,20 @@ class FakeCupy(_Namespace):
         runtime = types.SimpleNamespace(getDeviceCount=lambda: 1,
                                         memGetInfo=lambda: (self.free, 2 * self.free))
         memory = types.SimpleNamespace(OutOfMemoryError=_OutOfMemoryError)
+        #: queue pinned get/set copies until their stream synchronizes
+        self.deferred = False
+        self.stream = _Stream(self)
         self.cuda = types.SimpleNamespace(runtime=runtime, memory=memory,
-                                          alloc_pinned_memory=self._alloc_pinned)
+                                          alloc_pinned_memory=self._alloc_pinned,
+                                          get_current_stream=lambda: self.stream,
+                                          Stream=lambda **_k: _Stream(self))
         self._pool = _Pool(self)
+
+    def issue(self, stream, pinned, copy):
+        if self.deferred and pinned:
+            (stream if stream is not None else self.stream).pending.append(copy)
+        else:
+            copy()
 
     def _alloc_pinned(self, nbytes):
         if self.fail_pinned:

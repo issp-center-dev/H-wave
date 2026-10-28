@@ -61,6 +61,48 @@ class TestParallelCopy(unittest.TestCase):
             staging.parallel_copy(x[1:], x[:-1], 4, min_bytes=0)
         np.testing.assert_array_equal(x, ref)
 
+    def test_the_real_threshold(self):
+        """Just below PARALLEL_COPY_MIN_BYTES: one assignment; at and above it:
+        threaded pieces. Bitwise either way."""
+        from hwave.solver import staging
+        limit = staging.PARALLEL_COPY_MIN_BYTES
+        self.assertEqual(limit, 16 * 1024 ** 2)
+        row = 64 * 1024                                  # bytes per leading-axis row
+        real = staging._executor
+        for nbytes, threaded in ((limit - row, False), (limit, True), (limit + row, True)):
+            with self.subTest(nbytes=nbytes):
+                n = nbytes // row
+                src = np.arange(n * row // 8, dtype=np.float64).reshape(n, row // 8)
+                dst = np.zeros_like(src)
+                self.assertEqual(dst.nbytes, nbytes)
+                with mock.patch.object(staging, "_executor", side_effect=real) as ex:
+                    staging.parallel_copy(dst, src, 4)
+                self.assertEqual(ex.called, threaded)
+                np.testing.assert_array_equal(dst, src)
+
+    def test_concurrent_callers_share_one_pool(self):
+        """Callers asking for different worker counts at the same time never
+        meet a pool shut down under them."""
+        import threading
+        from hwave.solver import staging
+        errors = []
+
+        def run(w):
+            try:
+                for _ in range(20):
+                    src = _rand((16, 4, 4), w)
+                    dst = np.empty_like(src)
+                    staging.parallel_copy(dst, src, w, min_bytes=0)
+                    np.testing.assert_array_equal(dst, src)
+            except Exception as exc:              # noqa: BLE001
+                errors.append(exc)
+        ts = [threading.Thread(target=run, args=(w,)) for w in (2, 3, 5, 7, 9, 16)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(errors, [])
+
     def test_shape_mismatch_refused(self):
         from hwave.solver import staging
         with self.assertRaises(ValueError):
@@ -103,6 +145,37 @@ class TestPinnedStager(unittest.TestCase):
             st.release()
             self.assertEqual(st.nbytes, 0)
             self.assertEqual(cp.pinned_frees, 1)
+
+    def test_asynchronous_copies_are_synchronized_per_chunk(self):
+        """With copies that only land at their stream's synchronize (an
+        asynchronous DMA from / to pinned memory), several chunks through
+        one buffer still give every byte: each chunk's stream is synchronized
+        before the buffer is read or overwritten."""
+        from hwave.solver import staging
+        shape = (7, 3, 4, 4)
+        row = 3 * 4 * 4 * 16
+        x = _rand(shape, 6)
+        with fake_cupy() as cp, _threaded_tiny_copies():
+            d = cp.asarray(x)
+            cp.deferred = True
+            st = staging.PinnedStager(cp, max_bytes=2 * row, workers=2)
+            big = np.zeros((7, 3, 8, 8), complex)
+            st.copy_to_host(d, big[:, :, 0:4, 4:8])                   # D2H, 4 chunks
+            for i in range(7):
+                np.testing.assert_array_equal(big[i, :, 0:4, 4:8], x[i], err_msg=str(i))
+            np.testing.assert_array_equal(st.to_host(d), x)
+            back = st.to_device(big[:, :, 0:4, 4:8])                  # H2D, 4 chunks
+            self.assertEqual(cp.stream.pending, [])
+            for i in range(7):
+                np.testing.assert_array_equal(_host(back[i]), x[i], err_msg=str(i))
+            self.assertEqual(st.chunks, 12)
+            self.assertGreaterEqual(cp.stream.syncs, 12)
+            # a non-default current stream is the one used and synchronized
+            other = cp.cuda.Stream(non_blocking=True)
+            with mock.patch.object(cp.cuda, "get_current_stream", lambda: other):
+                back = st.to_device(x[::-1])
+            self.assertEqual(other.syncs, 4)
+            np.testing.assert_array_equal(_host(back), x[::-1])
 
     def test_a_row_larger_than_the_buffer_is_one_chunk(self):
         from hwave.solver import staging
@@ -233,6 +306,95 @@ class TestStoreStaging(unittest.TestCase):
                                      2 * nmat * slot)
                     rows = [s[0] for _d, s, _b in cp.transfers]
                     self.assertEqual(rows, [nmat, nmat] if fail else [4, 4, 1, 4, 4, 1])
+
+
+class TestStoreLeavesTheDeviceAsynchronously(unittest.TestCase):
+
+    def test_to_host_with_deferred_copies(self):
+        from hwave.solver.flex_bond import BondBlockStore
+        nmat, nvol, nd, B = 9, 3, 4, 2
+        ND = B * nd
+        with fake_cupy() as cp:
+            with BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W"), xp=cp,
+                                staging_bytes=2 * nvol * ND * ND * 16) as st:
+                ref = {}
+                for i, name in enumerate(("chibar", "W")):
+                    ref[name] = _rand((nmat, nvol, ND, ND), 20 + i)
+                    st.put_freq_batch(name, 0, nmat, ref[name])
+                cp.deferred = True
+                st.to_host()
+                for name in ref:
+                    np.testing.assert_array_equal(st._arr(name), ref[name])
+
+
+class TestCopyWorkersFollowTheBackend(unittest.TestCase):
+    """A CPU solve copies in one thread (as before); a GPU solve with a host
+    store gets the threaded copies."""
+
+    def test_cpu_one_thread_gpu_host_store_threaded(self):
+        from hwave.solver import flex_bond
+        from tests.test_bond_half_grid import _run
+        seen = []
+        real = flex_bond.BondBlockStore
+
+        class Spy(real):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                seen.append((self.copy_workers, self.resident))
+        with mock.patch.object(flex_bond, "BondBlockStore", Spy):
+            _run("UV", {}, half=False)
+            cpu = list(seen)
+            seen.clear()
+            with fake_cupy():
+                _run("UV", {"gpu": True, "longitudinal_bond_store": "host"}, half=False)
+        self.assertEqual(cpu, [(1, "host")])
+        self.assertEqual(seen, [(None, "host")])
+
+
+class TestRealCupyStreams(unittest.TestCase):
+    """On a CUDA device: forced multi-chunk host <-> device staging on a
+    NON-default stream, every chunk verified bit for bit (the pinned copies
+    are asynchronous there)."""
+
+    @classmethod
+    def setUpClass(cls):
+        try:
+            import cupy
+            if cupy.cuda.runtime.getDeviceCount() < 1:
+                raise RuntimeError("no device")
+        except Exception as exc:                  # noqa: BLE001
+            raise unittest.SkipTest("CuPy with a CUDA device is needed ({})".format(exc))
+        cls.cp = cupy
+
+    def test_multi_chunk_on_a_non_default_stream(self):
+        from hwave.solver import staging
+        cp = self.cp
+        n, rest = 33, (64, 16, 16)                       # 256 KiB per row
+        row = int(np.prod(rest)) * 16
+        x = _rand((n,) + rest, 7)
+        st = staging.PinnedStager(cp, max_bytes=3 * row, workers=4)
+        try:
+            with mock.patch.object(staging, "PARALLEL_COPY_MIN_BYTES", 0), \
+                    cp.cuda.Stream(non_blocking=True) as s:
+                # H2D from a strided host view
+                big = np.zeros((n, 64, 32, 16), complex)
+                big[:, :, 8:24, :] = x
+                d = st.to_device(big[:, :, 8:24, :])
+                # queue device work on the stream so the D2H must wait for it
+                d2 = d * 2.0
+                d2 -= d
+                host = st.to_host(d2)
+                strided = np.zeros((n, 64, 16, 32), complex)
+                st.copy_to_host(d2, strided[:, :, :, 4:20])
+                s.synchronize()
+            self.assertGreater(st.chunks, 3 * (n // 3))
+            for i in range(n):
+                np.testing.assert_array_equal(cp.asnumpy(d[i]), x[i], err_msg="h2d %d" % i)
+                np.testing.assert_array_equal(host[i], x[i], err_msg="d2h %d" % i)
+                np.testing.assert_array_equal(strided[i, :, :, 4:20], x[i],
+                                              err_msg="strided d2h %d" % i)
+        finally:
+            st.release()
 
 
 class TestSolvesOldVersusNew(unittest.TestCase):

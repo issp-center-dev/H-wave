@@ -616,7 +616,8 @@ that has no effect under the current settings.
   chunks through one reusable page-locked (pinned) staging buffer of
   256 MiB, or one frequency slice of the array when that is larger. The
   host side of each chunk, and the pair-strided copies of a host store, run
-  on up to 8 threads. If the pinned buffer cannot be allocated, the copies
+  on up to 8 threads (on the GPU path only; a CPU run copies in one thread,
+  as before). If the pinned buffer cannot be allocated, the copies
   take the unstaged path (logged at debug level). The copied values are the
   same either way.
 

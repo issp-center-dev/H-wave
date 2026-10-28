@@ -45,7 +45,6 @@ PARALLEL_COPY_MIN_BYTES = 16 * 1024 ** 2
 COPY_WORKERS = 8
 
 _pool = None
-_pool_workers = 0
 _pool_lock = threading.Lock()
 
 
@@ -53,14 +52,15 @@ def default_copy_workers():
     return max(1, min(COPY_WORKERS, os.cpu_count() or 1))
 
 
-def _executor(workers):
-    global _pool, _pool_workers
+def _executor():
+    """The one copy pool of the process (``COPY_WORKERS`` threads), created
+    on first use and never shut down, so a concurrent caller cannot find it
+    closed between obtaining it and submitting to it."""
+    global _pool
     with _pool_lock:
-        if _pool is None or _pool_workers < workers:
-            if _pool is not None:
-                _pool.shutdown(wait=True)
-            _pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="hwave-copy")
-            _pool_workers = workers
+        if _pool is None:
+            _pool = ThreadPoolExecutor(max_workers=max(1, COPY_WORKERS),
+                                       thread_name_prefix="hwave-copy")
         return _pool
 
 
@@ -84,7 +84,7 @@ def parallel_copy(dst, src, workers=None, min_bytes=None):
     def piece(i):
         dst[edges[i]:edges[i + 1]] = src[edges[i]:edges[i + 1]]
     # list() re-raises the first worker exception here
-    list(_executor(w).map(piece, range(w)))
+    list(_executor().map(piece, range(w)))
     return dst
 
 
@@ -98,7 +98,13 @@ class PinnedStager:
     ``chunk.get(out=buffer)`` and back by ``chunk.set(buffer)``. Chunks run
     along axis 0 of the array, so the device side of each chunk is a
     contiguous slice of a contiguous array and the host side may be any
-    strided view (a channel-pair block of a host store)."""
+    strided view (a channel-pair block of a host store).
+
+    Every chunk copy is issued on the CURRENT stream (captured per call and
+    passed explicitly) and that stream is synchronized after it, before the
+    staging buffer is read (device -> host) or overwritten or released
+    (host -> device): with a pinned source, ``set`` is truly asynchronous,
+    and ``get`` is non-blocking on older CuPy or other streams."""
 
     def __init__(self, xp, max_bytes=None, workers=None):
         self.xp = xp
@@ -181,10 +187,12 @@ class PinnedStager:
         if buf is None:
             parallel_copy(dst, _bk.to_host(src), self.workers)
             return dst
+        stream = self.xp.cuda.get_current_stream()
         for i0 in range(0, n, per):
             i1 = min(n, i0 + per)
             stage = self._view(buf, i1 - i0, src.shape, src.dtype)
-            src[i0:i1].get(out=stage)
+            src[i0:i1].get(stream=stream, out=stage)
+            stream.synchronize()             # the chunk has landed in stage
             parallel_copy(dst[i0:i1], stage, self.workers)
             self.chunks += 1
         return dst
@@ -210,10 +218,12 @@ class PinnedStager:
         if buf is None:
             return xp.asarray(np.ascontiguousarray(src))
         dst = xp.empty(src.shape, dtype=src.dtype)
+        stream = xp.cuda.get_current_stream()
         for i0 in range(0, n, per):
             i1 = min(n, i0 + per)
             stage = self._view(buf, i1 - i0, src.shape, src.dtype)
             parallel_copy(stage, src[i0:i1], self.workers)
-            dst[i0:i1].set(stage)
+            dst[i0:i1].set(stage, stream=stream)
+            stream.synchronize()             # stage may be overwritten / freed now
             self.chunks += 1
         return dst
