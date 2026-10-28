@@ -2043,6 +2043,14 @@ before any calculation:
 ``hwave_tsweep`` with ``run_eliashberg = true`` still refuses
 ``enable_spin_orbital`` (for both frequencies).
 
+Conversely, ``hwave_sc`` without ``enable_spin_orbital`` refuses a chi0q or
+FLEX archive that carries ``spin_orbital = True`` (or a FLEX
+``chi_convention = "spin_orbital"``) or a malformed marker, before any work:
+its shape would otherwise be misread as a non-spin-orbital file over
+:math:`2N` orbitals. Enable ``[mode] enable_spin_orbital`` or regenerate the
+archive with a non-spin-orbital run; archives without the marker load as
+before.
+
 Practical advice
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
