@@ -450,6 +450,7 @@ $<span class="w"> </span>hwave<span class="w"> </span>input.toml
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>FLEX iteration 1/100
 FLEX._find_mu_dressed: mu = -0.398893
   convergence: |dSigma|/|Sigma| = 1.000e+00
+  Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 1.055812 at q = (0.5, 0.5, 0); charge -0.682922 at q = (0, 0, 0)
 FLEX iteration 2/100
 FLEX._find_mu_dressed: mu = -0.291966
   convergence: |dSigma|/|Sigma| = 9.876e-01
@@ -457,6 +458,7 @@ FLEX._find_mu_dressed: mu = -0.291966
 FLEX iteration 64/100
 FLEX._find_mu_dressed: mu = -0.249146
   convergence: |dSigma|/|Sigma| = 9.241e-07
+  Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
 FLEX converged after 64 iterations
 </pre></div>
 </div>
@@ -524,7 +526,9 @@ iteration near the fixed point and avoids the oscillation. The seed must have
 the same <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> as the current run (both are fail-fast
 errors: <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> records its <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, so even a same-volume
 aspect-ratio change like <code class="docutils literal notranslate"><span class="pre">[2,8,1]</span></code> vs <code class="docutils literal notranslate"><span class="pre">[4,4,1]</span></code> is caught), so keep
-<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> fixed across a continuation sweep.</p>
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> fixed across a continuation sweep. To choose the
+step of a U or T scan, and to recognise a seed that was too far away, see
+<a class="reference internal" href="#flex-stoner-divergence"><span class="std std-ref">Stoner factor and a diverged run</span></a>.</p>
 <p>To audit an archive before using it as a seed, run
 <code class="docutils literal notranslate"><span class="pre">hwave_sigma_split</span> <span class="pre">--check</span> <span class="pre">sigma.npz</span></code>: it prints the relative deviation
 from <span class="math notranslate nohighlight">\(\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger\)</span>
@@ -549,6 +553,100 @@ previous output directory with a relative path, e.g.:</p>
 </pre></div>
 </div>
 </div>
+</section>
+<section id="stoner-factor-and-a-diverged-run">
+<span id="flex-stoner-divergence"></span><h3>Stoner factor and a diverged run<a class="headerlink" href="#stoner-factor-and-a-diverged-run" title="Link to this heading">¶</a></h3>
+<p>The log reports how close each iteration is to a static instability of its
+bubble. The line is written at INFO level on the first and the last
+iteration (and when the iteration looks divergent, see below), and at DEBUG
+level on every other iteration:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
+</pre></div>
+</div>
+<p>For each channel the value is</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
+<span class="eqno">(6.8)<a class="headerlink" href="#equation-flex-tutorial-tu-index-7" title="Link to this equation">¶</a></span>\[\lambda = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+\right\},\]</div>
+<p>the largest REAL eigenvalue (only a real eigenvalue reaching 1 makes
+<span class="math notranslate nohighlight">\(1 + \chi_0 W\)</span> singular; an eigenvalue counts as real when
+<span class="math notranslate nohighlight">\(|\mathrm{Im}\,e| \le 10^{-6} \max|e|\)</span>). Should a complex eigenvalue
+pair lie further right, as can happen for a non-Hermitian product with
+spin-orbit coupling, the line adds <code class="docutils literal notranslate"><span class="pre">(max</span> <span class="pre">Re</span> <span class="pre">over</span> <span class="pre">complex</span> <span class="pre">pairs</span> <span class="pre">...)</span></code>.
+Here <span class="math notranslate nohighlight">\(\chi_0\)</span> is the bubble of the current dressed Green function and
+<span class="math notranslate nohighlight">\(W\)</span> is the vertex of that channel’s sum
+<span class="math notranslate nohighlight">\([1 + \chi_0 W]^{-1}\chi_0\)</span>: <span class="math notranslate nohighlight">\(W = -U_s\)</span> (spin) and <span class="math notranslate nohighlight">\(+U_c\)</span>
+(charge) for <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code>, the full orbital vertices for
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>, and a single <code class="docutils literal notranslate"><span class="pre">spinful</span></code> value with the antisymmetrized vertex
+for the spin-orbital FLEX. For the one-band Hubbard model the spin value is
+<span class="math notranslate nohighlight">\(U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)\)</span>. <span class="math notranslate nohighlight">\(\mathbf{q}\)</span> is
+given in units of the reciprocal lattice vectors. The bond-resolved path
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) prints no such line; its conditioning
+guard line plays this role.</p>
+<p>How to read it: <span class="math notranslate nohighlight">\(\lambda \ge 1\)</span> means that the channel’s sum is
+statically unstable for that bubble. A converged FLEX solution stays below 1,
+and the distance from 1 tells how close the run is to the instability. A
+cold start may begin above 1 and recover (the sample above starts at 1.056).
+For choosing the step of a warm-started U scan, a rough heuristic: the first
+map uses the new U with the previous self-energy, so if the previous run
+ended at <span class="math notranslate nohighlight">\(\lambda\)</span> the first value is about
+<span class="math notranslate nohighlight">\(\lambda (U + \Delta U)/U\)</span>, and keeping it below 1 means
+<span class="math notranslate nohighlight">\(\Delta U / U &lt; (1 - \lambda)/\lambda\)</span> (about 5 % at
+<span class="math notranslate nohighlight">\(\lambda = 0.95\)</span>). This assumes that every interaction parameter of the
+channel scales with U (not so when V, U’ or J are held fixed), that
+<span class="math notranslate nohighlight">\(\chi_0\)</span> stays at its value for the previous self-energy, and that a
+first map below 1 suffices; none of these is guaranteed, and a first value
+below 1 does not ensure convergence. Take a clearly smaller step, and read
+the first-iteration value in the log. For a temperature scan, watch the
+first-iteration value the same way.</p>
+<p>If some channel stays at <span class="math notranslate nohighlight">\(\lambda \ge 1\)</span> for three iterations in a row
+while <span class="math notranslate nohighlight">\(|d\Sigma|/|\Sigma| \ge 0.5\)</span>, or the step is not finite, the log
+warns once (<code class="docutils literal notranslate"><span class="pre">FLEX</span> <span class="pre">iteration</span> <span class="pre">N</span> <span class="pre">looks</span> <span class="pre">divergent:</span> <span class="pre">...</span></code>). The warning does not
+stop the run.</p>
+<p>A diverged self-energy usually ends the run in the chemical-potential
+search, because <span class="math notranslate nohighlight">\(N(\mu)\)</span> no longer behaves like a particle number. A
+healthy <span class="math notranslate nohighlight">\(N(\mu)\)</span> runs from 0 to the number of states, so it reaches
+every target strictly between the two; when the target lies in that range
+and the search still fails, the error says that the self-energy has
+diverged. It also states how <span class="math notranslate nohighlight">\(N(\mu)\)</span> misbehaves on the band window
+(the bare band range widened by <span class="math notranslate nohighlight">\(1 + 10T\)</span>): flat, not finite, outside
+the physical range, or not monotonic. The message names these causes
+rather than blaming the filling. The example below is a one-band model
+warm-started from the converged <span class="math notranslate nohighlight">\(U = 2\)</span> self-energy at
+<span class="math notranslate nohighlight">\(U = 200\)</span>:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
+after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
+(N-Ncond = -8.0, -8.0). The self-energy has diverged, or ir_wmax does
+not cover the spectrum (N(mu) leaves the physical range [0, 16] over the
+band window [-9, 11] (from -3.12821 to -2.96742)); the target filling is
+reachable, so this is not a problem of the filling or the temperature.
+Check ir_wmax first if the run had converged so far. The last completed
+iteration was 1 with
+|dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
+q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
+too large a step in a warm-started scan (U or T; the previous
+self-energy is far from the new fixed point), too large a mixing (Mix),
+or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
+start (no sigma_init).
+</pre></div>
+</div>
+<p>Only a target outside that range (for example <code class="docutils literal notranslate"><span class="pre">Ncond</span></code> larger than the
+number of states) gives <code class="docutils literal notranslate"><span class="pre">Check</span> <span class="pre">the</span> <span class="pre">target</span> <span class="pre">filling/Ncond</span> <span class="pre">and</span> <span class="pre">temperature</span></code>.
+The decision does not use the values at the ends of the expanded bracket:
+with <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> <span class="math notranslate nohighlight">\(N(\mu)\)</span> tends to 0 at both far ends
+whatever the self-energy is, so equal values there (<code class="docutils literal notranslate"><span class="pre">N-Ncond</span> <span class="pre">=</span> <span class="pre">-8.0,</span>
+<span class="pre">-8.0</span></code> above) are not by themselves a sign of divergence.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> the same failure can also mean that
+<code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code> does not cover the dressed spectrum (the IR <span class="math notranslate nohighlight">\(N(\mu)\)</span> is a
+basis fit, valid only inside the basis bandwidth), so on that path the
+message names both causes. Before any of this, if the expanded bracket finds
+no root but <span class="math notranslate nohighlight">\(N(\mu)\)</span> on the band window does cross the target (on the
+IR path the doubling can jump beyond <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>), the root is solved on that
+sub-interval with a warning instead of failing – but only when <span class="math notranslate nohighlight">\(N(\mu)\)</span>
+on the window is healthy (finite, inside the physical range and increasing);
+a distorted window gives the error above. A non-finite self-energy and
+a target below 0 or above the number of states are refused before the
+search starts.</p>
 </section>
 <section id="hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental">
 <span id="flex-bond-hf-tutorial"></span><h3>Hartree-Fock renormalisation and the bond-resolved channel (experimental)<a class="headerlink" href="#hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental" title="Link to this heading">¶</a></h3>
@@ -1066,8 +1164,8 @@ number.</p>
 <h3>Model<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h3>
 <p>The second sample is a <strong>two-orbital Hubbard model</strong> with
 inter-orbital Coulomb interaction and Hund’s coupling:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-7">
-<span class="eqno">(6.8)<a class="headerlink" href="#equation-flex-tutorial-tu-index-7" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
+<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
     \varepsilon_{\alpha\beta}(\mathbf{k})\,
     c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
   + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
@@ -1708,20 +1806,20 @@ run looks under-provisioned).</p>
 superconductors</strong> proposed by Raghu et al. <a class="footnote-reference brackets" href="#id17" id="id16" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a>
 The model describes the Fe-As plane using <span class="math notranslate nohighlight">\(d_{xz}\)</span> and
 <span class="math notranslate nohighlight">\(d_{yz}\)</span> orbitals on a square lattice (1-Fe unit cell).</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
-<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
+<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
 \varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
 \varepsilon_{xy}(\mathbf{k}) &amp; \varepsilon_y(\mathbf{k})
 \end{pmatrix}\end{split}\]</div>
 <p>where</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
-<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
+<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_y(\mathbf{k}) &amp;= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_{xy}(\mathbf{k}) &amp;= -4t_4 \sin k_x \sin k_y\end{split}\]</div>
 <p>with <span class="math notranslate nohighlight">\(t_1 = -1.0\)</span>, <span class="math notranslate nohighlight">\(t_2 = 1.3\)</span>, <span class="math notranslate nohighlight">\(t_3 = t_4 = -0.85\)</span>.</p>
 <p>The interactions follow the Kanamori parameterization:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
-<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
+<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
 + U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
 - 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
 + J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
@@ -2118,8 +2216,8 @@ All current sample files use this case.</p>
 <p><strong>Long-range interactions</strong> (with non-zero <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>):</p>
 <p>These are automatically transformed into momentum-dependent
 interactions via FFT:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
-<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
+<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
 <p>For example, to include nearest-neighbor Coulomb interactions,
 add entries with lattice vectors <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code>, <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code>, etc.
 to the interaction file.</p>
@@ -2138,8 +2236,8 @@ the 4-body interaction tensor
 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
 to a 2-body contracted form <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span>.</p>
 <p>Specifically, same-spin and cross-spin components are separated:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
-<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-13">
+<span class="eqno">(6.14)<a class="headerlink" href="#equation-flex-tutorial-tu-index-13" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
 U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>where <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span> is the same-spin interaction and
 <span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span> is the cross-spin interaction.</p>

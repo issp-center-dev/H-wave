@@ -417,6 +417,7 @@ The output log shows the SCF convergence:
     FLEX iteration 1/100
     FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 1.055812 at q = (0.5, 0.5, 0); charge -0.682922 at q = (0, 0, 0)
     FLEX iteration 2/100
     FLEX._find_mu_dressed: mu = -0.291966
       convergence: |dSigma|/|Sigma| = 9.876e-01
@@ -424,6 +425,7 @@ The output log shows the SCF convergence:
     FLEX iteration 64/100
     FLEX._find_mu_dressed: mu = -0.249146
       convergence: |dSigma|/|Sigma| = 9.241e-07
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
     FLEX converged after 64 iterations
 
 
@@ -495,7 +497,9 @@ iteration near the fixed point and avoids the oscillation. The seed must have
 the same ``CellShape`` and ``Nmat`` as the current run (both are fail-fast
 errors: ``sigma.npz`` records its ``CellShape``, so even a same-volume
 aspect-ratio change like ``[2,8,1]`` vs ``[4,4,1]`` is caught), so keep
-``Nmat`` and ``CellShape`` fixed across a continuation sweep.
+``Nmat`` and ``CellShape`` fixed across a continuation sweep. To choose the
+step of a U or T scan, and to recognise a seed that was too far away, see
+:ref:`flex_stoner_divergence`.
 
 To audit an archive before using it as a seed, run
 ``hwave_sigma_split --check sigma.npz``: it prints the relative deviation
@@ -521,6 +525,114 @@ restart it from :math:`\Sigma = 0` -- see
       [file.input]
         path_to_input = "."
         sigma_init = "run_T0.50/output/sigma.npz"
+
+.. _flex_stoner_divergence:
+
+Stoner factor and a diverged run
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The log reports how close each iteration is to a static instability of its
+bubble. The line is written at INFO level on the first and the last
+iteration (and when the iteration looks divergent, see below), and at DEBUG
+level on every other iteration:
+
+.. code-block:: text
+
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
+
+For each channel the value is
+
+.. math::
+
+   \lambda = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\},
+
+the largest REAL eigenvalue (only a real eigenvalue reaching 1 makes
+:math:`1 + \chi_0 W` singular; an eigenvalue counts as real when
+:math:`|\mathrm{Im}\,e| \le 10^{-6} \max|e|`). Should a complex eigenvalue
+pair lie further right, as can happen for a non-Hermitian product with
+spin-orbit coupling, the line adds ``(max Re over complex pairs ...)``.
+Here :math:`\chi_0` is the bubble of the current dressed Green function and
+:math:`W` is the vertex of that channel's sum
+:math:`[1 + \chi_0 W]^{-1}\chi_0`: :math:`W = -U_s` (spin) and :math:`+U_c`
+(charge) for ``calc_scheme = "reduced"``, the full orbital vertices for
+``"general"``, and a single ``spinful`` value with the antisymmetrized vertex
+for the spin-orbital FLEX. For the one-band Hubbard model the spin value is
+:math:`U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)`. :math:`\mathbf{q}` is
+given in units of the reciprocal lattice vectors. The bond-resolved path
+(``longitudinal_bond_channels = true``) prints no such line; its conditioning
+guard line plays this role.
+
+How to read it: :math:`\lambda \ge 1` means that the channel's sum is
+statically unstable for that bubble. A converged FLEX solution stays below 1,
+and the distance from 1 tells how close the run is to the instability. A
+cold start may begin above 1 and recover (the sample above starts at 1.056).
+For choosing the step of a warm-started U scan, a rough heuristic: the first
+map uses the new U with the previous self-energy, so if the previous run
+ended at :math:`\lambda` the first value is about
+:math:`\lambda (U + \Delta U)/U`, and keeping it below 1 means
+:math:`\Delta U / U < (1 - \lambda)/\lambda` (about 5 % at
+:math:`\lambda = 0.95`). This assumes that every interaction parameter of the
+channel scales with U (not so when V, U' or J are held fixed), that
+:math:`\chi_0` stays at its value for the previous self-energy, and that a
+first map below 1 suffices; none of these is guaranteed, and a first value
+below 1 does not ensure convergence. Take a clearly smaller step, and read
+the first-iteration value in the log. For a temperature scan, watch the
+first-iteration value the same way.
+
+If some channel stays at :math:`\lambda \ge 1` for three iterations in a row
+while :math:`|d\Sigma|/|\Sigma| \ge 0.5`, or the step is not finite, the log
+warns once (``FLEX iteration N looks divergent: ...``). The warning does not
+stop the run.
+
+A diverged self-energy usually ends the run in the chemical-potential
+search, because :math:`N(\mu)` no longer behaves like a particle number. A
+healthy :math:`N(\mu)` runs from 0 to the number of states, so it reaches
+every target strictly between the two; when the target lies in that range
+and the search still fails, the error says that the self-energy has
+diverged. It also states how :math:`N(\mu)` misbehaves on the band window
+(the bare band range widened by :math:`1 + 10T`): flat, not finite, outside
+the physical range, or not monotonic. The message names these causes
+rather than blaming the filling. The example below is a one-band model
+warm-started from the converged :math:`U = 2` self-energy at
+:math:`U = 200`:
+
+.. code-block:: text
+
+    RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
+    after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged, or ir_wmax does
+    not cover the spectrum (N(mu) leaves the physical range [0, 16] over the
+    band window [-9, 11] (from -3.12821 to -2.96742)); the target filling is
+    reachable, so this is not a problem of the filling or the temperature.
+    Check ir_wmax first if the run had converged so far. The last completed
+    iteration was 1 with
+    |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
+    q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
+    too large a step in a warm-started scan (U or T; the previous
+    self-energy is far from the new fixed point), too large a mixing (Mix),
+    or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
+    start (no sigma_init).
+
+Only a target outside that range (for example ``Ncond`` larger than the
+number of states) gives ``Check the target filling/Ncond and temperature``.
+The decision does not use the values at the ends of the expanded bracket:
+with ``matsubara_basis = "ir"`` :math:`N(\mu)` tends to 0 at both far ends
+whatever the self-energy is, so equal values there (``N-Ncond = -8.0,
+-8.0`` above) are not by themselves a sign of divergence.
+
+With ``matsubara_basis = "ir"`` the same failure can also mean that
+``ir_wmax`` does not cover the dressed spectrum (the IR :math:`N(\mu)` is a
+basis fit, valid only inside the basis bandwidth), so on that path the
+message names both causes. Before any of this, if the expanded bracket finds
+no root but :math:`N(\mu)` on the band window does cross the target (on the
+IR path the doubling can jump beyond ``ir_wmax``), the root is solved on that
+sub-interval with a warning instead of failing -- but only when :math:`N(\mu)`
+on the window is healthy (finite, inside the physical range and increasing);
+a distorted window gives the error above. A non-finite self-energy and
+a target below 0 or above the number of states are refused before the
+search starts.
 
 .. _flex_bond_hf_tutorial:
 
