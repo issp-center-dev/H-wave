@@ -213,6 +213,61 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 chi0q ファイルには生成時の値が記録されており、読み込み時に設定と
 食い違う場合は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が警告を出します。</p>
 </div>
+<div class="admonition note" id="sc-mean-field-band-note">
+<p class="admonition-title">注釈</p>
+<p><strong>平均場の一体バンド: 組み立て。</strong> <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span></code>（UHFk が出力する
+一体ハミルトニアン）は<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドを置き換えます。
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>は<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドに Hartree 項を加え、
+<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場（<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍のテーブル）はさらにその上に加わります。
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>の場合（外部の
+<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定しない<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を含む）、
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はこの組み立てたバンドを
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>、化学ポテンシャル、ペアリング核の Green
+関数のすべてに用います。したがって三つは同じハミルトニアンを表します。
+キーの大文字・小文字は区別しません。ペアリング核（一重項・三重項）は
+スピンの添字を持たないため、スピンに依存しないバンドのみに対応します。</p>
+<p><strong>スピンの判定と</strong> <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>。スピンに依存するバンド
+（磁性をもつ<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>や<code class="docutils literal notranslate"><span class="pre">green_init</span></code>、またはゼロでない
+<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場）は、<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>の計算や読み込みの前に
+エラーとして拒否されます。判定は組み立てた一体バンド
+（<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>、または<code class="docutils literal notranslate"><span class="pre">Transfer</span></code>のバンドに<code class="docutils literal notranslate"><span class="pre">green_init</span></code>の
+Hartree 項を加えたもの、さらに<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍の<code class="docutils literal notranslate"><span class="pre">Extern</span></code>）
+に対して行います。上向き・下向きスピンのブロックの差とスピン混成ブロックの
+大きさは、エネルギーの単位で絶対値<span class="math notranslate nohighlight">\(10^{-10}\)</span>まで許されます。
+この許容誤差は後述の<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>の既定値で、<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>で
+大きくも小さくもできます。すべての成分が有限でなければなりません。
+<span class="math notranslate nohighlight">\(\max|H - H^\dagger|\)</span>が<span class="math notranslate nohighlight">\(\max(10^{-10}, 10^{-6}\max|H|)\)</span>を
+超えるバンドは拒否されます。<span class="math notranslate nohighlight">\(10^{-10}\)</span>を超えるがそれより小さい
+ずれ（例えば<span class="math notranslate nohighlight">\(\pm R\)</span>の行を別々に丸めた場合）は、エルミート部分
+<span class="math notranslate nohighlight">\((H + H^\dagger)/2\)</span>に置き換えられ、警告が出ます。
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>の Green 関数そのものも、すべてのセルでスピンに
+依存してはなりません（上向き・上向きと下向き・下向きのブロックが等しく、
+スピン混成ブロックがない）。許容誤差は無次元の成分に対して
+<span class="math notranslate nohighlight">\(\max(10^{-10}, \texttt{spin\_free\_tol})\)</span>です。磁性をもつ
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>はスピンの向きによらず磁性状態を表すため拒否されます
+（issue #88）。収束の緩い常磁性 UHF 解（例えばランダム初期状態から
+<code class="docutils literal notranslate"><span class="pre">EPS</span> <span class="pre">=</span> <span class="pre">6</span></code>）には<span class="math notranslate nohighlight">\(10^{-5}\)</span>程度の分裂が残ることがあります。
+UHF の収束を厳しくする、スピン対称な初期状態から UHF を始める、または
+<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>を大きくしてください。
+スピン偏極の場合は issue #88 で扱います。</p>
+<p><strong>load・ボンド・FLEX 入力での挙動。</strong> <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では、chi0q ファイルを
+出力した RPA 計算と同じ <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>/ <code class="docutils literal notranslate"><span class="pre">green_init</span></code>/ <code class="docutils literal notranslate"><span class="pre">Extern</span></code>を
+指定してください。この場合、読み込む chi0q が元のバンドで計算されている
+ため、エルミート性からの <span class="math notranslate nohighlight">\(10^{-10}\)</span>を超えるずれは、エルミート部分に
+置き換えられず拒否されます。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、および外部の<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定した場合は、
+これらのキーは使われず、その旨の警告が出ます。感受率と Green 関数は
+FLEX 計算または<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>のファイルから読み込まれるためです。</p>
+<p><strong>Hartree 項のみの</strong> <code class="docutils literal notranslate"><span class="pre">green_init</span></code>。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>のバンドは
+<span class="math notranslate nohighlight">\(T + \mathrm{Hartree}[G]\)</span>（RPA の組み立てで、Fock 項を含みません）
+です。そのため Fock 項がある場合、つまり<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>の行、オフサイトの<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の行
+（<span class="math notranslate nohighlight">\(R \neq 0\)</span>、または<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>で異なるサイトに
+ある軌道間）、または<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>部分がある場合は、
+同じ解から UHFk が出力する<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と異なります。このとき
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>を勧める警告が出ます。<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>が推奨される入力で、
+常磁性状態にはこれが整合した入力です。</p>
+</div>
 <div class="admonition warning">
 <p class="admonition-title">警告</p>
 <p><strong>修正前の</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <strong>FLEX計算の出力を使う場合。</strong>
@@ -261,6 +316,25 @@ chi0q ファイルには生成時の値が記録されており、読み込み�
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>（デフォルト）、<code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>、
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> /
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>: 平均場の一体バンドのスピン非依存性判定の絶対許容誤差
+（エネルギーの単位。上の<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>の注を参照。デフォルト
+<code class="docutils literal notranslate"><span class="pre">1e-10</span></code>、0 以上の有限の数）。測定した上向き・下向きの差やスピン混成が
+<code class="docutils literal notranslate"><span class="pre">1e-10</span></code>を超え<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>以下の場合、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+スピン平均したバンド<span class="math notranslate nohighlight">\((H_\uparrow + H_\downarrow)/2\)</span>を用い、
+スピン混成ブロックを捨て、捨てた両方の大きさを警告として出力します。
+<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>を超える場合はバンドを拒否します。スピン平均したバンドは、
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を自ら計算する場合
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）にのみ使えます。
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>では、読み込む chi0q が RPA 計算自身のバンドで
+計算されているため、<code class="docutils literal notranslate"><span class="pre">1e-10</span></code>を超えるバンドは拒否されます（<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>を
+使うか、スピン対称なバンドから chi0q を作り直してください）。<code class="docutils literal notranslate"><span class="pre">1e-10</span></code>より
+小さい値（例えば<code class="docutils literal notranslate"><span class="pre">0</span></code>）を指定すると、このバンドの判定は既定より厳しく
+なります。<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>には<code class="docutils literal notranslate"><span class="pre">green_init</span></code>に対するもう一つの用途が
+あります。Green 関数そのものを無次元の成分について許容誤差
+<span class="math notranslate nohighlight">\(\max(10^{-10}, \texttt{spin\_free\_tol})\)</span>で判定するため、G の判定は
+<code class="docutils literal notranslate"><span class="pre">1e-10</span></code>が下限で、それより厳しくはなりません。この許容誤差内の
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>でも、相互作用が大きいとバンドのスピン分裂がバンドの許容誤差を
+超えることがあり、その場合はバンドの判定のメッセージで拒否されます。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: ペアバブル<span class="math notranslate nohighlight">\(G^{(2)}\)</span>に解析的な松原 tail 補正を適用
 します（デフォルト<code class="docutils literal notranslate"><span class="pre">true</span></code>、バージョン 2.0 以降）。素朴な打ち切り和は主要な
 単位行列 tail を取りこぼし（<span class="math notranslate nohighlight">\(O(1/N_{\rm mat})\)</span>の誤差）、わずかに

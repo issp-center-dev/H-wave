@@ -215,6 +215,62 @@ can be poorly converged; production RPA/FLEX runs typically use
 <code class="docutils literal notranslate"><span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">1.0</span></code>. The chi0q file records the value it was produced
 with, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> warns on a mismatch when loading.</p>
 </div>
+<div class="admonition note" id="sc-mean-field-band-note">
+<p class="admonition-title">Note</p>
+<p><strong>Mean-field one-body band: assembly.</strong> <code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">trans_mod</span></code> (the
+one-body Hamiltonian written by UHFk) replaces the <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band;
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code> adds its Hartree term to the <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band; an
+<code class="docutils literal notranslate"><span class="pre">Extern</span></code> field (<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> times the table) is added on top. With
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (including
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> without an external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>),
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses this assembled band for
+<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>, for the chemical potential and for the Green
+function of the pairing kernel, so all three describe the same
+Hamiltonian. The keys are case-insensitive. Only a spin-independent band
+is supported, because the singlet/triplet pairing kernel has no spin
+index.</p>
+<p><strong>Spin check and</strong> <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>. A spin-dependent band (a magnetic
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> or <code class="docutils literal notranslate"><span class="pre">green_init</span></code>, or a finite <code class="docutils literal notranslate"><span class="pre">Extern</span></code> field) is refused
+with an error before <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> is computed or loaded.
+The check is made on the assembled one-body band (<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>, or the
+<code class="docutils literal notranslate"><span class="pre">Transfer</span></code> band plus the Hartree term of <code class="docutils literal notranslate"><span class="pre">green_init</span></code>, plus
+<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> times <code class="docutils literal notranslate"><span class="pre">Extern</span></code>): its up-up and down-down blocks may
+differ, and its spin-mixing blocks may be nonzero, by at most an
+absolute <span class="math notranslate nohighlight">\(10^{-10}\)</span> in energy units. This tolerance is the default
+of <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code> (below), which can raise or lower it. All entries
+must be finite. A band whose <span class="math notranslate nohighlight">\(\max|H - H^\dagger|\)</span> exceeds
+<span class="math notranslate nohighlight">\(\max(10^{-10}, 10^{-6}\max|H|)\)</span> is refused; a smaller deviation
+above <span class="math notranslate nohighlight">\(10^{-10}\)</span> (for example <span class="math notranslate nohighlight">\(\pm R\)</span> rows rounded
+independently) is replaced by the Hermitian part
+<span class="math notranslate nohighlight">\((H + H^\dagger)/2\)</span>, with a warning. The <code class="docutils literal notranslate"><span class="pre">green_init</span></code> Green
+function itself must also be spin-independent in every cell (up-up equal
+to down-down, no spin-mixing block) within
+<span class="math notranslate nohighlight">\(\max(10^{-10}, \texttt{spin\_free\_tol})\)</span> on its dimensionless
+entries: a magnetic <code class="docutils literal notranslate"><span class="pre">green_init</span></code> describes a magnetic state, whatever
+the spin direction, and is refused (issue #88). A paramagnetic UHF
+solution converged only loosely (for example <code class="docutils literal notranslate"><span class="pre">EPS</span> <span class="pre">=</span> <span class="pre">6</span></code> from a random
+start) can retain a splitting of order <span class="math notranslate nohighlight">\(10^{-5}\)</span>; tighten the UHF
+convergence, start UHF from a spin-symmetric state, or raise
+<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>. The spin-polarized case is tracked in issue #88.</p>
+<p><strong>Behaviour with</strong> <code class="docutils literal notranslate"><span class="pre">load</span></code>, <strong>bond and FLEX inputs.</strong> For <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>,
+give the same <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code> / <code class="docutils literal notranslate"><span class="pre">Extern</span></code> as the RPA run
+that wrote the chi0q file; there any deviation from Hermiticity above
+<span class="math notranslate nohighlight">\(10^{-10}\)</span> is refused instead of being replaced by the Hermitian
+part, because the loaded chi0q was computed on the raw band. With
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>, with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>, and with an
+external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>, these keys are not used and a warning says so:
+the susceptibilities and the Green function come from the FLEX run or
+from the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> file.</p>
+<p><strong>Hartree-only</strong> <code class="docutils literal notranslate"><span class="pre">green_init</span></code>. The <code class="docutils literal notranslate"><span class="pre">green_init</span></code> band is
+<span class="math notranslate nohighlight">\(T + \mathrm{Hartree}[G]\)</span> (RPA’s assembly, without the Fock
+term), so it differs from the <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> UHFk writes for the same
+solution whenever Fock terms are present: for any <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> or <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> row, an off-site <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> row
+(<span class="math notranslate nohighlight">\(R \neq 0\)</span>, or between orbitals on different sites per
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>), or the <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> part of
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>. A warning then recommends <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>, which is the
+preferred input and, for a paramagnetic state, the consistent one.</p>
+</div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
 <p><strong>Inputs from a pre-fix</strong> <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> <strong>FLEX run.</strong> That
@@ -262,6 +318,27 @@ solve restricted to that sector (see <code class="docutils literal notranslate">
 largest-real eigenvalue does not depend on <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>: absolute tolerance, in energy units, of the
+spin-independence check of the mean-field one-body band (see the
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> note above; default <code class="docutils literal notranslate"><span class="pre">1e-10</span></code>, a finite number
+<span class="math notranslate nohighlight">\(\geq 0\)</span>). When the measured up/down difference or spin mixing lies
+above <code class="docutils literal notranslate"><span class="pre">1e-10</span></code> but within <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses the
+spin-averaged band <span class="math notranslate nohighlight">\((H_\uparrow + H_\downarrow)/2\)</span>, drops the
+spin-mixing blocks, and logs a warning with both discarded magnitudes.
+Above <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code> the band is refused. The spin-averaged band is
+available only when <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> computes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> itself
+(<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>); with
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> a band beyond <code class="docutils literal notranslate"><span class="pre">1e-10</span></code> is refused, because the
+loaded chi0q was computed by the RPA run on its own band (use
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>, or regenerate chi0q from a spin-symmetric band). A value
+below <code class="docutils literal notranslate"><span class="pre">1e-10</span></code> (for example <code class="docutils literal notranslate"><span class="pre">0</span></code>) tightens this band check.
+<code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code> has a second use with <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the Green function
+itself is checked on its dimensionless entries with the tolerance
+<span class="math notranslate nohighlight">\(\max(10^{-10}, \texttt{spin\_free\_tol})\)</span>, so the G check is
+floored at <code class="docutils literal notranslate"><span class="pre">1e-10</span></code> and is never tightened below it. A <code class="docutils literal notranslate"><span class="pre">green_init</span></code>
+within that tolerance can still give a band whose spin splitting exceeds
+the band tolerance at large interaction strengths; such a band is refused
+with the band-level message.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>: Apply the analytic Matsubara tail correction to the pair
 bubble <span class="math notranslate nohighlight">\(G^{(2)}\)</span> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>; as of version 2.0). The bare truncated
 frequency sum misses the leading identity tail (an
