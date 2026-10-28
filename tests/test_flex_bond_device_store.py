@@ -650,7 +650,8 @@ class TestStoreReleaseOrder(unittest.TestCase):
 class TestKernelMatvecsAgree(unittest.TestCase):
     """The pairing kernels built from a device store and from a host store:
     their vertex blocks (uniform) or coefficients (IR) and a deterministic
-    matvec, before any eigensolver runs -- bit for bit on the fake."""
+    matvec, before any eigensolver runs -- bit for bit on the fake for the
+    uniform grid, to round-off for the IR fit."""
 
     def _kernels(self, store, pairing, half, eli, extra):
         from tests.test_bond_half_grid import _capture_kernels
@@ -660,6 +661,7 @@ class TestKernelMatvecsAgree(unittest.TestCase):
         return recs
 
     def _check(self, eli, extra):
+        from tests.test_bond_half_grid import _TOL, _blockwise_rel, _rel
         for pairing in ("singlet", "triplet", "both"):
             for half in (False, True):
                 with self.subTest(pairing=pairing, half=half):
@@ -672,6 +674,21 @@ class TestKernelMatvecsAgree(unittest.TestCase):
                         for k in a:
                             if a[k] is None:
                                 self.assertIsNone(b[k])
+                            elif eli is not None and k != "_nd":
+                                # IR: the coefficients are a host least-squares
+                                # fit whose BLAS reduction order may differ
+                                # between two runs on the same input (measured:
+                                # 3.6e-15 absolute on a CI runner), so the fit
+                                # and what follows it agree to round-off, per
+                                # channel block, not bit for bit
+                                if k == "coeffs":
+                                    dev = _blockwise_rel(b[k], a[k], a["_nd"])
+                                elif k == "const":
+                                    dev = _blockwise_rel(b[k], a[k], a["_nd"],
+                                                         ref=a["coeffs"])
+                                else:
+                                    dev = _rel(a[k], b[k])
+                                self.assertLessEqual(dev, _TOL, msg=str(k))
                             else:
                                 np.testing.assert_array_equal(np.asarray(b[k]),
                                                               np.asarray(a[k]), err_msg=str(k))
