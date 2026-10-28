@@ -2027,6 +2027,7 @@ class RPA:
                                       "longitudinal_bond_output_full",
                                       "longitudinal_bond_freq_batch",
                                       "longitudinal_bond_half_grid",
+                                      "longitudinal_bond_store",
                                       "flex_second_order")
                           if k in self.param_mod]
             if _flex_only:

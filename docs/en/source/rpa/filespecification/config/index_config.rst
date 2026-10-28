@@ -550,6 +550,78 @@ that has no effect under the current settings.
   ``[mode] enable_spin_orbital = true``. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_store``
+
+  **Type :**
+  String (``"auto"``, ``"host"`` or ``"device"``, case-insensitive; default
+  value is ``"auto"``; FLEX mode only)
+
+  **Description :**
+  Where the bond block store of the bond-resolved FLEX lives on the GPU
+  path (``gpu = true``). The store holds the bubble and the effective
+  interaction of every frequency and channel pair (with
+  ``longitudinal_bond_pairing`` a second slot for the pairing vertex, with
+  ``longitudinal_bond_output_full`` two more for the dynamic channels). In
+  host memory, every iteration copies the whole store between host and
+  device several times (the bubble's blocks out, the frequency batches in,
+  the effective interaction out and back in); in device memory these copies
+  disappear and only small arrays (the channel-0 collapses, the static
+  slices, the self-energy) come back. ``"auto"`` (default) keeps the store
+  on the device when it fits there and on the host otherwise; ``"host"``
+  always keeps it on the host (the behaviour of previous versions);
+  ``"device"`` always keeps it on the device and is refused when it does
+  not fit or when the GPU backend is not active (with ``gpu = false``
+  already when the input is read).
+
+  The admission is the device table of the bond gate with the store added
+  as a persistent row: the store fits when
+  ``1.25 * (persistent device rows + store + largest phase) <= 0.9 *
+  available device memory``, where the largest phase is
+  ``max(bubble, dressing + guard, transport)`` at a frequency batch. Under
+  ``"auto"`` the batch is at least ``ceil(4096 / nvol)`` frequencies (but
+  not more than the host table admits), so that the store does not push
+  the batch so small that the batched solves underfill the device;
+  ``"device"`` needs the store to fit at batch 1; a pinned
+  ``longitudinal_bond_freq_batch`` is checked as given. With
+  ``longitudinal_bond_pairing`` the device-store need also charges the
+  pairing's re-dressing (the pair bubble ``norb^4 * nvol * Nmat * 16``
+  bytes plus two frequency batches), which a host store left room for.
+  After the self-consistency the store leaves device memory before the
+  pairing kernel is admitted (the bubble slot is released, or moved to
+  host memory when a second pairing channel still needs it, and the vertex
+  slot moves to host memory), so the kernel can still keep
+  its blocks on the device.
+  The memory pool's
+  cached blocks are released before the free device memory is measured.
+  The decision and its reason are logged with the device table. The store
+  takes ``n_slots * Nmat_s * nvol * ND^2 * 16`` bytes, with ``Nmat_s =
+  Nmat`` (``Nmat/2 + 1`` with ``longitudinal_bond_half_grid = true``),
+  ``ND = B * norb^2`` and ``n_slots`` = 1 without pairing, 2 with it, plus
+  2 with ``longitudinal_bond_output_full``. For example, with ``ND`` = 36,
+  ``nvol`` = 1024 and ``Nmat`` = 1024 one slot is 20.3 GiB on the full
+  grid and 10.1 GiB on the half grid, so a singlet pairing run (two
+  slots) fits a 40 GB device only with the half grid. The host memory
+  table (``longitudinal_bond_memory_cap_gb``) is not reduced when the store
+  goes to the device.
+
+  If allocating the store on the device runs out of memory despite the
+  admission (fragmentation, another process), ``"auto"`` logs a warning and
+  continues with the store in host memory and the host-store frequency
+  batch; nothing has been computed at that point. ``"device"`` stops with
+  the error. An out-of-memory error during an iteration is not retried;
+  its message suggests ``"host"`` when the store is on the device.
+
+  Results: only where the store lives changes, not the arithmetic. At the
+  same frequency batch (``longitudinal_bond_freq_batch`` pinned), the
+  device store gives the results of the host store, bit for bit or, when
+  the GPU libraries pick different kernels for the differently aligned
+  arrays, to round-off. Under ``"auto"`` the device store can come with a
+  smaller frequency batch than the host store (the store takes device
+  memory the batch would otherwise use), and a different batch changes
+  the results at round-off level. The CPU path is unchanged (the store is
+  always in host memory there). Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``longitudinal_bond_pairing``
 
   **Type :**
