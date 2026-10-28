@@ -1160,10 +1160,12 @@ Domain of this version:
 - no ``sigma_init`` / ``trans_mod`` / ``green_init``: the run starts from
   the bare Hartree-Fock state.
 
-The reduced scheme refuses spin-orbital input. The static Eliashberg solver
-(``hwave_sc``) reads the spin-orbital FLEX outputs (see
-:ref:`sc_spin_orbital`); its dynamic entry and ``hwave_tsweep`` with
-``run_eliashberg = true`` still refuse ``enable_spin_orbital``. A FLEX-only
+The reduced scheme refuses spin-orbital input. The Eliashberg solver
+(``hwave_sc``) reads the spin-orbital FLEX outputs, with ``frequency =
+"static"`` (see :ref:`sc_spin_orbital`) and with ``frequency = "dynamic"``
+(see :ref:`sc_spin_orbital_dynamic`); its dynamic bond path and
+``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
+``enable_spin_orbital``. A FLEX-only
 ``hwave_tsweep`` runs it with ``warm_start = false`` (the spin-orbital FLEX
 takes no seed).
 

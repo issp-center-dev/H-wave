@@ -91,9 +91,11 @@ that has no effect under the current settings.
   - ``calc_scheme = "reduced"`` refuses spin-orbital input;
   - the static Eliashberg solver (``hwave_sc``) reads the outputs of such a
     run with ``[eliashberg] chi0q_mode = "flex"`` (write ``[file.output]
-    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. Its
-    dynamic entry and ``hwave_tsweep`` with ``run_eliashberg = true`` still
-    refuse ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
+    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. The
+    on-site dynamic solver (``frequency = "dynamic"``) reads them too (see
+    :ref:`sc_spin_orbital_dynamic`); the dynamic bond path and
+    ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
+    ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
     ``warm_start = false``.
 
   **Eliashberg solver.** ``hwave_sc`` solves the static linearized
@@ -101,7 +103,9 @@ that has no effect under the current settings.
   :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site interactions
   and ``chi0q_mode = "calc"``, ``"load"`` or ``"flex"``; the scope, the
   outputs and the refused combinations are listed in
-  :ref:`sc_spin_orbital`.
+  :ref:`sc_spin_orbital`. With ``frequency = "dynamic"`` it solves for the
+  frequency-resolved gap (uniform grid, ``chi0q_mode = "calc"`` or
+  ``"flex"``); see :ref:`sc_spin_orbital_dynamic`.
 
 .. _rpa_calc_scheme_auto:
 
@@ -962,6 +966,31 @@ that has no effect under the current settings.
   History depth of the Anderson acceleration. Memory grows by 2*depth
   sigma-sized arrays (kept on the device under GPU execution).
 
+- ``flex_sigma_hermitian_projection``
+
+  **Type :**
+  Boolean (default value is true; FLEX mode only)
+
+  **Description :**
+  Projects the self-energy onto
+  :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+  after every update of the SCF loop (linear or Anderson mixing, with or
+  without ``flex_hartree_fock``) and on a ``sigma_init`` seed:
+  :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`
+  at every :math:`\mathbf{k}`, on the uniform grid or the IR nodes. The
+  relation holds exactly for the self-energy of a Hermitian problem and the
+  FLEX map preserves it, so a run that is already symmetric changes only at
+  rounding level. Without it, a cold start past the bare Stoner instability
+  can leave a slowly decaying asymmetric remnant in ``sigma.npz``, or
+  converge, with no other signal, to a symmetry-broken, non-causal branch
+  that is not the self-energy of the Hermitian problem; a
+  ``flex_hartree_fock = true`` run refuses such an archive as
+  ``sigma_init``. ``false`` restores the unprojected update, and the run
+  then warns at its end when the final relative deviation exceeds
+  :math:`10^{-6}`. Archives written without the projection (including by
+  earlier versions) can be audited with ``hwave_sigma_split --check
+  sigma.npz``.
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -976,8 +1005,12 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
 ``ir_wmax``, ...) is documented in
 :ref:`the dynamic-frequency section of the Eliashberg solver tutorial
-<sc_dynamic_frequency>`. The two keys of the spin-orbital static path are
-listed first.
+<sc_dynamic_frequency>`. The two keys of the spin-orbital path (static and
+dynamic), ``flex_chiq`` and ``flex_chi0q``, are listed first. Both are read
+with ``chi0q_mode = "flex"`` by the static path (``frequency = "static"``) and
+by the dynamic path (``frequency = "dynamic"``) alike. The estimated peak
+memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
+(see :ref:`sc_spin_orbital_dynamic_memory`).
 
 - ``flex_chiq``
 
@@ -1197,13 +1230,15 @@ They specify the settings of the input and output files, respectively, on the ty
   **Description :**
   This parameter specifies the filename of the initial configuration exported from UHFk by the parameter ``file.output.rpa``. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.
 
+  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units, adjustable with ``[eliashberg] spin_free_tol``, in which case a band within that tolerance is spin-averaged, but only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself, i.e. with ``chi0q_mode = "calc"`` or on the bond path; with ``chi0q_mode = "load"`` no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
+
 - ``green_init``
 
   **Type :**
   String
 
   **Description :**
-  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used.
+  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The ``green_init`` band contains the Hartree term only; when Fock terms are present, ``trans_mod`` is recommended (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`).
 
 - ``sigma_init``
 
@@ -1219,10 +1254,22 @@ They specify the settings of the input and output files, respectively, on the ty
   loop" for the sweep workflow. With ``flex_hartree_fock = true`` only a
   ``sigma.npz`` written by such a run (``sigma_convention = "split"``,
   carrying ``sigma_static`` and ``sigma_fluct``) is accepted, the two
-  components seed the loop exactly as stored, and a mean field
+  components seed the loop as stored (apart from the projection of
+  ``flex_sigma_hermitian_projection``), and a mean field
   (``trans_mod`` / ``green_init``) given at the same time is refused; a
   legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
   (see :ref:`flex_bond_hf`).
+
+  The seed's relative deviation from :math:`\Sigma(\mathbf{k}, i\omega_n) =
+  \Sigma(\mathbf{k}, -i\omega_n)^\dagger` is measured on loading, and two
+  cases are distinguished. (1) A deviation above :math:`10^{-3}` produces a
+  warning, whether ``flex_sigma_hermitian_projection`` is on (the seed is
+  projected and the deviation removed is logged) or off (the seed is used
+  as is). (2) A non-causal, strongly asymmetric archive that is used as is
+  (projection off) with ``flex_hartree_fock = true`` fails the Hermiticity
+  check of the equal-time density: it is refused at ``flex_hf_density_tol``
+  under ``flex_guard_policy = "refuse"``, and gives a warning under
+  ``"warn"``. Audit an archive beforehand with ``hwave_sigma_split --check``.
 
 
 ``file.input.interaction`` section

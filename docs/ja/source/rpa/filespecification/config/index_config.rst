@@ -80,15 +80,19 @@ TOML形式
   - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は\ ``[eliashberg] chi0q_mode =
     "flex"``\ でこの計算の出力を読みます（\ ``[file.output]``\ の\ ``chiq``\ ・
     ``chi0q``\ ・\ ``green``\ を指定してください）。\ :ref:`sc_spin_orbital`\ を参照。
-    その動的エントリと\ ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
+    オンサイトの動的ソルバー（\ ``frequency = "dynamic"``\ ）もこれを読みます
+    （\ :ref:`sc_spin_orbital_dynamic`\ を参照）。動的なボンド分解の経路と
+    ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
     ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
-    ``warm_start = false``\ で実行できます
+    ``warm_start = false``\ で実行できます。
 
   **Eliashberg ソルバー。** ``hwave_sc``\ はスピン軌道模型の静的な線形化
   Eliashberg 方程式を、ひとつの\ :math:`2N \times 2N`\ ギャップ行列（\ ``pairing_type``\ なし）、
   オンサイト相互作用、\ ``chi0q_mode = "calc"``\ ・\ ``"load"``\ ・\ ``"flex"``\ で
   解きます。適用範囲、出力、拒否される組み合わせは\ :ref:`sc_spin_orbital`\ に
-  まとめています。
+  まとめています。\ ``frequency = "dynamic"``\ では振動数に依存するギャップを
+  求めます（一様格子、\ ``chi0q_mode = "calc"``\ または\ ``"flex"``\ ）。
+  :ref:`sc_spin_orbital_dynamic`\ を参照してください。
 
 .. _rpa_calc_scheme_auto:
 
@@ -826,6 +830,12 @@ TOML形式
 
   **説明 :** Anderson 加速の履歴の深さを指定します。メモリは自己エネルギーサイズの配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
 
+- ``flex_sigma_hermitian_projection``
+
+  **形式 :** bool型 (デフォルトは true、FLEXモードのみ)
+
+  **説明 :** SCF ループで自己エネルギーを更新するたびに（線形混合・Anderson 加速、\ ``flex_hartree_fock``\ の有無によらず）、また\ ``sigma_init``\ の初期値に対して、\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ を満たす部分へ射影します（各\ :math:`\mathbf{k}`\ で\ :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 、一様格子でも IR ノード上でも）。この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像もこれを保つため、既に対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、裸の Stoner 不安定性を超えたコールドスタートで\ ``sigma.npz``\ にゆっくり減衰する非対称な残差が残るか、他に何の兆候もなく、対称性の破れた非因果的な解（エルミートな問題の自己エネルギーではない）に収束することがあり、\ ``flex_hartree_fock = true``\ の計算はそのようなアーカイブを\ ``sigma_init``\ として拒否します。\ ``false``\ で射影しない従来の更新に戻り、最終的な相対偏差が\ :math:`10^{-6}`\ を超えると終了時に警告します。射影なしで（以前のバージョンを含む）書き出したアーカイブは\ ``hwave_sigma_split --check sigma.npz``\ で確認できます。
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -840,8 +850,12 @@ TOML形式
 テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
 :ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
-<sc_dynamic_frequency>`\ で説明しています。スピン軌道の静的経路の2つのキーを
-先に示します。
+<sc_dynamic_frequency>`\ で説明しています。スピン軌道の経路（静的・動的）の
+2つのキー（\ ``flex_chiq``\ と\ ``flex_chi0q``\ ）を先に示します。どちらも静的な経路
+（\ ``frequency = "static"``\ ）と動的な経路（\ ``frequency = "dynamic"``\ ）の両方が
+``chi0q_mode = "flex"``\ のときに読みます。動的な経路のピークメモリの見積もりは
+``[eliashberg] mem_limit_gb``\ と比較されます
+（:ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
 
 - ``flex_chiq``
 
@@ -1058,18 +1072,28 @@ TOML形式
 
   **説明 :** UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の\ ``file.output.rpa``\ に指定した出力ファイルのファイル名を指定します。
 
+  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は\ ``hwave_sc``\ 自身が\ :math:`\chi_0(\mathbf{q})`\ を計算する場合、すなわち\ ``chi0q_mode = "calc"``\ またはボンド経路に限られ、\ ``chi0q_mode = "load"``\ ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは使われません。``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
+
 
 - ``green_init``
 
   **形式 :** str型
 
-  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。
+  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。\ ``green_init``\ のバンドは Hartree 項のみを含むため、Fock 項がある場合は\ ``trans_mod``\ を推奨します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。
 
 - ``sigma_init``
 
   **形式 :** str型（FLEXモードのみ）
 
-  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
+  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります（\ ``flex_sigma_hermitian_projection``\ の射影を除く）。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
+
+  読み込み時に、種の\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+  相対偏差を測り、次の二つの場合を区別します。(1) 偏差が\ :math:`10^{-3}`\ を超えると、
+  ``flex_sigma_hermitian_projection``\ が有効（種を射影し、除去した偏差をログに出す）でも
+  無効（種をそのまま使う）でも警告します。(2) 射影なしでそのまま使われる、非因果的で強く
+  非対称なアーカイブは、\ ``flex_hartree_fock = true``\ では等時刻密度のエルミート性の
+  検査に失敗します。\ ``flex_guard_policy = "refuse"``\ では\ ``flex_hf_density_tol``\ で拒否され、
+  ``"warn"``\ では警告になります。事前に\ ``hwave_sigma_split --check``\ で確認できます。
 
 
 ``file.input.interaction``\ セクション

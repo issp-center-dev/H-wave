@@ -394,6 +394,7 @@ GPU 経路では、条件の良い写像で値の代わりに\ ``in bracket [low
     FLEX iteration 1/100
     FLEX._find_mu_dressed: mu = -0.398893
       convergence: |dSigma|/|Sigma| = 1.000e+00
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 1.055812 at q = (0.5, 0.5, 0); charge -0.682922 at q = (0, 0, 0)
     FLEX iteration 2/100
     FLEX._find_mu_dressed: mu = -0.291966
       convergence: |dSigma|/|Sigma| = 9.876e-01
@@ -401,6 +402,7 @@ GPU 経路では、条件の良い写像で値の代わりに\ ``in bracket [low
     FLEX iteration 64/100
     FLEX._find_mu_dressed: mu = -0.249146
       convergence: |dSigma|/|Sigma| = 9.241e-07
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
     FLEX converged after 64 iterations
 
 
@@ -467,6 +469,13 @@ FLEX はデフォルトで自己無撞着ループを\ :math:`\Sigma = 0`\ か�
 になります。``sigma.npz``\ は\ ``CellShape``\ を記録するため、体積が同じでも
 ``[2,8,1]``\ と\ ``[4,4,1]``\ のようなアスペクト比違いも検出されます）。
 continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定してください。
+U や T のスキャンの刻みの選び方と、遠すぎるシードの見分け方は
+:ref:`flex_stoner_divergence`\ を参照してください。
+
+アーカイブを種として使う前に確認するには、\ ``hwave_sigma_split --check sigma.npz``\ を
+実行します。\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+相対偏差を表示し、\ ``--asymmetry-tol``\ を超えると終了ステータス 1 を返します
+（\ :ref:`flex_bond_hf_tutorial`\ を参照）。
 
 ``calc_scheme = "general"``\ のシードは、どの2次カーネルで作られたかも記録
 しています。廃止された\ ``"takimoto"``\ カーネルのシードも初期値として警告付きで
@@ -485,6 +494,99 @@ continuation スイープでは\ ``Nmat``\ と\ ``CellShape``\ を固定して�
       [file.input]
         path_to_input = "."
         sigma_init = "run_T0.50/output/sigma.npz"
+
+.. _flex_stoner_divergence:
+
+Stoner 因子と発散した計算
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ログには、各反復がバブルの静的不安定にどれだけ近いかが出力されます。この行は
+最初と最後の反復（および後述の発散の兆候があるとき）に INFO レベルで、それ以外の
+反復では DEBUG レベルで出力されます。
+
+.. code-block:: text
+
+      Stoner factor max_q eig[U chi0(q, i nu = 0)]: spin 0.689976 at q = (0.5, 0.5, 0); charge -0.503243 at q = (0, 0, 0)
+
+各チャネルの値は
+
+.. math::
+
+   \lambda = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\}
+
+で、\ **実**\ 固有値の最大値です（\ :math:`1 + \chi_0 W`\ を特異にするのは 1 に達する
+実固有値だけです。\ :math:`|\mathrm{Im}\,e| \le 10^{-6} \max|e|`\ のとき実とみなします）。
+スピン軌道相互作用を含む非エルミートな積などで複素共役対がより右にある場合は、
+行に\ ``(max Re over complex pairs ...)``\ が付きます。\ :math:`\chi_0`\ はその反復の dressed Green 関数から作ったバブル、
+:math:`W`\ はそのチャネルの和\ :math:`[1 + \chi_0 W]^{-1}\chi_0`\ のバーテックスで、
+``calc_scheme = "reduced"``\ ではスピン\ :math:`W = -U_s`\ 、電荷\ :math:`+U_c`\ 、
+``"general"``\ では軌道の完全なバーテックス、スピン軌道 FLEX では反対称化した
+バーテックスによる 1 つの\ ``spinful``\ の値です。1 バンド Hubbard 模型ではスピンの値は
+:math:`U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)`\ です。\ :math:`\mathbf{q}`\ は
+逆格子ベクトル単位です。ボンド分解経路（\ ``longitudinal_bond_channels = true``\ ）では
+この行は出力されず、条件数ガードの行がその役割を担います。
+
+読み方: :math:`\lambda \ge 1`\ は、そのバブルに対してチャネルの和が静的に不安定で
+あることを意味します。収束した FLEX 解は 1 未満にとどまり、1 からの距離が不安定点への
+近さを表します。コールドスタートでは 1 を超えた値から始まって回復することがあります
+（上のサンプルは 1.056 から始まります）。warm start による U スキャンの刻みの
+目安（大まかな経験則）: 最初の写像は新しい U と前の自己エネルギーを使うので、前の計算が
+:math:`\lambda`\ で終わっていれば最初の値はおよそ\ :math:`\lambda (U + \Delta U)/U`\ で、
+これを 1 未満に保つには\ :math:`\Delta U / U < (1 - \lambda)/\lambda`\ です
+（\ :math:`\lambda = 0.95`\ で約 5 %）。これは、チャネルの全ての相互作用パラメータが U と
+ともにスケールすること（V、U'、J を固定する場合は成り立ちません）、\ :math:`\chi_0`\ が
+前の自己エネルギーでの値のままであること、最初の写像で 1 未満なら十分であること、を仮定
+しています。いずれも保証されず、最初の値が 1 未満でも収束は保証されません。はっきり
+小さい刻みを取り、ログの最初の反復の値を確認してください。温度スキャンでも同様に
+最初の反復の値を確認してください。
+
+あるチャネルで\ :math:`\lambda \ge 1`\ が 3 反復続けて\ :math:`|d\Sigma|/|\Sigma| \ge 0.5`\ と
+同時に起こるか、刻みが有限でない場合、ログに一度だけ警告
+（\ ``FLEX iteration N looks divergent: ...``\ ）が出ます。この警告で計算は止まりません。
+
+自己エネルギーが発散すると、\ :math:`N(\mu)`\ が粒子数として振る舞わなくなるため、
+通常は化学ポテンシャル探索で計算が停止します。正常な\ :math:`N(\mu)`\ は 0 から状態数まで
+変化するので、その間の目標値には必ず到達します。目標値がその範囲内なのに探索が失敗した
+場合、エラーは自己エネルギーの発散を指摘し、バンド窓（裸のバンド範囲を\ :math:`1 + 10T`\ だけ
+広げた範囲）での\ :math:`N(\mu)`\ の異常（平坦、非有限、物理的範囲外、非単調）も
+示します。フィリングを原因とはせず、これらの原因をそのまま示します。次は
+1 バンド模型で、収束した\ :math:`U = 2`\ の自己エネルギーから\ :math:`U = 200`\ へ
+warm start した例です。
+
+.. code-block:: text
+
+    RuntimeError: FLEX._find_mu_dressed: chemical-potential root not bracketed
+    after expansion to [-7.12485009544407e+31, 7.12485009544407e+31]
+    (N-Ncond = -8.0, -8.0). The self-energy has diverged, or ir_wmax does
+    not cover the spectrum (N(mu) leaves the physical range [0, 16] over the
+    band window [-9, 11] (from -3.12821 to -2.96742)); the target filling is
+    reachable, so this is not a problem of the filling or the temperature.
+    Check ir_wmax first if the run had converged so far. The last completed
+    iteration was 1 with
+    |dSigma|/|Sigma| = 1.000e+00 and Stoner factor spin 44.214974 at
+    q = (0.5, 0.5, 0); charge -24.889970 at q = (0, 0, 0). Likely causes:
+    too large a step in a warm-started scan (U or T; the previous
+    self-energy is far from the new fixed point), too large a mixing (Mix),
+    or the starting point. Use a smaller U/T step, a smaller Mix, or a cold
+    start (no sigma_init).
+
+目標値がその範囲外の場合（例えば\ ``Ncond``\ が状態数より大きい場合）に限り、
+メッセージは\ ``Check the target filling/Ncond and temperature``\ となります。
+判定には拡張した区間の両端の値を使いません。\ ``matsubara_basis = "ir"``\ では
+自己エネルギーによらず遠方の両端で\ :math:`N(\mu)`\ が 0 に近づくため、そこでの値が
+等しいこと（上の\ ``N-Ncond = -8.0, -8.0``\ ）だけでは発散の兆候になりません。
+
+``matsubara_basis = "ir"``\ では、同じ失敗は\ ``ir_wmax``\ が dressed スペクトルを
+覆っていないことも意味し得ます（IR の\ :math:`N(\mu)`\ は基底のフィットで、基底の
+帯域内でのみ有効です）。そのためこの経路ではメッセージが両方の原因を挙げます。
+また、拡張した区間で根が見つからなくてもバンド窓上の\ :math:`N(\mu)`\ が目標値を
+横切る場合（IR 経路では倍々の拡張が\ ``ir_wmax``\ を飛び越え得ます）、失敗せずに
+警告付きでその部分区間で根を求めます。ただし窓上の\ :math:`N(\mu)`\ が健全な
+（有限で、物理的範囲内にあり、増加する）場合に限ります。歪んだ窓では上記のエラーに
+なります。有限でない自己エネルギーと、0 未満または
+状態数を超える目標値は、探索の前に拒否されます。
 
 .. _flex_bond_hf_tutorial:
 
@@ -620,7 +722,9 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 スピンフリーのため）。
 
 *以前の計算から再開する。* ``flex_hartree_fock = true``\ で出力された\ ``sigma.npz``\ は
-分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ ）。
+分割成分を含み、そのまま新しい計算の初期値になります（``[file.input] sigma_init``\ 。
+``flex_sigma_hermitian_projection``\ の射影のみが適用され、収束したアーカイブは丸め誤差の
+範囲でしか変わりません）。
 その場合は\ ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ を削除（またはコメント
 アウト）してください。アーカイブは既に静的部分を含むため、同時に平均場を渡すと拒否されます。
 ``flex_hartree_fock``\ なしの計算の\ ``sigma.npz``\ （や手作りの全自己エネルギー）は
@@ -635,6 +739,36 @@ UHFk 解から始まり、Hartree-Fock 項が二重に数えられることは�
 最後の形式は、UHFk の\ ``trans_mod``\ アーカイブと計算の裸の Transfer 入力から静的補正を
 作ります（アーカイブをソルバーの規約で Fourier 変換し、裸の移動積分を引き、スピンフリーの
 ブロックに縮約します）。\ ``--force``\ で既存の出力を上書きします。
+
+変換ツールはまず全自己エネルギーを
+:math:`[\Sigma(\mathbf{k}, i\omega_n) + \Sigma(\mathbf{k}, -i\omega_n)^\dagger]/2`
+に対称化し、除去した相対偏差
+:math:`\max|\Sigma(\mathbf{k}, i\omega_n) - \Sigma(\mathbf{k}, -i\omega_n)^\dagger|
+/ \max|\Sigma|`\ をログに出力します。収束したアーカイブには丸め誤差しか含まれません。
+射影なし（\ ``flex_sigma_hermitian_projection = false``\ 、または射影のないバージョン）で
+裸の Stoner 不安定性を超えたコールドスタートから書き出したアーカイブには、ゆっくり減衰する
+残差（\ :math:`10^{-5}`\ 程度が観測されています）が残ることがあり、対称化でこれを除去します。
+しかし計算が、他に何の兆候もなく、対称性の破れた非因果的な解（相対偏差\ :math:`\sim 0.3`\ 、
+Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が正の固有値を持つ）に
+**収束** してしまっている場合もあり、これはエルミートな問題の自己エネルギーではありません。
+そのため偏差が\ ``--asymmetry-tol``\ （デフォルト\ :math:`10^{-3}`\ ）を超える場合は拒否します。
+そのような計算は射影を有効にしてやり直してください。
+
+**射影の導入以前に書き出したアーカイブ。** 裸の Stoner 不安定性を超えた計算の
+``sigma.npz``\ （およびそこから導いた結果）は、次のコマンドで確認してください::
+
+   hwave_sigma_split --check sigma.npz
+
+相対偏差を表示し、\ ``--asymmetry-tol``\ を超える場合は終了ステータス 1 を返します。
+``--check``\ が取るのは入力アーカイブ（と\ ``--asymmetry-tol``\ ）だけで、出力アーカイブや
+変換用のオプションを付けるとエラーになります。\ ``--asymmetry-tol``\ は、\ ``--check``\ では
+終了ステータスのしきい値、変換では拒否のしきい値になります::
+
+   hwave_sigma_split --check sigma.npz --asymmetry-tol 1e-6
+   hwave_sigma_split total.npz seed.npz --zero-static --asymmetry-tol 1e-4
+
+射影なしの計算は、最終的な偏差が\ :math:`10^{-6}`\ を超えると終了時に警告し、
+そのアーカイブを\ ``sigma_init``\ として読み込むと\ :math:`10^{-3}`\ を超える場合に警告します。
 
 **スピン感受率** :math:`\chi_s(\mathbf{q}, i\nu_0)`:
 
@@ -1275,12 +1409,12 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``energy.dat``\ の\ ``Sx``\ ・\ ``Sy``\ ・\ ``Sz``\ は全スピン軌道密度から計算されます
   （UHFk と同様、\ ``Sx``\ と\ ``Sy``\ はスピン軌道計算でのみ書き出されます）。
 
-静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
+``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこれらのアーカイブ
 （\ ``chiq.npz``\ 、\ ``chi0q.npz``\ 、\ ``green.npz``\ 。FLEX の実行で
 ``[file.output]``\ の\ ``chiq``\ 、\ ``chi0q``\ 、\ ``green``\ を指定してください。
-FLEX は指定されたアーカイブだけを出力します）を読みます。
-:ref:`sc_spin_orbital`\ を参照してください。動的 Eliashberg ソルバーはこれらを
-受け付けません。
+FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
+（\ :ref:`sc_spin_orbital`\ を参照）でも、すべてのボソン振動数の\ :math:`\chi`\ を使う
+動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
 
 ``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
@@ -1329,6 +1463,24 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
      - 5
      - Anderson 加速の履歴の深さ\ :math:`m`\ 。メモリは\ :math:`\Sigma`\ サイズの
        配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
+   * - ``flex_sigma_hermitian_projection``
+     - bool
+     - true
+     - 自己エネルギーを更新するたびに（および\ ``sigma_init``\ の初期値に対して）、
+       :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+       を満たす部分へ射影します。すなわち各\ :math:`\mathbf{k}`\ で
+       :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 。
+       この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像も
+       これを保つため、対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、
+       裸の Stoner 不安定性を超えたコールドスタートでは丸め誤差程度の非対称成分が
+       過渡的な発散とともに増幅されます。計算はゆっくり減衰する残差を残すか、
+       他に何の兆候もなく、対称性の破れた非因果的な解（エルミートな問題の
+       自己エネルギーではない）に収束することがあります。そのようなアーカイブは
+       ``sigma_init``\ に使う\ ``flex_hartree_fock = true``\ の計算の密度チェックでも
+       拒否されます。一様格子と IR ノードの両方、すべてのスキームで適用されます。
+       ``false``\ で射影しない従来の更新に戻り、最終的な偏差が\ :math:`10^{-6}`\ を
+       超えると終了時に警告します。既存のアーカイブの確認には
+       ``hwave_sigma_split --check``\ を使います。
    * - ``matsubara_basis``
      - str
      - "uniform"
