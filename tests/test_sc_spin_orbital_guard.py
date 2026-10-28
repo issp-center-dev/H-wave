@@ -7,11 +7,12 @@ spin-orbital dimension; paramagnetic S/C rules on spin-orbital indices;
 norb never halved) -- a silent wrong result.
 
 The static entry (calc_eliashberg, frequency = "static") now solves the
-spin-orbital gap equation (tests/test_sc_spin_orbital.py) and refuses only
-its unsupported combinations, before any work; the entries that do not
-support spin-orbital models (eliashberg_dynamic.solve_dynamic, the dynamic
-bond path, the temperature sweep) keep refusing it outright through
-reject_spin_orbital_mode.
+spin-orbital gap equation (tests/test_sc_spin_orbital.py), and so does the
+on-site dynamic solver (frequency = "dynamic", issue #284,
+tests/test_eliashberg_dynamic_so.py); both refuse only their unsupported
+combinations, before any work. The entries that do not support spin-orbital
+models (the dynamic bond path, the temperature sweep) keep refusing it
+outright through reject_spin_orbital_mode.
 """
 
 import os
@@ -174,7 +175,9 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         """A mode and an eliashberg section suffice: the configuration guard
         fires before any required key (mode.param, files) is even read -- a
         guard moved after expensive work would raise KeyError here."""
-        for eli in ({"frequency": "dynamic"}, {"Bond_Channels": True},
+        for eli in ({"frequency": "dynamic"},
+                    {"frequency": "dynamic", "matsubara_basis": "ir"},
+                    {"Bond_Channels": True},
                     {"eigenvalue_method": "subspace"}):
             with self.subTest(eli=eli):
                 with self.assertRaises(ValueError) as cm:
@@ -183,8 +186,10 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
                 self.assertIn("enable_spin_orbital", str(cm.exception))
 
     def test_dynamic_entry_rejects_first(self):
-        """solve_dynamic is publicly callable; the guard fires before any
-        other configuration is read (a minimal dict suffices)."""
+        """solve_dynamic is publicly callable; in spin-orbital mode it reaches
+        the spin-orbital dynamic solver, whose configuration guard fires before
+        any other configuration is read (a minimal dict suffices: the default
+        chi0q_mode = "load" is refused)."""
         from hwave.solver import eliashberg_dynamic
         with self.assertRaises(ValueError) as cm:
             eliashberg_dynamic.solve_dynamic(

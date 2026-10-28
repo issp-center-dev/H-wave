@@ -41,6 +41,7 @@ from . import backend as _bk
 from . import bubble
 from . import spin_orbital
 from . import matsubara as _ms
+from . import flex_diagnostics as _diag
 
 
 def _eigvals_small(M):
@@ -919,6 +920,12 @@ class FLEX(RPA):
                 "mixing_scheme must be 'linear' or 'anderson', got '{}'."
                 .format(self.mixing_scheme))
         self.anderson_depth = int(self.param_mod.get("anderson_depth", 5))
+        # issue #281: project the self-energy onto the subspace with
+        # Sigma(k, i w) = Sigma(k, -i w)^dag after every update (see
+        # flex_mixing for the derivation of where the relation is exact).
+        self.flex_sigma_hermitian_projection = _bk.strict_bool(
+            self.param_mod.get("flex_sigma_hermitian_projection", True),
+            "[mode.param] flex_sigma_hermitian_projection")
 
         # Matsubara-axis representation (design: docs/design/ir-matsubara.md,
         # Stage 2): the default uniform grid, or the sparse-ir intermediate
@@ -965,6 +972,10 @@ class FLEX(RPA):
         logger.info("    max_iter        = {}".format(self.max_iter))
         logger.info("    mix             = {}".format(self.mix))
         logger.info("    eps             = {:e}".format(self.eps))
+        if self.flex_sigma_hermitian_projection:
+            # logged when on (the default) only: a run with the projection
+            # switched off logs exactly what it did before issue #281
+            logger.info("    sigma Hermitian projection = on")
         # The inherited _show_params ran before FLEX resolved 'auto', so it
         # printed the deferred marker; restate the settled value and the
         # token that produced it (#167).
@@ -1276,6 +1287,9 @@ class FLEX(RPA):
             return self._solve_restoring_host_attrs(green_info, path_to_output)
         finally:
             self._second_order_device = None
+            # the log-only iteration record is solve-scoped (issue #282)
+            self._scf_monitor = None
+            self._stoner_last = None
             # the spin-orbital vertex is solve-scoped too (it may be a device
             # array of Nvol (2 norb)^4 entries)
             self._so_vertex = None
@@ -1300,6 +1314,10 @@ class FLEX(RPA):
         in RPA.
         """
         logger.info("Start FLEX calculations")
+        # per-solve diagnostics of the Hermitian projection (issue #281)
+        self.sigma_hermitian_removed_max = 0.0
+        self.sigma_seed_hermitian_deviation = None
+        self.sigma_final_hermitian_deviation = None
 
         beta = 1.0 / self.T
         nvol = self.lattice.nvol
@@ -1503,6 +1521,7 @@ class FLEX(RPA):
             else:
                 sigma = xp.asarray(seed)
                 logger.info("FLEX: warm-starting the SCF loop from sigma_init")
+                sigma = self._project_sigma_seed(sigma)
         else:
             sigma = xp.zeros(expected, dtype=np.complex128)
 
@@ -1519,6 +1538,9 @@ class FLEX(RPA):
         n_iter_done = 0
         mixer = (_AndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
+        # log-only record of the iteration (issue #282): Stoner factor lines
+        # and the context of a failed chemical-potential search
+        self._scf_monitor = _diag.ScfMonitor(logger)
         for iteration in range(self.max_iter):
             logger.info("FLEX iteration {}/{}".format(iteration + 1, self.max_iter))
 
@@ -1590,12 +1612,17 @@ class FLEX(RPA):
             # Step 7: Mix and check convergence
             diff = self._calc_convergence(sigma, sigma_new)
             logger.info("  convergence: |dSigma|/|Sigma| = {:.3e}".format(diff))
+            self._scf_monitor.record(
+                iteration + 1, diff, self._stoner_last,
+                last=diff < self.eps or iteration + 1 == self.max_iter)
 
             n_iter_done = iteration + 1
             if mixer is not None:
                 sigma = mixer.step(sigma, sigma_new)
             else:
                 sigma = (1.0 - self.mix) * sigma + self.mix * sigma_new
+            if self.flex_sigma_hermitian_projection:
+                sigma = self._project_sigma_update(sigma, iteration + 1)
 
             if diff < self.eps:
                 logger.info("FLEX converged after {} iterations".format(
@@ -1607,6 +1634,9 @@ class FLEX(RPA):
             logger.warning("FLEX did not converge after {} iterations "
                            "(diff={:.3e}, eps={:.3e})".format(
                                self.max_iter, diff, self.eps))
+
+        if self.max_iter > 0:
+            self._log_sigma_projection_summary(sigma)
 
         # SCF outcome, for programmatic consumers (sweeps, tests, mixer
         # comparisons)
@@ -2239,6 +2269,7 @@ class FLEX(RPA):
         del self._phase_b_seed            # the working state owns the seed from here on (spec 3.6)
         if np.any(state.static != 0) or np.any(state.fluct != 0):
             logger.info("FLEX: warm-starting the Phase B loop from the seed")
+            state = self._project_sigma_seed(state)
         mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
         gate = bool(self.longitudinal_bond_channels)
@@ -2247,6 +2278,7 @@ class FLEX(RPA):
                            "linear mixing is known to mis-converge near the charge "
                            "instability; consider mixing_scheme='anderson'.")
         counter = PassCounter(self.eps, needed=3)
+        self._scf_monitor = _diag.ScfMonitor(logger)   # log-only (issue #282)
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
@@ -2300,6 +2332,7 @@ class FLEX(RPA):
                 # before the next map allocates theirs (spec 3.6: one set)
                 chi0q_out = chi_s = chi_c = None
                 self._bond_last = None
+                self._stoner_last = None
                 with self._traced("green_mu"):
                     sigma = xp.asarray(state.total())
                     if self.calc_mu:
@@ -2364,6 +2397,8 @@ class FLEX(RPA):
                 done, count = counter.update(res_sigma, res_g, res_comp)
                 logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
                             .format(res_sigma, res_g, res_comp, count))
+                self._scf_monitor.record(iteration + 1, res_sigma, self._stoner_last,
+                                         last=done or iteration + 1 == self.max_iter)
                 # the guard diagnostics of this map (issue #199): the values the
                 # tolerances are compared against, iteration by iteration, so that
                 # an approach to an instability is visible before it refuses
@@ -2404,6 +2439,10 @@ class FLEX(RPA):
                 if not ok:
                     raise ValueError("the mixed static self-energy is not Hermitian "
                                      "(relative deviation {:.3e})".format(err))
+                if self.flex_sigma_hermitian_projection:
+                    # after the Hermiticity guard, so that a defective static
+                    # map is still refused rather than silently repaired
+                    state = self._project_sigma_update(state, iteration + 1)
                 heff = _hf.heff_eigenpairs(np.asarray(self.H0_k)[0], state.static[0, 0])
                 if done:
                     logger.info("FLEX converged after {} iterations".format(iteration + 1))
@@ -2414,6 +2453,7 @@ class FLEX(RPA):
                                "green={:.3e}, component={:.3e}, eps={:.3e})".format(
                                    self.max_iter, self.scf_sigma_residual, self.scf_green_residual,
                                    self.scf_component_residual, self.eps))
+            self._log_sigma_projection_summary(state)
             self.scf_converged = converged
             self.scf_iterations = n_iter_done
             with self._traced("post_scf"):
@@ -3472,6 +3512,17 @@ class FLEX(RPA):
         # GPU execution, host otherwise); _number_from_eigs dispatches on it
         # and returns plain floats, so the Newton/bisection logic below is
         # backend-independent.
+        # Issue #282: refuse what no eigendecomposition can fix BEFORE doing
+        # one -- a non-finite sigma (geev raises LinAlgError on it for
+        # nd >= 3) and a target no filling can reach -- with the classified
+        # RuntimeError. Both checks only read; they change no number.
+        nstate = int(np.size(ew_ref if ew_ref is not None else self.H0_eigenvalue))
+        sigma_finite = bool(_bk.array_module_of(sigma).isfinite(sigma).all())
+        if not sigma_finite or Ncond < 0.0 or Ncond > nstate:
+            raise RuntimeError(_diag.mu_failure_message(
+                "FLEX._find_mu_dressed", None, None, None, None, Ncond,
+                nstate, sigma_finite, None, None,
+                getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
         lam, ew = self._matsubara_number_operator(sigma, beta)
         if ew_ref is not None:
             # Phase B (#181): the analytic reference is Heff = H0 + sigma_static
@@ -3515,6 +3566,7 @@ class FLEX(RPA):
         hi = float(w.max()) + pad
         f_lo = _delta_n(lo)
         f_hi = _delta_n(hi)
+        fallback = None             # the band-window sub-interval, if used
         for _ in range(60):
             if f_lo == 0.0:
                 return lo
@@ -3529,15 +3581,69 @@ class FLEX(RPA):
             f_hi = _delta_n(hi)
         else:
             # 60 doublings span ~1e18 * initial width: a real root cannot be
-            # this far out. Fail loudly rather than return garbage. Raise a
-            # catchable exception (not sys.exit) so parameter sweeps, pipelines,
-            # and notebooks can handle/aggregate the failure instead of having
-            # the whole interpreter torn down.
-            raise RuntimeError(
-                "FLEX._find_mu_dressed: chemical-potential root not bracketed "
-                "after expansion to [{}, {}] (N-Ncond = {}, {}). Check the "
-                "target filling/Ncond and temperature.".format(
-                    lo, hi, f_lo, f_hi))
+            # this far out. Before failing, look on the physical band window
+            # (independent of Sigma): on the IR path N(mu) is a basis fit that
+            # falls back towards 0 once |mu| leaves ir_wmax, so the doubling
+            # can jump over a root that the window brackets (issue #282). Such
+            # a root is solved below; this only changes cases that used to
+            # raise. The probe is optional -- any error in it falls back to
+            # the unprobed message.
+            window = _diag.band_window(w, beta)
+            try:
+                mus = [float(m) for m in np.linspace(window[0], window[1], 9)]
+                f_window = [_delta_n(m) for m in mus]
+            except Exception:
+                f_window = None
+            # A window bracket is trusted only when the window itself is a
+            # healthy N(mu) (finite, inside [0, Nstate], monotonic): on an IR
+            # basis that does not cover the spectrum N(mu) is distorted and a
+            # crossing found there gives a biased mu.
+            sub = (None if f_window is None
+                   or not _diag.window_healthy(f_window, Ncond, nstate)
+                   else _diag.window_bracket(mus, f_window))
+            if sub is None:
+                # Fail loudly rather than return garbage, with a catchable
+                # exception classified by flex_diagnostics.mu_failure_message
+                # (the type is unchanged).
+                raise RuntimeError(_diag.mu_failure_message(
+                    "FLEX._find_mu_dressed", lo, hi, f_lo, f_hi, Ncond,
+                    nstate, sigma_finite, window, f_window,
+                    getattr(self, "_scf_monitor", None), is_ir=self.use_ir))
+            # keep what the classified error needs, should the fallback fail
+            expanded = (lo, hi, f_lo, f_hi, window, f_window)
+            lo, f_lo, hi, f_hi = sub
+            fallback = (min(lo, hi), max(lo, hi))
+            if f_lo == 0.0:
+                return lo
+            if f_hi == 0.0:
+                return hi
+            logger.warning(
+                "FLEX._find_mu_dressed: the expanded bracket found no root; "
+                "solving on the band-window sub-interval [%.6g, %.6g] instead%s.",
+                lo, hi, " (on the IR path check that ir_wmax covers the "
+                "spectrum)" if self.use_ir else "")
+
+        def _fallback_fail(mu_end, why):
+            # every failure of the band-window fallback is classified like a
+            # failure of the expanded search, with the fallback as a note
+            e_lo, e_hi, e_flo, e_fhi, e_win, e_fwin = expanded
+            raise RuntimeError(_diag.mu_failure_message(
+                "FLEX._find_mu_dressed", e_lo, e_hi, e_flo, e_fhi, Ncond,
+                nstate, sigma_finite, e_win, e_fwin,
+                getattr(self, "_scf_monitor", None), is_ir=self.use_ir,
+                note=" The band-window fallback on [{}, {}] ended at mu = "
+                     "{} with {}, which is not a reliable root.".format(
+                         fallback[0], fallback[1], mu_end, why)))
+
+        def _eval(mu_t):
+            # the normal bracket path calls _delta_n unwrapped; only the
+            # fallback turns an evaluation error into the classified error
+            if fallback is None:
+                return _delta_n(mu_t, with_deriv=True)
+            try:
+                return _delta_n(mu_t, with_deriv=True)
+            except Exception as exc:
+                _fallback_fail(mu_t, "N(mu) could not be evaluated: {}".format(exc))
 
         # orient the bracket so f(lo) < 0 < f(hi) (N increases with mu)
         if f_lo > 0.0:
@@ -3546,7 +3652,7 @@ class FLEX(RPA):
         mu = 0.5 * (lo + hi)
         dmu_old = abs(hi - lo)
         dmu = dmu_old
-        f, df = _delta_n(mu, with_deriv=True)
+        f, df = _eval(mu)
 
         xtol = 1.0e-12
         for _ in range(100):
@@ -3570,15 +3676,50 @@ class FLEX(RPA):
             if abs(dmu) < xtol:
                 break
 
-            f, df = _delta_n(mu, with_deriv=True)
+            f, df = _eval(mu)
             # keep the sign-change bracket [lo, hi] around the root
             if f < 0.0:
                 lo = mu
             else:
                 hi = mu
 
+        if fallback is not None:
+            # the fallback root must be a real root inside its sub-interval
+            # (classified like any other failure of the search; an error
+            # while evaluating the residual counts as a failed validation)
+            try:
+                f_mu = float(_delta_n(mu))
+            except Exception as exc:
+                f_mu, why = None, "N(mu) could not be evaluated: {}".format(exc)
+            else:
+                why = "N-Ncond = {}".format(f_mu)
+            if not (f_mu is not None and np.isfinite(f_mu)
+                    and fallback[0] <= mu <= fallback[1]
+                    and abs(f_mu) <= 1.0e-8 * max(1.0, float(nstate))):
+                _fallback_fail(mu, why)
         logger.info("FLEX._find_mu_dressed: mu = {}".format(mu))
         return mu
+
+    _scf_monitor = None      # per-solve ScfMonitor (issue #282)
+    _stoner_last = None      # Stoner factors of the latest bubble (issue #282)
+
+    def _stoner_factors(self, chi0q, channels):
+        """``{name: (lambda, q, max_re)}`` with ``lambda = max_q`` of the
+        largest REAL eigenvalue of ``-chi0(q, i nu = 0) W(q)`` (``max_re``:
+        over all eigenvalues) for each ``(name, W)`` in
+        ``channels``, ``W`` being the vertex handed to ``_solve_rpa``
+        (see :mod:`hwave.solver.flex_diagnostics`). Read-only: a log value,
+        one small eigenvalue problem per q on the static slice."""
+        try:
+            il, exact = _diag.static_boson_index(self)
+            tag = "" if exact else " (i nu nearest 0)"
+            shape = tuple(int(x) for x in self.lattice.shape)
+            c = _diag.static_slice(chi0q, il)       # one host copy per call
+            return {name + tag: _diag.static_instability(c, w, shape)
+                    for name, w in channels}
+        except Exception as exc:     # a log value must never end a run
+            logger.debug("Stoner factor not computed: %s", exc)
+            return None
 
     @do_profile
     def _flex_compute_veff(self, chi0q_raw, ham_orig):
@@ -3615,6 +3756,9 @@ class FLEX(RPA):
 
         # Decompose ham into spin and charge channels
         ham_s, ham_c = self._build_spin_charge_vertices(ham)
+
+        self._stoner_last = self._stoner_factors(
+            chi0q, (("spin", ham_s), ("charge", ham_c)))
 
         # Solve RPA for spin channel: chi_s = [1 - chi0*V_s]^{-1} chi0
         chi_s = self._solve_rpa(chi0q, ham_s)
@@ -3664,6 +3808,9 @@ class FLEX(RPA):
             math.
         """
         chi0q, Us, Uc = self._inflate_chi0q_and_ham_general(chi0q_raw, ham_orig)
+        # the vertices _solve_channels_general hands to _solve_rpa
+        self._stoner_last = self._stoner_factors(
+            chi0q, (("spin", -Us), ("charge", Uc)))
         chi_s, chi_c = self._solve_channels_general(chi0q, Us, Uc)
         factors = self._second_order_device or self._second_order_factors
         v_eff = self._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=factors)
@@ -3751,6 +3898,7 @@ class FLEX(RPA):
         """
         xp = _bk.array_module_of(chi0q_raw)
         gam = self._spinful_vertex(xp)
+        self._stoner_last = self._stoner_factors(chi0q_raw, (("spinful", gam),))
         chi = self._solve_rpa(chi0q_raw, gam)
         nmat, nvol = chi0q_raw.shape[0], chi0q_raw.shape[1]
         ndx = gam.shape[-1]
@@ -4690,6 +4838,114 @@ class FLEX(RPA):
                     .reshape(nblock, nmat, nvol, norb, norb) * (1.0 / beta))
 
         return sigma_kw
+
+    # Relative deviation max|Sigma(k, i w) - Sigma(k, -i w)^dag| / max|Sigma|
+    # of a seed above which loading it warns (issue #281). A converged
+    # archive of the Hermitian problem carries round-off; one written
+    # without the projection may carry a slowly decaying remnant (~1e-5 was
+    # reported) or sit on a symmetry-broken, non-causal branch (O(0.1)).
+    SIGMA_SEED_ASYMMETRY_WARN = 1.0e-3
+    # Final relative deviation of a run WITHOUT the projection above which
+    # the end of solve warns: a converged run of the Hermitian problem is
+    # symmetric to round-off, so 1e-6 is far above noise and far below the
+    # symmetry-broken branch.
+    SIGMA_UNPROJECTED_WARN = 1.0e-6
+    _BROKEN_BRANCH_NOTE = (
+        "a run without flex_sigma_hermitian_projection past the bare Stoner instability can "
+        "converge, with no other signal, to a symmetry-broken, non-causal fixed point that is "
+        "not the self-energy of this Hermitian problem")
+
+    @staticmethod
+    def _sigma_deviation(sigma):
+        from hwave.solver import flex_mixing as _fm
+        if isinstance(sigma, _fm.SplitState):
+            return max(_fm.frequency_hermitian_deviation(sigma.static)[1],
+                       _fm.frequency_hermitian_deviation(sigma.fluct)[1],
+                       _fm.frequency_hermitian_deviation(sigma.fluct, static=sigma.static)[1])
+        return _fm.frequency_hermitian_deviation(sigma)[1]
+
+    def _sigma_deviation_guarded(self, sigma, what):
+        """The diagnostic deviation, which must never fail a solve: any
+        failure (e.g. device memory exhausted after convergence) is logged
+        and reported as NaN."""
+        try:
+            return self._sigma_deviation(sigma)
+        except Exception as exc:          # diagnostics only
+            logger.warning("FLEX: the Sigma(k, i w) = Sigma(k, -i w)^dag check of the %s was "
+                           "skipped (%s: %s)", what, type(exc).__name__, exc)
+            return float("nan")
+
+    def _project_sigma_seed(self, sigma):
+        """Project a warm-start seed (an array, or a Phase B SplitState)
+        onto ``Sigma(k, i w) = Sigma(k, -i w)^dag`` (issue #281). The seed
+        is only the starting point of the iteration, so a large asymmetry
+        is reported loudly but not refused. With the projection off the
+        seed is used as is, and only a large asymmetry is reported."""
+        from hwave.solver import flex_mixing as _fm
+        rel = self._sigma_deviation_guarded(sigma, "seed")
+        self.sigma_seed_hermitian_deviation = rel
+        far = rel > self.SIGMA_SEED_ASYMMETRY_WARN
+        if not self.flex_sigma_hermitian_projection:
+            if far:
+                logger.warning(
+                    "FLEX: sigma_init violates Sigma(k, i w) = Sigma(k, -i w)^dag by a relative "
+                    "deviation of {:.3e} (> {:.0e}) and is used as is "
+                    "(flex_sigma_hermitian_projection = false); {}".format(
+                        rel, self.SIGMA_SEED_ASYMMETRY_WARN, self._BROKEN_BRANCH_NOTE))
+            return sigma
+        # in place: the seed arrays are this solve's own copies
+        if isinstance(sigma, _fm.SplitState):
+            out = _fm.project_split_state(sigma, inplace=True)
+        else:
+            out = _fm.project_frequency_hermitian_inplace(sigma)
+        msg = ("FLEX: sigma_init projected onto Sigma(k, i w) = Sigma(k, -i w)^dag "
+               "(relative deviation removed {:.3e})".format(rel))
+        if far:
+            logger.warning(msg + "; the seed is not the self-energy of this Hermitian problem "
+                           "(threshold {:.0e}): {}".format(self.SIGMA_SEED_ASYMMETRY_WARN,
+                                                           self._BROKEN_BRANCH_NOTE))
+        else:
+            logger.info(msg)
+        return out
+
+    def _log_sigma_projection_summary(self, sigma):
+        """End-of-solve diagnostic: the largest deviation the projection
+        removed, or -- with the projection off -- a warning when the final
+        self-energy is not symmetric (issue #281)."""
+        if self.flex_sigma_hermitian_projection:
+            logger.info("FLEX: sigma Hermitian projection: largest relative deviation "
+                        "removed in one update {:.3e}".format(self.sigma_hermitian_removed_max))
+            return
+        rel = self._sigma_deviation_guarded(sigma, "final self-energy")
+        self.sigma_final_hermitian_deviation = rel
+        if rel > self.SIGMA_UNPROJECTED_WARN:
+            logger.warning(
+                "FLEX: the final self-energy violates Sigma(k, i w) = Sigma(k, -i w)^dag by a "
+                "relative deviation of {:.3e} (> {:.0e}); {}. Repeat the run with "
+                "flex_sigma_hermitian_projection = true.".format(
+                    rel, self.SIGMA_UNPROJECTED_WARN, self._BROKEN_BRANCH_NOTE))
+
+    def _project_sigma_update(self, sigma, iteration):
+        """Project the mixed self-energy (an array, or a Phase B SplitState)
+        onto ``Sigma(k, i w) = Sigma(k, -i w)^dag`` (issue #281); see
+        :mod:`hwave.solver.flex_mixing` for where the relation is exact.
+        The relative deviation removed is logged (debug) and its running
+        maximum kept in ``self.sigma_hermitian_removed_max``."""
+        from hwave.solver import flex_mixing as _fm
+        # in place, one frequency pair at a time (a few single-frequency
+        # temporaries): the mixed iterate is a fresh array that no mixer
+        # history references yet
+        if isinstance(sigma, _fm.SplitState):
+            _, (_, rel) = _fm.project_frequency_hermitian_inplace(sigma.fluct, with_deviation=True)
+            _fm.project_frequency_hermitian_inplace(sigma.static)
+            out = sigma
+        else:
+            out, (_, rel) = _fm.project_frequency_hermitian_inplace(sigma, with_deviation=True)
+        logger.debug("  sigma Hermitian projection: relative deviation removed "
+                     "{:.3e} (iteration {})".format(rel, iteration))
+        self.sigma_hermitian_removed_max = max(
+            getattr(self, "sigma_hermitian_removed_max", 0.0), rel)
+        return out
 
     def _calc_convergence(self, sigma_old, sigma_new):
         """Calculate convergence criterion for self-energy.
