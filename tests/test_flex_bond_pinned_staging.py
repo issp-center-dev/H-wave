@@ -355,8 +355,11 @@ class TestPinnedStager(unittest.TestCase):
                 return real(dst, src, *a, **k)
 
             with mock.patch.object(staging, "parallel_copy", paused):
-                c = threading.Thread(target=lambda: out.setdefault("h", st.to_host(d)))
-                r = threading.Thread(target=st.release)
+                # daemon threads: a regression that deadlocks them must fail
+                # the test, not hang the interpreter at exit
+                c = threading.Thread(target=lambda: out.setdefault("h", st.to_host(d)),
+                                     daemon=True)
+                r = threading.Thread(target=st.release, daemon=True)
                 watched.owner = r
                 try:
                     c.start()
@@ -369,7 +372,8 @@ class TestPinnedStager(unittest.TestCase):
                 finally:
                     go.set()
                     c.join(timeout=30)
-                    r.join(timeout=30)
+                    if r.ident is not None:       # started
+                        r.join(timeout=30)
             self.assertTrue(waited, "release did not wait for the copy")
             self.assertFalse(c.is_alive() or r.is_alive(), "deadlock")
             np.testing.assert_array_equal(out["h"], x)
