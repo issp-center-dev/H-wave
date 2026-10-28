@@ -439,6 +439,98 @@ class DressResult:
     time_reversal_deviation: float = None
 
 
+class HalfGridDressing:
+    """The conditioning of the mirrored slices of a half-grid dressing pass
+    (issue #223), shared by the FLEX map (:func:`dress_and_build_w`) and the
+    in-process pairing's re-dressing
+    (:meth:`~hwave.solver.eliashberg_bond.PairVertexAccumulator.add_dressed`),
+    so that both apply ONE rule.
+
+    The mirrored slices ``l' = nmat - l`` are skipped only where that is
+    provably exact (:mod:`hwave.solver.half_grid`, relations (2)-(3)): the
+    guard refuses on every violation (``guard_policy = "refuse"``) over
+    every frequency (``guard_freqs = "all"``) and time reversal makes every
+    mirrored score a stored one -- checked here on the stored ``chibar``,
+    which the caller passes BEFORE any ``W`` batch overwrites it. Even then
+    a batch whose minimum score lies within :func:`half_grid.decision_margin`
+    of ``cond_tol`` has its mirror guarded on its own. Under ``"warn"`` and
+    under the ``"static"`` residual the mirror is always guarded.
+
+    The caller supplies ``dress(cb, V, channel, ls, guard_only=False)``,
+    its own :func:`_dress` call for the rows ``ls`` of a batch (the stored
+    rows, or with ``guard_only`` the diagnostics of their mirrors)."""
+
+    def __init__(self, chibar_half, S, C, *, nmat, spatial_shape, cond_tol, guard_freqs,
+                 guard_policy):
+        self.nmat = int(nmat)
+        self.cond_tol = cond_tol
+        trs = _hg.time_reversal_check(chibar_half, S, C, spatial_shape)
+        self.deviation = trs["deviation"]
+        self.mirror_guard = not (trs["holds"] and guard_freqs == "all"
+                                 and guard_policy == "refuse" and cond_tol is not None)
+        self.margin = _hg.decision_margin(trs, int(S.shape[-1]), cond_tol)
+        self.mq = _hg.minus_q_index(spatial_shape)
+        self.spatial_shape = tuple(spatial_shape)
+
+    def mirror(self, dress, cb, ls, V, channel, cmin):
+        """The dressing diagnostics of the mirrored slices ``l' = nmat - l``
+        of a batch (``l = 0`` and ``nmat / 2`` are their own mirrors and are
+        skipped); their scores join ``cmin`` when it is given."""
+        nmat = self.nmat
+        sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
+        if not sel.size:
+            return
+        xp = _bk.array_module_of(cb)
+        cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
+        _chi, cm = dress(cb_m, V, channel, nmat - ls[sel], guard_only=True)
+        del _chi, cb_m
+        if cmin is not None:
+            cmin.add(cm)
+
+    def _near(self, score):
+        # within the Weyl margin of cond_tol: the mirrored partner's score
+        # could fall on the other side
+        return score is not None and abs(score - self.cond_tol) <= self.margin * self.cond_tol
+
+    def stored(self, dress, cb, ls, V, channel, cmin):
+        """Dress the stored rows ``ls`` of a batch and return the dressed
+        channel. Under the skip, the mirror is guarded on its own only for a
+        batch whose minimum is within the margin of ``cond_tol`` (if the
+        minimum clears it, every block does), and a refusal at a stored
+        block is reported at its time-reversal mirror ``(-q, nmat - l)``,
+        which has the same score and which the full grid meets first."""
+        nmat = self.nmat
+        if self.mirror_guard:
+            chi, c = dress(cb, V, channel, ls)
+            if cmin is not None:
+                cmin.add(c)
+            return chi
+        try:
+            chi, c = dress(cb, V, channel, ls)
+        except _bc.BondConditioningError as exc:
+            if exc.l is None or exc.l in (0, nmat // 2):
+                raise
+            if self._near(exc.worst):
+                # the mirror's own guard decides: it refuses at the mirrored
+                # location if that block fails too (the full grid meets nu < 0
+                # first); otherwise the stored refusal stands
+                self.mirror(dress, cb, ls, V, channel, None)
+                raise
+            # the decision is the full grid's; with several violating blocks
+            # the location the full grid reports first can differ
+            new = _bc.relocate_refusal(exc, nmat - exc.l, int(self.mq[exc.iq]), nmat,
+                                       self.spatial_shape)
+            if new is None:
+                raise
+            raise new from exc
+        if cmin is not None:
+            cmin.add(c)
+        low = c.low if isinstance(c, _bc.GuardBracket) else c
+        if self._near(low):
+            self.mirror(dress, cb, ls, V, channel, cmin)
+        return chi
+
+
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       guard_freqs="all", guard_policy="refuse",
@@ -561,22 +653,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     half = bool(getattr(store, "half_grid", False))
     n_slices = store.nslices if half else nmat
     l_static = 0 if half else nmat // 2
-    mirror_guard, trs_dev = None, None
+    mirror_guard, trs_dev, hgd = None, None, None
     if half:
-        # the mirrored slices' own conditioning (half_grid, relations (2)-(3)).
-        # They are skipped only where that is provably exact: the guard
-        # refuses on every violation ("refuse" policy) over every frequency
-        # ("all"), and time reversal makes every mirrored score a stored one
-        # (checked on the stored chibar BEFORE any W batch overwrites it).
-        # Under "warn" and under the "static" residual the mirror is always
-        # guarded on its own.
-        trs = _hg.time_reversal_check(store.get_freq_batch("chibar", 0, n_slices), S, C,
-                                      spatial_shape)
-        trs_dev = trs["deviation"]
-        mirror_guard = not (trs["holds"] and guard_freqs == "all"
-                            and guard_policy == "refuse" and cond_tol is not None)
-        margin = _hg.decision_margin(trs, ND, cond_tol)
-        mq = _hg.minus_q_index(spatial_shape)
+        # the mirrored slices' own conditioning (HalfGridDressing): checked on
+        # the stored chibar BEFORE any W batch overwrites it
+        hgd = HalfGridDressing(store.get_freq_batch("chibar", 0, n_slices), S, C, nmat=nmat,
+                               spatial_shape=spatial_shape, cond_tol=cond_tol,
+                               guard_freqs=guard_freqs, guard_policy=guard_policy)
+        mirror_guard, trs_dev = hgd.mirror_guard, hgd.deviation
     cond_s, cond_c = _CondMin(), _CondMin()
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
@@ -584,62 +668,13 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     # accumulated over both channels and every frequency batch (issue #197)
     stats = {"guard_exact_blocks": 0, "guard_blocks": 0}
 
-    def _mirror(cb, ls, V_, ch, cmin):
-        # the dressing diagnostics of the mirrored slices l' = nmat - l of a
-        # half-grid batch (l = 0 and nmat/2 are their own mirrors: skipped)
-        sel = np.nonzero((ls != 0) & (ls != nmat // 2))[0]
-        if not sel.size:
-            return
-        cb_m = xp.ascontiguousarray(xp.conj(cb[xp.asarray(sel)]).swapaxes(-1, -2))
-        ls_m = nmat - ls[sel]
-        _chi, cm = _dress(cb_m, V_, ch, int(ls_m[0]), nmat, spatial_shape, cond_tol, iteration,
-                          guard_freqs, guard_policy, violations, guard_method, None, workers,
-                          guard_exact, ls=ls_m, guard_only=True)
-        del _chi, cb_m
-        if cmin is not None:
-            cmin.add(cm)
-
-    def _near(score):
-        # within the Weyl margin of cond_tol (half_grid.decision_margin): the
-        # mirrored partner's score could fall on the other side
-        return score is not None and abs(score - cond_tol) <= margin * cond_tol
-
-    def _stored(cb, ls, l_first, V_, ch, cmin):
-        # the stored slices of a half-grid batch; under the skip, the mirror
-        # is guarded on its own only for a batch whose minimum is within the
-        # margin of cond_tol (if the minimum clears it, every block does)
-        if mirror_guard:
-            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
-                            guard_freqs, guard_policy, violations, guard_method, stats,
-                            workers, guard_exact, ls=ls)
-            cmin.add(c)
-            return chi
-        try:
-            chi, c = _dress(cb, V_, ch, l_first, nmat, spatial_shape, cond_tol, iteration,
-                            guard_freqs, guard_policy, violations, guard_method, stats,
-                            workers, guard_exact, ls=ls)
-        except _bc.BondConditioningError as exc:
-            if exc.l is None or exc.l in (0, nmat // 2):
-                raise
-            if _near(exc.worst):
-                # the mirror's own guard decides: it refuses at the mirrored
-                # location if that block fails too (the full grid meets nu < 0
-                # first); otherwise the stored refusal stands
-                _mirror(cb, ls, V_, ch, None)
-                raise
-            # the mirror of the stored violating block, (-q, nmat - l), has
-            # the same score, so the refusal is reported at that mirror. The
-            # decision is the full grid's; with several violating blocks the
-            # location the full grid reports first can differ
-            new = _bc.relocate_refusal(exc, nmat - exc.l, int(mq[exc.iq]), nmat, spatial_shape)
-            if new is None:
-                raise
-            raise new from exc
-        cmin.add(c)
-        low = c.low if isinstance(c, _bc.GuardBracket) else c
-        if _near(low):
-            _mirror(cb, ls, V_, ch, cmin)
-        return chi
+    def _dress_rows(cb, V_, ch, ls, guard_only=False):
+        # one half-grid dressing call: the stored rows (statistics counted)
+        # or, guard_only, the diagnostics of their mirrored rows
+        return _dress(cb, V_, ch, int(ls[0]), nmat, spatial_shape, cond_tol, iteration,
+                      guard_freqs, guard_policy, violations, guard_method,
+                      None if guard_only else stats, workers, guard_exact, ls=ls,
+                      guard_only=guard_only)
 
     for l0 in range(0, n_slices, nb):
         l1 = min(n_slices, l0 + nb)
@@ -662,10 +697,10 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
             # (one mirrored batch and the solve's) are below the stored
             # dressing's own, which runs after them.
             for V_, ch, cmin in ((S, "spin", cond_s), (C, "charge", cond_c)):
-                _mirror(cb, ls, V_, ch, cmin)
+                hgd.mirror(_dress_rows, cb, ls, V_, ch, cmin)
         collapse0[rows] = _bk.to_host(cb[:, :, :nd, :nd])
         if half:
-            chi_s_b = _stored(cb, ls, l_first, S, "spin", cond_s)
+            chi_s_b = hgd.stored(_dress_rows, cb, ls, S, "spin", cond_s)
         else:
             chi_s_b, cs = _dress(cb, S, "spin", l_first, nmat, spatial_shape, cond_tol,
                                  iteration, guard_freqs, guard_policy, violations, guard_method,
@@ -680,7 +715,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         W_b = 1.5 * _sandwich(S, chi_s_b, S, workers)
         del chi_s_b
         if half:
-            chi_c_b = _stored(cb, ls, l_first, C, "charge", cond_c)
+            chi_c_b = hgd.stored(_dress_rows, cb, ls, C, "charge", cond_c)
         else:
             chi_c_b, cc = _dress(cb, C, "charge", l_first, nmat, spatial_shape, cond_tol,
                                  iteration, guard_freqs, guard_policy, violations, guard_method,

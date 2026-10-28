@@ -108,6 +108,16 @@ def full_suite_enabled():
 #: the row, and decorate the method with :func:`heavy`. Doing only one of
 #: the two fails ``test_heavy_tests_registry.py``.
 HEAVY_TESTS = (
+    # --- tests/test_bond_half_grid.py -- the half bosonic grid (#223) -----
+    ("test_bond_half_grid", "TestPairingOracleIR", "test_mixing_and_batches",
+     "twelve two-orbital bond-gate FLEX solves with the in-process IR pairing "
+     "(full and half grid, both mixing schemes, three pinned batches), 6.4 s "
+     "measured; the fixture sweep of the same class stays in the fast gate"),
+    ("test_bond_half_grid", "TestPairingOracleUniform", "test_mixing_and_batches",
+     "sixteen two-orbital bond-gate FLEX solves with the in-process uniform "
+     "pairing of both channels (full and half grid, both mixing schemes, four "
+     "pinned batches), 5.4 s measured; the fixture sweep of the same class "
+     "stays in the fast gate"),
     # --- tests/test_bond_longitudinal_ed.py -- longitudinal bond ED granules
     ("test_bond_longitudinal_ed", "TestLongitudinalBondGranulesCaseM",
      "test_coulombinter_interorbital",
