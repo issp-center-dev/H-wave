@@ -35,7 +35,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
-                  PAIRLIFT_INERT_WARNING, canonical_scheme_name)
+                  _case_insensitive_file_input, PAIRLIFT_INERT_WARNING, canonical_scheme_name)
 from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
@@ -1167,6 +1167,9 @@ class FLEX(RPA):
         ``Sigma = 0`` is often decisive for convergence near a magnetic
         instability, where the zero-start transient makes the SCF oscillate.
         """
+        info_inputfile = _case_insensitive_file_input(
+            info_inputfile,
+            ("sigma_init", "trans_mod", "green_init", "chi0q_init"))
         info = super().read_init(info_inputfile)
         if "sigma_init" in info_inputfile:
             path_to_input = info_inputfile.get("path_to_input", "")

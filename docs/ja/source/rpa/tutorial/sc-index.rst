@@ -175,7 +175,8 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
 
      **平均場の一体バンド: 組み立て。** ``[file.input] trans_mod``\ （UHFk が出力する
      一体ハミルトニアン）は\ ``Transfer``\ のバンドを置き換えます。
-     ``green_init``\ は\ ``Transfer``\ のバンドに Hartree 項を加え、
+     ``green_init``\ は\ ``Transfer``\ のバンドにその Green 関数の
+     Hartree-Fock 平均場を加え、
      ``Extern``\ 場（``coeff_extern``\ 倍のテーブル）はさらにその上に加わります。
      ``chi0q_mode = "calc"``\ または\ ``"load"``\ の場合（外部の
      ``bond_green``\ を指定しない\ ``bond_channels = true``\ を含む）、
@@ -190,7 +191,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      ``Extern``\ 場）は、:math:`\chi_0(\mathbf{q})`\ の計算や読み込みの前に
      エラーとして拒否されます。判定は組み立てた一体バンド
      （``trans_mod``\ 、または\ ``Transfer``\ のバンドに\ ``green_init``\ の
-     Hartree 項を加えたもの、さらに\ ``coeff_extern``\ 倍の\ ``Extern``\ ）
+     Hartree-Fock 項を加えたもの、さらに\ ``coeff_extern``\ 倍の\ ``Extern``\ ）
      に対して行います。上向き・下向きスピンのブロックの差とスピン混成ブロックの
      大きさは、エネルギーの単位で絶対値\ :math:`10^{-10}`\ まで許されます。
      この許容誤差は後述の\ ``spin_free_tol``\ の既定値で、``spin_free_tol``\ で
@@ -219,15 +220,19 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      これらのキーは使われず、その旨の警告が出ます。感受率と Green 関数は
      FLEX 計算または\ ``bond_green``\ のファイルから読み込まれるためです。
 
-     **Hartree 項のみの** ``green_init``\ 。``green_init``\ のバンドは
-     :math:`T + \mathrm{Hartree}[G]`\ （RPA の組み立てで、Fock 項を含みません）
-     です。そのため Fock 項がある場合、つまり\ ``CoulombInter``\ 、
-     ``Hund``\ 、``Ising``\ 、``Exchange``\ の行、オフサイトの\ ``PairHop``\ の行
-     （:math:`R \neq 0`\ 、または\ ``[mode.param] orbital_site``\ で異なるサイトに
-     ある軌道間）、または\ ``Coulomb``\ の\ ``CoulombInter``\ 部分がある場合は、
-     同じ解から UHFk が出力する\ ``trans_mod``\ と異なります。このとき
-     ``trans_mod``\ を勧める警告が出ます。``trans_mod``\ が推奨される入力で、
-     常磁性状態にはこれが整合した入力です。
+     ``green_init`` **と** ``trans_mod``\ 。``green_init``\ のバンドは
+     :math:`T + \Sigma_{\rm HF}[G]`\ で、すべての相互作用の Hartree 項と
+     Fock 項を UHFk が平均場ハミルトニアンを作るのと同じ方法
+     （``flag_fock = true``\ ）で組み立てます。したがって\ ``green_init``\ と、
+     ``flag_fock = true``\ （既定値）の UHFk 計算が同じ解に対して出力する
+     ``trans_mod``\ は同じバンドを与えます。\ ``flag_fock = false``\ で得た
+     UHFk 解には、その\ ``trans_mod``\ （Hartree 項のみのバンド）を使って
+     ください。\ ``green_init``\ では Fock 項が加わります。元の格子の並進対称性を
+     破る\ ``SubShape``\ の UHFk 状態では、保存された\ ``green``\ も
+     ``trans_mod``\ も、読み戻したときに収束したバンドを再現しません
+     （issue #294）。
+     （issue #278 より前は\ ``green_init``\ のバンドに Fock 項が含まれず、
+     Fock 項をもつ相互作用があると\ ``hwave_sc``\ が警告を出していました）。
 
   .. warning::
 
@@ -1989,8 +1994,12 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   :math:`N`\ の非スピン軌道 general の chi0q（軌道添字\ :math:`N^4`\ ）の約 4 GiB と
   比べて大きくなります。\ ``frequency = "dynamic"``\ は全振動数を必要とします
   （\ :ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
-- スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は検証して
-  いません（\ ``"dynamic"``\ については\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+- スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は、A100 GPU
+  上で\ ``gpu = false``\ と照合済みです。SU(2) 模型の全スペクトルと複素 SOC 模型の
+  Arnoldi 法の解は固有値が\ :math:`10^{-10}`\ で一致し、反復法の解は収束時の残差の
+  範囲で一致します
+  （\ ``tests/test_sc_spin_orbital_gpu.py``\ 。\ ``"dynamic"``\ については
+  \ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
 検証
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2258,7 +2267,10 @@ GPU
 ``gpu = true``\ では頂点とペアバブルをデバイスへ移します。カーネルは動的ソルバーで
 共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
 ます。ホストとデバイスのカーネルの作用を\ :math:`10^{-12}`\ で照合し、
-主要固有値も比べます（この確認には CuPy が必要です）。
+主要固有値も比べます（この確認には CuPy が必要です）。A100 GPU 上で、
+``gpu = true``\ の全スペクトルと Arnoldi 法の解は\ ``gpu = false``\ と固有値が
+:math:`10^{-10}`\ で一致し、反復法の解は収束時の残差の範囲で一致します。主要固有値が縮退している場合、ギャップは部分空間
+として比べます（\ ``tests/test_sc_spin_orbital_gpu.py``\ ）。
 
 検証
 """"

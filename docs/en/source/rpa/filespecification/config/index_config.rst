@@ -1213,6 +1213,8 @@ They specify the settings of the input and output files, respectively, on the ty
 ``file.input`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The keys ``chi0q_init``, ``trans_mod``, ``green_init`` and ``sigma_init`` (FLEX mode) are case-insensitive (``Trans_Mod`` is read as ``trans_mod``); giving one of them twice with different spellings is an error.
+
 - ``path_to_input``
 
   **Type :**
@@ -1248,7 +1250,7 @@ They specify the settings of the input and output files, respectively, on the ty
   String
 
   **Description :**
-  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The ``green_init`` band contains the Hartree term only; when Fock terms are present, ``trans_mod`` is recommended (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`).
+  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The one-body band is the ``Transfer`` band plus the Hartree-Fock mean field of the Green function (Hartree and Fock terms of every interaction, built as UHFk builds its mean-field Hamiltonian with ``flag_fock = true``), so it equals the band of the ``trans_mod`` that a UHFk run with ``flag_fock = true`` (the default) writes for the same solution (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`). For a UHFk solution obtained with ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band); ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state that breaks the translation symmetry of the original lattice, neither the saved ``green`` nor the saved ``trans_mod`` reproduces the converged band when read back (issue #294). Before issue #278 the Fock term was left out.
 
 - ``sigma_init``
 
