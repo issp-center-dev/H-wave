@@ -1989,8 +1989,11 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   :math:`N`\ の非スピン軌道 general の chi0q（軌道添字\ :math:`N^4`\ ）の約 4 GiB と
   比べて大きくなります。\ ``frequency = "dynamic"``\ は全振動数を必要とします
   （\ :ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
-- スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は検証して
-  いません（\ ``"dynamic"``\ については\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+- スピン軌道モードの\ ``frequency = "static"``\ での\ ``gpu = true``\ は、A100 GPU
+  上で\ ``gpu = false``\ と照合済みです。SU(2) 模型の全スペクトル、複素 SOC 模型の
+  Arnoldi 法と反復法の解は、固有値が\ :math:`10^{-10}`\ で一致します
+  （\ ``tests/test_sc_spin_orbital_gpu.py``\ 。\ ``"dynamic"``\ については
+  \ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 
 検証
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2258,7 +2261,10 @@ GPU
 ``gpu = true``\ では頂点とペアバブルをデバイスへ移します。カーネルは動的ソルバーで
 共通の、バックエンドによらないカーネルです。基底と固有値ソルバーはホストに残り
 ます。ホストとデバイスのカーネルの作用を\ :math:`10^{-12}`\ で照合し、
-主要固有値も比べます（この確認には CuPy が必要です）。
+主要固有値も比べます（この確認には CuPy が必要です）。A100 GPU 上で、
+``gpu = true``\ の全スペクトル、Arnoldi 法、反復法の解は\ ``gpu = false``\ と固有値が
+:math:`10^{-10}`\ で一致します。主要固有値が縮退している場合、ギャップは部分空間
+として比べます（\ ``tests/test_sc_spin_orbital_gpu.py``\ ）。
 
 検証
 """"
