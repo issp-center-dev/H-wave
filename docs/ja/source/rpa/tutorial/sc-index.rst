@@ -1976,6 +1976,47 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 （強磁性・反強磁性の平均場）は対象外です。スピン軌道モードでは\ ``trans_mod``\ と
 ``green_init``\ は拒否されます（issue #273）。
 
+**S_z ごとの重み。**\ スピン軌道モードの計算（静的・動的）は、各固有ベクトルの
+:math:`S_z`\ の成分も出力します。上向き・下向きは\ **入力の量子化軸**\ 、すなわち
+スピンブロック添字の\ :math:`\sigma^z`\ 基底を指します。これは Transfer のスピン
+ラベルと Extern の\ :math:`\sigma^z`\ の軸です。重みは磁場や磁化の軸へは回転
+しません。ギャップのスピンブロックを\ :math:`D_{st}`\ 、
+:math:`\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2`\ 、
+:math:`d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2`\ として
+
+.. math::
+
+   w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+   w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+   W_\text{tot} = \sum |\Delta|^2
+
+です。和は軌道の組、k（動的計算では松原振動数も）について取ります。4 つの重みの
+和は 1 です。上の重みとの関係は
+:math:`w^{S_z=0}_\text{singlet} = w_\psi`\ 、
+:math:`w^{S_z=0}_\text{triplet} = w_{d_z}`\ 、
+:math:`w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}`\ です。
+ログには固有ベクトルごとに 1 行が出力されます（\ ``solver_mode = "iteration"``\ では
+1 つのギャップを固有ベクトル 0 とします）::
+
+   S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+
+ギャップのアーカイブ（\ ``gap.npz``\ 、動的計算では\ ``gap_dynamic.npz``\ ）には
+``sz_weight_upup``\ 、\ ``sz_weight_dndn``\ 、\ ``sz_weight_singlet0``\ 、
+``sz_weight_triplet0``\ （float64、固有ベクトルごとに 1 要素）、
+``sz_conservation_residual``\ 、\ ``sz_conserved``\ が入ります。残差は入力が
+:math:`S_z`\ を保存するかどうかを測ります。\ :math:`r = \max(r_V, r_G)`\ で、
+:math:`r_V`\ は\ :math:`S_z(a) + S_z(d) \neq S_z(b) + S_z(c)`\ となるペアリング
+バーテックスの成分\ :math:`V_{abcd}`\ についての\ :math:`\max|V_\text{off}| / \max|V|`
+（すべての k と振動数について）、\ :math:`r_G`\ は Green 関数のスピン非対角ブロック
+についての同じ比です。\ ``sz_conserved``\ は\ :math:`r \le 10^{-12}`\ です。
+スピン軌道相互作用のない Zeeman 磁場では厳密に 0 になります。\ :math:`S_z`\ が
+保存しない場合（スピン軌道相互作用、スピン反転ホッピング）も重みは厳密な分解
+ですが、WARNING が 1 回出力されます::
+
+   S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+
 拒否される組み合わせ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

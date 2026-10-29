@@ -7787,7 +7787,8 @@ def _so_gap_npz_name(gap_file):
 
 
 def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
-                      eigenvectors, match, kx_array, ky_array, kz_array):
+                      eigenvectors, match, kx_array, ky_array, kz_array,
+                      sz_residual=None):
     """The spin-orbital output schema (issue #83).
 
     Writes the gap archive (:func:`_so_gap_npz_name`, default ``gap.npz``)
@@ -7807,7 +7808,15 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
     ``kx``/``ky``/``kz``, ``spin_components`` and ``gap_spin_weights``; with
     an eigenvalue analysis also ``eigenvalues``, ``eigenvectors``
     ``(n_eig, nd, nd, Nx, Ny, Nz)``, ``eigenvector_spin_weights`` and
-    ``eigenvalue_match``."""
+    ``eigenvalue_match``.
+
+    With ``sz_residual`` (the S_z-conservation residual of the run,
+    :func:`hwave.solver.so_pairing.sz_conservation_residual`) the S_z report
+    of :func:`hwave.solver.so_pairing.sz_report` is logged and its members
+    (``sz_weight_upup``, ``sz_weight_dndn``, ``sz_weight_singlet0``,
+    ``sz_weight_triplet0`` ``(n_ev,)``, ``sz_conservation_residual``,
+    ``sz_conserved``) are added to the archive; ``n_ev`` counts the
+    eigenvectors, or is 1 (the written gap) without an eigenvalue analysis."""
     from hwave.solver import so_pairing, spin_orbital
     comps = so_pairing.SPIN_COMPONENTS
     nd = 2 * int(norb_phys)
@@ -7850,6 +7859,17 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
         record["eigenvector_spin_weights"] = weights
         if match is not None:
             record["eigenvalue_match"] = np.asarray(match, dtype=bool)
+    if sz_residual is not None:
+        if eigenvalues is not None:
+            sz_gaps = vecs
+        elif gap is not None:
+            sz_gaps = [gap]
+        else:
+            sz_gaps = []
+        if len(sz_gaps):
+            record.update(so_pairing.sz_report(
+                [so_pairing.so_sz_decomposition(v, norb_phys) for v in sz_gaps],
+                sz_residual, logger))
     gap_comments = [
         "spin_orbital = true",
         "index_convention = {}".format(spin_orbital.INDEX_CONVENTION),
@@ -9007,6 +9027,13 @@ def calc_eliashberg(input_dict):
     else:
         sigma_init = _initialize_gap(init_gap_mode, norb, kx_array, ky_array, kz_array)
 
+    # S_z-conservation residual of the spin-orbital vertex and Green function
+    # (issue #88), once per run, on the host before any device transfer
+    so_sz_residual = None
+    if spin_orbital_mode:
+        so_sz_residual = so_pairing.sz_conservation_residual(
+            V=Vs_q, green=green_kw, norb_phys=norb_phys)
+
     # GPU: park the two large invariants (pairing vertex and pair bubble) on the
     # device once; each matvec then only moves the gap vector across PCIe. The
     # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
@@ -9269,7 +9296,8 @@ def calc_eliashberg(input_dict):
         so_out = _so_output_record(
             output_dir, gap_file, norb_phys, sigma_result, eigenvalues_eig,
             eigenvectors_eig,
-            eigenvalue_match, kx_array, ky_array, kz_array)
+            eigenvalue_match, kx_array, ky_array, kz_array,
+            sz_residual=so_sz_residual)
         bond_provenance, so_weights, so_gap_comments = so_out
 
     _save_results(

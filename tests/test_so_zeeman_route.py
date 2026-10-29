@@ -33,6 +33,11 @@ What this module pins:
 * :class:`TestScSpectrum` -- a Zeeman field without spin-orbit coupling
   conserves S_z: the static spectrum is the union of the three pair-S_z
   sector spectra (gate 0-S1), and the two routes give the same spectrum.
+* :class:`TestSzReport` -- the S_z weights of a gap sum to 1, are one-hot on
+  pure up-up / down-down / singlet / S_z = 0 triplet gaps, and refine the
+  psi/d weights (0-S4); the S_z-conservation residual is exactly 0 for a
+  Zeeman field without spin-orbit coupling, and with it the WARNING fires
+  once; the report reaches the log and the static and dynamic archives.
 
 Every run goes through the public entry :func:`hwave.qlms.run` (or, for the
 Eliashberg chi0, :func:`hwave.sc._calc_chi0q_internal`), with fixtures
@@ -823,8 +828,11 @@ class TestScBand(unittest.TestCase):
                 _run_sc(mode, extern_header_dim="abc", extern_rows=[(0, 0, 0, 1, 1, 0.1, 0.0)])
 
     def test_no_false_ignored_warning_dynamic(self):
-        with self.assertNoLogs(level="WARNING"):
+        # the only WARNING is the S_z-conservation one (soc != 0 breaks S_z)
+        with self.assertLogs(level="WARNING") as cm:
             lam_ext = _run_sc_dynamic_calc(extern=0.1, transfer_onsite_symmetric=True)
+        self.assertEqual(len(cm.output), 1, cm.output)
+        self.assertIn("S_z is not conserved (residual", cm.output[0])
         lam_tr = _run_sc_dynamic_calc(transfer_zeeman=0.1, transfer_onsite_symmetric=False)
         lam_0 = _run_sc_dynamic_calc()
         self.assertLessEqual(_assignment_max(lam_ext, lam_tr), 1e-10 * np.abs(lam_tr).max())
@@ -936,6 +944,219 @@ class TestScSpectrum(unittest.TestCase):                                # 0-S1
         self.assertEqual(a.size, b.size)
         self.assertLessEqual(_assignment_max(a, b), 1e-12 * max(1, np.abs(b).max()))
         self.assertGreater(_assignment_max(a, _sc_eigs("extern", h=0.0)), 1e-6)
+
+
+
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.INFO)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+    def text(self, level=logging.INFO):
+        return "\n".join(r.getMessage() for r in self.records if r.levelno >= level)
+
+
+@contextlib.contextmanager
+def _capture_logs():
+    """Every INFO+ record of the run (the hwave_sc and solver loggers), with
+    nothing printed."""
+    root = logging.getLogger()
+    cap = _LogCapture()
+    prev_level, prev_disable = root.level, logging.root.manager.disable
+    prev_handlers = root.handlers[:]
+    root.handlers = [cap]
+    root.setLevel(logging.INFO)
+    logging.disable(logging.NOTSET)
+    try:
+        yield cap
+    finally:
+        root.handlers = prev_handlers
+        root.setLevel(prev_level)
+        logging.disable(prev_disable)
+
+
+class _ScRun:
+    """``npz`` (the loaded gap archive), ``stdout`` (the INFO log of the run,
+    which is what the command line prints) and ``log`` (WARNING and above)."""
+
+    def __init__(self, npz, stdout, log):
+        self.npz, self.stdout, self.log = npz, stdout, log
+
+
+def _run_sc_archive(h, soc, eli, npz_name, nmat=16):
+    import hwave.sc as sc
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _sc_model(d, soc=soc, extern=h)
+        inp = _sc_input(d, files, eli=eli, nmat=nmat)
+        with _capture_logs() as cap:
+            sc.calc_eliashberg(inp)
+        out = inp["file"]["output"]["path_to_output"]
+        with np.load(os.path.join(out, npz_name)) as z:
+            npz = {k: z[k] for k in z.files}
+    return _ScRun(_NpzView(npz), cap.text(logging.INFO), cap.text(logging.WARNING))
+
+
+class _NpzView(dict):
+    @property
+    def files(self):
+        return list(self.keys())
+
+
+def _run_sc_static(h, soc, solver_mode="eigenvalue"):
+    eli = {"solver_mode": solver_mode, "num_eigenvalues": 4}
+    if solver_mode == "iteration":
+        eli.update({"init_gap": "cos", "max_iter": 300, "spectral_shift": "auto"})
+    return _run_sc_archive(h, soc, eli, "gap.npz")
+
+
+def _run_sc_dynamic(h, soc=0.0):
+    return _run_sc_archive(h, soc, {"frequency": "dynamic", "num_eigenvalues": 2,
+                                    "spectral_shift": "auto"}, "gap_dynamic.npz", nmat=8)
+
+
+def _random_gap(n, seed=7):
+    rng = np.random.default_rng(seed)
+    shape = (2 * n, 2 * n, 3, 2, 1)
+    return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+
+
+class TestSzReport(unittest.TestCase):                                  # 0-S4
+    def test_weights_sum_one_hot_and_match_psi_d(self):
+        from hwave.solver import so_pairing
+        n = 2
+        upup = np.zeros((2 * n, 2 * n, 3))
+        upup[0, 1, :] = 1.0
+        upup[1, 0, :] = -1.0
+        w_up = so_pairing.so_sz_decomposition(upup, n)
+        self.assertAlmostEqual(w_up["upup"], 1.0, delta=1e-12)
+        dndn = np.zeros_like(upup)
+        dndn[n, n + 1, :] = 1.0
+        self.assertAlmostEqual(so_pairing.so_sz_decomposition(dndn, n)["dndn"], 1.0,
+                               delta=1e-12)
+        kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
+        ky, kz = kx, np.zeros(1)
+        singlet = so_pairing.so_initial_gap("cos", n, kx, ky, kz)
+        self.assertAlmostEqual(so_pairing.so_sz_decomposition(singlet, n)["singlet0"], 1.0,
+                               delta=1e-12)
+        triplet = so_pairing.so_initial_gap("p_x", n, kx, ky, kz)
+        self.assertAlmostEqual(so_pairing.so_sz_decomposition(triplet, n)["triplet0"], 1.0,
+                               delta=1e-12)
+        for seed in range(4):                    # any gap: the identity holds elementwise
+            g = _random_gap(n, seed)
+            w = so_pairing.so_sz_decomposition(g, n)
+            v = so_pairing.so_spin_decomposition(g, n)
+            self.assertEqual(tuple(w), so_pairing.SZ_COMPONENTS)
+            self.assertAlmostEqual(sum(w.values()), 1.0, delta=1e-12)
+            self.assertAlmostEqual(w["singlet0"], v["psi"], delta=1e-12)
+            self.assertAlmostEqual(w["triplet0"], v["dz"], delta=1e-12)
+            self.assertAlmostEqual(w["upup"] + w["dndn"], v["dx"] + v["dy"], delta=1e-12)
+            # phase and normalization do not matter
+            w2 = so_pairing.so_sz_decomposition(3.0 * np.exp(0.4j) * g, n)
+            for c in so_pairing.SZ_COMPONENTS:
+                self.assertAlmostEqual(w2[c], w[c], delta=1e-12)
+        zero = so_pairing.so_sz_decomposition(np.zeros((2 * n, 2 * n, 2)), n)
+        self.assertTrue(all(np.isnan(x) for x in zero.values()))
+
+    def test_off_sector_index_and_residual_definition(self):
+        from hwave.solver import so_pairing
+        n = 2
+        nd = 2 * n
+        idx = so_pairing.sz_off_sector_index(n)
+        # test-side enumeration of the rule
+        spin = [a // n for a in range(nd)]
+        expect = {t for t in np.ndindex(nd, nd, nd, nd)
+                  if spin[t[0]] + spin[t[3]] != spin[t[1]] + spin[t[2]]}
+        self.assertEqual(set(idx), expect)
+        self.assertEqual(len(idx), len(expect))
+        self.assertEqual(len(idx), 10 * n ** 4)
+        rng = np.random.default_rng(3)
+        V = rng.standard_normal((nd,) * 4 + (3, 2)) + 0j
+        G = rng.standard_normal((nd, nd, 3, 2, 5)) + 0j
+        # residual = the per-tuple definition of the brief
+        r_v = max(np.abs(V[t]).max() for t in idx) / np.abs(V).max()
+        self.assertAlmostEqual(so_pairing.sz_conservation_residual(V=V, norb_phys=n),
+                               r_v, delta=1e-15)
+        r_g = max(np.abs(G[:n, n:]).max(), np.abs(G[n:, :n]).max()) / np.abs(G).max()
+        self.assertAlmostEqual(so_pairing.sz_conservation_residual(green=G, norb_phys=n),
+                               r_g, delta=1e-15)
+        self.assertAlmostEqual(
+            so_pairing.sz_conservation_residual(V=V, green=G, norb_phys=n),
+            max(r_v, r_g), delta=1e-15)
+        # a conserving pair is exactly 0; None and zero arrays contribute 0
+        Vc = V.copy()
+        for t in idx:
+            Vc[t] = 0.0
+        Gc = G.copy()
+        Gc[:n, n:] = 0.0
+        Gc[n:, :n] = 0.0
+        self.assertEqual(so_pairing.sz_conservation_residual(V=Vc, green=Gc, norb_phys=n), 0.0)
+        self.assertEqual(so_pairing.sz_conservation_residual(norb_phys=n), 0.0)
+        self.assertEqual(so_pairing.sz_conservation_residual(V=0 * V, norb_phys=n), 0.0)
+        # one off-sector entry is seen; non-contiguous input is read as is
+        Vc[0, 0, 0, n] = 0.5
+        self.assertGreater(so_pairing.sz_conservation_residual(V=Vc, norb_phys=n), 0.0)
+        Gt = np.swapaxes(Gc, 2, 4)
+        self.assertEqual(so_pairing.sz_conservation_residual(green=Gt, norb_phys=n), 0.0)
+
+    def test_residual_and_warning(self):
+        r0 = _run_sc_static(h=0.1, soc=0.0)
+        self.assertLessEqual(float(r0.npz["sz_conservation_residual"]), 1e-12)
+        self.assertTrue(r0.npz["sz_conserved"])
+        self.assertEqual(r0.npz["sz_conserved"].dtype, np.bool_)
+        self.assertNotIn("S_z is not conserved", r0.log)
+        r1 = _run_sc_static(h=0.1, soc=0.3)
+        self.assertGreater(float(r1.npz["sz_conservation_residual"]), 1e-12)
+        self.assertFalse(r1.npz["sz_conserved"])
+        self.assertIn("S_z is not conserved (residual", r1.log)
+        self.assertEqual(r1.log.count("S_z is not conserved"), 1)
+        self.assertIn("not separate pairing channels.", r1.log)
+        for r in (r0, r1):
+            ws = np.stack([r.npz["sz_weight_" + c] for c in
+                           ("upup", "dndn", "singlet0", "triplet0")])
+            self.assertEqual(ws.dtype, np.float64)
+            self.assertEqual(ws.shape[1], r.npz["eigenvalues"].shape[0])
+            np.testing.assert_allclose(ws.sum(axis=0), 1.0, rtol=0, atol=1e-12)
+            # the stored weights are those of the stored eigenvectors
+            ev = r.npz["eigenvector_spin_weights"]
+            np.testing.assert_allclose(ws[2], ev[:, 0], rtol=0, atol=1e-12)
+            np.testing.assert_allclose(ws[3], ev[:, 3], rtol=0, atol=1e-12)
+
+    def test_stdout_line_and_iteration_mode(self):
+        r = _run_sc_static(h=0.1, soc=0.0, solver_mode="iteration")
+        self.assertRegex(
+            r.stdout, r"S_z decomposition of eigenvector 0: up-up = \d\.\d{6}, down-down = "
+                      r"\d\.\d{6}, S_z=0 singlet = \d\.\d{6}, S_z=0 triplet = \d\.\d{6} "
+                      r"\(the four sum to 1\)")
+        self.assertNotIn("eigenvector 1:", r.stdout)
+        self.assertEqual(r.npz["sz_weight_upup"].shape, (1,))
+        from hwave.solver import so_pairing
+        w = so_pairing.so_sz_decomposition(r.npz["gap"], S.NP)
+        for c in so_pairing.SZ_COMPONENTS:
+            self.assertAlmostEqual(float(r.npz["sz_weight_" + c][0]), w[c], delta=1e-12)
+
+    def test_dynamic_archive_keys(self):
+        d = _run_sc_dynamic(h=0.1)
+        for key in ("sz_weight_upup", "sz_weight_dndn", "sz_weight_singlet0",
+                    "sz_weight_triplet0", "sz_conservation_residual", "sz_conserved"):
+            self.assertIn(key, d.npz.files)
+        self.assertEqual(d.npz["sz_weight_upup"].shape, d.npz["eigenvalues"].shape)
+        self.assertLessEqual(float(d.npz["sz_conservation_residual"]), 1e-12)
+        self.assertTrue(d.npz["sz_conserved"])
+        self.assertIn("S_z decomposition of eigenvector 1:", d.stdout)
+        d1 = _run_sc_dynamic(h=0.1, soc=0.3)
+        self.assertGreater(float(d1.npz["sz_conservation_residual"]), 1e-12)
+        self.assertIn("S_z is not conserved (residual", d1.log)
+        # iteration mode: the one gap is eigenvector 0
+        di = _run_sc_archive(0.1, 0.0, {"frequency": "dynamic", "solver_mode": "iteration",
+                                        "spectral_shift": "auto", "init_gap": "cos"},
+                             "gap_dynamic.npz", nmat=8)
+        self.assertEqual(di.npz["sz_weight_upup"].shape, (1,))
+        self.assertIn("S_z decomposition of eigenvector 0:", di.stdout)
+        self.assertNotIn("eigenvector 1:", di.stdout)
 
 
 if __name__ == "__main__":

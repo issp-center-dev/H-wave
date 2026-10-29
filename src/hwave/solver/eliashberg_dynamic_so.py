@@ -428,10 +428,17 @@ def _fmt_weights(labels, w):
 
 def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
                   eigenvalues, eigen_weights, match, norb_phys, T, kx, ky, kz,
-                  eigenvalue_selection, leakage, note=None, extra_prov=None):
+                  eigenvalue_selection, leakage, note=None, extra_prov=None,
+                  sz_residual=None, sz_weights=None):
     """Write ``eigenvalue.dat``, ``gap.dat`` and ``gap_dynamic.npz`` in the
     spin-orbital schema of the static solver (#269) plus the frequency
-    content (see the user guide)."""
+    content (see the user guide).
+
+    With ``sz_residual`` (the run's S_z-conservation residual,
+    ``so_pairing.sz_conservation_residual``) the S_z report
+    (``so_pairing.sz_report``) is logged and added to the archive;
+    ``sz_weights`` are the ``so_pairing.so_sz_decomposition`` of the
+    eigenvectors (default: of ``gap_w`` alone, iteration mode)."""
     from hwave.solver import so_pairing, spin_orbital
     os.makedirs(output_dir, exist_ok=True)
     comps = so_pairing.SPIN_COMPONENTS
@@ -514,6 +521,10 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
             "eigenvector_spin_weights": ew[:, :4],
             "eigenvector_frequency_parity_weights": ew[:, 4:6],
             "eigenvalue_match": np.asarray(match, dtype=bool)})
+    if sz_residual is not None:
+        if sz_weights is None:
+            sz_weights = [so_pairing.so_sz_decomposition(gap_w, norb_phys)]
+        record.update(so_pairing.sz_report(sz_weights, sz_residual, logger))
     np.savez(os.path.join(output_dir, _OUTPUT_NPZ), **record)
 
     n0 = nmat // 2
@@ -701,6 +712,9 @@ def solve_dynamic_so(input_dict):
     t0 = time.time()
     V_w = so_pairing.so_pairing_vertex_dynamic(gam, chi_w, nd, (Nx, Ny, Nz))
     del chi_w, gam
+    # S_z-conservation residual (issue #88), once per run, on the host: r_V
+    # before V_w moves to the device or is freed, r_G before green_w is freed
+    sz_residual = so_pairing.sz_conservation_residual(V=V_w, norb_phys=norb_phys)
     if gpu_active:
         backend.warn_if_device_memory_short(
             3 * V_w.nbytes, logger, label="the spin-orbital dynamic Eliashberg "
@@ -711,6 +725,8 @@ def solve_dynamic_so(input_dict):
     Vs_rt = vertex_to_rt(V_w, workers=fft_workers)
     del V_w
     G2_w = calc_g2_dynamic(green_w, beta)
+    sz_residual = max(sz_residual, so_pairing.sz_conservation_residual(
+        green=green_w, norb_phys=norb_phys))
     del green_w
     if gpu_active:
         G2_w = xp.asarray(G2_w)
@@ -736,7 +752,7 @@ def solve_dynamic_so(input_dict):
     seed_full = load_seed(seed_path, gap_shape) if seed_path else None
 
     # --- solve ---
-    eigenvalues_eig = eig_weights = match = None
+    eigenvalues_eig = eig_weights = match = sz_weights = None
     note = None
     t0 = time.time()
     if solver_mode == "iteration":
@@ -809,13 +825,14 @@ def solve_dynamic_so(input_dict):
                     "come from a second solve with spectral_shift='auto' "
                     "(largest real part)".format(
                         num_eigenvalues, "fermion-antisymmetric", leading_re))
-        rows, match = [], []
+        rows, match, sz_weights = [], [], []
         gap_w = None
         for i in range(len(vals)):
             g = _fix_gauge(basis.to_full(vecs[:, i]).reshape(gap_shape))
             match.append(antisymmetry_residual(g) <= sc._SO_ANTISYM_TOL)
             wi = gap_weights(g, norb_phys)
             rows.append(np.concatenate([wi["spin"], wi["parity"]]))
+            sz_weights.append(so_pairing.so_sz_decomposition(g, norb_phys))
             if i == 0:
                 gap_w = g
         match = np.array(match, dtype=bool)
@@ -838,7 +855,7 @@ def solve_dynamic_so(input_dict):
         eigenvalues=eigenvalues_eig, eigen_weights=eig_weights, match=match,
         norb_phys=norb_phys, T=T, kx=kx, ky=ky, kz=kz,
         eigenvalue_selection=selection, leakage=leakage, note=note,
-        extra_prov=extra)
+        extra_prov=extra, sz_residual=sz_residual, sz_weights=sz_weights)
     logger.info("leading gap: spin weights %s; frequency parity %s",
                 _fmt_weights(so_pairing.SPIN_COMPONENTS, w["spin"]),
                 _fmt_weights(FREQUENCY_PARITY_LABELS, w["parity"]))

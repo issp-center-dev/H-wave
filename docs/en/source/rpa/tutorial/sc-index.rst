@@ -2076,6 +2076,49 @@ value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
 field) is not covered: ``trans_mod`` and ``green_init`` are refused in
 spin-orbital mode (issue #273).
 
+**S_z-resolved weights.** Every spin-orbital run (static and dynamic) also
+reports the :math:`S_z` content of each eigenvector. Up and down refer to the
+**input quantization axis**: the :math:`\sigma^z` basis of the spin-block
+index, which is the axis of the Transfer spin labels and of Extern's
+:math:`\sigma^z`. The weights are not rotated to a field or magnetization
+axis. With the spin blocks :math:`D_{st}` of the gap,
+:math:`\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2` and
+:math:`d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2`,
+
+.. math::
+
+   w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+   w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+   W_\text{tot} = \sum |\Delta|^2 ,
+
+summed over the orbital pairs, k (and the Matsubara frequencies of a dynamic
+run). The four weights sum to 1. They refine the weights above:
+:math:`w^{S_z=0}_\text{singlet} = w_\psi`,
+:math:`w^{S_z=0}_\text{triplet} = w_{d_z}` and
+:math:`w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}`.
+The log has one line per eigenvector (in ``solver_mode = "iteration"``, the
+one gap as eigenvector 0)::
+
+   S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+
+The gap archive (``gap.npz``, or ``gap_dynamic.npz`` for a dynamic run)
+holds ``sz_weight_upup``, ``sz_weight_dndn``, ``sz_weight_singlet0`` and
+``sz_weight_triplet0`` (float64, one entry per eigenvector),
+``sz_conservation_residual`` and ``sz_conserved``. The residual measures
+whether the inputs conserve :math:`S_z`:
+:math:`r = \max(r_V, r_G)`, where :math:`r_V` is
+:math:`\max|V_\text{off}| / \max|V|` over the pairing-vertex entries
+:math:`V_{abcd}` with :math:`S_z(a) + S_z(d) \neq S_z(b) + S_z(c)` (all k
+and frequencies), :math:`r_G` the same ratio for the spin-off-diagonal
+blocks of the Green function, and ``sz_conserved`` is :math:`r \le 10^{-12}`.
+A Zeeman field without spin-orbit coupling gives exactly 0. When
+:math:`S_z` is not conserved (spin-orbit coupling, a spin-flip hopping) the
+weights are still an exact decomposition, and one WARNING is logged::
+
+   S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+
 Refused combinations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
