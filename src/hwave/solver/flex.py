@@ -2720,10 +2720,17 @@ class FLEX(RPA):
         names, aliases = self._bond_store_layout()
         ND = self._bond_view.n_channels * nd
 
+        # the threaded host copies of the store (issue #275, part 2) are for the
+        # GPU path, where a host store's pair-strided copies are on the critical
+        # path of every iteration; a CPU solve copies in its own thread, as before
+        # (decided by the BACKEND: a GPU run with a host store also holds numpy
+        # slots)
+        copy_workers = 1 if xp is np else None
+
         def build(module):
             return flex_bond.BondBlockStore(nmat, nvol, ND, nd, names, aliases,
                                             half_grid=self.longitudinal_bond_half_grid,
-                                            xp=module)
+                                            xp=module, copy_workers=copy_workers)
         if getattr(self, "_bond_store_resident", "host") != "device":
             return build(np)
         try:
