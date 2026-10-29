@@ -305,8 +305,14 @@ class TestMapPreservesSymmetry(_TmpDir):
 
 
 #: the cold-start configuration of the issue on the dimer: U past the bare
-#: Stoner instability, small linear mixing
-_COLD = dict(T=0.1, CellShape=[6, 6, 1], Nmat=32, Mix=0.05, EPS=8, IterationMax=1000)
+#: Stoner instability, small linear mixing. The projected cold start crosses
+#: the pole 1 - U chi0 = 0 of the spin channel; with Mix = 0.05 an unlucky
+#: step there left it unconverged after 1000 iterations in about one run in
+#: ten under round-off-level changes of U (GitHub issue #299). With
+#: Mix = 0.06 both runs take the same number of iterations under relative
+#: changes of U up to 1e-6, and the unprojected run still reaches the broken
+#: branch (larger Mix does not: the unprojected run then stays symmetric).
+_COLD = dict(T=0.1, CellShape=[6, 6, 1], Nmat=32, Mix=0.06, EPS=8, IterationMax=1000)
 _COLD_U = 2.8
 
 
@@ -359,14 +365,41 @@ class TestBrokenBranchLight(_TmpDir):
     """The fast-gate twin of the cold-start case: a smaller grid and a seed
     carrying a 1e-2 anti-symmetric part. Without the projection the run
     converges to the symmetry-broken, non-causal branch and the end-of-solve
-    diagnostic warns; with it the same start stays symmetric and causal."""
+    diagnostic warns; with it the same start stays symmetric and causal.
 
-    _PAR = dict(T=0.1, CellShape=[6, 6, 1], Nmat=16, Mix=0.1, EPS=8, IterationMax=400)
+    Both runs start past the bare Stoner instability, so the symmetric
+    iteration has to cross the pole of the spin channel, 1 - U chi0 = 0, on
+    its way to the fixed point: a step that lands close to it produces a
+    huge transient self-energy, after which linear mixing wanders
+    chaotically, and whether it settles within IterationMax is decided by
+    rounding (GitHub issue #299: from the bare anti-symmetric seed with
+    Mix = 0.1, relative changes of U of 1e-15 left the projected run
+    unconverged in about a third of the cases and non-causal in a few
+    percent). The seed therefore also carries a small causal damping
+    ``-i gamma sign(w_n)``, removed by neither projection, and the mixing is
+    chosen so that the projected run crosses the pole in one mild step: it
+    then converges in the same number of iterations under relative changes
+    of U up to 1e-6, on Accelerate and OpenBLAS alike, while the unprojected
+    run still reaches the broken branch.
+
+    Before changing ``_PAR``, ``_GAMMA`` or ``_COLD_U``, re-validate the
+    margin: repeat both runs under relative changes of U up to 1e-6 (and, for
+    the BLAS, with one and several threads); every projected run must
+    converge with max Im eig < 0, and every unprojected run must converge
+    (``scf_converged``) on the broken branch with the deviations asserted
+    below. The same applies to ``_COLD`` for the heavy twin."""
+
+    _PAR = dict(T=0.1, CellShape=[6, 6, 1], Nmat=16, Mix=0.1075, EPS=8, IterationMax=400)
+    _GAMMA = 0.0875
 
     def _run(self, proj):
         files = _write_dimer(self.d, _COLD_U)
         s, gi = _dimer_solver(self.d, files, flex_sigma_hermitian_projection=proj, **self._PAR)
-        gi["sigma_init"] = _antisymmetric((1, 16, 36, 2, 2), 1e-2)
+        shape = (1, 16, 36, 2, 2)
+        # centred grid: the first half of the frequency axis is w_n < 0
+        sign = np.where(np.arange(shape[1]) < shape[1] // 2, -1.0, 1.0)
+        damping = (-1j * self._GAMMA * sign)[None, :, None, None, None] * np.eye(2)
+        gi["sigma_init"] = damping + _antisymmetric(shape, 1e-2)
         with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
             s.solve(gi, self.d)
         return s, [m for m in cm.output if m.startswith("WARNING")]
@@ -384,8 +417,12 @@ class TestBrokenBranchLight(_TmpDir):
 
     def test_projected_stays_symmetric_and_causal(self):
         s, warn = self._run(True)
+        # on failure, say whether the run did not converge or ended non-causal
+        state = "scf_converged={} after {} iterations, max Im eig {:.3e}; warnings: {}".format(
+            s.scf_converged, s.scf_iterations, _max_im_eig(s.sigma), warn)
+        self.assertTrue(s.scf_converged, state)
         self.assertEqual(_rel_dev(s.sigma), 0.0)
-        self.assertLess(_max_im_eig(s.sigma), 0.0)
+        self.assertLess(_max_im_eig(s.sigma), 0.0, state)
         self.assertFalse(any("final self-energy violates" in m for m in warn))
 
 
