@@ -38,6 +38,7 @@ from . import bubble
 from . import fold
 from . import green as green_mod
 from . import spin_orbital
+from . import fingerprint
 
 
 #: Emitted whenever a PairLift declaration is solved: its particle-hole
@@ -2351,6 +2352,12 @@ class RPA:
 
         beta = 1.0/self.T
 
+        # spin-orbital archive provenance (#88): the realized state and the
+        # Green-function digest of THIS solve; set only when this solve
+        # builds its own bubble, so a previous solve cannot leak them
+        self._so_state = None
+        self._so_fp_green = None
+
         # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
         # Green's function that produced the bubble: refuse an external
         # chi0q FIRST -- before the backend is resolved and before the
@@ -2573,6 +2580,9 @@ class RPA:
             else:
                 mu = self.mu_value
 
+            if self.ham_info.enable_spin_orbital:
+                self._so_state = self._so_bare_state(mu)
+
             if gpu_active:
                 logger.info("RPA: GPU backend active (CuPy); moving H0 "
                             "eigenpairs to the device.")
@@ -2593,6 +2603,9 @@ class RPA:
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 
             green0, green0_tail = self._calc_green(beta, mu)
+            if self.ham_info.enable_spin_orbital:
+                self._so_fp_green = fingerprint.green_digest(
+                    self._so_canonical_green(green0, green0_tail), "b_f_k_o_o_v1")
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
@@ -3054,6 +3067,10 @@ class RPA:
             return {"spin_orbital": True}
 
         so_stamp = _spin_orbital_stamp()
+        # #88: the version-1 fingerprint and state members, built once and
+        # written beside the spin_orbital marker into chi0q and chiq
+        so_prov = (self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
+                   if so_stamp else {})
         if (bool(getattr(getattr(self, "ham_info", None),
                          "enable_spin_orbital", False))
                 and not so_stamp
@@ -3081,6 +3098,7 @@ class RPA:
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
                     **so_stamp,
+                    **so_prov,
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -3140,6 +3158,7 @@ class RPA:
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
                 **so_stamp,
+                **so_prov,
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
@@ -3996,6 +4015,71 @@ class RPA:
         self.H0_eigenvector = v
 
     @do_profile
+    # ------------------------------------------------- #88 SO provenance
+    def _so_bare_state(self, mu):
+        """The realized band state of a spin-orbital RPA run
+        (:class:`fingerprint.SOState`), in electrons per cell summed over
+        all spin-orbitals: the density is the masked Fermi count
+        ``_find_mu`` roots, at the realized ``mu``; a spin-free band holds
+        one spin's levels, so its count is doubled."""
+        nvol = self.lattice.nvol
+        nspin = 2 if self.spin_mode == "spin-free" else 1
+        count = _masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
+                                      0.0, self.ene_cutoff)[0]
+        target = self.Ncond / nvol if self.calc_mu else mu
+        return fingerprint.so_state(beta=1.0 / self.T, nmat=self.nmat, mu=mu,
+                                    density=nspin * count / nvol,
+                                    calc_mu=self.calc_mu, target=target)
+
+    def _so_canonical_green(self, green, green_tail):
+        """The full bare G of a spin-orbital run in the canonical layout
+        ``(1, Nmat, nvol, nd, nd)``, spin-block order (the deflated G plus
+        its tail; a spin-free or spin-diagonal band is expanded to its
+        spin blocks)."""
+        xp = _bk.array_module_of(green)
+        g = green + green_tail
+        nb, nmat, nvol, n, _ = g.shape
+        if self.spin_mode == "spinful":
+            return g
+        full = xp.zeros((1, nmat, nvol, 2 * n, 2 * n), dtype=xp.complex128)
+        for s in (0, 1):
+            full[0, :, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = g[s if nb == 2 else 0]
+        return full
+
+    def _so_band_tables(self):
+        """``(transfer, extern, BandMeta)`` of the PRE-FOLD ``read_w90``
+        tables of this run (``ham_info.param_ham_orig`` when the lattice has
+        a sublattice, else ``ham_info.param_ham``); never the folded table
+        and never ``ham_trans_q``."""
+        ham_info = self.ham_info
+        src = (ham_info.param_ham_orig if self.lattice.has_sublattice
+               else ham_info.param_ham)
+        transfer = src.get("Transfer", None)
+        extern = src.get("Extern", None)
+        meta = fingerprint.BandMeta(
+            coeff_extern=float(self.ext),
+            enable_spin_orbital=True,
+            index_convention=spin_orbital.INDEX_CONVENTION,
+            norb=int(src["Geometry"]["norb"]),
+            norb_phys=int(ham_info.norb_orig),
+            cell_shape=tuple(int(x) for x in self.lattice.cellshape),
+            sub_shape=tuple(int(x) for x in self.lattice.subshape))
+        return transfer, extern, meta
+
+    def _so_provenance(self, producer_stage, producer_label):
+        """The fingerprint/state members of this spin-orbital run, built
+        once per call (merged into every archive of the run), or ``{}``
+        when this solve established no state (e.g. a supplied chi0q)."""
+        state = getattr(self, "_so_state", None)
+        fp_green = getattr(self, "_so_fp_green", None)
+        if state is None or fp_green is None:
+            return {}
+        transfer, extern, meta = self._so_band_tables()
+        return fingerprint.so_provenance_members(
+            producer_stage=producer_stage, producer_label=producer_label,
+            transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
+            state=state)
+
     def _find_mu(self, Ncond, T):
         logger.debug(">>> RPA._find_mu")
 

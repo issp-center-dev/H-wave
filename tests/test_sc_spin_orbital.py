@@ -2049,7 +2049,8 @@ class TestChi0qInitProvenance(_TmpDir):
 class TestArchiveMembers(_TmpDir):
     """The ``spin_orbital`` marker is written ONLY by spin-orbital runs: a
     non-spin-orbital RPA / FLEX archive keeps exactly its previous member
-    set; a spin-orbital RPA run writes ``spin_orbital = True``."""
+    set; a spin-orbital RPA run writes ``spin_orbital = True`` and the
+    version-1 fingerprint/state members (issue #88), and nothing else."""
 
     def _rpa(self, files, so, scheme, out):
         from hwave import qlms
@@ -2085,7 +2086,10 @@ class TestArchiveMembers(_TmpDir):
                 m = np.asarray(z["spin_orbital"])
                 self.assertEqual((m.ndim, m.dtype), (0, np.bool_))
                 self.assertTrue(bool(m))
-                self.assertEqual(sorted(set(z.files) - {"spin_orbital"}),
+                from hwave.solver import fingerprint
+                prov = set(fingerprint.SO_PROVENANCE_MEMBERS)
+                self.assertLessEqual(prov, set(z.files))
+                self.assertEqual(sorted(set(z.files) - {"spin_orbital"} - prov),
                                  _NON_SO_MEMBERS[("RPA", "general", name)])
 
 

@@ -40,6 +40,7 @@ from .density_projection import project_density_pairs
 from . import backend as _bk
 from . import bubble
 from . import spin_orbital
+from . import fingerprint
 from . import matsubara as _ms
 from . import half_grid as _half_grid
 from . import flex_diagnostics as _diag
@@ -1373,6 +1374,10 @@ class FLEX(RPA):
         in RPA.
         """
         logger.info("Start FLEX calculations")
+        # spin-orbital archive provenance (#88): the realized final state of
+        # THIS solve (set by the spin-orbital final-state block only)
+        self._so_state = None
+        self._so_fp_green = None
         # per-solve diagnostics of the Hermitian projection (issue #281)
         self.sigma_hermitian_removed_max = 0.0
         self.sigma_seed_hermitian_deviation = None
@@ -2666,6 +2671,14 @@ class FLEX(RPA):
                            "mu": float(mu)}
                 if self._so_spinful:
                     physics.update(self._spin_vector(dens.rho_r))
+                    # #88: the closure density of the final state, electrons
+                    # per cell over all spin-orbitals (the trace runs over
+                    # both spins), at the final dressed mu
+                    _nv = self.lattice.nvol
+                    self._so_state = fingerprint.so_state(
+                        beta=beta, nmat=self.nmat, mu=mu,
+                        density=dens.n_per_spin / _nv, calc_mu=self.calc_mu,
+                        target=(self.Ncond / _nv if self.calc_mu else mu))
                 self.physics = physics
                 logger.info("FLEX: NCond = {}, Sz = {}, ChemicalPotential = {}".format(
                     physics["NCond"], physics["Sz"], physics["mu"]))
@@ -5260,6 +5273,15 @@ class FLEX(RPA):
         """
         logger.info("Save FLEX results")
         path_to_output = info_outputfile["path_to_output"]
+        # #88: the version-1 fingerprint and state members of a spin-orbital
+        # run, built ONCE and merged into chiq, green, sigma and chi0q; the
+        # Green digest is that of the array written to green.npz
+        so_prov = {}
+        if (getattr(self, "_so_spinful", False)
+                and getattr(self, "_so_state", None) is not None
+                and green_info.get("green") is not None):
+            self._so_fp_green = fingerprint.green_digest(green_info["green"], "b_f_k_o_o_v1")
+            so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
         _pb = getattr(self, "_phase_b_active", False)
         _bond_static = {}
         _last_map_omitted = False
@@ -5373,7 +5395,8 @@ class FLEX(RPA):
                      # member set); hwave_sc requires it in spin-orbital
                      # flex mode -- index_convention alone is on every file
                      **({"spin_orbital": True}
-                        if getattr(self, "_so_spinful", False) else {}))
+                        if getattr(self, "_so_spinful", False) else {}),
+                     **so_prov)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -5461,6 +5484,7 @@ class FLEX(RPA):
             if self._so_spinful:
                 # #83: written ONLY by a spin-orbital run (see chi0q above)
                 save_dict["spin_orbital"] = True
+                save_dict.update(so_prov)
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
 
@@ -5480,6 +5504,7 @@ class FLEX(RPA):
                                    **self._provenance_block("final_state"))
             if self._so_spinful:
                 sigma_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
+                sigma_extra.update(so_prov)
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
                      **sigma_extra,
@@ -5510,6 +5535,7 @@ class FLEX(RPA):
                 green_extra.update(self._provenance_block("final_state"))
             if self._so_spinful:
                 green_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
+                green_extra.update(so_prov)
             np.savez(file_name,
                      green=green_info.get("green"),
                      wavevector_unit=self.kvec,

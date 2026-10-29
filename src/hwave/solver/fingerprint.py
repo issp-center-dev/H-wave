@@ -6,8 +6,12 @@ values are hashed as their exact bytes, with no rounding, after ``-0.0`` is
 mapped to ``+0.0``; NaN and infinities are refused.  The digests are
 run-versus-file compatibility keys, not an integrity layer.
 """
+import functools
 import hashlib
+import logging
+import os
 import struct
+import subprocess
 from typing import Iterable, NamedTuple, Optional
 
 import numpy as np
@@ -27,6 +31,8 @@ PRODUCER_STAGES = (
     "sc_so_bond_static",
     "sc_so_bond_dynamic",
 )
+
+logger = logging.getLogger(__name__)
 
 _MAGIC = "hwave-fp"
 _C16_BYTES = 16
@@ -220,3 +226,152 @@ def green_digest(green, layout: str) -> str:
     block at a time); the caller's array is never modified.
     """
     return digest("green", _green_chunks(green, layout))
+
+
+# ---------------------------------------------------------------- provenance
+class SOState(NamedTuple):
+    """The realized normal state of a spin-orbital producer.
+
+    A tagged union on ``calc_mu``:
+
+    * ``calc_mu = True``: ``target`` is the electron density per cell summed
+      over all spin-orbitals, and ``mu_tol = |density - target|`` (the
+      achieved residual).
+    * ``calc_mu = False``: ``target`` is the configured mu (energy units),
+      ``mu_tol = 0.0``, and ``density`` (electrons per cell over all
+      spin-orbitals) is a diagnostic only.
+    """
+    beta: float
+    nmat: int
+    mu: float
+    density: float
+    calc_mu: bool
+    target: float
+    mu_tol: float
+
+
+def so_state(*, beta, nmat, mu, density, calc_mu, target) -> SOState:
+    """An :class:`SOState` with ``mu_tol`` set by the ``calc_mu`` tag."""
+    calc_mu = bool(calc_mu)
+    density = float(density)
+    target = float(target)
+    mu_tol = abs(density - target) if calc_mu else 0.0
+    return SOState(float(beta), int(nmat), float(mu), density, calc_mu, target, mu_tol)
+
+
+_VERSION_MAX = 256
+
+#: The version-1 members ``so_provenance_members`` writes (the schema table
+#: of the design's archive section), in a fixed order.
+SO_PROVENANCE_MEMBERS = (
+    "fingerprint_version", "producer_stage", "producer_label", "producer_version",
+    "fp_transfer", "fp_extern", "fp_meta", "fp_band", "fp_green",
+    "prov_transfer_keys", "prov_transfer_vals", "prov_extern_present",
+    "prov_extern_keys", "prov_extern_vals",
+    "prov_coeff_extern", "prov_enable_spin_orbital", "prov_index_convention",
+    "prov_norb", "prov_norb_phys", "prov_cell_shape", "prov_sub_shape",
+    "state_beta", "state_nmat", "state_mu", "state_density", "state_calc_mu",
+    "state_target", "state_mu_tol",
+)
+
+
+@functools.lru_cache(maxsize=None)
+def _git_describe() -> Optional[str]:
+    """``git describe --always --dirty`` of the package directory (2 s
+    limit), or None. Cached per process; never raises."""
+    try:
+        pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        r = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=pkg,
+                           capture_output=True, text=True, timeout=2.0)
+        out = r.stdout.strip()
+        return out if r.returncode == 0 and out else None
+    except Exception:
+        return None
+
+
+def _producer_version() -> str:
+    """``hwave.__version__`` (read at call time) plus `` (<git describe>)``
+    when available; longer than 256 characters it is cut to 255 plus
+    ``…``. Never fails."""
+    try:
+        import hwave
+        v = str(getattr(hwave, "__version__", "unknown"))
+    except Exception:
+        v = "unknown"
+    g = _git_describe()
+    if g:
+        v = "{} ({})".format(v, g)
+    if len(v) > _VERSION_MAX:
+        v = v[:_VERSION_MAX - 1] + "…"
+        logger.info("producer_version truncated to %d characters", _VERSION_MAX)
+    return v
+
+
+def table_arrays(table: Optional[dict]):
+    """``(keys int64 (n, 5), vals complex128 (n,))`` of a ``read_w90``-style
+    table, sorted by the signed ``(Rx, Ry, Rz, a, b)`` key (the digest
+    order); empty arrays for ``None``."""
+    if not table:
+        return np.zeros((0, 5), dtype=np.int64), np.zeros((0,), dtype=np.complex128)
+    keys = np.array([[*k[0], *k[1]] for k in table], dtype=np.int64).reshape(len(table), 5)
+    vals = np.array(list(table.values()), dtype=np.complex128)
+    order = np.lexsort(keys.T[::-1])
+    return np.ascontiguousarray(keys[order]), np.ascontiguousarray(vals[order])
+
+
+def so_provenance_members(*, producer_stage, producer_label, transfer, extern,
+                          meta: BandMeta, fp_green: str, state: SOState) -> dict:
+    """The version-1 fingerprint and state members of a spin-orbital archive.
+
+    Build it once per run and merge the same dict into every archive of
+    that run. Refuses (ValueError naming the member) any non-finite float
+    or complex member.
+    """
+    if producer_stage not in PRODUCER_STAGES:
+        raise ValueError("unknown producer_stage {!r}".format(producer_stage))
+    if not (isinstance(fp_green, str) and len(fp_green) == 64
+            and all(c in "0123456789abcdef" for c in fp_green)):
+        raise ValueError("fp_green must be a 64-character lowercase hex digest, got {!r}"
+                         .format(fp_green))
+    tk, tv = table_arrays(transfer)
+    ek, ev = table_arrays(extern)
+    m = {
+        "fingerprint_version": np.int64(FINGERPRINT_VERSION),
+        "producer_stage": np.str_(producer_stage),
+        "producer_label": np.str_(producer_label),
+        "producer_version": np.str_(_producer_version()),
+        "fp_green": np.str_(fp_green),
+        "prov_transfer_keys": tk,
+        "prov_transfer_vals": tv,
+        "prov_extern_present": np.bool_(extern is not None),
+        "prov_extern_keys": ek,
+        "prov_extern_vals": ev,
+        "prov_coeff_extern": np.float64(meta.coeff_extern),
+        "prov_enable_spin_orbital": np.bool_(meta.enable_spin_orbital),
+        "prov_index_convention": np.str_(meta.index_convention),
+        "prov_norb": np.int64(meta.norb),
+        "prov_norb_phys": np.int64(meta.norb_phys),
+        "prov_cell_shape": np.array(meta.cell_shape, dtype=np.int64).reshape(3),
+        "prov_sub_shape": np.array(meta.sub_shape, dtype=np.int64).reshape(3),
+        "state_beta": np.float64(state.beta),
+        "state_nmat": np.int64(state.nmat),
+        "state_mu": np.float64(state.mu),
+        "state_density": np.float64(state.density),
+        "state_calc_mu": np.bool_(state.calc_mu),
+        "state_target": np.float64(state.target),
+        "state_mu_tol": np.float64(state.mu_tol),
+    }
+    for k, v in m.items():
+        if v.dtype.kind in "fc" and not np.all(np.isfinite(v)):
+            raise ValueError("non-finite spin-orbital provenance member {}: {!r}".format(k, v))
+    if not state.beta > 0:
+        raise ValueError("state_beta must be > 0, got {!r}".format(state.beta))
+    if not state.calc_mu and state.mu_tol != 0.0:
+        raise ValueError("state_mu_tol must be 0.0 for a fixed-mu state, got {!r}"
+                         .format(state.mu_tol))
+    fps = band_digests(transfer, extern, meta)
+    for k in ("fp_transfer", "fp_extern", "fp_meta", "fp_band"):
+        m[k] = np.str_(fps[k])
+    if set(m) != set(SO_PROVENANCE_MEMBERS):  # pragma: no cover - schema drift guard
+        raise RuntimeError("spin-orbital provenance members drifted from the schema")
+    return {k: m[k] for k in SO_PROVENANCE_MEMBERS}
