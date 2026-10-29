@@ -1691,6 +1691,11 @@ class TestFlexToScExternEndToEnd(unittest.TestCase):
             self.assertAlmostEqual(float(g["state_mu"]), mu, delta=1e-12,
                                    msg=(route, freq))
             self.assertEqual(bool(g["prov_extern_present"]), route == "extern")
+            # the closure density is recomputed on hwave_sc's own band: it
+            # closes to the filling target only if that band carries the field
+            self.assertAlmostEqual(float(g["state_density"]),
+                                   float(g["state_target"]), delta=1e-8,
+                                   msg=(route, freq))
 
     def test_cross_route_consumer_refused(self):
         """FLEX archives produced on the Transfer route, hwave_sc on the
