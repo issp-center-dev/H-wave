@@ -806,6 +806,10 @@ TOML形式
 
   **説明 :** 外場の係数\ :math:`h`\ を指定します。外場は\ :math:`\pm h H_{\alpha\beta}(r_{ij})`\ の形式で導入され、行列要素\ :math:`H_{\alpha\beta}(r_{ij})`\ の定義は相互作用入力ファイルで与えます。符号は\ :math:`+(-)`\ が spin up(down) です。
 
+  デフォルトの 0.0 のままでは Extern ファイルは効きません。適用するには\ ``coeff_extern``\ （例えば 1.0）を指定してください。
+
+  スピン軌道モード（\ ``enable_spin_orbital = true``\ 、RPA と Hartree-Fock FLEX）でも、Extern ファイルは物理軌道インデックス 1〜\ :math:`N_\text{orbital}`\ で書き、同じ符号の規則が適用されます。上向きスピンは\ :math:`+h H_{\alpha\beta}`\ 、下向きスピンは\ :math:`-h H_{\alpha\beta}`\ だけずれます。磁場はここ（Extern + ``coeff_extern``\ ）で与えるか、Transfer ファイルのオンサイト項として与えるかのどちらか一方にしてください。両方書くと足し合わされます。\ :doc:`../inputfiles/interaction`\ を参照してください。
+
 - ``RndSeed``
 
   **形式 :** int型 (デフォルトは1234)

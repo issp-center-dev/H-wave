@@ -1476,6 +1476,49 @@ it is requested), both in the static solver (see :ref:`sc_spin_orbital`) and
 in the dynamic one, which uses :math:`\chi` at every bosonic frequency (see
 :ref:`sc_spin_orbital_dynamic`).
 
+Spin-polarized FLEX (Zeeman field)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A spin-orbital FLEX run can be put in a Zeeman field :math:`h`. One sign
+convention holds throughout: the field shifts the up-spin level by
+:math:`+h` and the down-spin level by :math:`-h` (the :math:`\sigma^z` sign
+of the Extern term). Both routes below need ``enable_spin_orbital = true``,
+the Geometry ``norb`` equal to :math:`2 n_{\rm orb}`, and the Transfer file
+in the interleaved spin-orbital indices (1-based file index
+:math:`2a + s + 1`, :math:`s = 0` for up).
+
+- **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
+  :math:`a` (1-based file indices)::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **Route 2: Extern + coeff_extern.** The Extern file uses the
+  **physical** orbital indices: an :math:`n_{\rm orb} \times n_{\rm orb}`
+  matrix per :math:`R`, indices :math:`1, \ldots, n_{\rm orb}`, in the same
+  Wannier90 format as without ``enable_spin_orbital``. It does not use the
+  :math:`1, \ldots, 2 n_{\rm orb}` spin-orbital indices of the Transfer
+  file; an index outside the physical range, or a header (line 2) that
+  declares another orbital count, is rejected. The operator is
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
+  ``[mode.param] coeff_extern``; :math:`H_{aa}(0) = h` with
+  ``coeff_extern = 1.0`` equals Route 1.
+
+Side by side, for one orbital and :math:`h = 0.1`::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+
+Use one route, not both: the two fields add. For :math:`h > 0` the down
+spin is favoured, so at fixed filling ``Sz`` in ``energy.dat`` is negative.
+Each field value is its own state point: for a field sweep, rerun FLEX at
+every value.
+
+The Extern route is accepted by the spin-orbital Hartree-Fock FLEX only.
+Without ``enable_spin_orbital``, ``flex_hartree_fock = true`` still refuses
+an external field.
+
 The output files of a run without ``enable_spin_orbital`` can also be used
 as input for the Eliashberg equation solver (``hwave_sc``) to analyze
 superconducting instabilities. See :doc:`/rpa/tutorial/sc-index` for details.

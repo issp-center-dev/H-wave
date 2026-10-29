@@ -1922,7 +1922,9 @@ class FLEX(RPA):
         shape = tuple(int(x) for x in self.lattice.shape)
         no = 2 * norb if self._so_spinful else norb      # Green-function dimension
         expected = (1, nmat, nvol, no, no)
-        if self.ham_info.ham_extern_q is not None:
+        # the spin-orbital band adds Extern itself (_calc_epsilon_k,
+        # sigma^z H_ab(k), issue #88); only the spin-free Phase B refuses it
+        if self.ham_info.ham_extern_q is not None and not self._so_spinful:
             raise ValueError("flex_hartree_fock=true does not support an external field "
                              "(spin-diagonal H0)")
         if self._so_spinful:

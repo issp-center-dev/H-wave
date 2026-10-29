@@ -1416,6 +1416,47 @@ FLEX は指定されたアーカイブだけを出力します）を読みます
 （\ :ref:`sc_spin_orbital`\ を参照）でも、すべてのボソン振動数の\ :math:`\chi`\ を使う
 動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
 
+スピン偏極した FLEX（Zeeman 磁場）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+スピン軌道モードの FLEX 計算には Zeeman 磁場\ :math:`h`\ をかけられます。符号の規則は
+全体を通して一つです。磁場は上向きスピンの準位を\ :math:`+h`\ 、下向きスピンの準位を
+:math:`-h`\ だけずらします（Extern 項の\ :math:`\sigma^z`\ の符号）。以下のどちらの方法でも、
+``enable_spin_orbital = true``\ 、Geometry の\ ``norb``\ を\ :math:`2 n_{\rm orb}`\ とし、
+Transfer ファイルをインターリーブしたスピン軌道インデックス（1始まりのファイル上の
+インデックス\ :math:`2a + s + 1`\ 、上向きが\ :math:`s = 0`\ ）で書く必要があります。
+
+- **方法 1: Transfer に Zeeman 項を書く。** 各軌道\ :math:`a`\ についてオンサイト項を
+  加えます（1始まりのファイル上のインデックス）::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **方法 2: Extern + coeff_extern。** Extern ファイルは\ **物理**\ 軌道インデックスを
+  使います。各\ :math:`R`\ について\ :math:`n_{\rm orb} \times n_{\rm orb}`\ 行列で、
+  インデックスは\ :math:`1, \ldots, n_{\rm orb}`\ 、形式は\ ``enable_spin_orbital``\ を
+  使わない場合と同じ Wannier90 形式です。Transfer ファイルのスピン軌道インデックス
+  :math:`1, \ldots, 2 n_{\rm orb}`\ は使いません。物理軌道の範囲外のインデックス、
+  または別の軌道数を宣言するヘッダ（2行目）は拒否されます。演算子は
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`\ で、
+  ``[mode.param] coeff_extern``\ 倍されます。\ ``coeff_extern = 1.0``\ で
+  :math:`H_{aa}(0) = h`\ とすると方法 1 と同じになります。
+
+1軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+
+どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます。
+:math:`h > 0`\ では下向きスピンが有利になるので、フィリング一定のもとで\ ``energy.dat``\ の
+``Sz``\ は負になります。磁場の値ごとに別の状態点です。磁場を掃引するときは、値ごとに
+FLEX を実行し直してください。
+
+Extern による方法を受け付けるのはスピン軌道モードの Hartree-Fock FLEX だけです。
+``enable_spin_orbital``\ を使わない場合、\ ``flex_hartree_fock = true``\ は引き続き
+外場を拒否します。
+
 ``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
 

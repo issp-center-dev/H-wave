@@ -702,6 +702,18 @@ class Interaction:
         # mode options
         self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
 
+        # issue #88: in spin-orbital mode the Extern file is written in
+        # PHYSICAL orbital indices 1..norb_phys; _make_ham_trans would drop
+        # an out-of-range row without a word, so refuse it here, on the
+        # pre-fold table and header (before _init_interaction folds them).
+        # The non-spin-orbital silent drop is unchanged (issue #303).
+        if self.enable_spin_orbital and "Extern" in param_ham:
+            spin_orbital.check_extern_indices(
+                param_ham["Extern"],
+                _so_physical_norb(param_ham["Geometry"]["norb"], True, source="Geometry"),
+                getattr(param_ham, "source_files", {}).get("extern", "Extern"),
+                declared_norb=getattr(param_ham, "source_dimensions", {}).get("extern"))
+
         # initialize, and reshape if use sublattice
         self._init_interaction()
 
