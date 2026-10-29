@@ -711,7 +711,8 @@ def solve_dynamic_so(input_dict):
         mu = sc._determine_mu(eigenvalues, beta, n_filling, nd)
         logger.info("mu = %.6f", mu)
         green_w = sc._build_bond_green(
-            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+            eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None,
+            spin_orbital_mode=True).full_sc
         # the kernel's own G and state
         from hwave.solver import fingerprint
         so_members = sc._so_writer_members(

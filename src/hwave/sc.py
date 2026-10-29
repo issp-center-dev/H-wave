@@ -1280,7 +1280,8 @@ def _require_so_chi0q_marker(data, file_name, hint=None, producer="RPA"):
             "enable_spin_orbital = true. {}".format(file_name, producer, hint))
 
 
-def _refuse_so_archive_in_non_so_mode(data, file_name):
+def _refuse_so_archive_in_non_so_mode(data, file_name,
+                                      check_index_convention=False):
     """Refuse a spin-orbital susceptibility archive in a non-spin-orbital run.
 
     A spin-orbital archive over N physical orbitals has nd = 2N and so the
@@ -1291,7 +1292,13 @@ def _refuse_so_archive_in_non_so_mode(data, file_name):
     "spin_orbital"``); non-spin-orbital archives carry neither, so they load
     unchanged. A marker that is not a scalar bool is refused too (the
     spin-orbital side does the same). Checked on the open npz, before any
-    array is read."""
+    array is read.
+
+    ``check_index_convention`` (Green-function files only) also refuses
+    ``index_convention == "spin_block"``: a spin-orbital FLEX green.npz can
+    carry that tag alone, whereas the tag sits on EVERY chi0q/chiq archive
+    (non-spin-orbital runs included), so the susceptibility readers leave
+    it off."""
     hint = ("Enable [mode] enable_spin_orbital = true, or regenerate the "
             "archive with a non-spin-orbital run.")
     if "spin_orbital" in data:
@@ -1315,6 +1322,38 @@ def _refuse_so_archive_in_non_so_mode(data, file_name):
             "FLEX output) and cannot be used without [mode] "
             "enable_spin_orbital = true. {}".format(
                 file_name, _SO_FLEX_CHI_CONVENTION, hint))
+    from hwave.solver import spin_orbital as _spin_orbital
+    if (check_index_convention and "index_convention" in data
+            and str(data["index_convention"]) == _spin_orbital.INDEX_CONVENTION):
+        raise ValueError(
+            "Green-function file '{}' is tagged index_convention = {!r} (a "
+            "spin-orbital run's output, spin_orbital = True) and cannot be "
+            "used without [mode] enable_spin_orbital = true: its orbital "
+            "axis is the spin-block spin-orbital index, not a physical "
+            "orbital. {}".format(file_name, _spin_orbital.INDEX_CONVENTION,
+                                 hint))
+
+
+def _refuse_so_green_file(green_path, label="bond_green"):
+    """Open a Green-function npz lazily and refuse a spin-orbital one.
+
+    O(1): only the scalar marker keys are read, never the ``green`` array.
+    A missing / unreadable file is left to :func:`_load_green_npz`, whose
+    error is the more specific one."""
+    if not os.path.isfile(green_path):
+        return
+    try:
+        data = np.load(green_path)
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile,
+            AttributeError):
+        return
+    try:
+        _refuse_so_archive_in_non_so_mode(data, green_path,
+                                          check_index_convention=True)
+    finally:
+        close = getattr(data, "close", None)
+        if close is not None:
+            close()
 
 
 def _preflight_refuse_so_archives(input_dict, chi0q_mode):
@@ -2869,7 +2908,8 @@ class _BondGreen(NamedTuple):
 
 
 def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
-                      coeff_tail_requested, bond_green_path):
+                      coeff_tail_requested, bond_green_path,
+                      spin_orbital_mode=False):
     """Build the bond path's :class:`_BondGreen` carrier.
 
     Internal branch (``bond_green_path is None``): flattens sc.py's
@@ -2914,12 +2954,18 @@ def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
         The resolved ``[eliashberg] bond_coeff_tail`` value.
     bond_green_path : str or None
         ``[eliashberg] bond_green``; ``None`` selects the internal build.
+    spin_orbital_mode : bool
+        ``False`` (the non-spin-orbital bond path): an external file is
+        checked for spin-orbital markers first and refused (the #271
+        preflight does not run on the bond path). ``True`` skips the check.
 
     Returns
     -------
     _BondGreen
     """
     if bond_green_path is not None:
+        if not spin_orbital_mode:
+            _refuse_so_green_file(bond_green_path)
         Nx, Ny, Nz, norb = eigenvalues.shape
         green_sc, nfreq = _load_green_npz(
             bond_green_path, norb, Nx, Ny, Nz, label="bond_green")
@@ -9160,6 +9206,7 @@ def calc_eliashberg(input_dict):
         # only, so the preflight still precedes every large allocation.
         nmat_bond = nmat
         if bond_green is not None:
+            _refuse_so_green_file(bond_green)
             nmat_peek = _peek_green_npz_nfreq(bond_green, label="bond_green")
             if nmat_peek is not None:
                 # Validate the EFFECTIVE (file) Nmat before the preflight: an
@@ -9195,7 +9242,8 @@ def calc_eliashberg(input_dict):
         # AFTER the preflight above (review fix I-2 / the ordering pin).
         green_carrier = _build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat,
-            bond_coeff_tail_requested, bond_green)
+            bond_coeff_tail_requested, bond_green,
+            spin_orbital_mode=False)
         green_kw = green_carrier.full_sc
         if bond_green is not None:
             nmat_green = green_kw.shape[-1]

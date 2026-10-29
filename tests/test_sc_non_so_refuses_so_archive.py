@@ -297,5 +297,72 @@ class TestFlexMode(_Base):
         self.assertEqual(conv, "myo")
 
 
+class TestBondGreen(_Base):
+    """The bond path skips the #271 preflight, so ``bond_green`` is checked
+    where it is opened."""
+
+    def _bond_inp(self, green):
+        _wfile(os.path.join(self.n, "coulombinter.dat"), "CoulombInter", 2,
+               [(1, 0, 0, 1, 1, 0.5, 0.0), (-1, 0, 0, 1, 1, 0.5, 0.0)])
+        inp = self._inp({"bond_channels": True, "bond_green": green,
+                         "solver_mode": "eigenvalue", "num_eigenvalues": 2})
+        inp["file"]["input"]["interaction"]["CoulombInter"] = \
+            "coulombinter.dat"
+        return inp
+
+    def _green_with(self, name, drop=(), **replace):
+        d = os.path.join(self.d, name)
+        os.makedirs(d)
+        p = os.path.join(d, "green.npz")
+        _resave(os.path.join(self.flex, "green.npz"), p, drop=drop, **replace)
+        return p
+
+    def test_non_so_bond_path_refuses_so_green(self):
+        inp = self._bond_inp(os.path.join(self.flex, "green.npz"))
+        with _quiet(), mock.patch.object(
+                sc, "_build_bond_vertices",
+                side_effect=AssertionError("heavy work")):
+            with self.assertRaisesRegex(
+                    ValueError, r"spin_orbital = True.*enable_spin_orbital"):
+                sc.calc_eliashberg(inp)
+
+    def test_index_convention_only_archive_refused(self):
+        p = self._green_with(
+            "idxonly", drop=("spin_orbital", "chi_convention"))
+        with np.load(p) as z:
+            self.assertNotIn("spin_orbital", z.files)
+            self.assertEqual(str(z["index_convention"]), "spin_block")
+        with _quiet(), self.assertRaisesRegex(ValueError, r"spin_block"):
+            sc.calc_eliashberg(self._bond_inp(p))
+
+    def test_refusal_does_not_read_the_green_array(self):
+        p = self._green_with("lazy")
+        with mock.patch.object(
+                sc, "_load_green_npz",
+                side_effect=AssertionError("array read")):
+            with self.assertRaisesRegex(ValueError, "spin_block"):
+                sc._build_bond_green(
+                    np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p)
+
+    def test_so_mode_flag_skips_the_check(self):
+        p = os.path.join(self.flex, "green.npz")
+        with mock.patch.object(
+                sc, "_load_green_npz",
+                side_effect=RuntimeError("reached loader")):
+            with self.assertRaisesRegex(RuntimeError, "reached loader"):
+                sc._build_bond_green(
+                    np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p,
+                    spin_orbital_mode=True)
+
+    def test_unmarked_green_still_loads(self):
+        p = self._green_with("plain", drop=("index_convention",))
+        with np.load(p) as z:
+            g = z["green"]
+        carrier = sc._build_bond_green(
+            np.zeros((4, 4, 1, 2)), None, 0.0, float(np.load(p)["beta"]),
+            32, 0.0, p)
+        self.assertEqual(carrier.full_sc.shape[-1], g.shape[1])
+
+
 if __name__ == "__main__":
     unittest.main()
