@@ -698,7 +698,7 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
                 "present" if run_present else "absent"))
         else:
             diffs.append(_table_diff("Extern", file_extern, run_band.extern))
-    # load mode follows the existing stored-axis rule for Nmat (step 3)
+    # load mode follows the existing stored-axis rule for Nmat (see the state check)
     point = ("the identical state point (Nmat excepted in chi0q_mode = \"load\")"
              if nmat_rule == "load" else "the identical state point")
     if diffs:
