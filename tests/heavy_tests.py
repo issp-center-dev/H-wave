@@ -55,7 +55,12 @@ same Matsubara working point, as their ~18 s sibling
 ``test_interorbital_bond_chain``, which is over the rule; splitting the
 three between the two shapes of the suite would mean a fast gate that
 re-derives most of a chain ED without ever reaching the verdict the module
-exists for. Their cost is deferred knowingly, with the sibling.
+exists for. Their cost is deferred knowingly, with the sibling. The same
+holds for ``test_so_pairing_ed.TestZeemanSzConserving``'s
+``test_totaled_equals_sectored_L3`` (3.7 s measured on an idle machine,
+10 s or more under load): the 12-mode engine cross-check of gate 0-S2
+(ii), deferred with its ~64 s sibling; its L = 2 variant (0.03 s) keeps
+the engine check in the fast gate.
 
 Every OTHER entry below is over the rule on its own, measured. Two of them
 sit close to it and carry the measurement in their reason string, so that a
@@ -220,7 +225,8 @@ HEAVY_TESTS = (
      "test_exact_interacting_green_function",
      "the production spin-orbital dynamic operator equals the ED-validated "
      "kernel on the exact interacting Green function of the L = 3 spin-mixing "
-     "chain (the shared ED fixture of test_so_pairing_ed, ~12 s); the free-G "
+     "chain (the shared ED fixture of test_so_pairing_ed, 62 s measured when it "
+     "is the first method to build that fixture); the free-G "
      "sibling stays in the fast gate"),
     ("test_eliashberg_dynamic_so", "TestLMRetry",
      "test_retry_matches_the_dense_reduced_spectrum",
@@ -307,6 +313,12 @@ HEAVY_TESTS = (
      "spin-mixing one-body block pins the second order of the spin-orbital "
      "FLEX for all seven interaction types (28 production maps at "
      "Nmat = 4096, ~20 s)"),
+    ("test_flex_spin_orbital_ed", "TestZeemanSecondOrder",
+     "test_zeeman_without_and_with_soc",
+     "gate 0-F2 (#88): the same second-order ED comparison with a Zeeman field, "
+     "without and with the spin-mixing block, the field through Transfer and "
+     "through Extern (all seven types, Nmat = 4096, 58 s measured); the "
+     "three-type Nmat = 512 smoke variant stays in the fast gate"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",
@@ -332,6 +344,21 @@ HEAVY_TESTS = (
     ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
      "test_second_order_needs_the_fluctuation_vertex",
      "spin-orbital ladder without the fluctuation term misses at O(lambda^2)"),
+    ("test_so_pairing_ed", "TestZeemanSpinFlipModel",
+     "test_first_and_second_order",
+     "gate 0-S2 (i, #88): the spin-mixing chain with a Zeeman field, pair "
+     "susceptibility O(lambda), O(lambda^2) vs TotalNED (five new ED solves, "
+     "63 s measured)"),
+    ("test_so_pairing_ed", "TestZeemanSzConserving",
+     "test_first_and_second_order",
+     "gate 0-S2 (ii, #88): the S_z-conserving chain with a Zeeman field, pair "
+     "susceptibility O(lambda), O(lambda^2) vs ED (five new ED solves, 64 s "
+     "measured)"),
+    ("test_so_pairing_ed", "TestZeemanSzConserving",
+     "test_totaled_equals_sectored_L3",
+     "gate 0-S2 (ii, #88): TotalNED equals SectorED on the 12-mode L = 3 "
+     "Zeeman chain (3.7 s measured; registered with its ED siblings, the "
+     "L = 2 variant stays in the fast gate)"),
     # --- tests/test_spinful_transverse_ed.py -- t_so granule campaign ----
     ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
      "test_norb2_coulombinter",
