@@ -894,6 +894,53 @@ class TestConsumerChecks(_Dir):
                                     r"sigma\.npz and green\.npz come from different runs"):
             _sc("flex", self.inp_soc)
 
+    def test_flex_chi0q_companion_checked(self):
+        """The FLEX chi0q is provenance-checked like chiq: one from another
+        coeff_extern is refused by its band, an unversioned one beside a
+        versioned chiq is refused."""
+        out = _flex_for_sc(self.inp_soc)
+        other = _flex_for_sc(_soc_input(self.new_dir()), coeff_extern=0.0)
+        shutil.copy(other["chi0q"], out["chi0q"])
+        with self.assertRaisesRegex(ValueError, r"chi0q\.npz' \(written by .*band differs: "
+                                                r"coeff_extern: file 0\.0, run 1\.0"):
+            _sc("flex", self.inp_soc)
+        out = _flex_for_sc(self.inp_soc)
+        _strip_fingerprint_members(out["chi0q"])
+        with self.assertRaisesRegex(ValueError, r"chi0q\.npz' has no fingerprint_version "
+                                                r"while the chiq archive has one"):
+            _sc("flex", self.inp_soc)
+
+    def test_nmat_only_difference_names_the_key(self):
+        _flex_for_sc(self.inp_soc)
+        with self.assertRaisesRegex(ValueError, r"state differs: nmat 16 \(file\) vs 32 "
+                                                r"\(run\)\. .*set \[mode\.param\] Nmat = 16"):
+            _sc("flex", self.inp_soc, nmat=32)
+
+    def test_legacy_sigma_with_versioned_chiq(self):
+        out = _flex_for_sc(self.inp_soc)
+        _strip_fingerprint_members(out["sigma"])
+        with self.assertRaisesRegex(ValueError, r"sigma\.npz' has no fingerprint_version; "
+                                                r"regenerate the FLEX run's sigma"):
+            _sc("flex", self.inp_soc)
+
+    def test_wrong_dtype_member_refused(self):
+        for k, v in (("state_beta", np.str_("10.0")), ("fp_band", np.int64(3))):
+            with self.subTest(member=k):
+                path = _write_members(self.d, dict(fp.so_provenance_members(**self.kw),
+                                                   **{k: v}))
+                with self.assertRaisesRegex(ValueError, r"malformed or truncated: member {} "
+                                                        r"has the wrong dtype or rank"
+                                            .format(k)):
+                    fp.check_so_archive(np.load(path), path, run_band=self.band,
+                                        run_state=self.run_state, run_has_extern=False,
+                                        nmat_rule="exact")
+
+    def test_dynamic_requires_filling(self):
+        _flex_for_sc(self.inp_soc)
+        with self.assertRaisesRegex(ValueError, r"\[mode\.param\] filling must be specified "
+                                                r"\(the spin-orbital archive checks"):
+            _sc("flex", self.inp_soc, frequency="dynamic", filling=None)
+
     def test_missing_sigma_refused(self):
         out = _flex_for_sc(self.inp_soc)
         os.remove(out["sigma"])

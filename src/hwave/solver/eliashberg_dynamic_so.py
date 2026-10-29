@@ -646,7 +646,9 @@ def solve_dynamic_so(input_dict):
     extern_table, _extern_file = sc._read_so_extern(input_dict, norb_phys)
     n_filling = mode_param.get("filling")
     if n_filling is None:
-        raise ValueError("filling must be specified.")
+        raise ValueError(
+            "[mode.param] filling must be specified (the spin-orbital archive "
+            "checks compare the filling target).")
     # this run's band and state, for the archive checks (#88)
     so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta,
                                nmat, n_filling)

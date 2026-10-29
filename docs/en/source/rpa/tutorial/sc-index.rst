@@ -2163,8 +2163,10 @@ each archive it reads against its own input, before any large array is read:
    locates the zero bosonic frequency through the file's ``nmat``. μ itself
    is not compared: with the band identical, the density decides.
 4. **Green function.** In ``"flex"`` mode the digest of the Green function
-   as loaded must equal the chiq archive's ``fp_green``, and the sigma
-   archive must record the same ``fp_green``. In ``"load"`` mode no Green
+   as loaded must equal the ``fp_green`` of the chiq archive (and of its
+   chi0q companion, which is checked like chiq), and the sigma archive must
+   record the same ``fp_green``. ``green.npz`` itself is verified through
+   this digest, not by its own provenance members. In ``"load"`` mode no Green
    function is borrowed, and the archive's ``fp_green`` is logged as a
    producer assertion (INFO).
 
@@ -2460,6 +2462,8 @@ Scope
   computed at every bosonic frequency, and
   :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`;
 - on-site interactions, no bond channels (as in the static case);
+- ``[mode.param] filling``, in both modes (the archive checks compare the
+  filling target);
 - an even ``Nmat``;
 - ``solver_mode = "iteration"`` or ``"eigenvalue"`` with
   ``eigenvalue_method = "arnoldi"``. ``"both"`` runs the eigenvalue leg only,

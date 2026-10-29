@@ -8193,6 +8193,16 @@ class _SOFlexBorrowed(NamedTuple):
     sigma_static: object
 
 
+def _so_require_versioned_companion(info, companion, path, what, key):
+    """A versioned FLEX chiq needs a versioned companion: an unversioned one
+    comes from an older (or another) run."""
+    if not info.legacy and companion.legacy:
+        raise ValueError(
+            "'{}' has no fingerprint_version while the chiq archive has one; "
+            "regenerate the FLEX run's {} ({}; version 1 writes it).".format(
+                path, what, key))
+
+
 def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
                         hint):
     """The static self-energy ``(nvol, nd, nd)`` of the spin-orbital FLEX run
@@ -8210,7 +8220,12 @@ def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
             "file.".format(sigma_path, hint))
     with np.load(sigma_path) as ds:
         sinfo = _so_check_archive(ds, sigma_path, so_run, "exact")
-        if sinfo.legacy or sinfo.producer_fp_green != fp_green:
+        if sinfo.legacy:
+            raise ValueError(
+                "'{}' has no fingerprint_version; regenerate the FLEX run's sigma "
+                "(version 1 writes it), together with its chiq and green.".format(
+                    sigma_path))
+        if sinfo.producer_fp_green != fp_green:
             raise ValueError(
                 "{} and {} come from different runs: '{}' records fp_green {} "
                 "but the Green function '{}' has digest {}. Use the sigma and "
@@ -8370,9 +8385,15 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             _require_so_chi0q_marker(
                 d0, chi0_path, producer="FLEX",
                 hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
-        so_info = None
+        so_info = so_info0 = None
         if so_run is not None:
             so_info = _so_check_archive(data, chi_path, so_run, "exact")
+            # the chi0q companion carries the same members (FLEX writes one
+            # build into every archive); checked before any array is read
+            with np.load(chi0_path) as d0:
+                so_info0 = _so_check_archive(d0, chi0_path, so_run, "exact")
+            _so_require_versioned_companion(so_info, so_info0, chi0_path,
+                                            "chi0q", "[file.output] chi0q")
         chiq = data["chiq"]
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
@@ -8430,6 +8451,9 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             with np.load(chi_path) as data:
                 so_info = _so_check_archive(data, chi_path, so_run, "exact",
                                             green_fp=consumed_fp)
+            with np.load(chi0_path) as d0:
+                _so_check_archive(d0, chi0_path, so_run, "exact",
+                                  green_fp=consumed_fp)
             sigma_static = _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run,
                                                consumed_fp, green_path, hint)
         borrowed = _SOFlexBorrowed(so_info, consumed_fp, sigma_static)

@@ -691,10 +691,14 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
     if nmat_rule == "exact" and state.nmat != int(run_state.nmat):
         diffs.append("nmat {} (file) vs {} (run)".format(state.nmat, int(run_state.nmat)))
     if diffs:
+        if len(diffs) == 1 and diffs[0].startswith("nmat "):
+            fix = "set [mode.param] Nmat = {} (the producer's grid)".format(state.nmat)
+        else:
+            fix = "re-run {} at this filling and temperature".format(label)
         raise SOArchiveError(
             "'{}' (written by {}) does not match this run: state differs: {}. "
-            "Archives are reused only at the identical state point; re-run {} at "
-            "this filling and temperature.".format(path, label, "; ".join(diffs), label))
+            "Archives are reused only at the identical state point; {}.".format(
+                path, label, "; ".join(diffs), fix))
 
     # (4) green
     file_green = str(_scalar(data, "fp_green"))
