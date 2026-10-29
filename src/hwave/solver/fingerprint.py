@@ -200,6 +200,16 @@ def _green_chunks(green, layout):
             return np.ascontiguousarray(b.transpose(3, 2, 0, 1))
         return backend.to_host(view[f0:f1, k0:k1])
 
+    return _block_chunks(nmat, nvol, nd, block,
+                         _MAX_FREQ_GATHER if frequency_last else None)
+
+
+def _block_chunks(nmat, nvol, nd, block, max_freq=None):
+    """The canonical green stream (header, then the ``(Nmat, nvol, nd, nd)``
+    values in C order) drawn from ``block(f0, f1, k0, k1)``, which returns
+    the ``[f0:f1, k0:k1]`` block as a host array of shape
+    ``(f1 - f0, k1 - k0, nd, nd)``. Each requested block holds at most
+    ``max(CHUNK_BYTES, one k-row of nd*nd complex)``."""
     yield encode_string("c16")
     yield encode_int(4)
     for n in (nmat, nvol, nd, nd):
@@ -208,8 +218,8 @@ def _green_chunks(green, layout):
     slice_bytes = nvol * nd * nd * _C16_BYTES
     if slice_bytes <= CHUNK_BYTES:
         nf = max(1, CHUNK_BYTES // slice_bytes)
-        if frequency_last:
-            nf = min(nf, _MAX_FREQ_GATHER)
+        if max_freq is not None:
+            nf = min(nf, max_freq)
         for f0 in range(0, nmat, nf):
             yield _canonical_bytes(block(f0, min(f0 + nf, nmat), 0, nvol), "green")
     else:
@@ -226,6 +236,24 @@ def green_digest(green, layout: str) -> str:
     block at a time); the caller's array is never modified.
     """
     return digest("green", _green_chunks(green, layout))
+
+
+def green_digest_blocks(nmat: int, nvol: int, nd: int, block) -> str:
+    """:func:`green_digest` (layout ``"b_f_k_o_o_v1"``) of a canonical
+    ``(1, Nmat, nvol, nd, nd)`` Green array that is never materialized:
+    ``block(f0, f1, k0, k1)`` returns its ``[0, f0:f1, k0:k1]`` block
+    (shape ``(f1 - f0, k1 - k0, nd, nd)``, host or device). Blocks are
+    requested in order and each holds at most ``max(CHUNK_BYTES, one k-row
+    of nd*nd complex)``, so a caller that builds the array lazily (a sum, a
+    layout expansion) never holds more than one block of it. The digest is
+    byte-identical to ``green_digest`` of the materialized array."""
+    def host_block(f0, f1, k0, k1):
+        b = backend.to_host(block(f0, f1, k0, k1))
+        if tuple(b.shape) != (f1 - f0, k1 - k0, nd, nd):
+            raise ValueError("green block [{}:{}, {}:{}] has shape {}, expected {}".format(
+                f0, f1, k0, k1, tuple(b.shape), (f1 - f0, k1 - k0, nd, nd)))
+        return b
+    return digest("green", _block_chunks(int(nmat), int(nvol), int(nd), host_block))
 
 
 # ---------------------------------------------------------------- provenance
@@ -501,8 +529,8 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
                      green_layout: Optional[str] = None,
                      green_fp: Optional[str] = None) -> SOArchiveInfo:
     """Validate the version-1 provenance of a spin-orbital archive against
-    this run (design section 6.4, PR 0 scope: no interaction or topology
-    digest).
+    this run (band, state and Green function only; no interaction or
+    topology digest is recorded in this version).
 
     ``data`` is the open npz (or a mapping of its members), ``path`` its
     file name for the messages. ``run_band`` is this run's band

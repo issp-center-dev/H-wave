@@ -2604,8 +2604,7 @@ class RPA:
 
             green0, green0_tail = self._calc_green(beta, mu)
             if self.ham_info.enable_spin_orbital:
-                self._so_fp_green = fingerprint.green_digest(
-                    self._so_canonical_green(green0, green0_tail), "b_f_k_o_o_v1")
+                self._so_fp_green = self._so_green_digest(green0, green0_tail)
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
@@ -4038,21 +4037,35 @@ class RPA:
                                     density=nspin * count / ncell,
                                     calc_mu=self.calc_mu, target=target)
 
-    def _so_canonical_green(self, green, green_tail):
-        """The full bare G of a spin-orbital run in the canonical layout
-        ``(1, Nmat, nvol, nd, nd)``, spin-block order (the deflated G plus
-        its tail; a spin-free or spin-diagonal band is expanded to its
-        spin blocks). Under a sublattice this is the folded-supercell G
-        (k on the supercell grid, nd = 2 * norb_phys * subvol)."""
+    def _so_green_digest(self, green, green_tail):
+        """``fp_green`` of a spin-orbital run: the digest (layout
+        ``"b_f_k_o_o_v1"``) of the full bare G in the canonical layout
+        ``(1, Nmat, nvol, nd, nd)``, spin-block order -- the deflated G plus
+        its tail, a spin-free or spin-diagonal band expanded to its spin
+        blocks. Under a sublattice this is the folded-supercell G (k on the
+        supercell grid, nd = 2 * norb_phys * subvol).
+
+        The canonical array is never materialized: the sum and the
+        spin-block expansion are formed one digest block at a time
+        (:func:`fingerprint.green_digest_blocks`, at most
+        ``fingerprint.CHUNK_BYTES`` per block, on the array's device), so
+        this adds no Green-sized allocation to the run."""
         xp = _bk.array_module_of(green)
-        g = green + green_tail
-        nb, nmat, nvol, n, _ = g.shape
+        nb, nmat, nvol, n, _ = green.shape
+        tail = xp.broadcast_to(green_tail, green.shape)
         if self.spin_mode == "spinful":
-            return g
-        full = xp.zeros((1, nmat, nvol, 2 * n, 2 * n), dtype=xp.complex128)
-        for s in (0, 1):
-            full[0, :, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = g[s if nb == 2 else 0]
-        return full
+            def block(f0, f1, k0, k1):
+                return green[0, f0:f1, k0:k1] + tail[0, f0:f1, k0:k1]
+            return fingerprint.green_digest_blocks(nmat, nvol, n, block)
+
+        def block(f0, f1, k0, k1):
+            b = xp.zeros((f1 - f0, k1 - k0, 2 * n, 2 * n), dtype=xp.complex128)
+            for s in (0, 1):
+                g = s if nb == 2 else 0
+                b[:, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = (
+                    green[g, f0:f1, k0:k1] + tail[g, f0:f1, k0:k1])
+            return b
+        return fingerprint.green_digest_blocks(nmat, nvol, 2 * n, block)
 
     def _so_band_tables(self):
         """``(transfer, extern, BandMeta)`` of the PRE-FOLD ``read_w90``

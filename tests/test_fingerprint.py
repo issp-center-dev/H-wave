@@ -236,6 +236,29 @@ class TestDigests(unittest.TestCase):
         with self.assertRaises(ValueError):
             fp.green_digest(_rand((1, 2, 2, 2, 2)), "nope")
 
+    def test_block_source_same_digest(self):
+        """``green_digest_blocks`` equals ``green_digest`` of the
+        materialized array at every chunking, and is only ever asked for
+        in-range blocks of at most max(chunk, one k-row)."""
+        g = _rand((1, 8, 6, 4, 4))
+        ref = fp.green_digest(g, "b_f_k_o_o_v1")
+        asked = []
+
+        def block(f0, f1, k0, k1):
+            asked.append((f1 - f0) * (k1 - k0) * 4 * 4 * 16)
+            return g[0, f0:f1, k0:k1].copy()
+        for chunk in (fp.CHUNK_BYTES, 16, 6 * 4 * 4 * 16, 3 * 6 * 4 * 4 * 16 + 16):
+            asked.clear()
+            with mock.patch.object(fp, "CHUNK_BYTES", chunk):
+                self.assertEqual(fp.green_digest_blocks(8, 6, 4, block), ref)
+            self.assertTrue(asked)
+            for n in asked:
+                self.assertLessEqual(n, max(chunk, 4 * 4 * 16))
+
+    def test_block_source_shape_checked(self):
+        with self.assertRaisesRegex(ValueError, "expected"):
+            fp.green_digest_blocks(2, 2, 2, lambda f0, f1, k0, k1: np.zeros((1, 1, 2, 2), complex))
+
     @unittest.skipUnless(_HAS_CUPY, "cupy not available")
     def test_device_array_same_digest(self):
         g = _rand((1, 8, 6, 4, 4))

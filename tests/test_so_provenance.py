@@ -489,7 +489,18 @@ class TestProducersWrite(_Dir):
         """The non-spin-orbital archives against the pre-change snapshot:
         member set, dtype, shape and non-float values exact everywhere; float
         values exact on the recorded platform, within 1e-12 of scale
-        elsewhere (CI cannot reproduce the recorded platform's bits)."""
+        elsewhere (CI cannot reproduce the recorded platform's bits).
+
+        A failure here means a non-spin-orbital archive changed. If that
+        change is intended (a deliberate new or changed non-spin-orbital
+        member), the snapshot must be regenerated, never loosened: run, from
+        the repository root on the tree WITH the change,
+
+            PYTHONPATH=$PWD/src:$PWD python3 -B tests/so_provenance_ref/make.py
+
+        which rewrites ``tests/so_provenance_ref/<run>/*.npz`` and
+        ``platform.txt``; commit them together with the change and say in
+        the commit message which member changed and why."""
         exact = ref_make.platform_tag() == _ref_platform()
         for name, run in ref_make.RUNS.items():
             ref = _reference_outputs(name)
@@ -511,6 +522,85 @@ class TestProducersWrite(_Dir):
                             else:
                                 scale = max(1.0, float(np.max(np.abs(b)))) if b.size else 1.0
                                 np.testing.assert_allclose(a, b, rtol=0, atol=1e-12 * scale)
+
+
+def _traced_peak(fn):
+    """Peak bytes traced by ``tracemalloc`` (NumPy reports its buffers to
+    it) while ``fn()`` runs, above the level at its start."""
+    import tracemalloc
+    tracemalloc.start()
+    try:
+        base = tracemalloc.get_traced_memory()[0]
+        fn()
+        return tracemalloc.get_traced_memory()[1] - base
+    finally:
+        tracemalloc.stop()
+
+
+class TestRpaGreenDigest(unittest.TestCase):
+    """``RPA._so_green_digest`` (the ``fp_green`` of a spin-orbital RPA run)
+    streams the canonical G: its digest is byte-identical to the
+    whole-array definition (deflated G plus tail, a spin-free/spin-diagonal
+    band expanded to spin blocks) for every band kind, and no Green-sized
+    array is allocated while it is computed."""
+
+    @staticmethod
+    def _whole_array(spin_mode, green, tail):
+        # the whole-array definition fp_green had before it was streamed
+        g = green + tail
+        nb, nmat, nvol, n, _ = g.shape
+        if spin_mode == "spinful":
+            return g
+        full = np.zeros((1, nmat, nvol, 2 * n, 2 * n), dtype=np.complex128)
+        for s in (0, 1):
+            full[0, :, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = g[s if nb == 2 else 0]
+        return full
+
+    @staticmethod
+    def _cases(nmat=8):
+        rng = np.random.default_rng(7)
+
+        def c(*shape):
+            return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+        # (spin_mode, nblock, n): spin-free (1 block, norb), spin-diagonal
+        # (2 blocks, norb), spinful (1 block, 2*norb)
+        for mode, nb, n in (("spin-free", 1, 3), ("spin-diag", 2, 3), ("spinful", 1, 6)):
+            green = c(nb, nmat, 5, n, n)
+            # the tail is constant over frequency (V V^dagger coeff_tail beta/2)
+            tail = np.broadcast_to(c(nb, 1, 5, n, n), green.shape).copy()
+            yield mode, green, tail
+
+    def _digest(self, mode, green, tail):
+        from hwave.solver.rpa import RPA
+        from types import SimpleNamespace
+        return RPA._so_green_digest(SimpleNamespace(spin_mode=mode), green, tail)
+
+    def test_streaming_equals_whole_array_digest(self):
+        for mode, green, tail in self._cases():
+            ref = fp.green_digest(self._whole_array(mode, green, tail), "b_f_k_o_o_v1")
+            for chunk in (fp.CHUNK_BYTES, 16, 5 * 36 * 16, 3 * 5 * 36 * 16 + 16):
+                with self.subTest(mode=mode, chunk=chunk), \
+                        mock.patch.object(fp, "CHUNK_BYTES", chunk):
+                    self.assertEqual(self._digest(mode, green, tail), ref)
+            with self.subTest(mode=mode, tail="zero"):
+                z = np.zeros_like(green)
+                self.assertEqual(self._digest(mode, green, z), fp.green_digest(
+                    self._whole_array(mode, green, z), "b_f_k_o_o_v1"))
+
+    def test_no_green_sized_allocation(self):
+        """Peak traced allocation while digesting stays below half of the
+        deflated G (one frequency slice per block); the whole-array
+        definition, measured the same way, exceeds it (non-vacuity)."""
+        for mode, green, tail in self._cases(nmat=64):
+            bound = green.nbytes // 2
+            nd = 6
+            with self.subTest(mode=mode), \
+                    mock.patch.object(fp, "CHUNK_BYTES", 5 * nd * nd * 16):
+                peak = _traced_peak(lambda: self._digest(mode, green, tail))
+                peak_whole = _traced_peak(lambda: fp.green_digest(
+                    self._whole_array(mode, green, tail), "b_f_k_o_o_v1"))
+                self.assertLess(peak, bound)
+                self.assertGreater(peak_whole, bound)
 
 
 # ------------------------------------------------- consumers (hwave_sc, #88)
