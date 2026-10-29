@@ -2174,7 +2174,7 @@ An archive without ``fingerprint_version`` (written before this version, or
 by a run whose band the version-1 digests do not cover: ``trans_mod`` /
 ``green_init``, or a supplied in-memory chi0q) cannot be checked. It is
 refused when this run has an Extern field, and otherwise accepted with a
-WARNING. Sidecar byte-size checks apply from schema 4 (later PRs).
+WARNING.
 
 **What the gap archive records.** ``gap.npz`` (``producer_stage =
 "sc_so_static"``) and ``gap_dynamic.npz`` (``"sc_so_dynamic"``) carry the
@@ -2253,13 +2253,6 @@ producer:
      - A damaged, truncated or hand-edited archive, or a producer whose
        density did not close. Rerun the producer.
      - the producer's ``[file.output]`` archives
-   * - capability mismatch (from A2)
-     - A bond-resolved archive read by an on-site consumer, or the reverse.
-     - --
-   * - version-1 archive refused (from A2)
-     - Version-1 archives will have to be regenerated once the bond
-       schema lands.
-     - --
 
 Refused combinations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

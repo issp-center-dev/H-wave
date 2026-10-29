@@ -1071,6 +1071,10 @@ SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は�
 - ``spinful_vertex_exchange = true``\ で、\ ``longitudinal_bond_channels``\ はなし
 - ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
   Hartree-Fock 状態から始まります）
+- Extern 場を受け付けます。ファイルは物理軌道の添字で書き、バンドに
+  ``coeff_extern``\ :math:`\cdot H_1 \otimes \sigma^z`\ （上向きスピンが
+  :math:`+`\ 、下向きスピンが\ :math:`-`\ ）を加えます。\ :math:`H_1`\ がオンサイトなら
+  Zeeman 場です（\ :ref:`sc_spin_polarized`\ を参照）。
 
 reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
 （\ ``hwave_sc``\ ）は\ ``frequency = "static"``\ （\ :ref:`sc_spin_orbital`\ を参照）でも
