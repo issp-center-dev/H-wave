@@ -8241,14 +8241,17 @@ class _SOFlexBorrowed(NamedTuple):
     sigma_static: object
 
 
-def _so_require_versioned_companion(info, companion, path, what, key):
-    """A versioned FLEX chiq needs a versioned companion: an unversioned one
-    comes from an older (or another) run."""
-    if not info.legacy and companion.legacy:
+def _so_require_versioned_companion(info, companion, path, chi_path):
+    """The FLEX chiq and chi0q archives must both carry fingerprint_version
+    or both lack it: a mixed pair comes from two different runs, and a
+    legacy chiq would also skip the Green-digest and self-energy checks of
+    a versioned chi0q."""
+    if info.legacy != companion.legacy:
         raise ValueError(
-            "'{}' has no fingerprint_version while the chiq archive has one; "
-            "regenerate the FLEX run's {} ({}; version 1 writes it).".format(
-                path, what, key))
+            "FLEX archives '{}' ({}) and '{}' ({}) disagree on "
+            "fingerprint_version; regenerate both from one FLEX run.".format(
+                chi_path, "unversioned" if info.legacy else "versioned",
+                path, "unversioned" if companion.legacy else "versioned"))
 
 
 def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
@@ -8441,7 +8444,7 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             with np.load(chi0_path) as d0:
                 so_info0 = _so_check_archive(d0, chi0_path, so_run, "exact")
             _so_require_versioned_companion(so_info, so_info0, chi0_path,
-                                            "chi0q", "[file.output] chi0q")
+                                            chi_path)
         chiq = data["chiq"]
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))

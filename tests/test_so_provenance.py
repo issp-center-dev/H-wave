@@ -1014,8 +1014,21 @@ class TestConsumerChecks(_Dir):
             _sc("flex", self.inp_soc)
         out = _flex_for_sc(self.inp_soc)
         _strip_fingerprint_members(out["chi0q"])
-        with self.assertRaisesRegex(ValueError, r"chi0q\.npz' has no fingerprint_version "
-                                                r"while the chiq archive has one"):
+        with self.assertRaisesRegex(ValueError, r"chiq\.npz' \(versioned\) and '.*chi0q\.npz' "
+                                                r"\(unversioned\) disagree on fingerprint_version"):
+            _sc("flex", self.inp_soc)
+
+    def test_flex_legacy_chiq_with_versioned_chi0q_refused(self):
+        """The reversed mix (unversioned chiq, versioned chi0q) is refused
+        too, before the Green function is read: otherwise the Green-digest
+        and self-energy checks would be skipped."""
+        out = _flex_for_sc(self.inp_soc)
+        _strip_fingerprint_members(out["chiq"])
+        os.remove(out["sigma"])
+        os.remove(out["green"])              # a Green read would fail differently
+        with self.assertRaisesRegex(ValueError, r"chiq\.npz' \(unversioned\) and '.*chi0q\.npz' "
+                                                r"\(versioned\) disagree on fingerprint_version; "
+                                                r"regenerate both from one FLEX run"):
             _sc("flex", self.inp_soc)
 
     def test_nmat_only_difference_names_the_key(self):
