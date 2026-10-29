@@ -583,12 +583,19 @@ def sz_off_sector_index(norb_phys):
 def _block_max(x, n, spins):
     """``max |x[block]|`` over the spin blocks ``spins`` of the leading
     ``len(spins[0])`` axes; every block is a basic-slicing view (no copy of
-    ``x``), and the temporaries are one block at a time."""
+    ``x``), and the temporaries are one block at a time. A non-finite entry
+    raises ``ValueError``: it would otherwise drop out of ``max`` and report
+    a broken input as S_z-conserving."""
     best = 0.0
     for s in spins:
         blk = x[tuple(slice(t * n, (t + 1) * n) for t in s)]
         if blk.size:
-            best = max(best, float(np.abs(blk).max()))
+            m = float(np.abs(blk).max())
+            if not np.isfinite(m):
+                raise ValueError(
+                    "the S_z conservation residual needs finite input; the "
+                    "spin block {} holds a non-finite entry".format(s))
+            best = max(best, m)
     return best
 
 

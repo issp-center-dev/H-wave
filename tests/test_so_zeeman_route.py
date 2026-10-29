@@ -1115,6 +1115,27 @@ class TestSzReport(unittest.TestCase):                                  # 0-S4
         Gt = np.swapaxes(Gc, 2, 4)
         self.assertEqual(so_pairing.sz_conservation_residual(green=Gt, norb_phys=n), 0.0)
 
+    def test_residual_refuses_non_finite_input(self):
+        # a NaN or Inf would otherwise drop out of max() and read as conserving
+        from hwave.solver import so_pairing
+        n = 2
+        nd = 2 * n
+        off_v = (0, 0, 0, n)        # S(a)+S(d) != S(b)+S(c)
+        on_v = (0, 0, 0, 0)
+        for bad in (np.nan, np.inf):
+            for slot in (off_v, on_v):
+                with self.subTest(member="V", value=bad, slot=slot):
+                    V = np.zeros((nd,) * 4 + (2,), dtype=complex)
+                    V[slot] = bad
+                    with self.assertRaisesRegex(ValueError, "non-finite"):
+                        so_pairing.sz_conservation_residual(V=V, norb_phys=n)
+            for slot in ((0, n), (0, 0)):
+                with self.subTest(member="green", value=bad, slot=slot):
+                    G = np.zeros((nd, nd, 3), dtype=complex)
+                    G[slot] = bad
+                    with self.assertRaisesRegex(ValueError, "non-finite"):
+                        so_pairing.sz_conservation_residual(green=G, norb_phys=n)
+
     def test_residual_and_warning(self):
         r0 = _run_sc_static(h=0.1, soc=0.0)
         self.assertLessEqual(float(r0.npz["sz_conservation_residual"]), 1e-12)
