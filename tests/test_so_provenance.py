@@ -8,16 +8,20 @@ four. What this module pins:
 * :class:`TestMembers` -- ``fingerprint.so_provenance_members``: the member
   schema (dtype, shape), the digests recomputable from the stored ``prov_*``
   tables, the ``calc_mu`` tagged union of the state, the refusal of a
-  non-finite member, ``producer_version`` (truncation, git describe cached
-  and never failing).
+  non-finite member, ``producer_version`` (truncation, git describe cached,
+  never failing, and taken only from the package's own repository).
 * :class:`TestProducersWrite` -- the RPA and FLEX producers through
   ``hwave.qlms.run``: the band digest equals the one computed from the input
   files, the state is the realized one (closure density in electrons per
   cell over all spin-orbitals, a fixed-mu density against a closed-form
   Fermi sum), the PRE-FOLD tables are hashed under a sublattice, the members
-  are built once per run, mixed-case keys, and the non-spin-orbital archives
-  are unchanged against the snapshot in ``tests/so_provenance_ref`` (made by
-  ``tests/so_provenance_ref/make.py`` on the tree before this change).
+  are built once per run, mixed-case keys, no provenance when trans_mod
+  changes the band, and the non-spin-orbital archives against the snapshot
+  in ``tests/so_provenance_ref`` (made by ``tests/so_provenance_ref/make.py``
+  on the tree before this change): member set, dtype, shape and non-float
+  values exact everywhere; float values exact on the recorded platform,
+  within 1e-12 of scale elsewhere (CI cannot reproduce the recorded
+  platform's bits).
 """
 import contextlib
 import glob
@@ -271,12 +275,30 @@ class TestMembers(_Dir):
                 self.assertEqual(fp._producer_version(), "1.2.3")
                 self.assertEqual(fp._producer_version(), "1.2.3")
             self.assertEqual(run.call_count, 1)
-        fp._git_describe.cache_clear()
-        ok = mock.Mock(returncode=0, stdout="v2.0.0-5-gabc\n")
-        with mock.patch.object(fp.subprocess, "run", return_value=ok) as run:
-            with mock.patch.object(hwave, "__version__", "2.0.0"):
-                self.assertEqual(fp._producer_version(), "2.0.0 (v2.0.0-5-gabc)")
-            self.assertEqual(run.call_args.kwargs["timeout"], 2.0)
+
+    def _git(self, top):
+        """A fake ``subprocess.run``: ``rev-parse`` answers ``top``,
+        ``describe`` answers a fixed description."""
+        def run(cmd, **kw):
+            self.assertEqual(kw["timeout"], 2.0)
+            if cmd[1] == "rev-parse":
+                return mock.Mock(returncode=0, stdout=top + "\n")
+            return mock.Mock(returncode=0, stdout="v2.0.0-5-gabc\n")
+        return run
+
+    def test_git_describe_only_from_own_repository(self):
+        pkg = os.path.dirname(os.path.dirname(os.path.abspath(fp.__file__)))
+        own = os.path.dirname(os.path.dirname(pkg))                 # <top>/src/hwave
+        self.addCleanup(fp._git_describe.cache_clear)
+        for top, expect in ((own, "2.0.0 (v2.0.0-5-gabc)"),       # the package's repo
+                            (os.path.dirname(own), "2.0.0"),       # an enclosing repo
+                            (self.d, "2.0.0")):                    # unrelated repo
+            with self.subTest(top=top):
+                fp._git_describe.cache_clear()
+                with mock.patch.object(fp.subprocess, "run", side_effect=self._git(top)):
+                    with mock.patch.object(hwave, "__version__", "2.0.0"):
+                        self.assertEqual(fp._producer_version(), expect)
+        self.assertTrue(os.path.isfile(os.path.join(own, "pyproject.toml")))
 
 
 class TestProducersWrite(_Dir):
@@ -284,8 +306,8 @@ class TestProducersWrite(_Dir):
         super().setUp()
         self.inp_soc = _so_input(self.new_dir())
         p = self.inp_soc["param"]
-        self.nvol = int(np.prod(self.inp_soc["cell"]))
-        self.ncond = p["filling"] * 2 * self.nvol                 # Nstate = nd * nvol
+        self.ncell = int(np.prod(self.inp_soc["cell"]))           # ORIGINAL cells
+        self.ncond = p["filling"] * 2 * self.ncell                # Nstate = nd * ncell
 
     def _check(self, npz, stage, inp):
         self.assertEqual(int(npz["fingerprint_version"]), 1)
@@ -304,13 +326,13 @@ class TestProducersWrite(_Dir):
             self.assertEqual(int(out[k]["nmat"]), int(out[k]["state_nmat"]))
         z = out["chi0q"]
         self.assertTrue(bool(z["state_calc_mu"]))
-        self.assertAlmostEqual(float(z["state_target"]), self.ncond / self.nvol, delta=1e-15)
-        self.assertLessEqual(abs(float(z["state_density"]) - self.ncond / self.nvol),
+        self.assertAlmostEqual(float(z["state_target"]), self.ncond / self.ncell, delta=1e-15)
+        self.assertLessEqual(abs(float(z["state_density"]) - self.ncond / self.ncell),
                              float(z["state_mu_tol"]) + 1e-12)
         self.assertLess(float(z["state_mu_tol"]), 1e-10)
         # the realized mu reproduces the density in the closed form
         self.assertAlmostEqual(
-            _closed_form_fermi_sum(self.inp_soc, float(z["state_mu"])) / self.nvol,
+            _closed_form_fermi_sum(self.inp_soc, float(z["state_mu"])) / self.ncell,
             float(z["state_density"]), delta=1e-12)
         # one build for both archives
         for k in _SCHEMA:
@@ -326,7 +348,7 @@ class TestProducersWrite(_Dir):
         self.assertEqual(float(z["state_target"]), 0.1)
         self.assertEqual(float(z["state_mu"]), 0.1)
         self.assertAlmostEqual(float(z["state_density"]),
-                               _closed_form_fermi_sum(inp, mu=0.1) / self.nvol, delta=1e-12)
+                               _closed_form_fermi_sum(inp, mu=0.1) / self.ncell, delta=1e-12)
 
     def test_rpa_so_density_counts_every_spin_orbital(self):
         """A spin-free (no field, no SOC) and a spin-diagonal band count both
@@ -363,8 +385,60 @@ class TestProducersWrite(_Dir):
         self.assertEqual(str(a["fp_band"]), fp.band_digests(T, E, meta)["fp_band"])
         self.assertEqual(int(a["prov_norb"]), 2)
         self.assertEqual(tuple(a["prov_sub_shape"]), (2, 1, 1))
-        # the sublattice run folds (nvol 2): density is per (super)cell of the run
         self.assertLess(float(a["state_mu_tol"]), 1e-10)
+
+    def test_rpa_sublattice_state_per_original_cell(self):
+        """Under a sublattice (2 supercells of 2 cells) the state is per
+        ORIGINAL unit cell: the target is filling * nd (nd = 2 spin-orbitals
+        per cell), not per folded supercell, and the density is the
+        closed-form count of the unfolded band over the 4 original cells."""
+        for mu in (None, 0.1):
+            with self.subTest(mu=mu):
+                inp = _so_input(self.new_dir(), sub_shape=(2, 1, 1), cell=(4, 1, 1), mu=mu)
+                a = _run_rpa_so(inp)["chi0q"]
+                self.assertEqual(a["chi0q"].shape[1], 2)            # folded: nvol = 2
+                ref = _closed_form_fermi_sum(inp, float(a["state_mu"])) / 4
+                self.assertAlmostEqual(float(a["state_density"]), ref, delta=1e-12)
+                if mu is None:
+                    self.assertAlmostEqual(float(a["state_target"]),
+                                           inp["param"]["filling"] * 2, delta=1e-14)
+                    self.assertLess(float(a["state_mu_tol"]), 1e-10)
+                else:
+                    self.assertEqual(float(a["state_target"]), 0.1)
+
+    def test_rpa_trans_mod_writes_no_provenance(self):
+        """A one-body band changed by trans_mod is not covered by the
+        version-1 band digest: the archives keep the spin_orbital marker but
+        carry no provenance member, and one INFO line says why."""
+        import tests.test_rpa_so_trans_mod as TM
+        tc = TM.TestRPASOTransModMultiOrbital()
+        tc._tmpdir = self.new_dir()
+        tm_path = tc._write_fixture()
+        inter = {"Geometry": "geom_so_2orb.dat", "Transfer": "transfer_so_2orb.dat",
+                 "CoulombIntra": "coulombintra_2orb.dat"}
+        prov = set(fp.SO_PROVENANCE_MEMBERS)
+        for trans_mod in (None, tm_path):
+            with self.subTest(trans_mod=trans_mod is not None):
+                out = os.path.join(self.new_dir(), "out")
+                with _quiet():
+                    solver, green = TM._run({"enable_spin_orbital": True}, inter, out,
+                                            trans_mod_file=trans_mod)
+                files = {"path_to_output": out, "chi0q": "chi0q.npz", "chiq": "chiq.npz"}
+                with self.assertLogs("hwave.solver.rpa", level="INFO") as cm:
+                    solver.save_results(files, green)
+                note = [r for r in cm.output if "provenance not written" in r]
+                for f in ("chi0q.npz", "chiq.npz"):
+                    with np.load(os.path.join(out, f)) as z:
+                        self.assertTrue(bool(z["spin_orbital"]))
+                        if trans_mod is None:                       # anti-vacuity
+                            self.assertLessEqual(prov, set(z.files))
+                        else:
+                            self.assertFalse(prov & set(z.files))
+                if trans_mod is None:
+                    self.assertEqual(note, [])
+                else:
+                    self.assertEqual(len(note), 1)
+                    self.assertIn("trans_mod/green_init", note[0])
 
     def test_flex_so_bindings_agree(self):
         out = _run_flex_so(self.inp_soc)
@@ -379,7 +453,7 @@ class TestProducersWrite(_Dir):
         self.assertEqual(float(g["beta"]), float(g["state_beta"]))
         self.assertTrue(bool(g["state_calc_mu"]))
         self.assertLessEqual(float(g["state_mu_tol"]), 1e-10)
-        self.assertAlmostEqual(float(g["state_target"]), self.ncond / self.nvol, delta=1e-15)
+        self.assertAlmostEqual(float(g["state_target"]), self.ncond / self.ncell, delta=1e-15)
 
     def test_flex_so_fixed_mu(self):
         inp = self.inp_soc
@@ -412,10 +486,10 @@ class TestProducersWrite(_Dir):
         self.assertEqual(str(mixed["fp_band"]), str(base["fp_band"]))
 
     def test_non_so_archives_bit_identical(self):
-        """Member set, dtype, shape and values of the non-spin-orbital
-        archives equal the pre-change snapshot (exactly on the platform it
-        was made on; elsewhere floats within 1e-12 of their scale, since a
-        different LAPACK may round differently)."""
+        """The non-spin-orbital archives against the pre-change snapshot:
+        member set, dtype, shape and non-float values exact everywhere; float
+        values exact on the recorded platform, within 1e-12 of scale
+        elsewhere (CI cannot reproduce the recorded platform's bits)."""
         exact = ref_make.platform_tag() == _ref_platform()
         for name, run in ref_make.RUNS.items():
             ref = _reference_outputs(name)

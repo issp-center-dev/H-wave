@@ -3069,8 +3069,15 @@ class RPA:
         so_stamp = _spin_orbital_stamp()
         # #88: the version-1 fingerprint and state members, built once and
         # written beside the spin_orbital marker into chi0q and chiq
-        so_prov = (self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
-                   if so_stamp else {})
+        so_prov = {}
+        if so_stamp:
+            if "trans_mod" in green_info or "green_init" in green_info:
+                logger.info(
+                    "save_results: spin-orbital provenance not written: the one-body "
+                    "band includes trans_mod/green_init, which version-1 "
+                    "fingerprints do not cover")
+            else:
+                so_prov = self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
         if (bool(getattr(getattr(self, "ham_info", None),
                          "enable_spin_orbital", False))
                 and not so_stamp
@@ -4014,28 +4021,29 @@ class RPA:
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
 
-    @do_profile
     # ------------------------------------------------- #88 SO provenance
     def _so_bare_state(self, mu):
         """The realized band state of a spin-orbital RPA run
         (:class:`fingerprint.SOState`), in electrons per cell summed over
         all spin-orbitals: the density is the masked Fermi count
         ``_find_mu`` roots, at the realized ``mu``; a spin-free band holds
-        one spin's levels, so its count is doubled."""
-        nvol = self.lattice.nvol
+        one spin's levels, so its count is doubled. "Per cell" is per
+        ORIGINAL unit cell (``lattice.cellvol``), also under a sublattice."""
+        ncell = self.lattice.cellvol          # ORIGINAL cells (nvol * subvol)
         nspin = 2 if self.spin_mode == "spin-free" else 1
         count = _masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
                                       0.0, self.ene_cutoff)[0]
-        target = self.Ncond / nvol if self.calc_mu else mu
+        target = self.Ncond / ncell if self.calc_mu else mu
         return fingerprint.so_state(beta=1.0 / self.T, nmat=self.nmat, mu=mu,
-                                    density=nspin * count / nvol,
+                                    density=nspin * count / ncell,
                                     calc_mu=self.calc_mu, target=target)
 
     def _so_canonical_green(self, green, green_tail):
         """The full bare G of a spin-orbital run in the canonical layout
         ``(1, Nmat, nvol, nd, nd)``, spin-block order (the deflated G plus
         its tail; a spin-free or spin-diagonal band is expanded to its
-        spin blocks)."""
+        spin blocks). Under a sublattice this is the folded-supercell G
+        (k on the supercell grid, nd = 2 * norb_phys * subvol)."""
         xp = _bk.array_module_of(green)
         g = green + green_tail
         nb, nmat, nvol, n, _ = g.shape
@@ -4080,6 +4088,7 @@ class RPA:
             transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
             state=state)
 
+    @do_profile
     def _find_mu(self, Ncond, T):
         logger.debug(">>> RPA._find_mu")
 

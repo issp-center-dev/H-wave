@@ -2674,7 +2674,7 @@ class FLEX(RPA):
                     # #88: the closure density of the final state, electrons
                     # per cell over all spin-orbitals (the trace runs over
                     # both spins), at the final dressed mu
-                    _nv = self.lattice.nvol
+                    _nv = self.lattice.cellvol    # ORIGINAL cells (no sublattice here)
                     self._so_state = fingerprint.so_state(
                         beta=beta, nmat=self.nmat, mu=mu,
                         density=dens.n_per_spin / _nv, calc_mu=self.calc_mu,

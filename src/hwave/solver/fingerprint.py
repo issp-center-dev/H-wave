@@ -262,7 +262,9 @@ def so_state(*, beta, nmat, mu, density, calc_mu, target) -> SOState:
 _VERSION_MAX = 256
 
 #: The version-1 members ``so_provenance_members`` writes (the schema table
-#: of the design's archive section), in a fixed order.
+#: of the design's archive section), in a fixed order. Consumers validate an
+#: archive by THIS list, never by a name prefix such as ``state_``: FLEX
+#: archives already carry an unrelated ``state_iteration`` member.
 SO_PROVENANCE_MEMBERS = (
     "fingerprint_version", "producer_stage", "producer_label", "producer_version",
     "fp_transfer", "fp_extern", "fp_meta", "fp_band", "fp_green",
@@ -277,11 +279,24 @@ SO_PROVENANCE_MEMBERS = (
 
 @functools.lru_cache(maxsize=None)
 def _git_describe() -> Optional[str]:
-    """``git describe --always --dirty`` of the package directory (2 s
-    limit), or None. Cached per process; never raises."""
+    """``git describe --always --dirty`` of the repository the package lives
+    in (2 s limit per git call), or None. Accepted only when the package
+    really is that repository's ``src/hwave`` (the top level holds a
+    ``pyproject.toml``), so an installed copy inside some unrelated
+    repository never borrows its description. Cached per process; never
+    raises."""
     try:
         pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        r = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=pkg,
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=pkg,
+                           capture_output=True, text=True, timeout=2.0)
+        top = r.stdout.strip()
+        if r.returncode != 0 or not top:
+            return None
+        if not (os.path.isfile(os.path.join(top, "pyproject.toml"))
+                and os.path.realpath(os.path.join(top, "src", "hwave"))
+                == os.path.realpath(pkg)):
+            return None
+        r = subprocess.run(["git", "describe", "--always", "--dirty"], cwd=top,
                            capture_output=True, text=True, timeout=2.0)
         out = r.stdout.strip()
         return out if r.returncode == 0 and out else None
