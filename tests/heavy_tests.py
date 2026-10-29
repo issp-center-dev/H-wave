@@ -225,8 +225,9 @@ HEAVY_TESTS = (
      "test_exact_interacting_green_function",
      "the production spin-orbital dynamic operator equals the ED-validated "
      "kernel on the exact interacting Green function of the L = 3 spin-mixing "
-     "chain (the shared ED fixture of test_so_pairing_ed, 62 s measured when it "
-     "is the first method to build that fixture); the free-G "
+     "chain (one ED solve of the fixture shared with test_so_pairing_ed, 13 s "
+     "measured when it is the first method to build it, free when that "
+     "module ran first in the process); the free-G "
      "sibling stays in the fast gate"),
     ("test_eliashberg_dynamic_so", "TestLMRetry",
      "test_retry_matches_the_dense_reduced_spectrum",

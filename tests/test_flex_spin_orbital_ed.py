@@ -324,6 +324,7 @@ class TestZeemanSecondOrder(unittest.TestCase):
                                     x=0.0125, types=_SMOKE)
         dev = _rel_dev(c_prod, c_ed)
         self.assertLessEqual(dev, SMOKE_TOL, "relative deviation {:.2e}".format(dev))
+        self._asymmetric(c_ed)  # the field must be present (on both sides: dev above)
 
 
 if __name__ == "__main__":

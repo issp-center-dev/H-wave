@@ -211,11 +211,18 @@ def _model(lam, model, zeeman):
     return fx, terms, _h1(fx, model, zeeman)
 
 
-@functools.lru_cache(maxsize=None)
 def _ed(lam, model="spin_flip", zeeman=0.0):
     """``(chi, G)``: the pair susceptibility in the ``PAIRS`` basis and
     ``G[n, A, (j, B)] = G_{(0, A), (j, B)}(i w_n)`` on the ``max(NMATS)``
-    grid (cached per ``(lam, model, zeeman)``)."""
+    grid (cached per ``(lam, model, zeeman)``). Uncached itself: it passes
+    every argument positionally to :func:`_ed_cached`, so ``_ed(lam)`` and
+    ``_ed(lam, "spin_flip", 0.0)`` share one cache entry (``lru_cache``
+    keys the two spellings differently)."""
+    return _ed_cached(float(lam), str(model), float(zeeman))
+
+
+@functools.lru_cache(maxsize=None)
+def _ed_cached(lam, model, zeeman):
     fx, terms, h1 = _model(lam, model, zeeman)
     ed = TotalNED(fx, terms, h1=h1)
     chi = ed.pair_correlator(
@@ -500,8 +507,8 @@ class TestZeemanSpinFlipModel(unittest.TestCase):
         self.assertGreater(_zeeman_split(g), 1e-2)                  # the field is load bearing
         self.assertGreater(np.linalg.norm(g[:NP, NP:]), 1e-1 * np.linalg.norm(g))
         c1, c2 = _coefficients(model="spin_flip", zeeman=_ZEEMAN)
-        self.assertLessEqual(c1, 2e-5, "order 1: {:.3e}".format(c1))
-        self.assertLessEqual(c2, 2e-4, "order 2: {:.3e}".format(c2))
+        self.assertLess(c1, TOL_C1, "order 1: {:.3e}".format(c1))
+        self.assertLess(c2, TOL_C2, "order 2: {:.3e}".format(c2))
 
 
 class TestZeemanSzConserving(unittest.TestCase):
@@ -528,8 +535,8 @@ class TestZeemanSzConserving(unittest.TestCase):
         self.assertGreater(_zeeman_split(g), 1e-2)                  # the field is load bearing
         self.assertLess(np.linalg.norm(g[:NP, NP:]), 1e-12 * np.linalg.norm(g))   # S_z conserved
         c1, c2 = _coefficients(model="no_spin_flip", zeeman=_ZEEMAN)
-        self.assertLessEqual(c1, 2e-5, "order 1: {:.3e}".format(c1))
-        self.assertLessEqual(c2, 2e-4, "order 2: {:.3e}".format(c2))
+        self.assertLess(c1, TOL_C1, "order 1: {:.3e}".format(c1))
+        self.assertLess(c2, TOL_C2, "order 2: {:.3e}".format(c2))
 
 
 if __name__ == "__main__":
