@@ -738,8 +738,16 @@ different Matsubara frequencies.
 FLEX prerequisite
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The dynamic mode needs frequency-resolved input that only the FLEX solver
-produces, so it **must** be run with ``chi0q_mode = "flex"``. Before calling
+This section describes the dynamic solver without ``enable_spin_orbital``.
+In spin-orbital mode the dynamic solver also accepts ``chi0q_mode =
+"calc"``, which builds the Green function and :math:`\chi_0` from the band
+and needs no FLEX output, and with ``"flex"`` it reads the ``chiq``,
+``chi0q``, ``green`` and ``sigma`` archives of a spin-orbital FLEX run
+instead of the files below (see :ref:`sc_spin_orbital_dynamic`).
+
+Without ``enable_spin_orbital``, the dynamic mode needs frequency-resolved
+input that only the FLEX solver produces, so it **must** be run with
+``chi0q_mode = "flex"``. Before calling
 ``hwave_sc`` you must run a FLEX calculation (``mode = "FLEX"``) that writes,
 into the directory read by the Eliashberg step:
 
@@ -800,7 +808,7 @@ into the directory read by the Eliashberg step:
 
 ``Nmat`` must be even and must match between the FLEX output and the
 ``[mode.param]`` value. If ``frequency = "dynamic"`` is requested without
-``chi0q_mode = "flex"`` (outside spin-orbital mode), with an odd ``Nmat``, or without a dressed
+``chi0q_mode = "flex"``, with an odd ``Nmat``, or without a dressed
 ``green.npz``, the solver aborts with an explanatory error rather than falling
 back silently. The FLEX output directory can be selected with
 ``[file.input] path_to_flex_output`` (default: the ``[file.output]``
