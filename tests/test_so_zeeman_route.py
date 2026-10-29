@@ -42,6 +42,15 @@ What this module pins:
   psi/d weights (0-S4); the S_z-conservation residual is exactly 0 for a
   Zeeman field without spin-orbit coupling, and with it the WARNING fires
   once; the report reaches the log and the static and dynamic archives.
+* :class:`TestGeneralExtern` -- a general Extern table (R != 0 with its
+  Hermitian partner at -R, off-diagonal, complex, orbital dependent,
+  ``coeff_extern = 0.7``, on a 4 x 3 lattice) gives the same band in
+  hwave_sc, the RPA and the Hartree-Fock FLEX, and equals the Transfer rows
+  ``+-coeff_extern H_ab(R)`` on ``2a + s + 1`` built independently in the
+  test.
+* :class:`TestEpsilonKNotInPlace` -- adding the field leaves the stored band
+  and a caller's ``trans_mod`` untouched; a repeated call gives the same
+  H0(k).
 
 Every run goes through the public entry :func:`hwave.qlms.run` (or, for the
 Eliashberg chi0, :func:`hwave.sc._calc_chi0q_internal`), with fixtures
@@ -1329,6 +1338,195 @@ class TestFieldLimit(unittest.TestCase):                                # 0-S3
             else:                                                                # 4
                 self.assertTrue(np.all(np.abs(a[c]) <= 1e-3 * np.abs(a).max()), a[c])
 
+
+# ------------------------------------------------- a general Extern table
+#
+# Every fixture above is on-site, diagonal and orbital-uniform, so a sign
+# flip R -> -R, a transpose [a, b] -> [b, a] or an orbital permutation of the
+# Extern table would pass them. The table below has R != 0 entries (each with
+# its Hermitian partner at -R), off-diagonal and complex entries, and differs
+# between the orbitals; the 4 x 3 lattice distinguishes R from -R along both
+# axes.
+
+#: the general Extern table, physical 0-based orbitals: {R: 2 x 2 block}
+_GEN_B = np.array([[0.12 + 0.05j, -0.08 + 0.11j], [0.06 - 0.04j, -0.09 + 0.03j]])
+_GEN_C = np.array([[0.04 - 0.07j, 0.10 + 0.02j], [-0.05 + 0.06j, 0.07j]])
+_GEN_EXTERN = {(1, 0, 0): _GEN_B, (-1, 0, 0): _GEN_B.conj().T,
+               (0, 1, 0): _GEN_C, (0, -1, 0): _GEN_C.conj().T,
+               (0, 0, 0): np.array([[0.15, 0.05 + 0.03j], [0.05 - 0.03j, -0.10]])}
+_GEN_COEFF = 0.7
+_GEN_CELL = [4, 3, 1]
+_GEN_SOC = 0.35
+
+
+def _gen_extern_rows():
+    """``_GEN_EXTERN`` as 1-based Extern file rows."""
+    return [R + (a + 1, b + 1, v.real, v.imag)
+            for R, blk in _GEN_EXTERN.items()
+            for (a, b), v in np.ndenumerate(blk)]
+
+
+def _gen_add_to_transfer(path, coeff):
+    """Write ``coeff * sigma^z_s * H_ab(R)`` of ``_GEN_EXTERN`` into the
+    Transfer file at the interleaved 1-based index ``2a + s + 1`` (s = 0 up
+    with +, s = 1 down with -), added to any row already there."""
+    dim, _nr, _deg, rows = _read_w90_rows(path)
+    table = {r[:5]: complex(r[5], r[6]) for r in rows}
+    assert len(table) == len(rows)
+    for R, blk in _GEN_EXTERN.items():
+        for (a, b), v in np.ndenumerate(blk):
+            for s, sign in ((0, 1.0), (1, -1.0)):
+                key = R + (2 * a + s + 1, 2 * b + s + 1)
+                table[key] = table.get(key, 0.0) + coeff * sign * v
+    S._wfile(path, "Transfer", dim,
+             [k + (v.real, v.imag) for k, v in table.items()])
+
+
+def _gen_model(d, route, types=S._SU2_TYPES):
+    """The two-orbital model (``soc = _GEN_SOC``) with the general field
+    along ``route`` ("extern", "transfer" or None)."""
+    files = _sc_model(d, soc=_GEN_SOC, types=types)
+    if route == "extern":
+        _write_w90(d, S.NP, _gen_extern_rows())
+        files = dict(files, Extern="extern.dat")
+    elif route == "transfer":
+        _gen_add_to_transfer(os.path.join(d, "transfer.dat"), _GEN_COEFF)
+    else:
+        assert route is None, route
+    return files
+
+
+def _gen_sc_band(route):
+    """hwave_sc epsilon(k) of the general model, RPA layout ``(nvol, nd, nd)``."""
+    import hwave.sc as sc
+    seen = {}
+
+    def spy_eig(eps, *a, **kw):
+        seen["eps"] = np.array(eps, copy=True)
+        raise _Stop()
+
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _gen_model(d, route)
+        inp = _sc_input(d, files, coeff_extern=_GEN_COEFF, CellShape=list(_GEN_CELL))
+        with _quiet(), mock.patch.object(sc, "_calc_eigenvalues", side_effect=spy_eig):
+            try:
+                sc.calc_eliashberg(inp)
+            except _Stop:
+                pass
+    return _to_rpa_layout(seen["eps"])
+
+
+def _gen_solver_band(route, mode):
+    """H0(k) ``(nvol, nd, nd)`` of the spin-orbital RPA or Hartree-Fock FLEX
+    (general scheme, through ``hwave.qlms.run``) on the general model."""
+    import hwave.qlms as qlms
+    import hwave.solver.rpa as rpa_mod
+    seen = {}
+    real_eps = rpa_mod.RPA._calc_epsilon_k
+
+    def spy(self_, green_info):
+        real_eps(self_, green_info)
+        seen["H0"] = np.array(self_.H0_k, copy=True)
+        seen["spin_mode"] = self_.spin_mode
+        raise _Stop()
+
+    types = S._SU2_TYPES if mode == "RPA" else ("CoulombIntra",)
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _gen_model(d, route, types=types)
+        inp = _sc_input(d, files, coeff_extern=_GEN_COEFF, out="out_" + mode,
+                        CellShape=list(_GEN_CELL))
+        inp["mode"]["mode"] = mode
+        inp["mode"]["calc_scheme"] = "general"
+        if mode == "FLEX":
+            inp["mode"]["param"].update(flex_hartree_fock=True, IterationMax=1)
+        inp["file"]["input"]["path_to_input"] = d
+        del inp["eliashberg"]
+        inp["log"] = {"print_level": 0}
+        with _quiet(), mock.patch.object(rpa_mod.RPA, "_calc_epsilon_k", autospec=True,
+                                         side_effect=spy):
+            try:
+                qlms.run(input_dict=inp)
+            except _Stop:
+                pass
+    assert seen["spin_mode"] == "spinful", seen["spin_mode"]
+    return seen["H0"].reshape(-1, S.ND, S.ND)
+
+
+class TestGeneralExtern(unittest.TestCase):
+    """A general Extern table (R != 0, off-diagonal, complex, orbital
+    dependent, coeff_extern = 0.7) reaches hwave_sc, the RPA and the FLEX
+    band as the Transfer rows ``+-coeff_extern H_ab(R)`` on ``2a + s + 1``
+    written independently here."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sc_ext = _gen_sc_band("extern")
+        cls.sc_tr = _gen_sc_band("transfer")
+        cls.sc_0 = _gen_sc_band(None)
+
+    def test_field_is_general(self):
+        n = S.NP
+        diff = self.sc_tr - self.sc_0
+        up = diff[:, :n, :n]
+        self.assertGreater(np.abs(up[:, 0, 1]).max(), 0.1)              # off-diagonal
+        self.assertGreater(np.abs(up[:, 0, 0] - up[:, 1, 1]).max(), 0.1)  # orbital dependent
+        self.assertGreater(np.ptp(up[:, 0, 0].real), 0.1)              # k dependent (R != 0)
+        self.assertGreater(np.abs(up - up.transpose(0, 2, 1)).max(), 0.1)   # not symmetric
+
+    def test_sc_extern_equals_transfer_route(self):
+        np.testing.assert_allclose(self.sc_ext, self.sc_tr, rtol=0, atol=1e-13)
+
+    def test_sc_band_equals_rpa(self):
+        np.testing.assert_allclose(self.sc_ext, _gen_solver_band("extern", "RPA"),
+                                   rtol=0, atol=1e-13)
+
+    def test_rpa_extern_equals_transfer_route(self):
+        np.testing.assert_allclose(_gen_solver_band("extern", "RPA"), self.sc_tr,
+                                   rtol=0, atol=1e-13)
+
+    def test_flex_extern_equals_transfer_route(self):
+        ext = _gen_solver_band("extern", "FLEX")
+        np.testing.assert_allclose(ext, _gen_solver_band("transfer", "FLEX"),
+                                   rtol=0, atol=1e-13)
+        np.testing.assert_allclose(ext, self.sc_tr, rtol=0, atol=1e-13)
+
+
+class TestEpsilonKNotInPlace(unittest.TestCase):
+    """Adding the Extern field to H0(k) leaves the stored band and a
+    caller's ``trans_mod`` untouched, so a repeated call gives the same
+    H0(k)."""
+
+    def test_repeated_call(self):
+        import hwave.qlmsio as qlmsio
+        import hwave.solver.rpa as rpa_mod
+        with _TmpDirs() as t:
+            d = t.new()
+            inter = _so_1orb_fixture(d, "extern")
+            inter["path_to_input"] = d
+            mode = {"mode": "RPA", "enable_spin_orbital": True, "calc_scheme": "general",
+                    "calc_type": "ring", "param": dict(_E1_PARAM, CellShape=[4, 1, 1])}
+            with _quiet():
+                ham = qlmsio.read_input_k.QLMSkInput(
+                    {"path_to_input": d, "interaction": inter}).get_param("ham")
+                solver = rpa_mod.RPA(ham, {"print_level": 0}, mode)
+                stored = solver.ham_info.ham_trans_q
+                before = stored.tobytes()
+                solver._calc_epsilon_k({})
+                first = np.array(solver.H0_k, copy=True)
+                solver._calc_epsilon_k({})
+                second = np.array(solver.H0_k, copy=True)
+                self.assertEqual(solver.ham_info.ham_trans_q.tobytes(), before)
+                self.assertIs(solver.ham_info.ham_trans_q, stored)
+                np.testing.assert_array_equal(first, second)
+                no_field = stored.reshape(first.shape)
+                self.assertGreater(np.abs(first - no_field).max(), 0.05)   # field applied
+                trans_mod = np.array(stored, copy=True)
+                tm_before = trans_mod.tobytes()
+                solver._calc_epsilon_k({"trans_mod": trans_mod})
+                self.assertEqual(trans_mod.tobytes(), tm_before)
+                np.testing.assert_array_equal(solver.H0_k, first)
 
 
 if __name__ == "__main__":

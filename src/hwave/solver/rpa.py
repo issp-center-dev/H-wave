@@ -3930,7 +3930,9 @@ class RPA:
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
                 Sz = np.diag((1,-1))
-                H0 += np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
+                # not in place: H0 may alias ham_trans_q or a caller's
+                # trans_mod, and a repeated call must not add the field twice
+                H0 = H0 + np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
 
             # check if diagonal
             ns = self.ns
