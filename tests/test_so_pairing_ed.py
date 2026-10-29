@@ -78,6 +78,14 @@ spin-mixing chain (TotalNED only), and ``TestZeemanSzConserving`` on the
 chain without spin-flip hopping and without ``PairLift`` (``MODELS``), where
 S_z is conserved, so TotalNED must also equal SectorED (``L = 2`` in the
 fast gate, the 12-mode ``L = 3`` chain in the full suite). Same tolerances.
+The field enters the ED Hamiltonian only, and production receives it only
+through the exact Green function ``G`` of that ED (and the bubble ``chi``
+built from it): these gates validate the vertex ``V = 1/2 Gamma - Gamma chi
+Gamma`` and the ladder with a spin-polarized ``G``. They do not exercise the
+Extern or Transfer input route of a field; that route is covered by the band
+tests of ``tests/test_so_zeeman_route.py`` (hwave_sc against the spinful RPA
+and FLEX band, and the Extern against the Transfer route) and by the
+spin-orbital FLEX ED gate of ``tests/test_flex_spin_orbital_ed.py``.
 """
 import functools
 import types
@@ -499,7 +507,10 @@ def _pair_corr(engine, zeeman, L):
 class TestZeemanSpinFlipModel(unittest.TestCase):
     """Gate 0-S2 (i): the spin-flip-hopping chain of
     :class:`TestSOPairingVertexAgainstED` with a Zeeman field (TotalNED only:
-    S_z is not conserved) -- same comparison and tolerances."""
+    S_z is not conserved) -- same comparison and tolerances. The field
+    reaches production only through the ED Green function, so this checks
+    the vertex and ladder with a polarized ``G``, not the Extern/Transfer
+    input route (see the module docstring)."""
 
     @heavy
     def test_first_and_second_order(self):
@@ -514,7 +525,8 @@ class TestZeemanSpinFlipModel(unittest.TestCase):
 class TestZeemanSzConserving(unittest.TestCase):
     """Gate 0-S2 (ii): without spin-flip hopping and without ``PairLift``
     the Zeeman-split model conserves S_z, so the total-N engine must agree
-    with the (N_up, N_dn) engine, and the production ladder with the ED."""
+    with the (N_up, N_dn) engine, and the production ladder (fed the ED
+    Green function, as above) with the ED."""
 
     def test_totaled_equals_sectored(self):
         want = _pair_corr("SectorED", _ZEEMAN, 2)
