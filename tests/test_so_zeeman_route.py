@@ -1493,6 +1493,44 @@ class TestGeneralExtern(unittest.TestCase):
         np.testing.assert_allclose(ext, self.sc_tr, rtol=0, atol=1e-13)
 
 
+class TestCoeffExternValidation(unittest.TestCase):
+    """In spin-orbital mode RPA, FLEX and hwave_sc accept or refuse the same
+    coeff_extern values, with the same message."""
+
+    MSG = r"^\[mode\.param\] coeff_extern must be a finite real number, got {}$"
+
+    def _rpa(self, value, mode="RPA"):
+        param = dict(_E1_PARAM, CellShape=[4, 1, 1], coeff_extern=value)
+        extra = {"calc_scheme": "general"}
+        if mode == "RPA":
+            extra["calc_type"] = "ring"
+        else:
+            param.update(SubShape=[1, 1, 1], flex_hartree_fock=True, IterationMax=1)
+        with _TmpDirs() as t:
+            d = t.new()
+            inter = _so_1orb_fixture(d, "extern")
+            _run(d, mode, param, inter, {"green": "green.npz"}, True, extra)
+
+    def _sc(self, value):
+        with _TmpDirs() as t:
+            d = t.new()
+            files = _sc_model(d, extern=0.1)
+            with _quiet():
+                import hwave.sc as sc
+                sc.calc_eliashberg(_sc_input(d, files, coeff_extern=value))
+
+    def test_bool_and_non_finite_refused_alike(self):
+        import re
+        for value, shown in ((True, "True"), (float("nan"), "nan"), ("1.0", "'1.0'")):
+            pattern = self.MSG.format(re.escape(shown))
+            for name, run in (("RPA", lambda v: self._rpa(v)),
+                              ("FLEX", lambda v: self._rpa(v, "FLEX")),
+                              ("hwave_sc", self._sc)):
+                with self.subTest(value=value, solver=name), \
+                        self.assertRaisesRegex(ValueError, pattern):
+                    run(value)
+
+
 class TestEpsilonKNotInPlace(unittest.TestCase):
     """Adding the Extern field to H0(k) leaves the stored band and a
     caller's ``trans_mod`` untouched, so a repeated call gives the same

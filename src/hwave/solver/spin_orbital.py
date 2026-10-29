@@ -132,6 +132,20 @@ def check_extern_indices(table, norb_phys, file_name, declared_norb=None):
                 raise _extern_index_error(file_name, i + 1, norb_phys)
 
 
+def validate_coeff_extern(raw):
+    """``[mode.param] coeff_extern`` of a spin-orbital run as a float: a
+    finite real number (a bool is refused: ``float(True) == 1.0`` would
+    silently switch the field on). Shared by RPA, FLEX and ``hwave_sc``, so
+    one value is accepted or refused alike."""
+    import numbers
+    if (isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real)
+            or not np.isfinite(float(raw))):
+        raise ValueError(
+            "[mode.param] coeff_extern must be a finite real number, got "
+            "{!r}".format(raw))
+    return float(raw)
+
+
 def interleaved_index(orb, spin):
     """Interleaved spin-orbital index of ``(orb, spin)``."""
     return 2 * orb + spin

@@ -901,7 +901,7 @@ that has no effect under the current settings.
 
   With the default 0.0 an Extern file has no effect; set ``coeff_extern`` (e.g. 1.0) to apply it.
 
-  In spin-orbital mode (``enable_spin_orbital = true``: RPA, the Hartree-Fock FLEX and the Eliashberg solver ``hwave_sc``) the Extern file keeps the physical orbital indices :math:`1, \ldots, N_\text{orbital}` and the same sign rule applies: spin up is shifted by +\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}` and spin down by −\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}`. The field can be given either here (Extern + ``coeff_extern``) or as on-site entries in the Transfer file, not both: the two add. See :doc:`../inputfiles/interaction`.
+  In spin-orbital mode (``enable_spin_orbital = true``: RPA, the Hartree-Fock FLEX and the Eliashberg solver ``hwave_sc``) the Extern file keeps the physical orbital indices :math:`1, \ldots, N_\text{orbital}` and the same sign rule applies: spin up is shifted by +\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}` and spin down by −\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}`. The field can be given either here (Extern + ``coeff_extern``) or as on-site entries in the Transfer file, not both: the two add. See :doc:`../inputfiles/interaction`. In spin-orbital mode a value that is not a finite real number (for example ``true`` or ``nan``) is refused by every solver.
   
 
 

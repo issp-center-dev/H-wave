@@ -2442,16 +2442,11 @@ def _read_so_extern(input_dict, norb_phys):
 def _so_coeff_extern(input_dict):
     """``[mode.param] coeff_extern`` (case-insensitive, default 0.0): a
     finite real number."""
-    import numbers
     from requests.structures import CaseInsensitiveDict
+    from hwave.solver import spin_orbital
     raw = CaseInsensitiveDict(input_dict["mode"].get("param", {}) or {}).get(
         "coeff_extern", 0.0)
-    if (isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real)
-            or not np.isfinite(float(raw))):
-        raise ValueError(
-            "[mode.param] coeff_extern must be a finite real number, got "
-            "{!r}".format(raw))
-    return float(raw)
+    return spin_orbital.validate_coeff_extern(raw)
 
 
 class _SORun(NamedTuple):

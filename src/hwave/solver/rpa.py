@@ -1837,6 +1837,10 @@ class RPA:
         self.coeff_tail = _ct
         # #167 invariant: never mutated after construction (scheme resolution input).
         self.ext = self.param_mod.get("coeff_extern", 0.0)
+        if self.ham_info.enable_spin_orbital:
+            # the spin-orbital RPA/FLEX and hwave_sc accept or refuse the
+            # same values (a bool would otherwise enable the field as 1.0)
+            self.ext = spin_orbital.validate_coeff_extern(self.ext)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
         # user request; consumers resolve it via backend.get_backend (warn and
