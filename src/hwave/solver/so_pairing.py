@@ -297,8 +297,12 @@ def check_so_config(input_dict):
     ``flex_green``; ``flex_chi_s`` / ``flex_chi_c`` are refused),
     ``solver_mode = "iteration" / "eigenvalue" / "both"`` with
     ``eigenvalue_method = "arnoldi"``, no ``pairing_type`` (the gap is one
-    general spin-orbital matrix), the antisymmetrized spinful vertex
-    (``spinful_vertex_exchange`` not false) and no ``Extern`` file."""
+    general spin-orbital matrix) and the antisymmetrized spinful vertex
+    (``spinful_vertex_exchange`` not false). An ``Extern`` file (a Zeeman
+    field ``coeff_extern * sigma^z H_ab(R)`` in physical orbital indices,
+    issue #88) is accepted; it enters the band through
+    :func:`hwave.sc._so_epsilon_k` and is checked by
+    :func:`hwave.sc._read_so_extern`."""
     from hwave.solver.backend import strict_bool
     eli = _ci(input_dict.get("eliashberg", {}))
     freq = eli.get("frequency", "static")
@@ -372,12 +376,6 @@ def check_so_config(input_dict):
                 "Hamiltonian while the kernel Green function and chemical "
                 "potential come from the bare Transfer file; see issue #273). "
                 "Remove {}.".format(_SO_WHAT, key, key))
-    files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
-    if "Extern" in files:
-        raise ValueError(
-            "{}: the Extern (external field) file is not used by hwave_sc. In "
-            "spin-orbital mode write a Zeeman term into the Transfer file as a "
-            "spin-dependent one-body term, and remove Extern.".format(_SO_WHAT))
 
 
 def check_so_supported(input_dict, interactions, site, norb_phys=None):

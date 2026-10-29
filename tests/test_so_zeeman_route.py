@@ -23,6 +23,16 @@ What this module pins:
   Extern (0-F1): one map and the converged state agree with the Transfer
   route; the keys are case-insensitive through ``hwave.qlms.run``; the
   non-spin-orbital Hartree-Fock FLEX still refuses an external field.
+* :class:`TestScBand` -- the spin-orbital Eliashberg front end (``hwave_sc``)
+  accepts Extern: its epsilon(k) equals the spinful RPA H0(k) with Extern;
+  the two routes add (with a WARNING); a zero ``coeff_extern`` gives the
+  Transfer band; the keys are case-insensitive; a bad Extern index or
+  header is refused in calc, load and flex modes before any heavy work; the
+  dynamic solver issues no false "Extern is ignored" WARNING and agrees
+  between the routes.
+* :class:`TestScSpectrum` -- a Zeeman field without spin-orbit coupling
+  conserves S_z: the static spectrum is the union of the three pair-S_z
+  sector spectra (gate 0-S1), and the two routes give the same spectrum.
 
 Every run goes through the public entry :func:`hwave.qlms.run` (or, for the
 Eliashberg chi0, :func:`hwave.sc._calc_chi0q_internal`), with fixtures
@@ -39,6 +49,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.qlmsio.wan90 as wan90
+import tests.test_sc_spin_orbital as S        # the shared two-orbital model
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SPIN_DIR = os.path.join(_HERE, "equivalence_input", "spin")
@@ -565,6 +576,366 @@ class TestFlexRoutes(unittest.TestCase):
     def test_non_so_hf_flex_still_refuses_extern(self):
         with self.assertRaisesRegex(ValueError, "does not support an external field"):
             _flex_non_so_hf_with_extern()
+
+
+# ------------------------------------------------- the Eliashberg front end
+#
+# The two-orbital square-lattice model of tests/test_sc_spin_orbital.py
+# (``S._write_model``; on-site SU(2) interaction set, optional Rashba-like
+# spin-orbit hopping ``soc``), with a Zeeman field along either route.
+
+
+class _Stop(Exception):
+    """Ends a run once the array under test has been captured."""
+
+
+@contextlib.contextmanager
+def _quiet_info(level=logging.INFO):
+    """Silence ``level`` and below (default INFO: WARNINGs still reach
+    ``assertLogs``)."""
+    prev = logging.root.manager.disable
+    logging.disable(level)
+    try:
+        yield
+    finally:
+        logging.disable(prev)
+
+
+def _sc_model(d, soc=0.0, transfer_zeeman=0.0, extern=None, extern_rows=None,
+              extern_header_dim=S.NP, key="Extern", types=S._SU2_TYPES):
+    """Write the model into ``d``; returns the interaction file map.
+
+    ``transfer_zeeman = h`` adds ``+h`` / ``-h`` to the on-site up / down
+    Transfer entries of every orbital (Route 1); ``extern = h`` writes an
+    Extern file ``H_aa(0) = h`` in physical indices (Route 2), or
+    ``extern_rows`` verbatim (1-based), under the key ``key`` with line 2
+    ``extern_header_dim``."""
+    files = S._write_model(d, so=True, soc=soc, types=types)
+    if transfer_zeeman:
+        path = os.path.join(d, "transfer.dat")
+        dim, _nr, _deg, rows = _read_w90_rows(path)
+        # 1-based interleaved file index 2a + s + 1 -> the sign of the field
+        onsite = {2 * a + s + 1: (1 if s == 0 else -1)
+                  for a in range(S.NP) for s in (0, 1)}
+        hit = set()
+        new_rows = []
+        for r in rows:
+            if r[:3] == (0, 0, 0) and r[3] == r[4] and r[3] in onsite:
+                r = r[:5] + (r[5] + onsite[r[3]] * transfer_zeeman, r[6])
+                hit.add(r[3])
+            new_rows.append(r)
+        assert hit == set(onsite), hit          # every on-site row exists
+        S._wfile(path, "Transfer", dim, new_rows)
+    if extern is not None or extern_rows is not None:
+        if extern_rows is None:
+            extern_rows = [(0, 0, 0, a + 1, a + 1, extern, 0.0) for a in range(S.NP)]
+        _write_w90(d, extern_header_dim, extern_rows)
+        files = dict(files, **{key: "extern.dat"})
+    return files
+
+
+def _sc_input(d, files, eli=None, coeff_extern=1.0, coeff_key="coeff_extern", **kw):
+    inp = S._input(d, files, True,
+                   dict({"chi0q_mode": "calc", "solver_mode": "eigenvalue"}, **(eli or {})),
+                   **kw)
+    if coeff_extern is not None:
+        inp["mode"]["param"][coeff_key] = coeff_extern
+    return inp
+
+
+def _capture_sc_band(soc=0.0, transfer_zeeman=0.0, extern=None, coeff_extern=1.0,
+                     key="Extern", coeff_key="coeff_extern", silence=logging.INFO):
+    """The spin-block epsilon(k) ``(nd, nd, Nx, Ny, Nz)`` the static
+    spin-orbital hwave_sc run diagonalizes (``chi0q_mode = "calc"``);
+    log records up to ``silence`` are dropped."""
+    import hwave.sc as sc
+    seen = {}
+
+    def spy_eig(eps, *a, **kw):
+        seen["eps"] = np.array(eps, copy=True)
+        raise _Stop()
+
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _sc_model(d, soc=soc, transfer_zeeman=transfer_zeeman, extern=extern, key=key)
+        inp = _sc_input(d, files, coeff_extern=coeff_extern, coeff_key=coeff_key)
+        with _quiet_info(silence), mock.patch.object(sc, "_calc_eigenvalues",
+                                                     side_effect=spy_eig):
+            try:
+                sc.calc_eliashberg(inp)
+            except _Stop:
+                pass
+    return seen["eps"]
+
+
+def _to_rpa_layout(eps):
+    """``(nd, nd, Nx, Ny, Nz)`` -> the RPA ``(nvol, nd, nd)`` layout."""
+    nd = eps.shape[0]
+    return np.moveaxis(eps.reshape(nd, nd, -1), -1, 0)
+
+
+def _capture_sc_and_rpa_band(extern, soc):
+    """``(epsilon_k of hwave_sc, H0(k) of the spin-orbital RPA)`` with the
+    Extern route; the RPA band must be the spinful one (``soc != 0``)."""
+    import hwave.qlms as qlms
+    import hwave.solver.rpa as rpa_mod
+    eps = _capture_sc_band(soc=soc, extern=extern)
+    seen = {}
+    real_eps = rpa_mod.RPA._calc_epsilon_k
+
+    def spy_rpa(self_, green_info):
+        real_eps(self_, green_info)
+        seen["H0"] = np.array(self_.H0_k, copy=True)
+        seen["spin_mode"] = self_.spin_mode
+        raise _Stop()
+
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _sc_model(d, soc=soc, extern=extern)
+        inp = _sc_input(d, files, out="out_rpa")
+        inp["mode"]["calc_scheme"] = "general"
+        inp["file"]["input"]["path_to_input"] = d
+        del inp["eliashberg"]
+        inp["log"] = {"print_level": 0}
+        with _quiet(), mock.patch.object(rpa_mod.RPA, "_calc_epsilon_k", autospec=True,
+                                         side_effect=spy_rpa):
+            try:
+                qlms.run(input_dict=inp)
+            except _Stop:
+                pass
+    assert seen["spin_mode"] == "spinful", seen["spin_mode"]
+    nd = eps.shape[0]
+    return eps, seen["H0"].reshape(-1, nd, nd)
+
+
+_HEAVY_MOCKS = ("_build_bond_green", "_calc_chi0q_internal", "_load_chi0q",
+                "_load_flex_so", "_so_static_vertex", "_so_rpa_vertex",
+                "_calc_eigenvalues")
+
+
+def _run_sc(mode, extern_rows, extern_header_dim=S.NP, key="Extern"):
+    """A static spin-orbital hwave_sc run in ``chi0q_mode = mode`` with the
+    given Extern file; every heavy step raises, so a refusal must come
+    first. Raises what the run raises."""
+    import hwave.sc as sc
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _sc_model(d, extern_rows=extern_rows, extern_header_dim=extern_header_dim,
+                          key=key)
+        inp = _sc_input(d, files, eli={"chi0q_mode": mode})
+        with contextlib.ExitStack() as st:
+            st.enter_context(_quiet())
+            for name in _HEAVY_MOCKS:
+                st.enter_context(mock.patch.object(
+                    sc, name, side_effect=AssertionError("heavy work reached: " + name)))
+            try:
+                sc.calc_eliashberg(inp)
+            finally:
+                out = inp["file"]["output"]["path_to_output"]
+                assert not (os.path.exists(out) and os.listdir(out)), os.listdir(out)
+
+
+def _run_sc_dynamic_calc(extern=None, transfer_zeeman=0.0, transfer_onsite_symmetric=True,
+                         soc=0.3):
+    """A full spin-orbital DYNAMIC hwave_sc run (``chi0q_mode = "calc"``,
+    Nmat = 8); returns the eigenvalues it found. Logging is not silenced
+    (callers check the WARNINGs). ``transfer_onsite_symmetric`` asserts the
+    Transfer file has no spin-dependent on-site entry (Route 1 off)."""
+    import hwave.sc as sc
+    assert transfer_onsite_symmetric == (transfer_zeeman == 0.0)
+    cap = {}
+    real_solve = sc._so_solve_eigenvalue
+
+    def solve(*a, **kw):
+        out = real_solve(*a, **kw)
+        cap["vals"] = np.array(out[0])
+        return out
+
+    with _TmpDirs() as t:
+        d = t.new()
+        files = _sc_model(d, soc=soc, transfer_zeeman=transfer_zeeman, extern=extern)
+        inp = _sc_input(d, files, eli={"frequency": "dynamic", "num_eigenvalues": 4,
+                                       "spectral_shift": "auto"}, nmat=8)
+        with _quiet_info(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve):
+            sc.calc_eliashberg(inp)
+    return cap["vals"]
+
+
+class TestScBand(unittest.TestCase):
+    def test_epsilon_k_equals_rpa_with_extern(self):                   # soc != 0: spinful RPA
+        eps_sc, h0_rpa = _capture_sc_and_rpa_band(extern=0.1, soc=0.35)
+        np.testing.assert_allclose(_to_rpa_layout(eps_sc), h0_rpa, rtol=0, atol=1e-12)
+        # spin-mixing hopping present, and the field is in the band
+        n = S.NP
+        self.assertGreater(np.abs(h0_rpa[:, :n, n:]).max(), 0.1)
+        no_field = _to_rpa_layout(_capture_sc_band(soc=0.35))
+        diff = h0_rpa - no_field
+        np.testing.assert_allclose(diff[:, :n, :n], np.broadcast_to(0.1 * np.eye(n), diff[:, :n, :n].shape),
+                                   rtol=0, atol=1e-14)
+        np.testing.assert_allclose(diff[:, n:, n:], -diff[:, :n, :n], rtol=0, atol=1e-14)
+
+    def test_routes_add_and_warn(self):
+        with self.assertLogs("hwave_sc", "WARNING") as cm:
+            both = _capture_sc_band(transfer_zeeman=0.1, extern=0.1)
+        self.assertTrue(any("the two fields add" in m for m in cm.output), cm.output)
+        self.assertTrue(any("orbital 1" in m for m in cm.output), cm.output)
+        np.testing.assert_allclose(both, _capture_sc_band(transfer_zeeman=0.2), rtol=0, atol=1e-14)
+
+    def test_single_route_does_not_warn_and_states_sign(self):
+        for kw in ({"extern": 0.1}, {"transfer_zeeman": 0.1}):
+            with self.subTest(**kw), self.assertLogs("hwave_sc", "INFO") as cm:
+                _capture_sc_band(silence=logging.DEBUG, **kw)
+            self.assertFalse(any("the two fields add" in m for m in cm.output))
+            sign = [m for m in cm.output
+                    if "Zeeman sign: +h raises spin-up (favours spin-down occupation)" in m]
+            self.assertEqual(len(sign), 1 if "extern" in kw else 0, cm.output)
+
+    def test_extern_and_transfer_routes_same_band(self):
+        np.testing.assert_allclose(_capture_sc_band(extern=0.1),
+                                   _capture_sc_band(transfer_zeeman=0.1), rtol=0, atol=1e-14)
+
+    def test_zero_coeff_extern_equals_transfer_band(self):
+        np.testing.assert_array_equal(_capture_sc_band(extern=0.1, coeff_extern=0.0),
+                                      _capture_sc_band())
+        # and an absent coeff_extern defaults to 0.0
+        np.testing.assert_array_equal(_capture_sc_band(extern=0.1, coeff_extern=None),
+                                      _capture_sc_band())
+
+    def test_mixed_case_keys(self):
+        ref = _capture_sc_band(extern=0.1)
+        self.assertGreater(np.abs(ref - _capture_sc_band()).max(), 0.05)
+        np.testing.assert_array_equal(
+            _capture_sc_band(extern=0.1, key="EXTERN", coeff_key="Coeff_Extern"), ref)
+
+    def test_extern_index_out_of_range_load_and_flex(self):
+        for mode in ("calc", "load", "flex"):
+            for key in ("Extern", "EXTERN"):
+                with self.subTest(mode=mode, key=key), self.assertRaisesRegex(
+                        ValueError, r"Extern file '.*extern\.dat': orbital index 3 is outside "
+                                    r"1\.\.2\. In spin-orbital mode"):
+                    _run_sc(mode, extern_rows=[(0, 0, 0, 3, 3, 0.1, 0.0)], key=key)
+            with self.subTest(mode=mode, header=4), self.assertRaisesRegex(
+                    ValueError, r"Extern file '.*extern\.dat': its header declares 4 orbitals, "
+                                r"but norb_phys = 2\. In spin-orbital mode"):
+                _run_sc(mode, extern_header_dim=4, extern_rows=[(0, 0, 0, 1, 1, 0.1, 0.0)])
+            with self.subTest(mode=mode, header="abc"), self.assertRaisesRegex(
+                    ValueError, r"extern\.dat: line 2 must be the number of orbitals"):
+                _run_sc(mode, extern_header_dim="abc", extern_rows=[(0, 0, 0, 1, 1, 0.1, 0.0)])
+
+    def test_no_false_ignored_warning_dynamic(self):
+        with self.assertNoLogs(level="WARNING"):
+            lam_ext = _run_sc_dynamic_calc(extern=0.1, transfer_onsite_symmetric=True)
+        lam_tr = _run_sc_dynamic_calc(transfer_zeeman=0.1, transfer_onsite_symmetric=False)
+        lam_0 = _run_sc_dynamic_calc()
+        self.assertLessEqual(_assignment_max(lam_ext, lam_tr), 1e-10 * np.abs(lam_tr).max())
+        # the field reaches the dynamic solve
+        self.assertGreater(_assignment_max(lam_ext, lam_0), 1e-6)
+
+    def test_no_false_ignored_warning_static_flex(self):
+        """The static chi0q_mode = "flex" path issues no "Extern is ignored"
+        WARNING either (the spin-orbital FLEX band includes Extern); the run
+        is stopped where the FLEX archives would be read."""
+        import hwave.sc as sc
+        with _TmpDirs() as t:
+            d = t.new()
+            files = _sc_model(d, soc=0.3, extern=0.1)
+            inp = _sc_input(d, files, eli={"chi0q_mode": "flex"})
+            with self.assertNoLogs(level="WARNING"), _quiet_info(), \
+                    mock.patch.object(sc, "_load_flex_so", side_effect=_Stop()):
+                with self.assertRaises(_Stop):
+                    sc.calc_eliashberg(inp)
+
+
+def _assignment_max(a, b):
+    """Max ``|a_i - b_pi(i)|`` over the optimal one-to-one assignment."""
+    from scipy.optimize import linear_sum_assignment
+    a, b = np.asarray(a).ravel(), np.asarray(b).ravel()
+    assert a.size == b.size, (a.size, b.size)
+    cost = np.abs(a[:, None] - b[None, :])
+    r, c = linear_sum_assignment(cost)
+    return float(cost[r, c].max())
+
+
+_SPECTRA = {}
+
+
+def _sc_static_dense(h, soc=0.0, route="extern"):
+    """The production static spin-orbital run (dense branch, every
+    eigenvalue of the antisymmetric space) with a field ``h``:
+    ``{"evs", "M", "shape"}`` -- the eigenvalues it reports and the dense
+    matrix of the kernel operator it built. Cached per arguments."""
+    import hwave.sc as sc
+    key = (h, soc, route)
+    if key in _SPECTRA:
+        return _SPECTRA[key]
+    cap = {}
+    real_solve = sc._so_solve_eigenvalue
+
+    def solve(A, basis, *a, **kw):
+        cap["A"] = A
+        out = real_solve(A, basis, *a, **kw)
+        cap["evs"] = np.array(out[0])
+        return out
+
+    Nx, Ny, Nz = S.CELL
+    shape = (S.ND, S.ND, Nx, Ny, Nz)
+    n = int(np.prod(shape))
+    with _TmpDirs() as t:
+        d = t.new()
+        kw = {"extern": h} if route == "extern" else {"transfer_zeeman": h}
+        files = _sc_model(d, soc=soc, **kw)
+        inp = _sc_input(d, files, eli={"num_eigenvalues": n}, nmat=32)
+        with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve):
+            sc.calc_eliashberg(inp)
+    M = cap["A"].matmat(np.eye(n, dtype=complex))
+    _SPECTRA[key] = {"evs": cap["evs"], "M": M, "shape": shape}
+    return _SPECTRA[key]
+
+
+def _sc_static_full_spectrum(h, soc=0.0):
+    out = _sc_static_dense(h, soc)
+    dim = np.linalg.matrix_rank(S._dense_P(out["shape"]))
+    assert out["evs"].size == dim, (out["evs"].size, dim)    # every eigenvalue
+    return out["evs"]
+
+
+def _sector_spectrum(p, h, soc=0.0):
+    """Eigenvalues of the kernel compressed onto the antisymmetric gaps of
+    pair-``S_z = p`` (``p = +1``: up-up, ``0``: up-down and down-up, ``-1``:
+    down-down), from an orthonormal basis of ``P Pi_p`` built here."""
+    out = _sc_static_dense(h, soc)
+    shape = out["shape"]
+    nd = shape[0]
+    spin = np.arange(nd) // (nd // 2)              # spin-block order: 0 = up
+    sz = (1 - 2 * spin)[:, None] + (1 - 2 * spin)[None, :]     # 2 * (s_z + t_z)
+    mask = np.broadcast_to((sz == 2 * p)[:, :, None, None, None], shape).ravel()
+    P = S._dense_P(shape)
+    Pi = np.diag(mask.astype(float))
+    w, U = np.linalg.eigh(Pi @ P @ Pi)
+    Q = U[:, w > 0.5]
+    return np.linalg.eigvals(Q.conj().T @ out["M"] @ Q)
+
+
+def _sc_eigs(route, h=_H, soc=0.35):
+    return _sc_static_dense(h, soc, route)["evs"]
+
+
+class TestScSpectrum(unittest.TestCase):                                # 0-S1
+    def test_zeeman_spectrum_is_union_of_pair_sz_sectors(self):
+        lam = _sc_static_full_spectrum(h=0.1, soc=0.0)
+        sectors = {p: _sector_spectrum(p, h=0.1) for p in (+1, 0, -1)}
+        expect = np.concatenate([sectors[p] for p in (+1, 0, -1)])
+        self.assertLessEqual(_assignment_max(lam, expect), 1e-8 * max(1, np.abs(lam).max()))
+        # the field splits the equal-spin sectors (without it they coincide)
+        self.assertGreater(_assignment_max(sectors[+1], sectors[-1]), 1e-4)
+        z = {p: _sector_spectrum(p, h=0.0) for p in (+1, -1)}
+        self.assertLessEqual(_assignment_max(z[+1], z[-1]), 1e-10 * max(1, np.abs(lam).max()))
+
+    def test_extern_and_transfer_routes_same_spectrum(self):
+        a, b = _sc_eigs("extern"), _sc_eigs("transfer")
+        self.assertEqual(a.size, b.size)
+        self.assertLessEqual(_assignment_max(a, b), 1e-12 * max(1, np.abs(b).max()))
+        self.assertGreater(_assignment_max(a, _sc_eigs("extern", h=0.0)), 1e-6)
 
 
 if __name__ == "__main__":

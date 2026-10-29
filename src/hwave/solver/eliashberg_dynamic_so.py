@@ -623,6 +623,9 @@ def solve_dynamic_so(input_dict):
     so_pairing.check_so_supported(
         input_dict, interactions, sc._nonbond_site(input_dict, norb_phys),
         norb_phys=norb_phys)
+    # the Zeeman field of an Extern file (issue #88), read and checked in
+    # every chi0q_mode before any heavy work
+    extern_table, _extern_file = sc._read_so_extern(input_dict, norb_phys)
     logger.info("=== Spin-orbital dynamic Eliashberg solver (issue #284) ===")
     logger.info("T = %s, beta = %.6g, grid %dx%dx%d, Nmat = %d, nd = %d "
                 "spin-orbitals (%d physical orbitals), chi0q_mode = %s, "
@@ -668,9 +671,9 @@ def solve_dynamic_so(input_dict):
                                                     chi_path, T)
         del chi0_w
     else:
-        epsilon_k = sc._build_hamiltonian_k(kx, ky, kz, hr, nd)
-        epsilon_k = spin_orbital.interleaved_to_spinblock(
-            epsilon_k, norb_phys, axes=(0, 1))
+        # spin-block band, Extern included (the band of the spinful RPA chi0)
+        epsilon_k = sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table,
+                                     norb_phys)
         eigenvalues, eigenvectors = sc._calc_eigenvalues(epsilon_k)
         n_filling = mode_param.get("filling")
         if n_filling is None:

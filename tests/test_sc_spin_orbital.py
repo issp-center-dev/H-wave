@@ -31,8 +31,9 @@ orthonormal basis of that subspace (``sc._SOAntisymmetricBasis``).
   exact-diagonalization-validated dynamic kernel.
 * ``TestArchiveMembers``: only spin-orbital runs write the ``spin_orbital``
   marker; non-spin-orbital RPA / FLEX archives keep their member sets.
-* ``TestTransferUnderSOC``: with spin-orbit hopping, the epsilon(k) of
-  hwave_sc equals the H0(k) of the spin-orbital RPA.
+* ``TestTransferUnderSOC``: with spin-orbit hopping, without and with an
+  Extern field, the epsilon(k) of hwave_sc equals the H0(k) of the
+  spin-orbital RPA.
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
 * ``TestSpinDecomposition``: ``so_pairing.so_spin_components`` /
   ``so_spin_decomposition`` on hand-built gaps (pure psi, d_x, d_y, d_z and a
@@ -658,13 +659,22 @@ class TestRefusals(_TmpDir):
                 out = inp["file"]["output"]["path_to_output"]
                 self.assertFalse(os.path.exists(out) and os.listdir(out))
 
-    def test_extern_file(self):
+    def test_extern_file_accepted(self):
+        """An Extern file (the Zeeman field sigma^z H_ab(R) * coeff_extern,
+        issue #88) is accepted: the static calc run completes and writes the
+        spin-orbital gap archive, whatever the spelling of the key."""
         files = _write_model(self.d, so=True)
         _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP,
                [(0, 0, 0, a + 1, a + 1, 0.1, 0.0) for a in range(NP)])
         for key in ("Extern", "EXTERN"):
             with self.subTest(key=key):
-                self._refused(r"Extern", so_files=dict(files, **{key: "extern.dat"}))
+                out = "out_" + key
+                inp = _input(self.d, dict(files, **{key: "extern.dat"}), True,
+                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                              "num_eigenvalues": 2}, out=out, coeff_extern=1.0)
+                with _quiet():
+                    sc.calc_eliashberg(inp)
+                self.assertTrue(os.path.isfile(os.path.join(self.d, out, "gap.npz")))
 
     def _mean_field_refused(self, name, spellings):
         files = _write_model(self.d, so=True)
@@ -1267,19 +1277,44 @@ class _Stop(Exception):
 
 class TestTransferUnderSOC(_TmpDir):
 
+    #: an Extern table in PHYSICAL orbital indices (issue #88): on-site,
+    #: inter-orbital and a complex off-site Hermitian pair, so the sigma^z
+    #: spin sign, the e^{+ikR} phase and the coefficient are all exercised
+    _EXTERN_ROWS = [(0, 0, 0, 1, 1, 0.1, 0.0), (0, 0, 0, 2, 2, -0.07, 0.0),
+                    (0, 0, 0, 1, 2, 0.03, 0.0), (0, 0, 0, 2, 1, 0.03, 0.0),
+                    (1, 0, 0, 1, 2, 0.05, 0.02), (-1, 0, 0, 2, 1, 0.05, -0.02)]
+
     def test_epsilon_k_equals_spin_orbital_rpa(self):
         """With spin-orbit hopping (soc != 0), the epsilon(k) hwave_sc
         diagonalizes for its Green function (the interleaved Transfer file
-        reordered to spin-block) equals the H0(k) the spin-orbital RPA
-        assembles, to 1e-12. The complex-conjugate, the k -> -k and the
-        un-reordered (interleaved) readings all miss by O(soc), so the
-        comparison is not vacuous."""
+        reordered to spin-block, plus ``coeff_extern * sigma^z H(k)`` of an
+        Extern file) equals the H0(k) the spin-orbital RPA assembles, to
+        1e-12, without and with Extern. The complex-conjugate, the k -> -k
+        and the un-reordered (interleaved) readings all miss by O(soc), and
+        the Extern field moves the band, so the comparison is not vacuous."""
         from hwave import qlms
         from hwave.solver import rpa as rpa_mod
         from hwave.solver import spin_orbital
         files = _write_model(self.d, so=True, soc=0.35)
+        _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP, self._EXTERN_ROWS)
         Nx, Ny, Nz = CELL
         nvol = Nx * Ny * Nz
+        bands = {}
+        for extern in (False, True):
+            with self.subTest(extern=extern):
+                run_files = dict(files, Extern="extern.dat") if extern else files
+                param = {"coeff_extern": 0.8} if extern else {}
+                bands[extern] = self._compare_with_rpa(
+                    qlms, rpa_mod, spin_orbital, run_files, param, nvol,
+                    "_ext" if extern else "")
+        # the field is load-bearing: up-up moves by +0.8 H(k), down-down by -0.8 H(k)
+        diff = bands[True] - bands[False]
+        self.assertGreater(np.abs(diff[:, :NP, :NP]).max(), 0.05)
+        np.testing.assert_allclose(diff[:, NP:, NP:], -diff[:, :NP, :NP], rtol=0, atol=1e-14)
+        np.testing.assert_array_equal(diff[:, :NP, NP:], 0.0)
+
+    def _compare_with_rpa(self, qlms, rpa_mod, spin_orbital, files, param, nvol, tag):
+        Nx, Ny, Nz = CELL
         seen = {}
 
         def spy_eig(eps, *a, **kw):
@@ -1287,7 +1322,8 @@ class TestTransferUnderSOC(_TmpDir):
             raise _Stop()
 
         inp = _input(self.d, files, True, {"chi0q_mode": "calc",
-                                           "solver_mode": "eigenvalue"})
+                                           "solver_mode": "eigenvalue"},
+                     out="out" + tag, **param)
         with _quiet(), mock.patch.object(sc, "_calc_eigenvalues",
                                          side_effect=spy_eig):
             with self.assertRaises(_Stop):
@@ -1301,7 +1337,7 @@ class TestTransferUnderSOC(_TmpDir):
             seen["spin_mode"] = self_.spin_mode
             raise _Stop()
 
-        rpa_in = _input(self.d, files, True, {}, out="out_rpa")
+        rpa_in = _input(self.d, files, True, {}, out="out_rpa" + tag, **param)
         rpa_in["mode"]["calc_scheme"] = "general"
         rpa_in["file"]["input"]["path_to_input"] = self.d
         del rpa_in["eliashberg"]
@@ -1331,7 +1367,7 @@ class TestTransferUnderSOC(_TmpDir):
                             ("interleaved", interleaved)):
             with self.subTest(reading=name):
                 self.assertGreater(np.abs(E - other).max(), 0.1)
-
+        return E
 
 def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
               cell=None, T=0.25):

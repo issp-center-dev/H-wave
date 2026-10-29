@@ -208,11 +208,13 @@ This section controls the Eliashberg solver. Key parameters:
      to down-down, no spin-mixing block) within
      :math:`\max(10^{-10}, \texttt{spin\_free\_tol})` on its dimensionless
      entries: a magnetic ``green_init`` describes a magnetic state, whatever
-     the spin direction, and is refused (issue #88). A paramagnetic UHF
+     the spin direction, and is refused (a magnetic mean-field input is not
+     supported by the spin-orbital route either yet, issue #273). A paramagnetic UHF
      solution converged only loosely (for example ``EPS = 6`` from a random
      start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
      convergence, start UHF from a spin-symmetric state, or raise
-     ``spin_free_tol``. The spin-polarized case is tracked in issue #88.
+     ``spin_free_tol``. A state polarized by a Zeeman field runs with
+     ``[mode] enable_spin_orbital = true``; see :ref:`sc_spin_polarized`.
 
      **Behaviour with** ``load``, **bond and FLEX inputs.** For ``"load"``,
      give the same ``trans_mod`` / ``green_init`` / ``Extern`` as the RPA run
@@ -1663,7 +1665,9 @@ each off-site row acts on the bond it was declared on.
    ``longitudinal_bond_pairing`` of FLEX log a WARNING reporting the bonds
    (the first four by name) where ``J_Exchange != J_Hund - 2 J_Ising`` (each row taken with its
    partner); the run is not refused and no number changes. The
-   spin-resolved treatment is tracked in issue #88. These
+   spin-orbital route (:ref:`sc_spin_orbital`) treats such couplings
+   exactly for on-site interactions; its bond-resolved extension is
+   issue #270. These
    statements are pinned against an independent spin-orbital construction
    in ``tests/test_sc_bond_pairing_oracle.py``.
 
@@ -1814,7 +1818,8 @@ Supporting a spin-polarized model in the singlet/triplet channels would
 require an :math:`S_z`-resolved pairing vertex together with the transverse
 susceptibility :math:`\chi^{+-}`, which the reduced scheme does not store.
 That is a feature addition rather than a configuration change; the
-spin-orbital representation above is the route for spin-mixing models.
+spin-orbital representation above is the route for spin-mixing models and
+for spin-polarized (Zeeman-field) models (see :ref:`sc_spin_polarized`).
 
 
 .. _sc_spin_orbital:
@@ -2005,6 +2010,72 @@ separate spin and charge channels. If the FLEX archive records
 ``scf_converged = false``, a WARNING is logged: the stored :math:`\chi` and
 Green function agree only at convergence.
 
+.. _sc_spin_polarized:
+
+Spin-polarized states (Zeeman field)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A spin-orbital ``hwave_sc`` run (static or dynamic) can be put in a Zeeman
+field :math:`h`. One sign convention holds throughout: the field shifts the
+up-spin level by :math:`+h` and the down-spin level by :math:`-h` (the
+:math:`\sigma^z` sign of the Extern term). Both routes below need
+``[mode] enable_spin_orbital = true``, the Geometry ``norb`` equal to
+:math:`2N`, and the Transfer file in the interleaved spin-orbital indices
+(1-based file index :math:`2a + s + 1`, :math:`s = 0` for up).
+
+- **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
+  :math:`a` (1-based file indices)::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **Route 2: Extern + coeff_extern.** The Extern file uses the
+  **physical** orbital indices: an :math:`N \times N` matrix per
+  :math:`R`, indices :math:`1, \ldots, N`, in the same Wannier90 format as
+  without ``enable_spin_orbital``. It does not use the
+  :math:`1, \ldots, 2N` spin-orbital indices of the Transfer file; an index
+  outside the physical range, a header (line 2) that declares another
+  orbital count, or a malformed header is rejected before any calculation,
+  in every ``chi0q_mode``. The operator is
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
+  ``[mode.param] coeff_extern`` (default 0); :math:`H_{aa}(0) = h` with
+  ``coeff_extern = 1.0`` equals Route 1. The band of ``hwave_sc`` then
+  equals the band of the spin-orbital RPA and FLEX runs with the same
+  input.
+
+Side by side, for one orbital and :math:`h = 0.1`::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+
+Use one route, not both: the two fields add (a WARNING is logged when an
+active Extern field meets spin-dependent on-site Transfer entries). For
+:math:`h > 0` the down spin is favoured, so at fixed filling the field
+polarizes the electrons toward spin down; the log states the convention
+(``Zeeman sign: +h raises spin-up (favours spin-down occupation)``).
+
+The field enters every input the solver uses:
+
+- ``chi0q_mode = "calc"``: the band, the chemical potential, the Green
+  function and the internally computed spinful :math:`\chi_0` all include
+  it;
+- ``chi0q_mode = "flex"``: run the spin-orbital FLEX with the same field
+  (see :ref:`flex_spin_orbital`); its :math:`\chi` and Green function
+  already include it;
+- ``chi0q_mode = "load"`` needs spin-mixing hopping: without it the
+  spin-orbital RPA reduces the model to the spin-diagonal form and writes a
+  physical-orbital chi0q, which this mode refuses. For Zeeman-only models
+  use ``"calc"`` or ``"flex"``. With spin-mixing hopping, give the same
+  field as the RPA run that wrote the chi0q file.
+
+Each field value is its own state point. An RPA or FLEX archive written at
+another field value (another ``coeff_extern`` or Extern table) describes
+another state: for a field sweep, rerun the RPA or FLEX producer at every
+value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
+field) is not covered: ``trans_mod`` and ``green_init`` are refused in
+spin-orbital mode (issue #273).
+
 Refused combinations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2046,7 +2117,9 @@ before any calculation:
 - an ``output_gap`` whose gap archive name (see *Outputs*) equals
   ``output_eigenvalue``;
 - an odd spin-orbital count (Geometry ``norb``);
-- an ``Extern`` file (write a Zeeman field into the Transfer file instead);
+- an ``Extern`` file with an orbital index outside :math:`1 \ldots N` or a
+  header that does not declare :math:`N` orbitals (see
+  :ref:`sc_spin_polarized`);
 - ``[file.input] trans_mod`` and ``green_init`` (a mean-field one-body input is not
   supported yet; see issue #273);
 - ``[mode.param] spinful_vertex_exchange = false``.
@@ -2081,8 +2154,6 @@ Practical advice
   cannot reach a triplet-led state from this seed. Use ``solver_mode =
   "eigenvalue"`` (Arnoldi), or an odd seed (``"p_x"``, ``"p_y"``, ...,
   which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
-- A Zeeman term written into the Transfer file as a spin-dependent one-body
-  term runs, but this case has not been validated.
 - Memory. With ``frequency = "static"``, ``chi0q_mode = "calc"`` computes
   the spinful chi0q at the zero bosonic frequency only:
   :math:`N_k (2N)^4` complex numbers, i.e. :math:`16\,N_k (2N)^4` bytes,
@@ -2119,6 +2190,12 @@ Validation
 - **Agreement between inputs.** ``chi0q_mode = "calc"`` and ``"load"`` give
   the same eigenvalues, and ``"flex"`` reproduces the spectrum built
   directly from the stored FLEX :math:`\chi` and Green function.
+- **Zeeman field.** The Extern route and the Transfer route give the same
+  band (equal to the spin-orbital RPA band, also with spin-orbit coupling)
+  and the same spectrum, static and dynamic. Without spin-orbit coupling
+  the field conserves :math:`S_z`, and the static spectrum equals the
+  union of the spectra of the three pair-:math:`S_z` sectors (up-up,
+  up-down, down-down); the field splits the up-up and down-down sectors.
 
 Relation to the non-spin-orbital singlet and triplet
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2126,7 +2203,7 @@ Relation to the non-spin-orbital singlet and triplet
 The non-spin-orbital singlet and triplet formulas assume a spin-rotation
 invariant interaction. ``Hund`` alone or ``Exchange`` alone conserves
 :math:`S_z` but is not rotation invariant, so for them those formulas are an
-approximation (see issue #88), whereas the spin-orbital path treats these
+approximation, whereas the spin-orbital path treats these
 terms exactly. Its singlet eigenvalues can therefore differ from those of a
 non-spin-orbital run for such models; the equal-spin triplet agrees.
 Rotation-invariant combinations (for example ``Hund`` and ``Exchange`` in

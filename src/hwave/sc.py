@@ -1913,8 +1913,9 @@ def _refuse_spin_dependent(what, detail, tol=SPIN_FREE_ATOL):
         "start UHF from a spin-symmetric initial state, or raise "
         "[eliashberg] spin_free_tol (the band is then spin-averaged). A "
         "genuinely magnetic (spin-diagonal with unequal spins, or "
-        "spin-mixing) mean field, or a finite Extern field, needs the "
-        "spin-polarized treatment of issue #88.".format(what, detail, tol))
+        "spin-mixing) mean field, or a finite Extern field: run it with "
+        "[mode] enable_spin_orbital = true (see the spin-polarized section "
+        "of the Eliashberg tutorial).".format(what, detail, tol))
 
 
 def _read_spin_free_tol(eli_param):
@@ -2136,8 +2137,9 @@ def _check_green_init_spin_free(g, norb, spin_free_tol):
             "|G_up - G_down| = {:.3e}, max |spin-mixing G| = {:.3e}; "
             "tolerance max(1e-10, [eliashberg] spin_free_tol) = {:g} on the "
             "dimensionless Green-function entries). The singlet/triplet "
-            "pairing kernel of hwave_sc carries no spin index; a magnetic "
-            "state needs the spin-polarized treatment of issue #88. For a "
+            "pairing kernel of hwave_sc carries no spin index; for a magnetic "
+            "state run it with [mode] enable_spin_orbital = true (see the "
+            "spin-polarized section of the Eliashberg tutorial). For a "
             "paramagnetic state, the trans_mod written by UHFk is the "
             "consistent input.".format(split, mix, tol))
 
@@ -2351,6 +2353,97 @@ def _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb):
         epsilon_k[orb1, orb2, :, :, :] += value * np.exp(
             +1j * (kx_mesh * Rx + ky_mesh * Ry + kz_mesh * Rz)
         )
+    return epsilon_k
+
+
+def _read_so_extern(input_dict, norb_phys):
+    """The spin-orbital ``Extern`` table, read and checked (issue #88).
+
+    In spin-orbital mode the Extern file holds ``H_ab(R)`` in PHYSICAL
+    orbital indices ``1..norb_phys``; the operator is ``coeff_extern *
+    sum H_ab(R) sigma^z_{ss'} c+_{as} c_{bs'}``. The header (line 2) must
+    declare ``norb_phys`` and every index must be in range
+    (:func:`hwave.solver.spin_orbital.check_extern_indices`); a malformed
+    header is refused by :func:`hwave.qlmsio.wan90.read_w90_header_dim`.
+    Run in every ``chi0q_mode`` (calc, load, flex), before any heavy work.
+
+    Returns
+    -------
+    (extern_table, file_name) : tuple
+        ``(None, None)`` when ``[file.input.interaction]`` names no Extern
+        file (the key is matched case-insensitively).
+    """
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import spin_orbital
+    files = CaseInsensitiveDict(input_dict["file"]["input"]["interaction"])
+    if "Extern" not in files:
+        return None, None
+    file_name = os.path.join(files.get("path_to_input", ""), files["Extern"])
+    dim = wan90.read_w90_header_dim(file_name)
+    table = wan90.read_w90(file_name)
+    spin_orbital.check_extern_indices(table, norb_phys, file_name,
+                                      declared_norb=dim)
+    logger.info("Reading Extern from {} ({} physical orbitals)".format(
+        file_name, norb_phys))
+    return table, file_name
+
+
+def _so_coeff_extern(input_dict):
+    """``[mode.param] coeff_extern`` (case-insensitive, default 0.0): a
+    finite real number."""
+    import numbers
+    from requests.structures import CaseInsensitiveDict
+    raw = CaseInsensitiveDict(input_dict["mode"].get("param", {}) or {}).get(
+        "coeff_extern", 0.0)
+    if (isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real)
+            or not np.isfinite(float(raw))):
+        raise ValueError(
+            "[mode.param] coeff_extern must be a finite real number, got "
+            "{!r}".format(raw))
+    return float(raw)
+
+
+def _so_epsilon_k(input_dict, kx_array, ky_array, kz_array, hr, extern_table,
+                  norb_phys):
+    """The spin-orbital one-body band ``(nd, nd, Nx, Ny, Nz)`` in spin-block
+    order (``nd = 2 * norb_phys``), as the spin-orbital RPA assembles it::
+
+        interleaved_to_spinblock(T(k)) + coeff_extern * H1(k) (x) sigma^z
+
+    ``T(k)`` from the interleaved Transfer table ``hr``, ``H1(k)`` from the
+    physical-orbital Extern table (``None``: no field). The Zeeman sign is
+    that of the Extern definition: ``+h`` shifts spin up by ``+h`` and spin
+    down by ``-h``. A Zeeman field written into the Transfer file as well
+    (Route 1) adds to it, with a WARNING."""
+    from hwave.solver import spin_orbital
+    nd = 2 * norb_phys
+    epsilon_k = spin_orbital.interleaved_to_spinblock(
+        _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, nd),
+        norb_phys, axes=(0, 1))
+    if extern_table is None:
+        return epsilon_k
+    coeff = _so_coeff_extern(input_dict)
+    if coeff == 0.0:
+        return epsilon_k
+    up, dn = 0, 1
+    for a in range(norb_phys):
+        t_up = hr.get(((0, 0, 0), (spin_orbital.interleaved_index(a, up),
+                                   spin_orbital.interleaved_index(a, up))), 0.0)
+        t_dn = hr.get(((0, 0, 0), (spin_orbital.interleaved_index(a, dn),
+                                   spin_orbital.interleaved_index(a, dn))), 0.0)
+        if t_up != t_dn:
+            logger.warning(
+                "Extern adds to spin-dependent on-site terms already present "
+                "in the Transfer file (orbital {}); the two fields add".format(
+                    a + 1))
+            break
+    h1 = coeff * _build_hamiltonian_k(kx_array, ky_array, kz_array,
+                                      extern_table, norb_phys)
+    if np.any(h1 != 0):
+        logger.info("Zeeman sign: +h raises spin-up (favours spin-down "
+                    "occupation)")
+    epsilon_k[:norb_phys, :norb_phys] += h1
+    epsilon_k[norb_phys:, norb_phys:] -= h1
     return epsilon_k
 
 
@@ -8491,6 +8584,9 @@ def calc_eliashberg(input_dict):
         so_pairing.check_so_supported(
             input_dict, interactions, _nonbond_site(input_dict, norb_phys),
             norb_phys=norb_phys)
+        # the Zeeman field sigma^z H_ab(R) of an Extern file (issue #88),
+        # read and checked in every chi0q_mode before any heavy work
+        so_extern_table, _so_extern_file = _read_so_extern(input_dict, norb_phys)
         logger.info("enable_spin_orbital: %d physical orbitals, nd = %d "
                     "spin-orbitals (spin-block order)", norb_phys, norb)
 
@@ -8541,7 +8637,12 @@ def calc_eliashberg(input_dict):
     # from the FLEX run, whose outputs already include its one-body band.
     band = None
     spin_free_tol = _read_spin_free_tol(eli_param)
-    if chi0q_mode == "flex":
+    if spin_orbital_mode:
+        # spin-orbital mode refuses trans_mod / green_init; an Extern field
+        # enters its band directly (_so_epsilon_k, Step 4), as it enters the
+        # spin-orbital RPA and FLEX bands, so nothing here applies to it
+        pass
+    elif chi0q_mode == "flex":
         _warn_one_body_band_ignored(input_dict, "chi0q_mode = 'flex'")
     elif use_bond_channels and bond_green is not None:
         # the external Green function replaces the band entirely: the bond
@@ -8580,18 +8681,20 @@ def calc_eliashberg(input_dict):
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
 
     # --- Step 4: Build Hamiltonian and diagonalize ---
-    if band is None or band.same_as_bare:
+    if spin_orbital_mode:
+        # the Transfer file is interleaved; everything downstream is
+        # spin-block. Extern adds coeff_extern * sigma^z H_ab(k), exactly as
+        # in the spin-orbital RPA band (spin-orbital mode refuses trans_mod /
+        # green_init, so it never takes the mean-field band below)
+        logger.info("Building Hamiltonian in k-space...")
+        epsilon_k = _so_epsilon_k(input_dict, kx_array, ky_array, kz_array,
+                                  hr, so_extern_table, norb_phys)
+    elif band is None or band.same_as_bare:
         if band is not None:
             logger.info("The one-body band from {} equals the Transfer band "
                         "exactly".format(", ".join(band.sources)))
         logger.info("Building Hamiltonian in k-space...")
         epsilon_k = _build_hamiltonian_k(kx_array, ky_array, kz_array, hr, norb)
-        if spin_orbital_mode:
-            # the Transfer file is interleaved; everything downstream is
-            # spin-block (spin-orbital mode refuses trans_mod / green_init /
-            # Extern, so it never takes the mean-field band below)
-            epsilon_k = spin_orbital.interleaved_to_spinblock(
-                epsilon_k, norb_phys, axes=(0, 1))
     else:
         logger.info("Using the mean-field one-body band ({}) as the "
                     "Hamiltonian in k-space".format(", ".join(band.sources)))
