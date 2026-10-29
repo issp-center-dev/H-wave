@@ -176,14 +176,21 @@ def _green_chunks(green, layout):
             raise ValueError(f"layout {layout!r} needs shape (nd, nd, Nx, Ny, Nz, Nmat), got {shape}")
         nd, nmat = shape[0], shape[5]
         nvol = shape[2] * shape[3] * shape[4]
-        view = green.reshape(nd, nd, nvol, nmat)
+        view = green
         frequency_last = True
     else:
         raise ValueError(f"unknown green layout {layout!r}")
 
     def block(f0, f1, k0, k1):
-        if frequency_last:  # (nd, nd, nvol, f) -> (f, k, nd, nd)
-            b = backend.to_host(view[:, :, k0:k1, f0:f1])
+        if frequency_last:  # (nd, nd, Nx, Ny, Nz, f) -> (f, k, nd, nd)
+            if k0 == 0 and k1 == nvol:
+                b = backend.to_host(view[..., f0:f1])
+            else:  # one frequency, a k sub-range gathered by index
+                xp = backend.array_module_of(view)
+                ix = np.unravel_index(np.arange(k0, k1), shape[2:5])
+                idx = tuple(xp.asarray(i) for i in ix)
+                b = backend.to_host(view[(slice(None), slice(None)) + idx + (slice(f0, f1),)])
+            b = b.reshape(nd, nd, -1, f1 - f0)
             return np.ascontiguousarray(b.transpose(3, 2, 0, 1))
         return backend.to_host(view[f0:f1, k0:k1])
 

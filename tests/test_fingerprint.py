@@ -110,11 +110,17 @@ class TestDigests(unittest.TestCase):
 
     def test_table_signed_keys_sort_and_chunking(self):
         t = {((0, -1, 2), (1, 0)): 1j, ((-1, 3, 0), (0, 0)): 2 + 0j,
-             ((0, -1, 2), (0, 1)): -0.0 + 1j, ((0, 0, 0), (0, 0)): 1.5}
+             ((0, -1, 2), (0, 1)): complex(-0.0, -0.0), ((0, 0, 0), (0, 0)): 1.5}
         ref = _ref_table_digest("transfer", t)
         self.assertEqual(fp.table_digest("transfer", t), ref)
         with mock.patch.object(fp, "CHUNK_BYTES", 56):
             self.assertEqual(fp.table_digest("transfer", t), ref)
+
+    def test_table_signed_zero_canonicalized(self):
+        neg = {((0, 0, 0), (0, 0)): complex(-0.0, 1.0), ((1, 0, 0), (0, 0)): complex(2.0, -0.0)}
+        pos = {((0, 0, 0), (0, 0)): complex(0.0, 1.0), ((1, 0, 0), (0, 0)): complex(2.0, 0.0)}
+        self.assertEqual(fp.table_digest("transfer", neg), fp.table_digest("transfer", pos))
+        self.assertEqual(fp.table_digest("transfer", neg), _ref_table_digest("transfer", pos))
 
     def test_table_non_finite_refused(self):
         t = {((0, 0, 0), (0, 0)): complex(float("nan"), 0.0)}
@@ -178,6 +184,38 @@ class TestDigests(unittest.TestCase):
             with mock.patch.object(fp, "CHUNK_BYTES", nbytes):
                 self.assertEqual(fp.green_digest(g, "b_f_k_o_o_v1"), ref)
                 self.assertEqual(fp.green_digest(_to_sc(g), "sc_o_o_xyz_f"), ref)
+
+    def test_sc_noncontiguous_no_whole_copy(self):
+        g = _rand((1, 8, 6, 4, 4))
+        ref = fp.green_digest(g, "b_f_k_o_o_v1")
+        # non-C-contiguous 6-D array: a strided view of a larger buffer
+        big = np.zeros(_to_sc(g).shape[:-1] + (16,), complex)
+        big[..., ::2] = _to_sc(g)
+        sc = big[..., ::2]
+        self.assertFalse(sc.flags.c_contiguous)
+        whole = sc.size * 16
+        seen = []
+        real_host = fp.backend.to_host
+        real_acg = np.ascontiguousarray
+
+        def rec_host(a):
+            seen.append(a.size * 16)
+            return real_host(a)
+
+        def rec_acg(a, *args, **kw):
+            seen.append(np.asarray(a).size * 16)
+            return real_acg(a, *args, **kw)
+
+        for chunk in (fp.CHUNK_BYTES, 6 * 4 * 4 * 16, 16):
+            seen.clear()
+            with mock.patch.object(fp, "CHUNK_BYTES", chunk), \
+                    mock.patch.object(fp.backend, "to_host", rec_host), \
+                    mock.patch.object(fp.np, "ascontiguousarray", rec_acg):
+                self.assertEqual(fp.green_digest(sc, "sc_o_o_xyz_f"), ref)
+            self.assertTrue(seen)
+            if chunk < whole:
+                self.assertLess(max(seen), whole)
+                self.assertLessEqual(max(seen), max(chunk, 4 * 4 * 16) * 16)
 
     def test_caller_array_not_mutated(self):
         g = _rand((1, 2, 2, 2, 2))
