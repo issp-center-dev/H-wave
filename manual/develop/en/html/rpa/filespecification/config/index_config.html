@@ -619,6 +619,18 @@ continues with the store in host memory and the host-store frequency
 batch; nothing has been computed at that point. <code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code> stops with
 the error. An out-of-memory error during an iteration is not retried;
 its message suggests <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> when the store is on the device.</p>
+<p>Copies of the store between host and device memory (every iteration with
+a host store; once, before the pairing kernel, with a device store) go in
+chunks through one reusable page-locked (pinned) staging buffer of at
+most 256 MiB (a frequency slice larger than that is copied in parts);
+this buffer adds to the host memory in use. Host copies of 16 MiB or more
+(the host side of each chunk, and the channel-pair strided copies of a
+host store) run on up to 8 threads (at most the CPUs the process may use),
+on the GPU path only; a CPU run copies in one thread, as before. All of
+this is automatic; there is no key to set. If the pinned buffer cannot be
+allocated (for example under a locked-memory limit, <code class="docutils literal notranslate"><span class="pre">ulimit</span> <span class="pre">-l</span></code>), that
+copy takes the unstaged path and a debug-level log message says so; the
+next copy tries again. The copied values are the same either way.</p>
 <p>Results: only where the store lives changes, not the arithmetic. At the
 same frequency batch (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> pinned), the
 device store gives the results of the host store, bit for bit or, when

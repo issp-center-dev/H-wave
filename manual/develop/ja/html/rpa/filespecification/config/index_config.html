@@ -537,6 +537,19 @@ GPU 経路（<code class="docutils literal notranslate"><span class="pre">gpu</s
 まだ何も計算していません。<code class="docutils literal notranslate"><span class="pre">&quot;device&quot;</span></code>はエラーで停止します。
 反復中のメモリ不足は再試行しません。ストアがデバイスにある場合、その
 メッセージは<code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code>を勧めます。</p>
+<p>ホストメモリとデバイスメモリの間のストアのコピー（ホストのストアでは
+各反復、デバイスのストアではペアリングカーネルの前に 1 回）は、
+再利用する 1 つのページロック（ピン留め）されたステージングバッファ
+（最大 256 MiB。これより大きい振動数スライスは分けてコピーします）を
+通して分割して行います。このバッファの分だけホストメモリの使用量が
+増えます。16 MiB 以上のホスト側のコピー（各分割のホスト側のコピーと、
+ホストのストアのチャネル対ごとのストライド付きコピー）は最大 8 スレッド
+（プロセスが使える CPU 数まで）で行います（GPU 経路のみ。CPU での計算は従来どおり 1 スレッドでコピー
+します）。これらはすべて自動で行われ、設定するキーはありません。
+ピン留めバッファを確保できない場合（たとえばロックメモリの上限
+<code class="docutils literal notranslate"><span class="pre">ulimit</span> <span class="pre">-l</span></code>による場合）は、そのコピーはステージングを使わない経路で
+行い、デバッグレベルのログにその旨を出力します。次のコピーでは再び
+確保を試みます。どちらの経路でもコピーされる値は同じです。</p>
 <p>結果について：変わるのはストアの置き場所だけで、演算は変わりません。
 同じ振動数バッチ（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>を指定）では、
 デバイスのストアはホストのストアと同じ結果を、ビット単位で、または
