@@ -2176,8 +2176,8 @@ each archive it reads against its own input, before any large array is read:
    (``"flex"``). In ``"load"`` mode ``Nmat`` may differ: the existing rule
    locates the zero bosonic frequency through the file's ``nmat``. The
    loaded :math:`\chi_0` was then summed on another Matsubara grid, so its
-   frequency truncation differs from this run's (about 2 % between
-   ``Nmat = 64`` and ``128`` at ``T = 0.05`` in one model), and a WARNING
+   frequency truncation differs from this run's (the difference shrinks
+   as ``Nmat`` grows but can reach the percent level), and a WARNING
    says so; the same ``Nmat`` as the producer reproduces it. μ itself is
    not compared: with the band identical, the density decides.
 4. **Green function.** In ``"flex"`` mode the digest of the Green function
