@@ -188,34 +188,42 @@ class TestDigests(unittest.TestCase):
     def test_sc_noncontiguous_no_whole_copy(self):
         g = _rand((1, 8, 6, 4, 4))
         ref = fp.green_digest(g, "b_f_k_o_o_v1")
-        # non-C-contiguous 6-D array: a strided view of a larger buffer
-        big = np.zeros(_to_sc(g).shape[:-1] + (16,), complex)
-        big[..., ::2] = _to_sc(g)
-        sc = big[..., ::2]
+        # Fortran-ordered 6-D array: merging the xyz axes needs a copy
+        sc = np.asfortranarray(_to_sc(g))
         self.assertFalse(sc.flags.c_contiguous)
-        whole = sc.size * 16
-        seen = []
-        real_host = fp.backend.to_host
-        real_acg = np.ascontiguousarray
+        self.assertFalse(np.shares_memory(sc.reshape(4, 4, 6, 8), sc))  # non-vacuity
+        whole = sc.nbytes
 
-        def rec_host(a):
-            seen.append(a.size * 16)
-            return real_host(a)
+        class Rec(np.ndarray):
+            """Records the nbytes of every array that reshape/copy/astype
+            materializes (i.e. that does not share memory with its source)."""
+            log = []
 
-        def rec_acg(a, *args, **kw):
-            seen.append(np.asarray(a).size * 16)
-            return real_acg(a, *args, **kw)
+            def _note(self, r):
+                if not np.may_share_memory(r, self):
+                    Rec.log.append(r.nbytes)
+                return r
 
-        for chunk in (fp.CHUNK_BYTES, 6 * 4 * 4 * 16, 16):
-            seen.clear()
-            with mock.patch.object(fp, "CHUNK_BYTES", chunk), \
-                    mock.patch.object(fp.backend, "to_host", rec_host), \
-                    mock.patch.object(fp.np, "ascontiguousarray", rec_acg):
-                self.assertEqual(fp.green_digest(sc, "sc_o_o_xyz_f"), ref)
-            self.assertTrue(seen)
-            if chunk < whole:
-                self.assertLess(max(seen), whole)
-                self.assertLessEqual(max(seen), max(chunk, 4 * 4 * 16) * 16)
+            def reshape(self, *a, **k):
+                return self._note(super().reshape(*a, **k))
+
+            def copy(self, *a, **k):
+                return self._note(super().copy(*a, **k))
+
+            def astype(self, *a, **k):
+                return self._note(super().astype(*a, **k))
+
+        rec = sc.view(Rec)
+        for chunk in (6 * 4 * 4 * 16, 16):  # one frequency slice; below one k-row
+            Rec.log.clear()
+            with mock.patch.object(fp, "CHUNK_BYTES", chunk):
+                self.assertEqual(fp.green_digest(rec, "sc_o_o_xyz_f"), ref)
+            # no materialized temporary may approach the whole array, and
+            # every one is at most max(chunk, one k-row of nd*nd complex)
+            self.assertLess(whole, 8 * 6 * 4 * 4 * 16 + 1)
+            for n in Rec.log:
+                self.assertLess(n, whole)
+                self.assertLessEqual(n, max(chunk, 4 * 4 * 16))
 
     def test_caller_array_not_mutated(self):
         g = _rand((1, 2, 2, 2, 2))
