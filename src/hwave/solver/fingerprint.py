@@ -421,24 +421,37 @@ def so_provenance_members(*, producer_stage, producer_label, transfer, extern,
 
 
 # ---------------------------------------------------------- consumer checks
-#: dtype kind and ndim of every version-1 member (the schema table of the
-#: design's archive section); validated by :func:`check_so_archive`.
+#: dtype and ndim of every version-1 member (the schema table of the
+#: design's archive section); validated by :func:`check_so_archive`. The
+#: numeric and bool dtypes are exact (either byte order: every value is read
+#: through a Python scalar and the digests are recomputed little-endian);
+#: "str" is any unicode width.
 SO_MEMBER_SCHEMA = {
-    "fingerprint_version": ("i", 0),
-    "producer_stage": ("U", 0), "producer_label": ("U", 0), "producer_version": ("U", 0),
-    "fp_transfer": ("U", 0), "fp_extern": ("U", 0), "fp_meta": ("U", 0),
-    "fp_band": ("U", 0), "fp_green": ("U", 0),
-    "prov_transfer_keys": ("i", 2), "prov_transfer_vals": ("c", 1),
-    "prov_extern_present": ("b", 0),
-    "prov_extern_keys": ("i", 2), "prov_extern_vals": ("c", 1),
-    "prov_coeff_extern": ("f", 0), "prov_enable_spin_orbital": ("b", 0),
-    "prov_index_convention": ("U", 0),
-    "prov_norb": ("i", 0), "prov_norb_phys": ("i", 0),
-    "prov_cell_shape": ("i", 1), "prov_sub_shape": ("i", 1),
-    "state_beta": ("f", 0), "state_nmat": ("i", 0), "state_mu": ("f", 0),
-    "state_density": ("f", 0), "state_calc_mu": ("b", 0),
-    "state_target": ("f", 0), "state_mu_tol": ("f", 0),
+    "fingerprint_version": ("int64", 0),
+    "producer_stage": ("str", 0), "producer_label": ("str", 0),
+    "producer_version": ("str", 0),
+    "fp_transfer": ("str", 0), "fp_extern": ("str", 0), "fp_meta": ("str", 0),
+    "fp_band": ("str", 0), "fp_green": ("str", 0),
+    "prov_transfer_keys": ("int64", 2), "prov_transfer_vals": ("complex128", 1),
+    "prov_extern_present": ("bool", 0),
+    "prov_extern_keys": ("int64", 2), "prov_extern_vals": ("complex128", 1),
+    "prov_coeff_extern": ("float64", 0), "prov_enable_spin_orbital": ("bool", 0),
+    "prov_index_convention": ("str", 0),
+    "prov_norb": ("int64", 0), "prov_norb_phys": ("int64", 0),
+    "prov_cell_shape": ("int64", 1), "prov_sub_shape": ("int64", 1),
+    "state_beta": ("float64", 0), "state_nmat": ("int64", 0), "state_mu": ("float64", 0),
+    "state_density": ("float64", 0), "state_calc_mu": ("bool", 0),
+    "state_target": ("float64", 0), "state_mu_tol": ("float64", 0),
 }
+
+
+def _schema_dtype_ok(dtype, name):
+    """``dtype`` is the schema dtype ``name`` (any byte order; "str": any
+    unicode width)."""
+    if name == "str":
+        return dtype.kind == "U"
+    return dtype.newbyteorder("<") == np.dtype(name).newbyteorder("<")
+
 
 UNKNOWN_PRODUCER = "<unknown producer>"
 
@@ -538,7 +551,8 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
     ``calc_mu`` and ``target`` (and ``mu`` for a fixed-mu run) are compared;
     ``density`` and ``mu_tol`` are not read. ``nmat_rule`` is ``"exact"``
     (a borrowed G) or ``"load"`` (load mode: the existing stored-axis rule
-    applies instead, Nmat is not compared here). With ``green`` (in
+    applies instead; a different Nmat is not refused here, only reported
+    with a WARNING). With ``green`` (in
     ``green_layout``) or ``green_fp`` (its digest, already computed by the
     caller) the archive's ``fp_green`` is verified; otherwise it is a
     producer assertion, logged at INFO.
@@ -581,14 +595,12 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
     for k in SO_PROVENANCE_MEMBERS:
         if k not in names:
             malformed("member {} is missing".format(k), "absent", "present")
-        kind, ndim = SO_MEMBER_SCHEMA[k]
+        dname, ndim = SO_MEMBER_SCHEMA[k]
         a = np.asarray(data[k])
-        if a.dtype.kind != kind or a.ndim != ndim:
+        if not _schema_dtype_ok(a.dtype, dname) or a.ndim != ndim:
             malformed("member {} has the wrong dtype or rank".format(k),
-                      "{}/{}d".format(a.dtype, a.ndim),
-                      "{}/{}d".format({"i": "int64", "U": "str", "c": "complex128",
-                                       "f": "float64", "b": "bool"}[kind], ndim))
-        if kind in "fc" and not np.all(np.isfinite(a)):
+                      "{}/{}d".format(a.dtype, a.ndim), "{}/{}d".format(dname, ndim))
+        if a.dtype.kind in "fc" and not np.all(np.isfinite(a)):
             malformed("member {} is not finite".format(k), repr(a.tolist()), "finite")
     stage = str(_scalar(data, "producer_stage"))
     if stage not in PRODUCER_STAGES:
@@ -686,12 +698,15 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
                 "present" if run_present else "absent"))
         else:
             diffs.append(_table_diff("Extern", file_extern, run_band.extern))
+    # load mode follows the existing stored-axis rule for Nmat (step 3)
+    point = ("the identical state point (Nmat excepted in chi0q_mode = \"load\")"
+             if nmat_rule == "load" else "the identical state point")
     if diffs:
         raise SOArchiveError(
             "'{}' (written by {}) does not match this run: band differs: {}. "
-            "Archives are reused only at the identical state point (not a warm "
-            "start across a sweep); re-run {} with this input (the same "
-            "Transfer/Extern/coeff_extern).".format(path, label, "; ".join(diffs), label))
+            "Archives are reused only at {} (not a warm start across a sweep); "
+            "re-run {} with this input (the same Transfer/Extern/coeff_extern)."
+            .format(path, label, "; ".join(diffs), point, label))
 
     # (3) state
     diffs = []
@@ -725,8 +740,15 @@ def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOStat
             fix = "re-run {} at this filling and temperature".format(label)
         raise SOArchiveError(
             "'{}' (written by {}) does not match this run: state differs: {}. "
-            "Archives are reused only at the identical state point; {}.".format(
-                path, label, "; ".join(diffs), fix))
+            "Archives are reused only at {}; {}.".format(
+                path, label, "; ".join(diffs), point, fix))
+    if nmat_rule == "load" and state.nmat != int(run_state.nmat):
+        check_logger.warning(
+            "'%s' (written by %s) was summed on another Matsubara grid: "
+            "state_nmat %d (file) vs Nmat %d (run); the frequency truncation of "
+            "the loaded chi0 differs from this run's. Set [mode.param] Nmat = %d "
+            "to reproduce the producer.", path, label, state.nmat,
+            int(run_state.nmat), state.nmat)
 
     # (4) green
     file_green = str(_scalar(data, "fp_green"))

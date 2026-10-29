@@ -813,7 +813,8 @@ class TestConsumerChecks(_Dir):
     def test_field_sweep_cannot_borrow(self):
         _rpa_for_sc(self.inp_soc, coeff_extern=0.0)
         with self.assertRaisesRegex(ValueError, r"coeff_extern: file 0\.0, run 0\.1.*"
-                                                r"identical state point"):
+                                                r"identical state point \(Nmat excepted in "
+                                                r"chi0q_mode = \"load\"\)"):
             _sc("load", self.inp_soc, coeff_extern=0.1)
 
     def test_state_message_lists_all_fields(self):
@@ -1045,16 +1046,35 @@ class TestConsumerChecks(_Dir):
             _sc("flex", self.inp_soc)
 
     def test_wrong_dtype_member_refused(self):
-        for k, v in (("state_beta", np.str_("10.0")), ("fp_band", np.int64(3))):
-            with self.subTest(member=k):
-                path = _write_members(self.d, dict(fp.so_provenance_members(**self.kw),
-                                                   **{k: v}))
+        good = fp.so_provenance_members(**self.kw)
+        for k, v in (("state_beta", np.str_("10.0")), ("fp_band", np.int64(3)),
+                     ("state_nmat", np.int32(good["state_nmat"])),
+                     ("state_beta", np.float32(good["state_beta"])),
+                     ("prov_transfer_vals", good["prov_transfer_vals"].astype(np.complex64)),
+                     ("prov_cell_shape", good["prov_cell_shape"].astype(np.int32)),
+                     ("state_calc_mu", np.int64(good["state_calc_mu"]))):
+            with self.subTest(member=k, dtype=str(np.asarray(v).dtype)):
+                path = _write_members(self.d, dict(good, **{k: v}))
                 with self.assertRaisesRegex(ValueError, r"malformed or truncated: member {} "
                                                         r"has the wrong dtype or rank"
                                             .format(k)):
                     fp.check_so_archive(np.load(path), path, run_band=self.band,
                                         run_state=self.run_state, run_has_extern=False,
                                         nmat_rule="exact")
+
+    def test_big_endian_member_accepted(self):
+        """Every value is read through a Python scalar, so the byte order of
+        a member does not matter; only its width and kind do."""
+        good = fp.so_provenance_members(**self.kw)
+        swapped = dict(good, state_nmat=np.asarray(good["state_nmat"]).astype(">i8"),
+                       prov_transfer_vals=good["prov_transfer_vals"].astype(">c16"))
+        path = _write_members(self.d, swapped)
+        with np.load(path) as z:
+            self.assertEqual(z["state_nmat"].dtype.byteorder, ">")
+            info = fp.check_so_archive(z, path, run_band=self.band,
+                                       run_state=self.run_state, run_has_extern=False,
+                                       nmat_rule="exact")
+        self.assertFalse(info.legacy)
 
     def test_dynamic_requires_filling(self):
         _flex_for_sc(self.inp_soc)
@@ -1070,8 +1090,21 @@ class TestConsumerChecks(_Dir):
 
     def test_load_mode_keeps_existing_nmat_rule(self):
         _rpa_for_sc(self.inp_soc, nmat=64)
-        out = _sc("load", self.inp_soc, nmat=128)
+        with self.assertLogs("qlms.solver.fingerprint", "WARNING") as cm:
+            out = _sc("load", self.inp_soc, quiet=False, nmat=128)
         self.assertEqual(int(out.npz["state_nmat"]), 128)        # its own G, not the RPA's
+        msgs = [m for m in cm.output if "another Matsubara grid" in m]
+        self.assertEqual(len(msgs), 1, cm.output)
+        self.assertRegex(msgs[0], r"chi0q\.npz' \(written by .*\) was summed on another "
+                                  r"Matsubara grid: state_nmat 64 \(file\) vs Nmat 128 "
+                                  r"\(run\); .*Set \[mode\.param\] Nmat = 64 to reproduce")
+
+    def test_load_mode_same_nmat_does_not_warn(self):
+        _rpa_for_sc(self.inp_soc, nmat=64)
+        with self.assertLogs("qlms", "WARNING") as cm:
+            logging.getLogger("qlms").warning("sentinel")     # assertNoLogs needs 3.10
+            _sc("load", self.inp_soc, quiet=False, nmat=64)
+        self.assertFalse(any("another Matsubara grid" in m for m in cm.output), cm.output)
 
     def test_zeeman_only_rpa_load_refused(self):                     # documented limitation, pin
         _rpa_for_sc(self.inp_zeeman_only)
