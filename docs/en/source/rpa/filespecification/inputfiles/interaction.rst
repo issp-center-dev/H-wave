@@ -255,7 +255,9 @@ Usage rules
    header that declares another orbital count, is rejected with an error
    (the solver does not drop such rows).
 
-   The spin dependence comes from :math:`\sigma^z`: an entry
+   The spin dependence comes from :math:`\sigma^z`. Let
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1` be the physical-orbital
+   index of the previous item (Extern file index :math:`\alpha + 1`). An entry
    :math:`H_{\alpha\alpha}(0) = h`, scaled by ``coeff_extern``, shifts the
    up-spin level of orbital :math:`\alpha` by :math:`+h` and the down-spin
    level by :math:`-h`. For :math:`h > 0` the down spin is therefore
@@ -264,6 +266,6 @@ Usage rules
 
    The same field can be written into the Transfer file instead, as on-site
    entries :math:`+h` on index :math:`2\alpha + 1` and :math:`-h` on index
-   :math:`2\alpha + 2`. Use one route, not both: the two fields add.
+   :math:`2\alpha + 2` (1-based Transfer file indices, :math:`\alpha` 0-based as above). Use one route, not both: the two fields add.
 
 .. raw:: latex

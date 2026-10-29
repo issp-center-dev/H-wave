@@ -1485,10 +1485,11 @@ convention holds throughout: the field shifts the up-spin level by
 of the Extern term). Both routes below need ``enable_spin_orbital = true``,
 the Geometry ``norb`` equal to :math:`2 n_{\rm orb}`, and the Transfer file
 in the interleaved spin-orbital indices (1-based file index
-:math:`2a + s + 1`, :math:`s = 0` for up).
+:math:`2a + s + 1`, with the physical orbital :math:`a = 0, \ldots, n_{\rm orb} - 1`
+and :math:`s = 0` for up).
 
-- **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
-  :math:`a` (1-based file indices)::
+- **Route 1: Zeeman in Transfer.** Add on-site entries for each physical
+  orbital :math:`a = 0, \ldots, n_{\rm orb} - 1` (1-based file indices)::
 
      0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
      0 0 0  2a+2 2a+2  -h 0.0     # down: -h
@@ -1502,7 +1503,8 @@ in the interleaved spin-orbital indices (1-based file index
   declares another orbital count, is rejected. The operator is
   :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
   ``[mode.param] coeff_extern``; :math:`H_{aa}(0) = h` with
-  ``coeff_extern = 1.0`` equals Route 1.
+  ``coeff_extern = 1.0`` (file index :math:`a + 1` of the Extern file)
+  equals Route 1.
 
 Side by side, for one orbital and :math:`h = 0.1`::
 

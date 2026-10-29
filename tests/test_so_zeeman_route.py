@@ -34,6 +34,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -237,10 +238,12 @@ class _TmpDirs:
 
 
 def _rpa_so(route, extern_rows=None, cell=(4, 1, 1), sub_shape=None,
-            extern_header_dim=1, assert_no_sublattice=False):
+            extern_header_dim=1, assert_no_sublattice=False, extern_key="Extern"):
     """Spin-orbital RPA (general, ring) on the 0-E1 fixture through
     ``hwave.qlms.run``; returns ``{"chi0q", "chiq"}``. ``sub_shape = None``
-    omits ``SubShape`` (no sublattice)."""
+    omits ``SubShape`` (no sublattice); ``extern_header_dim`` is written
+    verbatim as line 2 of the Extern file (a string writes a malformed
+    header); ``extern_key`` spells the ``[file.input.interaction]`` key."""
     if assert_no_sublattice:
         assert sub_shape is None, "assert_no_sublattice needs sub_shape=None"
     param = dict(_E1_PARAM, CellShape=list(cell))
@@ -249,7 +252,8 @@ def _rpa_so(route, extern_rows=None, cell=(4, 1, 1), sub_shape=None,
     with _TmpDirs() as t:
         d = t.new()
         inter = _so_1orb_fixture(d, route, extern_rows=extern_rows,
-                                 extern_header_dim=extern_header_dim)
+                                 extern_header_dim=extern_header_dim,
+                                 extern_key=extern_key)
         return _run(d, "RPA", param, inter, {"chi0q": "chi0q.npz", "chiq": "chiq.npz"},
                     True, {"calc_scheme": "general", "calc_type": "ring"})
 
@@ -270,15 +274,23 @@ def _sc_chi0_general(route):
             return np.asarray(sc._calc_chi0q_internal(inp, chi0q_tensor="general"))
 
 
-def _sc_chi_general(route, types=("CoulombIntra",)):
+def _sc_chi_general(route, types=("CoulombIntra",), spinful=True):
     """The spin-orbital RPA chiq (general, ring) on the 0-E2 fixture
-    (``hwave.qlms.run``), shape ``(nmat, nvol, nd, nd, nd, nd)`` (the
-    spinful archive has no block axis)."""
+    (``hwave.qlms.run``), shape ``(nmat, nvol, nd, nd, nd, nd)`` in
+    spin-block order (``nd = 4``).
+
+    ``spinful = True`` forces the spinful path (``RPA._keep_spinful``, as the
+    Eliashberg front end does, ``hwave.sc._calc_chi0q_internal``): without
+    SOC the RPA would otherwise resolve the band to ``spin-diag`` and solve
+    exactly the non-spin-orbital problem. ``spinful = False`` keeps that
+    default resolution (a check of the spin-orbital ENCODING only)."""
+    import hwave.solver.rpa as rpa_mod
     with _TmpDirs() as t:
         d = t.new()
         inter = _so_2orb_fixture(d, route, types=types)
-        res = _run(d, "RPA", _E2_PARAM, inter, {"chiq": "chiq.npz"}, True,
-                   {"calc_scheme": "general", "calc_type": "ring"})
+        with mock.patch.object(rpa_mod.RPA, "_keep_spinful", spinful, create=True):
+            res = _run(d, "RPA", _E2_PARAM, inter, {"chiq": "chiq.npz"}, True,
+                       {"calc_scheme": "general", "calc_type": "ring"})
     chiq = res["chiq"]
     assert chiq.ndim == 6, chiq.shape
     return chiq
@@ -391,18 +403,34 @@ class TestRPARoutes(unittest.TestCase):
         self.assertGreater(np.abs(_cross_spin_slots(chi0_so)).max(), 1e-3)
 
     def test_coulombinter_chi_matches_non_so(self):                     # 0-E2 (chi, CoulombInter)
-        """Without SOC the spin-orbital RPA resolves to the spin-diagonal
-        layout, so both archives hold the same ``(nmat, nvol, nd, nd, nd,
-        nd)`` spin-block chi (``nd = 4``); they agree entry by entry, the
-        all-up block included. Compared for ``CoulombInter`` only: the
-        non-spin-orbital spin-diagonal solve has no on-site exchange
-        crossing for the other types."""
+        """The SPINFUL spin-orbital chi (path forced, as hwave_sc does) per
+        all-``s`` spin block equals the non-spin-orbital spin-diagonal chi.
+        Compared for ``CoulombInter`` only: the non-spin-orbital
+        spin-diagonal solve has no on-site exchange crossing for the other
+        types (the spinful antisymmetrized vertex does)."""
         chi_so = _sc_chi_general(route="extern", types=("CoulombInter",))
         chi_ns = _rpa_non_so_spin_diag(types=("CoulombInter",))["chiq"]
         self.assertEqual(chi_so.shape, chi_ns.shape)
-        self.assertGreater(np.abs(_ssss_slots(chi_ns, 0)).max(), 1e-3)
-        np.testing.assert_allclose(_ssss_slots(chi_so, 0), _ssss_slots(chi_ns, 0),
-                                   rtol=0, atol=1e-12)
+        # the spinful path was taken: the transverse (spin-flip) slots,
+        # which the spin-diagonal layout leaves at zero, are populated
+        n = 2
+        sp = np.arange(2 * n) // n
+        s1, s2, s3, s4 = np.meshgrid(sp, sp, sp, sp, indexing="ij")
+        transverse = ~((s1 == s2) & (s3 == s4))
+        self.assertEqual(np.abs(chi_ns[..., transverse]).max(), 0.0)
+        self.assertGreater(np.abs(chi_so[..., transverse]).max(), 1e-3)
+        for s in (0, 1):
+            with self.subTest(spin=s):
+                self.assertGreater(np.abs(_ssss_slots(chi_ns, s)).max(), 1e-3)
+                np.testing.assert_allclose(_ssss_slots(chi_so, s), _ssss_slots(chi_ns, s),
+                                           rtol=0, atol=1e-12)
+
+    def test_so_encoding_spin_diag_equals_non_so(self):
+        """Encoding check: without SOC and without forcing the spinful path,
+        the spin-orbital input resolves to the spin-diagonal solve and its
+        chi equals the non-spin-orbital one entry by entry."""
+        chi_so = _sc_chi_general(route="extern", types=("CoulombInter",), spinful=False)
+        chi_ns = _rpa_non_so_spin_diag(types=("CoulombInter",))["chiq"]
         np.testing.assert_allclose(chi_so, chi_ns, rtol=0, atol=1e-12)
 
     def test_extern_index_out_of_range_no_sublattice(self):            # silently dropped before
@@ -418,11 +446,50 @@ class TestRPARoutes(unittest.TestCase):
                     sub_shape=(2, 1, 1))
 
     def test_extern_header_dimension_refused(self):                    # rows all in range
-        for sub in (None, (2, 1, 1)):
-            with self.subTest(sublattice=sub), \
-                    self.assertRaisesRegex(ValueError, r"orbital index 2 is outside 1\.\.1"):
+        for sub, key in ((None, "Extern"), ((2, 1, 1), "Extern"), (None, "EXTERN")):
+            with self.subTest(sublattice=sub, key=key), \
+                    self.assertRaisesRegex(ValueError, r"Extern file '.*extern\.dat': its header "
+                                           r"declares 2 orbitals, but norb_phys = 1\. In "
+                                           r"spin-orbital mode Extern uses PHYSICAL"):
                 _rpa_so(route="extern", extern_header_dim=2,
-                        extern_rows=[(0, 0, 0, 1, 1, 0.1, 0.0)], cell=(4, 1, 1), sub_shape=sub)
+                        extern_rows=[(0, 0, 0, 1, 1, 0.1, 0.0)], cell=(4, 1, 1), sub_shape=sub,
+                        extern_key=key)
+
+    def test_extern_malformed_header_refused(self):
+        """The reader stores no dimension for a malformed line 2; the
+        spin-orbital Extern check re-reads it and names the problem."""
+        for key in ("Extern", "EXTERN"):
+            with self.subTest(key=key), \
+                    self.assertRaisesRegex(ValueError, r"extern\.dat: line 2 must be the number "
+                                           r"of orbitals \(a positive integer\), got 'abc'"):
+                _rpa_so(route="extern", extern_header_dim="abc", extern_key=key)
+
+    def test_non_so_malformed_header_accepted_as_before(self):
+        """Without spin-orbital mode a malformed line 2 (ignored by
+        ``read_w90``) is still accepted, with the same result."""
+        import hwave.qlmsio.read_input_k as read_input_k
+        res = {}
+        for line2 in ("2", "abc"):
+            with _TmpDirs() as t:
+                d = t.new()
+                for f in ("geom.dat", "transfer.dat", "coulombintra.dat"):
+                    shutil.copy(os.path.join(_SPIN_DIR, f), os.path.join(d, f))
+                p = os.path.join(d, "coulombintra.dat")
+                with open(p) as f:
+                    lines = f.readlines()
+                lines[1] = line2 + "\n"
+                with open(p, "w") as f:
+                    f.writelines(lines)
+                inter = {"Geometry": "geom.dat", "Transfer": "transfer.dat",
+                         "CoulombIntra": "coulombintra.dat"}
+                with _quiet():
+                    reader = read_input_k.QLMSkInput(
+                        {"path_to_input": d, "interaction": dict(inter, path_to_input=d)})
+                dims = reader.get_param("ham").source_dimensions
+                self.assertEqual(dims["coulombintra"], None if line2 == "abc" else 2)
+                res[line2] = _run(d, "RPA", _E2_PARAM, inter, {"chiq": "chiq.npz"}, False,
+                                  {"calc_scheme": "general", "calc_type": "ring"})["chiq"]
+        np.testing.assert_array_equal(res["abc"], res["2"])
 
     def test_header_dim_reader_contract(self):
         path = _write_w90(self.d, header_dim=2, rows=[(0, 0, 0, 1, 1, 0.1, 0.0)])
@@ -448,7 +515,12 @@ class TestExternIndexChecker(unittest.TestCase):
         tbl = {((0, 0, 0), (0, 1)): 0.1, ((1, 0, 0), (1, 0)): 0.2}
         check_extern_indices(tbl, 2, "e.dat")                      # no header: fine
         check_extern_indices(tbl, 2, "e.dat", declared_norb=2)     # matching header
-        with self.assertRaisesRegex(ValueError, r"orbital index 4 is outside 1\.\.2\."):
+        with self.assertRaisesRegex(ValueError, r"^Extern file 'e\.dat': its header declares 4 "
+                                    r"orbitals, but norb_phys = 2\. In spin-orbital mode "
+                                    r"Extern uses PHYSICAL orbital indices \(norb_phys = 2\), "
+                                    r"while the Transfer file uses the 2·norb_phys = 4 "
+                                    r"spin-orbital indices; write the field per physical "
+                                    r"orbital \(the sign per spin comes from σ\^z\)\.$"):
             check_extern_indices(tbl, 2, "e.dat", declared_norb=4)
         with self.assertRaisesRegex(ValueError, r"orbital index 0 is outside 1\.\.2\."):
             check_extern_indices({((0, 0, 0), (-1, 0)): 0.1}, 2, "e.dat")

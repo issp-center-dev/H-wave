@@ -72,14 +72,25 @@ def physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
     return geom_norb // 2
 
 
+def _extern_range_sentence(norb_phys):
+    return ("In spin-orbital mode Extern uses PHYSICAL orbital indices (norb_phys = "
+            "{n}), while the Transfer file uses the 2\u00b7norb_phys = {n2} "
+            "spin-orbital indices; write the field per physical orbital (the sign "
+            "per spin comes from \u03c3^z).".format(n=norb_phys, n2=2 * norb_phys))
+
+
 def _extern_index_error(file_name, index_1based, norb_phys):
     return ValueError(
-        "Extern file '{f}': orbital index {i} is outside 1..{n}. In "
-        "spin-orbital mode Extern uses PHYSICAL orbital indices (norb_phys = "
-        "{n}), while the Transfer file uses the 2\u00b7norb_phys = {n2} "
-        "spin-orbital indices; write the field per physical orbital (the sign "
-        "per spin comes from \u03c3^z).".format(
-            f=file_name, i=index_1based, n=norb_phys, n2=2 * norb_phys))
+        "Extern file '{f}': orbital index {i} is outside 1..{n}. {rest}".format(
+            f=file_name, i=index_1based, n=norb_phys,
+            rest=_extern_range_sentence(norb_phys)))
+
+
+def _extern_header_error(file_name, declared_norb, norb_phys):
+    return ValueError(
+        "Extern file '{f}': its header declares {d} orbitals, but norb_phys = "
+        "{n}. {rest}".format(f=file_name, d=declared_norb, n=norb_phys,
+                             rest=_extern_range_sentence(norb_phys)))
 
 
 def check_extern_indices(table, norb_phys, file_name, declared_norb=None):
@@ -110,10 +121,11 @@ def check_extern_indices(table, norb_phys, file_name, declared_norb=None):
     Raises
     ------
     ValueError
-        Naming the first offending index (1-based) and both index ranges.
+        Naming the declared header dimension, or else the first offending
+        index (1-based), and both index ranges.
     """
     if declared_norb is not None and int(declared_norb) != norb_phys:
-        raise _extern_index_error(file_name, int(declared_norb), norb_phys)
+        raise _extern_header_error(file_name, int(declared_norb), norb_phys)
     for (_irvec, orbvec), _v in table.items():
         for i in orbvec:
             if not 0 <= i < norb_phys:

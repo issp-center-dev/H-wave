@@ -79,7 +79,8 @@ class QLMSkInput():
         self.ham_param = CaseInsensitiveDict()
         # provenance of every interaction table, keyed by the LOWER-CASED
         # file key: the path it was read from and the orbital count its
-        # header (line 2) declares. read_w90 drops the header, so a solver
+        # header (line 2) declares (None when that line is not a positive
+        # integer). read_w90 drops the header, so a solver
         # that must check a table against the declared dimension (the
         # spin-orbital Extern check, issue #88) reads it from here.
         self.ham_param.source_files = {}
@@ -118,7 +119,15 @@ class QLMSkInput():
                 logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
                 tbl = wan90.read_w90(f)
                 self.ham_param.source_files[k.lower()] = f
-                self.ham_param.source_dimensions[k.lower()] = wan90.read_w90_header_dim(f)
+                # lenient: a malformed header never fails the read here
+                # (read_w90 ignores line 2, and non-spin-orbital input must
+                # behave as before); the spin-orbital Extern check re-reads
+                # it and reports the explicit error
+                try:
+                    dim = wan90.read_w90_header_dim(f)
+                except ValueError:
+                    dim = None
+                self.ham_param.source_dimensions[k.lower()] = dim
                 # issue #93: fail fast on a declaration table that is not
                 # Hermitian-closed (X_ab(R) = conj(X_ba(-R))) -- every
                 # solver used to do something different with such input.

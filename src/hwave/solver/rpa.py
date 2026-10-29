@@ -708,11 +708,18 @@ class Interaction:
         # pre-fold table and header (before _init_interaction folds them).
         # The non-spin-orbital silent drop is unchanged (issue #303).
         if self.enable_spin_orbital and "Extern" in param_ham:
+            _files = getattr(param_ham, "source_files", {})
+            _ext_file = _files.get("extern", "Extern")
+            _declared = getattr(param_ham, "source_dimensions", {}).get("extern")
+            if _declared is None and "extern" in _files:
+                # the reader stores None for a malformed header; re-read it
+                # so the user gets the explicit "line 2 must be ..." error
+                _declared = wan90.read_w90_header_dim(_ext_file)
             spin_orbital.check_extern_indices(
                 param_ham["Extern"],
                 _so_physical_norb(param_ham["Geometry"]["norb"], True, source="Geometry"),
-                getattr(param_ham, "source_files", {}).get("extern", "Extern"),
-                declared_norb=getattr(param_ham, "source_dimensions", {}).get("extern"))
+                _ext_file,
+                declared_norb=_declared)
 
         # initialize, and reshape if use sublattice
         self._init_interaction()
