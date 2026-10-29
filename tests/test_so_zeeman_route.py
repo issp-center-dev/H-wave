@@ -48,6 +48,10 @@ What this module pins:
   hwave_sc, the RPA and the Hartree-Fock FLEX, and equals the Transfer rows
   ``+-coeff_extern H_ab(R)`` on ``2a + s + 1`` built independently in the
   test.
+* :class:`TestFlexToScExternEndToEnd` -- FLEX archives of either route are
+  accepted by hwave_sc in flex mode (static and dynamic) on the same route;
+  the routes give the same eigenvalues and S_z weights, the gap archive
+  records the FLEX mu, and a consumer on the other route is refused.
 * :class:`TestEpsilonKNotInPlace` -- adding the field leaves the stored band
   and a caller's ``trans_mod`` untouched; a repeated call gives the same
   H0(k).
@@ -1586,6 +1590,115 @@ class TestEpsilonKNotInPlace(unittest.TestCase):
                 solver._calc_epsilon_k({"trans_mod": trans_mod})
                 self.assertEqual(trans_mod.tobytes(), tm_before)
                 np.testing.assert_array_equal(solver.H0_k, first)
+
+
+def _e2e_input(d, route):
+    """The 0-E1 fixture (complex SOC, ``h = _H``) in ``route`` written into
+    ``d``, as the input description of the ``tests.test_so_provenance``
+    runners."""
+    inter = _so_1orb_fixture(d, route)
+    param = dict(_E1_PARAM, CellShape=[4, 1, 1], SubShape=[1, 1, 1])
+    return {"dir": d, "inter": inter, "param": param, "cell": (4, 1, 1),
+            "sub_shape": (1, 1, 1)}
+
+
+def _flex_e2e(inp):
+    """The converged spin-orbital Hartree-Fock FLEX of ``inp`` through
+    ``hwave.qlms.run``, writing chiq, chi0q, green, sigma and energy.dat into
+    ``<dir>/output_FLEX``; returns ``(status, mu)`` with ``mu`` the
+    ChemicalPotential of energy.dat."""
+    import hwave.qlms as qlms
+    d = inp["dir"]
+    out = os.path.join(d, "output_FLEX")
+    param = dict(_F1_PARAM, IterationMax=200, EPS=10, coeff_extern=1.0)
+    run_inp = {"log": {"print_level": 0},
+               "mode": {"mode": "FLEX", "enable_spin_orbital": True, "param": param,
+                        "calc_scheme": "general"},
+               "file": {"input": {"path_to_input": d,
+                                  "interaction": dict(inp["inter"], path_to_input=d)},
+                        "output": {"chiq": "chiq.npz", "chi0q": "chi0q.npz",
+                                   "green": "green.npz", "sigma": "sigma.npz",
+                                   "energy": "energy.dat", "path_to_output": out}}}
+    with _quiet():
+        status = qlms.run(input_dict=run_inp)
+    mu = None
+    with open(os.path.join(out, "energy.dat")) as f:
+        for line in f:
+            if line.split("=")[0].strip() == "ChemicalPotential":
+                mu = float(line.split("=")[1])
+    return status, mu
+
+
+class TestFlexToScExternEndToEnd(unittest.TestCase):
+    """The Zeeman field from FLEX to hwave_sc: a spin-orbital Hartree-Fock
+    FLEX run with the field as Extern (``coeff_extern = 1``) or as on-site
+    Transfer rows, whose chiq / chi0q / green / sigma archives hwave_sc
+    then reads (``chi0q_mode = "flex"``, static and dynamic) on the same
+    route. The archives are accepted, the two routes give the same
+    eigenvalues and S_z weights (which sum to 1), the gap archive records
+    the FLEX chemical potential, and a consumer on the other route is
+    refused by the band check."""
+
+    _SZ_KEYS = ("sz_weight_upup", "sz_weight_dndn", "sz_weight_singlet0",
+                "sz_weight_triplet0")
+
+    @classmethod
+    def setUpClass(cls):
+        import tests.test_so_provenance as P
+        cls.P = P
+        cls.tmp = _TmpDirs()
+        cls.inp, cls.flex, cls.gap = {}, {}, {}
+        for route in ("extern", "transfer"):
+            inp = _e2e_input(cls.tmp.new(), route)
+            cls.inp[route] = inp
+            cls.flex[route] = _flex_e2e(inp)
+            for freq in ("static", "dynamic"):
+                cls.gap[route, freq] = P._sc("flex", inp, frequency=freq).npz
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.__exit__(None, None, None)
+
+    def test_flex_converged(self):
+        for route in ("extern", "transfer"):
+            status, mu = self.flex[route]
+            self.assertTrue(status["scf_converged"], route)
+            self.assertIsNotNone(mu, route)
+        self.assertAlmostEqual(self.flex["extern"][1], self.flex["transfer"][1], delta=1e-10)
+
+    def test_routes_same_eigenvalues(self):
+        for freq in ("static", "dynamic"):
+            a = self.gap["extern", freq]["eigenvalues"]
+            b = self.gap["transfer", freq]["eigenvalues"]
+            self.assertEqual(a.shape, (2,))
+            np.testing.assert_allclose(a, b, rtol=1e-10, atol=0, err_msg=freq)
+
+    def test_sz_weights_agree_and_sum_to_one(self):
+        for freq in ("static", "dynamic"):
+            for route in ("extern", "transfer"):
+                g = self.gap[route, freq]
+                total = sum(np.asarray(g[k]) for k in self._SZ_KEYS)
+                np.testing.assert_allclose(total, 1.0, atol=1e-10,
+                                           err_msg=(route, freq))
+            for k in self._SZ_KEYS:
+                np.testing.assert_allclose(self.gap["extern", freq][k],
+                                           self.gap["transfer", freq][k],
+                                           atol=1e-10, err_msg=(k, freq))
+
+    def test_gap_records_flex_mu(self):
+        for (route, freq), g in self.gap.items():
+            mu = self.flex[route][1]
+            self.assertAlmostEqual(float(g["state_mu"]), mu, delta=1e-12,
+                                   msg=(route, freq))
+            self.assertEqual(bool(g["prov_extern_present"]), route == "extern")
+
+    def test_cross_route_consumer_refused(self):
+        """FLEX archives produced on the Transfer route, hwave_sc on the
+        Extern route: the band check refuses them."""
+        src = os.path.join(self.inp["transfer"]["dir"], "output_FLEX")
+        for freq in ("static", "dynamic"):
+            with self.assertRaisesRegex(ValueError, r"\(written by .*band differs: "):
+                self.P._sc("flex", self.inp["extern"], src=src, frequency=freq)
 
 
 if __name__ == "__main__":
