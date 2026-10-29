@@ -429,7 +429,7 @@ def _fmt_weights(labels, w):
 def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
                   eigenvalues, eigen_weights, match, norb_phys, T, kx, ky, kz,
                   eigenvalue_selection, leakage, note=None, extra_prov=None,
-                  sz_residual=None, sz_weights=None):
+                  sz_residual=None, sz_weights=None, provenance_members=None):
     """Write ``eigenvalue.dat``, ``gap.dat`` and ``gap_dynamic.npz`` in the
     spin-orbital schema of the static solver (#269) plus the frequency
     content (see the user guide).
@@ -438,7 +438,12 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
     ``so_pairing.sz_conservation_residual``) the S_z report
     (``so_pairing.sz_report``) is logged and added to the archive;
     ``sz_weights`` are the ``so_pairing.so_sz_decomposition`` of the
-    eigenvectors (default: of ``gap_w`` alone, iteration mode)."""
+    eigenvectors (default: of ``gap_w`` alone, iteration mode).
+
+    ``provenance_members`` (#88, ``fingerprint.so_provenance_members`` of this
+    run's band and the Green function and state its kernel used) go into the
+    archive, and their scalar members into ``eigenvalue.dat``."""
+    import hwave.sc as sc
     from hwave.solver import so_pairing, spin_orbital
     os.makedirs(output_dir, exist_ok=True)
     comps = so_pairing.SPIN_COMPONENTS
@@ -474,6 +479,7 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
         "pauli_leakage": "{:.3e}".format(leakage),
     }
     prov.update(extra_prov or {})
+    prov.update(sc._so_provenance_lines(provenance_members))
     with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
         for key in sorted(prov):
@@ -525,6 +531,7 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
         if sz_weights is None:
             sz_weights = [so_pairing.so_sz_decomposition(gap_w, norb_phys)]
         record.update(so_pairing.sz_report(sz_weights, sz_residual, logger))
+    record.update(provenance_members or {})
     np.savez(os.path.join(output_dir, _OUTPUT_NPZ), **record)
 
     n0 = nmat // 2
@@ -637,6 +644,12 @@ def solve_dynamic_so(input_dict):
     # the Zeeman field of an Extern file (issue #88), read and checked in
     # every chi0q_mode before any heavy work
     extern_table, _extern_file = sc._read_so_extern(input_dict, norb_phys)
+    n_filling = mode_param.get("filling")
+    if n_filling is None:
+        raise ValueError("filling must be specified.")
+    # this run's band and state, for the archive checks (#88)
+    so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta,
+                               nmat, n_filling)
     logger.info("=== Spin-orbital dynamic Eliashberg solver (issue #284) ===")
     logger.info("T = %s, beta = %.6g, grid %dx%dx%d, Nmat = %d, nd = %d "
                 "spin-orbitals (%d physical orbitals), chi0q_mode = %s, "
@@ -674,10 +687,17 @@ def solve_dynamic_so(input_dict):
     # --- inputs: chi at every bosonic frequency, and G ---
     gam = sc._so_rpa_vertex(input_dict)
     if chi0q_mode == "flex":
-        chi_w, green_w, chi0_w, chi_path = sc._load_flex_so(
-            input_dict, nd, Nx, Ny, Nz, interactions=interactions, full=True)
+        chi_w, green_w, chi0_w, chi_path, borrowed = sc._load_flex_so(
+            input_dict, nd, Nx, Ny, Nz, interactions=interactions, full=True,
+            so_run=so_run)
         logger.info("Using the spin-orbital FLEX chiq (all %d bosonic "
                     "frequencies) and dressed Green's function", nmat)
+        # the borrowed G as consumed: its digest, mu and closure density on
+        # this run's band (equal to the FLEX run's: the band was checked)
+        so_members = sc._so_flex_writer_members(
+            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, borrowed, green_w,
+            sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys),
+            beta)
         consistency = _check_vertex_every_frequency(gam, chi_w, chi0_w,
                                                     chi_path, T)
         del chi0_w
@@ -686,13 +706,16 @@ def solve_dynamic_so(input_dict):
         epsilon_k = sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table,
                                      norb_phys)
         eigenvalues, eigenvectors = sc._calc_eigenvalues(epsilon_k)
-        n_filling = mode_param.get("filling")
-        if n_filling is None:
-            raise ValueError("filling must be specified.")
         mu = sc._determine_mu(eigenvalues, beta, n_filling, nd)
         logger.info("mu = %.6f", mu)
         green_w = sc._build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+        # the kernel's own G and state
+        from hwave.solver import fingerprint
+        so_members = sc._so_writer_members(
+            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run,
+            fingerprint.green_digest(green_w, "sc_o_o_xyz_f"),
+            sc._so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
         chi0q_raw = sc._calc_chi0q_internal(input_dict, chi0q_tensor="general",
                                             precomputed_mu=mu)
         nvol, nd2 = Nk, nd * nd
@@ -855,7 +878,8 @@ def solve_dynamic_so(input_dict):
         eigenvalues=eigenvalues_eig, eigen_weights=eig_weights, match=match,
         norb_phys=norb_phys, T=T, kx=kx, ky=ky, kz=kz,
         eigenvalue_selection=selection, leakage=leakage, note=note,
-        extra_prov=extra, sz_residual=sz_residual, sz_weights=sz_weights)
+        extra_prov=extra, sz_residual=sz_residual, sz_weights=sz_weights,
+        provenance_members=so_members)
     logger.info("leading gap: spin weights %s; frequency parity %s",
                 _fmt_weights(so_pairing.SPIN_COMPONENTS, w["spin"]),
                 _fmt_weights(FREQUENCY_PARITY_LABELS, w["parity"]))

@@ -390,3 +390,324 @@ def so_provenance_members(*, producer_stage, producer_label, transfer, extern,
     if set(m) != set(SO_PROVENANCE_MEMBERS):  # pragma: no cover - schema drift guard
         raise RuntimeError("spin-orbital provenance members drifted from the schema")
     return {k: m[k] for k in SO_PROVENANCE_MEMBERS}
+
+
+# ---------------------------------------------------------- consumer checks
+#: dtype kind and ndim of every version-1 member (the schema table of the
+#: design's archive section); validated by :func:`check_so_archive`.
+SO_MEMBER_SCHEMA = {
+    "fingerprint_version": ("i", 0),
+    "producer_stage": ("U", 0), "producer_label": ("U", 0), "producer_version": ("U", 0),
+    "fp_transfer": ("U", 0), "fp_extern": ("U", 0), "fp_meta": ("U", 0),
+    "fp_band": ("U", 0), "fp_green": ("U", 0),
+    "prov_transfer_keys": ("i", 2), "prov_transfer_vals": ("c", 1),
+    "prov_extern_present": ("b", 0),
+    "prov_extern_keys": ("i", 2), "prov_extern_vals": ("c", 1),
+    "prov_coeff_extern": ("f", 0), "prov_enable_spin_orbital": ("b", 0),
+    "prov_index_convention": ("U", 0),
+    "prov_norb": ("i", 0), "prov_norb_phys": ("i", 0),
+    "prov_cell_shape": ("i", 1), "prov_sub_shape": ("i", 1),
+    "state_beta": ("f", 0), "state_nmat": ("i", 0), "state_mu": ("f", 0),
+    "state_density": ("f", 0), "state_calc_mu": ("b", 0),
+    "state_target": ("f", 0), "state_mu_tol": ("f", 0),
+}
+
+UNKNOWN_PRODUCER = "<unknown producer>"
+
+#: the consumer-check messages go to the ``qlms`` hierarchy, beside the
+#: consumers' own log lines
+check_logger = logging.getLogger("qlms").getChild("solver").getChild("fingerprint")
+
+#: the relative tolerances of the compatibility checks
+BETA_RTOL = 1e-12
+TARGET_RTOL = 1e-12
+MU_RTOL = 1e-12
+DENSITY_RTOL = 1e-8
+#: the cap on a producer's density-closure residual, relative to max(1, |t|)
+RESIDUAL_CAP = 1e-8
+#: |state_mu_tol - |state_density - state_target|| allowed, relative
+MU_TOL_CONSISTENCY = 1e-12
+
+NMAT_RULES = ("exact", "load")
+
+
+class SOArchiveError(ValueError):
+    """A consumed spin-orbital archive refused by :func:`check_so_archive`
+    (a ValueError; callers that rewrap layout errors let it through)."""
+
+
+class SOArchiveInfo(NamedTuple):
+    """What :func:`check_so_archive` learned about a consumed archive.
+
+    Validation and message data only: the hwave_sc writers record their own
+    state and never copy these fields. A legacy (unversioned) archive gives
+    ``SOArchiveInfo(None, None, None, legacy=True)``."""
+    producer_state: Optional[SOState]
+    producer_fp_green: Optional[str]
+    producer_label: Optional[str]
+    legacy: bool
+
+
+def _members(data):
+    return set(data.files) if hasattr(data, "files") else set(data)
+
+
+def _readable_label(data, names):
+    if "producer_label" not in names:
+        return UNKNOWN_PRODUCER
+    try:
+        v = np.asarray(data["producer_label"])
+        if v.ndim == 0 and v.dtype.kind == "U" and str(v[()]).strip():
+            return str(v[()])
+    except Exception:
+        pass
+    return UNKNOWN_PRODUCER
+
+
+def _table_from_arrays(keys, vals):
+    return {(tuple(int(x) for x in k[:3]), tuple(int(x) for x in k[3:])): complex(v)
+            for k, v in zip(keys, vals)}
+
+
+def _sorted_key(k):
+    return tuple(k[0]) + tuple(k[1])
+
+
+def _fmt_value(v):
+    return "absent" if v is None else repr(v)
+
+
+def _table_diff(name, file_tbl, run_tbl):
+    """``<Table>: file <n> rows, run <m> rows; first differing row (R=..,
+    a=.., b=..): file <v>, run <w>`` (1-based orbitals)."""
+    file_tbl = file_tbl or {}
+    run_tbl = run_tbl or {}
+    head = "{}: file {} rows, run {} rows".format(name, len(file_tbl), len(run_tbl))
+    for k in sorted(set(file_tbl) | set(run_tbl), key=_sorted_key):
+        a, b = file_tbl.get(k), run_tbl.get(k)
+        if a is None or b is None or complex(a) != complex(b):
+            return "{}; first differing row (R={}, a={}, b={}): file {}, run {}".format(
+                head, tuple(int(x) for x in k[0]), int(k[1][0]) + 1, int(k[1][1]) + 1,
+                _fmt_value(a), _fmt_value(b))
+    return head + " (the rows agree; the digests differ)"
+
+
+def _scalar(data, k):
+    return np.asarray(data[k])[()]
+
+
+def check_so_archive(data, path: str, *, run_band: BandInputs, run_state: SOState,
+                     run_has_extern: bool, nmat_rule: str, green=None,
+                     green_layout: Optional[str] = None,
+                     green_fp: Optional[str] = None) -> SOArchiveInfo:
+    """Validate the version-1 provenance of a spin-orbital archive against
+    this run (design section 6.4, PR 0 scope: no interaction or topology
+    digest).
+
+    ``data`` is the open npz (or a mapping of its members), ``path`` its
+    file name for the messages. ``run_band`` is this run's band
+    (:func:`band_inputs`), ``run_state`` its state: ``beta``, ``nmat``,
+    ``calc_mu`` and ``target`` (and ``mu`` for a fixed-mu run) are compared;
+    ``density`` and ``mu_tol`` are not read. ``nmat_rule`` is ``"exact"``
+    (a borrowed G) or ``"load"`` (load mode: the existing stored-axis rule
+    applies instead, Nmat is not compared here). With ``green`` (in
+    ``green_layout``) or ``green_fp`` (its digest, already computed by the
+    caller) the archive's ``fp_green`` is verified; otherwise it is a
+    producer assertion, logged at INFO.
+
+    Order: (0) an archive without ``fingerprint_version`` takes the legacy
+    policy -- refused when the run has an Extern field, a WARNING otherwise;
+    (1) structural validation; (2) band; (3) state; (4) green. Every refusal
+    is a single-line ValueError."""
+    if nmat_rule not in NMAT_RULES:
+        raise ValueError("nmat_rule must be one of {}, got {!r}".format(NMAT_RULES, nmat_rule))
+    names = _members(data)
+    label = _readable_label(data, names)
+
+    # (0) legacy first: never reported as malformed
+    if "fingerprint_version" not in names:
+        why = ("written before this version, or by a run whose one-body band or "
+               "state the version-1 fingerprints do not cover: trans_mod/"
+               "green_init, or a supplied chi0q")
+        if run_has_extern:
+            raise SOArchiveError(
+                "'{}' has no fingerprint_version ({}); the run has an Extern "
+                "field, so its band cannot be verified. Regenerate it.".format(path, why))
+        check_logger.warning(
+            "'%s' has no fingerprint_version (%s); band and state compatibility "
+            "are not checked. Regenerate it to enable the checks.", path, why)
+        return SOArchiveInfo(None, None, None, legacy=True)
+
+    def malformed(check, stored, expected):
+        raise SOArchiveError(
+            "'{}' is malformed or truncated: {} ({} vs {}). Regenerate it with "
+            "{}.".format(path, check, stored, expected, label))
+
+    # (1) structural
+    ver = np.asarray(data["fingerprint_version"])
+    if ver.ndim != 0 or ver.dtype.kind not in "iu":
+        malformed("fingerprint_version is not an integer scalar",
+                  "{}/{}d".format(ver.dtype, ver.ndim), "int64/0d")
+    if int(ver[()]) != FINGERPRINT_VERSION:
+        malformed("unsupported fingerprint_version", int(ver[()]), FINGERPRINT_VERSION)
+    for k in SO_PROVENANCE_MEMBERS:
+        if k not in names:
+            malformed("member {} is missing".format(k), "absent", "present")
+        kind, ndim = SO_MEMBER_SCHEMA[k]
+        a = np.asarray(data[k])
+        if a.dtype.kind != kind or a.ndim != ndim:
+            malformed("member {} has the wrong dtype or rank".format(k),
+                      "{}/{}d".format(a.dtype, a.ndim),
+                      "{}/{}d".format({"i": "int64", "U": "str", "c": "complex128",
+                                       "f": "float64", "b": "bool"}[kind], ndim))
+        if kind in "fc" and not np.all(np.isfinite(a)):
+            malformed("member {} is not finite".format(k), repr(a.tolist()), "finite")
+    stage = str(_scalar(data, "producer_stage"))
+    if stage not in PRODUCER_STAGES:
+        malformed("producer_stage is not a known stage", repr(stage),
+                  "one of {}".format(", ".join(PRODUCER_STAGES)))
+    for k in ("fp_transfer", "fp_extern", "fp_meta", "fp_band", "fp_green"):
+        s = str(_scalar(data, k))
+        if len(s) != 64 or any(c not in "0123456789abcdef" for c in s):
+            malformed("{} is not a 64-character lowercase hex digest".format(k),
+                      repr(s), "64 hex characters")
+    tk, tv = np.asarray(data["prov_transfer_keys"]), np.asarray(data["prov_transfer_vals"])
+    ek, ev = np.asarray(data["prov_extern_keys"]), np.asarray(data["prov_extern_vals"])
+    for nm, keys, vals in (("transfer", tk, tv), ("extern", ek, ev)):
+        if keys.shape[1:] != (5,) or vals.shape != (keys.shape[0],):
+            malformed("prov_{}_keys/vals shapes".format(nm),
+                      "{}/{}".format(keys.shape, vals.shape), "(n, 5)/(n,)")
+    for k in ("prov_cell_shape", "prov_sub_shape"):
+        if np.asarray(data[k]).shape != (3,):
+            malformed("{} shape".format(k), np.asarray(data[k]).shape, (3,))
+    ext_present = bool(_scalar(data, "prov_extern_present"))
+    if not ext_present and ek.shape[0] != 0:
+        malformed("prov_extern_keys of an absent Extern", "{} rows".format(ek.shape[0]),
+                  "0 rows")
+    beta_f = float(_scalar(data, "state_beta"))
+    if not beta_f > 0:
+        malformed("state_beta must be > 0", repr(beta_f), "> 0")
+    if "beta" in names:
+        b = np.asarray(data["beta"])
+        if b.ndim != 0 or b.dtype.kind not in "fi" or float(b[()]) != beta_f:
+            malformed("beta differs from state_beta", repr(b.tolist()), repr(beta_f))
+    nmat_f = int(_scalar(data, "state_nmat"))
+    if "nmat" in names:
+        n = np.asarray(data["nmat"])
+        if n.ndim != 0 or n.dtype.kind not in "iu" or int(n[()]) != nmat_f:
+            malformed("nmat differs from state_nmat", repr(n.tolist()), nmat_f)
+    # the diff source must reproduce the stored digests
+    file_transfer = _table_from_arrays(tk, tv)
+    file_extern = _table_from_arrays(ek, ev) if ext_present else None
+    file_meta = BandMeta(
+        float(_scalar(data, "prov_coeff_extern")),
+        bool(_scalar(data, "prov_enable_spin_orbital")),
+        str(_scalar(data, "prov_index_convention")),
+        int(_scalar(data, "prov_norb")), int(_scalar(data, "prov_norb_phys")),
+        tuple(int(x) for x in np.asarray(data["prov_cell_shape"])),
+        tuple(int(x) for x in np.asarray(data["prov_sub_shape"])))
+    file_fps = {k: str(_scalar(data, k))
+                for k in ("fp_transfer", "fp_extern", "fp_meta", "fp_band")}
+    recomputed = band_digests(file_transfer, file_extern, file_meta)
+    for k in ("fp_transfer", "fp_extern", "fp_meta", "fp_band"):
+        if recomputed[k] != file_fps[k]:
+            malformed("{} does not match the digest recomputed from its prov_* "
+                      "fields".format(k), file_fps[k][:12] + "...",
+                      recomputed[k][:12] + "...")
+    state = SOState(beta_f, nmat_f, float(_scalar(data, "state_mu")),
+                    float(_scalar(data, "state_density")),
+                    bool(_scalar(data, "state_calc_mu")),
+                    float(_scalar(data, "state_target")),
+                    float(_scalar(data, "state_mu_tol")))
+    t = state.target
+    scale = max(1.0, abs(t))
+    if state.calc_mu:
+        resid = abs(state.density - t)
+        if abs(state.mu_tol - resid) > MU_TOL_CONSISTENCY * scale:
+            malformed("state_mu_tol is not |state_density - state_target|",
+                      repr(state.mu_tol), repr(resid))
+        if state.mu_tol > RESIDUAL_CAP * scale:
+            raise SOArchiveError(
+                "'{}' cannot be reused: the producer did not reach its filling "
+                "(residual {:.3e} electrons per cell > 1e-8·max(1,|t|) = {:.3e}). "
+                "Regenerate it with {} so that its density closes to that "
+                "tolerance.".format(path, state.mu_tol, RESIDUAL_CAP * scale, label))
+    elif state.mu_tol != 0.0:
+        malformed("state_mu_tol of a fixed-mu state", repr(state.mu_tol), "0.0")
+
+    # (2) band
+    run_fps = run_band.digests
+    diffs = []
+    if file_fps["fp_meta"] != run_fps["fp_meta"]:
+        for field in BandMeta._fields:
+            a, b = getattr(file_meta, field), getattr(run_band.meta, field)
+            if isinstance(b, (list, tuple)):
+                b = tuple(int(x) for x in b)
+            if a != b:
+                diffs.append("{}: file {!r}, run {!r}".format(field, a, b))
+        if not diffs:
+            diffs.append("meta: file {}, run {}".format(file_fps["fp_meta"][:12],
+                                                       run_fps["fp_meta"][:12]))
+    if file_fps["fp_transfer"] != run_fps["fp_transfer"]:
+        diffs.append(_table_diff("Transfer", file_transfer, run_band.transfer))
+    if file_fps["fp_extern"] != run_fps["fp_extern"]:
+        run_present = run_band.extern is not None
+        if ext_present != run_present:
+            diffs.append("Extern: file {}, run {}".format(
+                "present" if ext_present else "absent",
+                "present" if run_present else "absent"))
+        else:
+            diffs.append(_table_diff("Extern", file_extern, run_band.extern))
+    if diffs:
+        raise SOArchiveError(
+            "'{}' (written by {}) does not match this run: band differs: {}. "
+            "Archives are reused only at the identical state point (not a warm "
+            "start across a sweep); re-run {} with this input (the same "
+            "Transfer/Extern/coeff_extern).".format(path, label, "; ".join(diffs), label))
+
+    # (3) state
+    diffs = []
+    if state.calc_mu != bool(run_state.calc_mu):
+        diffs.append("calc_mu: file {}, run {}".format(state.calc_mu,
+                                                       bool(run_state.calc_mu)))
+    elif state.calc_mu:
+        tr = float(run_state.target)
+        sr = max(1.0, abs(tr))
+        if abs(state.target - tr) > TARGET_RTOL * sr:
+            diffs.append("target {!r} (file) vs {!r} (run) electrons per cell".format(
+                state.target, tr))
+        tol = max(DENSITY_RTOL * sr, 10.0 * state.mu_tol)
+        if abs(state.density - tr) > tol:
+            diffs.append("density {!r} (file) vs target {!r} (run, tol {:.3g}) "
+                         "electrons per cell".format(state.density, tr, tol))
+    else:
+        mr = float(run_state.mu)
+        if not abs(state.mu - mr) <= MU_RTOL * max(1.0, abs(mr)):
+            diffs.append("fixed mu {!r} (file) vs {!r} (run) energy units".format(
+                state.mu, mr))
+    br = float(run_state.beta)
+    if not abs(state.beta - br) <= BETA_RTOL * br:
+        diffs.append("beta {!r} (file) vs {!r} (run)".format(state.beta, br))
+    if nmat_rule == "exact" and state.nmat != int(run_state.nmat):
+        diffs.append("nmat {} (file) vs {} (run)".format(state.nmat, int(run_state.nmat)))
+    if diffs:
+        raise SOArchiveError(
+            "'{}' (written by {}) does not match this run: state differs: {}. "
+            "Archives are reused only at the identical state point; re-run {} at "
+            "this filling and temperature.".format(path, label, "; ".join(diffs), label))
+
+    # (4) green
+    file_green = str(_scalar(data, "fp_green"))
+    if green_fp is None and green is not None:
+        green_fp = green_digest(green, green_layout)
+    if green_fp is not None:
+        if green_fp != file_green:
+            raise SOArchiveError(
+                "'{}' (written by {}): fp_green mismatch: the Green function this "
+                "run loaded has digest {}..., the archive records {}...; the Green "
+                "function and the susceptibility do not come from the same run. "
+                "Regenerate both with {}.".format(path, label, green_fp[:12],
+                                                 file_green[:12], label))
+    else:
+        check_logger.info("fp_green: producer assertion (%s)", path)
+    return SOArchiveInfo(state, file_green, label, legacy=False)

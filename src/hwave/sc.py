@@ -1349,13 +1349,18 @@ def _preflight_refuse_so_archives(input_dict, chi0q_mode):
             _refuse_so_archive_in_non_so_mode(data, path)
 
 
-def _load_chi0q(input_dict, norb=None):
+def _load_chi0q(input_dict, norb=None, so_run=None):
     """Load chi0q from NPZ file produced by H-wave RPA solver.
 
     Parameters
     ----------
     input_dict : dict
         Parsed TOML input dictionary.
+    so_run : _SORun, optional
+        Spin-orbital mode (#88): the archive's version-1 provenance is
+        checked against this run (:func:`_so_check_archive`, the load-mode
+        nmat rule) after the marker checks and before the chi0q array is
+        read, and the result is returned as a third item.
 
     Returns
     -------
@@ -1364,6 +1369,8 @@ def _load_chi0q(input_dict, norb=None):
     static_index : int
         Position of the zero bosonic frequency along the frequency axis
         (determined from the freq_index metadata).
+    so_info : SOArchiveInfo
+        Only with ``so_run``.
     """
     output_info = input_dict["file"]["output"]
     path_to_output = output_info["path_to_output"]
@@ -1380,8 +1387,11 @@ def _load_chi0q(input_dict, norb=None):
         "\"ir\".")
     enable_spin_orbital = _resolve_spin_orbital_flag(input_dict)
     validate_chi0q_index_convention(data, enable_spin_orbital, file_name)
+    so_info = None
     if enable_spin_orbital:
         _require_so_chi0q_marker(data, file_name)
+        if so_run is not None:
+            so_info = _so_check_archive(data, file_name, so_run, "load")
     else:
         _refuse_so_archive_in_non_so_mode(data, file_name)
     chi0q = data["chi0q"]
@@ -1620,6 +1630,8 @@ def _load_chi0q(input_dict, norb=None):
     if static_index is not None and static_index != nfreq // 2:
         logger.info("static (zero bosonic frequency) slice at index {} "
                     "of {}".format(static_index, nfreq))
+    if so_run is not None:
+        return chi0q, static_index, so_info
     return chi0q, static_index
 
 
@@ -2401,6 +2413,104 @@ def _so_coeff_extern(input_dict):
             "[mode.param] coeff_extern must be a finite real number, got "
             "{!r}".format(raw))
     return float(raw)
+
+
+class _SORun(NamedTuple):
+    """This spin-orbital hwave_sc run as the archive checks see it (#88):
+    its band (:func:`hwave.solver.fingerprint.band_inputs`), its state
+    (``beta``, ``nmat``, ``calc_mu = True``, ``target`` in electrons per cell;
+    ``mu``, ``density`` and ``mu_tol`` are NaN, in memory only, never
+    compared and never serialized) and whether it has an Extern field."""
+    band: object
+    state: object
+    has_extern: bool
+
+
+def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
+                   n_filling):
+    """The :class:`_SORun` of a spin-orbital hwave_sc run, built from its own
+    input before any archive is read. hwave_sc always searches mu
+    (``filling`` is mandatory), so the target is ``filling * nd`` electrons
+    per cell over all ``nd = 2 * norb_phys`` spin-orbitals. The band is the
+    Transfer table as read (interleaved), the physical-orbital Extern table
+    (or None), and the metadata of the spin-orbital RPA/FLEX producers
+    (``coeff_extern``, the index convention, the orbital counts, CellShape
+    and the resolved SubShape)."""
+    from hwave.solver import fingerprint, spin_orbital
+    param = input_dict["mode"]["param"]
+    cs = param["CellShape"]
+    cs = list(cs) if isinstance(cs, (list, tuple)) else [cs]
+    cs = cs + [1] * (3 - len(cs))
+    ss = param.get("SubShape", cs)
+    ss = list(ss) if isinstance(ss, (list, tuple)) else [ss]
+    ss = ss + [1] * (3 - len(ss))
+    meta = fingerprint.BandMeta(
+        coeff_extern=_so_coeff_extern(input_dict), enable_spin_orbital=True,
+        index_convention=spin_orbital.INDEX_CONVENTION,
+        norb=2 * int(norb_phys), norb_phys=int(norb_phys),
+        cell_shape=tuple(int(x) for x in cs), sub_shape=tuple(int(x) for x in ss))
+    nan = float("nan")
+    state = fingerprint.SOState(float(beta), int(nmat), nan, nan, True,
+                                float(n_filling) * 2 * int(norb_phys), nan)
+    return _SORun(fingerprint.band_inputs(hr, extern_table, meta), state,
+                  extern_table is not None)
+
+
+def _so_check_archive(data, path, so_run, nmat_rule, **kw):
+    """:func:`hwave.solver.fingerprint.check_so_archive` against ``so_run``."""
+    from hwave.solver import fingerprint
+    return fingerprint.check_so_archive(
+        data, path, run_band=so_run.band, run_state=so_run.state,
+        run_has_extern=so_run.has_extern, nmat_rule=nmat_rule, **kw)
+
+
+def _so_own_state(eigenvalues, beta, mu, nmat, target):
+    """The state of a kernel built on this run's own band and mu: the masked
+    Fermi count of the eigenvalues at ``mu`` (``rpa._masked_fermi_delta_n``,
+    the count ``_determine_mu`` roots) per cell, the ``calc_mu = True``
+    branch."""
+    from hwave.solver import fingerprint
+    from hwave.solver import rpa as _rpa
+    w = np.asarray(backend.to_host(eigenvalues))
+    nvol = int(np.prod(w.shape[:3]))
+    count = _rpa._masked_fermi_delta_n(w, 1.0 / beta, mu, 0.0, 100.0)[0]
+    return fingerprint.so_state(beta=beta, nmat=nmat, mu=mu,
+                                density=float(count) / nvol, calc_mu=True,
+                                target=target)
+
+
+def _so_flex_consumed_state(green_sc, epsilon_k, sigma_static, mu, beta,
+                            target):
+    """The state of a borrowed spin-orbital FLEX Green function as consumed:
+    the closure density FLEX itself uses
+    (``hartree_fock.equal_time_density`` with the reference
+    ``heff_eigenpairs(H0_k, sigma_static)``, flex.py
+    ``_phase_b_density_and_hf``) per cell, at the mu the kernel applied.
+    ``green_sc`` is ``(nd, nd, Nx, Ny, Nz, nmat)``, ``epsilon_k`` this run's
+    spin-block band ``(nd, nd, Nx, Ny, Nz)`` and ``sigma_static`` the FLEX
+    run's static self-energy ``(nvol, nd, nd)``."""
+    from hwave.solver import fingerprint, hartree_fock as _hf
+    eps = np.asarray(backend.to_host(epsilon_k))
+    nd = eps.shape[0]
+    shape = tuple(int(x) for x in eps.shape[2:5])
+    nvol = int(np.prod(shape))
+    H0 = np.moveaxis(eps.reshape(nd, nd, nvol), -1, 0)
+    g = _green_sc_to_canonical(np.asarray(backend.to_host(green_sc)))
+    dens = _hf.equal_time_density(g, _hf.heff_eigenpairs(H0, sigma_static), mu,
+                                  beta, shape, sym_tol=None)
+    return fingerprint.so_state(beta=beta, nmat=int(g.shape[1]), mu=mu,
+                                density=float(np.real(dens.n_per_spin)) / nvol,
+                                calc_mu=True, target=target)
+
+
+def _so_writer_members(stage, label, so_run, fp_green, state):
+    """The version-1 members of a hwave_sc gap archive: this run's band and
+    the Green function and state its kernel used (never the producer's)."""
+    from hwave.solver import fingerprint
+    return fingerprint.so_provenance_members(
+        producer_stage=stage, producer_label=label,
+        transfer=so_run.band.transfer, extern=so_run.band.extern,
+        meta=so_run.band.meta, fp_green=fp_green, state=state)
 
 
 def _so_epsilon_k(input_dict, kx_array, ky_array, kz_array, hr, extern_table,
@@ -7786,9 +7896,53 @@ def _so_gap_npz_name(gap_file):
     return gap_file + ".npz" if name == gap_file else name
 
 
+#: producer labels of the hwave_sc spin-orbital gap archives (#88)
+_SO_STATIC_LABEL = "hwave_sc (spin-orbital, static)"
+_SO_DYNAMIC_LABEL = "hwave_sc (spin-orbital, dynamic)"
+
+
+def _so_flex_writer_members(stage, label, so_run, borrowed, green_sc, epsilon_k,
+                            beta):
+    """The writer members of a run whose kernel used a borrowed spin-orbital
+    FLEX Green function: its digest as consumed, the mu the kernel applied
+    (the validated archive value) and the closure density of that G
+    (:func:`_so_flex_consumed_state`). None, with one INFO line, for a legacy
+    (unversioned) archive: the mu of its Green function is not recorded, so
+    no state can be measured."""
+    if borrowed.info.legacy:
+        logger.info(
+            "spin-orbital provenance not written: the borrowed FLEX archive has "
+            "no fingerprint_version, so the chemical potential of its Green "
+            "function, and with it the state this kernel used, is unknown")
+        return None
+    state = _so_flex_consumed_state(
+        green_sc, epsilon_k, borrowed.sigma_static, borrowed.info.producer_state.mu,
+        beta, so_run.state.target)
+    return _so_writer_members(stage, label, so_run, borrowed.fp_green, state)
+
+
+def _so_prov_line(v):
+    """The ``# key = value`` text of a scalar provenance member."""
+    a = np.asarray(v)
+    if a.dtype.kind == "b":
+        return "true" if bool(a) else "false"
+    if a.dtype.kind == "f":
+        return repr(float(a))
+    if a.dtype.kind in "iu":
+        return str(int(a))
+    return str(a[()])
+
+
+def _so_provenance_lines(members):
+    """The scalar members of ``members`` as ``{key: text}`` (the arrays stay
+    in the npz only)."""
+    return {k: _so_prov_line(v) for k, v in (members or {}).items()
+            if np.ndim(v) == 0}
+
+
 def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
                       eigenvectors, match, kx_array, ky_array, kz_array,
-                      sz_residual=None):
+                      sz_residual=None, provenance_members=None):
     """The spin-orbital output schema (issue #83).
 
     Writes the gap archive (:func:`_so_gap_npz_name`, default ``gap.npz``)
@@ -7809,6 +7963,11 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
     an eigenvalue analysis also ``eigenvalues``, ``eigenvectors``
     ``(n_eig, nd, nd, Nx, Ny, Nz)``, ``eigenvector_spin_weights`` and
     ``eigenvalue_match``.
+
+    With ``provenance_members`` (#88: the version-1 members of
+    :func:`hwave.solver.fingerprint.so_provenance_members` for this run's band
+    and the Green function and state its kernel used) the archive gets every
+    member and ``provenance`` gets the scalar ones.
 
     With ``sz_residual`` (the S_z-conservation residual of the run,
     :func:`hwave.solver.so_pairing.sz_conservation_residual`) the S_z report
@@ -7870,6 +8029,11 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
             record.update(so_pairing.sz_report(
                 [so_pairing.so_sz_decomposition(v, norb_phys) for v in sz_gaps],
                 sz_residual, logger))
+    if provenance_members:
+        # #88: the version-1 members of this run (its band, the G and state its
+        # kernel used): the npz holds all of them, eigenvalue.dat the scalars
+        record.update(provenance_members)
+        prov.update(_so_provenance_lines(provenance_members))
     gap_comments = [
         "spin_orbital = true",
         "index_convention = {}".format(spin_orbital.INDEX_CONVENTION),
@@ -8016,7 +8180,66 @@ def _so_flex_full_axis(data, arr, path, nd, nvol, config_nmat, what):
     return out
 
 
-def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
+class _SOFlexBorrowed(NamedTuple):
+    """What a spin-orbital FLEX consumer borrowed (#88): ``info``, the
+    :class:`hwave.solver.fingerprint.SOArchiveInfo` of the chiq archive;
+    ``fp_green``, the digest of the Green function as consumed (computed once,
+    in the verification against the archive); ``sigma_static``, the FLEX
+    run's static self-energy ``(nvol, nd, nd)`` (for the closure density of
+    that Green function). ``fp_green`` and ``sigma_static`` are None for a
+    legacy (unversioned) archive."""
+    info: object
+    fp_green: object
+    sigma_static: object
+
+
+def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
+                        hint):
+    """The static self-energy ``(nvol, nd, nd)`` of the spin-orbital FLEX run
+    whose Green function digest is ``fp_green``, from ``[eliashberg]
+    flex_sigma`` (default ``"sigma.npz"``): the archive is validated
+    (:func:`_so_check_archive`) and must record the same ``fp_green``."""
+    from hwave.solver import spin_orbital
+    sigma_path = os.path.join(flex_dir, eli.get("flex_sigma", "sigma.npz"))
+    if not os.path.exists(sigma_path):
+        raise ValueError(
+            "FLEX self-energy archive '{}' not found. {}, and also its sigma: "
+            "hwave_sc records the closure density of the borrowed Green "
+            "function, which needs the static self-energy. Set [file.output] "
+            "sigma in the FLEX run and [eliashberg] flex_sigma to that "
+            "file.".format(sigma_path, hint))
+    with np.load(sigma_path) as ds:
+        sinfo = _so_check_archive(ds, sigma_path, so_run, "exact")
+        if sinfo.legacy or sinfo.producer_fp_green != fp_green:
+            raise ValueError(
+                "{} and {} come from different runs: '{}' records fp_green {} "
+                "but the Green function '{}' has digest {}. Use the sigma and "
+                "green archives of one spin-orbital FLEX run.".format(
+                    os.path.basename(sigma_path), os.path.basename(green_path),
+                    sigma_path, (sinfo.producer_fp_green or "none")[:12],
+                    green_path, fp_green[:12]))
+        conv = str(ds["sigma_convention"]) if "sigma_convention" in ds else None
+        tag = str(ds["index_convention"]) if "index_convention" in ds else None
+        if conv != "split" or tag != spin_orbital.INDEX_CONVENTION:
+            raise ValueError(
+                "FLEX self-energy archive '{}' records sigma_convention = {!r} "
+                "and index_convention = {!r}; expected 'split' and {!r} (a "
+                "spin-orbital Hartree-Fock FLEX run writes them).".format(
+                    sigma_path, conv, tag, spin_orbital.INDEX_CONVENTION))
+        st = np.asarray(ds["sigma_static"]) if "sigma_static" in ds else None
+        want = (1, 1, nvol, nd, nd)
+        if st is None or st.dtype != np.complex128 or st.shape != want:
+            raise ValueError(
+                "FLEX self-energy archive '{}': sigma_static must be complex128 "
+                "of shape {}, got {}. Regenerate it with a spin-orbital "
+                "Hartree-Fock FLEX run.".format(
+                    sigma_path, want,
+                    None if st is None else "{} {}".format(st.dtype, st.shape)))
+    return np.ascontiguousarray(st[0, 0])
+
+
+def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
+                  so_run=None):
     """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
     ``[mode] enable_spin_orbital = true``) for ``chi0q_mode = "flex"``.
 
@@ -8025,7 +8248,7 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
     (:func:`_so_flex_full_axis`), and requires the Green function on the
     configured Nmat; the tag checks are the same.
 
-    Returns ``(chi, green_kw, chi0, chi_path)``:
+    Returns ``(chi, green_kw, chi0, chi_path, borrowed)``:
 
     * ``chi`` ``(nvol, nd^2, nd^2)``: the stored ``chiq`` -- the single
       antisymmetrized spinful channel ``[1 + chi0 Gamma]^-1 chi0`` in the
@@ -8038,7 +8261,14 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
       ``chiq`` carries no fingerprint of the vertex it was resummed with, so
       without it interaction files that differ from the FLEX run's would give
       silently wrong eigenvalues;
-    * ``chi_path``: the chiq archive read.
+    * ``chi_path``: the chiq archive read;
+    * ``borrowed`` (:class:`_SOFlexBorrowed`), or None without ``so_run``.
+
+    With ``so_run`` (:class:`_SORun`, #88) the chiq archive's version-1
+    provenance is checked against this run (:func:`_so_check_archive`, exact
+    nmat) after its tag checks and before any array is read, and again with
+    the digest of the loaded Green function; the sigma archive of the same
+    run is then read (:func:`_load_flex_so_sigma`).
 
     The archive is identified by its TAGS, never by its shape (a one-orbital
     spin-orbital file has nd = 2, the shape of a two-orbital non-spin-orbital
@@ -8069,7 +8299,8 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
         "Nmat", _DEFAULT_NMAT)
     hint = ("[mode] enable_spin_orbital = true with chi0q_mode = \"flex\" reads "
             "the outputs of a spin-orbital FLEX run (calc_scheme = \"general\", "
-            "[mode] enable_spin_orbital = true, [file.output] chiq and green)")
+            "[mode] enable_spin_orbital = true, [file.output] chiq, chi0q, green "
+            "and sigma)")
 
     if not os.path.exists(chi_path):
         raise ValueError(
@@ -8139,6 +8370,9 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
             _require_so_chi0q_marker(
                 d0, chi0_path, producer="FLEX",
                 hint="{}; and its chi0q ([file.output] chi0q).".format(hint))
+        so_info = None
+        if so_run is not None:
+            so_info = _so_check_archive(data, chi_path, so_run, "exact")
         chiq = data["chiq"]
         if chiq.ndim >= 2 and chiq.shape[1] == nvol:
             validate_momentum_convention(data, chi_path, chiq, 1, (Nx, Ny, Nz))
@@ -8187,7 +8421,19 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False):
         else:
             chi0 = _so_flex_static_slice(d0, d0["chi0q"], chi0_path, nd, nvol,
                                          config_nmat, "chi0q")
-    return chi, green_kw, chi0, chi_path
+    borrowed = None
+    if so_run is not None:
+        consumed_fp = sigma_static = None
+        if not so_info.legacy:
+            from hwave.solver import fingerprint
+            consumed_fp = fingerprint.green_digest(green_kw, "sc_o_o_xyz_f")
+            with np.load(chi_path) as data:
+                so_info = _so_check_archive(data, chi_path, so_run, "exact",
+                                            green_fp=consumed_fp)
+            sigma_static = _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run,
+                                               consumed_fp, green_path, hint)
+        borrowed = _SOFlexBorrowed(so_info, consumed_fp, sigma_static)
+    return chi, green_kw, chi0, chi_path, borrowed
 
 
 def _so_flex_backward_error(gam, chi, chi0):
@@ -8609,6 +8855,9 @@ def calc_eliashberg(input_dict):
         so_extern_table, _so_extern_file = _read_so_extern(input_dict, norb_phys)
         logger.info("enable_spin_orbital: %d physical orbitals, nd = %d "
                     "spin-orbitals (spin-block order)", norb_phys, norb)
+        # this run's band and state, for the archive checks (#88)
+        so_run = _so_run_inputs(input_dict, hr, so_extern_table, norb_phys,
+                                beta, nmat, n_filling)
 
     if use_bond_channels:
         # Every guard raises before any susceptibility/Green data is built, so
@@ -8751,10 +9000,14 @@ def calc_eliashberg(input_dict):
             # the stored chi and G of a spin-orbital FLEX run (tags checked
             # before any heavy work); Gamma from the interaction files, checked
             # against the run's through its (required) chi0q archive
-            chi_so, green_kw, chi0_so, chi_path = _load_flex_so(
-                input_dict, norb, Nx, Ny, Nz, interactions=interactions)
+            chi_so, green_kw, chi0_so, chi_path, so_borrowed = _load_flex_so(
+                input_dict, norb, Nx, Ny, Nz, interactions=interactions,
+                so_run=so_run)
             logger.info("Using the spin-orbital FLEX chiq and dressed Green's "
                         "function")
+            so_members = _so_flex_writer_members(
+                "sc_so_static", _SO_STATIC_LABEL, so_run, so_borrowed, green_kw,
+                epsilon_k, beta)
             gam = _so_rpa_vertex(input_dict)
             _check_so_flex_vertex(gam, chi_so, chi0_so, chi_path)
             del chi0_so
@@ -8768,8 +9021,12 @@ def calc_eliashberg(input_dict):
                                                  static_only=True)
                 static_index = 0
             else:
+                from hwave.solver.fingerprint import SOArchiveError
                 try:
-                    chi0q_raw, static_index = _load_chi0q(input_dict, norb=norb)
+                    chi0q_raw, static_index, _so_info = _load_chi0q(
+                        input_dict, norb=norb, so_run=so_run)
+                except SOArchiveError:
+                    raise       # a provenance refusal is not a layout error
                 except ValueError as err:
                     raise ValueError(
                         "{} ([mode] enable_spin_orbital = true with chi0q_mode = "
@@ -8784,6 +9041,12 @@ def calc_eliashberg(input_dict):
             logger.info("Calculating Green's function G(k, iwn) (spin-orbital)...")
             green_kw = _build_bond_green(
                 eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None).full_sc
+            # the kernel's own G and state (in load mode only chi0 is borrowed)
+            from hwave.solver import fingerprint
+            so_members = _so_writer_members(
+                "sc_so_static", _SO_STATIC_LABEL, so_run,
+                fingerprint.green_digest(green_kw, "sc_o_o_xyz_f"),
+                _so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
             logger.info("Computing the spin-orbital pairing vertex...")
             Vs_q = _so_static_vertex(input_dict, chi0q_raw, norb_phys,
                                      Nx, Ny, Nz, static_index)
@@ -9297,7 +9560,7 @@ def calc_eliashberg(input_dict):
             output_dir, gap_file, norb_phys, sigma_result, eigenvalues_eig,
             eigenvectors_eig,
             eigenvalue_match, kx_array, ky_array, kz_array,
-            sz_residual=so_sz_residual)
+            sz_residual=so_sz_residual, provenance_members=so_members)
         bond_provenance, so_weights, so_gap_comments = so_out
 
     _save_results(

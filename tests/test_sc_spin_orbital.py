@@ -1372,7 +1372,7 @@ class TestTransferUnderSOC(_TmpDir):
 def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
               cell=None, T=0.25):
     """A FLEX run of the model in ``d`` through the public entry, writing
-    ``chiq``, ``chi0q`` and ``green`` into ``d/out``."""
+    ``chiq``, ``chi0q``, ``green`` and ``sigma`` into ``d/out``."""
     from hwave import qlms
     inp = _input(d, files, so, {}, T=T, nmat=nmat, out=out,
                  **({"CellShape": list(cell)} if cell else {}))
@@ -1382,8 +1382,9 @@ def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
         "IterationMax": 200, "Mix": 0.5, "EPS": 10, "mixing_scheme": "linear",
         "flex_hartree_fock": scheme == "general"})
     inp["file"]["input"]["path_to_input"] = d
+    # sigma: hwave_sc records the closure density of the borrowed G (#88)
     inp["file"]["output"].update({"chiq": "chiq", "green": "green",
-                                  "chi0q": "chi0q"})
+                                  "chi0q": "chi0q", "sigma": "sigma"})
     del inp["eliashberg"]
     inp["log"] = {"print_level": 0}
     with _quiet():
@@ -1512,8 +1513,9 @@ class TestFlexMode(unittest.TestCase):
         ``freq_index`` / ``nmat``, not the centre of the stored axis: chiq and
         chi0q restricted to the original indices 14..21 of nmat = 32 (zero
         frequency, original index 16, at position 2; the centre, position 4,
-        is a finite frequency) give the eigenvalues of the full archives --
-        also when the configured Nmat (64) differs from the file's nmat."""
+        is a finite frequency) give the eigenvalues of the full archives. A
+        configured Nmat (64) other than the FLEX run's is refused: a borrowed
+        Green function is reused only at its own state point (#88)."""
         bad = os.path.join(self.d, "flex_off_centre")
         self.addCleanup(shutil.rmtree, bad, True)
         shutil.copytree(self.flex, bad)
@@ -1530,12 +1532,12 @@ class TestFlexMode(unittest.TestCase):
                                1e-3 * np.abs(arr[16]).max())
         ref = _run(_flex_input(self.d, self.files, self.flex,
                                out=self._out("out_full")))
-        for nmat in (32, 64):
-            with self.subTest(config_nmat=nmat):
-                got = _run(_flex_input(self.d, self.files, bad, Nmat=nmat,
-                                       out=self._out("out_off_%d" % nmat)))
-                np.testing.assert_allclose(got["evs"], ref["evs"], rtol=1e-12,
-                                           atol=0)
+        got = _run(_flex_input(self.d, self.files, bad, Nmat=32,
+                               out=self._out("out_off_32")))
+        np.testing.assert_allclose(got["evs"], ref["evs"], rtol=1e-12, atol=0)
+        self._refused(r"state differs: nmat 32 \(file\) vs 64 \(run\)",
+                      _flex_input(self.d, self.files, bad, Nmat=64,
+                                  out=self._out("out_off_64")))
 
     def test_su2_limit_against_non_so_flex(self):
         """Independent oracle at the FLEX level: soc = 0 spin-orbital FLEX
@@ -1653,18 +1655,19 @@ class TestFlexMode(unittest.TestCase):
                                       out=self._out("out_no_chi0q")))
 
     def test_file_keys_are_case_insensitive(self):
-        """``flex_chiq`` / ``flex_chi0q`` / ``flex_green`` under mixed-case
-        keys select renamed copies; the result equals the default names'."""
+        """``flex_chiq`` / ``flex_chi0q`` / ``flex_green`` / ``flex_sigma``
+        under mixed-case keys select renamed copies; the result equals the
+        default names'."""
         ren = os.path.join(self.d, "flex_renamed")
         self.addCleanup(shutil.rmtree, ren, True)
         os.makedirs(ren)
         for src, dst in (("chiq.npz", "renamed.npz"), ("chi0q.npz", "bare.npz"),
-                         ("green.npz", "g2.npz")):
+                         ("green.npz", "g2.npz"), ("sigma.npz", "s2.npz")):
             shutil.copy(os.path.join(self.flex, src), os.path.join(ren, dst))
         ref = _run(_flex_input(self.d, self.files, self.flex,
                                out=self._out("out_default")))
         keys = {"Flex_ChiQ": "renamed.npz", "Flex_Chi0Q": "bare.npz",
-                "FLEX_GREEN": "g2.npz"}
+                "FLEX_GREEN": "g2.npz", "Flex_Sigma": "s2.npz"}
         with self.subTest(keys=keys):
             got = _run(_flex_input(self.d, self.files, ren, keys,
                                    out=self._out("out_renamed")))

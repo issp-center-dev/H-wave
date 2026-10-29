@@ -513,5 +513,533 @@ class TestProducersWrite(_Dir):
                                 np.testing.assert_allclose(a, b, rtol=0, atol=1e-12 * scale)
 
 
+# ------------------------------------------------- consumers (hwave_sc, #88)
+_SC_ELI = {"solver_mode": "eigenvalue", "num_eigenvalues": 2}
+
+
+def _soc_input(d, extern=False):
+    """The 0-E1 spin-mixing fixture (complex SOC 0.35+0.15i, one physical
+    orbital) for the hwave_sc consumers; ``extern = False`` drops the Extern
+    key (the Transfer file is the same either way)."""
+    inp = _so_input(d)
+    if not extern:
+        inp["inter"] = {k: v for k, v in inp["inter"].items() if k.lower() != "extern"}
+    return inp
+
+
+def _zeeman_only_input(d):
+    """The 0-E2 fixture (two orbitals, Extern Zeeman field, no SOC): the RPA
+    reduces it to the spin-diagonal form."""
+    inter = Z._so_2orb_fixture(d, "extern")
+    return {"dir": d, "inter": inter, "param": dict(Z._E2_PARAM),
+            "cell": (4, 4, 1), "sub_shape": (1, 1, 1)}
+
+
+def _with(param, over):
+    """``param`` with the overrides ``coeff_extern``, ``mu`` (drops
+    ``filling``), ``nmat``, ``T`` and ``filling``."""
+    param = dict(param)
+    for k, v in over.items():
+        if k == "mu":
+            param.pop("filling", None)
+            param["mu"] = v
+        elif k == "nmat":
+            param["Nmat"] = v
+        else:
+            param[k] = v
+    return param
+
+
+def _rpa_for_sc(inp, **over):
+    """The spin-orbital RPA of ``inp`` (with the parameter overrides);
+    returns ``{"dir": its output directory, "path": its chi0q.npz}``."""
+    _run(dict(inp, param=_with(inp["param"], over)), "RPA",
+         {"chi0q": "chi0q.npz", "chiq": "chiq.npz"}, _RPA_EXTRA)
+    out = os.path.join(inp["dir"], "output_RPA")
+    return {"dir": out, "path": os.path.join(out, "chi0q.npz")}
+
+
+def _flex_for_sc(inp, **over):
+    """The spin-orbital Hartree-Fock FLEX of ``inp`` (3 maps), writing chiq,
+    green, sigma and chi0q; returns the output directory and the paths."""
+    param = _with(dict(Z._F1_PARAM, IterationMax=3, coeff_extern=1.0,
+                       CellShape=list(inp["cell"])), over)
+    _run(dict(inp, param=param), "FLEX",
+         {"chiq": "chiq.npz", "green": "green.npz", "sigma": "sigma.npz",
+          "chi0q": "chi0q.npz"}, {"calc_scheme": "general"})
+    out = os.path.join(inp["dir"], "output_FLEX")
+    return {"dir": out, **{k: os.path.join(out, k + ".npz")
+                           for k in ("chiq", "green", "sigma", "chi0q")}}
+
+
+def _resave(path, drop=(), **replace):
+    with np.load(path) as z:
+        items = {k: np.array(z[k]) for k in z.files if k not in drop}
+    items.update(replace)
+    np.savez(path, **items)
+
+
+def _drop_member(path, k):
+    _resave(path, drop=(k,))
+
+
+def _set_member(path, k, v):
+    _resave(path, **{k: v})
+
+
+def _strip_fingerprint_members(path):
+    """An archive as written before version 1: no provenance member (the
+    spin_orbital marker stays)."""
+    _resave(path, drop=fp.SO_PROVENANCE_MEMBERS)
+
+
+def _overwrite_green_entry(green_path, value):
+    with np.load(green_path) as z:
+        g = np.array(z["green"])
+    g[0, 0, 0, 0, 0] += value
+    _set_member(green_path, "green", g)
+
+
+def _edit_w90(path, R, ab, dv):
+    """Add ``dv`` to the row ``(R, a, b)`` (0-based orbitals) of a W90 file
+    (appended when absent)."""
+    dim, _nr, _deg, rows = Z._read_w90_rows(path)
+    key = tuple(R) + (ab[0] + 1, ab[1] + 1)
+    for i, r in enumerate(rows):
+        if r[:5] == key:
+            rows[i] = r[:5] + (r[5] + dv, r[6])
+            break
+    else:
+        rows.append(key + (dv, 0.0))
+    Z._write_w90_file(path, dim, rows)
+
+
+class _ScOut:
+    def __init__(self, npz, kernel_green):
+        self.npz = npz
+        self.kernel_green = kernel_green
+
+
+def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
+        extern_edit=None, quiet=True, **over):
+    """A spin-orbital hwave_sc run on ``inp`` (parameter overrides
+    ``over``) in ``chi0q_mode = mode`` reading the archives of ``src`` (the
+    output directory of :func:`_rpa_for_sc` / :func:`_flex_for_sc`; default:
+    that of ``inp``). ``transfer_edit`` / ``extern_edit`` ``(R, (a, b), dv)``
+    change the run's input files first. Returns the gap archive and the G
+    the pair bubble was built from."""
+    import hwave.sc as sc
+    d = inp["dir"]
+    if transfer_edit is not None:
+        _edit_w90(os.path.join(d, inp["inter"]["Transfer"]), *transfer_edit)
+    if extern_edit is not None:
+        _edit_w90(os.path.join(d, inp["inter"]["Extern"]), *extern_edit)
+    if src is None:
+        src = os.path.join(d, "output_RPA" if mode == "load" else "output_FLEX")
+    out = src if mode == "load" else os.path.join(d, "output_sc_" + mode)
+    eli = dict(_SC_ELI, chi0q_mode=mode)
+    if frequency == "dynamic":
+        eli.update(frequency="dynamic", spectral_shift="auto")
+    run_inp = {
+        "mode": {"mode": "RPA", "enable_spin_orbital": True,
+                 "param": _with(inp["param"], over)},
+        "file": {"input": {"path_to_input": "", "path_to_flex_output": src,
+                           "interaction": dict(inp["inter"], path_to_input=d)},
+                 "output": {"path_to_output": out, "chi0q": "chi0q"}},
+        "eliashberg": eli}
+    seen = {}
+    real_g2 = sc._calc_g2
+
+    def spy_g2(green, *a, **kw):
+        seen["green"] = np.array(green, copy=True)
+        return real_g2(green, *a, **kw)
+
+    import hwave.solver.eliashberg_dynamic_so as dso
+    real_g2d = dso.calc_g2_dynamic
+
+    def spy_g2d(green, *a, **kw):
+        seen["green"] = np.array(green, copy=True)
+        return real_g2d(green, *a, **kw)
+
+    ctx = _quiet() if quiet else Z._quiet_info()
+    with ctx, mock.patch.object(sc, "_calc_g2", side_effect=spy_g2), \
+            mock.patch.object(dso, "calc_g2_dynamic", side_effect=spy_g2d):
+        sc.calc_eliashberg(run_inp)
+    name = "gap.npz" if frequency == "static" else "gap_dynamic.npz"
+    with np.load(os.path.join(out, name)) as z:
+        npz = {k: np.array(z[k]) for k in z.files}
+    return _ScOut(npz, seen.get("green"))
+
+
+def _write_members(d, members):
+    path = os.path.join(tempfile.mkdtemp(dir=d), "a.npz")
+    np.savez(path, **members)
+    return path
+
+
+def _write_raw(d, lines):
+    path = os.path.join(tempfile.mkdtemp(dir=d), "raw.dat")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return path
+
+
+class TestConsumerChecks(_Dir):
+    """``fingerprint.check_so_archive`` through the hwave_sc consumers: the
+    structural, band, state and green refusals, the legacy policy and the
+    exact state-point rule."""
+
+    def setUp(self):
+        super().setUp()
+        self.inp_soc = _soc_input(self.new_dir())
+        self.inp_soc_extern = _soc_input(self.new_dir(), extern=True)
+        self.inp_zeeman_only = _zeeman_only_input(self.new_dir())
+        T, E, meta = _tables_and_meta_from_input(self.inp_soc_extern)
+        self.band = fp.band_inputs(T, E, meta)
+        self.kw = dict(producer_stage="rpa_so", producer_label="test producer",
+                       transfer=T, extern=E, meta=meta, fp_green="0" * 64,
+                       state=fp.SOState(10.0, 64, 0.1, 2.0, True, 2.0, 0.0))
+        nan = float("nan")
+        self.run_state = fp.SOState(10.0, 64, nan, nan, True, 2.0, nan)
+
+    def test_field_sweep_cannot_borrow(self):
+        _rpa_for_sc(self.inp_soc, coeff_extern=0.0)
+        with self.assertRaisesRegex(ValueError, r"coeff_extern: file 0\.0, run 0\.1.*"
+                                                r"identical state point"):
+            _sc("load", self.inp_soc, coeff_extern=0.1)
+
+    def test_state_message_lists_all_fields(self):
+        _flex_for_sc(self.inp_soc, filling=0.5, T=0.1)
+        with self.assertRaisesRegex(ValueError, r"state differs: .*density .* \(file\) "
+                                                r"vs target .*; beta "):
+            _sc("flex", self.inp_soc, filling=0.4, T=0.2)
+
+    def test_beta_mismatch(self):
+        _flex_for_sc(self.inp_soc, T=0.1)
+        with self.assertRaisesRegex(ValueError, r"state differs: beta"):
+            _sc("flex", self.inp_soc, T=0.1 * (1 + 1e-9))
+
+    def test_green_digest_mismatch(self):
+        out = _flex_for_sc(self.inp_soc)
+        _overwrite_green_entry(out["green"], value=1e-3)
+        with self.assertRaisesRegex(ValueError, r"fp_green mismatch"):
+            _sc("flex", self.inp_soc)
+
+    def test_unversioned_archive_rules(self):
+        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc)["path"])
+        with self.assertLogs("qlms", "WARNING") as cm:
+            _sc("load", self.inp_soc, quiet=False)
+        self.assertTrue(any("has no fingerprint_version" in m for m in cm.output))
+        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc_extern)["path"])
+        with self.assertRaisesRegex(ValueError, r"has an Extern field.*Regenerate"):
+            _sc("load", self.inp_soc_extern)
+
+    def test_missing_member_and_bad_stage_and_dup_field(self):
+        for mutate, rx in ((lambda p: _drop_member(p, "fp_band"),
+                            r"malformed or truncated: member fp_band is missing"),
+                           (lambda p: _set_member(p, "producer_stage", "rpa"),
+                            r"malformed.*producer_stage"),
+                           (lambda p: _set_member(p, "state_beta", 1.0), r"beta")):
+            with self.subTest(rx=rx):
+                mutate(_rpa_for_sc(self.inp_soc)["path"])
+                with self.assertRaisesRegex(ValueError, rx):
+                    _sc("load", self.inp_soc)
+
+    def test_duplicated_nmat_refused(self):
+        p = _rpa_for_sc(self.inp_soc)["path"]
+        with np.load(p) as z:
+            self.assertIn("nmat", z.files)                       # anti-vacuity
+        _set_member(p, "state_nmat", np.int64(17))
+        with self.assertRaisesRegex(ValueError, r"malformed.*nmat differs from state_nmat"):
+            _sc("load", self.inp_soc)
+
+    def test_transfer_row_diff(self):
+        _rpa_for_sc(self.inp_soc)
+        with self.assertRaisesRegex(ValueError, r"Transfer: file \d+ rows, run \d+ rows; "
+                                                r"first differing row \(R=\(1, 0, 0\), "
+                                                r"a=1, b=2\)"):
+            _sc("load", self.inp_soc, transfer_edit=((1, 0, 0), (0, 1), 0.01))
+
+    def test_extern_presence_and_row_diff(self):
+        src = _rpa_for_sc(self.inp_soc)["dir"]
+        with self.assertRaisesRegex(ValueError, r"Extern: file absent, run present"):
+            _sc("load", self.inp_soc_extern, src=src)
+        _rpa_for_sc(self.inp_soc_extern)
+        with self.assertRaisesRegex(ValueError, r"Extern: .*first differing row "
+                                                r"\(R=\(0, 0, 0\), a=1, b=1\)"):
+            _sc("load", self.inp_soc_extern, extern_edit=((0, 0, 0), (0, 0), 0.2))
+
+    def test_tampered_provenance_and_inflated_tolerance_refused(self):
+        for mutate, rx in ((lambda p: _set_member(p, "prov_coeff_extern", 0.5),
+                            r"malformed.*fp_meta"),
+                           (lambda p: _set_member(p, "state_mu_tol", 1.0),
+                            r"malformed.*state_mu_tol")):
+            with self.subTest(rx=rx):
+                mutate(_rpa_for_sc(self.inp_soc)["path"])
+                with self.assertRaisesRegex(ValueError, rx):
+                    _sc("load", self.inp_soc)
+
+    def test_tagged_union_round_trip(self):
+        for calc_mu, state in ((True, fp.SOState(10.0, 64, 0.1, 2.0 + 1e-11, True, 2.0, 1e-11)),
+                               (False, fp.SOState(10.0, 64, 0.1, 1.97, False, 0.1, 0.0))):
+            with self.subTest(calc_mu=calc_mu):
+                path = _write_members(self.d, fp.so_provenance_members(
+                    **dict(self.kw, state=state)))
+                run = self.run_state._replace(
+                    calc_mu=calc_mu, target=state.target,
+                    mu=state.mu if not calc_mu else float("nan"))
+                info = fp.check_so_archive(np.load(path), path, run_band=self.band,
+                                           run_state=run, run_has_extern=False,
+                                           nmat_rule="exact")
+                self.assertFalse(info.legacy)
+                self.assertEqual(info.producer_state.calc_mu, calc_mu)
+                self.assertEqual(info.producer_state, state)
+                self.assertEqual(info.producer_label, "test producer")
+                # a fixed mu that differs is refused, in energy units
+                if not calc_mu:
+                    with self.assertRaisesRegex(ValueError, r"fixed mu 0\.1 \(file\) "
+                                                            r"vs 0\.2 \(run\)"):
+                        fp.check_so_archive(np.load(path), path, run_band=self.band,
+                                            run_state=run._replace(mu=0.2),
+                                            run_has_extern=False, nmat_rule="exact")
+
+    def test_nmat_rule(self):
+        path = _write_members(self.d, fp.so_provenance_members(**self.kw))
+        run = self.run_state._replace(nmat=128)
+        with self.assertRaisesRegex(ValueError, r"nmat 64 \(file\) vs 128 \(run\)"):
+            fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
+                                run_has_extern=False, nmat_rule="exact")
+        fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
+                            run_has_extern=False, nmat_rule="load")
+        with self.assertRaisesRegex(ValueError, r"nmat_rule"):
+            fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
+                                run_has_extern=False, nmat_rule="loose")
+
+    def test_legacy_checked_first_and_unknown_label(self):
+        """No fingerprint_version: the legacy policy, even with other members
+        missing or broken; a malformed versioned archive without a readable
+        label names <unknown producer>."""
+        path = _write_members(self.d, {"spin_orbital": np.bool_(True),
+                                       "state_beta": np.str_("broken")})
+        with self.assertLogs("qlms", "WARNING"):
+            info = fp.check_so_archive(np.load(path), path, run_band=self.band,
+                                       run_state=self.run_state, run_has_extern=False,
+                                       nmat_rule="exact")
+        self.assertEqual(info, fp.SOArchiveInfo(None, None, None, legacy=True))
+        m = fp.so_provenance_members(**self.kw)
+        m.pop("producer_label")
+        path = _write_members(self.d, m)
+        with self.assertRaisesRegex(ValueError, r"Regenerate it with <unknown producer>\."):
+            fp.check_so_archive(np.load(path), path, run_band=self.band,
+                                run_state=self.run_state, run_has_extern=False,
+                                nmat_rule="exact")
+
+    def test_green_verified_or_asserted(self):
+        g = np.zeros((1, 4, 4, 2, 2), dtype=complex)
+        g[0, :, :, 0, 0] = 1.0
+        m = fp.so_provenance_members(**dict(self.kw, fp_green=fp.green_digest(
+            g, "b_f_k_o_o_v1")))
+        path = _write_members(self.d, m)
+        call = lambda **kw: fp.check_so_archive(
+            np.load(path), path, run_band=self.band, run_state=self.run_state,
+            run_has_extern=False, nmat_rule="exact", **kw)
+        call(green=g, green_layout="b_f_k_o_o_v1")
+        with self.assertLogs("qlms", "INFO") as cm:
+            call()
+        self.assertTrue(any("fp_green: producer assertion" in r for r in cm.output))
+        g2 = g.copy()
+        g2[0, 1, 2, 1, 0] = 1e-12
+        with self.assertRaisesRegex(ValueError, r"fp_green mismatch"):
+            call(green=g2, green_layout="b_f_k_o_o_v1")
+
+    def test_fixed_mu_archive_refused_by_hwave_sc(self):
+        _rpa_for_sc(self.inp_soc, mu=0.1)
+        with self.assertRaisesRegex(ValueError, r"calc_mu: file False, run True"):
+            _sc("load", self.inp_soc)
+
+    def test_residual_cap_boundary(self):
+        t = 2.0
+        cap = 1e-8 * max(1.0, t)
+        for r, ok in ((0.999 * cap, True), (1.001 * cap, False)):
+            with self.subTest(r=r):
+                path = _write_members(self.d, fp.so_provenance_members(
+                    **dict(self.kw, state=fp.so_state(beta=10.0, nmat=64, mu=0.1,
+                                                      density=t + r, calc_mu=True,
+                                                      target=t))))
+                call = lambda: fp.check_so_archive(
+                    np.load(path), path, run_band=self.band, run_state=self.run_state,
+                    run_has_extern=False, nmat_rule="exact")
+                if ok:
+                    call()
+                else:
+                    with self.assertRaisesRegex(ValueError, r"did not reach its filling"):
+                        call()
+
+    def test_non_finite_member_refused_at_write(self):
+        with self.assertRaisesRegex(ValueError, r"state_density"):
+            fp.so_provenance_members(**dict(self.kw, state=self.kw["state"]._replace(
+                density=float("nan"))))
+
+    def test_header_dim_bad_line(self):
+        for bad in ("", "x", "0"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(
+                    ValueError, r"line 2 must be the number of orbitals"):
+                wan90.read_w90_header_dim(_write_raw(self.d, ["comment", bad, "1", "1",
+                                                               "0 0 0 1 1 0.1 0.0"]))
+
+    def test_sigma_green_binding(self):
+        out = _flex_for_sc(self.inp_soc)
+        _set_member(out["sigma"], "fp_green", "0" * 64)
+        with self.assertRaisesRegex(ValueError,
+                                    r"sigma\.npz and green\.npz come from different runs"):
+            _sc("flex", self.inp_soc)
+
+    def test_missing_sigma_refused(self):
+        out = _flex_for_sc(self.inp_soc)
+        os.remove(out["sigma"])
+        with self.assertRaisesRegex(ValueError, r"self-energy archive .* not found"):
+            _sc("flex", self.inp_soc)
+
+    def test_load_mode_keeps_existing_nmat_rule(self):
+        _rpa_for_sc(self.inp_soc, nmat=64)
+        out = _sc("load", self.inp_soc, nmat=128)
+        self.assertEqual(int(out.npz["state_nmat"]), 128)        # its own G, not the RPA's
+
+    def test_zeeman_only_rpa_load_refused(self):                     # documented limitation, pin
+        _rpa_for_sc(self.inp_zeeman_only)
+        with self.assertRaisesRegex(ValueError, r"spin-diag|layout"):
+            _sc("load", self.inp_zeeman_only)
+
+
+class TestScWriters(_Dir):
+    """The hwave_sc gap archives record this run's band and the Green
+    function and state its kernel used."""
+
+    def setUp(self):
+        super().setUp()
+        self.inp_soc = _soc_input(self.new_dir())
+
+    def _common(self, npz, stage):
+        self.assertEqual(int(npz["fingerprint_version"]), 1)
+        self.assertEqual(str(npz["producer_stage"]), stage)
+        T, E, meta = _tables_and_meta_from_input(self.inp_soc)
+        self.assertEqual(str(npz["fp_band"]), fp.band_digests(T, None, meta)["fp_band"])
+        self.assertTrue(bool(npz["state_calc_mu"]))
+        self.assertAlmostEqual(float(npz["state_target"]),
+                               self.inp_soc["param"]["filling"] * 2, delta=1e-15)
+        self.assertEqual(float(npz["state_beta"]), 1.0 / self.inp_soc["param"]["T"])
+        for k, (kind, ndim) in _SCHEMA.items():
+            self.assertEqual((npz[k].dtype.kind, npz[k].ndim), (kind, ndim), k)
+
+    def test_calc_mode_own_state(self):
+        out = _sc("calc", self.inp_soc)
+        self._common(out.npz, "sc_so_static")
+        self.assertEqual(str(out.npz["fp_green"]),
+                         fp.green_digest(out.kernel_green, "sc_o_o_xyz_f"))
+        self.assertLessEqual(abs(float(out.npz["state_density"])
+                                 - float(out.npz["state_target"])), 1e-10)
+
+    def test_load_records_own_green_and_state(self):
+        _rpa_for_sc(self.inp_soc)
+        out = _sc("load", self.inp_soc)
+        self._common(out.npz, "sc_so_static")
+        self.assertEqual(str(out.npz["fp_green"]),
+                         fp.green_digest(out.kernel_green, "sc_o_o_xyz_f"))
+        self.assertLessEqual(abs(float(out.npz["state_density"])
+                                 - float(out.npz["state_target"])), 1e-10)
+        self.assertAlmostEqual(float(out.npz["state_mu_tol"]),
+                               abs(float(out.npz["state_density"])
+                                   - float(out.npz["state_target"])), delta=1e-15)
+
+    def test_flex_records_borrowed_green_and_used_mu(self):
+        src = {}
+        with np.load(_flex_for_sc(self.inp_soc)["green"]) as z:
+            src = {k: np.array(z[k]) for k in z.files}
+        out = _sc("flex", self.inp_soc)
+        self._common(out.npz, "sc_so_static")
+        self.assertEqual(str(out.npz["fp_green"]), fp.green_digest(src["green"], "b_f_k_o_o_v1"))
+        self.assertEqual(str(out.npz["fp_green"]),
+                         fp.green_digest(out.kernel_green, "sc_o_o_xyz_f"))
+        self.assertEqual(float(out.npz["state_mu"]), float(src["state_mu"]))
+        self.assertAlmostEqual(float(out.npz["state_density"]), float(src["state_density"]),
+                               delta=1e-12 * max(1.0, abs(float(src["state_density"]))))
+        self.assertAlmostEqual(float(out.npz["state_mu_tol"]),
+                               abs(float(out.npz["state_density"])
+                                   - float(out.npz["state_target"])), delta=1e-15)
+
+    def test_flex_density_is_measured_on_the_consumed_green(self):
+        """The closure density is FLEX's own routine applied to the G the
+        kernel consumed, at the archive mu, with the stored static sigma."""
+        from hwave.solver import hartree_fock as hf
+        out = _flex_for_sc(self.inp_soc)
+        with np.load(out["sigma"]) as z:
+            sig = np.array(z["sigma_static"])[0, 0]
+        with np.load(out["green"]) as z:
+            g, mu = np.array(z["green"]), float(z["state_mu"])
+        calls = []
+        real = hf.equal_time_density
+
+        def spy(green_kw, heff, mu_, beta, shape, **kw):
+            calls.append((np.array(green_kw), mu_, kw))
+            return real(green_kw, heff, mu_, beta, shape, **kw)
+
+        heffs = []
+        real_heff = hf.heff_eigenpairs
+
+        def spy_heff(H0, s, *a, **kw):
+            heffs.append(np.array(s))
+            return real_heff(H0, s, *a, **kw)
+
+        with mock.patch.object(hf, "equal_time_density", side_effect=spy), \
+                mock.patch.object(hf, "heff_eigenpairs", side_effect=spy_heff):
+            _sc("flex", self.inp_soc)
+        self.assertEqual(len(calls), 1)
+        np.testing.assert_array_equal(calls[0][0], g)
+        self.assertEqual(calls[0][1], mu)
+        self.assertEqual(calls[0][2], {"sym_tol": None})
+        np.testing.assert_array_equal(heffs[0], sig)
+
+    def test_dynamic_writers(self):
+        for mode in ("calc", "flex"):
+            with self.subTest(mode=mode):
+                if mode == "flex":
+                    with np.load(_flex_for_sc(self.inp_soc)["green"]) as z:
+                        src_fp, src_mu = str(z["fp_green"]), float(z["state_mu"])
+                out = _sc(mode, self.inp_soc, frequency="dynamic")
+                self._common(out.npz, "sc_so_dynamic")
+                self.assertEqual(str(out.npz["fp_green"]),
+                                 fp.green_digest(out.kernel_green, "sc_o_o_xyz_f"))
+                if mode == "flex":
+                    self.assertEqual(str(out.npz["fp_green"]), src_fp)
+                    self.assertEqual(float(out.npz["state_mu"]), src_mu)
+                else:
+                    self.assertLessEqual(abs(float(out.npz["state_density"])
+                                             - float(out.npz["state_target"])), 1e-10)
+
+    def test_eigenvalue_dat_carries_the_scalars(self):
+        out = _sc("calc", self.inp_soc)
+        path = os.path.join(self.inp_soc["dir"], "output_sc_calc", "eigenvalue.dat")
+        with open(path) as f:
+            text = f.read()
+        self.assertIn("# producer_stage = sc_so_static", text)
+        self.assertIn("# fp_green = {}".format(str(out.npz["fp_green"])), text)
+        self.assertIn("# state_calc_mu = true", text)
+        self.assertNotIn("prov_transfer_keys", text)
+
+    def test_legacy_input_gives_truthful_outputs(self):
+        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc)["path"])
+        out = _sc("load", self.inp_soc).npz
+        self.assertEqual(int(out["fingerprint_version"]), 1)
+        self.assertTrue(np.isfinite(float(out["state_density"])))
+
+    def test_legacy_flex_writes_no_provenance(self):
+        out = _flex_for_sc(self.inp_soc)
+        for k in ("chiq", "green", "sigma", "chi0q"):
+            _strip_fingerprint_members(out[k])
+        npz = _sc("flex", self.inp_soc).npz
+        self.assertFalse(set(fp.SO_PROVENANCE_MEMBERS) & set(npz))
+        self.assertTrue(bool(npz["spin_orbital"]))
+
+
 if __name__ == "__main__":
     unittest.main()
