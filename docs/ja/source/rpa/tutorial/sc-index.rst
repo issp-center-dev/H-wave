@@ -149,7 +149,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   :math:`\chi_0(\mathbf{q})`\ を読み込みます。
   ``"calc"``\ は内部で計算します。
   ``"flex"``\ はFLEX計算の dressed 感受率を読み込みます
-  （``frequency = "dynamic"``\ に必須）。
+  （スピン軌道モード以外では\ ``frequency = "dynamic"``\ に必須。\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
   ``"calc"``\ は静的計算が使う唯一の振動数であるボソン振動数ゼロでのみ
   :math:`\chi_0(\mathbf{q})`\ を計算するため、メモリは
   :math:`O(N_\mathrm{mat} N_k\,n_d^4)`\ ではなく\ :math:`O(N_k\,n_d^4)`\ です
@@ -253,7 +253,8 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   頂点\ :math:`V(\mathbf{q}, i\omega_l)`\ とギャップ\ :math:`\phi(\mathbf{k}, i\omega_n)`
   を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
   ``chi0q_mode = "flex"``\ が必要です
-  （下記の\ :ref:`動的振動数の節 <sc_dynamic_frequency>`\ を参照）。
+  （下記の\ :ref:`動的振動数の節 <sc_dynamic_frequency>`\ を参照）。ただし
+  スピン軌道モードでは\ ``"calc"``\ も使えます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 - ``pairing_type``: ``"singlet"``\ または\ ``"triplet"``\ 。スピン軌道モードでは
   ギャップがひとつのスピン軌道行列なので指定しません（\ :ref:`sc_spin_orbital`\ を参照）。
 - ``init_gap``: 反復法の初期ギャップ対称性。
@@ -771,7 +772,7 @@ Eliashberg ステップが読み込むディレクトリへ以下を書き出す
    外部生成の感受率ファイルにのみ影響します。
 
 ``Nmat``\ は偶数で、かつ FLEX 出力と\ ``[mode.param]``\ の値とで一致していなければ
-なりません。``chi0q_mode = "flex"``\ なしで\ ``frequency = "dynamic"``\ を指定した
+なりません。スピン軌道モード以外で\ ``chi0q_mode = "flex"``\ なしで\ ``frequency = "dynamic"``\ を指定した
 場合、``Nmat``\ が奇数の場合、あるいは dressed ``green.npz``\ が無い場合、ソルバーは
 黙って別の処理へフォールバックせず、説明的なエラーで停止します。FLEX 出力
 ディレクトリは\ ``[file.input] path_to_flex_output``\ で指定でき（既定は
@@ -2152,7 +2153,7 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
        (versioned) disagree on fingerprint_version``\ （またはその逆）
      - chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
        計算から両方を作り直してください。
-     - ``[eliashberg] flex_chiq``\ 、FLEX の\ ``[file.output] chi0q``
+     - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、FLEX の\ ``[file.output] chi0q``
    * - ``fp_green mismatch``\ ／\ ``sigma.npz and green.npz come from different
        runs``
      - Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません

@@ -152,7 +152,8 @@ This section controls the Eliashberg solver. Key parameters:
   ``"eigenvalue"`` (Arnoldi eigenvalue analysis), or ``"both"``.
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
-  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``
+  outside spin-orbital mode; see :ref:`sc_spin_orbital_dynamic`).
   ``"calc"`` evaluates :math:`\chi_0(\mathbf{q})` at the zero bosonic
   frequency only, the one frequency the static solve uses, so its memory is
   :math:`O(N_k\,n_d^4)` instead of :math:`O(N_\mathrm{mat} N_k\,n_d^4)`
@@ -257,7 +258,9 @@ This section controls the Eliashberg solver. Key parameters:
   equation with a frequency-dependent pairing vertex
   :math:`V(\mathbf{q}, i\omega_l)` and gap :math:`\phi(\mathbf{k}, i\omega_n)`;
   it requires ``chi0q_mode = "flex"`` (see
-  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below).
+  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below), except
+  in spin-orbital mode, which also accepts ``"calc"`` (see
+  :ref:`sc_spin_orbital_dynamic`).
 - ``pairing_type``: ``"singlet"`` or ``"triplet"``. Not set in spin-orbital
   mode, where the gap is one spin-orbital matrix (see :ref:`sc_spin_orbital`).
 - ``init_gap``: Initial gap symmetry for iteration.
@@ -797,7 +800,7 @@ into the directory read by the Eliashberg step:
 
 ``Nmat`` must be even and must match between the FLEX output and the
 ``[mode.param]`` value. If ``frequency = "dynamic"`` is requested without
-``chi0q_mode = "flex"``, with an odd ``Nmat``, or without a dressed
+``chi0q_mode = "flex"`` (outside spin-orbital mode), with an odd ``Nmat``, or without a dressed
 ``green.npz``, the solver aborts with an explanatory error rather than falling
 back silently. The FLEX output directory can be selected with
 ``[file.input] path_to_flex_output`` (default: the ``[file.output]``
@@ -2262,7 +2265,7 @@ producer:
        (versioned) disagree on fingerprint_version`` (or the reverse)
      - The chiq and chi0q archives come from two different FLEX runs.
        Regenerate both from one FLEX run.
-     - ``[eliashberg] flex_chiq``, the FLEX ``[file.output] chi0q``
+     - ``[eliashberg] flex_chiq``, ``flex_chi0q``, the FLEX ``[file.output] chi0q``
    * - ``fp_green mismatch`` / ``sigma.npz and green.npz come from different
        runs``
      - The Green function (or the self-energy) is not the one the chiq
