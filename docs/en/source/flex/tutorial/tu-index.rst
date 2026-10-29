@@ -1486,7 +1486,7 @@ of the Extern term). Both routes below need ``enable_spin_orbital = true``,
 the Geometry ``norb`` equal to :math:`2 n_{\rm orb}`, and the Transfer file
 in the interleaved spin-orbital indices (1-based file index
 :math:`2a + s + 1`, with the physical orbital :math:`a = 0, \ldots, n_{\rm orb} - 1`
-and :math:`s = 0` for up).
+and :math:`s = 0` for up, :math:`s = 1` for down).
 
 - **Route 1: Zeeman in Transfer.** Add on-site entries for each physical
   orbital :math:`a = 0, \ldots, n_{\rm orb} - 1` (1-based file indices)::
@@ -1502,24 +1502,29 @@ and :math:`s = 0` for up).
   file; an index outside the physical range, or a header (line 2) that
   declares another orbital count, is rejected. The operator is
   :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
-  ``[mode.param] coeff_extern``; :math:`H_{aa}(0) = h` with
+  ``[mode.param] coeff_extern``, which defaults to 0.0: set it (e.g. to
+  1.0) for the Extern file to take effect. :math:`H_{aa}(0) = h` with
   ``coeff_extern = 1.0`` (file index :math:`a + 1` of the Extern file)
   equals Route 1.
 
-Side by side, for one orbital and :math:`h = 0.1`::
+Side by side, for two orbitals and :math:`h = 0.1`::
 
-   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
-   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
-   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
 
 Use one route, not both: the two fields add. For :math:`h > 0` the down
 spin is favoured, so at fixed filling ``Sz`` in ``energy.dat`` is negative.
 Each field value is its own state point: for a field sweep, rerun FLEX at
 every value.
 
-The Extern route is accepted by the spin-orbital Hartree-Fock FLEX only.
-Without ``enable_spin_orbital``, ``flex_hartree_fock = true`` still refuses
-an external field.
+With ``enable_spin_orbital = true`` the FLEX solver accepts the Extern route
+(the spin-orbital FLEX requires ``flex_hartree_fock = true``); the
+spin-orbital RPA and ``hwave_sc`` accept it too. Without
+``enable_spin_orbital``, ``flex_hartree_fock = true`` still refuses an
+external field.
 
 The output files of a run without ``enable_spin_orbital`` can also be used
 as input for the Eliashberg equation solver (``hwave_sc``) to analyze

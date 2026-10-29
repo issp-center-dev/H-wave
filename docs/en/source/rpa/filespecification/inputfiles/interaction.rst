@@ -268,4 +268,7 @@ Usage rules
    entries :math:`+h` on index :math:`2\alpha + 1` and :math:`-h` on index
    :math:`2\alpha + 2` (1-based Transfer file indices, :math:`\alpha` 0-based as above). Use one route, not both: the two fields add.
 
+   ``coeff_extern`` defaults to 0.0, so an Extern file has no effect until
+   ``[mode.param] coeff_extern`` is set (e.g. to 1.0).
+
 .. raw:: latex

@@ -1928,8 +1928,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 下向きスピンの準位を\ :math:`-h`\ だけずらします（Extern 項の\ :math:`\sigma^z`\ の符号）。
 以下のどちらの方法でも、\ ``[mode] enable_spin_orbital = true``\ 、Geometry の\ ``norb``\ を
 :math:`2N`\ とし、Transfer ファイルをインターリーブしたスピン軌道インデックス
-（1始まりのファイル上のインデックス\ :math:`2a + s + 1`\ 、上向きが\ :math:`s = 0`\ ）で
-書く必要があります。
+（1始まりのファイル上のインデックス\ :math:`2a + s + 1`\ 、上向きが\ :math:`s = 0`\ 、
+下向きが\ :math:`s = 1`\ ）で書く必要があります。
 
 - **方法 1: Transfer に Zeeman 項を書く。** 各軌道\ :math:`a`\ についてオンサイト項を
   加えます（1始まりのファイル上のインデックス）::
@@ -1945,15 +1945,18 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   宣言するヘッダ（2行目）、または不正なヘッダは、どの\ ``chi0q_mode``\ でも計算の前に
   拒否されます。演算子は
   :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`\ で、
-  ``[mode.param] coeff_extern``\ 倍されます（既定値 0）。\ ``coeff_extern = 1.0``\ で
+  ``[mode.param] coeff_extern``\ 倍されます（既定値 0.0 なので、\ ``coeff_extern``\ を
+  例えば 1.0 に設定するまで Extern ファイルは効きません）。\ ``coeff_extern = 1.0``\ で
   :math:`H_{aa}(0) = h`\ とすると方法 1 と同じになります。このとき\ ``hwave_sc``\ の
   バンドは、同じ入力によるスピン軌道モードの RPA・FLEX のバンドと一致します。
 
-1軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
+2軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
 
-   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
-   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
-   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
 
 どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます
 （有効な Extern 場とスピン依存のオンサイトの Transfer 項が両方あると WARNING が
@@ -1973,6 +1976,12 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   出力しますが、このモードはそれを拒否します。Zeeman 項だけの模型には
   ``"calc"``\ または\ ``"flex"``\ を使ってください。スピン混成のあるホッピングが
   ある場合は、chi0q ファイルを出力した RPA 計算と同じ磁場を与えてください。
+
+出力側（RPA または FLEX）と、そのアーカイブを再利用する\ ``hwave_sc``\ の計算は、
+同じ方法を使う必要があります（両方とも Transfer、または両方とも同じファイルと
+同じ\ ``coeff_extern``\ の Extern）。アーカイブの検査は結果のバンドではなく
+Transfer・Extern のテーブルと\ ``coeff_extern``\ を比較するので、同じ磁場でも別の方法で
+書くとバンドの差として拒否されます。
 
 磁場の値ごとに別の状態点です。別の磁場の値（別の\ ``coeff_extern``\ や Extern
 テーブル）で出力された RPA・FLEX のアーカイブは別の状態を表し、拒否されます
@@ -2030,7 +2039,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 **アーカイブは同一の状態点でのみ再利用されます。**\ 掃引の初期値（ウォーム
 スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
 chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
-実行し直してください。
+実行し直してください。唯一の例外は\ ``chi0q_mode = "load"``\ での\ ``Nmat``\ です
+（下の 3 項）。この場合、別の\ ``Nmat``\ の chi0q アーカイブは WARNING を出して
+受け入れます。
 
 スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
 ます（\ ``fingerprint_version = 1``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
@@ -2041,7 +2052,8 @@ chiq、green、sigma のアーカイブは拒否されるので、この入力�
 自身の入力と照合します。
 
 1. **構造。**\ version が 1 であること、\ ``producer_stage``\ が既知の段階であること、
-   すべてのメンバーが正しい dtype と次元で存在すること、重複するフィールドが一致する
+   すべてのメンバーが正確な dtype（\ ``int64``\ 、\ ``float64``\ 、\ ``complex128``\ 、
+   ``bool``\ のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と次元で存在すること、重複するフィールドが一致する
    こと（\ ``beta`` = ``state_beta``\ 、\ ``nmat`` = ``state_nmat``\ ）、\ ``prov_*``\ から
    再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
    整合し、1セルあたり\ :math:`10^{-8}\max(1, |t|)`\ 電子以下であること
@@ -2058,11 +2070,16 @@ chiq、green、sigma のアーカイブは拒否されるので、この入力�
    対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
    :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
    完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
-   ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。μ 自体は比較しません。
+   ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。このとき読み込んだ
+   :math:`\chi_0`\ は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
+   異なる（ある模型で\ ``T = 0.05``\ 、\ ``Nmat = 64``\ と\ ``128``\ の間で約 2 %）ため、
+   WARNING を出します。出力側と同じ\ ``Nmat``\ にすれば再現します。μ 自体は比較しません。
    バンドが同一なら密度で判定できるためです。
 4. **Green 関数。**\ ``"flex"``\ では、読み込んだ Green 関数のダイジェストが chiq
    アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の\ ``fp_green``\ と
    等しく、sigma のアーカイブも同じ\ ``fp_green``\ を記録していなければなりません。
+   chiq と chi0q のアーカイブは、両方が\ ``fingerprint_version``\ をもつか、両方とも
+   もたないかのどちらかでなければなりません。
    ``green.npz``\ 自体はこのダイジェストで検証し、それ自身の来歴メンバーでは検証
    しません。\ ``"load"``\ では Green 関数を借りないので、アーカイブの
    ``fp_green``\ は出力側の主張として INFO で記録されます。
@@ -2104,8 +2121,10 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
      - 揃える・作り直すキー
    * - ``... does not match this run: band differs: coeff_extern: file 0.0,
        run 0.1 ... Archives are reused only at the identical state point``
-     - 別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。一致する
-       磁場で、この入力により出力側の計算を実行し直してください。
+     - 別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。または
+       出力側とこの計算が同じ磁場を別の方法（一方は Transfer、他方は Extern）で
+       与えています。検査はバンドではなくテーブルを比較します。一致する磁場で、
+       この入力と同じ方法により出力側の計算を実行し直してください。
      - ``Transfer``\ 、\ ``Extern``\ 、\ ``[mode.param] coeff_extern``\ （\ ``CellShape``\ 、
        ``SubShape``\ も）
    * - ``state differs: calc_mu: file False, run True``
@@ -2125,6 +2144,15 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
      - ``"flex"``\ は Green 関数をそれ自身の格子で再利用します。FLEX の\ ``Nmat``\ を
        使ってください。
      - ``[mode.param] Nmat``
+   * - ``state_nmat ... (file) vs Nmat ... (run)``\ （WARNING、\ ``"load"``\ モード）
+     - chi0q のアーカイブは別の松原格子で和をとったものです。使用はされますが、
+       振動数の打ち切りが異なります。再現するには\ ``Nmat``\ を出力側の値にしてください。
+     - ``[mode.param] Nmat``
+   * - ``FLEX archives '...chiq.npz' (unversioned) and '...chi0q.npz'
+       (versioned) disagree on fingerprint_version``\ （またはその逆）
+     - chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
+       計算から両方を作り直してください。
+     - ``[eliashberg] flex_chiq``\ 、FLEX の\ ``[file.output] chi0q``
    * - ``fp_green mismatch``\ ／\ ``sigma.npz and green.npz come from different
        runs``
      - Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません

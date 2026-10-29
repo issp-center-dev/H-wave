@@ -2025,7 +2025,8 @@ up-spin level by :math:`+h` and the down-spin level by :math:`-h` (the
 :math:`\sigma^z` sign of the Extern term). Both routes below need
 ``[mode] enable_spin_orbital = true``, the Geometry ``norb`` equal to
 :math:`2N`, and the Transfer file in the interleaved spin-orbital indices
-(1-based file index :math:`2a + s + 1`, :math:`s = 0` for up).
+(1-based file index :math:`2a + s + 1`, :math:`s = 0` for up and
+:math:`s = 1` for down).
 
 - **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
   :math:`a` (1-based file indices)::
@@ -2042,16 +2043,19 @@ up-spin level by :math:`+h` and the down-spin level by :math:`-h` (the
   orbital count, or a malformed header is rejected before any calculation,
   in every ``chi0q_mode``. The operator is
   :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
-  ``[mode.param] coeff_extern`` (default 0); :math:`H_{aa}(0) = h` with
-  ``coeff_extern = 1.0`` equals Route 1. The band of ``hwave_sc`` then
+  ``[mode.param] coeff_extern`` (default 0.0, so the Extern file has no
+  effect until ``coeff_extern`` is set, e.g. to 1.0); :math:`H_{aa}(0) = h`
+  with ``coeff_extern = 1.0`` equals Route 1. The band of ``hwave_sc`` then
   equals the band of the spin-orbital RPA and FLEX runs with the same
   input.
 
-Side by side, for one orbital and :math:`h = 0.1`::
+Side by side, for two orbitals and :math:`h = 0.1`::
 
-   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
-   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
-   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
 
 Use one route, not both: the two fields add (a WARNING is logged when an
 active Extern field meets spin-dependent on-site Transfer entries). For
@@ -2072,6 +2076,12 @@ The field enters every input the solver uses:
   physical-orbital chi0q, which this mode refuses. For Zeeman-only models
   use ``"calc"`` or ``"flex"``. With spin-mixing hopping, give the same
   field as the RPA run that wrote the chi0q file.
+
+A producer (RPA or FLEX) and the ``hwave_sc`` run that reuses its archives
+must use the same route: both Transfer, or both Extern with the same file
+and ``coeff_extern``. The archive check compares the Transfer and Extern
+tables and ``coeff_extern``, not the resulting band, so the same field
+written along the other route is refused as a band difference.
 
 Each field value is its own state point. An RPA or FLEX archive written at
 another field value (another ``coeff_extern`` or Extern table) describes
@@ -2131,7 +2141,9 @@ Archive checks: exact state-point reuse only
 **An archive is reused only at the identical state point.** It is not a
 warm start across a sweep: a chi0q, chiq, green or sigma archive written at
 another field, filling, temperature or band is refused, and the producer has
-to be rerun with this input.
+to be rerun with this input. The one exception is ``Nmat`` in
+``chi0q_mode = "load"`` (item 3 below): there a chi0q archive from another
+``Nmat`` is accepted with a WARNING.
 
 The spin-orbital RPA and FLEX runs write version-1 provenance members into
 their archives (``fingerprint_version = 1``, ``producer_stage``,
@@ -2142,7 +2154,9 @@ copies of the band input and the realized state ``state_*``). In
 each archive it reads against its own input, before any large array is read:
 
 1. **Structure.** The version is 1, ``producer_stage`` is a known stage, every
-   member is present with its dtype and rank, the duplicated fields agree
+   member is present with its exact dtype (``int64``, ``float64``,
+   ``complex128`` or ``bool``, in either byte order; a string of any
+   width) and rank, the duplicated fields agree
    (``beta`` = ``state_beta``, ``nmat`` = ``state_nmat``), the band digests
    recomputed from the ``prov_*`` members equal the stored ones, and the
    recorded density residual is consistent and at most
@@ -2160,12 +2174,17 @@ each archive it reads against its own input, before any large array is read:
    :math:`\max(10^{-8}\max(1,|t|), 10\,r)` with :math:`r` the file's
    residual); ``Nmat`` exactly when the Green function is borrowed
    (``"flex"``). In ``"load"`` mode ``Nmat`` may differ: the existing rule
-   locates the zero bosonic frequency through the file's ``nmat``. μ itself
-   is not compared: with the band identical, the density decides.
+   locates the zero bosonic frequency through the file's ``nmat``. The
+   loaded :math:`\chi_0` was then summed on another Matsubara grid, so its
+   frequency truncation differs from this run's (about 2 % between
+   ``Nmat = 64`` and ``128`` at ``T = 0.05`` in one model), and a WARNING
+   says so; the same ``Nmat`` as the producer reproduces it. μ itself is
+   not compared: with the band identical, the density decides.
 4. **Green function.** In ``"flex"`` mode the digest of the Green function
    as loaded must equal the ``fp_green`` of the chiq archive (and of its
    chi0q companion, which is checked like chiq), and the sigma archive must
-   record the same ``fp_green``. ``green.npz`` itself is verified through
+   record the same ``fp_green``. The chiq and chi0q archives must both carry
+   ``fingerprint_version`` or both lack it. ``green.npz`` itself is verified through
    this digest, not by its own provenance members. In ``"load"`` mode no Green
    function is borrowed, and the archive's ``fp_green`` is logged as a
    producer assertion (INFO).
@@ -2210,8 +2229,10 @@ producer:
    * - ``... does not match this run: band differs: coeff_extern: file 0.0,
        run 0.1 ... Archives are reused only at the identical state point``
      - The archive was written for another band (another field, Transfer or
-       Extern table). Rerun the producer at the matching field, with this
-       input.
+       Extern table), or the producer and this run give the same field along
+       different routes (Transfer in one, Extern in the other): the check
+       compares the tables, not the band. Rerun the producer at the matching
+       field, with this input and the same route.
      - ``Transfer``, ``Extern``, ``[mode.param] coeff_extern`` (also
        ``CellShape``, ``SubShape``)
    * - ``state differs: calc_mu: file False, run True``
@@ -2231,6 +2252,17 @@ producer:
      - ``"flex"`` reuses the Green function on its own grid. Use the FLEX
        run's ``Nmat``.
      - ``[mode.param] Nmat``
+   * - ``state_nmat ... (file) vs Nmat ... (run)`` (WARNING, ``"load"``
+       mode)
+     - The chi0q archive was summed on another Matsubara grid; it is used,
+       but its frequency truncation differs. Set ``Nmat`` to the producer's
+       value to reproduce it.
+     - ``[mode.param] Nmat``
+   * - ``FLEX archives '...chiq.npz' (unversioned) and '...chi0q.npz'
+       (versioned) disagree on fingerprint_version`` (or the reverse)
+     - The chiq and chi0q archives come from two different FLEX runs.
+       Regenerate both from one FLEX run.
+     - ``[eliashberg] flex_chiq``, the FLEX ``[file.output] chi0q``
    * - ``fp_green mismatch`` / ``sigma.npz and green.npz come from different
        runs``
      - The Green function (or the self-energy) is not the one the chiq

@@ -1425,7 +1425,7 @@ FLEX は指定されたアーカイブだけを出力します）を読みます
 ``enable_spin_orbital = true``\ 、Geometry の\ ``norb``\ を\ :math:`2 n_{\rm orb}`\ とし、
 Transfer ファイルをインターリーブしたスピン軌道インデックス（1始まりのファイル上の
 インデックス\ :math:`2a + s + 1`\ 、物理軌道が\ :math:`a = 0, \ldots, n_{\rm orb} - 1`\ 、
-上向きが\ :math:`s = 0`\ ）で書く必要があります。
+上向きが\ :math:`s = 0`\ 、下向きが\ :math:`s = 1`\ ）で書く必要があります。
 
 - **方法 1: Transfer に Zeeman 項を書く。** 各物理軌道\ :math:`a = 0, \ldots, n_{\rm orb} - 1`\ についてオンサイト項を
   加えます（1始まりのファイル上のインデックス）::
@@ -1440,23 +1440,27 @@ Transfer ファイルをインターリーブしたスピン軌道インデッ�
   :math:`1, \ldots, 2 n_{\rm orb}`\ は使いません。物理軌道の範囲外のインデックス、
   または別の軌道数を宣言するヘッダ（2行目）は拒否されます。演算子は
   :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`\ で、
-  ``[mode.param] coeff_extern``\ 倍されます。\ ``coeff_extern = 1.0``\ で
+  ``[mode.param] coeff_extern``\ 倍されます。\ ``coeff_extern``\ の既定値は 0.0 なので、
+  Extern ファイルを効かせるには設定してください（例えば 1.0）。\ ``coeff_extern = 1.0``\ で
   :math:`H_{aa}(0) = h`\ （Extern ファイル上のインデックス\ :math:`a + 1`\ ）とすると方法 1 と同じになります。
 
-1軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
+2軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
 
-   # Route 1 -- Transfer, spin-orbital indices 1..2       # Route 2 -- Extern, physical index 1; coeff_extern = 1.0
-   0 0 0  1 1   0.1 0.0     # up   +h                     0 0 0  1 1   0.1 0.0
-   0 0 0  2 2  -0.1 0.0     # down -h                     # down gets -h from sigma^z
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
 
 どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます。
 :math:`h > 0`\ では下向きスピンが有利になるので、フィリング一定のもとで\ ``energy.dat``\ の
 ``Sz``\ は負になります。磁場の値ごとに別の状態点です。磁場を掃引するときは、値ごとに
 FLEX を実行し直してください。
 
-Extern による方法を受け付けるのはスピン軌道モードの Hartree-Fock FLEX だけです。
-``enable_spin_orbital``\ を使わない場合、\ ``flex_hartree_fock = true``\ は引き続き
-外場を拒否します。
+``enable_spin_orbital = true``\ では FLEX は Extern による方法を受け付けます
+（スピン軌道モードの FLEX には\ ``flex_hartree_fock = true``\ が必要です）。スピン軌道
+モードの RPA と\ ``hwave_sc``\ も受け付けます。\ ``enable_spin_orbital``\ を使わない場合、
+``flex_hartree_fock = true``\ は引き続き外場を拒否します。
 
 ``enable_spin_orbital``\ を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (``hwave_sc``) の入力としても使用できます。詳細は\ :doc:`/rpa/tutorial/sc-index`\ を参照してください。
