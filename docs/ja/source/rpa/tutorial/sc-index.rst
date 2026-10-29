@@ -1894,7 +1894,7 @@ Pauli 射影
 
 ``chi0q_mode = "flex"``\ では、\ ``enable_spin_orbital = true``\ 、
 ``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
-FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
+FLEX の4つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
 ``[file.output] path_to_output``\ ）から読みます。
 
 - ``[eliashberg] flex_chiq``\ （既定値\ ``"chiq.npz"``\ ）: スピンフル感受率
@@ -1905,10 +1905,14 @@ FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （な�
   :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合（たとえば
   相互作用ファイルを変更した場合）は拒否します;
 - ``[eliashberg] flex_green``\ （既定値\ ``"green.npz"``\ ）: 繰り込まれた Green 関数。
-  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します。
+  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します;
+- ``[eliashberg] flex_sigma``\ （既定値\ ``"sigma.npz"``\ ）: 同じ FLEX 計算の自己
+  エネルギー。これも必須です（\ ``[file.output] sigma``\ で出力してください）。その
+  静的部分から借りた Green 関数の閉包密度を求め、ギャップのアーカイブに記録します
+  （\ :ref:`sc_so_archive_checks`\ を参照）。
 
-``flex_chiq``\ と\ ``flex_chi0q``\ はスピン軌道モードでのみ使われ、キーの大文字・
-小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
+``flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_sigma``\ はスピン軌道モードでのみ使われ、
+キーの大文字・小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
 FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
 ためです。FLEX のアーカイブが\ ``scf_converged = false``\ を記録している場合は
 WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整合するのは収束時
@@ -1971,8 +1975,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   ある場合は、chi0q ファイルを出力した RPA 計算と同じ磁場を与えてください。
 
 磁場の値ごとに別の状態点です。別の磁場の値（別の\ ``coeff_extern``\ や Extern
-テーブル）で出力された RPA・FLEX のアーカイブは別の状態を表します。磁場を掃引する
-ときは、値ごとに RPA・FLEX を実行し直してください。自発的な磁気秩序
+テーブル）で出力された RPA・FLEX のアーカイブは別の状態を表し、拒否されます
+（\ :ref:`sc_so_archive_checks`\ を参照）。磁場を掃引するときは、値ごとに RPA・FLEX を
+実行し直してください。自発的な磁気秩序
 （強磁性・反強磁性の平均場）は対象外です。スピン軌道モードでは\ ``trans_mod``\ と
 ``green_init``\ は拒否されます（issue #273）。
 
@@ -2017,6 +2022,137 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 
    S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
 
+.. _sc_so_archive_checks:
+
+アーカイブの検査: 同一の状態点でのみ再利用
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**アーカイブは同一の状態点でのみ再利用されます。**\ 掃引の初期値（ウォーム
+スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
+chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
+実行し直してください。
+
+スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
+ます（\ ``fingerprint_version = 1``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
+バンドのダイジェスト\ ``fp_transfer``\ 、\ ``fp_extern``\ 、\ ``fp_meta``\ 、
+``fp_band``\ 、Green 関数のダイジェスト\ ``fp_green``\ 、バンド入力の写し
+``prov_*``\ 、実現した状態\ ``state_*``\ ）。\ ``chi0q_mode = "load"``\ と\ ``"flex"``\ では、
+スピン軌道モードの\ ``hwave_sc``\ は読み込む各アーカイブを、大きな配列を読む前に
+自身の入力と照合します。
+
+1. **構造。**\ version が 1 であること、\ ``producer_stage``\ が既知の段階であること、
+   すべてのメンバーが正しい dtype と次元で存在すること、重複するフィールドが一致する
+   こと（\ ``beta`` = ``state_beta``\ 、\ ``nmat`` = ``state_nmat``\ ）、\ ``prov_*``\ から
+   再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
+   整合し、1セルあたり\ :math:`10^{-8}\max(1, |t|)`\ 電子以下であること
+   （\ :math:`t`\ は目標値）。
+2. **バンド。**\ Transfer テーブル、Extern テーブル（とその有無）、メタデータ
+   （\ ``coeff_extern``\ 、添字の規約、軌道数、\ ``CellShape``\ 、\ ``SubShape``\ ）が同一で
+   なければなりません。メッセージは各差分を示します。例:
+   ``coeff_extern: file 0.0, run 0.1``\ 、\ ``Transfer: file 12 rows, run 12 rows;
+   first differing row (R=(1, 0, 0), a=1, b=2): file (0.1+0j), run (0.11+0j)``
+   （軌道は1始まり）。
+3. **状態。**\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
+   （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
+   目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
+   対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
+   :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
+   完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
+   ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。μ 自体は比較しません。
+   バンドが同一なら密度で判定できるためです。
+4. **Green 関数。**\ ``"flex"``\ では、読み込んだ Green 関数のダイジェストが chiq
+   アーカイブの\ ``fp_green``\ と等しく、sigma のアーカイブも同じ\ ``fp_green``\ を記録して
+   いなければなりません。\ ``"load"``\ では Green 関数を借りないので、アーカイブの
+   ``fp_green``\ は出力側の主張として INFO で記録されます。
+
+``fingerprint_version``\ のないアーカイブ（このバージョンより前に書かれたもの、または
+version 1 のダイジェストが扱わないバンドの計算、すなわち\ ``trans_mod``\ ・
+``green_init``\ やメモリ上で与えた chi0q の計算で書かれたもの）は検査できません。
+この計算に Extern 場があれば拒否し、なければ WARNING を出して受け入れます。
+サイドカーのバイト数の検査はスキーマ 4（後続の PR）から適用されます。
+
+**ギャップのアーカイブに記録される内容。**\ ``gap.npz``\ （\ ``producer_stage =
+"sc_so_static"``\ ）と\ ``gap_dynamic.npz``\ （\ ``"sc_so_dynamic"``\ ）は同じ version 1 の
+メンバーをもち、\ *この*\ 計算のカーネルが実際に使ったものを記録します。出力側の
+値を写すことはありません。
+
+- ``"calc"``\ と\ ``"load"``\ : 自身のバンドと自身の μ から作った Green 関数。
+  ``state_density``\ はその μ でのバンドの1セルあたりの Fermi 分布の和、
+  ``state_mu_tol = |state_density - state_target|``\ です;
+- ``"flex"``\ : ``fp_green``\ は消費した借用 Green 関数のダイジェスト、\ ``state_mu``\ は
+  それを作った FLEX の μ、\ ``state_density``\ はその閉包密度で、FLEX と同じ手続き
+  （\ ``flex_sigma``\ の静的自己エネルギー、この計算のバンド）で求めます。
+  ``fingerprint_version``\ のないアーカイブでは Green 関数の μ がわからないため、
+  ギャップのアーカイブには来歴メンバーを書き込みません（INFO で通知します）。
+
+スカラーのメンバーは\ ``eigenvalue.dat``\ にも\ ``# key = value``\ の行として出力されます。
+version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_green``\ によってのみ Green 関数と
+結び付けられます。出力側は密度を1セルあたり\ :math:`10^{-8}\max(1,|t|)`\ 電子まで
+閉じる必要があります（FLEX の閉包検査\ :math:`10^{-10}`\ と RPA の μ 探索はどちらも
+満たします）。
+
+**トラブルシューティング。**\ どの拒否もファイルと出力側の計算を示す1行の
+メッセージです。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - メッセージ
+     - 原因と対処
+     - 揃える・作り直すキー
+   * - ``... does not match this run: band differs: coeff_extern: file 0.0,
+       run 0.1 ... Archives are reused only at the identical state point``
+     - 別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。一致する
+       磁場で、この入力により出力側の計算を実行し直してください。
+     - ``Transfer``\ 、\ ``Extern``\ 、\ ``[mode.param] coeff_extern``\ （\ ``CellShape``\ 、
+       ``SubShape``\ も）
+   * - ``state differs: calc_mu: file False, run True``
+     - 出力側は μ 固定で実行されています。\ ``hwave_sc``\ はつねに\ ``filling``\ から
+       μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で実行し直してください。
+     - ``[mode.param] filling``\ （\ ``mu``\ を削除）
+   * - ``state differs: target ... (file) vs ... (run) ...; density ...
+       (file) vs target ... (run, tol ...)``
+     - FLEX（または RPA）が別のフィリングで実行されています。このフィリングで
+       実行し直してください。
+     - ``[mode.param] filling``
+   * - ``state differs: beta ... (file) vs ... (run)``
+     - 別の温度です（相対許容幅\ :math:`10^{-12}`\ ）。この\ ``T``\ で実行し直して
+       ください。
+     - ``[mode.param] T``
+   * - ``state differs: nmat ... (file) vs ... (run)``
+     - ``"flex"``\ は Green 関数をそれ自身の格子で再利用します。FLEX の\ ``Nmat``\ を
+       使ってください。
+     - ``[mode.param] Nmat``
+   * - ``fp_green mismatch``\ ／\ ``sigma.npz and green.npz come from different
+       runs``
+     - Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません
+       （変更された、または取り違えたファイル）。ひとつの FLEX 計算のアーカイブを
+       使うか、実行し直してください。
+     - ``[eliashberg] flex_green``\ 、\ ``flex_sigma``\ 、\ ``flex_chiq``
+   * - ``... has no fingerprint_version (...); the run has an Extern field,
+       so its band cannot be verified. Regenerate it.``
+     - バージョンのないアーカイブを磁場のある計算で読もうとしています。この
+       バージョンで出力側を実行し直してください（Extern がなければ WARNING のみ）。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
+   * - ``... needs the general (4-index) spinful chi0q ...``\ （load モード、
+       スピン混成のホッピングのない Zeeman 場）
+     - スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。
+       ``chi0q_mode = "calc"``\ または\ ``"flex"``\ を使ってください。
+     - ``[eliashberg] chi0q_mode``
+   * - ``'<file>' is malformed or truncated: <check> (<stored> vs
+       <expected>). Regenerate it with <producer>.``\ （\ ``the producer did not
+       reach its filling``\ も）
+     - 壊れた・途中で切れた・手で編集したアーカイブ、または密度が閉じなかった
+       出力側の計算です。実行し直してください。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
+   * - 能力の不一致（A2 から）
+     - ボンド分解のアーカイブをオンサイトの計算が読む場合、またはその逆。
+     - --
+   * - version 1 のアーカイブの拒否（A2 から）
+     - ボンドのスキーマの導入後は version 1 のアーカイブを作り直す必要があります。
+     - --
+
 拒否される組み合わせ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2045,7 +2181,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - FLEX の chi0q アーカイブがない場合（FLEX の実行で\ ``[file.output] chi0q``\ を
   指定してください）、FLEX の chi0q アーカイブがマーカー\ ``spin_orbital = True``
   （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
-  アーカイブがない場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
+  または自己エネルギーのアーカイブがない場合、\ :ref:`sc_so_archive_checks`\ の
+  検査に通らないアーカイブの場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
   （波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
   相互作用が一致することは示せません）;
 - ``"arnoldi"``\ 以外の\ ``eigenvalue_method``;
@@ -2197,7 +2334,7 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
      eigenvalue_method = "arnoldi"
 
 - ``chi0q_mode = "flex"``: スピン軌道 FLEX 計算の\ ``chiq``\ ・\ ``chi0q``\ ・
-  ``green``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
+  ``green``\ ・\ ``sigma``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
   もつもの（上の「スピン軌道 FLEX の出力の読み込み」を参照）。この入力の頂点が保存
   された\ :math:`\chi`\ を再現すること、\ :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ 、の
   確認は\ :math:`\nu = 0`\ だけでなく\ **すべての**\ ボソン振動数で行います;

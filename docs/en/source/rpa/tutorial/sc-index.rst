@@ -1986,7 +1986,7 @@ Outputs
 Reading the outputs of a spin-orbital FLEX run
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-With ``chi0q_mode = "flex"`` the solver reads three archives of a FLEX run
+With ``chi0q_mode = "flex"`` the solver reads four archives of a FLEX run
 with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
 ``[mode.param] flex_hartree_fock = true``, from ``[file.input]
 path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
@@ -2001,10 +2001,14 @@ path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
   mismatch (for example a changed interaction file) is refused;
 - ``[eliashberg] flex_green`` (default ``"green.npz"``): the dressed Green
   function, also required; the FLEX run writes it only when ``[file.output]
-  green`` is set.
+  green`` is set;
+- ``[eliashberg] flex_sigma`` (default ``"sigma.npz"``): the self-energy of
+  the same FLEX run, also required (write it with ``[file.output] sigma``).
+  Its static part gives the closure density of the borrowed Green function,
+  which the gap archive records (see :ref:`sc_so_archive_checks`).
 
-``flex_chiq`` and ``flex_chi0q`` are used only in spin-orbital mode; the
-keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
+``flex_chiq``, ``flex_chi0q`` and ``flex_sigma`` are used only in
+spin-orbital mode; the keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
 because a spin-orbital FLEX run stores one spinful channel rather than
 separate spin and charge channels. If the FLEX archive records
 ``scf_converged = false``, a WARNING is logged: the stored :math:`\chi` and
@@ -2071,8 +2075,8 @@ The field enters every input the solver uses:
 
 Each field value is its own state point. An RPA or FLEX archive written at
 another field value (another ``coeff_extern`` or Extern table) describes
-another state: for a field sweep, rerun the RPA or FLEX producer at every
-value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
+another state and is refused (see :ref:`sc_so_archive_checks`): for a field
+sweep, rerun the RPA or FLEX producer at every value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
 field) is not covered: ``trans_mod`` and ``green_init`` are refused in
 spin-orbital mode (issue #273).
 
@@ -2119,6 +2123,142 @@ weights are still an exact decomposition, and one WARNING is logged::
 
    S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
 
+.. _sc_so_archive_checks:
+
+Archive checks: exact state-point reuse only
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**An archive is reused only at the identical state point.** It is not a
+warm start across a sweep: a chi0q, chiq, green or sigma archive written at
+another field, filling, temperature or band is refused, and the producer has
+to be rerun with this input.
+
+The spin-orbital RPA and FLEX runs write version-1 provenance members into
+their archives (``fingerprint_version = 1``, ``producer_stage``,
+``producer_label``, the band digests ``fp_transfer``, ``fp_extern``,
+``fp_meta``, ``fp_band``, the Green digest ``fp_green``, the ``prov_*``
+copies of the band input and the realized state ``state_*``). In
+``chi0q_mode = "load"`` and ``"flex"`` the spin-orbital ``hwave_sc`` checks
+each archive it reads against its own input, before any large array is read:
+
+1. **Structure.** The version is 1, ``producer_stage`` is a known stage, every
+   member is present with its dtype and rank, the duplicated fields agree
+   (``beta`` = ``state_beta``, ``nmat`` = ``state_nmat``), the band digests
+   recomputed from the ``prov_*`` members equal the stored ones, and the
+   recorded density residual is consistent and at most
+   :math:`10^{-8}\max(1, |t|)` electrons per cell (:math:`t` the target).
+2. **Band.** The Transfer table, the Extern table (and whether there is
+   one) and the metadata (``coeff_extern``, the index convention, the
+   orbital counts, ``CellShape`` and ``SubShape``) must be identical. The
+   message lists each difference, e.g. ``coeff_extern: file 0.0, run 0.1``
+   or ``Transfer: file 12 rows, run 12 rows; first differing row (R=(1, 0,
+   0), a=1, b=2): file (0.1+0j), run (0.11+0j)`` (orbitals 1-based).
+3. **State.** :math:`\beta` (relative :math:`10^{-12}`); the μ-search mode
+   (``hwave_sc`` always searches μ, so a fixed-μ archive is refused); the
+   target ``filling * 2N`` electrons per cell (relative :math:`10^{-12}`);
+   the producer's closure density against that target (tolerance
+   :math:`\max(10^{-8}\max(1,|t|), 10\,r)` with :math:`r` the file's
+   residual); ``Nmat`` exactly when the Green function is borrowed
+   (``"flex"``). In ``"load"`` mode ``Nmat`` may differ: the existing rule
+   locates the zero bosonic frequency through the file's ``nmat``. μ itself
+   is not compared: with the band identical, the density decides.
+4. **Green function.** In ``"flex"`` mode the digest of the Green function
+   as loaded must equal the chiq archive's ``fp_green``, and the sigma
+   archive must record the same ``fp_green``. In ``"load"`` mode no Green
+   function is borrowed, and the archive's ``fp_green`` is logged as a
+   producer assertion (INFO).
+
+An archive without ``fingerprint_version`` (written before this version, or
+by a run whose band the version-1 digests do not cover: ``trans_mod`` /
+``green_init``, or a supplied in-memory chi0q) cannot be checked. It is
+refused when this run has an Extern field, and otherwise accepted with a
+WARNING. Sidecar byte-size checks apply from schema 4 (later PRs).
+
+**What the gap archive records.** ``gap.npz`` (``producer_stage =
+"sc_so_static"``) and ``gap_dynamic.npz`` (``"sc_so_dynamic"``) carry the
+same version-1 members, describing what *this* run's kernel used; nothing
+is copied from the producer:
+
+- ``"calc"`` and ``"load"``: the run's own Green function, built from its
+  band and its own μ; ``state_density`` is the Fermi count of the band at that
+  μ per cell, ``state_mu_tol = |state_density - state_target|``;
+- ``"flex"``: ``fp_green`` is the digest of the borrowed Green function as
+  consumed, ``state_mu`` the FLEX μ it was built at, and ``state_density``
+  its closure density, computed with the routine FLEX uses (the static
+  self-energy from ``flex_sigma``, on this run's band). With an archive
+  without ``fingerprint_version`` the μ of the Green function is unknown,
+  and the gap archive gets no provenance members (an INFO line says so).
+
+The scalar members also appear as ``# key = value`` lines in
+``eigenvalue.dat``. Accepted limitations of version 1: the sigma archive is
+bound to the Green function only through its ``fp_green``; a producer must
+close its density to :math:`10^{-8}\max(1,|t|)` electrons per cell (FLEX's
+closure check at :math:`10^{-10}` and the RPA μ search both do).
+
+**Troubleshooting.** Every refusal is one line naming the file and the
+producer:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Message
+     - Cause and remedy
+     - Keys to align or regenerate
+   * - ``... does not match this run: band differs: coeff_extern: file 0.0,
+       run 0.1 ... Archives are reused only at the identical state point``
+     - The archive was written for another band (another field, Transfer or
+       Extern table). Rerun the producer at the matching field, with this
+       input.
+     - ``Transfer``, ``Extern``, ``[mode.param] coeff_extern`` (also
+       ``CellShape``, ``SubShape``)
+   * - ``state differs: calc_mu: file False, run True``
+     - The producer ran at a fixed μ; ``hwave_sc`` always searches μ from
+       ``filling``. Rerun the producer with ``filling`` instead of ``mu``.
+     - ``[mode.param] filling`` (remove ``mu``)
+   * - ``state differs: target ... (file) vs ... (run) ...; density ...
+       (file) vs target ... (run, tol ...)``
+     - The FLEX (or RPA) run was at another filling. Rerun it at this
+       filling.
+     - ``[mode.param] filling``
+   * - ``state differs: beta ... (file) vs ... (run)``
+     - Another temperature (relative tolerance :math:`10^{-12}`). Rerun the
+       producer at this ``T``.
+     - ``[mode.param] T``
+   * - ``state differs: nmat ... (file) vs ... (run)``
+     - ``"flex"`` reuses the Green function on its own grid. Use the FLEX
+       run's ``Nmat``.
+     - ``[mode.param] Nmat``
+   * - ``fp_green mismatch`` / ``sigma.npz and green.npz come from different
+       runs``
+     - The Green function (or the self-energy) is not the one the chiq
+       archive was computed with: a modified or mixed-up file. Use the
+       archives of one FLEX run, or rerun it.
+     - ``[eliashberg] flex_green``, ``flex_sigma``, ``flex_chiq``
+   * - ``... has no fingerprint_version (...); the run has an Extern field,
+       so its band cannot be verified. Regenerate it.``
+     - An unversioned archive and a run with a field. Rerun the producer
+       with this version (without Extern only a WARNING is logged).
+     - the producer's ``[file.output]`` archives
+   * - ``... needs the general (4-index) spinful chi0q ...`` (load mode,
+       Zeeman field without spin-mixing hopping)
+     - The spin-orbital RPA reduces a Zeeman-only model to the spin-diagonal
+       form. Use ``chi0q_mode = "calc"`` or ``"flex"``.
+     - ``[eliashberg] chi0q_mode``
+   * - ``'<file>' is malformed or truncated: <check> (<stored> vs
+       <expected>). Regenerate it with <producer>.`` (also ``the producer
+       did not reach its filling``)
+     - A damaged, truncated or hand-edited archive, or a producer whose
+       density did not close. Rerun the producer.
+     - the producer's ``[file.output]`` archives
+   * - capability mismatch (from A2)
+     - A bond-resolved archive read by an on-site consumer, or the reverse.
+     - --
+   * - version-1 archive refused (from A2)
+     - Version-1 archives will have to be regenerated once the bond
+       schema lands.
+     - --
+
 Refused combinations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -2150,7 +2290,8 @@ before any calculation:
 - a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
   run), a FLEX chi0q archive without the marker ``spin_orbital = True``
   (written only by a spin-orbital FLEX run), a missing FLEX Green function
-  archive, and a FLEX :math:`\chi` that the vertex of this input does not
+  or self-energy archive, an archive that fails the checks of
+  :ref:`sc_so_archive_checks`, and a FLEX :math:`\chi` that the vertex of this input does not
   reproduce (checked per wavevector, so the bound does not loosen with the
   lattice size; the marker alone does not show that the interactions
   match);
@@ -2309,8 +2450,8 @@ Scope
      solver_mode       = "eigenvalue"
      eigenvalue_method = "arnoldi"
 
-- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q`` and ``green`` archives of a
-  spin-orbital FLEX run, on the full bosonic and fermionic grid of the
+- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q``, ``green`` and ``sigma``
+  archives of a spin-orbital FLEX run, on the full bosonic and fermionic grid of the
   configured ``Nmat`` (see "Reading the outputs of a spin-orbital FLEX run"
   above). The check that the vertex of this input reproduces the stored
   :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`, runs at **every**
