@@ -2475,8 +2475,10 @@ def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
     (or None), and the metadata of the spin-orbital RPA/FLEX producers
     (``coeff_extern``, the index convention, the orbital counts, CellShape
     and the resolved SubShape)."""
+    from requests.structures import CaseInsensitiveDict
     from hwave.solver import fingerprint, spin_orbital
-    param = input_dict["mode"]["param"]
+    # case-insensitive, like every [mode.param] key of the producers
+    param = CaseInsensitiveDict(input_dict["mode"].get("param", {}) or {})
     cs = param["CellShape"]
     cs = list(cs) if isinstance(cs, (list, tuple)) else [cs]
     cs = cs + [1] * (3 - len(cs))

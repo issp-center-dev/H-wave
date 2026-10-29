@@ -792,6 +792,24 @@ class TestConsumerChecks(_Dir):
         nan = float("nan")
         self.run_state = fp.SOState(10.0, 64, nan, nan, True, 2.0, nan)
 
+    def test_run_inputs_mixed_case_keys(self):
+        """``sc._so_run_inputs`` reads ``CellShape``/``SubShape`` (and
+        ``coeff_extern``) case-insensitively: mixed-case keys give the same
+        band metadata and digests as the canonical spelling, and an omitted
+        ``SubShape`` defaults to a lowercase ``cellshape``."""
+        from hwave import sc
+        T, E, _ = _tables_and_meta_from_input(self.inp_soc_extern)
+
+        def run(param):
+            return sc._so_run_inputs({"mode": {"param": param}}, T, E, 1, 10.0, 64, 0.5)
+        canon = run({"CellShape": [4, 2], "SubShape": [1, 1, 1], "coeff_extern": 0.5})
+        mixed = run({"cellshape": [4, 2], "SUBSHAPE": [1, 1, 1], "Coeff_Extern": 0.5})
+        self.assertEqual(canon.band.meta.cell_shape, (4, 2, 1))
+        self.assertEqual(mixed.band.meta, canon.band.meta)
+        self.assertEqual(mixed.band.digests, canon.band.digests)
+        dflt = run({"cellShape": [4, 2]})
+        self.assertEqual(dflt.band.meta.sub_shape, (4, 2, 1))
+
     def test_field_sweep_cannot_borrow(self):
         _rpa_for_sc(self.inp_soc, coeff_extern=0.0)
         with self.assertRaisesRegex(ValueError, r"coeff_extern: file 0\.0, run 0\.1.*"
