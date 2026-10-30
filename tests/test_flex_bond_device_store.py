@@ -369,6 +369,21 @@ _EIG_TOL = 1.0e-10
 _ROUND_TOL = 1.0e-12
 
 
+#: members that measure round-off themselves (the relative parity leakage
+#: of the bond gap, ~1e-18): a tolerance relative to their own size is
+#: below their noise, so they are compared to _ROUND_TOL absolutely (a
+#: transfer defect would make the leakage O(1))
+def _is_roundoff_diagnostic(name):
+    return str(name).endswith("parity_leakage")
+
+
+def _close_absolute(test, x, y, label):
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    test.assertTrue(np.all(np.isfinite(x)) and np.all(np.isfinite(y)), label)
+    test.assertLessEqual(float(np.max(np.abs(x - y))) if x.size else 0.0, _ROUND_TOL, label)
+
+
 def _same_floats(test, x, y, label):
     """Two arrays (or scalars) of the same shape and dtype. Floating-point
     ones: per real and imaginary component, the same NaN and infinity
@@ -429,6 +444,9 @@ def _assert_same_outputs(test, a, b):
         if _is_eig(fn):
             ph = _phase(fa[fn]["gap"], fb[fn]["gap"]) if "gap" in fa[fn] else 1.0
             for m in fa[fn]:
+                if _is_roundoff_diagnostic(m):
+                    _close_absolute(test, fa[fn][m], fb[fn][m], (fn, m))
+                    continue
                 _close_modulo_phase(test, fa[fn][m], fb[fn][m], (fn, m),
                                     ph if m.startswith("gap") and m != "gap_sector_weights"
                                     else 1.0)
@@ -478,7 +496,9 @@ def _cmp_value(test, x, y, key, eig, phase):
             np.testing.assert_array_equal(x, y, err_msg=key)
         return
     test.assertEqual(type(x), type(y), key)
-    if eig and isinstance(x, (float, np.floating, complex, np.complexfloating)):
+    if _is_roundoff_diagnostic(key) and isinstance(x, (float, np.floating)):
+        _close_absolute(test, x, y, key)
+    elif eig and isinstance(x, (float, np.floating, complex, np.complexfloating)):
         test.assertLessEqual(abs(x - y), _EIG_TOL * max(abs(x), 1e-300), key)
     elif isinstance(x, (float, np.floating, complex, np.complexfloating)):
         _same_floats(test, x, y, key)
