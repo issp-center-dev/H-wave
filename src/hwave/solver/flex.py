@@ -4196,7 +4196,15 @@ class FLEX(RPA):
         chi0_2d = chi0q_raw.reshape(nmat, nvol, ndx, ndx)
         chi_2d = chi.reshape(nmat, nvol, ndx, ndx)
         gB = gam[None]
-        ring = gB @ (chi_2d - 0.5 * chi0_2d) @ gB
+        # with numpy < 2 the bubble's FFT leaves the frequency axis with unit
+        # stride, and chi inherits that layout; the stacked products on it
+        # are about 10x slower with OpenBLAS, so form chi - chi0/2 in one
+        # C-ordered buffer
+        delta = xp.empty(chi_2d.shape, dtype=chi_2d.dtype)
+        xp.multiply(chi0_2d, 0.5, out=delta)
+        xp.subtract(chi_2d, delta, out=delta)
+        ring = gB @ delta @ gB
+        del delta
         # into the self-energy kernel's pair orientation, the conserving one
         # (issue #251): both pairs of every product transposed
         v_eff = xp.empty_like(ring)
