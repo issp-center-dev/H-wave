@@ -297,7 +297,9 @@ class TestZeemanSecondOrder(unittest.TestCase):
     """Gate 0-F2 (#88): with a Zeeman field, without (``soc = 0``, S_z
     conserved) and with the spin-mixing block, the second order of the
     spin-orbital FLEX map equals the exact one, the field reaching the solver
-    through the Transfer file or through Extern. The up and down diagonal
+    through Extern. The Transfer route gives the identical FLEX map (0-F1,
+    :class:`TestFlexRoutes` in ``test_so_zeeman_route``, to round-off), so the
+    gate runs the production side once per model. The up and down diagonal
     blocks of the ED coefficient differ by more than 1e-2 of its scale, so
     the field is load bearing."""
 
@@ -309,13 +311,12 @@ class TestZeemanSecondOrder(unittest.TestCase):
     @heavy
     def test_zeeman_without_and_with_soc(self):
         for soc in (0.0, _SOC):
-            for route in ("transfer", "extern"):              # production side; ED gets the same H
-                with self.subTest(soc=soc, route=route):
-                    c_ed, c_prod = _coeff2_pair(zeeman=_ZEEMAN, soc=soc, route=route,
-                                                nmat=4096, x=0.00625)
-                    dev = _rel_dev(c_prod, c_ed)
-                    self.assertLessEqual(dev, 2e-3, "relative deviation {:.2e}".format(dev))
-                    self._asymmetric(c_ed)
+            with self.subTest(soc=soc):
+                c_ed, c_prod = _coeff2_pair(zeeman=_ZEEMAN, soc=soc, route="extern",
+                                            nmat=4096, x=0.00625)
+                dev = _rel_dev(c_prod, c_ed)
+                self.assertLessEqual(dev, 2e-3, "relative deviation {:.2e}".format(dev))
+                self._asymmetric(c_ed)
 
     def test_smoke(self):
         """Fast: three types, no spin-mixing block, the Extern route, at
