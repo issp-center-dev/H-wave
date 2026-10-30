@@ -191,7 +191,10 @@ class TestEigenvaluesUnchanged(_Tmp):
         self.assertEqual(calls, [True])
         new_ev, old_ev = np.asarray(new["evs"]), np.asarray(old["evs"])
         self.assertEqual(new_ev.shape, old_ev.shape)
-        np.testing.assert_allclose(new_ev, old_ev, rtol=_EIG_RTOL, atol=0)
+        # the eigensolver's output order can change at round-off (it did on
+        # a CI runner), so the two spectra are compared as sorted lists
+        np.testing.assert_allclose(np.sort_complex(new_ev), np.sort_complex(old_ev),
+                                   rtol=_EIG_RTOL, atol=0)
 
     def test_reduced(self):
         for ct in (0.0, 1.0):
