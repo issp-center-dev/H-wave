@@ -31,7 +31,18 @@ keeps three types in the default gate.
 Both gates also assert that the compared coefficient is not vacuous and
 that its spin-off-diagonal block is a sizeable part of it, so the
 spin-mixing content is really being compared.
+
+``TestZeemanSecondOrder`` (gate 0-F2, #88) repeats the comparison with a
+Zeeman field ``h = 0.15`` (``+h`` on spin up, ``-h`` on spin down), without
+the spin-mixing block (S_z conserved) and with it, the field reaching the
+solver through the Transfer file or through an Extern file with
+``coeff_extern = 1``. Measured worst deviation over the seven types: 7.2e-4
+(no SOC) and 8.5e-4 (SOC) at ``Nmat = 4096`` (tolerance 2e-3), both routes
+equal; the up and down diagonal blocks of the ED coefficient differ by 0.20
+/ 0.35 of its scale (asserted: 1e-2). The fast smoke variant (three types,
+no SOC, Extern, ``Nmat = 512``) measures 5.3e-3 against the 2e-2 bound.
 """
+import functools
 import logging
 import os
 import shutil
@@ -52,28 +63,42 @@ M = 2 * N
 _SOC = 0.25
 
 
-def _soc_block():
+def _soc_block(soc=_SOC):
+    """The spin-mixing block ``F`` at amplitude ``soc`` (one fixed draw)."""
     rng = np.random.default_rng(11)
-    return _SOC * (rng.normal(size=(N, N)) + 1j * rng.normal(size=(N, N)))
+    return soc * (rng.normal(size=(N, N)) + 1j * rng.normal(size=(N, N)))
+
+
+def _one_body(zeeman=0.0, soc=_SOC):
+    """The one-body matrix on the spin-block index ``s * N + a``: ``H0`` in
+    both spin blocks, the spin-mixing block ``F`` (amplitude ``soc``) and a
+    Zeeman field (``+zeeman`` on spin up, ``-zeeman`` on spin down)."""
+    F = _soc_block(soc)
+    hg = np.zeros((M, M), complex)
+    hg[:N, :N] = H0 + zeeman * np.eye(N)
+    hg[N:, N:] = H0 - zeeman * np.eye(N)
+    hg[:N, N:] = F
+    hg[N:, :N] = F.conj().T
+    return hg
 
 
 F = _soc_block()
-#: the one-body matrix on the spin-block index ``s * N + a``
-HG = np.zeros((M, M), complex)
-HG[:N, :N] = H0
-HG[N:, N:] = H0
-HG[:N, N:] = F
-HG[N:, :N] = F.conj().T
+#: the one-body matrix of the SOC gate (no Zeeman field)
+HG = _one_body()
 
 
-def _hamiltonian(terms):
+def _hamiltonian(terms, hg=HG):
+    """``G3._hamiltonian`` (``H0`` in both spin blocks) plus the rest of
+    ``hg`` (spin-mixing block, Zeeman field) as a one-body operator."""
     H = G3._hamiltonian(terms)
+    rest = hg.copy()
+    rest[:N, :N] -= H0
+    rest[N:, N:] -= H0
     with ref._quiet_matmul():
-        for a in range(N):
-            for b in range(N):
-                if F[a, b] != 0:
-                    op = CD[ref._so(a, 0)] @ C[ref._so(b, 1)]
-                    H = H + F[a, b] * op + np.conj(F[a, b]) * op.conj().T
+        for p in range(M):
+            for q in range(M):
+                if rest[p, q] != 0:
+                    H = H + rest[p, q] * (_gen_op(p).conj().T @ _gen_op(q))
     return H
 
 
@@ -114,19 +139,21 @@ def _rho(H):
     return r
 
 
-def _fluct_ed(terms, iws):
+def _fluct_ed(terms, iws, hg=HG):
     """``Sigma_ED - Sigma_HF[rho_ED]`` on the spin-block index."""
-    H = _hamiltonian(terms)
+    H = _hamiltonian(terms, hg)
     G = _green(H, iws)
-    G0 = np.array([np.linalg.inv((iw + MU) * np.eye(M) - HG) for iw in iws])
+    G0 = np.array([np.linalg.inv((iw + MU) * np.eye(M) - hg) for iw in iws])
     sig = np.linalg.inv(G0) - np.linalg.inv(G)
     hf = G3.wick_hf_sigma(M, G3._mode_terms(terms), G3._gen_to_mode(_rho(H)))
     return sig - G3._mode_to_gen(hf)[None]
 
 
-def _fluct_prod(terms, nmat):
+def _fluct_prod(terms, nmat, hg=HG, extern=None):
     """Production ``Sigma_fluct`` of one spin-orbital FLEX map on the bare
-    Green function at ``mu = MU``."""
+    Green function at ``mu = MU``. ``hg`` goes into the Transfer file; with
+    ``extern = h`` an Extern file in physical orbital indices carries a
+    Zeeman field ``h`` (``coeff_extern = 1``) on top of it."""
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as flex_mod
     d = tempfile.mkdtemp(prefix="flex_so_ed_")
@@ -136,13 +163,17 @@ def _fluct_prod(terms, nmat):
         rows = []
         for p in range(M):
             for q in range(M):
-                if HG[p, q] != 0:
+                if hg[p, q] != 0:
                     # the transfer file uses the interleaved index 2 a + s
                     ip = 2 * (p % N) + p // N + 1
                     iq = 2 * (q % N) + q // N + 1
-                    rows.append((0, 0, 0, ip, iq, HG[p, q].real, HG[p, q].imag))
+                    rows.append((0, 0, 0, ip, iq, hg[p, q].real, hg[p, q].imag))
         _write_wan(os.path.join(d, "transfer.dat"), "Transfer", M, rows)
         idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        if extern is not None:
+            _write_wan(os.path.join(d, "extern.dat"), "Extern", N,
+                       [(0, 0, 0, a + 1, a + 1, extern, 0.0) for a in range(N)])
+            idict["Extern"] = "extern.dat"
         for itype, v in terms:
             _write_wan(os.path.join(d, itype + ".dat"), itype, N, G3._rows(itype, v))
             idict[itype] = itype + ".dat"
@@ -150,6 +181,8 @@ def _fluct_prod(terms, nmat):
         par = {"T": 1.0 / BETA, "mu": MU, "CellShape": [1, 1, 1], "SubShape": [1, 1, 1],
                "Nmat": nmat, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
                "flex_hartree_fock": True}
+        if extern is not None:
+            par["coeff_extern"] = 1.0
         prev = logging.root.manager.disable
         logging.disable(logging.WARNING)
         try:
@@ -200,6 +233,99 @@ class TestSecondOrderWithSOC(_Gate):
     @heavy
     def test_every_type(self):
         self._check(G3._TYPES, G3._NMAT, G3._X, G3._TOL)
+
+
+# ---------------------------------------------------------------------------
+# 0-F2: a Zeeman field, without and with the spin-mixing block (#88)
+# ---------------------------------------------------------------------------
+
+#: Zeeman field of the 0-F2 gate (+h on spin up, -h on spin down)
+_ZEEMAN = 0.15
+#: the smoke variant's types (as TestSecondOrderWithSOCSmoke)
+_SMOKE = ("CoulombIntra", "Exchange", "PairLift")
+#: smoke tolerance: 3x the measured worst deviation, but not below 2e-2
+SMOKE_TOL = 2.0e-2
+
+
+@functools.lru_cache(maxsize=None)
+def _coeff2_ed(itype, zeeman, soc, nmat, x):
+    """The refined O(x^2) coefficient of the exact fluctuation remainder of
+    ``itype`` in the model ``_one_body(zeeman, soc)``, on the inner eighth
+    of the ``nmat`` grid (cached per model and working point)."""
+    hg = _one_body(zeeman, soc)
+    iws = 1j * np.pi * (2 * np.arange(nmat) + 1 - nmat) / BETA
+    win = slice(nmat // 2 - nmat // 16, nmat // 2 + nmat // 16)
+    return G3._refine(lambda h: G3._coeff2(lambda y: _fluct_ed([(itype, y)], iws[win], hg), h),
+                      x)
+
+
+def _coeff2_prod(itype, zeeman, soc, route, nmat, x):
+    """The production counterpart of :func:`_coeff2_ed`; the field reaches
+    the solver through the Transfer file (``route = "transfer"``) or an
+    Extern file with ``coeff_extern = 1`` (``route = "extern"``)."""
+    win = slice(nmat // 2 - nmat // 16, nmat // 2 + nmat // 16)
+    if route == "transfer":
+        hg, ext = _one_body(zeeman, soc), None
+    elif route == "extern":
+        hg, ext = _one_body(0.0, soc), zeeman
+    else:
+        raise ValueError(route)
+    return G3._refine(lambda h: G3._coeff2(
+        lambda y: _fluct_prod([(itype, y)], nmat, hg, ext)[win], h), x)
+
+
+def _coeff2_pair(zeeman, soc, route, nmat, x, types=G3._TYPES):
+    """``(c_ed, c_prod)``, each ``(len(types), nwin, M, M)``: the second-order
+    coefficients of every type, stacked in the order of ``types``."""
+    c_ed = np.array([_coeff2_ed(t, zeeman, soc, nmat, x) for t in types])
+    c_prod = np.array([_coeff2_prod(t, zeeman, soc, route, nmat, x) for t in types])
+    return c_ed, c_prod
+
+
+def _rel_dev(c_prod, c_ed):
+    """Worst over the types of ``max|c_prod - c_ed| / max|c_ed|`` (G3's
+    per-type max-norm relative deviation)."""
+    return max(float(np.abs(p - e).max() / np.abs(e).max()) for p, e in zip(c_prod, c_ed))
+
+
+def _spin_diag_blocks(c):
+    """The spin-up and spin-down diagonal blocks of a stacked coefficient."""
+    return c[..., :N, :N], c[..., N:, N:]
+
+
+class TestZeemanSecondOrder(unittest.TestCase):
+    """Gate 0-F2 (#88): with a Zeeman field, without (``soc = 0``, S_z
+    conserved) and with the spin-mixing block, the second order of the
+    spin-orbital FLEX map equals the exact one, the field reaching the solver
+    through Extern. The Transfer route gives the identical FLEX map (0-F1,
+    :class:`TestFlexRoutes` in ``test_so_zeeman_route``, to round-off), so the
+    gate runs the production side once per model. The up and down diagonal
+    blocks of the ED coefficient differ by more than 1e-2 of its scale, so
+    the field is load bearing."""
+
+    def _asymmetric(self, c_ed):
+        self.assertGreater(np.abs(c_ed).max(), G3._FLOOR)               # anti-vacuity
+        up, dn = _spin_diag_blocks(c_ed)
+        self.assertGreater(np.abs(up - dn).max() / np.abs(c_ed).max(), 1e-2)
+
+    @heavy
+    def test_zeeman_without_and_with_soc(self):
+        for soc in (0.0, _SOC):
+            with self.subTest(soc=soc):
+                c_ed, c_prod = _coeff2_pair(zeeman=_ZEEMAN, soc=soc, route="extern",
+                                            nmat=4096, x=0.00625)
+                dev = _rel_dev(c_prod, c_ed)
+                self.assertLessEqual(dev, 2e-3, "relative deviation {:.2e}".format(dev))
+                self._asymmetric(c_ed)
+
+    def test_smoke(self):
+        """Fast: three types, no spin-mixing block, the Extern route, at
+        ``Nmat = 512``."""
+        c_ed, c_prod = _coeff2_pair(zeeman=_ZEEMAN, soc=0.0, route="extern", nmat=512,
+                                    x=0.0125, types=_SMOKE)
+        dev = _rel_dev(c_prod, c_ed)
+        self.assertLessEqual(dev, SMOKE_TOL, "relative deviation {:.2e}".format(dev))
+        self._asymmetric(c_ed)  # the field must be present (on both sides: dev above)
 
 
 if __name__ == "__main__":

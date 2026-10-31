@@ -65,7 +65,9 @@ import numpy as np
 __all__ = ["so_pairing_vertex", "so_pairing_vertex_parts",
            "so_pairing_vertex_dynamic", "so_initial_gap", "so_frequency",
            "check_so_config", "check_so_supported", "so_spin_components",
-           "so_spin_decomposition", "SPIN_COMPONENTS"]
+           "so_spin_decomposition", "SPIN_COMPONENTS", "SZ_COMPONENTS",
+           "so_sz_decomposition", "sz_off_sector_index",
+           "sz_conservation_residual", "sz_report"]
 
 #: relative tolerance of the on-site (q-independent Gamma) check
 _ONSITE_RTOL = 1.0e-10
@@ -297,8 +299,12 @@ def check_so_config(input_dict):
     ``flex_green``; ``flex_chi_s`` / ``flex_chi_c`` are refused),
     ``solver_mode = "iteration" / "eigenvalue" / "both"`` with
     ``eigenvalue_method = "arnoldi"``, no ``pairing_type`` (the gap is one
-    general spin-orbital matrix), the antisymmetrized spinful vertex
-    (``spinful_vertex_exchange`` not false) and no ``Extern`` file."""
+    general spin-orbital matrix) and the antisymmetrized spinful vertex
+    (``spinful_vertex_exchange`` not false). An ``Extern`` file (a Zeeman
+    field ``coeff_extern * sigma^z H_ab(R)`` in physical orbital indices,
+    issue #88) is accepted; it enters the band through
+    :func:`hwave.sc._so_epsilon_k` and is checked by
+    :func:`hwave.sc._read_so_extern`."""
     from hwave.solver.backend import strict_bool
     eli = _ci(input_dict.get("eliashberg", {}))
     freq = eli.get("frequency", "static")
@@ -372,12 +378,6 @@ def check_so_config(input_dict):
                 "Hamiltonian while the kernel Green function and chemical "
                 "potential come from the bare Transfer file; see issue #273). "
                 "Remove {}.".format(_SO_WHAT, key, key))
-    files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
-    if "Extern" in files:
-        raise ValueError(
-            "{}: the Extern (external field) file is not used by hwave_sc. In "
-            "spin-orbital mode write a Zeeman term into the Transfer file as a "
-            "spin-dependent one-body term, and remove Extern.".format(_SO_WHAT))
 
 
 def check_so_supported(input_dict, interactions, site, norb_phys=None):
@@ -510,3 +510,157 @@ def so_spin_decomposition(gap, norb_phys):
     if not tot > 0.0:
         return {k: float("nan") for k in SPIN_COMPONENTS}
     return {k: v / tot for k, v in zip(SPIN_COMPONENTS, sq)}
+
+
+# ---------------------------------------------------------------------------
+# S_z content of a spin-orbital gap and the S_z-conservation check (#88)
+# ---------------------------------------------------------------------------
+
+#: names of the S_z components, in output order
+SZ_COMPONENTS = ("upup", "dndn", "singlet0", "triplet0")
+
+#: ``sz_conserved`` holds when the residual is at most this
+SZ_CONSERVED_TOL = 1.0e-12
+
+
+def so_sz_decomposition(gap, norb_phys):
+    """S_z weights of a spin-orbital gap:
+    ``{"upup", "dndn", "singlet0", "triplet0"}``.
+
+    ``gap`` is ``Delta_AB(...)`` of shape ``(2N, 2N, ...)`` in spin-block
+    order (``A = s * N + a``, spin 0 = up along the INPUT quantization axis:
+    the sigma^z basis of the Transfer spin labels and of Extern's sigma^z;
+    the weights are not rotated to a field or magnetization axis). With the
+    spin blocks ``D_st`` of :func:`so_spin_components`,
+    ``psi = (D_ud - D_du) / 2`` and ``d_z = (D_ud + D_du) / 2``:
+
+        W = sum |Delta|^2,  w_upup = sum |D_uu|^2 / W,  w_dndn = sum |D_dd|^2 / W,
+        w_singlet0 = 2 sum |psi|^2 / W,  w_triplet0 = 2 sum |d_z|^2 / W,
+
+    summed over every orbital pair and trailing axis; the four sum to 1
+    (``|D_ud|^2 + |D_du|^2 = 2 (|psi|^2 + |d_z|^2)``). In terms of
+    :func:`so_spin_decomposition`, ``w_singlet0 = w_psi``,
+    ``w_triplet0 = w_dz`` and ``w_upup + w_dndn = w_dx + w_dy``. A zero gap
+    gives NaN weights."""
+    g = _split_spin_blocks(gap, norb_phys)
+
+    def sq(x):
+        return float(np.sum(np.abs(x) ** 2))
+
+    ud, du = g[0, :, 1], g[1, :, 0]
+    parts = (sq(g[0, :, 0]), sq(g[1, :, 1]),
+             0.5 * sq(ud - du), 0.5 * sq(ud + du))
+    tot = parts[0] + parts[1] + sq(ud) + sq(du)
+    if not tot > 0.0:
+        return {k: float("nan") for k in SZ_COMPONENTS}
+    return {k: v / tot for k, v in zip(SZ_COMPONENTS, parts)}
+
+
+def _sz_spin_tuples(conserving):
+    """The spin labels ``(s_a, s_b, s_c, s_d)`` of the vertex
+    ``V_abcd`` (``Delta_ad = -sum_bc V_abcd F_bc``) inside
+    (``conserving``) or outside the S_z sector ``S(a)+S(d) = S(b)+S(c)``."""
+    return tuple((sa, sb, sc_, sd)
+                 for sa in (0, 1) for sb in (0, 1) for sc_ in (0, 1)
+                 for sd in (0, 1)
+                 if (sa + sd == sb + sc_) == conserving)
+
+
+def sz_off_sector_index(norb_phys):
+    """Every off-sector vertex index ``(a, b, c, d)`` (spin-block order,
+    ``S(A) = A // norb_phys``): ``S(a) + S(d) != S(b) + S(c)``, i.e. ``V_abcd``
+    maps a pair of one S_z onto a pair of another. 10 of the 16 spin blocks."""
+    n = int(norb_phys)
+    if n <= 0:
+        raise ValueError("norb_phys must be positive, got {}".format(norb_phys))
+    out = []
+    for spins in _sz_spin_tuples(False):
+        for orbs in np.ndindex(n, n, n, n):
+            out.append(tuple(int(s * n + o) for s, o in zip(spins, orbs)))
+    return tuple(out)
+
+
+def _block_max(x, n, spins):
+    """``max |x[block]|`` over the spin blocks ``spins`` of the leading
+    ``len(spins[0])`` axes; every block is a basic-slicing view (no copy of
+    ``x``), and the temporaries are one block at a time. A non-finite entry
+    raises ``ValueError``: it would otherwise drop out of ``max`` and report
+    a broken input as S_z-conserving."""
+    best = 0.0
+    for s in spins:
+        blk = x[tuple(slice(t * n, (t + 1) * n) for t in s)]
+        if blk.size:
+            m = float(np.abs(blk).max())
+            if not np.isfinite(m):
+                raise ValueError(
+                    "the S_z conservation residual needs finite input; the "
+                    "spin block {} holds a non-finite entry".format(s))
+            best = max(best, m)
+    return best
+
+
+def _leak(x, n, off, on):
+    """``max |x_off-sector| / max |x|`` (max-norm; 0 if ``max |x| = 0``)."""
+    x_off = _block_max(x, n, off)
+    scale = max(x_off, _block_max(x, n, on))
+    return x_off / scale if scale > 0.0 else 0.0
+
+
+def sz_conservation_residual(V=None, green=None, norb_phys=None):
+    """The S_z-conservation residual ``max(r_V, r_G)`` of a spin-orbital run.
+
+    * ``r_V``: the vertex ``V`` ``(nd, nd, nd, nd, ...)`` (spin-block order,
+      any trailing k / frequency axes), off-sector where
+      ``S(a) + S(d) != S(b) + S(c)`` (:func:`sz_off_sector_index`);
+    * ``r_G``: the Green function ``green`` ``(nd, nd, ...)``, off-sector in
+      the spin-off-diagonal blocks ``G[:N, N:]`` and ``G[N:, :N]``;
+
+    each ``max |X_off| / max |X|`` over all blocks and slices (0 for a zero
+    array). A ``None`` argument contributes 0. The blocks are read through
+    views; neither array is copied."""
+    if norb_phys is None:
+        raise ValueError("sz_conservation_residual needs norb_phys")
+    n = int(norb_phys)
+    nd = 2 * n
+    r = 0.0
+    if V is not None:
+        V = np.asarray(V)
+        if V.ndim < 4 or V.shape[:4] != (nd,) * 4:
+            raise ValueError("the vertex must have shape (nd, nd, nd, nd, ...) "
+                             "with nd = {}; got {}".format(nd, V.shape))
+        r = max(r, _leak(V, n, _sz_spin_tuples(False), _sz_spin_tuples(True)))
+    if green is not None:
+        green = np.asarray(green)
+        if green.ndim < 2 or green.shape[:2] != (nd, nd):
+            raise ValueError("the Green function must have shape (nd, nd, ...) "
+                             "with nd = {}; got {}".format(nd, green.shape))
+        r = max(r, _leak(green, n, ((0, 1), (1, 0)), ((0, 0), (1, 1))))
+    return float(r)
+
+
+def sz_report(weights, residual, logger):
+    """The S_z report of a spin-orbital solve. ``weights`` holds the
+    :func:`so_sz_decomposition` of each reported gap (eigenvector ``i``);
+    logs one INFO line per eigenvector and, when
+    ``residual > SZ_CONSERVED_TOL``, one WARNING; returns the archive members
+    ``sz_weight_<component>`` (float64 ``(n_ev,)``),
+    ``sz_conservation_residual`` (float64) and ``sz_conserved`` (bool_)."""
+    rows = []
+    for i, w in enumerate(weights):
+        rows.append([float(w[c]) for c in SZ_COMPONENTS])
+        logger.info(
+            "S_z decomposition of eigenvector %d: up-up = %.6f, down-down = "
+            "%.6f, S_z=0 singlet = %.6f, S_z=0 triplet = %.6f (the four sum to "
+            "1)", i, *rows[-1])
+    residual = float(residual)
+    conserved = residual <= SZ_CONSERVED_TOL
+    if not conserved:
+        logger.warning(
+            "S_z is not conserved (residual %.3e): the S_z weights describe "
+            "the composition of each eigenvector in the input quantization "
+            "axis, not separate pairing channels.", residual)
+    rows = np.array(rows, dtype=np.float64).reshape(-1, len(SZ_COMPONENTS))
+    out = {"sz_weight_" + c: rows[:, j].copy() for j, c in enumerate(SZ_COMPONENTS)}
+    out["sz_conservation_residual"] = np.float64(residual)
+    out["sz_conserved"] = np.bool_(conserved)
+    return out

@@ -72,6 +72,80 @@ def physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
     return geom_norb // 2
 
 
+def _extern_range_sentence(norb_phys):
+    return ("In spin-orbital mode Extern uses PHYSICAL orbital indices (norb_phys = "
+            "{n}), while the Transfer file uses the 2\u00b7norb_phys = {n2} "
+            "spin-orbital indices; write the field per physical orbital (the sign "
+            "per spin comes from \u03c3^z).".format(n=norb_phys, n2=2 * norb_phys))
+
+
+def _extern_index_error(file_name, index_1based, norb_phys):
+    return ValueError(
+        "Extern file '{f}': orbital index {i} is outside 1..{n}. {rest}".format(
+            f=file_name, i=index_1based, n=norb_phys,
+            rest=_extern_range_sentence(norb_phys)))
+
+
+def _extern_header_error(file_name, declared_norb, norb_phys):
+    return ValueError(
+        "Extern file '{f}': its header declares {d} orbitals, but norb_phys = "
+        "{n}. {rest}".format(f=file_name, d=declared_norb, n=norb_phys,
+                             rest=_extern_range_sentence(norb_phys)))
+
+
+def check_extern_indices(table, norb_phys, file_name, declared_norb=None):
+    """Refuse a spin-orbital ``Extern`` table outside the physical orbitals.
+
+    In spin-orbital mode the Extern operator is
+    ``H = sum H_ab(R) sigma^z_{ss'} c+_{a s} c_{b s'}``: the file is written
+    in PHYSICAL orbital indices ``1..norb_phys`` (the spin sign comes from
+    ``sigma^z``), not in the ``1..2*norb_phys`` spin-orbital indices of the
+    Transfer file. An index outside the physical range used to be dropped
+    without a word; it is refused here.
+
+    Parameters
+    ----------
+    table : dict
+        ``{(irvec, (a, b)): value}`` as read by
+        :func:`hwave.qlmsio.wan90.read_w90` (0-based ``a``, ``b``), before
+        any sublattice folding.
+    norb_phys : int
+        Physical orbital count (Geometry ``norb // 2``), per original cell.
+    file_name : str
+        Source path, named in the error.
+    declared_norb : int, optional
+        The orbital count the file header declares (line 2). Checked first:
+        a header other than ``norb_phys`` is refused even when every row is
+        in range. ``None`` (a caller without a file) skips it.
+
+    Raises
+    ------
+    ValueError
+        Naming the declared header dimension, or else the first offending
+        index (1-based), and both index ranges.
+    """
+    if declared_norb is not None and int(declared_norb) != norb_phys:
+        raise _extern_header_error(file_name, int(declared_norb), norb_phys)
+    for (_irvec, orbvec), _v in table.items():
+        for i in orbvec:
+            if not 0 <= i < norb_phys:
+                raise _extern_index_error(file_name, i + 1, norb_phys)
+
+
+def validate_coeff_extern(raw):
+    """``[mode.param] coeff_extern`` of a spin-orbital run as a float: a
+    finite real number (a bool is refused: ``float(True) == 1.0`` would
+    silently switch the field on). Shared by RPA, FLEX and ``hwave_sc``, so
+    one value is accepted or refused alike."""
+    import numbers
+    if (isinstance(raw, (bool, np.bool_)) or not isinstance(raw, numbers.Real)
+            or not np.isfinite(float(raw))):
+        raise ValueError(
+            "[mode.param] coeff_extern must be a finite real number, got "
+            "{!r}".format(raw))
+    return float(raw)
+
+
 def interleaved_index(orb, spin):
     """Interleaved spin-orbital index of ``(orb, spin)``."""
     return 2 * orb + spin

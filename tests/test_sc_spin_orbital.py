@@ -31,8 +31,9 @@ orthonormal basis of that subspace (``sc._SOAntisymmetricBasis``).
   exact-diagonalization-validated dynamic kernel.
 * ``TestArchiveMembers``: only spin-orbital runs write the ``spin_orbital``
   marker; non-spin-orbital RPA / FLEX archives keep their member sets.
-* ``TestTransferUnderSOC``: with spin-orbit hopping, the epsilon(k) of
-  hwave_sc equals the H0(k) of the spin-orbital RPA.
+* ``TestTransferUnderSOC``: with spin-orbit hopping, without and with an
+  Extern field, the epsilon(k) of hwave_sc equals the H0(k) of the
+  spin-orbital RPA.
 * ``TestInitialGap``: the spin structure of the spin-orbital seed.
 * ``TestSpinDecomposition``: ``so_pairing.so_spin_components`` /
   ``so_spin_decomposition`` on hand-built gaps (pure psi, d_x, d_y, d_z and a
@@ -658,13 +659,22 @@ class TestRefusals(_TmpDir):
                 out = inp["file"]["output"]["path_to_output"]
                 self.assertFalse(os.path.exists(out) and os.listdir(out))
 
-    def test_extern_file(self):
+    def test_extern_file_accepted(self):
+        """An Extern file (the Zeeman field sigma^z H_ab(R) * coeff_extern,
+        issue #88) is accepted: the static calc run completes and writes the
+        spin-orbital gap archive, whatever the spelling of the key."""
         files = _write_model(self.d, so=True)
         _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP,
                [(0, 0, 0, a + 1, a + 1, 0.1, 0.0) for a in range(NP)])
         for key in ("Extern", "EXTERN"):
             with self.subTest(key=key):
-                self._refused(r"Extern", so_files=dict(files, **{key: "extern.dat"}))
+                out = "out_" + key
+                inp = _input(self.d, dict(files, **{key: "extern.dat"}), True,
+                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                              "num_eigenvalues": 2}, out=out, coeff_extern=1.0)
+                with _quiet():
+                    sc.calc_eliashberg(inp)
+                self.assertTrue(os.path.isfile(os.path.join(self.d, out, "gap.npz")))
 
     def _mean_field_refused(self, name, spellings):
         files = _write_model(self.d, so=True)
@@ -1267,19 +1277,44 @@ class _Stop(Exception):
 
 class TestTransferUnderSOC(_TmpDir):
 
+    #: an Extern table in PHYSICAL orbital indices (issue #88): on-site,
+    #: inter-orbital and a complex off-site Hermitian pair, so the sigma^z
+    #: spin sign, the e^{+ikR} phase and the coefficient are all exercised
+    _EXTERN_ROWS = [(0, 0, 0, 1, 1, 0.1, 0.0), (0, 0, 0, 2, 2, -0.07, 0.0),
+                    (0, 0, 0, 1, 2, 0.03, 0.0), (0, 0, 0, 2, 1, 0.03, 0.0),
+                    (1, 0, 0, 1, 2, 0.05, 0.02), (-1, 0, 0, 2, 1, 0.05, -0.02)]
+
     def test_epsilon_k_equals_spin_orbital_rpa(self):
         """With spin-orbit hopping (soc != 0), the epsilon(k) hwave_sc
         diagonalizes for its Green function (the interleaved Transfer file
-        reordered to spin-block) equals the H0(k) the spin-orbital RPA
-        assembles, to 1e-12. The complex-conjugate, the k -> -k and the
-        un-reordered (interleaved) readings all miss by O(soc), so the
-        comparison is not vacuous."""
+        reordered to spin-block, plus ``coeff_extern * sigma^z H(k)`` of an
+        Extern file) equals the H0(k) the spin-orbital RPA assembles, to
+        1e-12, without and with Extern. The complex-conjugate, the k -> -k
+        and the un-reordered (interleaved) readings all miss by O(soc), and
+        the Extern field moves the band, so the comparison is not vacuous."""
         from hwave import qlms
         from hwave.solver import rpa as rpa_mod
         from hwave.solver import spin_orbital
         files = _write_model(self.d, so=True, soc=0.35)
+        _wfile(os.path.join(self.d, "extern.dat"), "Extern", NP, self._EXTERN_ROWS)
         Nx, Ny, Nz = CELL
         nvol = Nx * Ny * Nz
+        bands = {}
+        for extern in (False, True):
+            with self.subTest(extern=extern):
+                run_files = dict(files, Extern="extern.dat") if extern else files
+                param = {"coeff_extern": 0.8} if extern else {}
+                bands[extern] = self._compare_with_rpa(
+                    qlms, rpa_mod, spin_orbital, run_files, param, nvol,
+                    "_ext" if extern else "")
+        # the field is load-bearing: up-up moves by +0.8 H(k), down-down by -0.8 H(k)
+        diff = bands[True] - bands[False]
+        self.assertGreater(np.abs(diff[:, :NP, :NP]).max(), 0.05)
+        np.testing.assert_allclose(diff[:, NP:, NP:], -diff[:, :NP, :NP], rtol=0, atol=1e-14)
+        np.testing.assert_array_equal(diff[:, :NP, NP:], 0.0)
+
+    def _compare_with_rpa(self, qlms, rpa_mod, spin_orbital, files, param, nvol, tag):
+        Nx, Ny, Nz = CELL
         seen = {}
 
         def spy_eig(eps, *a, **kw):
@@ -1287,7 +1322,8 @@ class TestTransferUnderSOC(_TmpDir):
             raise _Stop()
 
         inp = _input(self.d, files, True, {"chi0q_mode": "calc",
-                                           "solver_mode": "eigenvalue"})
+                                           "solver_mode": "eigenvalue"},
+                     out="out" + tag, **param)
         with _quiet(), mock.patch.object(sc, "_calc_eigenvalues",
                                          side_effect=spy_eig):
             with self.assertRaises(_Stop):
@@ -1301,7 +1337,7 @@ class TestTransferUnderSOC(_TmpDir):
             seen["spin_mode"] = self_.spin_mode
             raise _Stop()
 
-        rpa_in = _input(self.d, files, True, {}, out="out_rpa")
+        rpa_in = _input(self.d, files, True, {}, out="out_rpa" + tag, **param)
         rpa_in["mode"]["calc_scheme"] = "general"
         rpa_in["file"]["input"]["path_to_input"] = self.d
         del rpa_in["eliashberg"]
@@ -1331,12 +1367,12 @@ class TestTransferUnderSOC(_TmpDir):
                             ("interleaved", interleaved)):
             with self.subTest(reading=name):
                 self.assertGreater(np.abs(E - other).max(), 0.1)
-
+        return E
 
 def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
               cell=None, T=0.25):
     """A FLEX run of the model in ``d`` through the public entry, writing
-    ``chiq``, ``chi0q`` and ``green`` into ``d/out``."""
+    ``chiq``, ``chi0q``, ``green`` and ``sigma`` into ``d/out``."""
     from hwave import qlms
     inp = _input(d, files, so, {}, T=T, nmat=nmat, out=out,
                  **({"CellShape": list(cell)} if cell else {}))
@@ -1346,8 +1382,9 @@ def _run_flex(d, files, out, so=True, scheme="general", nmat=32,
         "IterationMax": 200, "Mix": 0.5, "EPS": 10, "mixing_scheme": "linear",
         "flex_hartree_fock": scheme == "general"})
     inp["file"]["input"]["path_to_input"] = d
+    # sigma: hwave_sc records the closure density of the borrowed G (#88)
     inp["file"]["output"].update({"chiq": "chiq", "green": "green",
-                                  "chi0q": "chi0q"})
+                                  "chi0q": "chi0q", "sigma": "sigma"})
     del inp["eliashberg"]
     inp["log"] = {"print_level": 0}
     with _quiet():
@@ -1476,8 +1513,9 @@ class TestFlexMode(unittest.TestCase):
         ``freq_index`` / ``nmat``, not the centre of the stored axis: chiq and
         chi0q restricted to the original indices 14..21 of nmat = 32 (zero
         frequency, original index 16, at position 2; the centre, position 4,
-        is a finite frequency) give the eigenvalues of the full archives --
-        also when the configured Nmat (64) differs from the file's nmat."""
+        is a finite frequency) give the eigenvalues of the full archives. A
+        configured Nmat (64) other than the FLEX run's is refused: a borrowed
+        Green function is reused only at its own state point (#88)."""
         bad = os.path.join(self.d, "flex_off_centre")
         self.addCleanup(shutil.rmtree, bad, True)
         shutil.copytree(self.flex, bad)
@@ -1494,12 +1532,12 @@ class TestFlexMode(unittest.TestCase):
                                1e-3 * np.abs(arr[16]).max())
         ref = _run(_flex_input(self.d, self.files, self.flex,
                                out=self._out("out_full")))
-        for nmat in (32, 64):
-            with self.subTest(config_nmat=nmat):
-                got = _run(_flex_input(self.d, self.files, bad, Nmat=nmat,
-                                       out=self._out("out_off_%d" % nmat)))
-                np.testing.assert_allclose(got["evs"], ref["evs"], rtol=1e-12,
-                                           atol=0)
+        got = _run(_flex_input(self.d, self.files, bad, Nmat=32,
+                               out=self._out("out_off_32")))
+        np.testing.assert_allclose(got["evs"], ref["evs"], rtol=1e-12, atol=0)
+        self._refused(r"state differs: nmat 32 \(file\) vs 64 \(run\)",
+                      _flex_input(self.d, self.files, bad, Nmat=64,
+                                  out=self._out("out_off_64")))
 
     def test_su2_limit_against_non_so_flex(self):
         """Independent oracle at the FLEX level: soc = 0 spin-orbital FLEX
@@ -1617,18 +1655,19 @@ class TestFlexMode(unittest.TestCase):
                                       out=self._out("out_no_chi0q")))
 
     def test_file_keys_are_case_insensitive(self):
-        """``flex_chiq`` / ``flex_chi0q`` / ``flex_green`` under mixed-case
-        keys select renamed copies; the result equals the default names'."""
+        """``flex_chiq`` / ``flex_chi0q`` / ``flex_green`` / ``flex_sigma``
+        under mixed-case keys select renamed copies; the result equals the
+        default names'."""
         ren = os.path.join(self.d, "flex_renamed")
         self.addCleanup(shutil.rmtree, ren, True)
         os.makedirs(ren)
         for src, dst in (("chiq.npz", "renamed.npz"), ("chi0q.npz", "bare.npz"),
-                         ("green.npz", "g2.npz")):
+                         ("green.npz", "g2.npz"), ("sigma.npz", "s2.npz")):
             shutil.copy(os.path.join(self.flex, src), os.path.join(ren, dst))
         ref = _run(_flex_input(self.d, self.files, self.flex,
                                out=self._out("out_default")))
         keys = {"Flex_ChiQ": "renamed.npz", "Flex_Chi0Q": "bare.npz",
-                "FLEX_GREEN": "g2.npz"}
+                "FLEX_GREEN": "g2.npz", "Flex_Sigma": "s2.npz"}
         with self.subTest(keys=keys):
             got = _run(_flex_input(self.d, self.files, ren, keys,
                                    out=self._out("out_renamed")))
@@ -2013,7 +2052,8 @@ class TestChi0qInitProvenance(_TmpDir):
 class TestArchiveMembers(_TmpDir):
     """The ``spin_orbital`` marker is written ONLY by spin-orbital runs: a
     non-spin-orbital RPA / FLEX archive keeps exactly its previous member
-    set; a spin-orbital RPA run writes ``spin_orbital = True``."""
+    set; a spin-orbital RPA run writes ``spin_orbital = True`` and the
+    version-1 fingerprint/state members (issue #88), and nothing else."""
 
     def _rpa(self, files, so, scheme, out):
         from hwave import qlms
@@ -2049,7 +2089,10 @@ class TestArchiveMembers(_TmpDir):
                 m = np.asarray(z["spin_orbital"])
                 self.assertEqual((m.ndim, m.dtype), (0, np.bool_))
                 self.assertTrue(bool(m))
-                self.assertEqual(sorted(set(z.files) - {"spin_orbital"}),
+                from hwave.solver import fingerprint
+                prov = set(fingerprint.SO_PROVENANCE_MEMBERS)
+                self.assertLessEqual(prov, set(z.files))
+                self.assertEqual(sorted(set(z.files) - {"spin_orbital"} - prov),
                                  _NON_SO_MEMBERS[("RPA", "general", name)])
 
 

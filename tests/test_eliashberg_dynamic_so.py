@@ -452,7 +452,8 @@ class TestFlexMode(_FlexFixture):
         with _quiet():
             sc.calc_eliashberg(S._flex_input(self.d, self.files, d,
                                              {"num_eigenvalues": 2},
-                                             out=self._out("o_static")))
+                                             out=self._out("o_static"),
+                                             Nmat=_NMAT_E2E))
 
     def test_frequency_grid_mismatch_is_refused(self):
         out = self._out("o_g")

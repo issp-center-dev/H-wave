@@ -24,6 +24,10 @@ import numpy as np
 
 import hwave.sc as sc
 
+#: the spin-polarized pointer of every spin-dependent-band refusal (#88)
+_SO_POINTER = ("run it with [mode] enable_spin_orbital = true (see the "
+               "spin-polarized section of the Eliashberg tutorial)")
+
 NX, NY = 8, 8
 T_RUN = 0.1
 NMAT = 64
@@ -422,7 +426,8 @@ class TestGreenInit(unittest.TestCase):
 
 class TestSpinDependentRefused(unittest.TestCase):
     """A spin-dependent band cannot enter the spinless pairing kernel: it is
-    refused, naming issue #88, before any chi0q is computed or loaded."""
+    refused, pointing to the spin-orbital route ([mode] enable_spin_orbital,
+    issue #88), before any chi0q is computed or loaded."""
 
     def _assert_refused(self, chi0q_mode, extra_file=None, extern=False,
                         extra_param=None, tm=None):
@@ -436,7 +441,7 @@ class TestSpinDependentRefused(unittest.TestCase):
             with _ForbidDownstream(), \
                     self.assertRaises(ValueError) as cm:
                 sc.calc_eliashberg(inp)
-        self.assertIn("#88", str(cm.exception))
+        self.assertIn(_SO_POINTER, str(cm.exception))
         return str(cm.exception)
 
     def _ferro(self):
@@ -484,7 +489,7 @@ class TestSpinDependentRefused(unittest.TestCase):
                          eliashberg={"bond_channels": True})
             with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
                 sc.calc_eliashberg(inp)
-        self.assertIn("#88", str(cm.exception))
+        self.assertIn(_SO_POINTER, str(cm.exception))
 
 
 class TestMixedCaseAndControl(unittest.TestCase):
@@ -706,7 +711,7 @@ class TestRefusalOrdering(unittest.TestCase):
                 inp["file"]["input"]["interaction"][inter_key] = "extern.dat"
             with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
                 sc.calc_eliashberg(inp)
-        self.assertIn("#88", str(cm.exception))
+        self.assertIn(_SO_POINTER, str(cm.exception))
         return str(cm.exception)
 
     def test_trans_mod(self):
@@ -801,7 +806,7 @@ class TestAssembledBandCheck(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             self._band(extra_file={"green_init": "g.npz"},
                        files={"g.npz": {"green": g}})
-        self.assertIn("#88", str(cm.exception))
+        self.assertIn(_SO_POINTER, str(cm.exception))
         self.assertIn("green_init describes a spin-dependent state",
                       str(cm.exception))
 
@@ -817,7 +822,7 @@ class TestAssembledBandCheck(unittest.TestCase):
         self.assertFalse(band.same_as_bare)
         with self.assertRaises(ValueError) as cm:
             self._band(extern_rows=rows, coeff=0.6e-10)
-        self.assertIn("#88", str(cm.exception))
+        self.assertIn(_SO_POINTER, str(cm.exception))
 
     def test_extern_cancelling_on_the_grid(self):
         # R = 0 and R = -NX wrap onto the same slot and cancel exactly
@@ -869,7 +874,7 @@ class TestAssembledBandCheck(unittest.TestCase):
                         with self.assertRaises(ValueError) as cm:
                             call()
                         # |G_up - G_down| = 2 m = 0.1
-                        self.assertIn("#88", str(cm.exception))
+                        self.assertIn(_SO_POINTER, str(cm.exception))
                         self.assertIn("max |G_up - G_down| = 1.000e-01",
                                       str(cm.exception))
 
@@ -899,7 +904,7 @@ class TestSpinFreeTolerance(unittest.TestCase):
         self.assertTrue(np.allclose(tm[:, 0, 0], tm[:, 1, 1]))
         lam, err = self._lam_or_error(tm)
         self.assertIsNone(lam)
-        self.assertIn("#88", err)
+        self.assertIn(_SO_POINTER, err)
 
     def test_spin_mixing_threshold(self):
         h = _nematic_hr(1)
@@ -908,7 +913,7 @@ class TestSpinFreeTolerance(unittest.TestCase):
         above = _trans_mod_from_hr(h, mixing=np.array([[1.0e-9]]))
         lam, err = self._lam_or_error(above)
         self.assertIsNone(lam)
-        self.assertIn("#88", err)
+        self.assertIn(_SO_POINTER, err)
         below = _trans_mod_from_hr(h, mixing=np.array([[1.0e-12]]))
         lam, err = self._lam_or_error(below)
         self.assertIsNone(err)
@@ -1205,7 +1210,7 @@ class TestSpinFreeTol(unittest.TestCase):
             with _ForbidDownstream(), self.assertRaises(ValueError) as cm:
                 sc.calc_eliashberg(_random_sc_input(d, inter, tm_path))
             msg = str(cm.exception)
-            for word in ("#88", "spin_free_tol", "EPS",
+            for word in (_SO_POINTER, "spin_free_tol", "EPS",
                          "{:.3e}".format(split)):
                 self.assertIn(word, msg)
 
@@ -1639,7 +1644,7 @@ class TestGreenInitSpinCheck(unittest.TestCase):
                 with self.assertRaises(ValueError) as cm:
                     self._call(g)
                 msg = str(cm.exception)
-                for word in ("#88", "trans_mod", "spin_free_tol",
+                for word in (_SO_POINTER, "trans_mod", "spin_free_tol",
                              "dimensionless"):
                     self.assertIn(word, msg)
         band = self._call(self._g())

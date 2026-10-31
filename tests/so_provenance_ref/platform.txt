@@ -1,0 +1,1 @@
+Darwin arm64 numpy 2.4.6

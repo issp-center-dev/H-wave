@@ -38,6 +38,7 @@ from . import bubble
 from . import fold
 from . import green as green_mod
 from . import spin_orbital
+from . import fingerprint
 
 
 #: Emitted whenever a PairLift declaration is solved: its particle-hole
@@ -701,6 +702,25 @@ class Interaction:
 
         # mode options
         self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
+
+        # issue #88: in spin-orbital mode the Extern file is written in
+        # PHYSICAL orbital indices 1..norb_phys; _make_ham_trans would drop
+        # an out-of-range row without a word, so refuse it here, on the
+        # pre-fold table and header (before _init_interaction folds them).
+        # The non-spin-orbital silent drop is unchanged (issue #303).
+        if self.enable_spin_orbital and "Extern" in param_ham:
+            _files = getattr(param_ham, "source_files", {})
+            _ext_file = _files.get("extern", "Extern")
+            _declared = getattr(param_ham, "source_dimensions", {}).get("extern")
+            if _declared is None and "extern" in _files:
+                # the reader stores None for a malformed header; re-read it
+                # so the user gets the explicit "line 2 must be ..." error
+                _declared = wan90.read_w90_header_dim(_ext_file)
+            spin_orbital.check_extern_indices(
+                param_ham["Extern"],
+                _so_physical_norb(param_ham["Geometry"]["norb"], True, source="Geometry"),
+                _ext_file,
+                declared_norb=_declared)
 
         # initialize, and reshape if use sublattice
         self._init_interaction()
@@ -1817,6 +1837,10 @@ class RPA:
         self.coeff_tail = _ct
         # #167 invariant: never mutated after construction (scheme resolution input).
         self.ext = self.param_mod.get("coeff_extern", 0.0)
+        if self.ham_info.enable_spin_orbital:
+            # the spin-orbital RPA/FLEX and hwave_sc accept or refuse the
+            # same values (a bool would otherwise enable the field as 1.0)
+            self.ext = spin_orbital.validate_coeff_extern(self.ext)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
         # user request; consumers resolve it via backend.get_backend (warn and
@@ -2332,6 +2356,12 @@ class RPA:
 
         beta = 1.0/self.T
 
+        # spin-orbital archive provenance (#88): the realized state and the
+        # Green-function digest of THIS solve; set only when this solve
+        # builds its own bubble, so a previous solve cannot leak them
+        self._so_state = None
+        self._so_fp_green = None
+
         # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
         # Green's function that produced the bubble: refuse an external
         # chi0q FIRST -- before the backend is resolved and before the
@@ -2554,6 +2584,9 @@ class RPA:
             else:
                 mu = self.mu_value
 
+            if self.ham_info.enable_spin_orbital:
+                self._so_state = self._so_bare_state(mu)
+
             if gpu_active:
                 logger.info("RPA: GPU backend active (CuPy); moving H0 "
                             "eigenpairs to the device.")
@@ -2574,6 +2607,8 @@ class RPA:
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 
             green0, green0_tail = self._calc_green(beta, mu)
+            if self.ham_info.enable_spin_orbital:
+                self._so_fp_green = self._so_green_digest(green0, green0_tail)
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
@@ -3035,6 +3070,17 @@ class RPA:
             return {"spin_orbital": True}
 
         so_stamp = _spin_orbital_stamp()
+        # #88: the version-1 fingerprint and state members, built once and
+        # written beside the spin_orbital marker into chi0q and chiq
+        so_prov = {}
+        if so_stamp:
+            if "trans_mod" in green_info or "green_init" in green_info:
+                logger.info(
+                    "save_results: spin-orbital provenance not written: the one-body "
+                    "band includes trans_mod/green_init, which version-1 "
+                    "fingerprints do not cover")
+            else:
+                so_prov = self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
         if (bool(getattr(getattr(self, "ham_info", None),
                          "enable_spin_orbital", False))
                 and not so_stamp
@@ -3062,6 +3108,7 @@ class RPA:
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
                     **so_stamp,
+                    **so_prov,
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -3121,6 +3168,7 @@ class RPA:
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
                 **so_stamp,
+                **so_prov,
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
@@ -3886,7 +3934,9 @@ class RPA:
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
                 Sz = np.diag((1,-1))
-                H0 += np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
+                # not in place: H0 may alias ham_trans_q or a caller's
+                # trans_mod, and a repeated call must not add the field twice
+                H0 = H0 + np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
 
             # check if diagonal
             ns = self.ns
@@ -3975,6 +4025,87 @@ class RPA:
 
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
+
+    # ------------------------------------------------- #88 SO provenance
+    def _so_bare_state(self, mu):
+        """The realized band state of a spin-orbital RPA run
+        (:class:`fingerprint.SOState`), in electrons per cell summed over
+        all spin-orbitals: the density is the masked Fermi count
+        ``_find_mu`` roots, at the realized ``mu``; a spin-free band holds
+        one spin's levels, so its count is doubled. "Per cell" is per
+        ORIGINAL unit cell (``lattice.cellvol``), also under a sublattice."""
+        ncell = self.lattice.cellvol          # ORIGINAL cells (nvol * subvol)
+        nspin = 2 if self.spin_mode == "spin-free" else 1
+        count = _masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
+                                      0.0, self.ene_cutoff)[0]
+        target = self.Ncond / ncell if self.calc_mu else mu
+        return fingerprint.so_state(beta=1.0 / self.T, nmat=self.nmat, mu=mu,
+                                    density=nspin * count / ncell,
+                                    calc_mu=self.calc_mu, target=target)
+
+    def _so_green_digest(self, green, green_tail):
+        """``fp_green`` of a spin-orbital run: the digest (layout
+        ``"b_f_k_o_o_v1"``) of the full bare G in the canonical layout
+        ``(1, Nmat, nvol, nd, nd)``, spin-block order -- the deflated G plus
+        its tail, a spin-free or spin-diagonal band expanded to its spin
+        blocks. Under a sublattice this is the folded-supercell G (k on the
+        supercell grid, nd = 2 * norb_phys * subvol).
+
+        The canonical array is never materialized: the sum and the
+        spin-block expansion are formed one digest block at a time
+        (:func:`fingerprint.green_digest_blocks`, at most
+        ``fingerprint.CHUNK_BYTES`` per block, on the array's device), so
+        this adds no Green-sized allocation to the run."""
+        xp = _bk.array_module_of(green)
+        nb, nmat, nvol, n, _ = green.shape
+        tail = xp.broadcast_to(green_tail, green.shape)
+        if self.spin_mode == "spinful":
+            def block(f0, f1, k0, k1):
+                return green[0, f0:f1, k0:k1] + tail[0, f0:f1, k0:k1]
+            return fingerprint.green_digest_blocks(nmat, nvol, n, block)
+
+        def block(f0, f1, k0, k1):
+            b = xp.zeros((f1 - f0, k1 - k0, 2 * n, 2 * n), dtype=xp.complex128)
+            for s in (0, 1):
+                g = s if nb == 2 else 0
+                b[:, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = (
+                    green[g, f0:f1, k0:k1] + tail[g, f0:f1, k0:k1])
+            return b
+        return fingerprint.green_digest_blocks(nmat, nvol, 2 * n, block)
+
+    def _so_band_tables(self):
+        """``(transfer, extern, BandMeta)`` of the PRE-FOLD ``read_w90``
+        tables of this run (``ham_info.param_ham_orig`` when the lattice has
+        a sublattice, else ``ham_info.param_ham``); never the folded table
+        and never ``ham_trans_q``."""
+        ham_info = self.ham_info
+        src = (ham_info.param_ham_orig if self.lattice.has_sublattice
+               else ham_info.param_ham)
+        transfer = src.get("Transfer", None)
+        extern = src.get("Extern", None)
+        meta = fingerprint.BandMeta(
+            coeff_extern=float(self.ext),
+            enable_spin_orbital=True,
+            index_convention=spin_orbital.INDEX_CONVENTION,
+            norb=int(src["Geometry"]["norb"]),
+            norb_phys=int(ham_info.norb_orig),
+            cell_shape=tuple(int(x) for x in self.lattice.cellshape),
+            sub_shape=tuple(int(x) for x in self.lattice.subshape))
+        return transfer, extern, meta
+
+    def _so_provenance(self, producer_stage, producer_label):
+        """The fingerprint/state members of this spin-orbital run, built
+        once per call (merged into every archive of the run), or ``{}``
+        when this solve established no state (e.g. a supplied chi0q)."""
+        state = getattr(self, "_so_state", None)
+        fp_green = getattr(self, "_so_fp_green", None)
+        if state is None or fp_green is None:
+            return {}
+        transfer, extern, meta = self._so_band_tables()
+        return fingerprint.so_provenance_members(
+            producer_stage=producer_stage, producer_label=producer_label,
+            transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
+            state=state)
 
     @do_profile
     def _find_mu(self, Ncond, T):

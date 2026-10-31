@@ -149,7 +149,7 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   :math:`\chi_0(\mathbf{q})`\ を読み込みます。
   ``"calc"``\ は内部で計算します。
   ``"flex"``\ はFLEX計算の dressed 感受率を読み込みます
-  （``frequency = "dynamic"``\ に必須）。
+  （スピン軌道モード以外では\ ``frequency = "dynamic"``\ に必須。\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
   ``"calc"``\ は静的計算が使う唯一の振動数であるボソン振動数ゼロでのみ
   :math:`\chi_0(\mathbf{q})`\ を計算するため、メモリは
   :math:`O(N_\mathrm{mat} N_k\,n_d^4)`\ ではなく\ :math:`O(N_k\,n_d^4)`\ です
@@ -205,11 +205,13 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
      スピン混成ブロックがない）。許容誤差は無次元の成分に対して
      :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`\ です。磁性をもつ
      ``green_init``\ はスピンの向きによらず磁性状態を表すため拒否されます
-     （issue #88）。収束の緩い常磁性 UHF 解（例えばランダム初期状態から
+     （磁性をもつ平均場の入力はスピン軌道の経路でもまだサポートされていません。
+     issue #273）。収束の緩い常磁性 UHF 解（例えばランダム初期状態から
      ``EPS = 6``\ ）には\ :math:`10^{-5}`\ 程度の分裂が残ることがあります。
      UHF の収束を厳しくする、スピン対称な初期状態から UHF を始める、または
      ``spin_free_tol``\ を大きくしてください。
-     スピン偏極の場合は issue #88 で扱います。
+     Zeeman 磁場で偏極した状態は\ ``[mode] enable_spin_orbital = true``\ で
+     計算できます。\ :ref:`sc_spin_polarized`\ を参照してください。
 
      **load・ボンド・FLEX 入力での挙動。** ``"load"``\ では、chi0q ファイルを
      出力した RPA 計算と同じ ``trans_mod``\ / ``green_init``\ / ``Extern``\ を
@@ -251,7 +253,8 @@ Eliashberg方程式ソルバーの設定です。主なパラメータ:
   頂点\ :math:`V(\mathbf{q}, i\omega_l)`\ とギャップ\ :math:`\phi(\mathbf{k}, i\omega_n)`
   を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
   ``chi0q_mode = "flex"``\ が必要です
-  （下記の\ :ref:`動的振動数の節 <sc_dynamic_frequency>`\ を参照）。
+  （下記の\ :ref:`動的振動数の節 <sc_dynamic_frequency>`\ を参照）。ただし
+  スピン軌道モードでは\ ``"calc"``\ も使えます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
 - ``pairing_type``: ``"singlet"``\ または\ ``"triplet"``\ 。スピン軌道モードでは
   ギャップがひとつのスピン軌道行列なので指定しません（\ :ref:`sc_spin_orbital`\ を参照）。
 - ``init_gap``: 反復法の初期ギャップ対称性。
@@ -708,7 +711,14 @@ false``\ ）も、文献 [1]_ と同じく単位胞をまたぐ相互作用の H
 FLEXの前提条件
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
+この節は\ ``enable_spin_orbital``\ を使わない動的ソルバーについて説明します。
+スピン軌道モードの動的ソルバーは\ ``chi0q_mode = "calc"``\ も受け付けます。
+この場合はバンドから Green 関数と\ :math:`\chi_0`\ を作るため、FLEX の出力は
+不要です。また\ ``"flex"``\ では、以下のファイルの代わりにスピン軌道 FLEX 計算の
+``chiq``\ 、\ ``chi0q``\ 、\ ``green``\ 、\ ``sigma``\ のアーカイブを読み込みます
+（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+
+``enable_spin_orbital``\ を使わない場合、動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
 ``chi0q_mode = "flex"``\ で実行する **必要があります**。``hwave_sc``\ を呼び出す前に、
 Eliashberg ステップが読み込むディレクトリへ以下を書き出す FLEX 計算
 （``mode = "FLEX"``\ ）を実行してください:
@@ -1586,7 +1596,8 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
    ``longitudinal_bond_pairing``\ は、\ ``J_Exchange != J_Hund - 2 J_Ising``
    となるボンド（各行はその相手の行と合わせて扱います。名前を挙げるのは最初の4つまで）を
    報告する WARNING をログに出力します。計算は拒否されず、数値も変わりません。
-   スピン分解した扱いは issue #88 で検討されています。これらは
+   スピン軌道の経路（\ :ref:`sc_spin_orbital`\ ）はオンサイト相互作用について
+   このような結合を厳密に扱います。そのボンド分解版は issue #270 です。これらは
    ``tests/test_sc_bond_pairing_oracle.py``\ で独立なスピン軌道の構成と
    比較して固定されています。
 
@@ -1730,7 +1741,8 @@ Eliashberg の pairing vertex は\ **常磁性を前提**\ としています。
 偏極した模型を一重項・三重項チャネルで扱うには、\ :math:`S_z`\ で分解した
 pairing vertex と、reduced スキームが保存していない横成分感受率
 :math:`\chi^{+-}`\ が必要になります。設定変更ではなく機能追加の範疇です。
-スピン混成のある模型には上のスピン軌道表現を使ってください。
+スピン混成のある模型と、スピン偏極した（Zeeman 磁場のある）模型には上のスピン軌道表現を
+使ってください（\ :ref:`sc_spin_polarized`\ を参照）。
 
 
 .. _sc_spin_orbital:
@@ -1890,7 +1902,7 @@ Pauli 射影
 
 ``chi0q_mode = "flex"``\ では、\ ``enable_spin_orbital = true``\ 、
 ``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
-FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
+FLEX の4つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
 ``[file.output] path_to_output``\ ）から読みます。
 
 - ``[eliashberg] flex_chiq``\ （既定値\ ``"chiq.npz"``\ ）: スピンフル感受率
@@ -1901,14 +1913,276 @@ FLEX の3つのアーカイブを\ ``[file.input] path_to_flex_output``\ （な�
   :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合（たとえば
   相互作用ファイルを変更した場合）は拒否します;
 - ``[eliashberg] flex_green``\ （既定値\ ``"green.npz"``\ ）: 繰り込まれた Green 関数。
-  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します。
+  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します;
+- ``[eliashberg] flex_sigma``\ （既定値\ ``"sigma.npz"``\ ）: 同じ FLEX 計算の自己
+  エネルギー。これも必須です（\ ``[file.output] sigma``\ で出力してください）。その
+  静的部分から借りた Green 関数の閉包密度を求め、ギャップのアーカイブに記録します
+  （\ :ref:`sc_so_archive_checks`\ を参照）。
 
-``flex_chiq``\ と\ ``flex_chi0q``\ はスピン軌道モードでのみ使われ、キーの大文字・
-小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
+``flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_sigma``\ はスピン軌道モードでのみ使われ、
+キーの大文字・小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
 FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
 ためです。FLEX のアーカイブが\ ``scf_converged = false``\ を記録している場合は
 WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整合するのは収束時
 だけです。
+
+.. _sc_spin_polarized:
+
+スピン偏極した状態（Zeeman 磁場）
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+スピン軌道モードの\ ``hwave_sc``\ の計算（静的・動的）には Zeeman 磁場\ :math:`h`\ を
+かけられます。符号の規則は全体を通して一つです。磁場は上向きスピンの準位を\ :math:`+h`\ 、
+下向きスピンの準位を\ :math:`-h`\ だけずらします（Extern 項の\ :math:`\sigma^z`\ の符号）。
+以下のどちらの方法でも、\ ``[mode] enable_spin_orbital = true``\ 、Geometry の\ ``norb``\ を
+:math:`2N`\ とし、Transfer ファイルをインターリーブしたスピン軌道インデックス
+（1始まりのファイル上のインデックス\ :math:`2a + s + 1`\ 、上向きが\ :math:`s = 0`\ 、
+下向きが\ :math:`s = 1`\ ）で書く必要があります。
+
+- **方法 1: Transfer に Zeeman 項を書く。** 各軌道\ :math:`a`\ についてオンサイト項を
+  加えます（1始まりのファイル上のインデックス）::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **方法 2: Extern + coeff_extern。** Extern ファイルは\ **物理**\ 軌道インデックスを
+  使います。各\ :math:`R`\ について\ :math:`N \times N`\ 行列で、インデックスは
+  :math:`1, \ldots, N`\ 、形式は\ ``enable_spin_orbital``\ を使わない場合と同じ
+  Wannier90 形式です。Transfer ファイルのスピン軌道インデックス
+  :math:`1, \ldots, 2N`\ は使いません。物理軌道の範囲外のインデックス、別の軌道数を
+  宣言するヘッダ（2行目）、または不正なヘッダは、どの\ ``chi0q_mode``\ でも計算の前に
+  拒否されます。演算子は
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`\ で、
+  ``[mode.param] coeff_extern``\ 倍されます（既定値 0.0 なので、\ ``coeff_extern``\ を
+  例えば 1.0 に設定するまで Extern ファイルは効きません）。\ ``coeff_extern = 1.0``\ で
+  :math:`H_{aa}(0) = h`\ とすると方法 1 と同じになります。このとき\ ``hwave_sc``\ の
+  バンドは、同じ入力によるスピン軌道モードの RPA・FLEX のバンドと一致します。
+
+2軌道、\ :math:`h = 0.1`\ の場合を並べると次のとおりです::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+
+どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます
+（有効な Extern 場とスピン依存のオンサイトの Transfer 項が両方あると WARNING が
+出ます）。\ :math:`h > 0`\ では下向きスピンが有利になるので、フィリング一定のもとで
+電子は下向きスピンに偏極します。ログにもこの規則が出力されます
+（\ ``Zeeman sign: +h raises spin-up (favours spin-down occupation)``\ ）。
+
+磁場はソルバーが使うすべての入力に入ります。
+
+- ``chi0q_mode = "calc"``\ : バンド、化学ポテンシャル、Green 関数、内部で計算する
+  スピンを含む\ :math:`\chi_0`\ のすべてが磁場を含みます。
+- ``chi0q_mode = "flex"``\ : 同じ磁場でスピン軌道モードの FLEX を実行してください
+  （\ :ref:`flex_spin_orbital`\ を参照）。その\ :math:`\chi`\ と Green 関数はすでに
+  磁場を含んでいます。
+- ``chi0q_mode = "load"``\ にはスピン混成のあるホッピングが必要です。それがないと
+  スピン軌道モードの RPA は模型をスピン対角の形に簡約し、物理軌道の chi0q を
+  出力しますが、このモードはそれを拒否します。Zeeman 項だけの模型には
+  ``"calc"``\ または\ ``"flex"``\ を使ってください。スピン混成のあるホッピングが
+  ある場合は、chi0q ファイルを出力した RPA 計算と同じ磁場を与えてください。
+
+出力側（RPA または FLEX）と、そのアーカイブを再利用する\ ``hwave_sc``\ の計算は、
+同じ方法を使う必要があります（両方とも Transfer、または両方とも同じファイルと
+同じ\ ``coeff_extern``\ の Extern）。アーカイブの検査は結果のバンドではなく
+Transfer・Extern のテーブルと\ ``coeff_extern``\ を比較するので、同じ磁場でも別の方法で
+書くとバンドの差として拒否されます。
+
+磁場の値ごとに別の状態点です。別の磁場の値（別の\ ``coeff_extern``\ や Extern
+テーブル）で出力された RPA・FLEX のアーカイブは別の状態を表し、拒否されます
+（\ :ref:`sc_so_archive_checks`\ を参照）。磁場を掃引するときは、値ごとに RPA・FLEX を
+実行し直してください。自発的な磁気秩序
+（強磁性・反強磁性の平均場）は対象外です。スピン軌道モードでは\ ``trans_mod``\ と
+``green_init``\ は拒否されます（issue #273）。
+
+**S_z ごとの重み。**\ スピン軌道モードの計算（静的・動的）は、各固有ベクトルの
+:math:`S_z`\ の成分も出力します。上向き・下向きは\ **入力の量子化軸**\ 、すなわち
+スピンブロック添字の\ :math:`\sigma^z`\ 基底を指します。これは Transfer のスピン
+ラベルと Extern の\ :math:`\sigma^z`\ の軸です。重みは磁場や磁化の軸へは回転
+しません。ギャップのスピンブロックを\ :math:`D_{st}`\ 、
+:math:`\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2`\ 、
+:math:`d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2`\ として
+
+.. math::
+
+   w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+   w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+   W_\text{tot} = \sum |\Delta|^2
+
+です。和は軌道の組、k（動的計算では松原振動数も）について取ります。4 つの重みの
+和は 1 です。上の重みとの関係は
+:math:`w^{S_z=0}_\text{singlet} = w_\psi`\ 、
+:math:`w^{S_z=0}_\text{triplet} = w_{d_z}`\ 、
+:math:`w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}`\ です。
+ログには固有ベクトルごとに 1 行が出力されます（\ ``solver_mode = "iteration"``\ では
+1 つのギャップを固有ベクトル 0 とします）::
+
+   S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+
+ギャップのアーカイブ（\ ``gap.npz``\ 、動的計算では\ ``gap_dynamic.npz``\ ）には
+``sz_weight_upup``\ 、\ ``sz_weight_dndn``\ 、\ ``sz_weight_singlet0``\ 、
+``sz_weight_triplet0``\ （float64、固有ベクトルごとに 1 要素）、
+``sz_conservation_residual``\ 、\ ``sz_conserved``\ が入ります。残差は入力が
+:math:`S_z`\ を保存するかどうかを測ります。\ :math:`r = \max(r_V, r_G)`\ で、
+:math:`r_V`\ は\ :math:`S_z(a) + S_z(d) \neq S_z(b) + S_z(c)`\ となるペアリング
+バーテックスの成分\ :math:`V_{abcd}`\ についての\ :math:`\max|V_\text{off}| / \max|V|`
+（すべての k と振動数について）、\ :math:`r_G`\ は Green 関数のスピン非対角ブロック
+についての同じ比です。\ ``sz_conserved``\ は\ :math:`r \le 10^{-12}`\ です。
+スピン軌道相互作用のない Zeeman 磁場では厳密に 0 になります。\ :math:`S_z`\ が
+保存しない場合（スピン軌道相互作用、スピン反転ホッピング）も重みは厳密な分解
+ですが、WARNING が 1 回出力されます::
+
+   S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+
+.. _sc_so_archive_checks:
+
+アーカイブの検査: 同一の状態点でのみ再利用
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**アーカイブは同一の状態点でのみ再利用されます。**\ 掃引の初期値（ウォーム
+スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
+chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
+実行し直してください。唯一の例外は\ ``chi0q_mode = "load"``\ での\ ``Nmat``\ です
+（下の 3 項）。この場合、別の\ ``Nmat``\ の chi0q アーカイブは WARNING を出して
+受け入れます。
+
+スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
+ます（\ ``fingerprint_version = 1``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
+バンドのダイジェスト\ ``fp_transfer``\ 、\ ``fp_extern``\ 、\ ``fp_meta``\ 、
+``fp_band``\ 、Green 関数のダイジェスト\ ``fp_green``\ 、バンド入力の写し
+``prov_*``\ 、実現した状態\ ``state_*``\ ）。\ ``chi0q_mode = "load"``\ と\ ``"flex"``\ では、
+スピン軌道モードの\ ``hwave_sc``\ は読み込む各アーカイブを、大きな配列を読む前に
+自身の入力と照合します。
+
+1. **構造。**\ version が 1 であること、\ ``producer_stage``\ が既知の段階であること、
+   すべてのメンバーが正確な dtype（\ ``int64``\ 、\ ``float64``\ 、\ ``complex128``\ 、
+   ``bool``\ のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と次元で存在すること、重複するフィールドが一致する
+   こと（\ ``beta`` = ``state_beta``\ 、\ ``nmat`` = ``state_nmat``\ ）、\ ``prov_*``\ から
+   再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
+   整合し、1セルあたり\ :math:`10^{-8}\max(1, |t|)`\ 電子以下であること
+   （\ :math:`t`\ は目標値）。
+2. **バンド。**\ Transfer テーブル、Extern テーブル（とその有無）、メタデータ
+   （\ ``coeff_extern``\ 、添字の規約、軌道数、\ ``CellShape``\ 、\ ``SubShape``\ ）が同一で
+   なければなりません。メッセージは各差分を示します。例:
+   ``coeff_extern: file 0.0, run 0.1``\ 、\ ``Transfer: file 12 rows, run 12 rows;
+   first differing row (R=(1, 0, 0), a=1, b=2): file (0.1+0j), run (0.11+0j)``
+   （軌道は1始まり）。
+3. **状態。**\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
+   （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
+   目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
+   対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
+   :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
+   完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
+   ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。このとき読み込んだ
+   :math:`\chi_0`\ は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
+   異なる（差は\ ``Nmat``\ とともに小さくなりますが、% のオーダーに達することがあります）ため、
+   WARNING を出します。出力側と同じ\ ``Nmat``\ にすれば再現します。μ 自体は比較しません。
+   バンドが同一なら密度で判定できるためです。
+4. **Green 関数。**\ ``"flex"``\ では、読み込んだ Green 関数のダイジェストが chiq
+   アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の\ ``fp_green``\ と
+   等しく、sigma のアーカイブも同じ\ ``fp_green``\ を記録していなければなりません。
+   chiq と chi0q のアーカイブは、両方が\ ``fingerprint_version``\ をもつか、両方とも
+   もたないかのどちらかでなければなりません。
+   ``green.npz``\ 自体はこのダイジェストで検証し、それ自身の来歴メンバーでは検証
+   しません。\ ``"load"``\ では Green 関数を借りないので、アーカイブの
+   ``fp_green``\ は出力側の主張として INFO で記録されます。
+
+``fingerprint_version``\ のないアーカイブ（このバージョンより前に書かれたもの、または
+version 1 のダイジェストが扱わないバンドの計算、すなわち\ ``trans_mod``\ ・
+``green_init``\ やメモリ上で与えた chi0q の計算で書かれたもの）は検査できません。
+この計算に Extern 場があれば拒否し、なければ WARNING を出して受け入れます。
+
+**ギャップのアーカイブに記録される内容。**\ ``gap.npz``\ （\ ``producer_stage =
+"sc_so_static"``\ ）と\ ``gap_dynamic.npz``\ （\ ``"sc_so_dynamic"``\ ）は同じ version 1 の
+メンバーをもち、\ *この*\ 計算のカーネルが実際に使ったものを記録します。出力側の
+値を写すことはありません。
+
+- ``"calc"``\ と\ ``"load"``\ : 自身のバンドと自身の μ から作った Green 関数。
+  ``state_density``\ はその μ でのバンドの1セルあたりの Fermi 分布の和、
+  ``state_mu_tol = |state_density - state_target|``\ です;
+- ``"flex"``\ : ``fp_green``\ は消費した借用 Green 関数のダイジェスト、\ ``state_mu``\ は
+  それを作った FLEX の μ、\ ``state_density``\ はその閉包密度で、FLEX と同じ手続き
+  （\ ``flex_sigma``\ の静的自己エネルギー、この計算のバンド）で求めます。
+  ``fingerprint_version``\ のないアーカイブでは Green 関数の μ がわからないため、
+  ギャップのアーカイブには来歴メンバーを書き込みません（INFO で通知します）。
+
+スカラーのメンバーは\ ``eigenvalue.dat``\ にも\ ``# key = value``\ の行として出力されます。
+version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_green``\ によってのみ Green 関数と
+結び付けられます。出力側は密度を1セルあたり\ :math:`10^{-8}\max(1,|t|)`\ 電子まで
+閉じる必要があります（FLEX の閉包検査\ :math:`10^{-10}`\ と RPA の μ 探索はどちらも
+満たします）。
+
+**トラブルシューティング。**\ どの拒否もファイルと出力側の計算を示す1行の
+メッセージです。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - メッセージ
+     - 原因と対処
+     - 揃える・作り直すキー
+   * - ``... does not match this run: band differs: coeff_extern: file 0.0,
+       run 0.1 ... Archives are reused only at the identical state point``
+     - 別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。または
+       出力側とこの計算が同じ磁場を別の方法（一方は Transfer、他方は Extern）で
+       与えています。検査はバンドではなくテーブルを比較します。一致する磁場で、
+       この入力と同じ方法により出力側の計算を実行し直してください。
+     - ``Transfer``\ 、\ ``Extern``\ 、\ ``[mode.param] coeff_extern``\ （\ ``CellShape``\ 、
+       ``SubShape``\ も）
+   * - ``state differs: calc_mu: file False, run True``
+     - 出力側は μ 固定で実行されています。\ ``hwave_sc``\ はつねに\ ``filling``\ から
+       μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で実行し直してください。
+     - ``[mode.param] filling``\ （\ ``mu``\ を削除）
+   * - ``state differs: target ... (file) vs ... (run) ...; density ...
+       (file) vs target ... (run, tol ...)``
+     - FLEX（または RPA）が別のフィリングで実行されています。このフィリングで
+       実行し直してください。
+     - ``[mode.param] filling``
+   * - ``state differs: beta ... (file) vs ... (run)``
+     - 別の温度です（相対許容幅\ :math:`10^{-12}`\ ）。この\ ``T``\ で実行し直して
+       ください。
+     - ``[mode.param] T``
+   * - ``state differs: nmat ... (file) vs ... (run)``
+     - ``"flex"``\ は Green 関数をそれ自身の格子で再利用します。FLEX の\ ``Nmat``\ を
+       使ってください。
+     - ``[mode.param] Nmat``
+   * - ``state_nmat ... (file) vs Nmat ... (run)``\ （WARNING、\ ``"load"``\ モード）
+     - chi0q のアーカイブは別の松原格子で和をとったものです。使用はされますが、
+       振動数の打ち切りが異なります。再現するには\ ``Nmat``\ を出力側の値にしてください。
+     - ``[mode.param] Nmat``
+   * - ``FLEX archives '...chiq.npz' (unversioned) and '...chi0q.npz'
+       (versioned) disagree on fingerprint_version``\ （またはその逆）
+     - chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
+       計算から両方を作り直してください。
+     - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、FLEX の\ ``[file.output] chi0q``
+   * - ``fp_green mismatch``\ ／\ ``sigma.npz and green.npz come from different
+       runs``
+     - Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません
+       （変更された、または取り違えたファイル）。ひとつの FLEX 計算のアーカイブを
+       使うか、実行し直してください。
+     - ``[eliashberg] flex_green``\ 、\ ``flex_sigma``\ 、\ ``flex_chiq``
+   * - ``... has no fingerprint_version (...); the run has an Extern field,
+       so its band cannot be verified. Regenerate it.``
+     - バージョンのないアーカイブを磁場のある計算で読もうとしています。この
+       バージョンで出力側を実行し直してください（Extern がなければ WARNING のみ）。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
+   * - ``... needs the general (4-index) spinful chi0q ...``\ （load モード、
+       スピン混成のホッピングのない Zeeman 場）
+     - スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。
+       ``chi0q_mode = "calc"``\ または\ ``"flex"``\ を使ってください。
+     - ``[eliashberg] chi0q_mode``
+   * - ``'<file>' is malformed or truncated: <check> (<stored> vs
+       <expected>). Regenerate it with <producer>.``\ （\ ``the producer did not
+       reach its filling``\ も）
+     - 壊れた・途中で切れた・手で編集したアーカイブ、または密度が閉じなかった
+       出力側の計算です。実行し直してください。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
 
 拒否される組み合わせ
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1938,7 +2212,8 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - FLEX の chi0q アーカイブがない場合（FLEX の実行で\ ``[file.output] chi0q``\ を
   指定してください）、FLEX の chi0q アーカイブがマーカー\ ``spin_orbital = True``
   （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
-  アーカイブがない場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
+  または自己エネルギーのアーカイブがない場合、\ :ref:`sc_so_archive_checks`\ の
+  検査に通らないアーカイブの場合、この入力の頂点が FLEX の\ :math:`\chi`\ を再現しない場合
   （波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
   相互作用が一致することは示せません）;
 - ``"arnoldi"``\ 以外の\ ``eigenvalue_method``;
@@ -1947,7 +2222,9 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - ギャップアーカイブの名前（「出力」を参照）が\ ``output_eigenvalue``\ と一致する
   ``output_gap``;
 - 奇数のスピン軌道数（Geometry の\ ``norb``\ ）;
-- ``Extern``\ ファイル（Zeeman 場は Transfer ファイルに書いてください）;
+- 軌道インデックスが\ :math:`1 \ldots N`\ の範囲外の\ ``Extern``\ ファイル、
+  またはヘッダが\ :math:`N`\ 軌道を宣言しない\ ``Extern``\ ファイル
+  （\ :ref:`sc_spin_polarized`\ を参照）;
 - ``[file.input]``\ の\ ``trans_mod``\ と\ ``green_init``\ （平均場の一体入力は
   まだサポートされていません。issue #273 を参照）;
 - ``[mode.param] spinful_vertex_exchange = false``\ 。
@@ -1981,8 +2258,6 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
   できません。\ ``solver_mode = "eigenvalue"``\ （Arnoldi）を使うか、奇の初期値
   （\ ``"p_x"``\ 、\ ``"p_y"``\ など。\ :math:`d_z`\ 三重項を与えます。
   ``"random"``\ は全スピンブロックを含みます）を使ってください。
-- Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
-  この場合は検証していません。
 - メモリ。\ ``frequency = "static"``\ では、\ ``chi0q_mode = "calc"``\ はスピンを
   含む chi0q をボソン振動数ゼロでのみ計算します。大きさは
   :math:`N_k (2N)^4`\ 個の複素数、すなわち\ :math:`16\,N_k (2N)^4`\ バイトです
@@ -2015,13 +2290,19 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
 - **入力経路間の一致。** ``chi0q_mode = "calc"``\ と\ ``"load"``\ は同じ固有値を
   与え、\ ``"flex"``\ は保存された FLEX の\ :math:`\chi`\ と Green 関数から直接
   作ったスペクトルを再現します。
+- **Zeeman 磁場。** Extern による方法と Transfer による方法は、同じバンド
+  （スピン軌道相互作用があってもスピン軌道モードの RPA のバンドと一致）と同じ
+  スペクトルを、静的・動的のどちらでも与えます。スピン軌道相互作用がなければ
+  磁場は\ :math:`S_z`\ を保存し、静的なスペクトルはペアの\ :math:`S_z`\ の3つのセクター
+  （上上・上下・下下）のスペクトルの和集合に一致します。磁場は上上と下下の
+  セクターを分裂させます。
 
 非スピン軌道の一重項・三重項との関係
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 非スピン軌道の一重項・三重項の式はスピン回転不変な相互作用を仮定しています。
 ``Hund``\ のみ、または\ ``Exchange``\ のみの相互作用は\ :math:`S_z`\ を保存しますが
-回転不変ではないので、これらに対してその式は近似です（issue #88 を参照）。
+回転不変ではないので、これらに対してその式は近似です。
 一方、スピン軌道の経路はこれらの項を厳密に扱います。したがってこのような模型
 では、スピン軌道の一重項の固有値は非スピン軌道の計算のものと異なり得ます。
 等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
@@ -2084,13 +2365,15 @@ WARNING を出します。保存された\ :math:`\chi`\ と Green 関数が整�
      eigenvalue_method = "arnoldi"
 
 - ``chi0q_mode = "flex"``: スピン軌道 FLEX 計算の\ ``chiq``\ ・\ ``chi0q``\ ・
-  ``green``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
+  ``green``\ ・\ ``sigma``\ のアーカイブで、設定した\ ``Nmat``\ のボソン・フェルミオンの全格子を
   もつもの（上の「スピン軌道 FLEX の出力の読み込み」を参照）。この入力の頂点が保存
   された\ :math:`\chi`\ を再現すること、\ :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ 、の
   確認は\ :math:`\nu = 0`\ だけでなく\ **すべての**\ ボソン振動数で行います;
 - ``chi0q_mode = "calc"``: 裸の Green 関数のスピンフルなバブルをすべてのボソン
   振動数で計算し、\ :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`\ とします;
 - オンサイト相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;
+- 両方のモードで\ ``[mode.param] filling``\ が必要（アーカイブの検査がフィリングの
+  目標値を比較するため）;
 - 偶数の\ ``Nmat``;
 - ``eigenvalue_method = "arnoldi"``\ での\ ``solver_mode = "iteration"``\ または
   ``"eigenvalue"``\ 。\ ``"both"``\ は非スピン軌道の動的ソルバーと同じく固有値の
