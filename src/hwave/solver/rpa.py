@@ -6,6 +6,7 @@ import dataclasses
 import numpy as np
 import numpy.fft as FFT
 import itertools
+import functools
 import copy
 from requests.structures import CaseInsensitiveDict
 from .base import ParamDict
@@ -39,6 +40,7 @@ from . import fold
 from . import green as green_mod
 from . import spin_orbital
 from . import fingerprint
+from . import threaded as _threaded
 
 
 #: Emitted whenever a PairLift declaration is solved: its particle-hole
@@ -5050,15 +5052,25 @@ class RPA:
         # Determine thread-parallel chunking for frequency axis
         # LAPACK releases the GIL, so threading gives real parallelism.
         # Only parallelize when there is enough work per thread.
-        # LAPACK's batched zgesv already uses internal threads for large batches,
-        # so explicit threading only helps for very large problems where the
-        # per-chunk overhead is negligible relative to compute.
+        # The workers run with the BLAS pinned to one thread (threaded._run):
+        # worker threads over a multithreaded OpenBLAS oversubscribe the CPU
+        # and can crash it (numpy 1.26), so without threadpoolctl the solve
+        # stays serial.
+        # The BLAS limit is process-wide while the workers run, so BLAS work
+        # in other Python threads is single-threaded meanwhile. A BLAS that
+        # threadpoolctl cannot see (Apple Accelerate) is left as it is: it is
+        # thread-safe, and the crash came from OpenBLAS, which it does see.
         # Users can force threading via HWAVE_RPA_THREADS env var.
         import os as _os
         n_workers = int(_os.environ.get("HWAVE_RPA_THREADS", "0"))
         if n_workers == 0:
             import multiprocessing
             n_workers = min(multiprocessing.cpu_count(), 4)
+            if not _threaded.available():
+                n_workers = 1
+        elif n_workers > 1:
+            # an explicit request: one warning when it cannot be honoured
+            n_workers = _threaded._effective_workers(n_workers)
         # Heuristic: only parallelize for large multi-orbital problems
         # where ndx >= 16 (8+ orbitals spinful) and enough frequency points.
         # For small ndx, batched LAPACK is faster than thread pool overhead.
@@ -5116,7 +5128,6 @@ class RPA:
         sol : ndarray, shape (nmat, nvol, ndx, ndx)
             RPA susceptibility.
         """
-        from concurrent.futures import ThreadPoolExecutor
         nmat = chi0q_2d.shape[0]
         sol = np.empty_like(chi0q_2d)
         eye = np.eye(ndx, dtype=np.complex128)
@@ -5132,8 +5143,9 @@ class RPA:
             mat = eye + (chi0q_chunk @ ham_bc)
             sol[sl] = np.linalg.solve(mat, chi0q_chunk)
 
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            list(pool.map(_solve_chunk, slices))
+        # BLAS pinned to one thread inside the workers (see _solve_rpa)
+        _threaded._run([functools.partial(_solve_chunk, sl) for sl in slices],
+                       n_workers)
 
         return sol
 
