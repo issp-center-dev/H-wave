@@ -1,8 +1,9 @@
 """Compatibility contract (spec 2026-09-08 section 3, extended by spec
 2026-09-16 section 2.4): 'local' on an input with no off-site two-body row
-keeps every numerical archive member of the general path np.array_equal to
-the reference revision's; the Hartree-Fock map on a declaration F
-reproduces the reference revision's map on the REVERSED declaration F^rev
+keeps every numerical archive member of the general path equal to the
+reference revision's (exactly with numpy >= 2; floating-point members to
+round-off with numpy < 2, see _assert_same_to_roundoff); the Hartree-Fock
+map on a declaration F reproduces the reference revision's map on the REVERSED declaration F^rev
 exactly; 'local' on a one-band Hubbard input agrees with the reference
 revision's retired 'takimoto' kernel to 1e-14 with the archive-scale floor,
 and so does the method-level assembly with the Takimoto-Hotta-Ueda formula;
@@ -62,7 +63,7 @@ par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], 
        # the reference revision predates the Hermitian projection of the
        # self-energy (issue #281), which changes a symmetric run at round-off
        # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
-       # that this byte-identity comparison stays about the code it names
+       # that this comparison with the reference stays about the code it names
        "flex_sigma_hermitian_projection": False}
 par.update(json.loads(extra_json))
 if so != "absent":
@@ -88,10 +89,13 @@ _COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
 
 
 #: Thread counts pinned to one in every comparison subprocess. The
-#: comparisons against the reference revision are exact (bit for bit), and
-#: a multithreaded BLAS or OpenMP reduction may sum in a different order
-#: from one process to the next: a CI run once saw two identical UHFk
-#: calculations differ by one unit in the last place of an energy.
+#: comparisons against the reference revision require exact numerical
+#: equality, with non-finite values in the same component positions (with
+#: numpy < 2 two of them allow round-off in finite floating-point
+#: components, see :func:`_assert_same_to_roundoff`), and a multithreaded BLAS or OpenMP
+#: reduction may sum in a different order from one process to the next: a
+#: CI run once saw two identical UHFk calculations differ by one unit in
+#: the last place of an energy.
 _SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
                       "MKL_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
                       "BLIS_NUM_THREADS": "1"}
@@ -129,7 +133,8 @@ def reference_subprocess_env(checkout):
 #: (:func:`reference_script` prefixes it to the script): the ring is
 #: transposed before the exact second order is added, in the same batches
 #: and the same operations as this tree, so every other number still has to
-#: agree with the reference bit for bit. The patch is skipped when the
+#: equal the reference's exactly (to round-off with numpy < 2, see
+#: :func:`_assert_same_to_roundoff`). The patch is skipped when the
 #: reference already carries the change (it then defines
 #: ``_pair_transpose_into``).
 REFERENCE_RING_ORIENTATION = r"""
@@ -211,7 +216,10 @@ def _run(checkout, path, inter, out, so, extra=None):
 #: The commit the compatibility harnesses compare against: the merge that
 #: precedes this branch (``develop`` at the time the branch was cut -- the
 #: merge of the local second-order kernel, #191). The contract these
-#: harnesses assert is BYTE identity with that revision, so the revision has
+#: harnesses assert is exact numerical equality with that revision, with
+#: non-finite values in the same component positions (except that with
+#: numpy < 2 the finite floating-point components of two of them agree to
+#: round-off; see :func:`_assert_same_to_roundoff`), so the revision has
 #: to be named -- comparing against "whatever the reference directory
 #: happens to contain" turns a failed comparison into a puzzle and a passing
 #: one into nothing at all.
@@ -229,6 +237,64 @@ DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 #: reference revision: ``{member: (reference value, this tree's value)}``.
 #: ``sc_vertex_version`` 3 marks the bond placement of issue #232.
 MOVED_STAMPS = {"sc_vertex_version": (2, 3)}
+
+
+#: numpy major version of this interpreter: the round-off allowance of
+#: :func:`_assert_same_to_roundoff` applies below 2 only
+NUMPY_BELOW_2 = int(np.__version__.split(".")[0]) < 2
+
+#: relative tolerance (to the array's scale) of the floating-point members
+#: of the two develop comparisons on numpy < 2. Since #309 the Matsubara
+#: transforms return C-ordered arrays, and with numpy < 2 the downstream FFT
+#: and BLAS calls then take other memory paths. Measured on a Linux
+#: numpy 1.26 host: up to ~2.2e-16 relative to the array's scale (green
+#: 2.2e-16, sigma 1.6e-16, chiq_c 2.5e-17, chi0q 4e-18), i.e. last-bit
+#: drift; 1e-12 leaves margin while still failing any physics change.
+ROUNDOFF_RTOL = 1e-12
+
+
+def _float_components(a):
+    """The real floating-point components of ``a``: ``[a]`` for a real
+    array, ``[a.real, a.imag]`` for a complex one."""
+    return [a.real, a.imag] if a.dtype.kind == "c" else [a]
+
+
+def _assert_same_to_roundoff(test, x, y, label):
+    """Assert that archive member ``x`` equals the reference's ``y``.
+
+    Shape and dtype always match exactly; integers, booleans and strings
+    exactly. Floating-point arrays are compared per real component (the real
+    and imaginary parts of a complex array independently, so that e.g.
+    nan+1j and nan+2j, or nan+1j and 2+nanj, are different): every component
+    must be NaN, +inf or -inf in exactly the same positions, and the finite
+    components must be
+
+    * exactly equal with numpy >= 2: there the C-ordered Matsubara
+      transforms of #309 are a no-op for the downstream FFT/BLAS results,
+      so any difference is a real change;
+    * within ROUNDOFF_RTOL times the largest finite component magnitude of
+      the two arrays with numpy < 2, where the C-ordered layout sends those
+      calls down other memory paths that move the last bits."""
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    test.assertEqual(x.dtype, y.dtype, label)
+    if x.dtype.kind not in "fc":
+        test.assertTrue(np.array_equal(x, y), label)
+        return
+    cx, cy = _float_components(x), _float_components(y)
+    for a, b in zip(cx, cy):
+        for cls in (np.isnan, np.isposinf, np.isneginf):
+            test.assertTrue(np.array_equal(cls(a), cls(b)), (label, cls.__name__))
+    fins = [np.isfinite(a) for a in cx]
+    if not NUMPY_BELOW_2:
+        for a, b, fin in zip(cx, cy, fins):
+            test.assertTrue(np.array_equal(a[fin], b[fin]), label)
+        return
+    scale = max(float(np.abs(c[fin]).max(initial=0.0))
+                for comps in (cx, cy) for c, fin in zip(comps, fins))
+    for a, b, fin in zip(cx, cy, fins):
+        test.assertLessEqual(float(np.abs(a[fin] - b[fin]).max(initial=0.0)),
+                             ROUNDOFF_RTOL * scale, label)
 
 
 def moved_stamp(member, reference, mine):
@@ -342,6 +408,74 @@ def _members(d, files=_FILES):
     return out
 
 
+class TestAssertSameToRoundoff(unittest.TestCase):
+    """The comparison helper of the develop comparisons, on both sides of
+    its numpy version gate (patched)."""
+
+    def _check(self, x, y, below_2):
+        mod = sys.modules[__name__]
+        saved = mod.NUMPY_BELOW_2
+        mod.NUMPY_BELOW_2 = below_2
+        try:
+            _assert_same_to_roundoff(self, np.asarray(x), np.asarray(y), "case")
+        finally:
+            mod.NUMPY_BELOW_2 = saved
+
+    def _passes(self, x, y):
+        for below_2 in (False, True):
+            with self.subTest(below_2=below_2):
+                self._check(x, y, below_2)
+
+    def _fails(self, x, y, below_2=(False, True)):
+        for b2 in below_2:
+            with self.subTest(below_2=b2):
+                with self.assertRaises(AssertionError):
+                    self._check(x, y, b2)
+
+    def test_identical_arrays_pass(self):
+        nan, inf = np.nan, np.inf
+        self._passes([1.0, nan, inf, -inf], [1.0, nan, inf, -inf])
+        self._passes([1 + 2j, complex(nan, 1), complex(2, -inf)],
+                     [1 + 2j, complex(nan, 1), complex(2, -inf)])
+        self._passes([nan, inf, -inf], [nan, inf, -inf])          # all non-finite
+        self._passes([complex(nan, inf)], [complex(nan, inf)])
+
+    def test_roundoff_only_below_numpy_2(self):
+        x = np.array([1.0, 2.0, -3.0])
+        y = x * (1 + 2.2e-16 * np.array([1, 0, 1]))
+        y[0] = np.nextafter(1.0, 2.0)
+        self._check(x, y, True)
+        self._fails(x, y, below_2=(False,))
+        z = np.array([1 + 1j, 2 - 3j])
+        self._check(z, z + complex(0, 4.4e-16), True)
+        self._fails(z, z + complex(0, 4.4e-16), below_2=(False,))
+
+    def test_real_change_fails_both(self):
+        self._fails([1.0, 2.0], [1.0, 2.0 * (1 + 1e-9)])
+        self._fails([1 + 1j], [1 + 1.000001j])
+
+    def test_nonfinite_placement(self):
+        nan, inf = np.nan, np.inf
+        self._fails([nan, 1.0], [1.0, nan])
+        self._fails([inf], [-inf])
+        self._fails([inf], [nan])
+        self._fails([complex(nan, 1)], [complex(nan, 2)])
+        self._fails([complex(nan, 1)], [complex(2, nan)])
+        self._fails([complex(1, inf)], [complex(1, -inf)])
+        self._fails([nan, inf], [nan, -inf])                         # all non-finite
+
+    def test_dtype_and_shape_mismatch(self):
+        self._fails(np.array([1.0], np.float64), np.array([1.0], np.float32))
+        self._fails(np.array([1.0]), np.array([1.0 + 0j]))
+        self._fails(np.array([1, 2]), np.array([1.0, 2.0]))
+        self._fails(np.array([1.0, 2.0]), np.array([[1.0, 2.0]]))
+
+    def test_non_float_exact(self):
+        self._passes(np.array(["local"]), np.array(["local"]))
+        self._fails(np.array(["local"]), np.array(["takimoto"]))
+        self._fails(np.array([1, 2]), np.array([1, 3]))
+
+
 class TestCompatibility(unittest.TestCase):
 
     def _develop(self):
@@ -352,8 +486,10 @@ class TestCompatibility(unittest.TestCase):
 
     def test_local_on_onsite_only_input_equals_develop(self):
         """The other unmoved path: ``flex_second_order = "local"`` on an
-        input with NO off-site two-body row is byte-identical to the
-        reference revision's.
+        input with NO off-site two-body row equals the reference revision's
+        (exactly with numpy >= 2; with numpy < 2 integers exactly and
+        floating-point values to round-off since #309, see
+        :func:`_assert_same_to_roundoff`).
 
         The orientation change touches the kernel's OFF-SITE vertex only
         (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
@@ -374,8 +510,7 @@ class TestCompatibility(unittest.TestCase):
                     if moved_stamp(k, v, mb[f][k]):
                         continue
                     if np.asarray(v).dtype.kind in "fciub":
-                        np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
-                                                      err_msg=str((f, k)))
+                        _assert_same_to_roundoff(self, mb[f][k], v, (f, k))
                         compared += 1
             self.assertGreater(compared, 10)
             # anti-vacuity: the kernel really ran on a non-trivial sigma
