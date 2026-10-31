@@ -12,6 +12,7 @@ reference revision (a detached worktree under RUNNER_TEMP; see
 HWAVE_REQUIRE_DEVELOP_COMPARISON=1, so they RUN there and a missing or
 unusable reference fails rather than skips. Locally they skip with a
 reason when no such checkout is at hand."""
+import decimal
 import os
 import re
 import shutil
@@ -90,7 +91,8 @@ def _log_lines_differ(la, lb, rtol=LOG_FLOAT_RTOL):
     Non-numeric text must be identical (so file names, path components and
     version strings, which _FLOAT_LITERAL never matches, compare exactly),
     the float literals must sit at the same places, and each pair must agree
-    to ``rtol`` relative to the larger magnitude of the two."""
+    to ``rtol`` relative to the larger magnitude of the two, compared as
+    exact decimal values (so out-of-range literals are compared too)."""
     ta, tb = _log_line_tokens(la), _log_line_tokens(lb)
     if len(ta) != len(tb):
         return "different number of float literals"
@@ -99,8 +101,12 @@ def _log_lines_differ(la, lb, rtol=LOG_FLOAT_RTOL):
             if x != y:
                 return "text {!r} != {!r}".format(x, y)
         else:
-            fx, fy = float(x), float(y)
-            if abs(fx - fy) > rtol * max(abs(fx), abs(fy)):
+            # compared as exact decimals, not floats: a literal outside the
+            # double range would overflow to inf or underflow to 0 and make
+            # different values (1e309 vs 1e308, 1e-400 vs 2e-400) compare
+            # equal
+            dx, dy = decimal.Decimal(x), decimal.Decimal(y)
+            if abs(dx - dy) > decimal.Decimal(repr(rtol)) * max(abs(dx), abs(dy)):
                 return "float {} != {} beyond rtol {}".format(x, y, rtol)
     return None
 
@@ -273,6 +279,13 @@ class TestAssertLogsMatch(unittest.TestCase):
         self._bad("x -1.5", "x 1.5")
         self._bad("e 1.5e-05", "e 1.5e-06")
         self._bad("mu = 0.5", "mu = 5")
+
+    def test_out_of_double_range_literals(self):
+        self._bad("x 1e309", "x 1e308")
+        self._bad("x 1e309", "x -1e309")
+        self._bad("x 1e-400", "x 2e-400")
+        self._ok("x 1e309", "x 1.0e309")
+        self._ok("x 1.0e-3", "x 0.001")
 
     def test_text_difference_fails(self):
         self._bad("hwave INFO converged 1.0", "hwave INFO diverged 1.0")
