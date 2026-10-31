@@ -93,7 +93,7 @@ import unittest
 
 import numpy as np
 
-from hwave.solver import bubble, spin_orbital
+from hwave.solver import bubble
 from hwave.solver.eliashberg_bond import (ArrayBlockSource, BondPairKernel, PairVertexUniform,
                                           _vinst_as_block)
 from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
@@ -106,8 +106,6 @@ from tests.test_so_pairing_vertex import _gamma, _onsite_decl
 
 L, NP, BETA, MU = 3, 2, 2.0, 0.8
 ND = 2 * NP                       # spin-orbitals, spin-block order s * NP + a
-#: EDFixture's in-site mode index (interleaved ``2 a + s``) of spin-block index A
-_MODE = spin_orbital.spinblock_order(NP)
 #: Transfer rows (r, a, b): t c+_{j,a,s} c_{j+r,b,s} (the chain of test_bond_pairing_ed)
 TRANSFER = {(0, 0, 0): -0.4, (0, 1, 1): 0.6, (0, 0, 1): -0.3, (0, 1, 0): -0.3,
             (1, 0, 1): -1.0, (-1, 1, 0): -1.0, (1, 0, 0): -0.5, (-1, 0, 0): -0.5}
@@ -129,27 +127,31 @@ NMATS = (128, 256)
 TOL_C1, TOL_C2, MISS = 2e-5, 2e-4, 1e-2
 
 _K = 2 * np.pi * np.arange(L) / L
+
+
+def _pair_basis(nd, nl):
+    """The pair basis ``(A, B, d')`` of ``nd`` spin-orbitals on an ``nl``-site
+    chain: spin-orbital A at the origin, B at d'."""
+    return [(A, B, dp) for A in range(nd) for B in range(nd) for dp in range(nl)]
+
+
 #: pair basis (A, B, d'): spin-orbital A at the origin, B at d'
-PAIRS = [(A, B, dp) for A in range(ND) for B in range(ND) for dp in range(L)]
-_INDEX = {p: i for i, p in enumerate(PAIRS)}
+PAIRS = _pair_basis(ND, L)
 
 
-def _wn(nmat):
-    return (2 * np.arange(nmat) + 1 - nmat) * np.pi / BETA
+def _wn(nmat, beta=BETA):
+    return (2 * np.arange(nmat) + 1 - nmat) * np.pi / beta
 
 
-def _mode(fx, j, A):
-    """ED mode of spin-block index ``A`` on site ``j``."""
-    return fx.nd * j + int(_MODE[A])
-
-
-def _antisymmetric_projector():
+def _antisymmetric_projector(pairs=PAIRS, nl=L):
     """``(1 - swap) / 2`` with swap ``(A, B, d') -> (B, A, -d')``: the pair
-    operators obey ``Delta_(B, A, -d') = -Delta_(A, B, d')``."""
-    swap = np.zeros((len(PAIRS), len(PAIRS)))
-    for i, (A, B, dp) in enumerate(PAIRS):
-        swap[_INDEX[(B, A, (-dp) % L)], i] = 1.0
-    return 0.5 * (np.eye(len(PAIRS)) - swap)
+    operators obey ``Delta_(B, A, -d') = -Delta_(A, B, d')`` (``pairs`` a
+    pair basis of an ``nl``-site chain, :func:`_pair_basis`)."""
+    index = {p: i for i, p in enumerate(pairs)}
+    swap = np.zeros((len(pairs), len(pairs)))
+    for i, (A, B, dp) in enumerate(pairs):
+        swap[index[(B, A, (-dp) % nl)], i] = 1.0
+    return 0.5 * (np.eye(len(pairs)) - swap)
 
 
 def _sz_change():
@@ -232,20 +234,34 @@ def _ed(lam, model="spin_flip", zeeman=0.0):
 @functools.lru_cache(maxsize=None)
 def _ed_cached(lam, model, zeeman):
     fx, terms, h1 = _model(lam, model, zeeman)
-    ed = TotalNED(fx, terms, h1=h1)
+    return _ed_observables(TotalNED(fx, terms, h1=h1), PAIRS, max(NMATS))
+
+
+def _ed_observables(ed, pairs, nmat):
+    """``(chi, G)`` of a ``TotalNED``: the pair susceptibility in the basis
+    ``pairs`` (:func:`_pair_basis`) and ``G[n, A, (j, B)] = G_{(0, A), (j,
+    B)}(i w_n)`` on the ``nmat``-point grid (``G`` is ``None`` when ``nmat``
+    is 0). Spin-orbital indices are spin-block, ``A = s * norb + a``."""
+    fx = ed.fx
+    norb, nd = fx.norb, fx.nd
     chi = ed.pair_correlator(
-        [(dp, B % NP, B // NP, A % NP, A // NP) for (A, B, dp) in PAIRS], qs=[0])[0]
-    G = ed.green(1j * _wn(max(NMATS)), rows=[_mode(fx, 0, A) for A in range(ND)],
-                 cols=[_mode(fx, j, B) for j in range(L) for B in range(ND)])
+        [(dp, B % norb, B // norb, A % norb, A // norb) for (A, B, dp) in pairs], qs=[0])[0]
+    if not nmat:
+        return chi, None
+    G = ed.green(1j * _wn(nmat, fx.beta),
+                 rows=[fx.mode(0, A % norb, A // norb) for A in range(nd)],
+                 cols=[fx.mode(j, B % norb, B // norb) for j in range(fx.L) for B in range(nd)])
     return chi, G
 
 
-def _green_sc(G, nmat):
+def _green_sc(G, nmat, nd=ND, nl=L):
     """``G_AB(k, i w_n) = sum_r e^{ikr} G_{(0 A),(r B)}`` in the sc layout
-    ``(ND, ND, L, 1, 1, nmat)`` on the centre ``nmat`` points of the ED grid."""
+    ``(nd, nd, nl, 1, 1, nmat)`` on the centre ``nmat`` points of the ED grid
+    (``nd`` spin-orbitals on an ``nl``-site chain)."""
     off = (G.shape[0] - nmat) // 2
-    Gr = G[off:off + nmat].reshape(nmat, ND, L, ND)
-    g = np.einsum("narb,kr->abkn", Gr, np.exp(1j * np.outer(_K, np.arange(L))))
+    Gr = G[off:off + nmat].reshape(nmat, nd, nl, nd)
+    k = 2 * np.pi * np.arange(nl) / nl
+    g = np.einsum("narb,kr->abkn", Gr, np.exp(1j * np.outer(k, np.arange(nl))))
     return g[:, :, :, None, None, :].copy()
 
 
@@ -301,34 +317,43 @@ def _antisym(phi):
     return 0.5 * (phi - ref)
 
 
-def _pair_sum(g, phi_w):
+def _pair_sum(g, phi_w, beta=BETA):
     """``X_AB(k) = T sum_n G_AE(k, w_n) G_BF(-k, -w_n) phi_EF(k, n)``."""
     gm = np.roll(g[:, :, ::-1, :, :, ::-1], 1, axis=2)[:, :, :, 0, 0]
-    return np.einsum("cekn,dfkn,efkn->cdk", g[:, :, :, 0, 0], gm, phi_w) / BETA
+    return np.einsum("cekn,dfkn,efkn->cdk", g[:, :, :, 0, 0], gm, phi_w) / beta
 
 
-def _production_chi(g, lam, nmat, **kw):
-    """The ladder through ``K K`` in the ``PAIRS`` basis: column ``(E, F,
-    d)`` is the response to the antisymmetric static field of
-    ``Delta_(E, F, d)^dagger``."""
-    out = np.zeros((len(PAIRS), len(PAIRS)), complex)
-    phase = np.exp(1j * np.outer(_K, np.arange(L)))
-    K = _kernel(g, lam, nmat, **kw)
-    for col, (E, F, dd) in enumerate(PAIRS):
-        Dr = np.zeros((ND, ND, L), complex)
+def _ladder_chi(K, g, nmat, pairs=PAIRS, beta=BETA):
+    """The ladder through ``K K`` of the pairing kernel ``K`` (a ``matvec``
+    on ``(nd, nd, nl, 1, 1, nmat)`` gaps) in the basis ``pairs``
+    (:func:`_pair_basis`; ``nd`` and ``nl`` are read from the sc-layout
+    Green function ``g``): column ``(E, F, d)`` is the response to the
+    antisymmetric static field of ``Delta_(E, F, d)^dagger``."""
+    nd, nl = g.shape[0], g.shape[2]
+    out = np.zeros((len(pairs), len(pairs)), complex)
+    k = 2 * np.pi * np.arange(nl) / nl
+    phase = np.exp(1j * np.outer(k, np.arange(nl)))
+    for col, (E, F, dd) in enumerate(pairs):
+        Dr = np.zeros((nd, nd, nl), complex)
         Dr[E, F, dd] += 0.5
-        Dr[F, E, (-dd) % L] -= 0.5
+        Dr[F, E, (-dd) % nl] -= 0.5
         phi = np.einsum("abd,kd->abk", Dr, phase)                     # e^{+ikd}
         term = np.ascontiguousarray(np.broadcast_to(phi[..., None], phi.shape + (nmat,)))
         total = term.copy()
         for _ in range(2):
             term = _antisym(K.matvec(term[:, :, :, None, None, :].ravel()).reshape(
-                ND, ND, L, nmat))
+                nd, nd, nl, nmat))
             total = total + term
-        X = 2.0 * _pair_sum(g, total)
-        for row, (A, B, dp) in enumerate(PAIRS):
+        X = 2.0 * _pair_sum(g, total, beta)
+        for row, (A, B, dp) in enumerate(pairs):
             out[row, col] += (X[A, B] * phase[:, dp].conj()).mean()   # e^{-ikd'}
     return out
+
+
+def _production_chi(g, lam, nmat, **kw):
+    """The ladder through ``K K`` of the one-channel kernel in the ``PAIRS``
+    basis (:func:`_ladder_chi`)."""
+    return _ladder_chi(_kernel(g, lam, nmat, **kw), g, nmat)
 
 
 @functools.lru_cache(maxsize=None)
@@ -355,11 +380,11 @@ def _ed_series(model="spin_flip", zeeman=0.0):
     return tuple(_ed(lam, model, zeeman)[0] for lam in LAMS)
 
 
-def _errors(want, got):
+def _errors(want, got, pairs=PAIRS, nl=L):
     """``{order: relative deviation}`` of the coefficients, both sides
     projected onto the antisymmetric pair space (the ED side lives there
     exactly)."""
-    P = _antisymmetric_projector()
+    P = _antisymmetric_projector(pairs, nl)
     out = {}
     for order, (a, b) in enumerate(zip(_stencil(want), _stencil(got)), 1):
         A, B = P @ a @ P, P @ b @ P

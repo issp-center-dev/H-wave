@@ -332,6 +332,39 @@ HEAVY_TESTS = (
     # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
     ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
      "general-scheme RPA first-order response vs ED"),
+    # --- tests/test_so_bond_chi_ed.py -- spinful bond correlators vs ED ---
+    ("test_so_bond_chi_ed", "TestChiFirstOrderED", "test_fixture_ii",
+     "the first-order longitudinal and transverse bond correlators of the "
+     "two-orbital three-cell chain vs exact diagonalization (12 modes, "
+     "largest sector 924, two steps), 19 sketches, 15.6 s measured on macOS, "
+     "19.0 s on Linux (numpy 1.26); the five-cell chain and its Zeeman variant "
+     "stay in the fast gate"),
+    # --- tests/test_so_bond_conventions.py -- spinful bond vertex vs ED ----
+    ("test_so_bond_conventions", "TestFilingAgainstED", "test_fixture_i_per_type",
+     "the spinful bond vertex of each interaction type alone vs the exact "
+     "first-order vertex part on the five-cell chain, every q and all 14 "
+     "sketches (seven exact diagonalizations at two steps), 5.2 s measured on "
+     "macOS, 10.4 s on Linux (numpy 1.26); the combined fixture stays in the fast gate"),
+    ("test_so_bond_conventions", "TestFilingAgainstED", "test_fixture_ii_combined",
+     "the spinful bond vertex of the two-orbital three-cell chain vs the exact "
+     "first-order vertex part (12 modes, largest sector 924, two steps), all "
+     "14 sketches, 11.9 s measured on macOS, 13.9 s on Linux (numpy 1.26)"),
+    # --- tests/test_so_bond_pairing_ed.py -- spinful bond pairing vs ED ---
+    ("test_so_bond_pairing_ed", "TestSOBondPairingAgainstED",
+     "test_first_and_second_order_two_sided",
+     "the spinful bond pair susceptibility at O(lambda) and O(lambda^2) vs "
+     "exact diagonalization of the two-orbital three-cell chain with on-site "
+     "and nearest-neighbour interactions (ten ED solves, production at "
+     "nmat = 128 and 256 for every reading), two-sided, 98.7 s measured on "
+     "macOS, 233 s on Linux (numpy 1.26); the one-orbital smoke stays in the fast gate"),
+    # --- tests/test_so_bond_pairing_oracle.py -- spinful bond pairing, 1st order
+    ("test_so_bond_pairing_oracle", "TestFirstOrderSOBondPairing", "test_all_types_norb_1_2_3",
+     "the static spinful bond pairing kernel at first order vs the independent "
+     "spin-orbital construction, every off-site type at both orientations and "
+     "CoulombIntra, norb_phys 1, 2 and 3 (39 cases, four production chains "
+     "each), 3.7 s measured on macOS, 7.7 s on Linux (numpy 1.26); heavy because "
+     "of the fast-gate budget, not its own runtime; the two-orbital subset "
+     "stays in the fast gate"),
     # --- tests/test_so_pairing_ed.py -- spin-orbital pairing vertex vs ED (#83)
     ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
      "test_first_and_second_order",
