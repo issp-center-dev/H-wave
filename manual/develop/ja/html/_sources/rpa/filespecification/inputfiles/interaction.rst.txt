@@ -219,5 +219,30 @@
       **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数（= 物理軌道数 × 2）
       になりました。既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
+-  **スピン軌道モードでの Extern。**\ ``mode.enable_spin_orbital = true``\ の場合も、
+   Extern ファイルは\ **物理**\ 軌道インデックスで書きます。各\ :math:`R`\ について
+   :math:`N_\text{orbital} \times N_\text{orbital}`\ 行列であり、インデックスは
+   1〜\ :math:`N_\text{orbital}`\ （幾何\ ``norb``\ の半分）、ヘッダの2行目は
+   :math:`N_\text{orbital}`\ です。Transfer ファイルのスピン軌道インデックス
+   1〜\ :math:`2 N_\text{orbital}`\ は\ **使いません**\ 。
+   1〜\ :math:`N_\text{orbital}`\ の範囲外のインデックス、または別の軌道数を宣言する
+   ヘッダはエラーとして拒否されます（そのような行を黙って捨てることはありません）。
+
+   スピン依存性は\ :math:`\sigma^z`\ から来ます。前項と同じく
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1`\ を物理軌道インデックスとします
+   （Extern ファイル上のインデックスは\ :math:`\alpha + 1`\ ）。\ ``coeff_extern``\ 倍されたエントリ
+   :math:`H_{\alpha\alpha}(0) = h`\ は、軌道\ :math:`\alpha`\ の上向きスピンの準位を
+   :math:`+h`\ 、下向きスピンの準位を\ :math:`-h`\ だけずらします。したがって
+   :math:`h > 0`\ では下向きスピンが有利になり、フィリング一定のもとでその占有数が増え、
+   :math:`S^z`\ は負になります。
+
+   同じ磁場は Transfer ファイルに、インデックス\ :math:`2\alpha + 1`\ に\ :math:`+h`\ 、
+   インデックス\ :math:`2\alpha + 2`\ に\ :math:`-h`\ のオンサイト項として書くこともできます
+   （1始まりの Transfer ファイル上のインデックス。\ :math:`\alpha`\ は上と同じく0始まり）。
+   どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます。
+
+   ``coeff_extern``\ の既定値は 0.0 なので、\ ``[mode.param] coeff_extern``\ を
+   （例えば 1.0 に）設定するまで Extern ファイルは効きません。
+
    
 .. raw:: latex

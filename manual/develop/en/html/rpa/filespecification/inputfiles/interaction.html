@@ -259,6 +259,29 @@ spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
 spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
 </li>
+<li><p><strong>Extern in spin-orbital mode.</strong> With <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>
+the Extern file keeps the <strong>physical</strong> orbital indices: an
+<span class="math notranslate nohighlight">\(N_\text{orbital} \times N_\text{orbital}\)</span> matrix per <span class="math notranslate nohighlight">\(R\)</span>,
+indices from 1 to <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span> (half the geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code>),
+and line 2 of the header is <span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>. It does <strong>not</strong> use
+the <span class="math notranslate nohighlight">\(1, \ldots, 2 N_\text{orbital}\)</span> spin-orbital indices of the
+Transfer file. An index outside <span class="math notranslate nohighlight">\(1, \ldots, N_\text{orbital}\)</span>, or a
+header that declares another orbital count, is rejected with an error
+(the solver does not drop such rows).</p>
+<p>The spin dependence comes from <span class="math notranslate nohighlight">\(\sigma^z\)</span>. Let
+<span class="math notranslate nohighlight">\(\alpha = 0, \ldots, N_\text{orbital}-1\)</span> be the physical-orbital
+index of the previous item (Extern file index <span class="math notranslate nohighlight">\(\alpha + 1\)</span>). An entry
+<span class="math notranslate nohighlight">\(H_{\alpha\alpha}(0) = h\)</span>, scaled by <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>, shifts the
+up-spin level of orbital <span class="math notranslate nohighlight">\(\alpha\)</span> by <span class="math notranslate nohighlight">\(+h\)</span> and the down-spin
+level by <span class="math notranslate nohighlight">\(-h\)</span>. For <span class="math notranslate nohighlight">\(h &gt; 0\)</span> the down spin is therefore
+favoured: at fixed filling its occupation grows and <span class="math notranslate nohighlight">\(S^z\)</span> becomes
+negative.</p>
+<p>The same field can be written into the Transfer file instead, as on-site
+entries <span class="math notranslate nohighlight">\(+h\)</span> on index <span class="math notranslate nohighlight">\(2\alpha + 1\)</span> and <span class="math notranslate nohighlight">\(-h\)</span> on index
+<span class="math notranslate nohighlight">\(2\alpha + 2\)</span> (1-based Transfer file indices, <span class="math notranslate nohighlight">\(\alpha\)</span> 0-based as above). Use one route, not both: the two fields add.</p>
+<p><code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> defaults to 0.0, so an Extern file has no effect until
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code> is set (e.g. to 1.0).</p>
+</li>
 </ul>
 </section>
 </section>

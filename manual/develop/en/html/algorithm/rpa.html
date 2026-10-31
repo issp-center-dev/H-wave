@@ -1070,7 +1070,11 @@ conditions of that switch;</p></li>
 interaction is not a <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>, and no <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>;</p></li>
 <li><p>no <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> / <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the run starts from
-the bare Hartree-Fock state.</p></li>
+the bare Hartree-Fock state;</p></li>
+<li><p>an Extern field is accepted: the file uses physical orbital indices and
+adds <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code> <span class="math notranslate nohighlight">\(\cdot H_1 \otimes \sigma^z\)</span> to the band
+(up spin <span class="math notranslate nohighlight">\(+\)</span>, down spin <span class="math notranslate nohighlight">\(-\)</span>), a Zeeman field when
+<span class="math notranslate nohighlight">\(H_1\)</span> is on-site (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-polarized"><span class="std std-ref">Spin-polarized states (Zeeman field)</span></a>).</p></li>
 </ul>
 <p>The reduced scheme refuses spin-orbital input. The Eliashberg solver
 (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the spin-orbital FLEX outputs, with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>

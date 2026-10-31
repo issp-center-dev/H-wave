@@ -975,6 +975,10 @@ SU(2) 対称な相互作用の場合だけです。一方<span class="math notra
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>はなし</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・<code class="docutils literal notranslate"><span class="pre">green_init</span></code>はなし（計算は裸の
 Hartree-Fock 状態から始まります）</p></li>
+<li><p>Extern 場を受け付けます。ファイルは物理軌道の添字で書き、バンドに
+<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code><span class="math notranslate nohighlight">\(\cdot H_1 \otimes \sigma^z\)</span>（上向きスピンが
+<span class="math notranslate nohighlight">\(+\)</span>、下向きスピンが<span class="math notranslate nohighlight">\(-\)</span>）を加えます。<span class="math notranslate nohighlight">\(H_1\)</span>がオンサイトなら
+Zeeman 場です（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>を参照）。</p></li>
 </ul>
 <p>reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
 （<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも

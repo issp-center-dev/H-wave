@@ -1158,7 +1158,11 @@ Domain of this version:
   interaction is not a :math:`\mathbf{q}`-only vertex);
 - ``spinful_vertex_exchange = true``, and no ``longitudinal_bond_channels``;
 - no ``sigma_init`` / ``trans_mod`` / ``green_init``: the run starts from
-  the bare Hartree-Fock state.
+  the bare Hartree-Fock state;
+- an Extern field is accepted: the file uses physical orbital indices and
+  adds ``coeff_extern`` :math:`\cdot H_1 \otimes \sigma^z` to the band
+  (up spin :math:`+`, down spin :math:`-`), a Zeeman field when
+  :math:`H_1` is on-site (see :ref:`sc_spin_polarized`).
 
 The reduced scheme refuses spin-orbital input. The Eliashberg solver
 (``hwave_sc``) reads the spin-orbital FLEX outputs, with ``frequency =

@@ -1522,6 +1522,55 @@ runs, as in UHFk).</p></li>
 it is requested), both in the static solver (see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
 in the dynamic one, which uses <span class="math notranslate nohighlight">\(\chi\)</span> at every bosonic frequency (see
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p>
+</section>
+<section id="spin-polarized-flex-zeeman-field">
+<h3>Spin-polarized FLEX (Zeeman field)<a class="headerlink" href="#spin-polarized-flex-zeeman-field" title="Link to this heading">¶</a></h3>
+<p>A spin-orbital FLEX run can be put in a Zeeman field <span class="math notranslate nohighlight">\(h\)</span>. One sign
+convention holds throughout: the field shifts the up-spin level by
+<span class="math notranslate nohighlight">\(+h\)</span> and the down-spin level by <span class="math notranslate nohighlight">\(-h\)</span> (the <span class="math notranslate nohighlight">\(\sigma^z\)</span> sign
+of the Extern term). Both routes below need <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+the Geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code> equal to <span class="math notranslate nohighlight">\(2 n_{\rm orb}\)</span>, and the Transfer file
+in the interleaved spin-orbital indices (1-based file index
+<span class="math notranslate nohighlight">\(2a + s + 1\)</span>, with the physical orbital <span class="math notranslate nohighlight">\(a = 0, \ldots, n_{\rm orb} - 1\)</span>
+and <span class="math notranslate nohighlight">\(s = 0\)</span> for up, <span class="math notranslate nohighlight">\(s = 1\)</span> for down).</p>
+<ul>
+<li><p><strong>Route 1: Zeeman in Transfer.</strong> Add on-site entries for each physical
+orbital <span class="math notranslate nohighlight">\(a = 0, \ldots, n_{\rm orb} - 1\)</span> (1-based file indices):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+</pre></div>
+</div>
+</li>
+<li><p><strong>Route 2: Extern + coeff_extern.</strong> The Extern file uses the
+<strong>physical</strong> orbital indices: an <span class="math notranslate nohighlight">\(n_{\rm orb} \times n_{\rm orb}\)</span>
+matrix per <span class="math notranslate nohighlight">\(R\)</span>, indices <span class="math notranslate nohighlight">\(1, \ldots, n_{\rm orb}\)</span>, in the same
+Wannier90 format as without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. It does not use the
+<span class="math notranslate nohighlight">\(1, \ldots, 2 n_{\rm orb}\)</span> spin-orbital indices of the Transfer
+file; an index outside the physical range, or a header (line 2) that
+declares another orbital count, is rejected. The operator is
+<span class="math notranslate nohighlight">\(\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}\)</span>, scaled by
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>, which defaults to 0.0: set it (e.g. to
+1.0) for the Extern file to take effect. <span class="math notranslate nohighlight">\(H_{aa}(0) = h\)</span> with
+<code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">1.0</span></code> (file index <span class="math notranslate nohighlight">\(a + 1\)</span> of the Extern file)
+equals Route 1.</p></li>
+</ul>
+<p>Side by side, for two orbitals and <span class="math notranslate nohighlight">\(h = 0.1\)</span>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+</pre></div>
+</div>
+<p>Use one route, not both: the two fields add. For <span class="math notranslate nohighlight">\(h &gt; 0\)</span> the down
+spin is favoured, so at fixed filling <code class="docutils literal notranslate"><span class="pre">Sz</span></code> in <code class="docutils literal notranslate"><span class="pre">energy.dat</span></code> is negative.
+Each field value is its own state point: for a field sweep, rerun FLEX at
+every value.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> the FLEX solver accepts the Extern route
+(the spin-orbital FLEX requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>); the
+spin-orbital RPA and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> accept it too. Without
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuses an
+external field.</p>
 <p>The output files of a run without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> can also be used
 as input for the Eliashberg equation solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) to analyze
 superconducting instabilities. See <a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">Tutorial: Eliashberg equation solver</span></a> for details.</p>

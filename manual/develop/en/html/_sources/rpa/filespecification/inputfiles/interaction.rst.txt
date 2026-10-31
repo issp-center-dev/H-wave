@@ -245,4 +245,30 @@ Usage rules
       spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
       spin-orbital ``geom.dat`` ``Norbit``.
 
+-  **Extern in spin-orbital mode.** With ``mode.enable_spin_orbital = true``
+   the Extern file keeps the **physical** orbital indices: an
+   :math:`N_\text{orbital} \times N_\text{orbital}` matrix per :math:`R`,
+   indices from 1 to :math:`N_\text{orbital}` (half the geometry ``norb``),
+   and line 2 of the header is :math:`N_\text{orbital}`. It does **not** use
+   the :math:`1, \ldots, 2 N_\text{orbital}` spin-orbital indices of the
+   Transfer file. An index outside :math:`1, \ldots, N_\text{orbital}`, or a
+   header that declares another orbital count, is rejected with an error
+   (the solver does not drop such rows).
+
+   The spin dependence comes from :math:`\sigma^z`. Let
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1` be the physical-orbital
+   index of the previous item (Extern file index :math:`\alpha + 1`). An entry
+   :math:`H_{\alpha\alpha}(0) = h`, scaled by ``coeff_extern``, shifts the
+   up-spin level of orbital :math:`\alpha` by :math:`+h` and the down-spin
+   level by :math:`-h`. For :math:`h > 0` the down spin is therefore
+   favoured: at fixed filling its occupation grows and :math:`S^z` becomes
+   negative.
+
+   The same field can be written into the Transfer file instead, as on-site
+   entries :math:`+h` on index :math:`2\alpha + 1` and :math:`-h` on index
+   :math:`2\alpha + 2` (1-based Transfer file indices, :math:`\alpha` 0-based as above). Use one route, not both: the two fields add.
+
+   ``coeff_extern`` defaults to 0.0, so an Extern file has no effect until
+   ``[mode.param] coeff_extern`` is set (e.g. to 1.0).
+
 .. raw:: latex

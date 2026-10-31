@@ -200,7 +200,7 @@ J. Phys. Soc. Jpn. <strong>76</strong>, 024706 (2007);
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を読み込みます。
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は内部で計算します。
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>はFLEX計算の dressed 感受率を読み込みます
-（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>に必須）。
+（スピン軌道モード以外では<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>に必須。<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。
 <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>は静的計算が使う唯一の振動数であるボソン振動数ゼロでのみ
 <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算するため、メモリは
 <span class="math notranslate nohighlight">\(O(N_\mathrm{mat} N_k\,n_d^4)\)</span>ではなく<span class="math notranslate nohighlight">\(O(N_k\,n_d^4)\)</span>です
@@ -252,11 +252,13 @@ Hartree-Fock 項を加えたもの、さらに<code class="docutils literal notr
 スピン混成ブロックがない）。許容誤差は無次元の成分に対して
 <span class="math notranslate nohighlight">\(\max(10^{-10}, \texttt{spin\_free\_tol})\)</span>です。磁性をもつ
 <code class="docutils literal notranslate"><span class="pre">green_init</span></code>はスピンの向きによらず磁性状態を表すため拒否されます
-（issue #88）。収束の緩い常磁性 UHF 解（例えばランダム初期状態から
+（磁性をもつ平均場の入力はスピン軌道の経路でもまだサポートされていません。
+issue #273）。収束の緩い常磁性 UHF 解（例えばランダム初期状態から
 <code class="docutils literal notranslate"><span class="pre">EPS</span> <span class="pre">=</span> <span class="pre">6</span></code>）には<span class="math notranslate nohighlight">\(10^{-5}\)</span>程度の分裂が残ることがあります。
 UHF の収束を厳しくする、スピン対称な初期状態から UHF を始める、または
 <code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>を大きくしてください。
-スピン偏極の場合は issue #88 で扱います。</p>
+Zeeman 磁場で偏極した状態は<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>で
+計算できます。<a class="reference internal" href="#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>を参照してください。</p>
 <p><strong>load・ボンド・FLEX 入力での挙動。</strong> <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では、chi0q ファイルを
 出力した RPA 計算と同じ <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>/ <code class="docutils literal notranslate"><span class="pre">green_init</span></code>/ <code class="docutils literal notranslate"><span class="pre">Extern</span></code>を
 指定してください。この場合、読み込む chi0q が元のバンドで計算されている
@@ -298,7 +300,8 @@ Fock 項をもつ相互作用があると<code class="docutils literal notransla
 頂点<span class="math notranslate nohighlight">\(V(\mathbf{q}, i\omega_l)\)</span>とギャップ<span class="math notranslate nohighlight">\(\phi(\mathbf{k}, i\omega_n)\)</span>
 を用いた、松原振動数に完全に依存する Eliashberg 方程式を解きます。
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>が必要です
-（下記の<a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照）。</p></li>
+（下記の<a class="reference internal" href="#sc-dynamic-frequency"><span class="std std-ref">動的振動数の節</span></a>を参照）。ただし
+スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>も使えます（<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>。スピン軌道モードでは
 ギャップがひとつのスピン軌道行列なので指定しません（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: 反復法の初期ギャップ対称性。
@@ -573,7 +576,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ギャップ関数<span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id50">
+<figure class="align-center" id="id51">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -581,11 +584,11 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id50" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id51">
+<figure class="align-center" id="id52">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -594,14 +597,14 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは<span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>（および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id52">
+<figure class="align-center" id="id53">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -611,7 +614,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満である。1を超える
 2つの白抜きマーカーは<em>三重項</em>カーネルの偶パリティ解で、スピン三重項
-ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
+ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id53" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -749,7 +752,13 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 異なる松原振動数どうしを結合します。</p>
 <section id="flex">
 <h3>FLEXの前提条件<a class="headerlink" href="#flex" title="Link to this heading">¶</a></h3>
-<p>動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
+<p>この節は<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない動的ソルバーについて説明します。
+スピン軌道モードの動的ソルバーは<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>も受け付けます。
+この場合はバンドから Green 関数と<span class="math notranslate nohighlight">\(\chi_0\)</span>を作るため、FLEX の出力は
+不要です。また<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、以下のファイルの代わりにスピン軌道 FLEX 計算の
+<code class="docutils literal notranslate"><span class="pre">chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma</span></code>のアーカイブを読み込みます
+（<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p>
+<p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合、動的モードは FLEX ソルバーのみが生成する振動数分解された入力を必要とするため、
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>で実行する <strong>必要があります</strong>。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>を呼び出す前に、
 Eliashberg ステップが読み込むディレクトリへ以下を書き出す FLEX 計算
 （<code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>）を実行してください:</p>
@@ -1567,7 +1576,8 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>は、<code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code>
 となるボンド（各行はその相手の行と合わせて扱います。名前を挙げるのは最初の4つまで）を
 報告する WARNING をログに出力します。計算は拒否されず、数値も変わりません。
-スピン分解した扱いは issue #88 で検討されています。これらは
+スピン軌道の経路（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>）はオンサイト相互作用について
+このような結合を厳密に扱います。そのボンド分解版は issue #270 です。これらは
 <code class="docutils literal notranslate"><span class="pre">tests/test_sc_bond_pairing_oracle.py</span></code>で独立なスピン軌道の構成と
 比較して固定されています。</p>
 </div>
@@ -1729,7 +1739,8 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 <p>偏極した模型を一重項・三重項チャネルで扱うには、<span class="math notranslate nohighlight">\(S_z\)</span>で分解した
 pairing vertex と、reduced スキームが保存していない横成分感受率
 <span class="math notranslate nohighlight">\(\chi^{+-}\)</span>が必要になります。設定変更ではなく機能追加の範疇です。
-スピン混成のある模型には上のスピン軌道表現を使ってください。</p>
+スピン混成のある模型と、スピン偏極した（Zeeman 磁場のある）模型には上のスピン軌道表現を
+使ってください（<a class="reference internal" href="#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>を参照）。</p>
 </section>
 <section id="enable-spin-orbital">
 <span id="sc-spin-orbital"></span><h2><span class="section-number">5.2.15. </span>スピン軌道模型（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>）<a class="headerlink" href="#enable-spin-orbital" title="Link to this heading">¶</a></h2>
@@ -1882,7 +1893,7 @@ spin-block 順（<code class="docutils literal notranslate"><span class="pre">ga
 <h3>スピン軌道 FLEX の出力の読み込み<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行した
-FLEX の3つのアーカイブを<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
+FLEX の4つのアーカイブを<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>）から読みます。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>）: スピンフル感受率
@@ -1893,17 +1904,284 @@ FLEX の3つのアーカイブを<code class="docutils literal notranslate"><spa
 <span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>の確認に使い、一致しない場合（たとえば
 相互作用ファイルを変更した場合）は拒否します;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;green.npz&quot;</span></code>）: 繰り込まれた Green 関数。
-これも必須です。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定したときだけ出力します。</p></li>
+これも必須です。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定したときだけ出力します;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_sigma</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;sigma.npz&quot;</span></code>）: 同じ FLEX 計算の自己
+エネルギー。これも必須です（<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">sigma</span></code>で出力してください）。その
+静的部分から借りた Green 関数の閉包密度を求め、ギャップのアーカイブに記録します
+（<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
 </ul>
-<p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>はスピン軌道モードでのみ使われ、キーの大文字・
-小文字は区別しません。<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>は拒否します。スピン軌道
+<p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>はスピン軌道モードでのみ使われ、
+キーの大文字・小文字は区別しません。<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>は拒否します。スピン軌道
 FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
 ためです。FLEX のアーカイブが<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>を記録している場合は
 WARNING を出します。保存された<span class="math notranslate nohighlight">\(\chi\)</span>と Green 関数が整合するのは収束時
 だけです。</p>
 </section>
-<section id="id40">
-<h3>拒否される組み合わせ<a class="headerlink" href="#id40" title="Link to this heading">¶</a></h3>
+<section id="zeeman">
+<span id="sc-spin-polarized"></span><h3>スピン偏極した状態（Zeeman 磁場）<a class="headerlink" href="#zeeman" title="Link to this heading">¶</a></h3>
+<p>スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の計算（静的・動的）には Zeeman 磁場<span class="math notranslate nohighlight">\(h\)</span>を
+かけられます。符号の規則は全体を通して一つです。磁場は上向きスピンの準位を<span class="math notranslate nohighlight">\(+h\)</span>、
+下向きスピンの準位を<span class="math notranslate nohighlight">\(-h\)</span>だけずらします（Extern 項の<span class="math notranslate nohighlight">\(\sigma^z\)</span>の符号）。
+以下のどちらの方法でも、<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span></code>を
+<span class="math notranslate nohighlight">\(2N\)</span>とし、Transfer ファイルをインターリーブしたスピン軌道インデックス
+（1始まりのファイル上のインデックス<span class="math notranslate nohighlight">\(2a + s + 1\)</span>、上向きが<span class="math notranslate nohighlight">\(s = 0\)</span>、
+下向きが<span class="math notranslate nohighlight">\(s = 1\)</span>）で書く必要があります。</p>
+<ul>
+<li><p><strong>方法 1: Transfer に Zeeman 項を書く。</strong> 各軌道<span class="math notranslate nohighlight">\(a\)</span>についてオンサイト項を
+加えます（1始まりのファイル上のインデックス）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+</pre></div>
+</div>
+</li>
+<li><p><strong>方法 2: Extern + coeff_extern。</strong> Extern ファイルは<strong>物理</strong>軌道インデックスを
+使います。各<span class="math notranslate nohighlight">\(R\)</span>について<span class="math notranslate nohighlight">\(N \times N\)</span>行列で、インデックスは
+<span class="math notranslate nohighlight">\(1, \ldots, N\)</span>、形式は<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合と同じ
+Wannier90 形式です。Transfer ファイルのスピン軌道インデックス
+<span class="math notranslate nohighlight">\(1, \ldots, 2N\)</span>は使いません。物理軌道の範囲外のインデックス、別の軌道数を
+宣言するヘッダ（2行目）、または不正なヘッダは、どの<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>でも計算の前に
+拒否されます。演算子は
+<span class="math notranslate nohighlight">\(\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}\)</span>で、
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>倍されます（既定値 0.0 なので、<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>を
+例えば 1.0 に設定するまで Extern ファイルは効きません）。<code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">1.0</span></code>で
+<span class="math notranslate nohighlight">\(H_{aa}(0) = h\)</span>とすると方法 1 と同じになります。このとき<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の
+バンドは、同じ入力によるスピン軌道モードの RPA・FLEX のバンドと一致します。</p></li>
+</ul>
+<p>2軌道、<span class="math notranslate nohighlight">\(h = 0.1\)</span>の場合を並べると次のとおりです:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+</pre></div>
+</div>
+<p>どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます
+（有効な Extern 場とスピン依存のオンサイトの Transfer 項が両方あると WARNING が
+出ます）。<span class="math notranslate nohighlight">\(h &gt; 0\)</span>では下向きスピンが有利になるので、フィリング一定のもとで
+電子は下向きスピンに偏極します。ログにもこの規則が出力されます
+（<code class="docutils literal notranslate"><span class="pre">Zeeman</span> <span class="pre">sign:</span> <span class="pre">+h</span> <span class="pre">raises</span> <span class="pre">spin-up</span> <span class="pre">(favours</span> <span class="pre">spin-down</span> <span class="pre">occupation)</span></code>）。</p>
+<p>磁場はソルバーが使うすべての入力に入ります。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: バンド、化学ポテンシャル、Green 関数、内部で計算する
+スピンを含む<span class="math notranslate nohighlight">\(\chi_0\)</span>のすべてが磁場を含みます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>: 同じ磁場でスピン軌道モードの FLEX を実行してください
+（<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。その<span class="math notranslate nohighlight">\(\chi\)</span>と Green 関数はすでに
+磁場を含んでいます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>にはスピン混成のあるホッピングが必要です。それがないと
+スピン軌道モードの RPA は模型をスピン対角の形に簡約し、物理軌道の chi0q を
+出力しますが、このモードはそれを拒否します。Zeeman 項だけの模型には
+<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>を使ってください。スピン混成のあるホッピングが
+ある場合は、chi0q ファイルを出力した RPA 計算と同じ磁場を与えてください。</p></li>
+</ul>
+<p>出力側（RPA または FLEX）と、そのアーカイブを再利用する<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の計算は、
+同じ方法を使う必要があります（両方とも Transfer、または両方とも同じファイルと
+同じ<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>の Extern）。アーカイブの検査は結果のバンドではなく
+Transfer・Extern のテーブルと<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>を比較するので、同じ磁場でも別の方法で
+書くとバンドの差として拒否されます。</p>
+<p>磁場の値ごとに別の状態点です。別の磁場の値（別の<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>や Extern
+テーブル）で出力された RPA・FLEX のアーカイブは別の状態を表し、拒否されます
+（<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。磁場を掃引するときは、値ごとに RPA・FLEX を
+実行し直してください。自発的な磁気秩序
+（強磁性・反強磁性の平均場）は対象外です。スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>は拒否されます（issue #273）。</p>
+<p><strong>S_z ごとの重み。</strong>スピン軌道モードの計算（静的・動的）は、各固有ベクトルの
+<span class="math notranslate nohighlight">\(S_z\)</span>の成分も出力します。上向き・下向きは<strong>入力の量子化軸</strong>、すなわち
+スピンブロック添字の<span class="math notranslate nohighlight">\(\sigma^z\)</span>基底を指します。これは Transfer のスピン
+ラベルと Extern の<span class="math notranslate nohighlight">\(\sigma^z\)</span>の軸です。重みは磁場や磁化の軸へは回転
+しません。ギャップのスピンブロックを<span class="math notranslate nohighlight">\(D_{st}\)</span>、
+<span class="math notranslate nohighlight">\(\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2\)</span>、
+<span class="math notranslate nohighlight">\(d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2\)</span>として</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-11">
+<span class="eqno">(5.12)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-11" title="Link to this equation">¶</a></span>\[w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+W_\text{tot} = \sum |\Delta|^2\]</div>
+<p>です。和は軌道の組、k（動的計算では松原振動数も）について取ります。4 つの重みの
+和は 1 です。上の重みとの関係は
+<span class="math notranslate nohighlight">\(w^{S_z=0}_\text{singlet} = w_\psi\)</span>、
+<span class="math notranslate nohighlight">\(w^{S_z=0}_\text{triplet} = w_{d_z}\)</span>、
+<span class="math notranslate nohighlight">\(w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}\)</span>です。
+ログには固有ベクトルごとに 1 行が出力されます（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>では
+1 つのギャップを固有ベクトル 0 とします）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+</pre></div>
+</div>
+<p>ギャップのアーカイブ（<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、動的計算では<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>）には
+<code class="docutils literal notranslate"><span class="pre">sz_weight_upup</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_weight_dndn</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_weight_singlet0</span></code>、
+<code class="docutils literal notranslate"><span class="pre">sz_weight_triplet0</span></code>（float64、固有ベクトルごとに 1 要素）、
+<code class="docutils literal notranslate"><span class="pre">sz_conservation_residual</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_conserved</span></code>が入ります。残差は入力が
+<span class="math notranslate nohighlight">\(S_z\)</span>を保存するかどうかを測ります。<span class="math notranslate nohighlight">\(r = \max(r_V, r_G)\)</span>で、
+<span class="math notranslate nohighlight">\(r_V\)</span>は<span class="math notranslate nohighlight">\(S_z(a) + S_z(d) \neq S_z(b) + S_z(c)\)</span>となるペアリング
+バーテックスの成分<span class="math notranslate nohighlight">\(V_{abcd}\)</span>についての<span class="math notranslate nohighlight">\(\max|V_\text{off}| / \max|V|\)</span>
+（すべての k と振動数について）、<span class="math notranslate nohighlight">\(r_G\)</span>は Green 関数のスピン非対角ブロック
+についての同じ比です。<code class="docutils literal notranslate"><span class="pre">sz_conserved</span></code>は<span class="math notranslate nohighlight">\(r \le 10^{-12}\)</span>です。
+スピン軌道相互作用のない Zeeman 磁場では厳密に 0 になります。<span class="math notranslate nohighlight">\(S_z\)</span>が
+保存しない場合（スピン軌道相互作用、スピン反転ホッピング）も重みは厳密な分解
+ですが、WARNING が 1 回出力されます:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+</pre></div>
+</div>
+</section>
+<section id="sc-so-archive-checks">
+<span id="id40"></span><h3>アーカイブの検査: 同一の状態点でのみ再利用<a class="headerlink" href="#sc-so-archive-checks" title="Link to this heading">¶</a></h3>
+<p><strong>アーカイブは同一の状態点でのみ再利用されます。</strong>掃引の初期値（ウォーム
+スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
+chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
+実行し直してください。唯一の例外は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>です
+（下の 3 項）。この場合、別の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の chi0q アーカイブは WARNING を出して
+受け入れます。</p>
+<p>スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
+ます（<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_label</span></code>、
+バンドのダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_transfer</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_extern</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_meta</span></code>、
+<code class="docutils literal notranslate"><span class="pre">fp_band</span></code>、Green 関数のダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>、バンド入力の写し
+<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>、実現した状態<code class="docutils literal notranslate"><span class="pre">state_*</span></code>）。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、
+スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は読み込む各アーカイブを、大きな配列を読む前に
+自身の入力と照合します。</p>
+<ol class="arabic simple">
+<li><p><strong>構造。</strong>version が 1 であること、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>が既知の段階であること、
+すべてのメンバーが正確な dtype（<code class="docutils literal notranslate"><span class="pre">int64</span></code>、<code class="docutils literal notranslate"><span class="pre">float64</span></code>、<code class="docutils literal notranslate"><span class="pre">complex128</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bool</span></code>のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と次元で存在すること、重複するフィールドが一致する
+こと（<code class="docutils literal notranslate"><span class="pre">beta</span></code> = <code class="docutils literal notranslate"><span class="pre">state_beta</span></code>、<code class="docutils literal notranslate"><span class="pre">nmat</span></code> = <code class="docutils literal notranslate"><span class="pre">state_nmat</span></code>）、<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>から
+再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
+整合し、1セルあたり<span class="math notranslate nohighlight">\(10^{-8}\max(1, |t|)\)</span>電子以下であること
+（<span class="math notranslate nohighlight">\(t\)</span>は目標値）。</p></li>
+<li><p><strong>バンド。</strong>Transfer テーブル、Extern テーブル（とその有無）、メタデータ
+（<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>、添字の規約、軌道数、<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>）が同一で
+なければなりません。メッセージは各差分を示します。例:
+<code class="docutils literal notranslate"><span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span> <span class="pre">run</span> <span class="pre">0.1</span></code>、<code class="docutils literal notranslate"><span class="pre">Transfer:</span> <span class="pre">file</span> <span class="pre">12</span> <span class="pre">rows,</span> <span class="pre">run</span> <span class="pre">12</span> <span class="pre">rows;</span>
+<span class="pre">first</span> <span class="pre">differing</span> <span class="pre">row</span> <span class="pre">(R=(1,</span> <span class="pre">0,</span> <span class="pre">0),</span> <span class="pre">a=1,</span> <span class="pre">b=2):</span> <span class="pre">file</span> <span class="pre">(0.1+0j),</span> <span class="pre">run</span> <span class="pre">(0.11+0j)</span></code>
+（軌道は1始まり）。</p></li>
+<li><p><strong>状態。</strong><span class="math notranslate nohighlight">\(\beta\)</span>（相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、μ の探索の有無
+（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
+目標値<code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code>（1セルあたりの電子数、相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、その目標値に
+対する出力側の閉包密度（許容幅<span class="math notranslate nohighlight">\(\max(10^{-8}\max(1,|t|), 10\,r)\)</span>、
+<span class="math notranslate nohighlight">\(r\)</span>はファイルの残差）、Green 関数を借りる場合（<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>）は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の
+完全一致。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>は異なってもかまいません。従来の規則が
+ファイルの<code class="docutils literal notranslate"><span class="pre">nmat</span></code>からボソン振動数ゼロの位置を決めます。このとき読み込んだ
+<span class="math notranslate nohighlight">\(\chi_0\)</span>は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
+異なる（差は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>とともに小さくなりますが、% のオーダーに達することがあります）ため、
+WARNING を出します。出力側と同じ<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>にすれば再現します。μ 自体は比較しません。
+バンドが同一なら密度で判定できるためです。</p></li>
+<li><p><strong>Green 関数。</strong><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、読み込んだ Green 関数のダイジェストが chiq
+アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>と
+等しく、sigma のアーカイブも同じ<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>を記録していなければなりません。
+chiq と chi0q のアーカイブは、両方が<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>をもつか、両方とも
+もたないかのどちらかでなければなりません。
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>自体はこのダイジェストで検証し、それ自身の来歴メンバーでは検証
+しません。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では Green 関数を借りないので、アーカイブの
+<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は出力側の主張として INFO で記録されます。</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>のないアーカイブ（このバージョンより前に書かれたもの、または
+version 1 のダイジェストが扱わないバンドの計算、すなわち<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>やメモリ上で与えた chi0q の計算で書かれたもの）は検査できません。
+この計算に Extern 場があれば拒否し、なければ WARNING を出して受け入れます。</p>
+<p><strong>ギャップのアーカイブに記録される内容。</strong><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
+<span class="pre">&quot;sc_so_static&quot;</span></code>）と<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>）は同じ version 1 の
+メンバーをもち、<em>この</em>計算のカーネルが実際に使ったものを記録します。出力側の
+値を写すことはありません。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>: 自身のバンドと自身の μ から作った Green 関数。
+<code class="docutils literal notranslate"><span class="pre">state_density</span></code>はその μ でのバンドの1セルあたりの Fermi 分布の和、
+<code class="docutils literal notranslate"><span class="pre">state_mu_tol</span> <span class="pre">=</span> <span class="pre">|state_density</span> <span class="pre">-</span> <span class="pre">state_target|</span></code>です;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は消費した借用 Green 関数のダイジェスト、<code class="docutils literal notranslate"><span class="pre">state_mu</span></code>は
+それを作った FLEX の μ、<code class="docutils literal notranslate"><span class="pre">state_density</span></code>はその閉包密度で、FLEX と同じ手続き
+（<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>の静的自己エネルギー、この計算のバンド）で求めます。
+<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>のないアーカイブでは Green 関数の μ がわからないため、
+ギャップのアーカイブには来歴メンバーを書き込みません（INFO で通知します）。</p></li>
+</ul>
+<p>スカラーのメンバーは<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にも<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code>の行として出力されます。
+version 1 で受け入れている制約: sigma のアーカイブは<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>によってのみ Green 関数と
+結び付けられます。出力側は密度を1セルあたり<span class="math notranslate nohighlight">\(10^{-8}\max(1,|t|)\)</span>電子まで
+閉じる必要があります（FLEX の閉包検査<span class="math notranslate nohighlight">\(10^{-10}\)</span>と RPA の μ 探索はどちらも
+満たします）。</p>
+<p><strong>トラブルシューティング。</strong>どの拒否もファイルと出力側の計算を示す1行の
+メッセージです。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 40.0%" />
+<col style="width: 30.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>メッセージ</p></th>
+<th class="head"><p>原因と対処</p></th>
+<th class="head"><p>揃える・作り直すキー</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">match</span> <span class="pre">this</span> <span class="pre">run:</span> <span class="pre">band</span> <span class="pre">differs:</span> <span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span>
+<span class="pre">run</span> <span class="pre">0.1</span> <span class="pre">...</span> <span class="pre">Archives</span> <span class="pre">are</span> <span class="pre">reused</span> <span class="pre">only</span> <span class="pre">at</span> <span class="pre">the</span> <span class="pre">identical</span> <span class="pre">state</span> <span class="pre">point</span></code></p></td>
+<td><p>別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。または
+出力側とこの計算が同じ磁場を別の方法（一方は Transfer、他方は Extern）で
+与えています。検査はバンドではなくテーブルを比較します。一致する磁場で、
+この入力と同じ方法により出力側の計算を実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>、<code class="docutils literal notranslate"><span class="pre">Extern</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>（<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>も）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">calc_mu:</span> <span class="pre">file</span> <span class="pre">False,</span> <span class="pre">run</span> <span class="pre">True</span></code></p></td>
+<td><p>出力側は μ 固定で実行されています。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに<code class="docutils literal notranslate"><span class="pre">filling</span></code>から
+μ を探索します。<code class="docutils literal notranslate"><span class="pre">mu</span></code>の代わりに<code class="docutils literal notranslate"><span class="pre">filling</span></code>で実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>（<code class="docutils literal notranslate"><span class="pre">mu</span></code>を削除）</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span> <span class="pre">...;</span> <span class="pre">density</span> <span class="pre">...</span>
+<span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(run,</span> <span class="pre">tol</span> <span class="pre">...)</span></code></p></td>
+<td><p>FLEX（または RPA）が別のフィリングで実行されています。このフィリングで
+実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">beta</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span></code></p></td>
+<td><p>別の温度です（相対許容幅<span class="math notranslate nohighlight">\(10^{-12}\)</span>）。この<code class="docutils literal notranslate"><span class="pre">T</span></code>で実行し直して
+ください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">T</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">nmat</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>は Green 関数をそれ自身の格子で再利用します。FLEX の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を
+使ってください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state_nmat</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">Nmat</span> <span class="pre">...</span> <span class="pre">(run)</span></code>（WARNING、<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>モード）</p></td>
+<td><p>chi0q のアーカイブは別の松原格子で和をとったものです。使用はされますが、
+振動数の打ち切りが異なります。再現するには<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を出力側の値にしてください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">FLEX</span> <span class="pre">archives</span> <span class="pre">'...chiq.npz'</span> <span class="pre">(unversioned)</span> <span class="pre">and</span> <span class="pre">'...chi0q.npz'</span>
+<span class="pre">(versioned)</span> <span class="pre">disagree</span> <span class="pre">on</span> <span class="pre">fingerprint_version</span></code>（またはその逆）</p></td>
+<td><p>chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
+計算から両方を作り直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、FLEX の<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code>／<code class="docutils literal notranslate"><span class="pre">sigma.npz</span> <span class="pre">and</span> <span class="pre">green.npz</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">different</span>
+<span class="pre">runs</span></code></p></td>
+<td><p>Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません
+（変更された、または取り違えたファイル）。ひとつの FLEX 計算のアーカイブを
+使うか、実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">fingerprint_version</span> <span class="pre">(...);</span> <span class="pre">the</span> <span class="pre">run</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">Extern</span> <span class="pre">field,</span>
+<span class="pre">so</span> <span class="pre">its</span> <span class="pre">band</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">verified.</span> <span class="pre">Regenerate</span> <span class="pre">it.</span></code></p></td>
+<td><p>バージョンのないアーカイブを磁場のある計算で読もうとしています。この
+バージョンで出力側を実行し直してください（Extern がなければ WARNING のみ）。</p></td>
+<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code>（load モード、
+スピン混成のホッピングのない Zeeman 場）</p></td>
+<td><p>スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>を使ってください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">&lt;check&gt;</span> <span class="pre">(&lt;stored&gt;</span> <span class="pre">vs</span>
+<span class="pre">&lt;expected&gt;).</span> <span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">with</span> <span class="pre">&lt;producer&gt;.</span></code>（<code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">producer</span> <span class="pre">did</span> <span class="pre">not</span>
+<span class="pre">reach</span> <span class="pre">its</span> <span class="pre">filling</span></code>も）</p></td>
+<td><p>壊れた・途中で切れた・手で編集したアーカイブ、または密度が閉じなかった
+出力側の計算です。実行し直してください。</p></td>
+<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="id41">
+<h3>拒否される組み合わせ<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>
 <p>次のいずれも、計算の前に、変更すべきキーやファイルを示すエラーになります。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">frequency</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>に固有の
@@ -1929,7 +2207,8 @@ chi0q ファイル、<code class="docutils literal notranslate"><span class="pre
 <li><p>FLEX の chi0q アーカイブがない場合（FLEX の実行で<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>を
 指定してください）、FLEX の chi0q アーカイブがマーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>
 （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
-アーカイブがない場合、この入力の頂点が FLEX の<span class="math notranslate nohighlight">\(\chi\)</span>を再現しない場合
+または自己エネルギーのアーカイブがない場合、<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>の
+検査に通らないアーカイブの場合、この入力の頂点が FLEX の<span class="math notranslate nohighlight">\(\chi\)</span>を再現しない場合
 （波数ごとに判定するため、許容幅は格子の大きさで緩みません。マーカーだけでは
 相互作用が一致することは示せません）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>;</p></li>
@@ -1938,7 +2217,9 @@ chi0q ファイル、<code class="docutils literal notranslate"><span class="pre
 <li><p>ギャップアーカイブの名前（「出力」を参照）が<code class="docutils literal notranslate"><span class="pre">output_eigenvalue</span></code>と一致する
 <code class="docutils literal notranslate"><span class="pre">output_gap</span></code>;</p></li>
 <li><p>奇数のスピン軌道数（Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span></code>）;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">Extern</span></code>ファイル（Zeeman 場は Transfer ファイルに書いてください）;</p></li>
+<li><p>軌道インデックスが<span class="math notranslate nohighlight">\(1 \ldots N\)</span>の範囲外の<code class="docutils literal notranslate"><span class="pre">Extern</span></code>ファイル、
+またはヘッダが<span class="math notranslate nohighlight">\(N\)</span>軌道を宣言しない<code class="docutils literal notranslate"><span class="pre">Extern</span></code>ファイル
+（<a class="reference internal" href="#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>を参照）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>の<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>と<code class="docutils literal notranslate"><span class="pre">green_init</span></code>（平均場の一体入力は
 まだサポートされていません。issue #273 を参照）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">false</span></code>。</p></li>
@@ -1953,8 +2234,8 @@ chi0q ファイル、<code class="docutils literal notranslate"><span class="pre
 軌道の計算でアーカイブを作り直してください。マーカーのないアーカイブはこれまで
 どおり読み込まれます。</p>
 </section>
-<section id="id41">
-<h3>実用上の注意<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>
+<section id="id42">
+<h3>実用上の注意<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>スピン軌道の計算は反対称部分空間（上の「Pauli 射影」を参照）で行われ、その
 次元はおよそ<span class="math notranslate nohighlight">\((2N)^2 N_k\)</span>の半分です。固有値はたかだかその個数しか
@@ -1971,8 +2252,6 @@ i\sigma_y\)</span>）の初期値です。反転対称な模型ではべき乗�
 できません。<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>（Arnoldi）を使うか、奇の初期値
 （<code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>など。<span class="math notranslate nohighlight">\(d_z\)</span>三重項を与えます。
 <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>は全スピンブロックを含みます）を使ってください。</p></li>
-<li><p>Transfer ファイルにスピン依存の一体項として書いた Zeeman 項は実行できますが、
-この場合は検証していません。</p></li>
 <li><p>メモリ。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>はスピンを
 含む chi0q をボソン振動数ゼロでのみ計算します。大きさは
 <span class="math notranslate nohighlight">\(N_k (2N)^4\)</span>個の複素数、すなわち<span class="math notranslate nohighlight">\(16\,N_k (2N)^4\)</span>バイトです
@@ -1992,8 +2271,8 @@ Arnoldi 法の解は固有値が<span class="math notranslate nohighlight">\(10^
 <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
 </ul>
 </section>
-<section id="id42">
-<h3>検証<a class="headerlink" href="#id42" title="Link to this heading">¶</a></h3>
+<section id="id43">
+<h3>検証<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><strong>SU(2) 極限。</strong> スピンに依存しないホッピングとスピン回転不変な相互作用では、
 非スピン軌道の一重項カーネルの各固有値はスピン軌道のスペクトルに1回、
@@ -2006,13 +2285,19 @@ Pauli 禁制モードは現れません。</p></li>
 <li><p><strong>入力経路間の一致。</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>は同じ固有値を
 与え、<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>は保存された FLEX の<span class="math notranslate nohighlight">\(\chi\)</span>と Green 関数から直接
 作ったスペクトルを再現します。</p></li>
+<li><p><strong>Zeeman 磁場。</strong> Extern による方法と Transfer による方法は、同じバンド
+（スピン軌道相互作用があってもスピン軌道モードの RPA のバンドと一致）と同じ
+スペクトルを、静的・動的のどちらでも与えます。スピン軌道相互作用がなければ
+磁場は<span class="math notranslate nohighlight">\(S_z\)</span>を保存し、静的なスペクトルはペアの<span class="math notranslate nohighlight">\(S_z\)</span>の3つのセクター
+（上上・上下・下下）のスペクトルの和集合に一致します。磁場は上上と下下の
+セクターを分裂させます。</p></li>
 </ul>
 </section>
-<section id="id43">
-<h3>非スピン軌道の一重項・三重項との関係<a class="headerlink" href="#id43" title="Link to this heading">¶</a></h3>
+<section id="id44">
+<h3>非スピン軌道の一重項・三重項との関係<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h3>
 <p>非スピン軌道の一重項・三重項の式はスピン回転不変な相互作用を仮定しています。
 <code class="docutils literal notranslate"><span class="pre">Hund</span></code>のみ、または<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>のみの相互作用は<span class="math notranslate nohighlight">\(S_z\)</span>を保存しますが
-回転不変ではないので、これらに対してその式は近似です（issue #88 を参照）。
+回転不変ではないので、これらに対してその式は近似です。
 一方、スピン軌道の経路はこれらの項を厳密に扱います。したがってこのような模型
 では、スピン軌道の一重項の固有値は非スピン軌道の計算のものと異なり得ます。
 等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
@@ -2026,8 +2311,8 @@ Pauli 禁制モードは現れません。</p></li>
 <span class="math notranslate nohighlight">\(n = 0, \ldots, N_\mathrm{mat} - 1\)</span>の上の
 <span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k}, i\omega_n)\)</span>を求め、pairing vertex はすべてのボソン
 振動数<span class="math notranslate nohighlight">\(\nu_m = (2m - N_\mathrm{mat})\pi T\)</span>で使います。</p>
-<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-11">
-<span class="eqno">(5.12)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-11" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-12">
+<span class="eqno">(5.13)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-12" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
 \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .\]</div>
 <p>裸の部分<span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma\)</span>は振動数によりません。揺らぎの部分は
 <span class="math notranslate nohighlight">\(+\mathbf{q}\)</span>と、<span class="math notranslate nohighlight">\(\chi\)</span>と同じボソン添字で読みます。これは厳密対角化が
@@ -2048,8 +2333,8 @@ Pauli 禁制モードは現れません。</p></li>
 ありません（反転対称性がない場合やスピン軌道相互作用がある場合）。そのため
 スペクトルは振動数について偶と奇のギャップを含み、各固有ベクトルの偶・奇の
 成分は選択せずに出力します。</p>
-<section id="id44">
-<h4>適用範囲<a class="headerlink" href="#id44" title="Link to this heading">¶</a></h4>
+<section id="id45">
+<h4>適用範囲<a class="headerlink" href="#id45" title="Link to this heading">¶</a></h4>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>（既定値）のみ;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>を<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>に明示的に指定する
@@ -2064,13 +2349,15 @@ Pauli 禁制モードは現れません。</p></li>
 </div>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>: スピン軌道 FLEX 計算の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・
-<code class="docutils literal notranslate"><span class="pre">green</span></code>のアーカイブで、設定した<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>のボソン・フェルミオンの全格子を
+<code class="docutils literal notranslate"><span class="pre">green</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma</span></code>のアーカイブで、設定した<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>のボソン・フェルミオンの全格子を
 もつもの（上の「スピン軌道 FLEX の出力の読み込み」を参照）。この入力の頂点が保存
 された<span class="math notranslate nohighlight">\(\chi\)</span>を再現すること、<span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>、の
 確認は<span class="math notranslate nohighlight">\(\nu = 0\)</span>だけでなく<strong>すべての</strong>ボソン振動数で行います;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: 裸の Green 関数のスピンフルなバブルをすべてのボソン
 振動数で計算し、<span class="math notranslate nohighlight">\(\chi = [1 + \chi_0\Gamma]^{-1}\chi_0\)</span>とします;</p></li>
 <li><p>オンサイト相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;</p></li>
+<li><p>両方のモードで<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>が必要（アーカイブの検査がフィリングの
+目標値を比較するため）;</p></li>
 <li><p>偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>または
 <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>。<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>は非スピン軌道の動的ソルバーと同じく固有値の
@@ -2078,8 +2365,8 @@ Pauli 禁制モードは現れません。</p></li>
 別のスピン軌道動的計算の<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>）を使えます。</p></li>
 </ul>
 </section>
-<section id="id45">
-<h4>拒否される組み合わせ<a class="headerlink" href="#id45" title="Link to this heading">¶</a></h4>
+<section id="id46">
+<h4>拒否される組み合わせ<a class="headerlink" href="#id46" title="Link to this heading">¶</a></h4>
 <p>上の静的な場合の拒否（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>、オフサイトの行、<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>、
 <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>など）に加えて、次のものはファイルを
 読む前に拒否します。どのエラーもキーを示します。</p>
@@ -2101,8 +2388,8 @@ Pauli 禁制モードは現れません。</p></li>
 <p><code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続きスピン軌道モードを拒否
 します。</p>
 </section>
-<section id="id46">
-<h4>初期ギャップ<a class="headerlink" href="#id46" title="Link to this heading">¶</a></h4>
+<section id="id47">
+<h4>初期ギャップ<a class="headerlink" href="#id47" title="Link to this heading">¶</a></h4>
 <p>べき乗反復（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>）の既定の初期値は
 <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;random&quot;</span></code>です。すべての<span class="math notranslate nohighlight">\((A, B, \mathbf{k}, \omega_n)\)</span>に
 わたる固定シードの乱数ギャップを反対称空間へ射影したもので、振動数の偶奇の両方を
@@ -2113,8 +2400,8 @@ Pauli 禁制モードは現れません。</p></li>
 到達できません。特定の偶振動数の状態を追う場合を除き、乱数の既定値を使って
 ください。Arnoldi 法は<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>を使いません。</p>
 </section>
-<section id="id47">
-<h4>出力<a class="headerlink" href="#id47" title="Link to this heading">¶</a></h4>
+<section id="id48">
+<h4>出力<a class="headerlink" href="#id48" title="Link to this heading">¶</a></h4>
 <p>ファイル名は動的ソルバーと同じ<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
 <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>です。規約は静的なスピン軌道ソルバーのもの（spin-block 順、
 <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>、<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>なし）です。</p>
@@ -2212,7 +2499,7 @@ Pauli 禁制モードは現れません。</p></li>
 どちらの場合も計算は反対称空間に制限されます。</p>
 </section>
 <section id="sc-spin-orbital-dynamic-memory">
-<span id="id48"></span><h4>メモリと時間<a class="headerlink" href="#sc-spin-orbital-dynamic-memory" title="Link to this heading">¶</a></h4>
+<span id="id49"></span><h4>メモリと時間<a class="headerlink" href="#sc-spin-orbital-dynamic-memory" title="Link to this heading">¶</a></h4>
 <p>4脚のテンソル（<span class="math notranslate nohighlight">\(\chi\)</span>、<span class="math notranslate nohighlight">\(\chi_0\)</span>、頂点、その
 <span class="math notranslate nohighlight">\((\mathbf{r}, \tau)\)</span>表示、ペアバブル）はそれぞれ
 <span class="math notranslate nohighlight">\(T_4 = 16\,(2N)^4 N_k N_\mathrm{mat}\)</span>バイトで、同じ<span class="math notranslate nohighlight">\(N\)</span>の非スピン
@@ -2267,8 +2554,8 @@ CPU、<code class="docutils literal notranslate"><span class="pre">fft_workers</
 <span class="math notranslate nohighlight">\(10^{-10}\)</span>で一致し、反復法の解は収束時の残差の範囲で一致します。主要固有値が縮退している場合、ギャップは部分空間
 として比べます（<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>）。</p>
 </section>
-<section id="id49">
-<h4>検証<a class="headerlink" href="#id49" title="Link to this heading">¶</a></h4>
+<section id="id50">
+<h4>検証<a class="headerlink" href="#id50" title="Link to this heading">¶</a></h4>
 <ul class="simple">
 <li><p><strong>厳密対角化との比較。</strong> 静的な検証と同じスピン混成のある鎖で、本番の演算子は、
 ペア感受率が相互作用の1次・2次で厳密対角化と一致するカーネルの作用に、丸め誤差

@@ -1455,6 +1455,51 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
 （<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも、すべてのボソン振動数の<span class="math notranslate nohighlight">\(\chi\)</span>を使う
 動的なソルバー（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）でも使えます。</p>
+</section>
+<section id="flex-zeeman">
+<h3>スピン偏極した FLEX（Zeeman 磁場）<a class="headerlink" href="#flex-zeeman" title="Link to this heading">¶</a></h3>
+<p>スピン軌道モードの FLEX 計算には Zeeman 磁場<span class="math notranslate nohighlight">\(h\)</span>をかけられます。符号の規則は
+全体を通して一つです。磁場は上向きスピンの準位を<span class="math notranslate nohighlight">\(+h\)</span>、下向きスピンの準位を
+<span class="math notranslate nohighlight">\(-h\)</span>だけずらします（Extern 項の<span class="math notranslate nohighlight">\(\sigma^z\)</span>の符号）。以下のどちらの方法でも、
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span></code>を<span class="math notranslate nohighlight">\(2 n_{\rm orb}\)</span>とし、
+Transfer ファイルをインターリーブしたスピン軌道インデックス（1始まりのファイル上の
+インデックス<span class="math notranslate nohighlight">\(2a + s + 1\)</span>、物理軌道が<span class="math notranslate nohighlight">\(a = 0, \ldots, n_{\rm orb} - 1\)</span>、
+上向きが<span class="math notranslate nohighlight">\(s = 0\)</span>、下向きが<span class="math notranslate nohighlight">\(s = 1\)</span>）で書く必要があります。</p>
+<ul>
+<li><p><strong>方法 1: Transfer に Zeeman 項を書く。</strong> 各物理軌道<span class="math notranslate nohighlight">\(a = 0, \ldots, n_{\rm orb} - 1\)</span>についてオンサイト項を
+加えます（1始まりのファイル上のインデックス）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+</pre></div>
+</div>
+</li>
+<li><p><strong>方法 2: Extern + coeff_extern。</strong> Extern ファイルは<strong>物理</strong>軌道インデックスを
+使います。各<span class="math notranslate nohighlight">\(R\)</span>について<span class="math notranslate nohighlight">\(n_{\rm orb} \times n_{\rm orb}\)</span>行列で、
+インデックスは<span class="math notranslate nohighlight">\(1, \ldots, n_{\rm orb}\)</span>、形式は<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を
+使わない場合と同じ Wannier90 形式です。Transfer ファイルのスピン軌道インデックス
+<span class="math notranslate nohighlight">\(1, \ldots, 2 n_{\rm orb}\)</span>は使いません。物理軌道の範囲外のインデックス、
+または別の軌道数を宣言するヘッダ（2行目）は拒否されます。演算子は
+<span class="math notranslate nohighlight">\(\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}\)</span>で、
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>倍されます。<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>の既定値は 0.0 なので、
+Extern ファイルを効かせるには設定してください（例えば 1.0）。<code class="docutils literal notranslate"><span class="pre">coeff_extern</span> <span class="pre">=</span> <span class="pre">1.0</span></code>で
+<span class="math notranslate nohighlight">\(H_{aa}(0) = h\)</span>（Extern ファイル上のインデックス<span class="math notranslate nohighlight">\(a + 1\)</span>）とすると方法 1 と同じになります。</p></li>
+</ul>
+<p>2軌道、<span class="math notranslate nohighlight">\(h = 0.1\)</span>の場合を並べると次のとおりです:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span># Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+</pre></div>
+</div>
+<p>どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます。
+<span class="math notranslate nohighlight">\(h &gt; 0\)</span>では下向きスピンが有利になるので、フィリング一定のもとで<code class="docutils literal notranslate"><span class="pre">energy.dat</span></code>の
+<code class="docutils literal notranslate"><span class="pre">Sz</span></code>は負になります。磁場の値ごとに別の状態点です。磁場を掃引するときは、値ごとに
+FLEX を実行し直してください。</p>
+<p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では FLEX は Extern による方法を受け付けます
+（スピン軌道モードの FLEX には<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が必要です）。スピン軌道
+モードの RPA と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>も受け付けます。<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合、
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>は引き続き外場を拒否します。</p>
 <p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない計算の出力ファイルはEliashberg方程式ソルバー
 (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) の入力としても使用できます。詳細は<a class="reference internal" href="../../rpa/tutorial/sc-index.html"><span class="doc">チュートリアル: Eliashberg方程式ソルバー</span></a>を参照してください。</p>
 </section>

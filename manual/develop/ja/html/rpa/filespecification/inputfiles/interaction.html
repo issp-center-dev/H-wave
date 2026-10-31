@@ -228,6 +228,28 @@ FLEX の<code class="docutils literal notranslate"><span class="pre">sigma_init<
 になりました。既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
 </li>
+<li><p><strong>スピン軌道モードでの Extern。</strong><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合も、
+Extern ファイルは<strong>物理</strong>軌道インデックスで書きます。各<span class="math notranslate nohighlight">\(R\)</span>について
+<span class="math notranslate nohighlight">\(N_\text{orbital} \times N_\text{orbital}\)</span>行列であり、インデックスは
+1〜<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>（幾何<code class="docutils literal notranslate"><span class="pre">norb</span></code>の半分）、ヘッダの2行目は
+<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>です。Transfer ファイルのスピン軌道インデックス
+1〜<span class="math notranslate nohighlight">\(2 N_\text{orbital}\)</span>は<strong>使いません</strong>。
+1〜<span class="math notranslate nohighlight">\(N_\text{orbital}\)</span>の範囲外のインデックス、または別の軌道数を宣言する
+ヘッダはエラーとして拒否されます（そのような行を黙って捨てることはありません）。</p>
+<p>スピン依存性は<span class="math notranslate nohighlight">\(\sigma^z\)</span>から来ます。前項と同じく
+<span class="math notranslate nohighlight">\(\alpha = 0, \ldots, N_\text{orbital}-1\)</span>を物理軌道インデックスとします
+（Extern ファイル上のインデックスは<span class="math notranslate nohighlight">\(\alpha + 1\)</span>）。<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>倍されたエントリ
+<span class="math notranslate nohighlight">\(H_{\alpha\alpha}(0) = h\)</span>は、軌道<span class="math notranslate nohighlight">\(\alpha\)</span>の上向きスピンの準位を
+<span class="math notranslate nohighlight">\(+h\)</span>、下向きスピンの準位を<span class="math notranslate nohighlight">\(-h\)</span>だけずらします。したがって
+<span class="math notranslate nohighlight">\(h &gt; 0\)</span>では下向きスピンが有利になり、フィリング一定のもとでその占有数が増え、
+<span class="math notranslate nohighlight">\(S^z\)</span>は負になります。</p>
+<p>同じ磁場は Transfer ファイルに、インデックス<span class="math notranslate nohighlight">\(2\alpha + 1\)</span>に<span class="math notranslate nohighlight">\(+h\)</span>、
+インデックス<span class="math notranslate nohighlight">\(2\alpha + 2\)</span>に<span class="math notranslate nohighlight">\(-h\)</span>のオンサイト項として書くこともできます
+（1始まりの Transfer ファイル上のインデックス。<span class="math notranslate nohighlight">\(\alpha\)</span>は上と同じく0始まり）。
+どちらか一方の方法だけを使ってください。両方書くと磁場が足し合わされます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>の既定値は 0.0 なので、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>を
+（例えば 1.0 に）設定するまで Extern ファイルは効きません。</p>
+</li>
 </ul>
 </section>
 </section>

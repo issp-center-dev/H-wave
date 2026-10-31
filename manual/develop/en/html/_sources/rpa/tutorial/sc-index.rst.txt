@@ -152,7 +152,8 @@ This section controls the Eliashberg solver. Key parameters:
   ``"eigenvalue"`` (Arnoldi eigenvalue analysis), or ``"both"``.
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
-  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``
+  outside spin-orbital mode; see :ref:`sc_spin_orbital_dynamic`).
   ``"calc"`` evaluates :math:`\chi_0(\mathbf{q})` at the zero bosonic
   frequency only, the one frequency the static solve uses, so its memory is
   :math:`O(N_k\,n_d^4)` instead of :math:`O(N_\mathrm{mat} N_k\,n_d^4)`
@@ -208,11 +209,13 @@ This section controls the Eliashberg solver. Key parameters:
      to down-down, no spin-mixing block) within
      :math:`\max(10^{-10}, \texttt{spin\_free\_tol})` on its dimensionless
      entries: a magnetic ``green_init`` describes a magnetic state, whatever
-     the spin direction, and is refused (issue #88). A paramagnetic UHF
+     the spin direction, and is refused (a magnetic mean-field input is not
+     supported by the spin-orbital route either yet, issue #273). A paramagnetic UHF
      solution converged only loosely (for example ``EPS = 6`` from a random
      start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
      convergence, start UHF from a spin-symmetric state, or raise
-     ``spin_free_tol``. The spin-polarized case is tracked in issue #88.
+     ``spin_free_tol``. A state polarized by a Zeeman field runs with
+     ``[mode] enable_spin_orbital = true``; see :ref:`sc_spin_polarized`.
 
      **Behaviour with** ``load``, **bond and FLEX inputs.** For ``"load"``,
      give the same ``trans_mod`` / ``green_init`` / ``Extern`` as the RPA run
@@ -255,7 +258,9 @@ This section controls the Eliashberg solver. Key parameters:
   equation with a frequency-dependent pairing vertex
   :math:`V(\mathbf{q}, i\omega_l)` and gap :math:`\phi(\mathbf{k}, i\omega_n)`;
   it requires ``chi0q_mode = "flex"`` (see
-  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below).
+  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below), except
+  in spin-orbital mode, which also accepts ``"calc"`` (see
+  :ref:`sc_spin_orbital_dynamic`).
 - ``pairing_type``: ``"singlet"`` or ``"triplet"``. Not set in spin-orbital
   mode, where the gap is one spin-orbital matrix (see :ref:`sc_spin_orbital`).
 - ``init_gap``: Initial gap symmetry for iteration.
@@ -733,8 +738,16 @@ different Matsubara frequencies.
 FLEX prerequisite
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The dynamic mode needs frequency-resolved input that only the FLEX solver
-produces, so it **must** be run with ``chi0q_mode = "flex"``. Before calling
+This section describes the dynamic solver without ``enable_spin_orbital``.
+In spin-orbital mode the dynamic solver also accepts ``chi0q_mode =
+"calc"``, which builds the Green function and :math:`\chi_0` from the band
+and needs no FLEX output, and with ``"flex"`` it reads the ``chiq``,
+``chi0q``, ``green`` and ``sigma`` archives of a spin-orbital FLEX run
+instead of the files below (see :ref:`sc_spin_orbital_dynamic`).
+
+Without ``enable_spin_orbital``, the dynamic mode needs frequency-resolved
+input that only the FLEX solver produces, so it **must** be run with
+``chi0q_mode = "flex"``. Before calling
 ``hwave_sc`` you must run a FLEX calculation (``mode = "FLEX"``) that writes,
 into the directory read by the Eliashberg step:
 
@@ -1663,7 +1676,9 @@ each off-site row acts on the bond it was declared on.
    ``longitudinal_bond_pairing`` of FLEX log a WARNING reporting the bonds
    (the first four by name) where ``J_Exchange != J_Hund - 2 J_Ising`` (each row taken with its
    partner); the run is not refused and no number changes. The
-   spin-resolved treatment is tracked in issue #88. These
+   spin-orbital route (:ref:`sc_spin_orbital`) treats such couplings
+   exactly for on-site interactions; its bond-resolved extension is
+   issue #270. These
    statements are pinned against an independent spin-orbital construction
    in ``tests/test_sc_bond_pairing_oracle.py``.
 
@@ -1814,7 +1829,8 @@ Supporting a spin-polarized model in the singlet/triplet channels would
 require an :math:`S_z`-resolved pairing vertex together with the transverse
 susceptibility :math:`\chi^{+-}`, which the reduced scheme does not store.
 That is a feature addition rather than a configuration change; the
-spin-orbital representation above is the route for spin-mixing models.
+spin-orbital representation above is the route for spin-mixing models and
+for spin-polarized (Zeeman-field) models (see :ref:`sc_spin_polarized`).
 
 
 .. _sc_spin_orbital:
@@ -1981,7 +1997,7 @@ Outputs
 Reading the outputs of a spin-orbital FLEX run
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-With ``chi0q_mode = "flex"`` the solver reads three archives of a FLEX run
+With ``chi0q_mode = "flex"`` the solver reads four archives of a FLEX run
 with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
 ``[mode.param] flex_hartree_fock = true``, from ``[file.input]
 path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
@@ -1996,14 +2012,290 @@ path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
   mismatch (for example a changed interaction file) is refused;
 - ``[eliashberg] flex_green`` (default ``"green.npz"``): the dressed Green
   function, also required; the FLEX run writes it only when ``[file.output]
-  green`` is set.
+  green`` is set;
+- ``[eliashberg] flex_sigma`` (default ``"sigma.npz"``): the self-energy of
+  the same FLEX run, also required (write it with ``[file.output] sigma``).
+  Its static part gives the closure density of the borrowed Green function,
+  which the gap archive records (see :ref:`sc_so_archive_checks`).
 
-``flex_chiq`` and ``flex_chi0q`` are used only in spin-orbital mode; the
-keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
+``flex_chiq``, ``flex_chi0q`` and ``flex_sigma`` are used only in
+spin-orbital mode; the keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
 because a spin-orbital FLEX run stores one spinful channel rather than
 separate spin and charge channels. If the FLEX archive records
 ``scf_converged = false``, a WARNING is logged: the stored :math:`\chi` and
 Green function agree only at convergence.
+
+.. _sc_spin_polarized:
+
+Spin-polarized states (Zeeman field)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A spin-orbital ``hwave_sc`` run (static or dynamic) can be put in a Zeeman
+field :math:`h`. One sign convention holds throughout: the field shifts the
+up-spin level by :math:`+h` and the down-spin level by :math:`-h` (the
+:math:`\sigma^z` sign of the Extern term). Both routes below need
+``[mode] enable_spin_orbital = true``, the Geometry ``norb`` equal to
+:math:`2N`, and the Transfer file in the interleaved spin-orbital indices
+(1-based file index :math:`2a + s + 1`, :math:`s = 0` for up and
+:math:`s = 1` for down).
+
+- **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
+  :math:`a` (1-based file indices)::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **Route 2: Extern + coeff_extern.** The Extern file uses the
+  **physical** orbital indices: an :math:`N \times N` matrix per
+  :math:`R`, indices :math:`1, \ldots, N`, in the same Wannier90 format as
+  without ``enable_spin_orbital``. It does not use the
+  :math:`1, \ldots, 2N` spin-orbital indices of the Transfer file; an index
+  outside the physical range, a header (line 2) that declares another
+  orbital count, or a malformed header is rejected before any calculation,
+  in every ``chi0q_mode``. The operator is
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
+  ``[mode.param] coeff_extern`` (default 0.0, so the Extern file has no
+  effect until ``coeff_extern`` is set, e.g. to 1.0); :math:`H_{aa}(0) = h`
+  with ``coeff_extern = 1.0`` equals Route 1. The band of ``hwave_sc`` then
+  equals the band of the spin-orbital RPA and FLEX runs with the same
+  input.
+
+Side by side, for two orbitals and :math:`h = 0.1`::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+
+Use one route, not both: the two fields add (a WARNING is logged when an
+active Extern field meets spin-dependent on-site Transfer entries). For
+:math:`h > 0` the down spin is favoured, so at fixed filling the field
+polarizes the electrons toward spin down; the log states the convention
+(``Zeeman sign: +h raises spin-up (favours spin-down occupation)``).
+
+The field enters every input the solver uses:
+
+- ``chi0q_mode = "calc"``: the band, the chemical potential, the Green
+  function and the internally computed spinful :math:`\chi_0` all include
+  it;
+- ``chi0q_mode = "flex"``: run the spin-orbital FLEX with the same field
+  (see :ref:`flex_spin_orbital`); its :math:`\chi` and Green function
+  already include it;
+- ``chi0q_mode = "load"`` needs spin-mixing hopping: without it the
+  spin-orbital RPA reduces the model to the spin-diagonal form and writes a
+  physical-orbital chi0q, which this mode refuses. For Zeeman-only models
+  use ``"calc"`` or ``"flex"``. With spin-mixing hopping, give the same
+  field as the RPA run that wrote the chi0q file.
+
+A producer (RPA or FLEX) and the ``hwave_sc`` run that reuses its archives
+must use the same route: both Transfer, or both Extern with the same file
+and ``coeff_extern``. The archive check compares the Transfer and Extern
+tables and ``coeff_extern``, not the resulting band, so the same field
+written along the other route is refused as a band difference.
+
+Each field value is its own state point. An RPA or FLEX archive written at
+another field value (another ``coeff_extern`` or Extern table) describes
+another state and is refused (see :ref:`sc_so_archive_checks`): for a field
+sweep, rerun the RPA or FLEX producer at every value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
+field) is not covered: ``trans_mod`` and ``green_init`` are refused in
+spin-orbital mode (issue #273).
+
+**S_z-resolved weights.** Every spin-orbital run (static and dynamic) also
+reports the :math:`S_z` content of each eigenvector. Up and down refer to the
+**input quantization axis**: the :math:`\sigma^z` basis of the spin-block
+index, which is the axis of the Transfer spin labels and of Extern's
+:math:`\sigma^z`. The weights are not rotated to a field or magnetization
+axis. With the spin blocks :math:`D_{st}` of the gap,
+:math:`\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2` and
+:math:`d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2`,
+
+.. math::
+
+   w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+   w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+   W_\text{tot} = \sum |\Delta|^2 ,
+
+summed over the orbital pairs, k (and the Matsubara frequencies of a dynamic
+run). The four weights sum to 1. They refine the weights above:
+:math:`w^{S_z=0}_\text{singlet} = w_\psi`,
+:math:`w^{S_z=0}_\text{triplet} = w_{d_z}` and
+:math:`w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}`.
+The log has one line per eigenvector (in ``solver_mode = "iteration"``, the
+one gap as eigenvector 0)::
+
+   S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+
+The gap archive (``gap.npz``, or ``gap_dynamic.npz`` for a dynamic run)
+holds ``sz_weight_upup``, ``sz_weight_dndn``, ``sz_weight_singlet0`` and
+``sz_weight_triplet0`` (float64, one entry per eigenvector),
+``sz_conservation_residual`` and ``sz_conserved``. The residual measures
+whether the inputs conserve :math:`S_z`:
+:math:`r = \max(r_V, r_G)`, where :math:`r_V` is
+:math:`\max|V_\text{off}| / \max|V|` over the pairing-vertex entries
+:math:`V_{abcd}` with :math:`S_z(a) + S_z(d) \neq S_z(b) + S_z(c)` (all k
+and frequencies), :math:`r_G` the same ratio for the spin-off-diagonal
+blocks of the Green function, and ``sz_conserved`` is :math:`r \le 10^{-12}`.
+A Zeeman field without spin-orbit coupling gives exactly 0. When
+:math:`S_z` is not conserved (spin-orbit coupling, a spin-flip hopping) the
+weights are still an exact decomposition, and one WARNING is logged::
+
+   S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+
+.. _sc_so_archive_checks:
+
+Archive checks: exact state-point reuse only
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**An archive is reused only at the identical state point.** It is not a
+warm start across a sweep: a chi0q, chiq, green or sigma archive written at
+another field, filling, temperature or band is refused, and the producer has
+to be rerun with this input. The one exception is ``Nmat`` in
+``chi0q_mode = "load"`` (item 3 below): there a chi0q archive from another
+``Nmat`` is accepted with a WARNING.
+
+The spin-orbital RPA and FLEX runs write version-1 provenance members into
+their archives (``fingerprint_version = 1``, ``producer_stage``,
+``producer_label``, the band digests ``fp_transfer``, ``fp_extern``,
+``fp_meta``, ``fp_band``, the Green digest ``fp_green``, the ``prov_*``
+copies of the band input and the realized state ``state_*``). In
+``chi0q_mode = "load"`` and ``"flex"`` the spin-orbital ``hwave_sc`` checks
+each archive it reads against its own input, before any large array is read:
+
+1. **Structure.** The version is 1, ``producer_stage`` is a known stage, every
+   member is present with its exact dtype (``int64``, ``float64``,
+   ``complex128`` or ``bool``, in either byte order; a string of any
+   width) and rank, the duplicated fields agree
+   (``beta`` = ``state_beta``, ``nmat`` = ``state_nmat``), the band digests
+   recomputed from the ``prov_*`` members equal the stored ones, and the
+   recorded density residual is consistent and at most
+   :math:`10^{-8}\max(1, |t|)` electrons per cell (:math:`t` the target).
+2. **Band.** The Transfer table, the Extern table (and whether there is
+   one) and the metadata (``coeff_extern``, the index convention, the
+   orbital counts, ``CellShape`` and ``SubShape``) must be identical. The
+   message lists each difference, e.g. ``coeff_extern: file 0.0, run 0.1``
+   or ``Transfer: file 12 rows, run 12 rows; first differing row (R=(1, 0,
+   0), a=1, b=2): file (0.1+0j), run (0.11+0j)`` (orbitals 1-based).
+3. **State.** :math:`\beta` (relative :math:`10^{-12}`); the μ-search mode
+   (``hwave_sc`` always searches μ, so a fixed-μ archive is refused); the
+   target ``filling * 2N`` electrons per cell (relative :math:`10^{-12}`);
+   the producer's closure density against that target (tolerance
+   :math:`\max(10^{-8}\max(1,|t|), 10\,r)` with :math:`r` the file's
+   residual); ``Nmat`` exactly when the Green function is borrowed
+   (``"flex"``). In ``"load"`` mode ``Nmat`` may differ: the existing rule
+   locates the zero bosonic frequency through the file's ``nmat``. The
+   loaded :math:`\chi_0` was then summed on another Matsubara grid, so its
+   frequency truncation differs from this run's (the difference shrinks
+   as ``Nmat`` grows but can reach the percent level), and a WARNING
+   says so; the same ``Nmat`` as the producer reproduces it. μ itself is
+   not compared: with the band identical, the density decides.
+4. **Green function.** In ``"flex"`` mode the digest of the Green function
+   as loaded must equal the ``fp_green`` of the chiq archive (and of its
+   chi0q companion, which is checked like chiq), and the sigma archive must
+   record the same ``fp_green``. The chiq and chi0q archives must both carry
+   ``fingerprint_version`` or both lack it. ``green.npz`` itself is verified through
+   this digest, not by its own provenance members. In ``"load"`` mode no Green
+   function is borrowed, and the archive's ``fp_green`` is logged as a
+   producer assertion (INFO).
+
+An archive without ``fingerprint_version`` (written before this version, or
+by a run whose band the version-1 digests do not cover: ``trans_mod`` /
+``green_init``, or a supplied in-memory chi0q) cannot be checked. It is
+refused when this run has an Extern field, and otherwise accepted with a
+WARNING.
+
+**What the gap archive records.** ``gap.npz`` (``producer_stage =
+"sc_so_static"``) and ``gap_dynamic.npz`` (``"sc_so_dynamic"``) carry the
+same version-1 members, describing what *this* run's kernel used; nothing
+is copied from the producer:
+
+- ``"calc"`` and ``"load"``: the run's own Green function, built from its
+  band and its own μ; ``state_density`` is the Fermi count of the band at that
+  μ per cell, ``state_mu_tol = |state_density - state_target|``;
+- ``"flex"``: ``fp_green`` is the digest of the borrowed Green function as
+  consumed, ``state_mu`` the FLEX μ it was built at, and ``state_density``
+  its closure density, computed with the routine FLEX uses (the static
+  self-energy from ``flex_sigma``, on this run's band). With an archive
+  without ``fingerprint_version`` the μ of the Green function is unknown,
+  and the gap archive gets no provenance members (an INFO line says so).
+
+The scalar members also appear as ``# key = value`` lines in
+``eigenvalue.dat``. Accepted limitations of version 1: the sigma archive is
+bound to the Green function only through its ``fp_green``; a producer must
+close its density to :math:`10^{-8}\max(1,|t|)` electrons per cell (FLEX's
+closure check at :math:`10^{-10}` and the RPA μ search both do).
+
+**Troubleshooting.** Every refusal is one line naming the file and the
+producer:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Message
+     - Cause and remedy
+     - Keys to align or regenerate
+   * - ``... does not match this run: band differs: coeff_extern: file 0.0,
+       run 0.1 ... Archives are reused only at the identical state point``
+     - The archive was written for another band (another field, Transfer or
+       Extern table), or the producer and this run give the same field along
+       different routes (Transfer in one, Extern in the other): the check
+       compares the tables, not the band. Rerun the producer at the matching
+       field, with this input and the same route.
+     - ``Transfer``, ``Extern``, ``[mode.param] coeff_extern`` (also
+       ``CellShape``, ``SubShape``)
+   * - ``state differs: calc_mu: file False, run True``
+     - The producer ran at a fixed μ; ``hwave_sc`` always searches μ from
+       ``filling``. Rerun the producer with ``filling`` instead of ``mu``.
+     - ``[mode.param] filling`` (remove ``mu``)
+   * - ``state differs: target ... (file) vs ... (run) ...; density ...
+       (file) vs target ... (run, tol ...)``
+     - The FLEX (or RPA) run was at another filling. Rerun it at this
+       filling.
+     - ``[mode.param] filling``
+   * - ``state differs: beta ... (file) vs ... (run)``
+     - Another temperature (relative tolerance :math:`10^{-12}`). Rerun the
+       producer at this ``T``.
+     - ``[mode.param] T``
+   * - ``state differs: nmat ... (file) vs ... (run)``
+     - ``"flex"`` reuses the Green function on its own grid. Use the FLEX
+       run's ``Nmat``.
+     - ``[mode.param] Nmat``
+   * - ``state_nmat ... (file) vs Nmat ... (run)`` (WARNING, ``"load"``
+       mode)
+     - The chi0q archive was summed on another Matsubara grid; it is used,
+       but its frequency truncation differs. Set ``Nmat`` to the producer's
+       value to reproduce it.
+     - ``[mode.param] Nmat``
+   * - ``FLEX archives '...chiq.npz' (unversioned) and '...chi0q.npz'
+       (versioned) disagree on fingerprint_version`` (or the reverse)
+     - The chiq and chi0q archives come from two different FLEX runs.
+       Regenerate both from one FLEX run.
+     - ``[eliashberg] flex_chiq``, ``flex_chi0q``, the FLEX ``[file.output] chi0q``
+   * - ``fp_green mismatch`` / ``sigma.npz and green.npz come from different
+       runs``
+     - The Green function (or the self-energy) is not the one the chiq
+       archive was computed with: a modified or mixed-up file. Use the
+       archives of one FLEX run, or rerun it.
+     - ``[eliashberg] flex_green``, ``flex_sigma``, ``flex_chiq``
+   * - ``... has no fingerprint_version (...); the run has an Extern field,
+       so its band cannot be verified. Regenerate it.``
+     - An unversioned archive and a run with a field. Rerun the producer
+       with this version (without Extern only a WARNING is logged).
+     - the producer's ``[file.output]`` archives
+   * - ``... needs the general (4-index) spinful chi0q ...`` (load mode,
+       Zeeman field without spin-mixing hopping)
+     - The spin-orbital RPA reduces a Zeeman-only model to the spin-diagonal
+       form. Use ``chi0q_mode = "calc"`` or ``"flex"``.
+     - ``[eliashberg] chi0q_mode``
+   * - ``'<file>' is malformed or truncated: <check> (<stored> vs
+       <expected>). Regenerate it with <producer>.`` (also ``the producer
+       did not reach its filling``)
+     - A damaged, truncated or hand-edited archive, or a producer whose
+       density did not close. Rerun the producer.
+     - the producer's ``[file.output]`` archives
 
 Refused combinations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2036,7 +2328,8 @@ before any calculation:
 - a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
   run), a FLEX chi0q archive without the marker ``spin_orbital = True``
   (written only by a spin-orbital FLEX run), a missing FLEX Green function
-  archive, and a FLEX :math:`\chi` that the vertex of this input does not
+  or self-energy archive, an archive that fails the checks of
+  :ref:`sc_so_archive_checks`, and a FLEX :math:`\chi` that the vertex of this input does not
   reproduce (checked per wavevector, so the bound does not loosen with the
   lattice size; the marker alone does not show that the interactions
   match);
@@ -2046,7 +2339,9 @@ before any calculation:
 - an ``output_gap`` whose gap archive name (see *Outputs*) equals
   ``output_eigenvalue``;
 - an odd spin-orbital count (Geometry ``norb``);
-- an ``Extern`` file (write a Zeeman field into the Transfer file instead);
+- an ``Extern`` file with an orbital index outside :math:`1 \ldots N` or a
+  header that does not declare :math:`N` orbitals (see
+  :ref:`sc_spin_polarized`);
 - ``[file.input] trans_mod`` and ``green_init`` (a mean-field one-body input is not
   supported yet; see issue #273);
 - ``[mode.param] spinful_vertex_exchange = false``.
@@ -2081,8 +2376,6 @@ Practical advice
   cannot reach a triplet-led state from this seed. Use ``solver_mode =
   "eigenvalue"`` (Arnoldi), or an odd seed (``"p_x"``, ``"p_y"``, ...,
   which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
-- A Zeeman term written into the Transfer file as a spin-dependent one-body
-  term runs, but this case has not been validated.
 - Memory. With ``frequency = "static"``, ``chi0q_mode = "calc"`` computes
   the spinful chi0q at the zero bosonic frequency only:
   :math:`N_k (2N)^4` complex numbers, i.e. :math:`16\,N_k (2N)^4` bytes,
@@ -2119,6 +2412,12 @@ Validation
 - **Agreement between inputs.** ``chi0q_mode = "calc"`` and ``"load"`` give
   the same eigenvalues, and ``"flex"`` reproduces the spectrum built
   directly from the stored FLEX :math:`\chi` and Green function.
+- **Zeeman field.** The Extern route and the Transfer route give the same
+  band (equal to the spin-orbital RPA band, also with spin-orbit coupling)
+  and the same spectrum, static and dynamic. Without spin-orbit coupling
+  the field conserves :math:`S_z`, and the static spectrum equals the
+  union of the spectra of the three pair-:math:`S_z` sectors (up-up,
+  up-down, down-down); the field splits the up-up and down-down sectors.
 
 Relation to the non-spin-orbital singlet and triplet
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -2126,7 +2425,7 @@ Relation to the non-spin-orbital singlet and triplet
 The non-spin-orbital singlet and triplet formulas assume a spin-rotation
 invariant interaction. ``Hund`` alone or ``Exchange`` alone conserves
 :math:`S_z` but is not rotation invariant, so for them those formulas are an
-approximation (see issue #88), whereas the spin-orbital path treats these
+approximation, whereas the spin-orbital path treats these
 terms exactly. Its singlet eigenvalues can therefore differ from those of a
 non-spin-orbital run for such models; the equal-spin triplet agrees.
 Rotation-invariant combinations (for example ``Hund`` and ``Exchange`` in
@@ -2189,8 +2488,8 @@ Scope
      solver_mode       = "eigenvalue"
      eigenvalue_method = "arnoldi"
 
-- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q`` and ``green`` archives of a
-  spin-orbital FLEX run, on the full bosonic and fermionic grid of the
+- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q``, ``green`` and ``sigma``
+  archives of a spin-orbital FLEX run, on the full bosonic and fermionic grid of the
   configured ``Nmat`` (see "Reading the outputs of a spin-orbital FLEX run"
   above). The check that the vertex of this input reproduces the stored
   :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`, runs at **every**
@@ -2199,6 +2498,8 @@ Scope
   computed at every bosonic frequency, and
   :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`;
 - on-site interactions, no bond channels (as in the static case);
+- ``[mode.param] filling``, in both modes (the archive checks compare the
+  filling target);
 - an even ``Nmat``;
 - ``solver_mode = "iteration"`` or ``"eigenvalue"`` with
   ``eigenvalue_method = "arnoldi"``. ``"both"`` runs the eigenvalue leg only,
