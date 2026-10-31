@@ -31,6 +31,7 @@ _pools_lock = threading.Lock()
 # threadpool_limits is process-global: one caller at a time owns the pinned region
 _run_lock = threading.Lock()
 _warned = False
+_warned_lock = threading.Lock()
 
 
 def available():
@@ -52,11 +53,12 @@ def _effective_workers(workers):
     global _warned
     w = _resolve_workers(workers)
     if w > 1 and not available():
-        if not _warned:
+        with _warned_lock:
+            first, _warned = not _warned, True
+        if first:
             logger.warning("threaded linear algebra requested (workers=%d) but threadpoolctl "
                            "is not installed; running serially (install it with "
                            "pip install \"hwave[threads]\")", w)
-            _warned = True
         return 1
     return w
 

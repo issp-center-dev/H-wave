@@ -51,6 +51,129 @@ class TestRPABlockSolveDenseChi0q(unittest.TestCase):
             err_msg="block-solve with dense chi0q must match the full solve")
 
 
+class TestRPAParallelSolve(unittest.TestCase):
+    """The frequency-parallel RPA solve (issue #310): its worker threads run
+    with the BLAS pinned to one thread (threads over a multithreaded OpenBLAS
+    oversubscribe the CPU and crashed numpy 1.26 at ndx = 36), it gives the
+    serial result, and without threadpoolctl the solve stays serial."""
+
+    def _case(self, nmat=1024, nvol=4, ndx=16, blocks=None):
+        # default: nmat * nvol * ndx^2 >= 1e6, the parallel branch
+        import hwave.solver.rpa as rpa_module
+
+        class LatticeStub:
+            pass
+
+        stub = object.__new__(rpa_module.RPA)
+        stub.lattice = LatticeStub()
+        stub.lattice.nvol = nvol
+        rng = np.random.default_rng(7)
+        shape = (nmat, nvol, ndx, ndx)
+        chi0q = 0.05 * (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
+        ham = 0.3 * (rng.standard_normal((nvol, ndx, ndx)) + 0j)
+        if blocks is not None:
+            mask = np.zeros((ndx, ndx), bool)
+            for b in blocks:
+                mask[np.ix_(b, b)] = True
+            chi0q = chi0q * mask
+            ham = ham * mask
+        ref = np.linalg.solve(np.eye(ndx) + chi0q @ ham[np.newaxis], chi0q)
+        return rpa_module, stub, chi0q, ham, ref
+
+    def _solve(self, rpa_module, stub, chi0q, ham, threads="4"):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"HWAVE_RPA_THREADS": threads}):
+            return rpa_module.RPA._solve_rpa(stub, chi0q, ham)
+
+    def _assert_ref(self, sol, ref):
+        np.testing.assert_allclose(sol, ref, rtol=0, atol=1e-12 * np.abs(ref).max())
+
+    def _spy_run(self, rpa_module, seen):
+        from threadpoolctl import threadpool_info
+        real_run = rpa_module._threaded._run
+
+        def spy_run(tasks, w):
+            def wrap(t):
+                def run():
+                    seen.append([i["num_threads"] for i in threadpool_info()
+                                 if i.get("user_api") == "blas"])
+                    return t()
+                return run
+            return real_run([wrap(t) for t in tasks], w)
+        return spy_run
+
+    def _require_threadpoolctl(self, rpa_module):
+        if not rpa_module._threaded.available():
+            self.skipTest("threadpoolctl not installed")
+
+    def test_parallel_branch_goes_through_the_pinned_runner(self):
+        from unittest import mock
+        rpa_module, stub, chi0q, ham, ref = self._case()
+        self._require_threadpoolctl(rpa_module)
+        seen = []
+        with mock.patch.object(rpa_module._threaded, "_run",
+                               side_effect=self._spy_run(rpa_module, seen)) as run:
+            sol = self._solve(rpa_module, stub, chi0q, ham)
+        self.assertEqual(run.call_count, 1)                     # the parallel branch ran
+        self.assertGreater(len(seen), 1)                        # in several workers
+        self._assert_ref(sol, ref)
+
+    def test_workers_run_with_one_blas_thread(self):
+        from unittest import mock
+        rpa_module, stub, chi0q, ham, _ref = self._case()
+        self._require_threadpoolctl(rpa_module)
+        from threadpoolctl import threadpool_info
+        n_blas = len([i for i in threadpool_info() if i.get("user_api") == "blas"])
+        if n_blas == 0:
+            # Apple Accelerate is invisible to threadpoolctl; OpenBLAS (CI) is not
+            self.skipTest("no BLAS visible to threadpoolctl")
+        seen = []
+        with mock.patch.object(rpa_module._threaded, "_run",
+                               side_effect=self._spy_run(rpa_module, seen)):
+            self._solve(rpa_module, stub, chi0q, ham)
+        self.assertGreater(len(seen), 1)
+        for nums in seen:
+            self.assertEqual(len(nums), n_blas)
+            self.assertTrue(all(n == 1 for n in nums), nums)
+
+    def test_block_diagonal_parallel(self):
+        from unittest import mock
+        rpa_module, stub, chi0q, ham, ref = self._case(
+            nmat=512, nvol=4, ndx=32, blocks=(range(0, 16), range(16, 32)))
+        self._require_threadpoolctl(rpa_module)
+        real = rpa_module.RPA._solve_rpa_parallel
+        with mock.patch.object(rpa_module.RPA, "_solve_rpa_parallel",
+                               side_effect=real) as par:
+            sol = self._solve(rpa_module, stub, chi0q, ham)
+        self.assertEqual(par.call_count, 2)                     # once per block
+        self._assert_ref(sol, ref)
+
+    def test_shape_that_crashed_the_unpinned_pool(self):
+        # (4096, 1, 36, 36) segfaulted numpy 1.26 / OpenBLAS with the old pool
+        rpa_module, stub, chi0q, ham, ref = self._case(nmat=4096, nvol=1, ndx=36)
+        self._assert_ref(self._solve(rpa_module, stub, chi0q, ham), ref)
+
+    def test_without_threadpoolctl_stays_serial(self):
+        from unittest import mock
+        rpa_module, stub, chi0q, ham, ref = self._case()
+        with mock.patch.object(rpa_module._threaded, "threadpool_limits", None), \
+                mock.patch.object(rpa_module._threaded, "_warned", False), \
+                mock.patch.object(rpa_module._threaded.logger, "warning") as warn, \
+                mock.patch.object(rpa_module.RPA, "_solve_rpa_parallel") as par:
+            # the automatic default: serial, no warning
+            sol = self._solve(rpa_module, stub, chi0q, ham, threads="0")
+            warn.assert_not_called()
+            self._assert_ref(sol, ref)
+            # an explicit request: serial, one warning naming threadpoolctl
+            sol = self._solve(rpa_module, stub, chi0q, ham, threads="4")
+            self._solve(rpa_module, stub, chi0q, ham, threads="4")
+            self.assertEqual(warn.call_count, 1)
+            self.assertIn("threadpoolctl", warn.call_args[0][0])
+            self._assert_ref(sol, ref)
+        par.assert_not_called()
+
+
 class TestRPABlockDiagonal(unittest.TestCase):
     """Test block-diagonal optimization in RPA._solve_rpa."""
 
