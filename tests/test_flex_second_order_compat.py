@@ -89,9 +89,10 @@ _COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
 
 
 #: Thread counts pinned to one in every comparison subprocess. The
-#: comparisons against the reference revision are exact (bit for bit; with
-#: numpy < 2 two of them allow round-off in floating-point members, see
-#: :func:`_assert_same_to_roundoff`), and a multithreaded BLAS or OpenMP
+#: comparisons against the reference revision require exact numerical
+#: equality, with non-finite values in the same component positions (with
+#: numpy < 2 two of them allow round-off in finite floating-point
+#: components, see :func:`_assert_same_to_roundoff`), and a multithreaded BLAS or OpenMP
 #: reduction may sum in a different order from one process to the next: a
 #: CI run once saw two identical UHFk calculations differ by one unit in
 #: the last place of an energy.
@@ -132,7 +133,8 @@ def reference_subprocess_env(checkout):
 #: (:func:`reference_script` prefixes it to the script): the ring is
 #: transposed before the exact second order is added, in the same batches
 #: and the same operations as this tree, so every other number still has to
-#: agree with the reference bit for bit. The patch is skipped when the
+#: equal the reference's exactly (to round-off with numpy < 2, see
+#: :func:`_assert_same_to_roundoff`). The patch is skipped when the
 #: reference already carries the change (it then defines
 #: ``_pair_transpose_into``).
 REFERENCE_RING_ORIENTATION = r"""
@@ -214,8 +216,9 @@ def _run(checkout, path, inter, out, so, extra=None):
 #: The commit the compatibility harnesses compare against: the merge that
 #: precedes this branch (``develop`` at the time the branch was cut -- the
 #: merge of the local second-order kernel, #191). The contract these
-#: harnesses assert is identity with that revision (bit for bit, except that
-#: with numpy < 2 the floating-point members of two of them agree to
+#: harnesses assert is exact numerical equality with that revision, with
+#: non-finite values in the same component positions (except that with
+#: numpy < 2 the finite floating-point components of two of them agree to
 #: round-off; see :func:`_assert_same_to_roundoff`), so the revision has
 #: to be named -- comparing against "whatever the reference directory
 #: happens to contain" turns a failed comparison into a puzzle and a passing
@@ -250,33 +253,48 @@ NUMPY_BELOW_2 = int(np.__version__.split(".")[0]) < 2
 ROUNDOFF_RTOL = 1e-12
 
 
+def _float_components(a):
+    """The real floating-point components of ``a``: ``[a]`` for a real
+    array, ``[a.real, a.imag]`` for a complex one."""
+    return [a.real, a.imag] if a.dtype.kind == "c" else [a]
+
+
 def _assert_same_to_roundoff(test, x, y, label):
     """Assert that archive member ``x`` equals the reference's ``y``.
 
-    Shape and dtype always match exactly. With numpy >= 2 the values must be
-    exactly equal (``np.array_equal``): there the C-ordered Matsubara
-    transforms of #309 are a no-op for the downstream FFT/BLAS results, so
-    any difference is a real change. With numpy < 2 the C-ordered layout
-    sends those calls down other memory paths that move the last bits, so
-    there integers, booleans and strings (and the finite/non-finite pattern)
-    must still match exactly while finite floating-point values may differ
-    by ROUNDOFF_RTOL relative to the larger magnitude of the two arrays."""
+    Shape and dtype always match exactly; integers, booleans and strings
+    exactly. Floating-point arrays are compared per real component (the real
+    and imaginary parts of a complex array independently, so that e.g.
+    nan+1j and nan+2j, or nan+1j and 2+nanj, are different): every component
+    must be NaN, +inf or -inf in exactly the same positions, and the finite
+    components must be
+
+    * exactly equal with numpy >= 2: there the C-ordered Matsubara
+      transforms of #309 are a no-op for the downstream FFT/BLAS results,
+      so any difference is a real change;
+    * within ROUNDOFF_RTOL times the largest finite component magnitude of
+      the two arrays with numpy < 2, where the C-ordered layout sends those
+      calls down other memory paths that move the last bits."""
     x, y = np.asarray(x), np.asarray(y)
     test.assertEqual(x.shape, y.shape, label)
     test.assertEqual(x.dtype, y.dtype, label)
     if x.dtype.kind not in "fc":
         test.assertTrue(np.array_equal(x, y), label)
         return
+    cx, cy = _float_components(x), _float_components(y)
+    for a, b in zip(cx, cy):
+        for cls in (np.isnan, np.isposinf, np.isneginf):
+            test.assertTrue(np.array_equal(cls(a), cls(b)), (label, cls.__name__))
+    fins = [np.isfinite(a) for a in cx]
     if not NUMPY_BELOW_2:
-        # exact, bit for bit (NaNs in the same places count as equal)
-        test.assertTrue(np.array_equal(x, y, equal_nan=True), label)
+        for a, b, fin in zip(cx, cy, fins):
+            test.assertTrue(np.array_equal(a[fin], b[fin]), label)
         return
-    test.assertTrue(np.array_equal(np.isfinite(x), np.isfinite(y)), label)
-    fin = np.isfinite(x)
-    test.assertTrue(np.array_equal(x[~fin], y[~fin], equal_nan=True), label)
-    scale = max(float(np.abs(x[fin]).max(initial=0.0)), float(np.abs(y[fin]).max(initial=0.0)))
-    test.assertLessEqual(float(np.abs(x[fin] - y[fin]).max(initial=0.0)),
-                         ROUNDOFF_RTOL * scale, label)
+    scale = max(float(np.abs(c[fin]).max(initial=0.0))
+                for comps in (cx, cy) for c, fin in zip(comps, fins))
+    for a, b, fin in zip(cx, cy, fins):
+        test.assertLessEqual(float(np.abs(a[fin] - b[fin]).max(initial=0.0)),
+                             ROUNDOFF_RTOL * scale, label)
 
 
 def moved_stamp(member, reference, mine):
@@ -388,6 +406,74 @@ def _members(d, files=_FILES):
         z = np.load(os.path.join(d, f))
         out[f] = {k: z[k] for k in z.files}
     return out
+
+
+class TestAssertSameToRoundoff(unittest.TestCase):
+    """The comparison helper of the develop comparisons, on both sides of
+    its numpy version gate (patched)."""
+
+    def _check(self, x, y, below_2):
+        mod = sys.modules[__name__]
+        saved = mod.NUMPY_BELOW_2
+        mod.NUMPY_BELOW_2 = below_2
+        try:
+            _assert_same_to_roundoff(self, np.asarray(x), np.asarray(y), "case")
+        finally:
+            mod.NUMPY_BELOW_2 = saved
+
+    def _passes(self, x, y):
+        for below_2 in (False, True):
+            with self.subTest(below_2=below_2):
+                self._check(x, y, below_2)
+
+    def _fails(self, x, y, below_2=(False, True)):
+        for b2 in below_2:
+            with self.subTest(below_2=b2):
+                with self.assertRaises(AssertionError):
+                    self._check(x, y, b2)
+
+    def test_identical_arrays_pass(self):
+        nan, inf = np.nan, np.inf
+        self._passes([1.0, nan, inf, -inf], [1.0, nan, inf, -inf])
+        self._passes([1 + 2j, complex(nan, 1), complex(2, -inf)],
+                     [1 + 2j, complex(nan, 1), complex(2, -inf)])
+        self._passes([nan, inf, -inf], [nan, inf, -inf])          # all non-finite
+        self._passes([complex(nan, inf)], [complex(nan, inf)])
+
+    def test_roundoff_only_below_numpy_2(self):
+        x = np.array([1.0, 2.0, -3.0])
+        y = x * (1 + 2.2e-16 * np.array([1, 0, 1]))
+        y[0] = np.nextafter(1.0, 2.0)
+        self._check(x, y, True)
+        self._fails(x, y, below_2=(False,))
+        z = np.array([1 + 1j, 2 - 3j])
+        self._check(z, z + complex(0, 4.4e-16), True)
+        self._fails(z, z + complex(0, 4.4e-16), below_2=(False,))
+
+    def test_real_change_fails_both(self):
+        self._fails([1.0, 2.0], [1.0, 2.0 * (1 + 1e-9)])
+        self._fails([1 + 1j], [1 + 1.000001j])
+
+    def test_nonfinite_placement(self):
+        nan, inf = np.nan, np.inf
+        self._fails([nan, 1.0], [1.0, nan])
+        self._fails([inf], [-inf])
+        self._fails([inf], [nan])
+        self._fails([complex(nan, 1)], [complex(nan, 2)])
+        self._fails([complex(nan, 1)], [complex(2, nan)])
+        self._fails([complex(1, inf)], [complex(1, -inf)])
+        self._fails([nan, inf], [nan, -inf])                         # all non-finite
+
+    def test_dtype_and_shape_mismatch(self):
+        self._fails(np.array([1.0], np.float64), np.array([1.0], np.float32))
+        self._fails(np.array([1.0]), np.array([1.0 + 0j]))
+        self._fails(np.array([1, 2]), np.array([1.0, 2.0]))
+        self._fails(np.array([1.0, 2.0]), np.array([[1.0, 2.0]]))
+
+    def test_non_float_exact(self):
+        self._passes(np.array(["local"]), np.array(["local"]))
+        self._fails(np.array(["local"]), np.array(["takimoto"]))
+        self._fails(np.array([1, 2]), np.array([1, 3]))
 
 
 class TestCompatibility(unittest.TestCase):

@@ -55,20 +55,33 @@ def _strip_issue282_diagnostics(log_text):
 
 
 #: a floating-point literal in a log line: digits with a decimal point
-#: and/or an exponent (a plain integer is not matched), not glued to a
-#: word or a larger number on either side (a sentence-ending period is
-#: allowed after it)
+#: and/or an exponent (a plain integer is not matched), optionally signed.
+#: It must stand on its own: not preceded by a word character, a dot, a
+#: sign, a hyphen or a path separator, and not followed by a word
+#: character, a path separator, or a dot, sign or hyphen that continues
+#: into a word or number -- so decimal pieces of file names, path
+#: components and version strings (file-1.25.dat, run/1.25/output, 1.25-x,
+#: v1.26.4, 1.26.4) are left alone, while a sentence-ending period or comma after a value is allowed.
 _FLOAT_LITERAL = re.compile(
-    r"(?<![\w.])[-+]?(?:\d+\.\d+|\.\d+|\d+(?=[eE][-+]?\d))(?:[eE][-+]?\d+)?(?!\w|\.\d)")
+    r"(?<![\w.+\-/\\])[-+]?(?:\d+\.\d+|\.\d+|\d+(?=[eE][-+]?\d))(?:[eE][-+]?\d+)?"
+    r"(?![\w/\\]|[.+\-]\w)")
+
+#: significant digits a printed float is rounded to before the logs are
+#: compared. A double carries 15.95 significant decimal digits, so 15 is the
+#: greatest precision at which a one-ulp difference (about 2.2e-16
+#: relative) is generally absorbed by the rounding (31.999999999999996 and
+#: 32.0 both become 32.0) while a relative change of a few 1e-15 or more is
+#: still seen; 12 digits would hide changes up to about 5e-12.
+LOG_FLOAT_DIGITS = 15
 
 
-def _normalise_log_floats(log_text, digits=12):
+def _normalise_log_floats(log_text, digits=LOG_FLOAT_DIGITS):
     """Replace every floating-point literal of ``log_text`` by its value
-    rounded to ``digits`` significant digits (printed with ``repr`` of the
-    rounded float), leaving integers and all other text untouched. Used on
-    BOTH logs of the develop comparison with numpy < 2 only, where the
-    last-bit drift of the C-ordered Matsubara transforms (#309) can flip a
-    printed repr such as 32.0 into 31.999999999999996."""
+    rounded to ``digits`` significant digits and printed as the shortest
+    repr that round-trips the rounded float, leaving integers and all other
+    text untouched. Used on BOTH logs of the develop comparison with numpy
+    < 2 only, where the last-bit drift of the C-ordered Matsubara transforms
+    (#309) can flip a printed repr such as 32.0 into 31.999999999999996."""
     return _FLOAT_LITERAL.sub(
         lambda m: repr(float("{:.{}g}".format(float(m.group(0)), digits))), log_text)
 
@@ -194,22 +207,38 @@ class TestNormaliseLogFloats(unittest.TestCase):
     """The float normaliser of TestG0Off's log comparison (numpy < 2)."""
 
     def test_last_bit_drift_is_absorbed(self):
-        self.assertEqual(_normalise_log_floats("Ncond = 31.999999999999996"),
-                         _normalise_log_floats("Ncond = 32.0"))
-        self.assertEqual(_normalise_log_floats("Ncond = 31.999999999999996"), "Ncond = 32.0")
-        self.assertEqual(_normalise_log_floats("res 1.0000000000000002e-05."),
-                         _normalise_log_floats("res 1e-05."))
-
-    def test_integers_and_text_untouched(self):
-        for text in ("iteration 3 of 10: nvol = 16, norb 2",
-                     "hwave.solver.flex INFO flex_second_order = local",
-                     "shape (4, 4, 1) step 7.", "v1.2.3 x2.5 k_0 1e"):
-            self.assertEqual(_normalise_log_floats(text), text)
+        n = _normalise_log_floats
+        self.assertEqual(n("Ncond = 31.999999999999996"), "Ncond = 32.0")
+        self.assertEqual(n("Ncond = 32.0"), "Ncond = 32.0")
+        self.assertEqual(n("mu 1.0000000000000002"), n("mu 1.0"))
+        self.assertEqual(n("res 1.0000000000000002e-05."), n("res 1e-05."))
+        self.assertEqual(n("x = -0.30000000000000004,"), "x = -0.3,")
 
     def test_a_real_difference_survives(self):
-        self.assertNotEqual(_normalise_log_floats("mu = 0.123456789"),
-                            _normalise_log_floats("mu = 0.123456788"))
-        self.assertNotEqual(_normalise_log_floats("mu = 0.5"), _normalise_log_floats("mu = 5"))
+        n = _normalise_log_floats
+        self.assertNotEqual(n("mu = 1.000000000004"), n("mu = 1.0"))
+        self.assertNotEqual(n("mu = 0.123456789"), n("mu = 0.123456788"))
+        self.assertNotEqual(n("mu = 0.5"), n("mu = 5"))
+        self.assertNotEqual(n("e 1.5e-05"), n("e 1.5e-06"))
+        self.assertNotEqual(n("x -1.5"), n("x 1.5"))
+
+    def test_rewritten_forms(self):
+        n = _normalise_log_floats
+        self.assertEqual(n("a 1e-05 b"), "a 1e-05 b")
+        self.assertEqual(n("a 2.50E+03 b"), "a 2500.0 b")
+        self.assertEqual(n("dev=-0.250000000000000011."), "dev=-0.25.")
+        self.assertEqual(n("[0.10000000000000002, 2.0]"), "[0.1, 2.0]")
+
+    def test_integers_and_text_untouched(self):
+        n = _normalise_log_floats
+        for text in ("iteration 3 of 10: nvol = 16, norb 2",
+                     "hwave.solver.flex INFO flex_second_order = local",
+                     "shape (4, 4, 1) step 7.", "index [3][-1] k_0 1e x2.5",
+                     "numpy v1.26.4", "numpy 1.26.4 and 2.4.6",
+                     "read file-1.23456789012345.dat",
+                     "read /tmp/run/1.23456789012345/output and run\\1.5\\x",
+                     "saved chi_1.5.npz", "range 1.0000000000000002-x"):
+            self.assertEqual(n(text), text, text)
 
 
 class TestG0Off(unittest.TestCase):
