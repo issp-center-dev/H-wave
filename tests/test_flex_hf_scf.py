@@ -1,6 +1,6 @@
 """The standalone Hartree-Fock-renormalised FLEX loop (spec 2026-09-06
 sections 1, 2, 4.2-4.3, 5.6; gates G0-off, G5, D7): gate-off inputs are
-byte-identical to develop, the single-band Hubbard HF term is a chemical-
+identical to develop (to round-off), the single-band Hubbard HF term is a chemical-
 potential shift, the mean-field seed follows the initial-value
 trajectory, the W-disabled fixed point equals paramagnetic UHFk, the
 reset set, IterationMax = 0 and the provenance block.
@@ -171,6 +171,7 @@ def _reversed_interaction_dir(src_dir, files, copy=("geom.dat", "transfer.dat"))
     return dst
 
 
+
 class TestG0Off(unittest.TestCase):
     """Gate-off inputs: every archive member and the complete log stream
     equal those of the reference revision (the main checkout, pinned by
@@ -196,14 +197,17 @@ class TestG0Off(unittest.TestCase):
 
     The npz comparison allows this side's archives to carry additional
     members beyond the reference revision's -- every member the reference
-    DOES have must still match exactly.
+    DOES have must still match: integers exactly, floating-point values to
+    round-off (the memory layout of the Matsubara transforms changed in
+    #309, which moves the last bits of numpy < 2's FFT and BLAS results).
     """
 
     def test_byte_identity_against_develop(self):
         from tests.test_flex_second_order_compat import (develop_checkout,
                                                            own_tree_subprocess_env,
                                                            reference_script,
-                                                           reference_subprocess_env, moved_stamp)
+                                                           reference_subprocess_env, moved_stamp,
+                                                           _assert_same_to_roundoff)
         here = os.getcwd()
         # one shared rule with the other develop-comparison harnesses: the
         # reference tree must be at the NAMED revision and clean, or the
@@ -239,7 +243,7 @@ class TestG0Off(unittest.TestCase):
                     if moved_stamp(k, db[k], da[k]):        # b = reference, a = here
                         continue
                     self.assertEqual(da[k].dtype, db[k].dtype, (name, k))
-                    self.assertTrue(np.array_equal(da[k], db[k]), (name, k))
+                    _assert_same_to_roundoff(self, da[k], db[k], (name, k))
             with open(os.path.join(a, "log.txt")) as fh:
                 la = fh.read().replace(here, "<root>").replace(a, "<out>")
             # Issue #282 added documented, purely additive diagnostic lines

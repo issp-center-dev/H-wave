@@ -231,6 +231,29 @@ DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 MOVED_STAMPS = {"sc_vertex_version": (2, 3)}
 
 
+#: floating-point members of the develop comparisons agree to round-off, not
+#: bit for bit: the Matsubara transforms return C-ordered arrays since #309,
+#: and with numpy < 2 the downstream FFT and BLAS calls then take other
+#: memory paths (measured: up to 2e-17 relative to the array's scale)
+ROUNDOFF_RTOL = 1e-12
+
+
+def _assert_same_to_roundoff(test, x, y, label):
+    """Integers, booleans and strings exactly; floating-point arrays to
+    ROUNDOFF_RTOL relative to the larger magnitude of the two."""
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    if x.dtype.kind not in "fc":
+        test.assertTrue(np.array_equal(x, y), label)
+        return
+    test.assertTrue(np.array_equal(np.isfinite(x), np.isfinite(y)), label)
+    fin = np.isfinite(x)
+    test.assertTrue(np.array_equal(x[~fin], y[~fin], equal_nan=True), label)
+    scale = max(float(np.abs(x[fin]).max(initial=0.0)), float(np.abs(y[fin]).max(initial=0.0)))
+    test.assertLessEqual(float(np.abs(x[fin] - y[fin]).max(initial=0.0)),
+                         ROUNDOFF_RTOL * scale, label)
+
+
 def moved_stamp(member, reference, mine):
     """True for a member listed in :data:`MOVED_STAMPS`, after checking that
     the two values are exactly the recorded pair; False otherwise."""
@@ -352,8 +375,8 @@ class TestCompatibility(unittest.TestCase):
 
     def test_local_on_onsite_only_input_equals_develop(self):
         """The other unmoved path: ``flex_second_order = "local"`` on an
-        input with NO off-site two-body row is byte-identical to the
-        reference revision's.
+        input with NO off-site two-body row equals the reference revision's
+        (integers exactly, floating-point values to round-off since #309).
 
         The orientation change touches the kernel's OFF-SITE vertex only
         (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
@@ -374,8 +397,7 @@ class TestCompatibility(unittest.TestCase):
                     if moved_stamp(k, v, mb[f][k]):
                         continue
                     if np.asarray(v).dtype.kind in "fciub":
-                        np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
-                                                      err_msg=str((f, k)))
+                        _assert_same_to_roundoff(self, mb[f][k], v, (f, k))
                         compared += 1
             self.assertGreater(compared, 10)
             # anti-vacuity: the kernel really ran on a non-trivial sigma
