@@ -61,29 +61,73 @@ def _strip_issue282_diagnostics(log_text):
 #: character, a path separator, or a dot, sign or hyphen that continues
 #: into a word or number -- so decimal pieces of file names, path
 #: components and version strings (file-1.25.dat, run/1.25/output, 1.25-x,
-#: v1.26.4, 1.26.4) are left alone, while a sentence-ending period or comma after a value is allowed.
+#: v1.26.4, 1.26.4) are left alone, while a sentence-ending period or
+#: comma after a value is allowed.
 _FLOAT_LITERAL = re.compile(
     r"(?<![\w.+\-/\\])[-+]?(?:\d+\.\d+|\.\d+|\d+(?=[eE][-+]?\d))(?:[eE][-+]?\d+)?"
     r"(?![\w/\\]|[.+\-]\w)")
 
-#: significant digits a printed float is rounded to before the logs are
-#: compared. A double carries 15.95 significant decimal digits, so 15 is the
-#: greatest precision at which a one-ulp difference (about 2.2e-16
-#: relative) is generally absorbed by the rounding (31.999999999999996 and
-#: 32.0 both become 32.0) while a relative change of a few 1e-15 or more is
-#: still seen; 12 digits would hide changes up to about 5e-12.
-LOG_FLOAT_DIGITS = 15
+#: relative tolerance of one printed float of the develop log comparison
+#: with numpy < 2 (the same allowance as the archives' ROUNDOFF_RTOL, here
+#: relative to the larger magnitude of the two printed values)
+LOG_FLOAT_RTOL = 1e-12
 
 
-def _normalise_log_floats(log_text, digits=LOG_FLOAT_DIGITS):
-    """Replace every floating-point literal of ``log_text`` by its value
-    rounded to ``digits`` significant digits and printed as the shortest
-    repr that round-trips the rounded float, leaving integers and all other
-    text untouched. Used on BOTH logs of the develop comparison with numpy
-    < 2 only, where the last-bit drift of the C-ordered Matsubara transforms
-    (#309) can flip a printed repr such as 32.0 into 31.999999999999996."""
-    return _FLOAT_LITERAL.sub(
-        lambda m: repr(float("{:.{}g}".format(float(m.group(0)), digits))), log_text)
+#: _FLOAT_LITERAL as the single capture group re.split needs to keep the
+#: matched literals in its result
+_FLOAT_TOKEN = re.compile("(" + _FLOAT_LITERAL.pattern + ")")
+
+
+def _log_line_tokens(line):
+    """Split a log line into alternating text and float-literal tokens:
+    ``[text, float, text, ..., text]`` (re.split with one capture group)."""
+    return _FLOAT_TOKEN.split(line)
+
+
+def _log_lines_differ(la, lb, rtol=LOG_FLOAT_RTOL):
+    """Why line ``la`` does not match line ``lb`` token by token, or None.
+
+    Non-numeric text must be identical (so file names, path components and
+    version strings, which _FLOAT_LITERAL never matches, compare exactly),
+    the float literals must sit at the same places, and each pair must agree
+    to ``rtol`` relative to the larger magnitude of the two."""
+    ta, tb = _log_line_tokens(la), _log_line_tokens(lb)
+    if len(ta) != len(tb):
+        return "different number of float literals"
+    for i, (x, y) in enumerate(zip(ta, tb)):
+        if i % 2 == 0:
+            if x != y:
+                return "text {!r} != {!r}".format(x, y)
+        else:
+            fx, fy = float(x), float(y)
+            if abs(fx - fy) > rtol * max(abs(fx), abs(fy)):
+                return "float {} != {} beyond rtol {}".format(x, y, rtol)
+    return None
+
+
+def _assert_logs_match(test, la, lb, below_2):
+    """Assert that log text ``la`` matches the reference's ``lb``.
+
+    With numpy >= 2 (``below_2`` false) the two must be identical strings.
+    With numpy < 2 the last-bit drift of the C-ordered Matsubara transforms
+    (#309) can change a printed value (32.0 vs 31.999999999999996), and any
+    fixed-digit rounding of both sides has boundaries such a drift can
+    straddle; so the logs are compared line by line and token by token
+    (:func:`_log_lines_differ`). A failure names the first differing line."""
+    if not below_2:
+        test.assertEqual(la, lb)
+        return
+    lines_a, lines_b = la.split("\n"), lb.split("\n")
+    for n, (x, y) in enumerate(zip(lines_a, lines_b), 1):
+        why = _log_lines_differ(x, y)
+        if why is not None:
+            test.fail("log line {} differs ({}):\n  here:      {}\n  reference: {}"
+                      .format(n, why, x, y))
+    if len(lines_a) != len(lines_b):
+        test.fail("logs differ in length: {} vs {} lines; first extra line: {!r}".format(
+            len(lines_a), len(lines_b),
+            (lines_a if len(lines_a) > len(lines_b) else lines_b)[min(len(lines_a),
+                                                                      len(lines_b))]))
 
 
 _G0_SCRIPT = r'''
@@ -203,42 +247,64 @@ def _reversed_interaction_dir(src_dir, files, copy=("geom.dat", "transfer.dat"))
     return dst
 
 
-class TestNormaliseLogFloats(unittest.TestCase):
-    """The float normaliser of TestG0Off's log comparison (numpy < 2)."""
+class TestAssertLogsMatch(unittest.TestCase):
+    """The log comparator of TestG0Off, on both sides of the numpy gate."""
 
-    def test_last_bit_drift_is_absorbed(self):
-        n = _normalise_log_floats
-        self.assertEqual(n("Ncond = 31.999999999999996"), "Ncond = 32.0")
-        self.assertEqual(n("Ncond = 32.0"), "Ncond = 32.0")
-        self.assertEqual(n("mu 1.0000000000000002"), n("mu 1.0"))
-        self.assertEqual(n("res 1.0000000000000002e-05."), n("res 1e-05."))
-        self.assertEqual(n("x = -0.30000000000000004,"), "x = -0.3,")
+    def _ok(self, la, lb):
+        _assert_logs_match(self, la, lb, below_2=True)
 
-    def test_a_real_difference_survives(self):
-        n = _normalise_log_floats
-        self.assertNotEqual(n("mu = 1.000000000004"), n("mu = 1.0"))
-        self.assertNotEqual(n("mu = 0.123456789"), n("mu = 0.123456788"))
-        self.assertNotEqual(n("mu = 0.5"), n("mu = 5"))
-        self.assertNotEqual(n("e 1.5e-05"), n("e 1.5e-06"))
-        self.assertNotEqual(n("x -1.5"), n("x 1.5"))
+    def _bad(self, la, lb):
+        with self.assertRaises(AssertionError):
+            _assert_logs_match(self, la, lb, below_2=True)
 
-    def test_rewritten_forms(self):
-        n = _normalise_log_floats
-        self.assertEqual(n("a 1e-05 b"), "a 1e-05 b")
-        self.assertEqual(n("a 2.50E+03 b"), "a 2500.0 b")
-        self.assertEqual(n("dev=-0.250000000000000011."), "dev=-0.25.")
-        self.assertEqual(n("[0.10000000000000002, 2.0]"), "[0.1, 2.0]")
+    def test_last_bit_drift_passes(self):
+        self._ok("a\nNcond = 31.999999999999996\nb", "a\nNcond = 32.0\nb")
+        self._ok("res 1.0000000000000002e-05.", "res 1e-05.")
+        self._ok("x = -0.30000000000000004, y [0.1, 2.0]", "x = -0.3, y [0.1, 2.0]")
 
-    def test_integers_and_text_untouched(self):
-        n = _normalise_log_floats
-        for text in ("iteration 3 of 10: nvol = 16, norb 2",
-                     "hwave.solver.flex INFO flex_second_order = local",
-                     "shape (4, 4, 1) step 7.", "index [3][-1] k_0 1e x2.5",
-                     "numpy v1.26.4", "numpy 1.26.4 and 2.4.6",
-                     "read file-1.23456789012345.dat",
-                     "read /tmp/run/1.23456789012345/output and run\\1.5\\x",
-                     "saved chi_1.5.npz", "range 1.0000000000000002-x"):
-            self.assertEqual(n(text), text, text)
+    def test_exact_on_numpy_2(self):
+        with self.assertRaises(AssertionError):
+            _assert_logs_match(self, "Ncond = 31.999999999999996", "Ncond = 32.0",
+                               below_2=False)
+        _assert_logs_match(self, "Ncond = 32.0", "Ncond = 32.0", below_2=False)
+
+    def test_real_number_change_fails(self):
+        self._bad("mu = 1.000000000004", "mu = 1.0")
+        self._bad("x -1.5", "x 1.5")
+        self._bad("e 1.5e-05", "e 1.5e-06")
+        self._bad("mu = 0.5", "mu = 5")
+
+    def test_text_difference_fails(self):
+        self._bad("hwave INFO converged 1.0", "hwave INFO diverged 1.0")
+        self._bad("iteration 3: 1.0", "iteration 4: 1.0")         # integers are text
+
+    def test_path_and_version_difference_fails(self):
+        self._bad("read file-1.23456789012345.dat", "read file-1.23456789012346.dat")
+        self._bad("read run/1.000000000000001/output", "read run/1.0/output")
+        self._bad("numpy v1.26.4", "numpy v1.26.5")
+        self._bad("numpy 1.26.4", "numpy 1.26.40")
+        self._bad("saved chi_1.5.npz", "saved chi_1.50.npz")
+
+    def test_extra_number_or_line_fails(self):
+        self._bad("values 1.0 2.0", "values 1.0")
+        self._bad("values 1.0", "values 1.0 x")
+        self._bad("a\nb", "a\nb\nc")
+
+    def test_failure_names_the_first_differing_line(self):
+        with self.assertRaises(AssertionError) as cm:
+            self._ok("a 1.0\nb 2.0\nc 3.0", "a 1.0\nb 2.5\nc 3.5")
+        self.assertIn("log line 2", str(cm.exception))
+
+    def test_float_literal_boundaries(self):
+        """What _FLOAT_LITERAL takes as a number (the rest is text)."""
+        floats = lambda t: _log_line_tokens(t)[1::2]
+        self.assertEqual(floats("a 1e-05 b 2.50E+03, c -0.25."), ["1e-05", "2.50E+03", "-0.25"])
+        self.assertEqual(floats("[0.1, 2.0]"), ["0.1", "2.0"])
+        for text in ("iteration 3 of 10: nvol = 16, norb 2", "shape (4, 4, 1) step 7.",
+                     "index [3][-1] k_0 1e x2.5", "numpy v1.26.4", "numpy 1.26.4 and 2.4.6",
+                     "read file-1.23456789012345.dat", "read /tmp/run/1.2345/output",
+                     "run\\1.5\\x", "saved chi_1.5.npz", "range 1.0000000000000002-x"):
+            self.assertEqual(floats(text), [], text)
 
 
 class TestG0Off(unittest.TestCase):
@@ -247,7 +313,7 @@ class TestG0Off(unittest.TestCase):
     tests/test_flex_second_order_compat.DEVELOP_COMMIT): exactly with
     numpy >= 2; with numpy < 2 floating-point values to round-off (archive
     members via _assert_same_to_roundoff, printed floats in the log via
-    _normalise_log_floats).
+    _assert_logs_match).
 
     The run below pins flex_second_order = "local" explicitly, on BOTH
     sides (the default of both revisions; spec 2026-09-08 D2). It used to
@@ -326,7 +392,7 @@ class TestG0Off(unittest.TestCase):
             # evaluation fails) and the one-off "looks divergent" WARNING of
             # the iteration monitor. Only those lines are removed, from this
             # side only; every other line must still match byte for byte
-            # (with numpy < 2 up to the printed floats, see below).
+            # (with numpy < 2 up to round-off in the printed floats, see below).
             la = _strip_issue282_diagnostics(la)
             with open(os.path.join(b, "log.txt")) as fh:
                 lb = fh.read().replace(develop, "<root>").replace(b, "<out>")
@@ -336,13 +402,10 @@ class TestG0Off(unittest.TestCase):
             # (an earlier version of this guard stripped that line, which
             # would now DELETE a line from one side only)
             self.assertIn("flex_second_order = local", la)
-            if NUMPY_BELOW_2:
-                # the last-bit drift of the archives can flip a printed
-                # float repr (e.g. 32.0 vs 31.999999999999996); compare the
-                # logs with every float literal rounded, identically on
-                # both sides. With numpy >= 2 the comparison stays exact.
-                la, lb = _normalise_log_floats(la), _normalise_log_floats(lb)
-            self.assertEqual(la, lb)
+            # exact with numpy >= 2; with numpy < 2 printed floats to
+            # round-off, token by token (the last-bit drift of the archives
+            # can flip a printed repr, e.g. 32.0 vs 31.999999999999996)
+            _assert_logs_match(self, la, lb, NUMPY_BELOW_2)
 
     def test_first_map_static_equals_develop_on_the_same_declaration(self):
         """Spec 2.4 end to end, as corrected by issue #232: with an OFF-SITE
