@@ -2799,10 +2799,14 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.identity(2)
-                    chi0q = xp.einsum('glkab,gh->lkgahb',
-                                      chi0q_orig,
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
+                    # source block g onto spin block (g, g), as
+                    # einsum('glkab,gh->lkgahb') with I_2, layout-independent
+                    # (#309)
+                    chi0q = xp.zeros((nfreq, nvol, nd, nd),
+                                     dtype=xp.result_type(chi0q_orig, float))
+                    for g in range(ns):
+                        sl = slice(g * norb, (g + 1) * norb)
+                        chi0q[..., sl, sl] = chi0q_orig[g]
 
                     ham = project_density_pairs(ham_long, nvol, nd, xp)
 
@@ -2813,13 +2817,14 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('glkabcd,gtuv->lkgatbucvd',
-                                      chi0q_orig,
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    # source block g on the all-equal spin slots (g,g,g,g),
+                    # as einsum('glkabcd,gtuv->lkgatbucvd') with the
+                    # g=t=u=v tensor, layout-independent (#309)
+                    chi0q = xp.zeros((nfreq, nvol, ns, norb, ns, norb, ns, norb, ns, norb),
+                                     dtype=xp.result_type(chi0q_orig, np.int32))
+                    for g in range(ns):
+                        chi0q[:, :, g, :, g, :, g, :, g, :] = chi0q_orig[g]
+                    chi0q = chi0q.reshape(nfreq, nvol, nd, nd, nd, nd)
                     ham = ham_long
 
             elif self.spin_mode == "spin-free":
@@ -2836,10 +2841,16 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.identity(ns)
-                    chi0q = xp.einsum('lkab,st->lksatb',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb),
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
+                    # scatter onto the spin-block diagonal (the Kronecker
+                    # product with I_ns, as einsum('lkab,st->lksatb')),
+                    # off-diagonal spin blocks zero; layout-independent,
+                    # unlike the einsum (#309)
+                    chi0q_src = chi0q_orig.reshape(nfreq, nvol, norb, norb)
+                    chi0q = xp.zeros((nfreq, nvol, nd, nd),
+                                     dtype=xp.result_type(chi0q_src, float))
+                    for s in range(ns):
+                        sl = slice(s * norb, (s + 1) * norb)
+                        chi0q[..., sl, sl] = chi0q_src
 
                     # same spin-major extraction as the combined-index
                     # pair diagonal (verified bitwise); shared projection
@@ -2853,13 +2864,16 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('lkabcd,stuv->lksatbucvd',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    # chi0q on the all-equal spin slots (s,s,s,s) of the
+                    # spin-major pair layout, zero elsewhere -- as
+                    # einsum('lkabcd,stuv->lksatbucvd') with the s=t=u=v
+                    # tensor, but layout-independent (#309)
+                    chi0q_src = chi0q_orig.reshape(nfreq, nvol, norb, norb, norb, norb)
+                    chi0q = xp.zeros((nfreq, nvol, ns, norb, ns, norb, ns, norb, ns, norb),
+                                     dtype=xp.result_type(chi0q_src, np.int32))
+                    for s in range(ns):
+                        chi0q[:, :, s, :, s, :, s, :, s, :] = chi0q_src
+                    chi0q = chi0q.reshape(nfreq, nvol, nd, nd, nd, nd)
                     ham = ham_long
 
             # For ring+ladder, validate the transverse channel BEFORE the
