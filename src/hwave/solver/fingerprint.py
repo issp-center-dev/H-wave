@@ -19,6 +19,9 @@ import numpy as np
 from . import backend
 
 FINGERPRINT_VERSION = 1
+#: format version of the interaction-record and declared-topology digests
+#: (to be reconciled with FINGERPRINT_VERSION when the archives move to version 2)
+INTERACTION_FINGERPRINT_VERSION = 2
 CHUNK_BYTES = 64 * 2**20
 _MAX_FREQ_GATHER = 16
 
@@ -68,17 +71,72 @@ def encode_string(s: str) -> bytes:
     return struct.pack("<I", len(b)) + b
 
 
-def _header(component: str) -> bytes:
-    return encode_string(_MAGIC) + encode_int(FINGERPRINT_VERSION) + encode_string(component)
+def _header(component: str, version: int = FINGERPRINT_VERSION) -> bytes:
+    return encode_string(_MAGIC) + encode_int(version) + encode_string(component)
 
 
-def digest(component: str, chunks: Iterable[bytes]) -> str:
+def digest(component: str, chunks: Iterable[bytes], *, version: int = FINGERPRINT_VERSION) -> str:
     """Hex SHA-256 of the domain-separated header followed by ``chunks``."""
     h = hashlib.sha256()
-    h.update(_header(component))
+    h.update(_header(component, version))
     for c in chunks:
         h.update(c)
     return h.hexdigest()
+
+
+# ------------------------------------------------- interaction / topology
+def _record_chunks(records):
+    n = len(records)
+    yield encode_int(n)
+    if n == 0:
+        return
+    types = np.asarray(records["type"])
+    tbytes = [str(t).encode("utf-8") for t in types]
+    modes = np.asarray(records["modes"], dtype="<i8").reshape(n, 4)
+    cells = np.asarray(records["cells"], dtype="<i8").reshape(n, 12)
+    v = np.asarray(records["v"], dtype="<c16")
+    bad = ~np.isfinite(v)
+    if bad.any():
+        i = int(np.flatnonzero(bad)[0])
+        key = (str(types[i]), tuple(int(x) for x in modes[i]),
+               tuple(tuple(int(x) for x in row) for row in cells[i].reshape(4, 3)))
+        raise ValueError(f"non-finite value in interaction entry {key}")
+    ranks = {b: i for i, b in enumerate(sorted(set(tbytes)))}
+    trank = np.array([ranks[b] for b in tbytes], dtype=np.int64)
+    keys = np.concatenate([trank[:, None], modes, cells], axis=1)
+    order = np.lexsort(keys.T[::-1])
+    for start in range(0, n, 4096):
+        out = []
+        for i in order[start:start + 4096]:
+            out.append(encode_string(str(types[i])))
+            out.append(modes[i].tobytes())
+            out.append(cells[i].tobytes())
+            out.append(encode_complex(v[i]))
+        yield b"".join(out)
+
+
+def interaction_digest(records) -> str:
+    """Digest of compiled interaction records, independent of their order.
+
+    Pass ``CompiledInteraction.records`` (``so_records.compile_interaction``),
+    the records with exact-zero coefficients excluded; its
+    ``records_all`` (zeros kept) gives a different digest for the same
+    interaction."""
+    return digest("interaction", _record_chunks(records), version=INTERACTION_FINGERPRINT_VERSION)
+
+
+def _topology_chunks(rows):
+    rows = np.asarray(rows, dtype="<i8").reshape(-1, 3)
+    n = len(rows)
+    yield encode_int(n)
+    if n:
+        rows = rows[np.lexsort(rows.T[::-1])]
+        yield np.ascontiguousarray(rows).tobytes()
+
+
+def topology_digest(declared_topology) -> str:
+    """Digest of the declared displacement set, independent of row order."""
+    return digest("topology", _topology_chunks(declared_topology), version=INTERACTION_FINGERPRINT_VERSION)
 
 
 # -------------------------------------------------------------------- tables
