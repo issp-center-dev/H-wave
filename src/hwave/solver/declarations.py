@@ -5,8 +5,11 @@ non-Hermitian-closed input, so unclosed tables reach these reductions
 only through reader-bypassing internal paths (and tests). A declaration
 table may carry the same physical bond from both ends:
 the two declarations of one coupling are ``(R, a, b)`` and
-``(-R, b, a)``. For every type except PairHop they multiply the SAME
-operator, so the table entering any vertex is the mean
+``(-R, b, a)``. For CoulombInter, Hund, Ising and PairLift the reversed
+partner multiplies the SAME operator; for Exchange and PairHop it
+multiplies the HERMITIAN CONJUGATE, which for a real Exchange coefficient
+has the same effect. For every type except PairHop the table entering any
+vertex is the mean
 
     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
 

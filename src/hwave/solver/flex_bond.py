@@ -108,6 +108,14 @@ class BondBlockStore:
         return "host" if self.xp is np else "device"
 
     @property
+    def slot_names(self):
+        """The names the store answers to now, as a tuple: the allocated
+        slots (released or detached ones excluded) in allocation order, then
+        the aliases whose target is still allocated."""
+        return tuple(self._arrays) + tuple(a for a, t in self._aliases.items()
+                                           if t in self._arrays)
+
+    @property
     def nbytes(self):
         """Bytes of the slots currently allocated (aliases counted once)."""
         return int(sum(int(a.nbytes) for a in self._arrays.values()))

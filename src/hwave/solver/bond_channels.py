@@ -606,14 +606,15 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     return chi_s, chi_c
 
 
-_DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0}
+_DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0, "spinful": +1.0}
 
 
 def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLOOR):
     """Dress ONE RPA channel on the (bond-enlarged) pair basis::
 
         chi = [I + sign * chi_bar @ W]^{-1} chi_bar,   sign = -1 ("spin"),
-                                                              +1 ("charge")
+                                                              +1 ("charge",
+                                                                 "spinful")
 
     ``chi_bar``/``W`` are ``(nvol, ND, ND)``; ``spatial_shape`` =
     ``(Nx, Ny, Nz)`` with ``prod == nvol`` (the q-point named in a
@@ -628,7 +629,7 @@ def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLO
     """
     if channel not in _DRESS_CHANNELS:
         raise ValueError(
-            "dress_channel: channel must be 'spin' or 'charge', got {!r}"
+            "dress_channel: channel must be 'spin', 'charge' or 'spinful', got {!r}"
             .format(channel))
     sign = _DRESS_CHANNELS[channel]
     chi_bar = np.asarray(chi_bar)
@@ -2635,8 +2636,49 @@ def gate_bond_topology(split, norb, *, max_shells=None):
         active_types=longitudinal_bond_types(split.offsite_types))
 
 
+def _resolve_displacement_set(interactions, cell, norb, *, max_shells,
+                              active_types, displacements):
+    """:func:`resolve_bond_topology` with ``displacements=``: the channels
+    of an explicit displacement list, ordered and truncated exactly as the
+    declared shells of the default path (each displacement is read as a
+    zero-valued CoulombInter row, so the declared-content truncation guard
+    never fires; a caller that has content on the displacements checks its
+    own cutoff). Returns a ``BondTopology`` with ``coeffs == {}``."""
+    diag = "resolve_bond_topology"
+    if (not hasattr(interactions, "__len__") or len(interactions) != 0
+            or isinstance(active_types, str)
+            or not isinstance(active_types, (tuple, list)) or len(active_types) != 0):
+        types = sorted(interactions) if hasattr(interactions, "keys") else interactions
+        raise ValueError(
+            "{}: displacements= builds a coefficient-free channel set; it requires "
+            "empty interactions and active_types=(), got interaction type(s) {} and "
+            "active_types {}".format(diag, types, active_types))
+    disp = np.asarray(displacements)
+    if disp.ndim != 2 or disp.shape[1] != 3:
+        raise ValueError(
+            "{}: displacements must be an (n, 3) array of integer displacements, "
+            "got shape {}".format(diag, disp.shape))
+    if not (np.issubdtype(disp.dtype, np.integer)
+            or (np.issubdtype(disp.dtype, np.floating)
+                and np.all(np.isfinite(disp)) and np.all(disp == np.floor(disp)))):
+        raise ValueError(
+            "{}: displacements must be integral, got {}".format(diag, disp.tolist()))
+    vecs = {tuple(int(x) for x in row) for row in disp}
+    for d in sorted(vecs):
+        neg = tuple(-x for x in d)
+        if neg not in vecs:
+            raise ValueError(
+                "{}: displacements must be closed under negation; {} has no partner "
+                "{}".format(diag, d, neg))
+    rows = {(d, (0, 0)): 0.0 for d in sorted(vecs) if d != (0, 0, 0)}
+    shells = _resolve_bond_topology_impl(
+        {"CoulombInter": rows}, cell, norb, max_shells=max_shells,
+        active_types=("CoulombInter",), diag=diag)
+    return BondTopology(delta_r=shells.delta_r, reverse=shells.reverse, coeffs={})
+
+
 def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
-                          active_types):
+                          active_types, displacements=None):
     """Resolve the master bond topology over an explicit ``active_types``
     selection (#181 Tier 3 Phase A): the union of every declared off-site
     shell of those types, channel 0 always ``R=(0,0,0)``, shells ordered
@@ -2648,7 +2690,19 @@ def resolve_bond_topology(interactions, cell, norb, *, max_shells=None,
     :func:`resolve_transverse_topology` (whose docstring has the details);
     that function is this one at ``active_types=_TRANSVERSE_ACTIVE_TYPES``.
     Diagnostics are prefixed ``resolve_bond_topology:``.
+
+    ``displacements`` (keyword, default ``None``): an ``(n, 3)`` integer
+    array of displacements, closed under negation. When given,
+    ``interactions`` must be empty and ``active_types=()``; the result holds
+    the channels of those displacements (channel 0 on-site, shells ordered
+    and ``max_shells``-truncated as above) and ``coeffs == {}``. It serves a
+    caller whose coefficients do not fit the ``(B, norb, norb)`` per-type
+    form (the spin-orbital vertex). ``None`` is the declared-shell path.
     """
+    if displacements is not None:
+        return _resolve_displacement_set(
+            interactions, cell, norb, max_shells=max_shells,
+            active_types=active_types, displacements=displacements)
     return _resolve_bond_topology_impl(
         interactions, cell, norb, max_shells=max_shells,
         active_types=active_types, diag="resolve_bond_topology")
@@ -3218,7 +3272,8 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
                 guard_only=False):
     """One frequency batch of the bond dressing (#181 Phase B, spec 3.2):
     ``chi_bar_b`` `(nb, nvol, ND, ND)`, ``W`` `(nvol, ND, ND)` broadcast
-    over the batch; ``mat = 1 -/+ chi_bar_b @ W`` is conditioning-checked
+    over the batch; ``mat = 1 -/+ chi_bar_b @ W`` (``-`` for ``"spin"``,
+    ``+`` for ``"charge"`` and ``"spinful"``) is conditioning-checked
     with BOTH criteria of :func:`_check_bond_conditioning` on the
     flattened ``(nb * nvol)`` batch and solved with ``numpy.linalg.solve``.
     Returns ``(chi_b, cond_min)``; a refusal names the bosonic Matsubara
@@ -3299,7 +3354,8 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
     runs the whole batch as above (the warn path's exact-singular refusal
     and the "static" residual need the solve) and returns ``chi``."""
     if channel not in _DRESS_CHANNELS:
-        raise ValueError("dress_batch: channel must be 'spin' or 'charge', got {!r}".format(channel))
+        raise ValueError("dress_batch: channel must be 'spin', 'charge' or 'spinful', got {!r}"
+                         .format(channel))
     if guard_freqs not in _GUARD_FREQS:
         raise ValueError("dress_batch: guard_freqs must be one of {}, got {!r}"
                          .format(list(_GUARD_FREQS), guard_freqs))

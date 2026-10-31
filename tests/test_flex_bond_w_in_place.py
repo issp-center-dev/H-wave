@@ -43,6 +43,25 @@ class TestStoreAlias(unittest.TestCase):
                 st.release_slot("W")
             st.get_freq_batch("chibar", 0, 1)            # still allocated
 
+    def test_slot_names(self):
+        with flex_bond.BondBlockStore(2, 1, 2, 1, ("chibar", "chi"), {"W": "chibar"}) as st:
+            self.assertEqual(st.slot_names, ("chibar", "chi", "W"))
+            st.release_slot("chi")
+            self.assertEqual(st.slot_names, ("chibar", "W"))
+            with self.assertRaises(AttributeError):
+                st.slot_names = ()
+
+    def test_slot_names_drop_aliases_of_freed_targets(self):
+        with flex_bond.BondBlockStore(2, 1, 2, 1, ("chibar", "chi"), {"W": "chibar"}) as st:
+            st.release_slot("chibar")
+            self.assertEqual(st.slot_names, ("chi",))
+        with flex_bond.BondBlockStore(2, 1, 2, 1, ("chibar", "chi"), {"W": "chibar"}) as st:
+            st.detach("chibar")
+            self.assertEqual(st.slot_names, ("chi",))
+        st = flex_bond.BondBlockStore(2, 1, 2, 1, ("chibar",), {"W": "chibar"})
+        st.release()
+        self.assertEqual(st.slot_names, ())
+
     def test_bad_alias_refused(self):
         with self.assertRaisesRegex(ValueError, "alias"):
             flex_bond.BondBlockStore(2, 1, 2, 1, ("chibar",), {"W": "missing"})
