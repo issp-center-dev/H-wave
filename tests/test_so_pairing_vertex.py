@@ -25,9 +25,6 @@ consumes (``Delta_ad = -sum_bc V_abcd F_bc``).
   treats them exactly. For Hund alone, which acts between equal spins only,
   the spin-orbital kernel returns exactly zero opposite-spin pairing.
 """
-import contextlib
-import logging
-import os
 import shutil
 import tempfile
 import unittest
@@ -35,11 +32,11 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
-import hwave.qlmsio.read_input_k as read_input_k
 from hwave.solver import bubble, rpa
 import tests.test_flex_spin_orbital as fso
 import tests.test_sc_bond_pairing_oracle as O
 from tests.test_bond_transverse_ed import _terms_pairlift_offsite
+from tests.so_bond_fixtures import onsite_decl as _onsite_decl, rpa_spinful_gamma
 
 NX, BETA, NMAT, MU = O.NX, O.BETA, O.NMAT, O.MU
 NP = 2            # physical orbitals
@@ -55,59 +52,11 @@ _SZ = np.diag([1.0, -1.0]).astype(complex)
 _TRIPLET = {"z": _SZ @ _IY, "x": _SX @ _IY, "y": _SY @ _IY}
 
 
-@contextlib.contextmanager
-def _quiet():
-    prev = logging.root.manager.disable
-    logging.disable(logging.WARNING)
-    try:
-        yield
-    finally:
-        logging.disable(prev)
-
-
-def _wfile(path, head, n, rows):
-    with open(path, "w") as f:
-        f.write("{}\n{}\n1\n 1\n".format(head, n))
-        for r in rows:
-            f.write("  %d %d %d %d %d  %.12f  %.12f\n" % r)
-
-
 def _gamma(decl):
     """``Gamma (NX, ND^2, ND^2)`` of the spin-orbital RPA built from the
     declarations ``{type: {((R, 0, 0), (a, b)): v}}`` (physical orbital
     indices, as the interaction files are read in spin-orbital mode)."""
-    d = tempfile.mkdtemp(prefix="so_pairing_")
-    try:
-        with open(os.path.join(d, "geom.dat"), "w") as f:
-            f.write("1 0 0\n0 1 0\n0 0 1\n%d\n" % ND + "0 0 0\n" * ND)
-        _wfile(os.path.join(d, "transfer.dat"), "Transfer", ND,
-               [(0, 0, 0, p + 1, p + 1, 0.1, 0.0) for p in range(ND)])
-        inter = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
-        for t, tbl in decl.items():
-            _wfile(os.path.join(d, t + ".dat"), t, NP,
-                   [(R[0], R[1], R[2], a + 1, b + 1, complex(v).real, complex(v).imag)
-                    for (R, (a, b)), v in tbl.items()])
-            inter[t] = t + ".dat"
-        io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": inter})
-        par = {"T": 1.0 / BETA, "mu": 0.0, "CellShape": [NX, 1, 1],
-               "SubShape": [1, 1, 1], "Nmat": 4}
-        with _quiet():
-            s = rpa.RPA(io.get_param("ham"), {}, {
-                "mode": "RPA", "param": par, "enable_spin_orbital": True,
-                "calc_scheme": "general"})
-        ham = np.asarray(s.ham_info.ham_inter_q).reshape(NX, ND, ND, ND, ND)
-        return rpa.spinful_bubble_vertex(ham, s.ham_info.spinful_exchange())
-    finally:
-        shutil.rmtree(d, ignore_errors=True)
-
-
-def _onsite_decl(t, v):
-    """The Hermitian-closed on-site declaration of type ``t``: the diagonal
-    rows of CoulombIntra, the inter-orbital pair ``(0, 1)`` / ``(1, 0)`` of
-    every other type."""
-    if t == "CoulombIntra":
-        return {t: {((0, 0, 0), (0, 0)): v, ((0, 0, 0), (1, 1)): 0.8 * v}}
-    return {t: {((0, 0, 0), (0, 1)): v, ((0, 0, 0), (1, 0)): np.conj(v)}}
+    return rpa_spinful_gamma(decl, NP, (NX, 1, 1), beta=BETA, value_format="%.12f")
 
 
 def _onsite_terms(t, fx, v):
