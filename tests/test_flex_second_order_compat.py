@@ -1,8 +1,9 @@
 """Compatibility contract (spec 2026-09-08 section 3, extended by spec
 2026-09-16 section 2.4): 'local' on an input with no off-site two-body row
-keeps every numerical archive member of the general path np.array_equal to
-the reference revision's; the Hartree-Fock map on a declaration F
-reproduces the reference revision's map on the REVERSED declaration F^rev
+keeps every numerical archive member of the general path equal to the
+reference revision's (exactly with numpy >= 2; floating-point members to
+round-off with numpy < 2, see _assert_same_to_roundoff); the Hartree-Fock
+map on a declaration F reproduces the reference revision's map on the REVERSED declaration F^rev
 exactly; 'local' on a one-band Hubbard input agrees with the reference
 revision's retired 'takimoto' kernel to 1e-14 with the archive-scale floor,
 and so does the method-level assembly with the Takimoto-Hotta-Ueda formula;
@@ -62,7 +63,7 @@ par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], 
        # the reference revision predates the Hermitian projection of the
        # self-energy (issue #281), which changes a symmetric run at round-off
        # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
-       # that this byte-identity comparison stays about the code it names
+       # that this comparison with the reference stays about the code it names
        "flex_sigma_hermitian_projection": False}
 par.update(json.loads(extra_json))
 if so != "absent":
@@ -88,10 +89,12 @@ _COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
 
 
 #: Thread counts pinned to one in every comparison subprocess. The
-#: comparisons against the reference revision are exact (bit for bit), and
-#: a multithreaded BLAS or OpenMP reduction may sum in a different order
-#: from one process to the next: a CI run once saw two identical UHFk
-#: calculations differ by one unit in the last place of an energy.
+#: comparisons against the reference revision are exact (bit for bit; with
+#: numpy < 2 two of them allow round-off in floating-point members, see
+#: :func:`_assert_same_to_roundoff`), and a multithreaded BLAS or OpenMP
+#: reduction may sum in a different order from one process to the next: a
+#: CI run once saw two identical UHFk calculations differ by one unit in
+#: the last place of an energy.
 _SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
                       "MKL_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
                       "BLIS_NUM_THREADS": "1"}
@@ -211,7 +214,9 @@ def _run(checkout, path, inter, out, so, extra=None):
 #: The commit the compatibility harnesses compare against: the merge that
 #: precedes this branch (``develop`` at the time the branch was cut -- the
 #: merge of the local second-order kernel, #191). The contract these
-#: harnesses assert is BYTE identity with that revision, so the revision has
+#: harnesses assert is identity with that revision (bit for bit, except that
+#: with numpy < 2 the floating-point members of two of them agree to
+#: round-off; see :func:`_assert_same_to_roundoff`), so the revision has
 #: to be named -- comparing against "whatever the reference directory
 #: happens to contain" turns a failed comparison into a puzzle and a passing
 #: one into nothing at all.
@@ -231,20 +236,40 @@ DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
 MOVED_STAMPS = {"sc_vertex_version": (2, 3)}
 
 
-#: floating-point members of the develop comparisons agree to round-off, not
-#: bit for bit: the Matsubara transforms return C-ordered arrays since #309,
-#: and with numpy < 2 the downstream FFT and BLAS calls then take other
-#: memory paths (measured: up to 2e-17 relative to the array's scale)
+#: numpy major version of this interpreter: the round-off allowance of
+#: :func:`_assert_same_to_roundoff` applies below 2 only
+NUMPY_BELOW_2 = int(np.__version__.split(".")[0]) < 2
+
+#: relative tolerance (to the array's scale) of the floating-point members
+#: of the two develop comparisons on numpy < 2. Since #309 the Matsubara
+#: transforms return C-ordered arrays, and with numpy < 2 the downstream FFT
+#: and BLAS calls then take other memory paths. Measured on a Linux
+#: numpy 1.26 host: up to ~2.2e-16 relative to the array's scale (green
+#: 2.2e-16, sigma 1.6e-16, chiq_c 2.5e-17, chi0q 4e-18), i.e. last-bit
+#: drift; 1e-12 leaves margin while still failing any physics change.
 ROUNDOFF_RTOL = 1e-12
 
 
 def _assert_same_to_roundoff(test, x, y, label):
-    """Integers, booleans and strings exactly; floating-point arrays to
-    ROUNDOFF_RTOL relative to the larger magnitude of the two."""
+    """Assert that archive member ``x`` equals the reference's ``y``.
+
+    Shape and dtype always match exactly. With numpy >= 2 the values must be
+    exactly equal (``np.array_equal``): there the C-ordered Matsubara
+    transforms of #309 are a no-op for the downstream FFT/BLAS results, so
+    any difference is a real change. With numpy < 2 the C-ordered layout
+    sends those calls down other memory paths that move the last bits, so
+    there integers, booleans and strings (and the finite/non-finite pattern)
+    must still match exactly while finite floating-point values may differ
+    by ROUNDOFF_RTOL relative to the larger magnitude of the two arrays."""
     x, y = np.asarray(x), np.asarray(y)
     test.assertEqual(x.shape, y.shape, label)
+    test.assertEqual(x.dtype, y.dtype, label)
     if x.dtype.kind not in "fc":
         test.assertTrue(np.array_equal(x, y), label)
+        return
+    if not NUMPY_BELOW_2:
+        # exact, bit for bit (NaNs in the same places count as equal)
+        test.assertTrue(np.array_equal(x, y, equal_nan=True), label)
         return
     test.assertTrue(np.array_equal(np.isfinite(x), np.isfinite(y)), label)
     fin = np.isfinite(x)
@@ -376,7 +401,9 @@ class TestCompatibility(unittest.TestCase):
     def test_local_on_onsite_only_input_equals_develop(self):
         """The other unmoved path: ``flex_second_order = "local"`` on an
         input with NO off-site two-body row equals the reference revision's
-        (integers exactly, floating-point values to round-off since #309).
+        (exactly with numpy >= 2; with numpy < 2 integers exactly and
+        floating-point values to round-off since #309, see
+        :func:`_assert_same_to_roundoff`).
 
         The orientation change touches the kernel's OFF-SITE vertex only
         (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
