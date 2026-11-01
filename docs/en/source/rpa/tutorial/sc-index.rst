@@ -762,7 +762,8 @@ contract.
   own: the leader is the computed eigenpair that is dominantly of the
   requested parity, or ``NaN`` with ``eigen_converged = false`` if there is
   none -- never an opposite-parity value. The dynamic solvers select within
-  the channel as described in :ref:`sc_dynamic_channels`, and the
+  the channel as described in :ref:`sc_dynamic_channels` (an unseeded run
+  whose computed eigenpairs include none of the channel reports ``NaN``), and the
   spin-orbital solvers work on the antisymmetric space.
 - **A power iteration reports a value only when it converged.** The value is
   the *signed* Rayleigh quotient
@@ -893,7 +894,9 @@ the status refers to that channel. With the default ``solver_mode =
 "eigenvalue"`` the status is ``3`` only when an ARPACK solve (the first
 largest-magnitude solve or the largest-real-part solve) failed on an
 operator too large for the dense fallback, or no eigenpair of the channel
-could be obtained. With ``solver_mode = "iteration"`` it is
+could be obtained (for the dynamic solver: no computed eigenpair of the
+channel, ``sector_selection = "none"``, in an unseeded run). With
+``solver_mode = "iteration"`` it is
 ``3`` whenever the iteration could not certify a value. With ``solver_mode
 = "both"`` the reported value, ``eigen_converged`` and the exit status
 follow the eigenvalue analysis (its leading eigenvector is the written
@@ -1000,6 +1003,13 @@ table only for the eigenvalue solver.
    limits the count -- so the leader may appear twice. Scripts that
    assumed ``num_eigenvalues`` rows, or that row 0 is the first global
    eigenpair, should read ``# leading_eigenvalue`` instead.
+
+   **Dynamic eigenvalue solver without a channel eigenpair.** Earlier
+   versions could report an opposite-channel value as the leading eigenvalue
+   of the dynamic eigenvalue solver when no eigenpair of the channel was in
+   the retained set (``sector_selection = "none"``). Such a run now reports
+   ``NaN`` with ``eigen_converged = false`` (unless seeded); rerun it with a
+   larger ``num_eigenvalues``.
 
    **Python API.** ``hwave.sc.calc_eliashberg`` now returns the reported
    leading eigenvalue on the static path as well (it returned ``None``
@@ -1332,7 +1342,14 @@ the requested channel, and the weights say what it is instead.
    computed eigenpairs are ordered, preferring the channel's even-frequency
    sector and falling back to its combined-parity sector only if no eigenpair
    lies in it. There ``sector_selection`` names the stage that matched, which is
-   also what the ``match`` column of ``eigenvalue.dat`` is labelled with.
+   also what the ``match`` column of ``eigenvalue.dat`` is labelled with. When
+   no computed eigenpair lies in either sector (``sector_selection =
+   "none"``), the first computed value belongs to the other channel: an
+   unseeded run reports ``NaN`` with ``eigen_converged = false`` (exit status
+   ``3``) and a WARNING naming the cause; increase ``num_eigenvalues`` or
+   check the kernel's parity. A seeded continuation (``seed_eigenvector``)
+   keeps the value of the branch it follows, with a WARNING that this value is
+   not certified for the channel.
 
 .. note::
 
