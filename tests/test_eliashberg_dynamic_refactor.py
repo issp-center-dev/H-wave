@@ -20,7 +20,8 @@ import unittest
 
 import numpy as np
 
-from tests.test_eliashberg_dynamic import _write_flex_fixture
+from tests.test_eliashberg_dynamic import (_write_flex_fixture,
+                                           _write_symmetric_flex_fixture)
 
 _GOLDEN = os.path.join("tests", "eliashberg_dynamic_golden")
 # "none": the unshifted power iteration (an absent spectral_shift now means
@@ -32,8 +33,15 @@ def _tag(mode, shift):
     return "{}_{}".format(mode, "noshift" if shift in (None, "none") else "shift")
 
 
-def _run(tmp, solver_mode, spectral_shift):
+def _run(tmp, solver_mode, spectral_shift, fixture=None):
+    """One golden case. ``fixture``: "random" (a synthetic susceptibility
+    archive whose kernel conserves no parity; the iteration cases) or
+    "symmetric" (a channel-conserving archive with a real channel leader;
+    the eigenvalue cases); by default "random" for the iteration and
+    "symmetric" otherwise."""
     import hwave.sc as sc
+    if fixture is None:
+        fixture = "random" if solver_mode == "iteration" else "symmetric"
     # scipy's eigs()/eigsh() seed their default ARPACK start vector from a
     # fresh numpy.random.Generator built from OS entropy on every call
     # (its "rng" kwarg, default None) -- legacy np.random.seed() has no
@@ -50,7 +58,11 @@ def _run(tmp, solver_mode, spectral_shift):
 
     np.random.default_rng = _pinned_default_rng
     try:
-        m = _write_flex_fixture(pathlib.Path(tmp), nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+        if fixture == "symmetric":
+            m = _write_symmetric_flex_fixture(pathlib.Path(tmp), nmat=8)
+        else:
+            m = _write_flex_fixture(pathlib.Path(tmp), nmat=8, norb=1, Nx=2,
+                                    Ny=2, Nz=1)
         inp = {"mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1], "SubShape": [1, 1, 1],
                                   "Nmat": 8, "filling": 0.5}},
                "file": {"input": {"interaction": {"path_to_input": "tests/rpa/input",
@@ -168,46 +180,50 @@ class TestDynamicGolden(unittest.TestCase):
                 # Every case now records which selection criterion produced the
                 # leading eigenvalue (issue #202).
                 self.assertIn("eigenvalue_selection", a, tag)
-                # neither iteration fixture converges in 50 steps on this
+                # neither iteration fixture converges in 50 steps on the
                 # random archive: no eigenvalue (NaN), flagged; the ARPACK
-                # cases converge
+                # cases (channel-conserving archive) converge
                 self.assertIn("eigen_converged", a, tag)
                 self.assertEqual(bool(a["eigen_converged"]), mode != "iteration", tag)
                 self.assertEqual(bool(np.isnan(float(a["eigenvalue"]))),
                                  mode == "iteration", tag)
-                # These fixtures conserve neither parity, so the iteration
-                # cases run unprojected; and on a 2x2x1 one-orbital grid the
-                # channel sector equals the combined-parity sector, so the
-                # eigenvalue cases find no eigenpair in either -- both report
-                # "none". The eigenvalue/both cases hold no positive channel
-                # eigenvalue in the plain which='LM' set, so issue #202's
-                # automatic re-solve reports the largest-real eigenvalue
-                # (eigenvalue_selection "LR_retry"); the iteration cases select
-                # by the power loop.
-                self.assertEqual(str(a["sector_selection"]), "none", tag)
+                # The random archive conserves neither parity, so the
+                # iteration cases run unprojected and select by the power
+                # loop ("none"). The channel-conserving archive of the
+                # eigenvalue/both cases is solved on the channel's
+                # even-frequency sector (a projected largest-real-part solve,
+                # "LR_projected"), and its leader is a channel eigenvalue.
+                iteration = mode == "iteration"
+                self.assertEqual(str(a["sector_selection"]),
+                                 "none" if iteration else "channel", tag)
                 self.assertEqual(
                     str(a["eigenvalue_selection"]),
-                    "iteration" if mode == "iteration" else "LR_retry", tag)
-                # a "none" selection keeps the historical match-column label,
-                # so the golden text is unchanged there too
+                    "iteration" if iteration else "LR_projected", tag)
                 with open(os.path.join(tmp, "eigenvalue.dat")) as fh:
                     ev_text = fh.read()
-                self.assertIn("# sector_selection=none", ev_text, tag)
-                self.assertNotIn("even-frequency sector", ev_text, tag)
+                if iteration:
+                    # a "none" selection keeps the historical match label
+                    self.assertIn("# sector_selection=none", ev_text, tag)
+                    self.assertNotIn("even-frequency sector", ev_text, tag)
+                else:
+                    self.assertIn("# sector_selection=channel", ev_text, tag)
+                    self.assertIn("match(1=channel even-frequency sector)",
+                                  ev_text, tag)
                 labels = [str(x) for x in a["gap_sector_labels"]]
                 self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
                                           "even_k_odd_w", "odd_k_odd_w"], tag)
                 w = np.asarray(a["gap_sector_weights"], dtype=float)
                 self.assertAlmostEqual(float(w.sum()), 1.0, places=9, msg=tag)
                 # a 2x2x1 grid has no odd-k function at all, so both odd-k
-                # sectors are empty. These fixtures are a synthetic random
-                # susceptibility archive whose kernel does not commute with
-                # the frequency reversal, so the gap keeps a sizeable
-                # odd-frequency admixture -- exactly what the new diagnostic
-                # is there to make visible, and the reason the purity of a
-                # returned gap is asserted on the physical fixtures instead.
+                # sectors are empty. The random archive of the iteration
+                # cases does not commute with the frequency reversal, so its
+                # iterate keeps a sizeable odd-frequency admixture -- exactly
+                # what the diagnostic is there to make visible; the channel
+                # leader of the eigenvalue cases is pure even-k even-w.
                 self.assertEqual(float(w[1]), 0.0, tag)
                 self.assertEqual(float(w[3]), 0.0, tag)
+                if not iteration:
+                    self.assertAlmostEqual(float(w[0]), 1.0, places=9, msg=tag)
                 # the recorded weights describe the gap stored next to them
                 from hwave.solver import eliashberg_dynamic as ed
                 recomputed = ed.gap_sector_weights(a["gap"])
@@ -217,6 +233,50 @@ class TestDynamicGolden(unittest.TestCase):
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
 
+
+
+class TestGoldenFixtures(unittest.TestCase):
+    """The two archives behind the golden cases. The random one has no
+    channel eigenpair, so its eigenvalue run reports no eigenvalue; the
+    channel-conserving one reports its channel leader, which a dense
+    diagonalization of the kernel on the channel sector confirms."""
+
+    def test_random_archive_reports_nan(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        _run(tmp, "eigenvalue", None, fixture="random")
+        z = np.load(os.path.join(tmp, "gap_dynamic.npz"))
+        self.assertTrue(np.isnan(float(z["eigenvalue"])))
+        self.assertIs(bool(z["eigen_converged"]), False)
+        self.assertEqual(str(z["sector_selection"]), "none")
+
+    def test_symmetric_archive_leader_is_the_dense_channel_leader(self):
+        from unittest import mock
+        from hwave.solver import eliashberg_dynamic as ed
+        cap = {}
+        real = ed._solve_channel_projected
+
+        def spy(make_operator, matvec, vec_size, gap_shape, *a, **k):
+            cap.update(matvec=matvec, n=vec_size, shape=gap_shape)
+            return real(make_operator, matvec, vec_size, gap_shape, *a, **k)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        with mock.patch.object(ed, "_solve_channel_projected", spy):
+            _run(tmp, "eigenvalue", None)
+        n, shape = cap["n"], cap["shape"]
+        I = np.eye(n, dtype=complex)
+        M = np.column_stack([np.asarray(cap["matvec"](I[:, j])).ravel()
+                             for j in range(n)])
+        P = np.column_stack([ed._project_parity_dynamic(
+            I[:, j].reshape(shape), "singlet").ravel() for j in range(n)])
+        self.assertLess(np.linalg.norm(M @ P - P @ M), 1e-12 * np.linalg.norm(M))
+        U, sv, _ = np.linalg.svd(P)
+        B = U[:, :int((sv > 1e-8).sum())]
+        ev = np.linalg.eigvals(B.conj().T @ M @ B)
+        lead = float(ev[np.argmax(ev.real)].real)
+        z = np.load(os.path.join(tmp, "gap_dynamic.npz"))
+        self.assertAlmostEqual(float(z["eigenvalue"]), lead, delta=1e-10)
+        self.assertGreater(lead, 0.0)
 
 class TestEigenDriverUnits(unittest.TestCase):
     """Direct unit coverage for build_seed, run_leading_eigenproblem's
@@ -437,7 +497,7 @@ class TestSecondaryRetryFailure(unittest.TestCase):
         with mock.patch.object(sc, "_solve_leading", leading), \
                 mock.patch.object(sc, "eigs", eigs), \
                 mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
-            _run(tmp, "eigenvalue", None)
+            _run(tmp, "eigenvalue", None, fixture="random")
         self.assertEqual(calls, [None, "auto"])
         txt = open(os.path.join(tmp, "eigenvalue.dat")).read()
         self.assertIn("eigen_converged=false", txt.replace(" ", ""))

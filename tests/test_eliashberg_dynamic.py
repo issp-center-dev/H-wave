@@ -65,6 +65,37 @@ def _write_flex_fixture(tmp_path, nmat=8, norb=1, Nx=2, Ny=2, Nz=1):
     return dict(nmat=nmat, norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
 
 
+
+def _write_symmetric_flex_fixture(tmp_path, nmat=8, Nx=2, Ny=2, T=0.5):
+    """A one-orbital FLEX archive whose dynamic singlet kernel CONSERVES the
+    channel's even-frequency sector, so the eigenvalue solver has a channel
+    eigenpair to report: G(k, iw) = 1/(iw - e_k) on the run's fermionic
+    grid, and real susceptibilities even in the bosonic frequency (the
+    archive's ascending order, nu_m = 2 pi T (m - nmat/2)). The charge
+    channel dominates, so the singlet vertex is attractive and the leading
+    channel eigenvalue is positive. (The random archive of
+    ``_write_flex_fixture`` conserves no parity and has no channel
+    eigenpair.)"""
+    nvol = Nx * Ny
+    kx = 2 * np.pi * np.arange(Nx) / Nx
+    ky = 2 * np.pi * np.arange(Ny) / Ny
+    KX, KY = np.meshgrid(kx, ky, indexing="ij")
+    eps = (-2.0 * (np.cos(KX) + 0.5 * np.cos(KY)) - 0.3).reshape(nvol)
+    wf = (2 * (np.arange(nmat) - nmat // 2) + 1) * np.pi * T
+    wb = 2 * (np.arange(nmat) - nmat // 2) * np.pi * T
+    green = 1.0 / (1j * wf[:, None] - eps[None, :])
+    cq = (0.6 + 0.25 * (np.cos(KX) + np.cos(KY))).reshape(nvol)
+    chis = 0.1 * cq[None, :] / (1.0 + 0.3 * wb[:, None] ** 2)
+    chic = 2.0 * cq[None, :] / (1.0 + 0.5 * wb[:, None] ** 2)
+    for name, chi in (("chiq_s", chis), ("chiq_c", chic)):
+        np.savez(tmp_path / (name + ".npz"),
+                 **{name: chi.reshape(nmat, nvol, 1, 1).astype(complex)},
+                 chi_convention="myo", chi_orbital_layout="acbd",
+                 momentum_convention="e_plus_ikR")
+    np.savez(tmp_path / "green.npz", green=green.reshape(1, nmat, nvol, 1, 1),
+             momentum_convention="e_plus_ikR")
+    return dict(nmat=nmat, norb=1, Nx=Nx, Ny=Ny, Nz=1)
+
 def test_load_flex_chi_dynamic_shapes(tmp_path):
     from hwave.solver import eliashberg_dynamic as ed
     m = _write_flex_fixture(tmp_path)
@@ -660,7 +691,7 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    m = _write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
 
     inp = {
         "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
@@ -834,8 +865,7 @@ def test_solve_dynamic_gpu_falls_back_without_cupy(tmp_path, monkeypatch,
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1,
-                            Nx=2, Ny=2, Nz=1)
+    m = _write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
 
     lam_cpu = ed.solve_dynamic(
         _dynamic_input_dict(input_dir, output_dir, m["nmat"]))
@@ -1828,7 +1858,7 @@ def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    m = _write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
     inp = {
         "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
                            "SubShape": [1, 1, 1], "Nmat": m["nmat"],
@@ -1846,8 +1876,9 @@ def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
     assert np.isfinite(lam)
     with open(os.path.join(output_dir, "eigenvalue.dat")) as fh:
         lines = fh.read().splitlines()
-    # wiring: the channel-parity match column is written
-    assert any("match(1=channel-parity)" in ln for ln in lines)
+    # wiring: the channel match column is written (this kernel conserves
+    # the channel's even-frequency sector, so it is labelled as such)
+    assert any("match(1=channel even-frequency sector)" in ln for ln in lines)
     # parse the per-eigenvalue table (index Re Im |ev| match)
     rows = [ln.split() for ln in lines
             if ln and not ln.startswith("#") and len(ln.split()) == 5]
@@ -1957,13 +1988,16 @@ def test_order_by_seed_overlap_picks_overlapping_branch():
     assert np.isclose(v2[0], 2.0)
 
 
-def _dyn_input(tmp_path, extra_eli):
+def _dyn_input(tmp_path, extra_eli, symmetric=False):
     import os
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
+    m = (_write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
+         if symmetric else
+         _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2,
+                             Nz=1))
     # This 2x2x1 one-orbital fixture is repulsive-dominant: the largest-REAL
     # eigenvalue is not the largest-magnitude one, so a plain which='LM' set
     # would trigger issue #202's automatic re-solve on the un-seeded run while
@@ -1994,13 +2028,16 @@ def test_solve_dynamic_seed_selects_overlapping_eigenpair(tmp_path):
     that branch instead of the algebraically-largest one."""
     import os
     from hwave.solver import eliashberg_dynamic as ed
-    inp, out = _dyn_input(tmp_path, {})
+    # a channel-conserving fixture: the un-seeded reference run has a
+    # channel eigenpair to report (the random archive has none)
+    inp, out = _dyn_input(tmp_path, {}, symmetric=True)
     lam0 = ed.solve_dynamic(inp)
     gap_path = os.path.join(out, "gap_dynamic.npz")
     assert os.path.exists(gap_path)
 
     # self-seed: same leading branch -> same lambda
-    inp2, out2 = _dyn_input(tmp_path / "b", {"seed_eigenvector": gap_path})
+    inp2, out2 = _dyn_input(tmp_path / "b", {"seed_eigenvector": gap_path},
+                            symmetric=True)
     lam_self = ed.solve_dynamic(inp2)
     assert np.isclose(lam_self, lam0, rtol=1e-6)
 
@@ -2419,8 +2456,7 @@ def test_tsweep_parser_reads_the_dynamic_leader(tmp_path):
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2,
-                            Nz=1)
+    m = _write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
     lam = ed.solve_dynamic(_dynamic_input_dict(input_dir, output_dir,
                                                m["nmat"]))
     path = os.path.join(output_dir, "eigenvalue.dat")

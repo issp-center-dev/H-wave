@@ -2001,12 +2001,39 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                             retry_note if not eigenvalue_note
                             else eigenvalue_note + "\n" + retry_note)
 
+    no_channel_pair = False
+    if (solver_mode != "iteration" and sector_selection == "none"
+            and np.isfinite(float(np.real(eigenvalue)))):
+        if seed_vec is None:
+            # No computed eigenpair has the channel's (or the combined)
+            # parity: the first row is an opposite-channel value, which is
+            # never reported as the channel's leader (as on the static path
+            # with a non-commuting kernel).
+            no_channel_pair = True
+            eigenvalue = complex(np.nan, np.nan)
+            eigen_converged = False
+            logger.warning(
+                "%s: no computed eigenpair has the '%s' channel's parity "
+                "(even-frequency or combined); the first computed value "
+                "belongs to the other channel, so no leading eigenvalue is "
+                "reported (NaN, eigen_converged = false). Increase "
+                "num_eigenvalues or check the kernel's parity.",
+                logger_label, pairing_type)
+        else:
+            logger.warning(
+                "%s: the seeded continuation (seed_eigenvector) follows a "
+                "branch that has neither the '%s' channel's even-frequency "
+                "nor its combined parity; its value is reported as the "
+                "continuation's, but it is not certified for the channel.",
+                logger_label, pairing_type)
     lam = float(np.real(eigenvalue))
     if solver_mode != "iteration" and not np.isfinite(lam):
         # the eigenvalue solver's largest-real-part solve failed on an
         # operator too large for the dense fallback (sc._solve_leading)
         eigen_converged = False
-    if not eigen_converged and solver_mode != "iteration":
+    if not eigen_converged and solver_mode != "iteration" and no_channel_pair:
+        lam = float("nan")
+    elif not eigen_converged and solver_mode != "iteration":
         lam = float("nan")
         logger.warning(
             "%s: the eigenvalue solver could not determine the largest real "

@@ -840,7 +840,7 @@ class TestFirstArnoldiSolveFailure(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         p1, p2, _state = _failing_first_lm()
         with p1, p2:
-            run_dyn(tmp, "eigenvalue", None)
+            run_dyn(tmp, "eigenvalue", None, fixture="random")
         txt = open(os.path.join(tmp, "eigenvalue.dat")).read()
         self.assertIn("eigen_converged=false", txt.replace(" ", ""))
         z = np.load(os.path.join(tmp, "gap_dynamic.npz"))
@@ -863,6 +863,70 @@ class TestFirstArnoldiSolveFailure(unittest.TestCase):
         out = inp["file"]["output"]["path_to_output"]
         txt = open(os.path.join(out, "eigenvalue.dat")).read()
         self.assertIn("# eigen_converged = false", txt)
+
+
+def _no_channel_kernel(shape=(1, 1, 4, 1, 1, 4)):
+    """Singlet (combined +) leader +1 under opposite-sector modes {5, 4, 3};
+    every eigenvector a generic even/odd-frequency mixture, so no eigenpair
+    of the which='LM' set has the channel's (or the combined) parity."""
+    from hwave.solver import eliashberg_dynamic as ed
+    n = int(np.prod(shape))
+    I = np.eye(n, dtype=complex)
+
+    def basis(sign):
+        P = np.column_stack([ed._project_combined_parity_dynamic(
+            I[:, j].reshape(shape), sign).ravel() for j in range(n)])
+        U, s, _ = np.linalg.svd(P)
+        return U[:, :int((s > 1e-8).sum())]
+    Bp, Bm = basis("singlet"), basis("triplet")
+    rng = np.random.default_rng(1)
+    Qp = Bp @ np.linalg.qr(rng.standard_normal((Bp.shape[1],) * 2))[0]
+    Qm = Bm @ np.linalg.qr(rng.standard_normal((Bm.shape[1],) * 2))[0]
+    lp = np.r_[1.0, np.full(Qp.shape[1] - 1, -0.5)]
+    lm = np.r_[5.0, 4.0, 3.0, np.full(Qm.shape[1] - 3, -0.5)]
+    return Qp @ np.diag(lp) @ Qp.conj().T + Qm @ np.diag(lm) @ Qm.conj().T
+
+
+class TestDynamicNoChannelEigenpair(unittest.TestCase):
+    """Dynamic eigenvalue solve whose computed set holds no eigenpair of the
+    channel or combined parity (sector_selection "none"): an unseeded run
+    reports NaN with eigen_converged = false, not an opposite-channel
+    value; a seeded continuation keeps its value with a WARNING."""
+
+    def _run(self, seed_vec=None, **eli):
+        from hwave.solver import eliashberg_dynamic as ed
+        from tests.test_eliashberg_dynamic import _capture_dynamic_warnings
+        shape = (1, 1, 4, 1, 1, 4)
+        M = _no_channel_kernel(shape)
+        info = {}
+        phi0 = ed._project_seed_dynamic(
+            np.random.default_rng(1).standard_normal(shape) + 0j, "singlet")
+        with _capture_dynamic_warnings() as recs:
+            out = ed.run_leading_eigenproblem(
+                lambda x: M @ np.asarray(x).ravel(), shape,
+                dict({"solver_mode": "eigenvalue", "num_eigenvalues": 2},
+                     **eli), "singlet", phi0=phi0, seed_vec=seed_vec,
+                use_ir=False, axF=None, nmat=4, info_out=info)
+        return out, info, " ".join(r.getMessage() for r in recs), M
+
+    def test_unseeded_reports_nan(self):
+        for eli in ({}, {"spectral_shift": "auto"}):
+            with self.subTest(**eli):
+                out, info, msg, _M = self._run(**eli)
+                self.assertEqual(out[7], "none")
+                self.assertTrue(np.isnan(out[0]))
+                self.assertIs(info["eigen_converged"], False)
+                self.assertIn("no computed eigenpair", msg)
+
+    def test_seeded_continuation_keeps_its_value_with_a_warning(self):
+        _out, _info, _msg, M = self._run()
+        ev, vec = np.linalg.eig(M)
+        seed = vec[:, int(np.argmax(ev.real))]
+        out, info, msg, _M = self._run(seed_vec=seed)
+        self.assertEqual(out[7], "none")
+        self.assertTrue(np.isfinite(out[0]))
+        self.assertIs(info["eigen_converged"], True)
+        self.assertIn("not certified", msg)
 
 
 def _start_annihilating_kernel(shape=(1, 1, 4, 1, 1, 4)):
