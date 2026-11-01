@@ -1886,18 +1886,15 @@ def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
     assert rows, "expected a 5-column eigenvalue table with the match flag"
     matches = [int(r[4]) for r in rows]
     res = [float(r[1]) for r in rows]
-    # selection: the reported leading lambda is the FIRST channel-parity row
-    # if any exists (reordering surfaced it), else the raw leading row.
-    if any(matches):
-        first_match = matches.index(1)
-        assert np.isclose(lam, res[first_match]), \
-            "leading lambda is not the first channel-parity eigenvalue"
-        # and the reordering put a matching pair at index 0
-        assert matches[0] == 1
-    else:
-        # no in-sector mode on this (non-centrosymmetric) fixture: the driver
-        # warns and falls back to the raw leading pair.
-        assert np.isclose(lam, res[0])
+    # selection: this channel-conserving fixture has channel eigenpairs, and
+    # the reported leading lambda is the FIRST channel row, placed at index 0.
+    # (A run in which no computed eigenpair passes the channel match reports
+    # NaN instead; see TestDynamicNoChannelEigenpair.)
+    assert any(matches)
+    first_match = matches.index(1)
+    assert np.isclose(lam, res[first_match]), \
+        "leading lambda is not the first channel eigenvalue"
+    assert matches[0] == 1
 
 
 def test_project_seed_dynamic_guard():
@@ -1999,13 +1996,15 @@ def _dyn_input(tmp_path, extra_eli, symmetric=False):
          if symmetric else
          _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2,
                              Nz=1))
-    # This 2x2x1 one-orbital fixture is repulsive-dominant: the largest-REAL
+    # spectral_shift="auto" selects by the largest real part up front, the
+    # documented way to keep a seeded continuation consistent with the
+    # un-seeded leading run. It matters on the random 2x2x1 archive
+    # (symmetric=False), which is repulsive-dominant: its largest-REAL
     # eigenvalue is not the largest-magnitude one, so a plain which='LM' set
-    # would trigger issue #202's automatic re-solve on the un-seeded run while
-    # a seeded run (which does not re-solve, by design) would still track the
-    # LM branch, and the two would disagree. Selecting by largest real part up
-    # front (spectral_shift="auto") is the documented way to keep a seeded
-    # continuation consistent with the un-seeded leading run.
+    # would trigger issue #202's automatic re-solve on the un-seeded run
+    # while a seeded run (which does not re-solve, by design) would still
+    # track the LM branch. The channel-conserving archive (symmetric=True)
+    # has a positive channel leader, and the setting is harmless there.
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
            "pairing_type": "singlet", "solver_mode": "eigenvalue",
            "num_eigenvalues": 6, "spectral_shift": "auto"}

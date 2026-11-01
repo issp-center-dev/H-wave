@@ -5,13 +5,20 @@ tests/eliashberg_dynamic_golden/.
 The ``iteration`` fixtures keep the iterate (gap) recorded from the
 pre-refactor code; their eigenvalue members were re-recorded once when a
 non-converged power iteration stopped reporting its iterate norm (now NaN with
-``eigen_converged = false``; neither fixture converges in 50 steps). The ``eigenvalue`` and ``both`` no-shift fixtures were regenerated once
-for issue #202: on this degenerate 2x2x1 grid the plain which='LM' set holds no
-positive channel eigenvalue, so the solver now re-solves for the largest real
-part (``eigenvalue_selection = "LR_retry"``) -- the pre-#202 goldens there were
-themselves an instance of the num_eigenvalues-dependent value the fix removes.
-This module is their regression baseline; the token comparison is unchanged (it
-still ignores only the new ``# ...`` header lines)."""
+``eigen_converged = false``; neither fixture converges in 50 steps); they run
+on a random susceptibility archive that conserves no parity.
+
+The ``eigenvalue`` and ``both`` no-shift fixtures run on a channel-conserving
+archive (``_write_symmetric_flex_fixture``): the eigenvalue solver works on the
+channel's even-frequency sector (``sector_selection = "channel"``,
+``eigenvalue_selection = "LR_projected"``) and reports the channel leader
+0.585817239, which a dense diagonalization on that sector confirms
+(``TestGoldenFixtures``). They were recorded on the random archive before, where
+no computed eigenpair passes the channel match; such a run now reports NaN
+(``TestGoldenFixtures.test_random_archive_reports_nan``).
+
+This module is their regression baseline; the token comparison ignores only the
+newer ``# ...`` header lines."""
 import os
 import pathlib
 import shutil

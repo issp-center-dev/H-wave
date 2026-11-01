@@ -762,8 +762,9 @@ contract.
   own: the leader is the computed eigenpair that is dominantly of the
   requested parity, or ``NaN`` with ``eigen_converged = false`` if there is
   none -- never an opposite-parity value. The dynamic solvers select within
-  the channel as described in :ref:`sc_dynamic_channels` (an unseeded run
-  whose computed eigenpairs include none of the channel reports ``NaN``), and the
+  the channel as described in :ref:`sc_dynamic_channels` (an unseeded
+  eigenvalue run whose computed eigenpairs include none of the channel
+  reports ``NaN``), and the
   spin-orbital solvers work on the antisymmetric space.
 - **A power iteration reports a value only when it converged.** The value is
   the *signed* Rayleigh quotient
@@ -1005,11 +1006,14 @@ table only for the eigenvalue solver.
    eigenpair, should read ``# leading_eigenvalue`` instead.
 
    **Dynamic eigenvalue solver without a channel eigenpair.** Earlier
-   versions could report an opposite-channel value as the leading eigenvalue
-   of the dynamic eigenvalue solver when no eigenpair of the channel was in
-   the retained set (``sector_selection = "none"``). Such a run now reports
-   ``NaN`` with ``eigen_converged = false`` (unless seeded); rerun it with a
-   larger ``num_eigenvalues``.
+   versions could report a value that is not a channel eigenvalue as the
+   leading eigenvalue of the dynamic eigenvalue solver when no computed
+   eigenpair passed the requested channel match (``sector_selection =
+   "none"``). Such a run now reports ``NaN`` with ``eigen_converged = false``
+   (unless seeded), and ``hwave_sc`` exits with status ``3``. Increase
+   ``num_eigenvalues``, or check that the kernel conserves the channel's
+   parity -- more eigenvalues do not help a parity-mixing kernel (see
+   :ref:`sc_dynamic_channels`).
 
    **Python API.** ``hwave.sc.calc_eliashberg`` now returns the reported
    leading eigenvalue on the static path as well (it returned ``None``
@@ -1341,13 +1345,16 @@ the requested channel, and the weights say what it is instead.
    that sector (``sector_selection = "channel"``, issue #202); otherwise the
    computed eigenpairs are ordered, preferring the channel's even-frequency
    sector and falling back to its combined-parity sector only if no eigenpair
-   lies in it. There ``sector_selection`` names the stage that matched, which is
-   also what the ``match`` column of ``eigenvalue.dat`` is labelled with. When
-   no computed eigenpair lies in either sector (``sector_selection =
-   "none"``), the first computed value belongs to the other channel: an
-   unseeded run reports ``NaN`` with ``eigen_converged = false`` (exit status
-   ``3``) and a WARNING naming the cause; increase ``num_eigenvalues`` or
-   check the kernel's parity. A seeded continuation (``seed_eigenvector``)
+   lies in it. For the eigenvalue solver, ``sector_selection`` records the
+   stage that matched, which also labels the ``match`` column of
+   ``eigenvalue.dat``. When no computed eigenpair passed the requested channel
+   match, even-frequency or combined-parity (``sector_selection = "none"``),
+   either all retained eigenpairs are of the other channel or the kernel
+   mixes parity, and no channel-certified leader exists: an unseeded run
+   reports ``NaN`` with ``eigen_converged = false`` (exit status ``3``) and a
+   WARNING naming the cause. Increase ``num_eigenvalues``, or check that the
+   kernel conserves the channel's parity (more eigenvalues do not help a
+   parity-mixing kernel). A seeded continuation (``seed_eigenvector``)
    keeps the value of the branch it follows, with a WARNING that this value is
    not certified for the channel.
 

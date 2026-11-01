@@ -437,8 +437,9 @@ def _reorder_eigenpairs_by_parity_dynamic(vals, vecs, gap_shape, pairing_type):
         else:
             selection = "none"
             logger.warning(
-                "No dynamic eigenpair matches the requested '%s' parity; the "
-                "reported leading gap belongs to the other channel. Increase "
+                "No dynamic eigenpair passed the requested '%s' channel match "
+                "(even-frequency or combined parity); the first computed "
+                "eigenpair is not certified for the channel. Increase "
                 "num_eigenvalues or check pairing_type.", pairing_type)
     idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
     return vals[idx], vecs[:, idx], match[idx], selection
@@ -1168,8 +1169,12 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         Written as the npz key ``eigen_converged`` and as
         ``eigen_converged=<true|false>`` in the ``gap.dat`` header when not
         ``None`` (``extra_meta`` wins when it already carries the key).
-        ``False``: the power iteration did not converge, ``eigenvalue`` is NaN
-        and ``gap`` is the last iterate, NOT an eigenvector.
+        ``False`` in three cases: a power iteration that did not converge (the gap is its
+        last iterate); a failed eigenvalue solve (the gap is a placeholder
+        vector); and an eigenvalue run in which no computed eigenpair passed
+        the requested channel's match (the gap is a computed eigenvector not
+        certified for the channel). ``eigenvalue`` is then NaN and the gap is
+        NOT the channel's eigenvector.
     """
     os.makedirs(output_dir, exist_ok=True)
     norb = gap_w.shape[0]
@@ -1685,11 +1690,17 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     ``info_out`` (a dict, optional) is updated with ``eigen_converged``
     (bool), ``n_iter``, ``two_cycle`` and the resolved ``spectral_shift`` of
     the power iteration (``None`` for the eigenvalue solver family). The
-    return arity is unchanged on purpose. ``eigen_converged`` is False only
-    when a power iteration (``solver_mode = "iteration"``) did not converge
-    -- by the iteration cap, by a detected sign-alternating two-cycle (a
-    negative dominant eigenvalue), or by a failed Rayleigh check; ``lam`` is
-    then NaN and ``gap_w`` is the last iterate, which is NOT an eigenvector.
+    return arity is unchanged on purpose. ``eigen_converged`` is False in
+    three cases, all with ``lam`` = NaN: a power iteration
+    (``solver_mode = "iteration"``) that did not converge -- by the
+    iteration cap, a detected sign-alternating two-cycle (a negative
+    dominant eigenvalue) or a failed Rayleigh check -- with ``gap_w`` its
+    last iterate; a failed eigenvalue solve (``eigenvalue_selection =
+    "not-converged"``), with a placeholder ``gap_w``; and an unseeded
+    eigenvalue run in which no computed eigenpair passed the requested
+    channel's (even-frequency or combined-parity) match (``sector_selection
+    = "none"``), with ``gap_w`` a computed eigenvector not certified for the
+    channel. None of these ``gap_w`` is the channel's eigenvector.
     A converged iteration reports the SIGNED Rayleigh eigenvalue of its
     iterate. Without an ``[eliashberg] spectral_shift`` the iteration runs
     with ``spectral_shift = "auto"`` (``"none"`` keeps it unshifted).
@@ -2005,25 +2016,29 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     if (solver_mode != "iteration" and sector_selection == "none"
             and np.isfinite(float(np.real(eigenvalue)))):
         if seed_vec is None:
-            # No computed eigenpair has the channel's (or the combined)
-            # parity: the first row is an opposite-channel value, which is
-            # never reported as the channel's leader (as on the static path
-            # with a non-commuting kernel).
+            # No computed eigenpair passed the channel's (even-frequency or
+            # combined-parity) match: either every retained eigenpair is of
+            # the other channel, or the kernel mixes parity. No
+            # channel-certified leader exists (as on the static path with a
+            # non-commuting kernel).
             no_channel_pair = True
             eigenvalue = complex(np.nan, np.nan)
             eigen_converged = False
             logger.warning(
-                "%s: no computed eigenpair has the '%s' channel's parity "
-                "(even-frequency or combined); the first computed value "
-                "belongs to the other channel, so no leading eigenvalue is "
+                "%s: no computed eigenpair passed the '%s' channel match "
+                "(even-frequency or combined parity) -- either all retained "
+                "eigenpairs are of the other channel, or the kernel mixes "
+                "parity -- so no channel-certified leading eigenvalue is "
                 "reported (NaN, eigen_converged = false). Increase "
-                "num_eigenvalues or check the kernel's parity.",
+                "num_eigenvalues, or check that the kernel conserves the "
+                "channel's parity (more eigenvalues do not help a "
+                "parity-mixing kernel).",
                 logger_label, pairing_type)
         else:
             logger.warning(
                 "%s: the seeded continuation (seed_eigenvector) follows a "
-                "branch that has neither the '%s' channel's even-frequency "
-                "nor its combined parity; its value is reported as the "
+                "branch that passed neither the '%s' channel's even-frequency "
+                "nor its combined-parity match; its value is reported as the "
                 "continuation's, but it is not certified for the channel.",
                 logger_label, pairing_type)
     lam = float(np.real(eigenvalue))
@@ -2129,9 +2144,11 @@ def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
 
     ``eigen_converged`` (bool), when not ``None``, adds
     ``# eigen_converged=<true|false>`` right after the fixed first header
-    line. ``false`` means the power iteration did not converge: the leading
-    value below is then NaN (no eigenvalue) and the matching gap is the last
-    iterate, not an eigenvector.
+    line. ``false``: the leading value below is NaN (no eigenvalue) and the
+    matching gap is not the channel's eigenvector -- the last iterate of a
+    power iteration that did not converge, a placeholder of a failed
+    eigenvalue solve, or a computed eigenvector not certified for the
+    channel when no computed eigenpair passed the channel's match.
     """
     with open(path, "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
@@ -2188,9 +2205,11 @@ def solve_dynamic(input_dict):
     Returns
     -------
     float
-        The leading (largest real part) Eliashberg eigenvalue lambda; NaN when
-        a power iteration did not converge (``eigen_converged = false`` in the
-        outputs).
+        The leading (largest real part) Eliashberg eigenvalue lambda; NaN
+        (``eigen_converged = false`` in the outputs) when a power iteration
+        did not converge, when the eigenvalue solve failed, or when no
+        computed eigenpair passed the requested channel's match in an
+        unseeded eigenvalue run.
     """
     import hwave.sc as sc
 
