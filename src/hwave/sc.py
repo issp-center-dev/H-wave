@@ -58,6 +58,97 @@ _PARITY_GUARD_PROBES = 3
 _AUTO_SHIFT_PROBE_STEPS = 15
 _AUTO_SHIFT_MARGIN = 1.05
 
+# A sign-alternating two-cycle is RECORDED (for the diagnosis of a run that
+# reaches max_iter) when, over the last _TWO_CYCLE_WINDOW steps, every flip
+# residual ||u_n + u_{n-1}|| stays below convergence_tol and the even and odd
+# iterates have individually converged (||u_n - u_{n-2}|| < convergence_tol).
+# It never stops the run: no finite window rules out a tiny component of a
+# positive dominant mode that is still growing.
+_TWO_CYCLE_WINDOW = 8
+
+# Rate-aware stopping of the power iteration: the remaining distance to the
+# fixed point is estimated as diff / (1 - rate), with rate the largest ratio
+# of consecutive iterate differences over the last _RATE_WINDOW steps,
+# clipped at _RATE_CLIP; a rate >= 1 (differences not shrinking: a drift)
+# never stops the run, and a difference below _DIFF_ROUNDOFF is accepted
+# outright (round-off level, where the ratios are noise).
+_RATE_WINDOW = 5
+_RATE_CLIP = 0.9999
+_DIFF_ROUNDOFF = 1.0e-13
+
+# Seed test, on K itself: the seed is an eigenvector of K when its residual
+# ||K v - lambda v|| / (spectral scale * ||v||) is below _SEED_EIGENVECTOR_TOL,
+# and is
+# annihilated by K when ||K v|| <= _SEED_ANNIHILATED_REL * (spectral scale) *
+# ||v||. 1e-8 is far below any seed that carries a genuine admixture of other
+# modes (those reach the residual of their admixture), yet far above the
+# round-off residual (~1e-14) of an analytic form factor that happens to be
+# an exact eigenvector by symmetry; between the two the rate-aware stopping
+# rule takes over.
+_SEED_EIGENVECTOR_TOL = 1.0e-8
+_SEED_ANNIHILATED_REL = 1.0e-10
+# fixed seed of the deterministic probe vector of the spectral scale
+_SEED_ADMIX_SEED = 20261101
+
+# A converged shifted iteration whose eigenvalue on K is below this fraction
+# of the shift (|lambda| <= _COLLAPSE_REL * sigma) found a vector K annihilates
+# (to round-off), not a pairing eigenvalue: reported as NaN, not converged.
+_COLLAPSE_REL = 1.0e-10
+
+# Largest operator dimension for which a failed ARPACK largest-real-part solve
+# falls back to a dense eigendecomposition (vec_size matvecs plus an O(n^3)
+# eig with vectors: several seconds and a few hundred MB at n = 2000). Above
+# it the leading eigenvalue is NaN.
+_DENSE_FALLBACK_MAX = 2000
+
+
+class _NonFiniteEigenvalues(ArithmeticError):
+    """An ARPACK call returned NaN or infinite eigenvalues; treated like a
+    solve that did not converge."""
+
+
+# Independent probes that establish a NULL operator before ARPACK error -9
+# ("starting vector is zero") is read as "the operator is zero": every image
+# of _NULL_PROBE_COUNT random vectors must be EXACTLY zero, elementwise. They
+# use their own seed, so an operator that happens to annihilate the
+# deterministic ARPACK start vector is not mistaken for a null one, and no
+# tolerance is allowed: a tiny but nonzero operator is not exempt (it is
+# reported as a failed solve, NaN "not-converged").
+_NULL_PROBE_SEED = 917253
+_NULL_PROBE_COUNT = 3
+
+
+def _arpack_error_code(exc):
+    """The ARPACK ``info`` code of a scipy ``ArpackError`` (parsed from its
+    message "ARPACK error <code>: ..."), or None."""
+    import re
+    m = re.match(r"ARPACK error (-?\d+)", str(exc))
+    return int(m.group(1)) if m else None
+
+
+def _operator_is_null(A, n):
+    """True when ``A`` maps _NULL_PROBE_COUNT independent random vectors (a
+    seeded generator of its own) to exactly zero, elementwise."""
+    rng = np.random.default_rng(_NULL_PROBE_SEED)
+    for _ in range(_NULL_PROBE_COUNT):
+        x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        y = np.asarray(A.matvec(x)).ravel()
+        if np.any(y != 0):
+            return False
+    return True
+
+# Default [eliashberg] solver_mode of hwave_sc (static, dynamic, spin-orbital
+# and the bond file entry) and of the in-process FLEX bond pairing step. Both
+# are the ARPACK eigenvalue solver: it searches the whole spectrum for the
+# largest real part, while the power iteration ("iteration", opt-in) follows
+# one symmetry sector and can only report what it can certify.
+DEFAULT_SOLVER_MODE = "eigenvalue"
+IN_PROCESS_DEFAULT_SOLVER_MODE = "eigenvalue"
+
+# Exit status of the hwave_sc command when the eigen-solver did not converge
+# (the reported leading eigenvalue is NaN; the outputs are still written).
+EXIT_EIGEN_NOT_CONVERGED = 3
+
 # Default Matsubara grid size (mode.param.Nmat). Single definition so the
 # legacy-file fallback in _static_freq_position and the main solver loop can
 # never silently disagree on the grid.
@@ -5997,7 +6088,8 @@ def _odd_harmonic_basis(norb, kx_array, ky_array, kz_array):
 
 def _bond_diagnostics_record(provenance, gap, eigenvalues, weight, norb,
                              kx_array, ky_array, kz_array,
-                             deg_tol=_BOND_DIAGNOSTICS_DEG_TOL):
+                             deg_tol=_BOND_DIAGNOSTICS_DEG_TOL,
+                             sector_eigenvalues=None, leader_available=True):
     """Opt-in character analysis of the leading bond state (``[eliashberg]
     bond_diagnostics``; spec S7.7).
 
@@ -6056,28 +6148,64 @@ def _bond_diagnostics_record(provenance, gap, eigenvalues, weight, norb,
         provenance["bond_diagnostics_harmonics"] = (
             "n/a (every odd harmonic vanishes on this k-grid)")
 
-    if eigenvalues is not None and len(eigenvalues) > 0:
+    if not leader_available:
+        # no reported leader (NaN): there is no state to describe
+        provenance["bond_diagnostics_leading_cluster"] = "n/a"
+        provenance["bond_diagnostics_leading_cluster_size"] = "n/a"
+        provenance["bond_diagnostics_leading_cluster_source"] = (
+            "n/a (no leading eigenvalue was obtained)")
+    elif sector_eigenvalues is not None and len(sector_eigenvalues) > 0:
+        # the reported leader came from the channel's parity-sector solve:
+        # its degeneracy is read off THAT spectrum (index 0 is the leader),
+        # not off the global listing, whose rows may describe other states
+        clusters = bond_channels.cluster_eigenvalues(
+            np.asarray(sector_eigenvalues), deg_tol=deg_tol)
+        leading = next(c for c in clusters if 0 in c)
+        if eigenvalues is not None and len(eigenvalues) > 0:
+            # the table's own groups, for reference (indices into its rows;
+            # row 0 is the leader, whose state the global rows may list
+            # again, so this grouping is not a degeneracy count)
+            provenance["bond_diagnostics_eigenvalue_clusters"] = str(
+                bond_channels.cluster_eigenvalues(np.asarray(eigenvalues),
+                                                  deg_tol=deg_tol))
+        provenance["bond_diagnostics_sector_eigenvalue_clusters"] = str(clusters)
+        provenance["bond_diagnostics_leading_cluster"] = str(leading)
+        provenance["bond_diagnostics_leading_cluster_size"] = len(leading)
+        provenance["bond_diagnostics_leading_cluster_source"] = (
+            "channel parity-sector spectrum")
+        provenance["bond_diagnostics_deg_tol"] = "{:.3e}".format(deg_tol)
+        provenance["bond_diagnostics_clusters_note"] = (
+            "near-degenerate groups (single-linkage on |lambda_i - lambda_j| "
+            "<= deg_tol) of the eigenvalues of the requested channel's "
+            "parity-sector solve, which produced the reported leader (its "
+            "index 0); bond_diagnostics_leading_cluster is the group "
+            "containing it, i.e. the degeneracy of the state this run "
+            "returns; size 2 is the odd E doublet")
+        logger.info("bond diagnostics -- sector eigenvalue clusters (deg_tol "
+                    "%.1e): %s; the returned state's cluster is %s (size %d)",
+                    deg_tol, clusters, leading, len(leading))
+    elif eigenvalues is not None and len(eigenvalues) > 0:
         clusters = bond_channels.cluster_eigenvalues(np.asarray(eigenvalues),
                                                      deg_tol=deg_tol)
         # The cluster of the RETURNED eigenpair, i.e. of row 0 -- NOT
         # clusters[0]. cluster_eigenvalues orders by descending Re lambda over
         # every computed eigenpair, while row 0 is the eigenpair the run
-        # actually reports, which _reorder_eigenpairs_by_parity promoted out of
-        # the channel's parity sector; an opposite-parity mode with a larger
-        # Re lambda is demoted below it but still clustered here. Reporting
-        # clusters[0]'s size as "the leading state's degeneracy" would then
-        # describe a different state than the one the file returns.
+        # actually reports (the channel's leader is row 0 of the table); an
+        # opposite-parity mode with a larger Re lambda sits below it but is
+        # still clustered here. Reporting clusters[0]'s size as "the leading
+        # state's degeneracy" would then describe a different state.
         leading = next(c for c in clusters if 0 in c)
         provenance["bond_diagnostics_eigenvalue_clusters"] = str(clusters)
         provenance["bond_diagnostics_leading_cluster"] = str(leading)
         provenance["bond_diagnostics_leading_cluster_size"] = len(leading)
+        provenance["bond_diagnostics_leading_cluster_source"] = (
+            "eigen-analysis table")
         provenance["bond_diagnostics_deg_tol"] = "{:.3e}".format(deg_tol)
         provenance["bond_diagnostics_clusters_note"] = (
             "near-degenerate groups of the COMPUTED eigenvalues (indices into "
             "the rows below, single-linkage on |lambda_i - lambda_j| <= "
             "deg_tol, ordered by descending Re lambda over ALL computed "
-            "eigenpairs -- including any opposite-parity mode that the "
-            "channel-parity promotion demoted below row 0). "
+            "eigenpairs -- including any opposite-parity mode below row 0). "
             "bond_diagnostics_leading_cluster is the group containing ROW 0, "
             "i.e. the degeneracy of the state this run actually returns; size "
             "2 is the odd E doublet")
@@ -6140,8 +6268,9 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
         ``K + sigma*I`` and the returned eigenvalue is shifted back (see
         ``_solve_leading``). Needed whenever the kernel is repulsive-dominant
         (negative dominant eigenvalue), where the unshifted iterate flips sign
-        every step and can never converge. When None (the default) the
-        historical unshifted iteration runs unchanged.
+        every step and can never converge. When None (the default of this
+        internal function) the unshifted iteration runs; the ``[eliashberg]``
+        configuration defaults to ``"auto"`` (``_resolve_spectral_shift``).
     info_out : dict, optional
         When given, updated in place with ``_solve_leading``'s info dict --
         including, on a shifted run, the Rayleigh validation record
@@ -6155,12 +6284,11 @@ def _solve_iteration(green_kw, Vs_q, G2, sigma_init, norb,
     sigma : ndarray
         Converged gap function.
     eigenvalue : float
-        Leading eigenvalue: without ``spectral_shift`` the (unsigned) norm of
-        sigma_new before normalization; with one, the signed eigenvalue when
-        the Rayleigh check validates it, else the raw shifted iterate-norm
-        estimate (see ``_solve_leading`` / ``info_out``).
+        Leading eigenvalue: the SIGNED Rayleigh eigenvalue of the converged
+        iterate, or NaN when the iteration did not converge (see
+        ``_solve_leading`` / ``info_out``).
     converged : bool
-        Whether convergence was achieved.
+        Whether convergence was achieved (the ``eigen_converged`` verdict).
     n_iter : int
         Number of iterations performed.
     """
@@ -6562,7 +6690,7 @@ def _is_gap_parity(gap, pairing_type, tol=0.9):
     return np.linalg.norm(proj) / n >= tol
 
 
-def _reorder_eigenpairs_by_parity(vals, gaps, pairing_type):
+def _reorder_eigenpairs_by_parity(vals, gaps, pairing_type, warn=True):
     """Stable-reorder eigenpairs so those matching the channel parity come first.
 
     The Eliashberg kernel preserves parity, so its eigenvectors split into even
@@ -6586,13 +6714,154 @@ def _reorder_eigenpairs_by_parity(vals, gaps, pairing_type):
     vals, gaps reordered with matching-parity eigenpairs first.
     """
     match = np.array([_is_gap_parity(g, pairing_type) for g in gaps])
-    if not np.any(match):
+    if warn and not np.any(match):
         logger.warning(
             "No computed eigenpair matches the requested '%s' parity; the "
             "reported leading gap belongs to the other channel. Increase "
             "num_eigenvalues or check the pairing_type.", pairing_type)
     idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
     return vals[idx], gaps[idx]
+
+
+def _parity_sector_basis(shape, pairing_type):
+    """Orthonormal coordinates of the channel's parity sector.
+
+    The parity map ``R: (a, b, k) -> (b, a, -k)`` (``_reverse_k_and_orbital``)
+    is an involution of the flat gap index. Even (singlet) sector: one
+    coordinate ``(e_i + e_Ri)/sqrt(2)`` per orbit ``i < R i`` plus ``e_i`` for
+    each self-paired ``i = R i``; odd (triplet) sector: ``(e_i - e_Ri)/
+    sqrt(2)`` per orbit (self-paired elements vanish). Returns ``(to_full,
+    to_reduced, dim)``."""
+    n = int(np.prod(shape))
+    partner = np.ascontiguousarray(
+        _reverse_k_and_orbital(np.arange(n).reshape(shape))).ravel()
+    flat = np.arange(n)
+    rep = flat[flat < partner]
+    rep_p = partner[rep]
+    self_idx = flat[flat == partner] if pairing_type == "singlet" else \
+        np.zeros(0, dtype=int)
+    sign = 1.0 if pairing_type == "singlet" else -1.0
+    npair, nself = len(rep), len(self_idx)
+    r2 = np.sqrt(0.5)
+
+    def to_full(c):
+        c = np.asarray(c).ravel()
+        g = np.zeros(n, dtype=complex)
+        g[rep] = r2 * c[:npair]
+        g[rep_p] = sign * r2 * c[:npair]
+        g[self_idx] = c[npair:]
+        return g
+
+    def to_reduced(g):
+        g = np.asarray(g).ravel()
+        return np.concatenate([r2 * (g[rep] + sign * g[rep_p]), g[self_idx]])
+
+    return to_full, to_reduced, npair + nself
+
+
+def _listing_with_leader(vals, gaps, lead, lead_gap):
+    """The eigen-analysis table with the reported channel leader as row 0.
+
+    The sector leader becomes row 0 (its vector has the requested parity, so
+    its match is 1); rows 1.. are the global eigen-analysis set exactly as
+    the solver returned it (``num_eigenvalues`` rows). Nothing is merged:
+    when the leader's state is also among the global rows it is listed
+    twice. Every emitted vector therefore stays paired with the eigenvalue
+    the solver computed for it."""
+    vals = np.asarray(vals)
+    gaps = np.asarray(gaps)
+    shape = gaps.shape[1:]
+    out_vals = np.concatenate([np.asarray([lead], dtype=np.result_type(
+        vals.dtype, np.asarray(lead).dtype)), vals])
+    out_gaps = np.concatenate([np.asarray(lead_gap).reshape((1,) + shape),
+                               gaps])
+    return out_vals, out_gaps
+
+
+def _channel_eigenpairs(vals, gaps, operator, shape, pairing_type,
+                        num_eigenvalues, spectral_shift=None):
+    """The reported leader of the requested pairing channel (static,
+    non-spin-orbital).
+
+    The global eigen-analysis set (``vals``/``gaps``) is kept for the
+    listing, reordered so the eigenpairs of the requested parity come first.
+    It does not by itself identify the channel's leader: the leading
+    ``num_eigenvalues`` eigenpairs of the whole kernel may contain a channel
+    eigenpair of large magnitude but not the channel's leader. When the
+    kernel commutes with parity (probed as in ``_solve_iteration``), the
+    leader is therefore ALWAYS obtained from a solve on the channel's own
+    parity coordinates (``_parity_sector_basis``: no complement, no penalty),
+    with the shared largest-real-part contract of ``_solve_leading``
+    (LR re-solve, dense fallback, NaN sentinel). When it does not commute,
+    the sector cannot be solved on its own; the leader is then the retained
+    eigenpair that is dominantly of the requested parity, or NaN if there is
+    none.
+
+    The sector solve uses the user's ``spectral_shift`` (largest real part
+    of the shifted sector operator) and otherwise the plain Arnoldi rules; it
+    is always an Arnoldi solve, whatever ``eigenvalue_method`` the global
+    listing used.
+
+    Returns ``(vals_r, gaps_r, lead, lead_gap, found, note, sector_vals)``:
+    the reordered listing, the leading eigenvalue and gap, whether a channel
+    leader was obtained, a one-line description of where it came from (or
+    None), and the sector solve's eigenvalues (None without a sector
+    solve)."""
+    from scipy.sparse.linalg import LinearOperator
+    A, n = operator
+    rng = np.random.default_rng(0)
+    leakage = 0.0
+    for _ in range(_PARITY_GUARD_PROBES):
+        x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).reshape(shape)
+        opp_max, img_max = 0.0, 0.0
+        for sign in (1.0, -1.0):
+            xp = 0.5 * (x + sign * _reverse_k_and_orbital(x))
+            axp = np.asarray(A.matvec(xp.ravel())).reshape(shape)
+            opp = 0.5 * (axp - sign * _reverse_k_and_orbital(axp))
+            opp_max = max(opp_max, float(np.linalg.norm(opp)))
+            img_max = max(img_max, float(np.linalg.norm(axp)))
+        # normalised by the LARGER sector image, so an analytically null (or
+        # tiny) opposite sector does not read as leakage 1
+        leakage = max(leakage, opp_max / (img_max + 1.0e-300))
+    nan = complex(np.nan, np.nan)
+    commuting = leakage <= 1.0e-8
+    vals_r, gaps_r = _reorder_eigenpairs_by_parity(vals, gaps, pairing_type,
+                                                   warn=not commuting)
+    if not commuting:
+        matched = bool(len(gaps_r) and _is_gap_parity(gaps_r[0], pairing_type))
+        logger.warning(
+            "The Eliashberg kernel does not commute with parity (leakage "
+            "%.2e), so the '%s' channel cannot be solved on its own parity "
+            "sector; %s", leakage, pairing_type,
+            "the leading value is the computed eigenpair that is dominantly of "
+            "the requested parity." if matched else
+            "no computed eigenpair has the requested parity: no eigenvalue is "
+            "reported (NaN, eigen_converged = false). Increase "
+            "num_eigenvalues.")
+        if matched:
+            return vals_r, gaps_r, vals_r[0], gaps_r[0], True, None, None
+        return vals_r, gaps_r, nan, None, False, None, None
+    to_full, to_reduced, dim = _parity_sector_basis(shape, pairing_type)
+    if dim == 0:
+        logger.warning("The '%s' parity sector is empty on this grid.",
+                       pairing_type)
+        return vals_r, gaps_r, nan, None, False, None, None
+    red = LinearOperator(
+        (dim, dim), matvec=lambda c: to_reduced(A.matvec(to_full(c))),
+        dtype=complex)
+    lead, cvec, info = _solve_leading(lambda: (red, dim), dim, "arnoldi",
+                                      num_eigenvalues=num_eigenvalues,
+                                      spectral_shift=spectral_shift)
+    if not np.isfinite(lead):
+        return vals_r, gaps_r, nan, None, False, None, None
+    lead_gap = to_full(cvec).reshape(shape)
+    note = ("leading value: the largest real part of the '{}' parity sector, "
+            "solved on that sector's own coordinates (selection {}); it is "
+            "row 0 of the table, followed by the global eigen-analysis "
+            "set".format(
+                pairing_type, info.get("selection")))
+    return (vals_r, gaps_r, complex(lead), lead_gap, True, note,
+            np.asarray(info.get("eigenvalues")))
 
 
 def _shift_from_eigenvalues(vals, factor=0.9):
@@ -6626,6 +6895,35 @@ def _shift_from_eigenvalues(vals, factor=0.9):
     # purely imaginary / all-zero sample yields a 0.0 shift, which sits at a
     # possible zero mode; physical FLEX inputs have a real dominant eigenvalue.
     return float(vals[np.argmax(np.abs(vals))].real) * factor
+
+
+def _normalize_spectral_shift(spectral_shift):
+    """``None`` for "no shift": ``None`` itself or the string ``"none"``
+    (any case; TOML has no null, so ``spectral_shift = "none"`` is how an
+    input asks for the unshifted solver). Anything else is returned as is
+    (and validated by ``_validate_spectral_shift``)."""
+    if isinstance(spectral_shift, str) and spectral_shift.strip().lower() == "none":
+        return None
+    return spectral_shift
+
+
+def _resolve_spectral_shift(spectral_shift, solver_mode):
+    """The ``[eliashberg] spectral_shift`` a solver leg actually uses.
+
+    For the power iteration (``solver_mode = "iteration"``) an absent value
+    (``None``) means ``"auto"``: an unshifted power iteration cannot converge
+    on a repulsive-dominant kernel (its dominant eigenvalue is negative) and,
+    even where it converges, follows the largest-MAGNITUDE eigenvalue, not the
+    largest real part. ``"none"`` keeps the unshifted iteration. For every
+    other solver an absent value stays ``None`` (no shift)."""
+    if spectral_shift is None and str(solver_mode).lower() == "iteration":
+        return "auto"
+    return _normalize_spectral_shift(spectral_shift)
+
+
+class _ShiftProbeFailed(Exception):
+    """The which='LM' spectral-radius probe of the auto spectral_shift did not
+    converge (and returned no usable eigenvalue)."""
 
 
 def _validate_spectral_shift(spectral_shift, solver_mode):
@@ -6780,7 +7078,8 @@ def _signed_rayleigh(A, vec):
 
 
 def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
-                                 convergence_tol):
+                                 convergence_tol, spectral_scale=None,
+                                 rho_max=None):
     """Decide what a shifted power iteration is allowed to report.
 
     Parameters
@@ -6795,6 +7094,15 @@ def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
         The sigma actually applied.
     convergence_tol : float
         The iteration's own tolerance; the residual bound is derived from it.
+    spectral_scale : float, optional
+        A spectral scale of K (the auto shift's radius estimate, or a probe
+        norm). When given, the residual bound is ``tol * spectral_scale``
+        instead of ``tol * (|lambda| + 1)``: a bound that grows with the
+        lambda being checked lets a non-normal kernel's off-spectrum
+        Rayleigh quotients pass.
+    rho_max : float, optional
+        An upper bound of the spectral radius; a Rayleigh value beyond it is
+        not an eigenvalue and is rejected.
 
     Returns
     -------
@@ -6813,10 +7121,14 @@ def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
     lam, resid = _signed_rayleigh(A_unshifted, vec)
     tol = max(_RAYLEIGH_RESIDUAL_ATOL,
               _RAYLEIGH_RESIDUAL_TOL_FACTOR * float(convergence_tol))
-    scale = abs(lam)
-    bound = tol * ((scale if np.isfinite(scale) else 0.0) + 1.0)
+    if spectral_scale is not None and spectral_scale > 0.0:
+        bound = tol * float(spectral_scale)
+    else:
+        scale = abs(lam)
+        bound = tol * ((scale if np.isfinite(scale) else 0.0) + 1.0)
     validated = bool(np.isfinite(resid) and resid <= bound
-                     and abs(lam.imag) <= bound)
+                     and abs(lam.imag) <= bound
+                     and (rho_max is None or abs(lam) <= rho_max))
     record = {
         "eigenvalue_validated": validated,
         "eigenvalue_kind": ("eigenvalue" if validated
@@ -6840,44 +7152,100 @@ def _validate_shifted_eigenvalue(A_unshifted, vec, iterate_value, shift,
 
 def _shifted_eigenvalue_note(solver_mode, spectral_shift, converged, n_iter,
                              iter_info, kernel_label="kernel"):
-    """The ``eigenvalue.dat`` comment describing a SHIFTED iteration's number.
+    """The ``eigenvalue.dat`` comment describing a power iteration's number.
 
     Split out of ``calc_eliashberg`` so the static and dynamic entry points --
     and the tests -- share one wording, and so the "this is NOT an eigenvalue"
-    case can never be silently dropped from the file.
+    case can never be silently dropped from the file. ``converged`` is the
+    ``eigen_converged`` verdict (``_solve_leading``'s ``info["converged"]``):
+    when it is False the reported value is NaN and the note says why.
+    ``spectral_shift`` None means the unshifted iteration
+    (``spectral_shift = "none"``).
     """
     info = iter_info or {}
     resid = info.get("rayleigh_residual")
     resid_txt = ("{:.3e}".format(resid) if isinstance(resid, float)
                  and np.isfinite(resid) else str(resid))
-    tail = ("the iteration {} after {} steps."
-            .format("converged" if converged else "did NOT converge", n_iter))
-    if info.get("eigenvalue_validated"):
-        note = (
-            "solver_mode='{}' with spectral_shift={!r}: the power iteration "
-            "ran on the shifted {} K + sigma*I and the value below is the "
-            "SIGNED eigenvalue of K (the shift has been subtracted back), "
-            "VALIDATED by the Rayleigh quotient <v|K|v>/<v|v> with residual "
-            "||K v - lambda v||/||v|| = {}; {}"
-            .format(solver_mode, spectral_shift, kernel_label, resid_txt,
-                    tail))
-        if info.get("shift_sufficient") is False:
-            note += (" WARNING: spectral_shift appears INSUFFICIENT -- the "
-                     "mode found has lambda + sigma < 0, so it is the "
-                     "largest-MAGNITUDE eigenvalue of K + sigma*I, not the "
-                     "algebraically largest (physical) one; re-run with a "
-                     "larger spectral_shift or \"auto\".")
-        return note
-    return (
-        "solver_mode='{}' with spectral_shift={!r}: the value below is a "
-        "SHIFTED ITERATE-NORM ESTIMATE, ||(K + sigma*I) v|| - sigma. It is "
-        "NOT an eigenvalue of K: the Rayleigh check <v|K|v>/<v|v> left a "
-        "residual ||K v - lambda v||/||v|| = {} (tolerance {}), so no signed "
-        "eigenvalue could be validated for this run -- do not quote it as "
-        "lambda. {} Raise max_iter, raise spectral_shift, or use "
-        "solver_mode=\"eigenvalue\"."
-        .format(solver_mode, spectral_shift, resid_txt,
-                info.get("rayleigh_residual_tol"), tail))
+    shift_txt = ("spectral_shift={!r}".format(spectral_shift)
+                 if spectral_shift is not None else "no spectral_shift")
+    if not converged:
+        if info.get("two_cycle"):
+            why = ("the iterate settled into a sign-alternating two-cycle "
+                   "after {} steps -- the dominant (largest-magnitude) "
+                   "eigenvalue of the iterated operator is NEGATIVE"
+                   .format(n_iter))
+            cyc = info.get("cycle_eigenvalue")
+            if cyc is not None:
+                why += " ({:.8e} on the {})".format(cyc, kernel_label)
+        elif info.get("diff_converged"):
+            why = ("the iterate difference converged after {} steps but the "
+                   "Rayleigh check left a residual ||K v - lambda v||/||v|| = "
+                   "{} (tolerance {})".format(
+                       n_iter, resid_txt, info.get("rayleigh_residual_tol")))
+        else:
+            why = "the iteration did NOT converge after {} steps".format(n_iter)
+        return (
+            "solver_mode='{}' with {}: {}. eigen_converged = false: NO "
+            "eigenvalue is reported (the value below is NaN, NOT an "
+            "eigenvalue) and the gap written with it is the last iterate, NOT "
+            "an eigenvector. Use solver_mode=\"eigenvalue\", or "
+            "spectral_shift=\"auto\" (the default for the iteration), or "
+            "raise max_iter.".format(solver_mode, shift_txt, why))
+    if spectral_shift is None:
+        return (
+            "solver_mode='{}' with no spectral_shift: the value below is the "
+            "SIGNED Rayleigh eigenvalue <v|K|v>/<v|v> of the converged "
+            "iterate (residual {}); the iteration converged after {} steps. "
+            "The unshifted iteration follows the largest-MAGNITUDE "
+            "eigenvalue.".format(solver_mode, resid_txt, n_iter))
+    note = (
+        "solver_mode='{}' with spectral_shift={!r}: the power iteration "
+        "ran on the shifted {} K + sigma*I and the value below is the "
+        "SIGNED eigenvalue of K (the shift has been subtracted back), "
+        "VALIDATED by the Rayleigh quotient <v|K|v>/<v|v> with residual "
+        "||K v - lambda v||/||v|| = {}; the iteration converged after {} "
+        "steps.".format(solver_mode, spectral_shift, kernel_label, resid_txt,
+                        n_iter))
+    if info.get("shift_sufficient") is False:
+        note += (" WARNING: spectral_shift appears INSUFFICIENT -- the "
+                 "mode found has lambda + sigma < 0, so it is the "
+                 "largest-MAGNITUDE eigenvalue of K + sigma*I, not the "
+                 "algebraically largest (physical) one; re-run with a "
+                 "larger spectral_shift or \"auto\".")
+    return note
+
+
+def _stall_advice(diffs, tol, max_iter, window=20):
+    """Advice for a power iteration that ran out of ``max_iter``.
+
+    When the iterate difference was still decreasing geometrically over the
+    last ``window`` steps, the observed rate gives the number of further steps
+    needed to reach ``tol``; otherwise the iteration was not converging at all
+    (a complex leading eigenvalue -- a complex-conjugate pair -- or two
+    eigenvalues of equal modulus, which a power iteration never resolves)."""
+    d = [x for x in diffs[-(window + 1):] if np.isfinite(x) and x > 0.0]
+    if len(d) >= 3:
+        k = len(d) - 1
+        rate = (d[-1] / d[0]) ** (1.0 / k)
+        # the stopping rule needs diff / (1 - rate) < tol (rate-aware)
+        target = tol * (1.0 - rate) if 0.0 < rate < 1.0 else tol
+        if 0.0 < rate < 1.0 and d[-1] > target:
+            more = int(np.ceil(np.log(target / d[-1]) / np.log(rate)))
+            return ("The iterate difference was still decreasing by a factor "
+                    "{:.4f} per step (now {:.2e}; the stopping rule needs "
+                    "diff / (1 - rate) < convergence_tol {:.1e}): "
+                    "about {} more steps are needed, i.e. max_iter of about "
+                    "{} -- or use solver_mode=\"eigenvalue\", which does not "
+                    "depend on the eigenvalue gap this way."
+                    .format(rate, d[-1], tol, more, max_iter + more))
+        return ("The iterate difference was not decreasing (factor {:.4f} per "
+                "step over the last {} steps): the iteration is not converging "
+                "at all. A complex leading eigenvalue (a complex-conjugate "
+                "pair) or two eigenvalues of equal modulus can never be "
+                "resolved by a power iteration; use solver_mode=\"eigenvalue\"."
+                .format(rate, k))
+    return ("Raise max_iter, or use solver_mode=\"eigenvalue\" (a complex "
+            "leading eigenvalue can never be reached by a power iteration).")
 
 
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
@@ -6924,7 +7292,9 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         estimated from a preliminary Arnoldi pass, exactly as
         ``_solve_eigenvalue`` does.
     alpha : float
-        Power-iteration mixing parameter. Only used by "iteration".
+        Power-iteration mixing parameter. Only used by "iteration", and only
+        without a ``spectral_shift`` (with a shift it is not applied; see
+        ``info["alpha_applied"]``).
     project_fn : callable, optional
         Flat-vector -> flat-vector projector applied to every power-iteration
         iterate (e.g. the gap-parity projector in ``_solve_iteration``). Only
@@ -6949,14 +7319,16 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     Returns
     -------
     leading_eigenvalue : complex or float
-        The dominant eigenvalue (eigenvalue-family: largest real part, per
-        ``_order_eigenpairs``). On the iteration path WITHOUT
-        ``spectral_shift`` it is the converged/last iterate norm (unsigned),
-        exactly as before. WITH a ``spectral_shift`` it is the signed Rayleigh
-        eigenvalue ``<v|K|v>/<v|v>`` when that passes the residual check
-        (``eig_analysis["eigenvalue_validated"]``), and otherwise the raw
-        ``||(K + sigma I) v|| - sigma``, which is NOT an eigenvalue and must be
-        reported as an estimate (see ``_validate_shifted_eigenvalue``).
+        Eigenvalue family: the eigenvalue of largest real part, per
+        ``_order_eigenpairs``; an unshifted ``which='LM'`` set that cannot
+        contain the largest real part (its largest real part is below its
+        smallest magnitude) is re-solved for it (``selection = "LR_retry"``,
+        unseeded runs only). Iteration path: the SIGNED Rayleigh eigenvalue
+        ``<v|K|v>/<v|v>`` of the converged iterate on the original K (with or
+        without ``spectral_shift``), and ``NaN`` whenever the iteration did not
+        converge -- by ``max_iter``, by a detected sign-alternating two-cycle
+        (a negative dominant eigenvalue of the iterated operator) or by a
+        failed residual check. The iterate norm is never returned.
     leading_eigenvector : ndarray
         Flat, shape ``(vec_size,)``.
     eig_analysis : dict
@@ -6967,17 +7339,27 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         -- ``"LM"`` (largest magnitude), ``"LR"`` (largest real part, a
         ``spectral_shift`` was applied), ``"dense-LR"`` (the tiny-operator dense
         eigendecomposition, ordered by real part) or ``"shift-invert"``.
-        "iteration" mode: ``{"converged": bool, "n_iter": int}`` --
-        exactly the historical key set when no shift is requested -- plus,
-        ONLY when a shift was actually applied (so the default path's dict is
-        unchanged), ``spectral_shift`` (the sigma actually applied),
-        ``eigenvalue_validated``, ``eigenvalue_kind``, ``rayleigh_eigenvalue``,
-        ``rayleigh_residual``, ``rayleigh_residual_tol`` and
-        ``shift_sufficient``.
+        "iteration" mode: ``converged`` (the ``eigen_converged`` verdict:
+        iterate difference below ``convergence_tol`` AND Rayleigh residual
+        check passed), ``diff_converged`` (the bare difference test),
+        ``n_iter``, ``two_cycle``, ``eigenvalue_validated``,
+        ``eigenvalue_kind`` (``"eigenvalue"``, ``"not-converged"``,
+        ``"not-computed"`` or ``"shifted-iterate-norm-estimate"``),
+        ``rayleigh_eigenvalue``, ``rayleigh_residual``,
+        ``rayleigh_residual_tol``, ``shift_sufficient``, on a two-cycle
+        ``cycle_eigenvalue`` (the Rayleigh quotient of the cycling iterate on
+        K, i.e. the negative dominant eigenvalue), and ``spectral_shift``
+        (the sigma actually applied) only when a shift was requested. The
+        eigenvalue family's dict may also carry ``lm_max_real`` /
+        ``lm_min_abs`` (the bound that triggered the re-solve),
+        ``lr_retry_failed``, and ``lm_solve_failed`` (the unshifted or
+        preliminary which='LM' solve did not converge; the selection is then
+        ``"dense-LR"`` or the NaN sentinel ``"not-converged"``).
     """
     # Validate spectral_shift up front -- before any branch, including the
     # iteration loop and the small-dense early return -- so an invalid value or
     # an incompatible mode fails fast everywhere.
+    spectral_shift = _normalize_spectral_shift(spectral_shift)
     _validate_spectral_shift(spectral_shift, solver_mode)
 
     if solver_mode == "iteration":
@@ -7014,107 +7396,283 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         # the sigma actually applied (None when no shift was requested), so
         # callers can report it; `shift` itself is the arithmetic value.
         shift_used = shift if spectral_shift is not None else None
+        # the operator whose eigenvalue is reported: the ORIGINAL kernel K
+        A_report = A_unshifted if shift_used is not None else A
+        # The mixing v <- (1 - alpha) u + alpha v damps the iterate like a
+        # second spectral shift: it halves the contraction (1 - rate) of the
+        # dominant mode at alpha = 0.5. With a spectral shift the eigenvalues
+        # of K + sigma*I are already positive and well separated in sign, so
+        # the mixing only slows the run; it is applied only without a shift
+        # (where it damps the sign flips of a negative dominant mode).
+        alpha_applied = float(alpha) if shift_used is None else 0.0
+        if shift_used is not None and alpha:
+            logger.info("Power iteration with a spectral shift: the mixing "
+                        "parameter alpha = %g is not applied.", alpha)
 
-        def _finish(value, vec, converged, n_iter_done, rayleigh=True):
-            """Assemble the return triple, validating the SHIFTED value.
+        def _finish(vec, diff_converged, n_iter_done, two_cycle=False,
+                    collapsed=False):
+            """Assemble the return triple.
 
-            On the unshifted path this is exactly the historical dict --
-            ``{"converged", "n_iter"}`` and NOTHING else, as at commit
-            712b1a0; ``spectral_shift`` is added only when a shift was really
-            applied, so a caller that compares or serializes the default
-            dict sees the key set it always saw -- and no extra matvec is
-            taken, so the default behaviour is bit-identical.
+            The reported value is the SIGNED Rayleigh quotient
+            ``<v|K|v>/<v|v>`` of the returned vector on the original kernel K
+            (one extra matvec), and only when the iteration converged AND that
+            quotient passes the residual check; in every other case it is NaN
+            -- a non-converged power iteration has no eigenvalue to report,
+            and its last iterate norm (``|lambda_-| (1 - alpha) / (1 + alpha)``
+            on a sign-alternating two-cycle) is not one. ``info["converged"]``
+            is that verdict (the ``eigen_converged`` flag of the outputs);
+            ``info["diff_converged"]`` is the bare iterate-difference test.
             """
-            info = {"converged": converged, "n_iter": n_iter_done}
-            if shift_used is None:
-                return value, vec, info
-            info["spectral_shift"] = shift_used
-            if not rayleigh:
-                # Nothing meaningful to validate (the zero-norm sentinel).
+            info = {"converged": False, "diff_converged": bool(diff_converged),
+                    "n_iter": n_iter_done, "two_cycle": bool(two_cycle),
+                    "alpha_applied": alpha_applied}
+            if shift_used is not None:
+                info["spectral_shift"] = shift_used
+            if collapsed:
+                # nothing meaningful to validate (the zero-norm iterate)
                 info.update({"eigenvalue_validated": False,
                              "eigenvalue_kind": "not-computed",
                              "rayleigh_eigenvalue": None,
                              "rayleigh_residual": float("inf"),
                              "rayleigh_residual_tol": float("nan"),
                              "shift_sufficient": None})
-                return value, vec, info
+                return float("nan"), vec, info
             value, record = _validate_shifted_eigenvalue(
-                A_unshifted, vec, value, shift, convergence_tol)
+                A_report, vec, float("nan"), shift, convergence_tol,
+                spectral_scale=spec_scale, rho_max=rho_max)
+            if shift_used is None:
+                record["shift_sufficient"] = None
             info.update(record)
-            if record["eigenvalue_validated"]:
-                logger.info(
-                    "Shifted power iteration: reporting the SIGNED Rayleigh "
-                    "eigenvalue lambda = %.8e of K (residual %.3e <= %.3e), "
-                    "not the raw shifted iterate norm.",
-                    value, record["rayleigh_residual"],
-                    record["rayleigh_residual_tol"])
-                if record["shift_sufficient"] is False:
-                    logger.warning(
-                        "spectral_shift = %.6f appears INSUFFICIENT: the "
-                        "iteration locked onto a mode with lambda = %.8e, so "
-                        "lambda + sigma = %.8e < 0 and the power iteration "
-                        "selected the largest-MAGNITUDE eigenvalue of "
-                        "K + sigma*I rather than the algebraically largest "
-                        "(physical) one. Re-run with a larger spectral_shift "
-                        "or spectral_shift=\"auto\".",
-                        shift, value, value + shift)
-            else:
+            if not diff_converged:
+                # the vector may still be an eigenvector (a two-cycle iterate
+                # is one of the dominant NEGATIVE mode), but it is not the
+                # eigenpair the iteration was asked for: report nothing
+                info["cycle_eigenvalue"] = (
+                    float(value) if two_cycle and record["eigenvalue_validated"]
+                    else None)
+                info.update({"eigenvalue_validated": False,
+                             "eigenvalue_kind": "not-converged",
+                             "rayleigh_eigenvalue": None})
+                return float("nan"), vec, info
+            if not record["eigenvalue_validated"]:
                 logger.warning(
-                    "Shifted power iteration: the returned value %.8e is "
-                    "||(K + sigma*I) v|| - sigma and is NOT an eigenvalue of "
-                    "K -- the Rayleigh check <v|K|v>/<v|v> left a residual of "
-                    "%.3e (tolerance %.3e), so no signed eigenvalue could be "
-                    "validated. Do not quote it as lambda; raise max_iter, "
-                    "raise spectral_shift, or use solver_mode=\"eigenvalue\".",
-                    value, record["rayleigh_residual"],
-                    record["rayleigh_residual_tol"])
+                    "Power iteration: the iterate difference fell below "
+                    "convergence_tol, but the Rayleigh check <v|K|v>/<v|v> "
+                    "left a residual of %.3e (tolerance %.3e), so the vector "
+                    "is not an eigenvector of K; no eigenvalue is reported "
+                    "(lambda = NaN, eigen_converged = false). Tighten "
+                    "convergence_tol or use solver_mode=\"eigenvalue\".",
+                    record["rayleigh_residual"], record["rayleigh_residual_tol"])
+                return float("nan"), vec, info
+            if (shift_used is not None
+                    and abs(value) <= _COLLAPSE_REL * max(abs(shift), 1.0e-300)):
+                # K annihilates the vector (to round-off): the shifted
+                # iteration "converged" on the eigenvalue sigma of K + sigma*I
+                # that a null vector of K carries, not on a pairing mode
+                logger.warning(
+                    "Power iteration: the converged vector is annihilated by "
+                    "the kernel (lambda = %.3e, below %.0e of the shift "
+                    "%.6f); this is not a pairing eigenvalue, so none is "
+                    "reported (lambda = NaN, eigen_converged = false). The "
+                    "iteration's sector may carry no other mode; use "
+                    "solver_mode=\"eigenvalue\" or another init_gap.",
+                    value, _COLLAPSE_REL, shift)
+                info.update({"eigenvalue_validated": False,
+                             "eigenvalue_kind": "annihilated",
+                             "rayleigh_eigenvalue": None})
+                return float("nan"), vec, info
+            info["converged"] = True
+            logger.info(
+                "Power iteration: reporting the SIGNED Rayleigh eigenvalue "
+                "lambda = %.8e of K (residual %.3e <= %.3e).",
+                value, record["rayleigh_residual"],
+                record["rayleigh_residual_tol"])
+            if record["shift_sufficient"] is False:
+                logger.warning(
+                    "spectral_shift = %.6f appears INSUFFICIENT: the "
+                    "iteration locked onto a mode with lambda = %.8e, so "
+                    "lambda + sigma = %.8e < 0 and the power iteration "
+                    "selected the largest-MAGNITUDE eigenvalue of "
+                    "K + sigma*I rather than the algebraically largest "
+                    "(physical) one. Re-run with a larger spectral_shift "
+                    "or spectral_shift=\"auto\".",
+                    shift, value, value + shift)
             return value, vec, info
 
-        sigma_old = init_vec
-        eigenvalue = 0.0
+        def _project(v):
+            return project_fn(v) if project_fn is not None else v
+
+        sigma_old = np.asarray(init_vec)
+
+        # Spectral scale of K, for the seed test and the residual check: the
+        # auto shift's own radius estimate, else one deterministic probe
+        # ||K g|| / ||g|| (a typical magnitude of K in the iteration's sector).
+        rng = np.random.default_rng(_SEED_ADMIX_SEED)
+        probe = _project(rng.standard_normal(vec_size)
+                         + 1j * rng.standard_normal(vec_size))
+        pn = float(np.linalg.norm(probe))
+        probe_scale = (float(np.linalg.norm(_project(A_report.matvec(probe))))
+                       / pn if pn > 0.0 else 0.0)
+        rho_est = None
+        if shift_used is not None and isinstance(spectral_shift, str):
+            rho_est = max((shift - 1.0e-6) / _AUTO_SHIFT_MARGIN, 0.0)
+        # (the probe can exceed the spectral radius by orders of magnitude on
+        # a strongly non-normal kernel, so it is used only without the
+        # auto-shift estimate)
+        spec_scale = rho_est if rho_est else probe_scale
+        # no eigenvalue of K can lie beyond the spectral radius; the auto
+        # shift sits 5 % above its estimate, so allow a further 5 %
+        rho_max = (_AUTO_SHIFT_MARGIN * shift if rho_est is not None
+                   else None)
+
+        # The seed test, on K itself: a seed that is an eigenvector of K (or
+        # that K annihilates) can never leave its mode -- the iteration then
+        # cannot search the seed's symmetry sector for the largest real part.
+        # It is NOT perturbed (a perturbation projected only on the channel
+        # parity would leave the lattice-symmetry sector of init_gap); the run
+        # reports no eigenvalue instead.
+        seed_norm = float(np.linalg.norm(sigma_old))
+        if seed_norm == 0.0 or not np.isfinite(seed_norm):
+            raise ValueError("the initial gap of the power iteration is zero "
+                             "or not finite")
+        k0 = _project(A_report.matvec(sigma_old))
+        k0_norm = float(np.linalg.norm(k0))
+        lam0 = complex(np.vdot(sigma_old, k0) / (seed_norm * seed_norm))
+        # relative to the spectral scale, not to ||K v||: a seed on a mode of
+        # small |lambda| is as much an eigenvector as one on a large mode
+        res_scale = (spec_scale * seed_norm if spec_scale > 0.0
+                     else max(k0_norm, 1.0e-300))
+        seed_resid = float(np.linalg.norm(k0 - lam0 * sigma_old)) / res_scale
+        if k0_norm <= _SEED_ANNIHILATED_REL * spec_scale * seed_norm:
+            seed_cause = "annihilated"
+        elif seed_resid < _SEED_EIGENVECTOR_TOL:
+            seed_cause = "eigenvector"
+        else:
+            seed_cause = None
+        if seed_cause is not None:
+            what = ("is annihilated by the kernel (K v = 0)"
+                    if seed_cause == "annihilated" else
+                    "is an eigenvector of the kernel (lambda = {:.8g})"
+                    .format(lam0.real))
+            logger.warning(
+                "Power iteration: the initial gap %s, so the power iteration "
+                "cannot search its symmetry sector for the largest real part; "
+                "no eigenvalue is reported (lambda = NaN, eigen_converged = "
+                "false). Use solver_mode=\"eigenvalue\" or a different "
+                "init_gap.", what)
+            info = {"converged": False, "diff_converged": False, "n_iter": 0,
+                    "two_cycle": False, "seed_is_eigenvector": True,
+                    "alpha_applied": alpha_applied,
+                    "eigenvalue_validated": False,
+                    "eigenvalue_kind": "seed-" + seed_cause,
+                    "seed_eigenvalue": (0.0 if seed_cause == "annihilated"
+                                        else float(lam0.real)),
+                    "rayleigh_eigenvalue": None,
+                    "rayleigh_residual": float("nan"),
+                    "rayleigh_residual_tol": float("nan"),
+                    "shift_sufficient": None}
+            if shift_used is not None:
+                info["spectral_shift"] = shift_used
+            return float("nan"), sigma_old / seed_norm, info
+
+        u_prev = None
+        u_prev2 = None
+        flips = []          # flip residuals ||u_n + u_{n-1}||
+        diffs = []          # iterate differences
+        cycling = False     # a sustained sign-alternating two-cycle right now
 
         for iteration in range(max_iter):
-            sigma_new = A.matvec(sigma_old)
-            if project_fn is not None:
-                sigma_new = project_fn(sigma_new)
+            sigma_new = _project(A.matvec(sigma_old))
             norm = np.linalg.norm(sigma_new)
 
             # A (possibly projected) iterate can collapse to the zero vector
             # when the kernel annihilates the requested sector; normalizing by
-            # `norm` would then produce NaN. `np.linalg.norm` squares its
-            # inputs, so it returns *exactly* 0.0 once the iterate underflows;
-            # guard precisely on that, plus any non-finite norm, and report
-            # non-convergence with the last finite iterate instead.
+            # `norm` would then produce NaN. Report non-convergence with the
+            # last finite iterate instead.
             if norm == 0.0 or not np.isfinite(norm):
                 logger.warning(
                     "Eliashberg iterate collapsed to zero norm at iteration "
                     "{}; the kernel annihilates the requested sector, so the "
                     "eigenvalue cannot be normalized. Returning the previous "
-                    "iterate as non-converged.".format(iteration))
-                # 0.0 is the historical non-converged sentinel, NOT a shifted
-                # eigenvalue, so it is returned as-is (un-shifting it would
-                # dress a failure up as lambda = -sigma) and no Rayleigh
-                # validation is attempted on it.
-                return _finish(0.0, sigma_old, False, iteration + 1,
-                               rayleigh=False)
+                    "iterate as non-converged (lambda = NaN)."
+                    .format(iteration))
+                return _finish(sigma_old, False, iteration + 1, collapsed=True)
 
-            # `norm` is the eigenvalue of the (possibly shifted) operator;
-            # subtract the shift back so every reported/logged value belongs to
-            # the ORIGINAL operator K. `shift` is exactly 0.0 when no spectral
-            # shift is in use, so the un-shifted path is bit-identical.
-            eigenvalue = norm - shift
-            diff = np.linalg.norm(sigma_new / norm - sigma_old)
-            logger.info("Iteration {:4d}: eigenvalue = {:.6f}, diff = {:.6e}".format(
-                iteration, eigenvalue, diff))
+            u = sigma_new / norm
+            diff = float(np.linalg.norm(u - sigma_old))
+            diffs.append(diff)
+            # `norm` is the iterate norm of the (possibly shifted) operator:
+            # a progress indicator only, never the reported eigenvalue
+            logger.info("Iteration {:4d}: iterate norm = {:.6f}, diff = {:.6e}"
+                        .format(iteration, norm - shift, diff))
 
-            if diff < convergence_tol:
-                logger.info("Converged at iteration {}".format(iteration + 1))
-                return _finish(eigenvalue, sigma_new / norm, True,
-                               iteration + 1)
+            # Rate-aware stopping: a small step is not a small distance to the
+            # fixed point when the iterate contracts slowly (a seed close to a
+            # subdominant mode drifts away from it by tiny steps). The
+            # remaining distance is estimated as diff / (1 - rate), with the
+            # contraction rate the LARGEST ratio of consecutive differences
+            # over the last _RATE_WINDOW steps (clipped below 1), and the run
+            # stops only when that estimate is below convergence_tol. A
+            # difference at round-off level is accepted outright. The window
+            # also replaces the earlier fixed minimum number of steps.
+            if diff < convergence_tol and len(diffs) > _RATE_WINDOW:
+                recent = diffs[-(_RATE_WINDOW + 1):]
+                ratios = [b / a for a, b in zip(recent[:-1], recent[1:])
+                          if a > 0.0]
+                rate = max(ratios) if ratios else 1.0
+                # a difference that is not shrinking is a drift, not a
+                # converged iterate: no finite distance estimate
+                remaining = (diff / (1.0 - min(rate, _RATE_CLIP))
+                             if rate < 1.0 else float("inf"))
+                if diff <= _DIFF_ROUNDOFF or remaining < convergence_tol:
+                    logger.info("Converged at iteration {} (contraction rate "
+                                "{:.4f}, estimated remaining distance {:.2e})"
+                                .format(iteration + 1, rate, remaining))
+                    return _finish(u, True, iteration + 1)
 
-            sigma_old = (1.0 - alpha) * sigma_new / norm + alpha * sigma_old
+            # Sign-alternating two-cycle (a NEGATIVE dominant eigenvalue of
+            # the iterated operator: only without a sufficient shift). It is
+            # recorded for the diagnosis but does NOT stop the run: no finite
+            # window can rule out a tiny component of a positive dominant mode
+            # that is still growing.
+            if u_prev is not None:
+                flips.append(float(np.linalg.norm(u + u_prev)))
+            cycling = bool(
+                u_prev2 is not None
+                and len(flips) >= _TWO_CYCLE_WINDOW
+                and max(flips[-_TWO_CYCLE_WINDOW:]) < convergence_tol
+                and np.linalg.norm(u - u_prev2) < convergence_tol)
+            u_prev2 = u_prev
+            u_prev = u
 
-        logger.warning("Failed to converge after {} iterations".format(max_iter))
+            sigma_old = ((1.0 - alpha_applied) * u + alpha_applied * sigma_old
+                         if alpha_applied else u)
+
+        if cycling:
+            value, vec, info = _finish(u_prev, False, max_iter, two_cycle=True)
+            cyc = info.get("cycle_eigenvalue")
+            logger.warning(
+                "Failed to converge after %d iterations: the iterate is in a "
+                "sign-alternating two-cycle (A v = -|A v| v'), i.e. the "
+                "dominant (largest-magnitude) eigenvalue of the iterated "
+                "operator%s is NEGATIVE%s. The power iteration cannot "
+                "converge to the leading pairing eigenvalue here, so no "
+                "eigenvalue is reported (lambda = NaN, eigen_converged = "
+                "false). Use solver_mode=\"eigenvalue\", or spectral_shift="
+                "\"auto\" (the default for solver_mode=\"iteration\")%s.",
+                max_iter,
+                "" if shift_used is None
+                else " K + sigma*I (sigma = {:.6f}: the spectral_shift is "
+                     "INSUFFICIENT)".format(shift),
+                "" if cyc is None
+                else " (Rayleigh quotient on K: {:.6f})".format(cyc),
+                "" if shift_used is None else " or a larger spectral_shift")
+            return value, vec, info
+
+        logger.warning(
+            "Failed to converge after %d iterations: no eigenvalue is "
+            "reported (lambda = NaN, eigen_converged = false). %s",
+            max_iter, _stall_advice(diffs, convergence_tol, max_iter))
         if shift_used is not None:
             logger.warning(
                 "The power iteration ran on the shifted operator K + sigma*I "
@@ -7123,7 +7681,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 "negative -- try a larger spectral_shift, or \"auto\") or it is "
                 "so large that it compressed the relative eigenvalue gaps "
                 "(try a smaller one, or solver_mode=\"eigenvalue\").", shift)
-        return _finish(eigenvalue, sigma_old, False, max_iter)
+        return _finish(sigma_old, False, max_iter)
 
     # Eigenvalue family: ARPACK Arnoldi or shift-invert.
     A, _ = make_operator()
@@ -7178,6 +7736,133 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     logger.info("Computing {} eigenvalues with method='{}'...".format(
         max_ev, solver_mode))
 
+    retry_record = {}
+    selection_label = None
+
+    def _largest_real_solve(shift_option):
+        """``eigs(A + sigma*I, which='LR')`` with sigma subtracted back."""
+        from scipy.sparse.linalg import LinearOperator as _LinOp
+        if isinstance(shift_option, str):  # "auto"
+            from scipy.sparse.linalg import ArpackError, ArpackNoConvergence
+            k_pre = min(6, vec_size - 2)
+            if k_pre >= 1:
+                try:
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM',
+                                       v0=_arpack_start(A))
+                except ArpackNoConvergence as exc:
+                    vals_pre = np.asarray(exc.eigenvalues)
+                    vals_pre = vals_pre[np.isfinite(vals_pre)]
+                    if not vals_pre.size:
+                        raise _ShiftProbeFailed(exc) from exc
+                    logger.warning(
+                        "auto spectral_shift: the spectral-radius probe "
+                        "(which='LM') did not fully converge (%s); the %d "
+                        "converged eigenvalues set the shift.", exc,
+                        vals_pre.size)
+                except ArpackError as exc:
+                    # any other ARPACK error (e.g. -9 on a null operator):
+                    # no radius, handled like a failed solve
+                    raise _ShiftProbeFailed(exc) from exc
+                if not np.all(np.isfinite(vals_pre)):
+                    # a NaN/Inf radius cannot size the shift: a failed
+                    # probe, handled like a failed solve (not the overflow
+                    # error below, which is for a finite but huge radius)
+                    raise _ShiftProbeFailed(_NonFiniteEigenvalues(
+                        "the probe returned non-finite eigenvalues"))
+                sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
+            else:
+                sig = 1.0
+            if not np.isfinite(sig):
+                raise ValueError(
+                    "auto spectral_shift overflowed to a non-finite value "
+                    "(spectral radius too large); pass an explicit shift.")
+        else:
+            sig = float(shift_option)
+        logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
+        A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
+                      dtype=A.dtype)
+        vals_lr, vecs_lr = eigs(A_sh, k=max_ev, which='LR',
+                                v0=_arpack_start(A_sh, seed_vec))
+        if not np.all(np.isfinite(vals_lr)):
+            raise _NonFiniteEigenvalues("non-finite eigenvalues returned")
+        return vals_lr - sig, vecs_lr
+
+    def _dense_largest_real():
+        """The complete spectrum by dense eigendecomposition (vec_size
+        matvecs), the largest real parts first, max_ev of them."""
+        dense = np.empty((vec_size, vec_size), dtype=complex)
+        basis_col = np.zeros(vec_size, dtype=complex)
+        for j in range(vec_size):
+            basis_col[j] = 1.0
+            dense[:, j] = A.matvec(basis_col)
+            basis_col[j] = 0.0
+        dvals, dvecs = np.linalg.eig(dense)
+        dvals, dvecs = _order_eigenpairs(dvals, dvecs)
+        return dvals[:max_ev], dvecs[:, :max_ev]
+
+    def _largest_real_or_fallback(shift_option, lm=None):
+        """``_largest_real_solve``; when ARPACK does not converge, a dense
+        eigendecomposition for vec_size <= _DENSE_FALLBACK_MAX, else NaN
+        eigenvalues (the vectors of ``lm`` when given) -- never the
+        largest-magnitude set as if it were the largest real part.
+        Returns ``(vals, vecs, label_suffix_or_None, record)``."""
+        from scipy.sparse.linalg import ArpackError
+        try:
+            v, w = _largest_real_solve(shift_option)
+            return v, w, None, {}
+        except (ArpackError, _ShiftProbeFailed, _NonFiniteEigenvalues) as exc:
+            what = ("the spectral-radius probe (which='LM') of the auto "
+                    "spectral_shift" if isinstance(exc, _ShiftProbeFailed)
+                    else "the largest-real-part solve (which='LR')")
+            return _failed_solve(exc, what, lm=lm)
+
+    def _failed_solve(exc, what, lm=None):
+        """The contract after an ARPACK solve did not converge: a dense
+        eigendecomposition (largest real parts first) for vec_size <=
+        _DENSE_FALLBACK_MAX, else NaN eigenvalues with finite placeholder
+        vectors and the label "not-converged".
+        Returns ``(vals, vecs, label, record)``."""
+        from scipy.sparse.linalg import ArpackError
+        if vec_size <= _DENSE_FALLBACK_MAX:
+            logger.warning(
+                "arnoldi: %s did not converge (%s); the operator "
+                "(dimension %d <= %d) is diagonalized densely instead.",
+                what, exc, vec_size, _DENSE_FALLBACK_MAX)
+            v, w = _dense_largest_real()
+            return v, w, "dense-LR", {"lr_retry_failed": True}
+        logger.warning(
+            "arnoldi: %s did not converge (%s) "
+            "and the operator (dimension %d > %d) is too large to "
+            "diagonalize densely: no leading eigenvalue is reported (NaN, "
+            "eigen_converged = false).%s", what, exc, vec_size,
+            _DENSE_FALLBACK_MAX,
+            "" if solver_mode.startswith("shift-invert") else
+            " Set an explicit spectral_shift or raise num_eigenvalues.")
+        # finite placeholder vectors (NOT eigenvectors; the NaN
+        # eigenvalues say so): the which='LM' vectors, which every
+        # downstream symmetry check accepts (they lie in the operator's
+        # space -- for the spin-orbital solvers, the antisymmetric one)
+        partial = getattr(exc, "eigenvectors", None)
+        if lm is not None:
+            w = lm[1]
+        elif (partial is not None and np.ndim(partial) == 2
+              and partial.shape[0] == vec_size and partial.shape[1] > 0
+              and np.all(np.isfinite(partial))):
+            # the partially converged vectors of the failed solve
+            w = np.asarray(partial)
+        else:
+            try:
+                _, w = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A))
+                if not np.all(np.isfinite(w)):
+                    raise _NonFiniteEigenvalues("non-finite vectors")
+            except (ArpackError, _NonFiniteEigenvalues):
+                rng_ph = np.random.default_rng(_SEED_ADMIX_SEED)
+                w = (rng_ph.standard_normal((vec_size, max_ev))
+                     + 1j * rng_ph.standard_normal((vec_size, max_ev)))
+                w /= np.linalg.norm(w, axis=0)
+        v = np.full(w.shape[1], np.nan + 0j)
+        return v, w, "not-converged", {"lr_retry_failed": True}
+
     if solver_mode == "arnoldi":
         if spectral_shift is not None:
             # Select the LARGEST-REAL eigenvalue (the physical SC eigenvalue,
@@ -7191,31 +7876,54 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             # ordering (Re(lambda+sigma) = Re(lambda) + sigma) but moves the
             # spectrum into the right half-plane, which conditions ARPACK's LR
             # iteration; we subtract sigma afterwards.
-            from scipy.sparse.linalg import LinearOperator as _LinOp
-            # spectral_shift is validated (positive-finite / "auto", arnoldi)
-            # near the top of _solve_leading.
-            if isinstance(spectral_shift, str):  # "auto"
-                k_pre = min(6, vec_size - 2)
-                if k_pre >= 1:
-                    vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
-                    sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
-                else:
-                    sig = 1.0
-                if not np.isfinite(sig):
-                    raise ValueError(
-                        "auto spectral_shift overflowed to a non-finite value "
-                        "(spectral radius too large); pass an explicit shift.")
-            else:
-                sig = float(spectral_shift)
-            logger.info("Spectral shift sigma={:.6f}: eigs(A+sigma*I, LR)".format(sig))
-            A_sh = _LinOp(A.shape, matvec=lambda v: A.matvec(v) + sig * v,
-                          dtype=A.dtype)
-            vals, vecs = eigs(A_sh, k=max_ev, which='LR', v0=_arpack_start(A_sh, seed_vec))
-            vals = vals - sig
-            selection_label = "LR"
+            # (spectral_shift is validated near the top of _solve_leading.)
+            vals, vecs, fallback, retry_record = _largest_real_or_fallback(
+                spectral_shift)
+            selection_label = fallback or "LR"
         else:
-            vals, vecs = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A, seed_vec))
-            selection_label = "LM"
+            from scipy.sparse.linalg import ArpackError
+            try:
+                vals, vecs = eigs(A, k=max_ev, which='LM',
+                                  v0=_arpack_start(A, seed_vec))
+                if not np.all(np.isfinite(vals)):
+                    raise _NonFiniteEigenvalues(
+                        "non-finite eigenvalues returned")
+                selection_label = "LM"
+            except (ArpackError, _NonFiniteEigenvalues) as exc:
+                # the unshifted solve itself did not converge: the same
+                # contract as a failed largest-real-part solve (dense
+                # fallback, else NaN "not-converged"), never an exception
+                vals, vecs, selection_label, _rec = _failed_solve(
+                    exc, "the unshifted solve (which='LM')")
+                retry_record = {"lm_solve_failed": True}
+            # The LM set holds every eigenvalue of magnitude above the
+            # smallest one it contains, m = min |lambda_i|; any eigenvalue
+            # outside it has real part <= m. So the largest real part FOUND
+            # is the largest real part of the whole spectrum whenever it is
+            # >= m. Otherwise (e.g. a repulsive-dominant kernel whose few
+            # largest-magnitude modes are all negative) the physical,
+            # largest-real eigenvalue may be missing: re-solve for the
+            # largest real part. A seeded run tracks its continuation branch
+            # on purpose and is left alone.
+            if selection_label == "LM" and seed_vec is None and len(vals):
+                re_max = float(np.max(vals.real))
+                m_min = float(np.min(np.abs(vals)))
+                tol_c = 1.0e-10 * max(1.0, float(np.max(np.abs(vals))))
+                if re_max < m_min - tol_c:
+                    logger.warning(
+                        "arnoldi (which='LM', %d eigenvalues): the largest "
+                        "real part found, %.6g, is below the smallest "
+                        "magnitude found, %.6g, so an eigenvalue with a "
+                        "larger real part may lie outside the computed set; "
+                        "re-solving for the largest real part "
+                        "(spectral_shift=\"auto\"). Set [eliashberg] "
+                        "spectral_shift=\"auto\" to skip the first solve.",
+                        max_ev, re_max, m_min)
+                    vals, vecs, fallback, rec = _largest_real_or_fallback(
+                        "auto", lm=(vals, vecs))
+                    selection_label = fallback or "LR_retry"
+                    retry_record = dict({"lm_max_real": re_max,
+                                         "lm_min_abs": m_min}, **rec)
 
     elif solver_mode.startswith("shift-invert"):
         if sigma_shift is None:
@@ -7230,14 +7938,40 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = 0.0
             else:
                 logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
-                sigma_shift = _shift_from_eigenvalues(vals_pre)
+                from scipy.sparse.linalg import ArpackError
+                try:
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM',
+                                       v0=_arpack_start(A))
+                    if not np.all(np.isfinite(vals_pre)):
+                        raise _NonFiniteEigenvalues(
+                            "non-finite eigenvalues returned")
+                    sigma_shift = _shift_from_eigenvalues(vals_pre)
+                except (ArpackError, _NonFiniteEigenvalues) as exc:
+                    # no target for the shift-invert solve: the same
+                    # contract as a failed solve (dense fallback, else NaN)
+                    vals, vecs, selection_label, _rec = _failed_solve(
+                        exc, "the preliminary which='LM' solve that sets "
+                             "the shift-invert target")
+                    retry_record = {"lm_solve_failed": True}
+                    sigma_shift = None
+        if selection_label is None:
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
-        vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
-            seed_vec=seed_vec
-        )
-        selection_label = "shift-invert"
+            from scipy.sparse.linalg import ArpackError
+            try:
+                vals, vecs = _eigs_shift_invert(
+                    A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
+                    seed_vec=seed_vec
+                )
+                if not np.all(np.isfinite(vals)):
+                    # e.g. a singular K - sigma*I (a null kernel with a zero
+                    # target): no eigenvalue, the failed-solve contract
+                    raise _NonFiniteEigenvalues(
+                        "non-finite eigenvalues returned")
+                selection_label = "shift-invert"
+            except (ArpackError, _NonFiniteEigenvalues) as exc:
+                vals, vecs, selection_label, _rec = _failed_solve(
+                    exc, "the shift-invert solve")
+                retry_record = {"shift_invert_failed": True}
 
     # With a seed eigenvector, track the branch that overlaps it (eigenvector
     # continuation); otherwise order by largest real part (the physical SC
@@ -7266,9 +8000,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 "\"auto\" so the largest-REAL eigenvalue is selected instead of "
                 "the largest-magnitude one.", vals[0].real)
 
-    return vals[0], vecs[:, 0], {"eigenvalues": vals, "eigenvectors": vecs,
-                                 "sigma_shift": sigma_shift,
-                                 "selection": selection_label}
+    return vals[0], vecs[:, 0], dict({"eigenvalues": vals, "eigenvectors": vecs,
+                                      "sigma_shift": sigma_shift,
+                                      "selection": selection_label},
+                                     **retry_record)
 
 
 def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
@@ -7341,6 +8076,7 @@ def _solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, num_eigenvalues=10,
             "not match norb**2*Nx*Ny*Nz ({}); eigenvectors would be reshaped "
             "with the wrong size.".format(operator[1], vec_size))
 
+    spectral_shift = _normalize_spectral_shift(spectral_shift)
     if method == "subspace":
         # spectral_shift routes through the ARPACK largest-real path in
         # _solve_leading; the subspace driver never reaches it, so reject a
@@ -7687,7 +8423,9 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
                   gap_file="gap.dat", eigenvalue_file="eigenvalue.dat",
                   eigenvalue_match=None, provenance=None,
                   eigenvalue_note=None, eigenvalue_weights=None,
-                  gap_comments=None):
+                  gap_comments=None, eigen_converged=None,
+                  iteration_converged=None, analysis_note=None,
+                  leading_eigenvalue=None):
     """Save gap function and eigenvalue results to files.
 
     Parameters
@@ -7731,6 +8469,26 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
         Spin-orbital mode only: ``#`` comment lines written before the column
         header of the gap file. None (the default) leaves the gap file
         unchanged.
+    eigen_converged : bool, optional
+        Written as ``# eigen_converged = <true|false>`` -- right after
+        ``# Iteration eigenvalue`` when the iteration ran, else at the top.
+        ``false``: the power iteration did not converge, the iteration value
+        is NaN and the gap file holds the last iterate, not an eigenvector.
+        With ``iteration_converged`` given (``solver_mode = "both"``) it
+        refers to the eigenvalue analysis and is written right before
+        ``# Eigenvalue analysis``.
+    iteration_converged : bool, optional
+        ``solver_mode = "both"`` only: the power iteration's own verdict,
+        written as ``# iteration_converged = <true|false>`` after
+        ``# Iteration eigenvalue``.
+    analysis_note : str, optional
+        Where the eigenvalue analysis' reported leader comes from (the
+        channel's parity-sector solve), written as ``#`` lines right after
+        the ``# eigen_converged`` line.
+    leading_eigenvalue : complex, optional
+        The eigenvalue analysis' reported leader (NaN when none), written as
+        the machine-readable line ``# leading_eigenvalue = <Re> <Im>`` right
+        before ``# Eigenvalue analysis``; it equals row 0 of the table.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -7780,13 +8538,32 @@ def _save_results(output_dir, sigma, eigenvalue, eigenvalues_eig, kx_array, ky_a
             if provenance:
                 for key in sorted(provenance):
                     fw.write("# {} = {}\n".format(key, provenance[key]))
+            flag_line = (None if eigen_converged is None else
+                         "# eigen_converged = {}\n".format(
+                             str(bool(eigen_converged)).lower()))
             if eigenvalue is not None:
                 fw.write("# Iteration eigenvalue\n")
+                if iteration_converged is not None:
+                    fw.write("# iteration_converged = {}\n".format(
+                        str(bool(iteration_converged)).lower()))
+                elif flag_line:
+                    fw.write(flag_line)
+                    if analysis_note:
+                        fw.write("# {}\n".format(analysis_note))
                 if eigenvalue_note:
                     for line in str(eigenvalue_note).splitlines():
                         fw.write("# {}\n".format(line))
                 fw.write("{:.8e}\n".format(eigenvalue))
             if eigenvalues_eig is not None:
+                if flag_line and (eigenvalue is None
+                                  or iteration_converged is not None):
+                    fw.write(flag_line)
+                    if analysis_note:
+                        fw.write("# {}\n".format(analysis_note))
+                if leading_eigenvalue is not None:
+                    lv = complex(leading_eigenvalue)
+                    fw.write("# leading_eigenvalue = {:.8e} {:.8e}\n".format(
+                        lv.real, lv.imag))
                 fw.write("# Eigenvalue analysis\n")
                 # The optional trailing `match` column is 1 when the eigenvector
                 # lies (dominantly) in the channel's parity sector (even for
@@ -7985,8 +8762,13 @@ def _so_provenance_lines(members):
 
 def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
                       eigenvectors, match, kx_array, ky_array, kz_array,
-                      sz_residual=None, provenance_members=None):
+                      sz_residual=None, provenance_members=None,
+                      eigen_converged=None):
     """The spin-orbital output schema (issue #83).
+
+    ``eigen_converged`` (bool, optional) is stored as the archive key of
+    that name: False when the gap is the last iterate of a power iteration
+    that did not converge (not an eigenvector).
 
     Writes the gap archive (:func:`_so_gap_npz_name`, default ``gap.npz``)
     and returns ``(provenance, weights, gap_comments)`` for
@@ -8051,6 +8833,8 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
             "{}={:.8e}".format(c, w[c]) for c in comps)
         record["gap"] = gap.reshape((nd, nd) + gap.shape[2:])
         record["gap_spin_weights"] = np.array([w[c] for c in comps])
+    if eigen_converged is not None:
+        record["eigen_converged"] = np.array(bool(eigen_converged))
     weights = None
     if eigenvalues is not None:
         vecs = np.stack([np.asarray(backend.to_host(v)) for v in eigenvectors])
@@ -8663,7 +9447,8 @@ def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
 
 
 def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
-                         spectral_shift=None, seed_vec=None, map_back=True):
+                         spectral_shift=None, seed_vec=None, map_back=True,
+                         info_out=None):
     """The eigenvalue analysis of the spin-orbital kernel on the
     antisymmetric coordinates of ``basis``; returns ``(vals, gaps)`` with
     the eigenvectors mapped back by ``E``, shape ``(n_ev,) + shape``,
@@ -8679,14 +9464,18 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
 
     ARPACK needs ``k < dim - 1``; when ``num_eigenvalues >= dim - 1`` the
     reduced operator (then small) is diagonalized densely instead and
-    ``min(num_eigenvalues, dim)`` eigenpairs are returned, selected as the
-    Arnoldi path selects them (largest magnitude, or largest real part with
-    a ``spectral_shift``), so no physical eigenpair is dropped at the
-    full-spectrum boundary. Only ``method = "arnoldi"`` is supported."""
+    ``min(num_eigenvalues, dim)`` eigenpairs are returned, selected by the
+    largest real part (the dense spectrum is complete), so no physical
+    eigenpair is dropped at the full-spectrum boundary. Only ``method = "arnoldi"`` is supported.
+
+    ``info_out`` (dict, optional) receives ``selection``: the criterion that
+    produced the eigenpairs (``"dense-LR"`` on the dense branch, else
+    ``_solve_leading``'s ``"LM"`` / ``"LR"`` / ``"LR_retry"``)."""
     if method != "arnoldi":
         raise ValueError(
             "[mode] enable_spin_orbital = true supports only "
             "eigenvalue_method = \"arnoldi\", got {!r}.".format(method))
+    spectral_shift = _normalize_spectral_shift(spectral_shift)
     _validate_spectral_shift(spectral_shift, method)
     red = basis.reduce(A)
     dim = basis.dim
@@ -8700,20 +9489,27 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
         dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
         vals, vecs = np.linalg.eig(dense)
         n_keep = min(max(1, int(num_eigenvalues)), dim)
-        key = -vals.real if spectral_shift is not None else -np.abs(vals)
-        sel = np.argsort(key, kind="stable")[:n_keep]
+        # the dense spectrum is complete, so select by the largest REAL part
+        # (the physical leading eigenvalue) whether or not a spectral_shift
+        # was given; a largest-magnitude cut could drop it behind repulsive
+        # modes
+        sel = np.argsort(-vals.real, kind="stable")[:n_keep]
         vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
         if seed_vec is not None:
             vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
         logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
                     "antisymmetric space; dense diagonalization, %d eigenpairs.",
                     num_eigenvalues, dim - 1, n_keep)
+        selection = "dense-LR"
     else:
         _, _, eig = _solve_leading(
             lambda: (red, dim), dim, method,
             num_eigenvalues=num_eigenvalues, sigma_shift=sigma_shift,
             spectral_shift=spectral_shift, seed_vec=seed_vec)
         vals, vecs = eig["eigenvalues"], eig["eigenvectors"]
+        selection = eig.get("selection")
+    if info_out is not None:
+        info_out["selection"] = selection
     if not map_back:
         return vals, vecs
     gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
@@ -8728,6 +9524,14 @@ def _so_check_antisymmetric_eigenpairs(vals, match):
     antisymmetric, and warn about any further pair that is not (match
     column 0). The solvers work on antisymmetric coordinates, so this fires
     only if that construction is broken."""
+    if np.size(vals) and not np.all(np.isfinite(np.asarray(vals))):
+        # the eigenvalue solver could not determine the largest real part
+        # (NaN sentinel, _solve_leading): the vectors are placeholders, not
+        # eigenvectors, and the run is reported with eigen_converged = false
+        logger.warning(
+            "spin-orbital: no eigenvalue was determined (NaN); the written gap "
+            "is a placeholder, not an eigenvector.")
+        return
     match = np.asarray(match, dtype=bool)
     if match.size and not match[0]:
         raise ValueError(
@@ -8756,6 +9560,17 @@ def calc_eliashberg(input_dict):
     ----------
     input_dict : dict
         Parsed TOML configuration dictionary.
+
+    Returns
+    -------
+    float or None
+        The reported leading eigenvalue lambda: the eigenvalue analysis' for
+        ``solver_mode = "eigenvalue"`` (the default) and ``"both"``, the power
+        iteration's for ``"iteration"``; ``NaN`` when it could not be
+        determined (``eigen_converged = false`` in the outputs; the
+        ``hwave_sc`` command then exits with status 3). The dynamic and
+        spin-orbital entries return the same quantity. (Earlier versions
+        returned None from the static path.)
     """
     # --- Parse parameters ---
     # [mode] enable_spin_orbital (issue #83): the static entry solves the
@@ -8858,7 +9673,7 @@ def calc_eliashberg(input_dict):
     gpu_required = backend.as_bool(eli_param.get("gpu_required", False))
     xp, gpu_active = backend.get_backend(use_gpu, logger, required=gpu_required)
 
-    solver_mode = eli_param.get("solver_mode", "iteration")
+    solver_mode = eli_param.get("solver_mode", DEFAULT_SOLVER_MODE)
     max_iter = eli_param.get("max_iter", 1000)
     alpha = eli_param.get("alpha", 0.5)
     tol = eli_param.get("convergence_tol", 1.0e-5)
@@ -9405,9 +10220,13 @@ def calc_eliashberg(input_dict):
     # the iteration runs on K + sigma*I and its reported eigenvalue is the
     # signed eigenvalue of K, which changes how the result must be labelled
     # below; keep it in scope for that.
-    iteration_spectral_shift = (eli_param.get("spectral_shift")
-                                if solver_mode in ("iteration", "both")
-                                else None)
+    # An absent spectral_shift means "auto" for the power iteration
+    # (_resolve_spectral_shift); "none" keeps it unshifted.
+    iteration_spectral_shift = (
+        _resolve_spectral_shift(eli_param.get("spectral_shift"), "iteration")
+        if solver_mode in ("iteration", "both") else None)
+    eigen_spectral_shift = _resolve_spectral_shift(
+        eli_param.get("spectral_shift"), "eigenvalue")
 
     # Rayleigh-validation record of a SHIFTED power iteration (empty on the
     # unshifted default path); decides whether the number written to
@@ -9448,6 +10267,16 @@ def calc_eliashberg(input_dict):
             )
         logger.info("Iteration result: eigenvalue = {:.6f}, converged = {}, n_iter = {}".format(
             eigenvalue_iter, converged, n_iter))
+        if not converged:
+            logger.warning(
+                "[eliashberg] the power iteration did not converge (%s): the "
+                "iteration eigenvalue is written as NaN with eigen_converged "
+                "= false, and the gap file holds the last iterate, NOT an "
+                "eigenvector. Use solver_mode = \"eigenvalue\" or "
+                "spectral_shift = \"auto\".",
+                "sign-alternating two-cycle: negative dominant eigenvalue"
+                if iteration_info.get("two_cycle")
+                else "after {} steps".format(n_iter))
         if spin_orbital_mode and not _so_is_antisymmetric(sigma_result):
             raise ValueError(
                 "[mode] enable_spin_orbital = true: the power iteration "
@@ -9455,27 +10284,67 @@ def calc_eliashberg(input_dict):
                 "(Delta_AB(k) = -Delta_BA(-k)) to round-off; it is not "
                 "written.")
 
+    eigen_leg_ok = True
+    eigen_leading = None
+    channel_lead = None
+    channel_lead_gap = None
+    analysis_note = None
+    sector_eigenvalues = None
+    channel_found_flag = False
     if solver_mode in ("eigenvalue", "both"):
         logger.info("=== Eigenvalue analysis ===")
         if spin_orbital_mode:
             eigenvalues_eig, eigenvectors_eig = _so_solve_eigenvalue(
                 A_so, so_basis, num_eigenvalues, eigenvalue_method,
                 sigma_shift=eli_param.get("sigma_shift"),
-                spectral_shift=eli_param.get("spectral_shift"))
+                spectral_shift=eigen_spectral_shift)
         else:
             eigenvalues_eig, eigenvectors_eig = _solve_eigenvalue(
                 Vs_q, G2, norb, Nx, Ny, Nz,
                 num_eigenvalues=num_eigenvalues,
                 method=eigenvalue_method,
                 sigma_shift=eli_param.get("sigma_shift"),
-                spectral_shift=eli_param.get("spectral_shift"),
+                spectral_shift=eigen_spectral_shift,
                 operator=kernel_operator,
             )
         # The kernel preserves parity; promote the eigenpairs whose gap has the
-        # requested channel parity (singlet even / triplet odd) so the reported
-        # leading eigenpair is the physical solution for this channel.
-        eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
-            eigenvalues_eig, eigenvectors_eig, parity_channel)
+        # requested channel parity (singlet even / triplet odd). On the
+        # non-spin-orbital path with a parity-commuting kernel the reported
+        # leader comes from a solve on the channel's parity sector and is
+        # prepended to the table as row 0 (_channel_eigenpairs,
+        # _listing_with_leader); a non-commuting kernel reports the retained
+        # eigenpair of (dominantly) the requested parity, or NaN.
+        if spin_orbital_mode:
+            eigenvalues_eig, eigenvectors_eig = _reorder_eigenpairs_by_parity(
+                eigenvalues_eig, eigenvectors_eig, parity_channel)
+        else:
+            op_static = (kernel_operator if kernel_operator is not None
+                         else _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz))
+            (eigenvalues_eig, eigenvectors_eig, channel_lead,
+             channel_lead_gap, channel_found, analysis_note,
+             sector_eigenvalues) = \
+                _channel_eigenpairs(eigenvalues_eig, eigenvectors_eig,
+                                    op_static, (norb, norb, Nx, Ny, Nz),
+                                    parity_channel, num_eigenvalues,
+                                    spectral_shift=eigen_spectral_shift)
+            channel_found_flag = bool(channel_found
+                                      and analysis_note is not None)
+            if not channel_found:
+                eigen_leg_ok = False
+            elif analysis_note is not None:
+                # a failed global solve (its NaN sentinel, placeholder
+                # vectors) lists nothing; the sector solve's leader stands
+                listed = np.isfinite(np.asarray(eigenvalues_eig))
+                if not np.all(listed):
+                    logger.warning(
+                        "The global eigen-analysis set could not be "
+                        "computed; the table lists only the '%s' leader of "
+                        "the parity-sector solve.", parity_channel)
+                    eigenvalues_eig = np.asarray(eigenvalues_eig)[listed]
+                    eigenvectors_eig = np.asarray(eigenvectors_eig)[listed]
+                eigenvalues_eig, eigenvectors_eig = _listing_with_leader(
+                    eigenvalues_eig, eigenvectors_eig, channel_lead,
+                    channel_lead_gap)
         # Flag whether each eigenvector lies (dominantly) in the channel's
         # parity sector (even for singlet, odd for triplet). _is_gap_parity is a
         # threshold test, so this is "dominantly the channel parity" rather than
@@ -9497,10 +10366,26 @@ def calc_eliashberg(input_dict):
             logger.info("  {:3d}: {:.6f} (|ev| = {:.6f}){}".format(
                 i, ev.real, abs(ev), tag))
 
-        # Use leading eigenvector as gap if no iteration result
+        # the reported leader: the channel solve on the non-spin-orbital
+        # path (_channel_eigenpairs), the leading listed eigenpair otherwise
+        if channel_lead is None:
+            channel_lead = eigenvalues_eig[0] if len(eigenvalues_eig) \
+                else complex(np.nan)
+            channel_lead_gap = eigenvectors_eig[0] if len(eigenvectors_eig) \
+                else None
+        eigen_leg_ok = bool(eigen_leg_ok and np.isfinite(channel_lead))
+        eigen_leading = (float(np.real(channel_lead)) if eigen_leg_ok
+                         else float("nan"))
+        lead_gap = (channel_lead_gap if channel_lead_gap is not None
+                    else eigenvectors_eig[0])
+        # Use the leading eigenvector as gap if no iteration result; in
+        # "both" the reported value is the eigenvalue analysis', so the gap
+        # written with it is its eigenvector too (when it was obtained)
         if sigma_result is None:
-            sigma_result = eigenvectors_eig[0]
-            eigenvalue_iter = eigenvalues_eig[0].real
+            sigma_result = lead_gap
+            eigenvalue_iter = eigen_leading
+        elif eigen_leg_ok:
+            sigma_result = lead_gap
 
     # --- Step 12b: bare-pp vs fluctuation attribution of lambda (S4.5) ---
     # Real Rayleigh quotients of the two kernel parts on the symmetrized
@@ -9538,39 +10423,35 @@ def calc_eliashberg(input_dict):
         # and -- on the iteration path -- whether that gap converged. Without
         # this the file carries two numbers (lambda_rayleigh and the iteration
         # value) that a reader cannot tell apart (review fix C1a).
+        # In "both" the written gap is the eigenvalue analysis' eigenvector
+        # when that leg succeeded, so the attribution refers to it; the
+        # iteration's semantics apply only when the iteration gap is written.
+        gap_from_eigen = (solver_mode == "both" and eigen_leg_ok)
         bond_provenance["lambda_rayleigh_solver_mode"] = solver_mode
+        if solver_mode == "both":
+            bond_provenance["lambda_rayleigh_gap_source"] = (
+                "eigenvalue analysis" if gap_from_eigen else "iteration")
         bond_provenance["lambda_rayleigh_converged"] = (
-            str(bool(converged)) if solver_mode in ("iteration", "both")
+            str(bool(eigen_leg_ok)) if gap_from_eigen
+            else str(bool(converged)) if solver_mode in ("iteration", "both")
             else "n/a")
 
-        # The iteration path returns ||A sigma||, an UNSIGNED norm. On a
-        # repulsive-dominant bond kernel the leading eigenvalue is NEGATIVE, so
-        # the power iterate flips sign every step: diff ~ 2 forever and the
-        # loop can never converge. That is structural, not a max_iter setting
-        # -- warn loudly and point at the signed quantity (review fix C1b).
-        # With a spectral_shift the iteration runs on K + sigma*I and the
-        # returned value IS the signed eigenvalue, so this warning does not
-        # apply (a mismatch there means the run simply did not converge, which
-        # is already warned about in _solve_leading).
-        if (iteration_spectral_shift is None
-                and solver_mode in ("iteration", "both")
-                and eigenvalue_iter is not None):
+        # The reported value (the iteration's SIGNED Rayleigh eigenvalue, or
+        # the eigenvalue analysis' leader in "both") must agree with the
+        # symmetrized-kernel Rayleigh quotient at the same gap.
+        reported = eigen_leading if gap_from_eigen else eigenvalue_iter
+        if (solver_mode in ("iteration", "both")
+                and reported is not None
+                and np.isfinite(reported)):
             lam_signed = attr["lambda"]
-            if (np.sign(lam_signed) != np.sign(eigenvalue_iter)
-                    or abs(lam_signed - eigenvalue_iter) > 1.0e-6):
+            if abs(lam_signed - reported) > 1.0e-6 * max(
+                    1.0, abs(lam_signed)):
                 logger.warning(
-                    "[eliashberg] solver_mode='%s' reports %.8e, which is the "
-                    "UNSIGNED norm of the power iterate (||A sigma||), NOT a "
-                    "signed eigenvalue; the signed physical quantity is "
-                    "lambda_rayleigh = %.8e (converged = %s). Iteration mode "
-                    "CANNOT converge on a repulsive-dominant bond kernel: its "
-                    "dominant eigenvalue is negative, so the iterate flips "
-                    "sign every step and the normalized difference stays "
-                    "~2 regardless of max_iter. Set [eliashberg] "
-                    "spectral_shift=\"auto\" to iterate on the shifted kernel "
-                    "K + sigma*I (the reported lambda is then signed), or use "
-                    "solver_mode=\"eigenvalue\" for the bond path.",
-                    solver_mode, eigenvalue_iter, lam_signed, bool(converged))
+                    "[eliashberg] solver_mode='%s' reports %.8e but the "
+                    "symmetrized-kernel Rayleigh quotient at the same gap is "
+                    "lambda_rayleigh = %.8e; check the convergence "
+                    "(convergence_tol) or use solver_mode=\"eigenvalue\".",
+                    solver_mode, reported, lam_signed)
 
     # --- Step 12c: opt-in bond diagnostics (S7.7 character analysis) ---
     # Additive comment lines only; off by default, so a run without the flag is
@@ -9580,50 +10461,57 @@ def calc_eliashberg(input_dict):
         _bond_diagnostics_record(
             bond_provenance, sigma_result, eigenvalues_eig,
             bond_attribution["weight"], norb,
-            kx_array, ky_array, kz_array)
+            kx_array, ky_array, kz_array,
+            sector_eigenvalues=(sector_eigenvalues if channel_found_flag
+                                else None),
+            leader_available=(eigen_leg_ok if eigenvalues_eig is not None
+                              else True))
 
     # --- Step 13: Save results ---
     # Label the iteration number in the file itself, so it can never be
     # silently confused with the signed lambda_rayleigh sitting next to it
     # (review fix C1c).
     #
-    # The note is written ONLY when it carries information, i.e. when the run
-    # opted into something that changes what the number means:
-    #   * an explicit spectral_shift -- the value is then the SIGNED eigenvalue
-    #     of K (or, if that could not be validated, a shifted iterate-norm
-    #     ESTIMATE, see below), not the historical unsigned iterate norm; or
+    # The note is written when it carries information:
+    #   * a spectral_shift (the iteration default "auto") -- the value is the
+    #     SIGNED eigenvalue of K, validated by the Rayleigh residual;
+    #   * a non-converged iteration -- the value is NaN, and the note says
+    #     why (cap, sign-alternating two-cycle, failed residual check); or
     #   * bond_channels -- eigenvalue.dat then also carries lambda_rayleigh,
     #     and the two numbers must be told apart.
-    # With both inactive the meaning is exactly the historical one and there is
-    # nothing to say, so eigenvalue.dat stays byte-for-byte the legacy file
-    # (tests/test_sc_legacy_golden.py pins this against commit 712b1a0).
+    # The "# eigen_converged = <true|false>" line is written for every run
+    # (_save_results).
     eigenvalue_note = None
-    if (solver_mode in ("iteration", "both") and eigenvalue_iter is not None
-            and (iteration_spectral_shift is not None or use_bond_channels)):
-        if iteration_spectral_shift is not None:
-            # Shifted power iteration: the value is the SIGNED eigenvalue of
-            # the original kernel only when the Rayleigh check validated it;
-            # otherwise it is an iterate-norm ESTIMATE and must be labelled as
-            # not-an-eigenvalue (see _validate_shifted_eigenvalue).
+    eigen_converged = None
+    # solver_mode = "both": eigen_converged, the returned value and the exit
+    # status follow the eigenvalue analysis; the iteration's own convergence
+    # is recorded as iteration_converged
+    iteration_converged = (bool(converged) if solver_mode == "both"
+                           and eigenvalue_iter is not None else None)
+    if solver_mode in ("iteration", "both") and eigenvalue_iter is not None:
+        eigen_converged = bool(converged)
+        if iteration_spectral_shift is not None or not eigen_converged:
+            # what the number is: the SIGNED (validated) eigenvalue of K, or
+            # NaN with the reason the iteration did not converge
             eigenvalue_note = _shifted_eigenvalue_note(
-                solver_mode, iteration_spectral_shift, converged, n_iter,
-                iteration_info)
-        else:
-            note = ("solver_mode='{}': the value below is the UNSIGNED norm of "
-                    "the power iterate (||A sigma||), not a signed eigenvalue; "
-                    "the power iteration {} after {} steps."
-                    .format(solver_mode,
-                            "converged" if converged else "did NOT converge",
-                            n_iter))
-            if bond_provenance and "lambda_rayleigh" in bond_provenance:
-                note += (" The signed physical eigenvalue of this run is "
-                         "lambda_rayleigh = {} above. Iteration mode does not "
-                         "converge for a repulsive-dominant bond kernel "
-                         "(negative dominant eigenvalue) unless you set "
-                         "[eliashberg] spectral_shift; otherwise use "
-                         "solver_mode=\"eigenvalue\"."
-                         .format(bond_provenance["lambda_rayleigh"]))
-            eigenvalue_note = note
+                solver_mode, iteration_spectral_shift, eigen_converged,
+                n_iter, iteration_info)
+        elif use_bond_channels:
+            eigenvalue_note = (
+                "solver_mode='{}': the value below is the SIGNED Rayleigh "
+                "eigenvalue of the converged power iterate ({} steps)."
+                .format(solver_mode, n_iter))
+        if use_bond_channels and bond_provenance \
+                and "lambda_rayleigh" in bond_provenance:
+            eigenvalue_note += (
+                " lambda_rayleigh = {} above is the symmetrized-kernel "
+                "Rayleigh quotient at the same gap.".format(
+                    bond_provenance["lambda_rayleigh"]))
+    if solver_mode in ("eigenvalue", "both") and eigenvalues_eig is not None:
+        # NaN when the largest-real-part solve failed on an operator too large
+        # for the dense fallback (_solve_leading), or when no eigenpair of the
+        # requested channel could be obtained (_channel_eigenpairs)
+        eigen_converged = bool(eigen_leg_ok)
 
     so_weights = None
     so_gap_comments = None
@@ -9632,7 +10520,8 @@ def calc_eliashberg(input_dict):
             output_dir, gap_file, norb_phys, sigma_result, eigenvalues_eig,
             eigenvectors_eig,
             eigenvalue_match, kx_array, ky_array, kz_array,
-            sz_residual=so_sz_residual, provenance_members=so_members)
+            sz_residual=so_sz_residual, provenance_members=so_members,
+            eigen_converged=eigen_converged)
         bond_provenance, so_weights, so_gap_comments = so_out
 
     _save_results(
@@ -9644,9 +10533,25 @@ def calc_eliashberg(input_dict):
         eigenvalue_note=eigenvalue_note,
         eigenvalue_weights=so_weights,
         gap_comments=so_gap_comments,
+        eigen_converged=eigen_converged,
+        iteration_converged=iteration_converged,
+        analysis_note=analysis_note,
+        leading_eigenvalue=(
+            (complex(channel_lead) if eigen_leg_ok
+             else complex(np.nan, np.nan))
+            if eigenvalues_eig is not None and channel_lead is not None
+            else None),
     )
 
     logger.info("=== Done ===")
+    # the reported leading eigenvalue -- the eigenvalue analysis' for
+    # solver_mode "eigenvalue" and "both", the iteration's for "iteration";
+    # NaN when it could not be determined. main() turns NaN into exit 3.
+    if eigen_leading is not None:
+        return eigen_leading
+    if eigenvalue_iter is None:
+        return None
+    return float(np.real(eigenvalue_iter))
 
 
 # ---------------------------------------------------------------------------
@@ -9682,7 +10587,17 @@ def main():
     with open(file_toml, "rb") as f:
         input_dict = tomli.load(f)
 
-    calc_eliashberg(input_dict)
+    lam = calc_eliashberg(input_dict)
+    if isinstance(lam, float) and np.isnan(lam):
+        # the outputs are written (lambda = NaN, eigen_converged = false);
+        # a script or job chain must still see that no eigenvalue exists
+        logger.error(
+            "The Eliashberg eigen-solver did not converge: no leading "
+            "eigenvalue was obtained (written as NaN with eigen_converged = "
+            "false). Use [eliashberg] solver_mode = \"eigenvalue\" or "
+            "spectral_shift = \"auto\". Exit status %d.",
+            EXIT_EIGEN_NOT_CONVERGED)
+        sys.exit(EXIT_EIGEN_NOT_CONVERGED)
 
 
 if __name__ == "__main__":

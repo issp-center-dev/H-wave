@@ -37,12 +37,24 @@ SPECTRUM_CX = [-0.5, 0.05, 0.03 + 0.6j, 0.03 - 0.6j, -0.2, -0.1]
 
 class TestArnoldiSpectralShiftSelection(unittest.TestCase):
 
-    def test_plain_lm_misses_small_positive_leading(self):
+    def test_plain_lm_set_without_the_leading_is_resolved(self):
+        """which='LM' with k=3 returns the three largest-magnitude (all
+        negative) eigenvalues; their largest real part (-0.3) is below their
+        smallest magnitude (0.3), so the LM set cannot contain the largest
+        real part and the driver re-solves for it: +0.05, not a repulsive
+        mode."""
         mk, n = _make_operator_for(SPECTRUM)
-        lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
-        # which='LM' with k=3 returns the three largest-magnitude (all negative),
-        # so the reported leading is a negative repulsive mode, NOT +0.05.
-        assert lead.real < 0.0
+        lead, _, info = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+        np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-6)
+        assert info["selection"] == "LR_retry"
+
+    def test_lm_set_that_certifies_its_leading_is_kept(self):
+        """A LM set whose largest real part is at least its smallest
+        magnitude already holds the global largest real part: no re-solve."""
+        mk, n = _make_operator_for([0.9, -0.5, 0.4, -0.1, 0.05, 0.03])
+        lead, _, info = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+        np.testing.assert_allclose(lead.real, 0.9, rtol=0, atol=1e-8)
+        assert info["selection"] == "LM"
 
     def test_spectral_shift_auto_recovers_positive_leading(self):
         mk, n = _make_operator_for(SPECTRUM)
@@ -131,11 +143,11 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
             sc._solve_eigenvalue(None, None, 1, 1, 1, 1, num_eigenvalues=3,
                                  method="subspace", spectral_shift="auto")
 
-    def test_negative_leading_warns_for_unseeded_arnoldi(self):
+    def test_uncertified_lm_set_warns_for_unseeded_arnoldi(self):
         mk, n = _make_operator_for(SPECTRUM)
         with _caplog("WARNING") as records:
             sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
-        assert any("negative" in r.message for r in records)
+        assert any("largest real part" in r.getMessage() for r in records)
 
     def test_negative_leading_no_warn_with_seed_vec(self):
         # A seed vector selects the continuation branch (here the -0.5 mode);
@@ -324,30 +336,31 @@ class TestShiftedEigenvalueValidation(unittest.TestCase):
 
     def test_insufficient_shift_never_reports_the_artefact_as_an_eigenvalue(self):
         """(a) diag(-3, -8, -5) with sigma = 1 and a short max_iter: the raw
-        quantity is the ~6 artefact, which is not an eigenvalue of K. It must be
-        labelled a shifted iterate-norm estimate, never an eigenvalue."""
+        quantity ||(K + sigma I) v|| - sigma is the ~6 artefact, which is not
+        an eigenvalue of K. A non-converged run reports NaN, never it."""
         lead, _, info = _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=3,
                                  alpha=0.0)
         assert info["converged"] is False
-        # the artefact itself (documented, not endorsed)
-        assert 5.0 < lead < 6.5
+        assert np.isnan(lead)
         assert info["eigenvalue_validated"] is False
-        assert info["eigenvalue_kind"] == "shifted-iterate-norm-estimate"
+        assert info["eigenvalue_kind"] == "not-converged"
         assert info["rayleigh_eigenvalue"] is None
-        assert info["rayleigh_residual"] > info["rayleigh_residual_tol"]
-        # ... and no eigenvalue of K is anywhere near the reported number
-        assert min(abs(lead - ev) for ev in ALL_NEGATIVE) > 1.0
 
-    def test_insufficient_shift_that_does_lock_on_reports_the_true_eigenvalue(self):
+    def test_insufficient_shift_that_locks_on_is_a_two_cycle(self):
         """Run the same insufficient shift long enough for the iterate to lock
-        onto the -8 mode: the reported number must then be that TRUE eigenvalue
-        (-8), never the 6 artefact, and the run must warn that sigma was too
-        small (the mode's shifted eigenvalue -7 is negative)."""
+        onto the -8 mode: its shifted eigenvalue -7 is negative, so the iterate
+        alternates sign -- a two-cycle, recorded and reported as NaN at
+        max_iter (no eigenvalue); the cycling mode's true eigenvalue (-8) is
+        recorded."""
         lead, _, info = _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=200,
                                  alpha=0.0)
-        np.testing.assert_allclose(lead, -8.0, rtol=0, atol=1e-6)
-        assert info["eigenvalue_validated"] is True
-        assert info["shift_sufficient"] is False
+        assert np.isnan(lead)
+        assert info["converged"] is False
+        assert info["two_cycle"] is True
+        # recorded, not stopped on: the run goes on to max_iter
+        assert info["n_iter"] == 200
+        np.testing.assert_allclose(info["cycle_eigenvalue"], -8.0, rtol=0,
+                                   atol=1e-6)
 
     def test_insufficient_shift_warns(self):
         with _caplog("WARNING", logger="hwave_sc") as records:
@@ -355,24 +368,23 @@ class TestShiftedEigenvalueValidation(unittest.TestCase):
         msgs = " ".join(r.getMessage() for r in records)
         assert "insufficient" in msgs.lower()
 
-    def test_unvalidated_shifted_run_warns_that_it_is_not_an_eigenvalue(self):
+    def test_unconverged_shifted_run_warns_that_no_eigenvalue_is_reported(self):
         with _caplog("WARNING", logger="hwave_sc") as records:
             _iterate(ALL_NEGATIVE, spectral_shift=1.0, max_iter=3, alpha=0.0)
         msgs = " ".join(r.getMessage() for r in records)
-        assert "not an eigenvalue" in msgs.lower()
+        assert "no eigenvalue is reported" in msgs.lower()
 
-    def test_unshifted_iteration_info_is_unchanged(self):
-        """The default (unshifted) path must be untouched: no Rayleigh matvec, no
-        extra keys, exactly the historical info dict.
-
-        The historical contract (commit 712b1a0, ``_solve_iteration``) is
-        ``{"converged": bool, "n_iter": int}`` and NOTHING else -- not even
-        ``spectral_shift: None``. Callers that compare or serialize this dict must
-        see the same key set they always saw when no shift was requested.
-        """
-        _, _, info = _iterate([2.0, 1.0, 0.5])
-        assert set(info) == {"converged", "n_iter"}
+    def test_unshifted_iteration_reports_the_signed_rayleigh_eigenvalue(self):
+        """The unshifted path (spectral_shift None / "none") also reports the
+        SIGNED Rayleigh eigenvalue of its converged iterate, never the iterate
+        norm, and carries no spectral_shift key."""
+        lead, _, info = _iterate([2.0, 1.0, 0.5])
+        assert info["converged"] is True
+        np.testing.assert_allclose(lead, 2.0, rtol=0, atol=1e-8)
+        np.testing.assert_allclose(info["rayleigh_eigenvalue"], 2.0, rtol=0,
+                                   atol=1e-8)
         assert "spectral_shift" not in info
+        assert info["two_cycle"] is False
 
 
 # --- the note that reaches eigenvalue.dat -----------------------------------
@@ -386,15 +398,84 @@ class TestShiftedEigenvalueNote(unittest.TestCase):
         assert "SIGNED eigenvalue" in note
         assert "converged" in note
 
-    def test_note_labels_an_unvalidated_shifted_value_as_not_an_eigenvalue(self):
+    def test_note_labels_a_non_converged_value_as_not_an_eigenvalue(self):
         info = {"eigenvalue_validated": False, "rayleigh_residual": 0.55,
-                "eigenvalue_kind": "shifted-iterate-norm-estimate"}
+                "eigenvalue_kind": "not-converged"}
         note = sc._shifted_eigenvalue_note("iteration", 1.0, False, 3, info)
         lower = note.lower()
         assert "not an eigenvalue" in lower
-        assert "estimate" in lower
+        assert "nan" in lower
+        assert "eigen_converged = false" in lower
         # (c) the non-converged status is stated too
         assert "did not converge" in lower
+
+    def test_note_names_the_two_cycle(self):
+        info = {"two_cycle": True, "cycle_eigenvalue": -1.93}
+        note = sc._shifted_eigenvalue_note("iteration", None, False, 14, info)
+        assert "two-cycle" in note
+        assert "NEGATIVE" in note
+        assert "no spectral_shift" in note
+
+
+class TestShiftedIterationIsUnmixed(unittest.TestCase):
+    """With a spectral shift (auto or explicit) the power iteration does not
+    mix the old iterate in (``alpha`` would act as a second shift); without a
+    shift ``alpha`` is applied as before."""
+
+    @staticmethod
+    def _op(seed=11, n=40):
+        rng = np.random.default_rng(seed)
+        Q, _ = np.linalg.qr(rng.standard_normal((n, n)))
+        lam = np.concatenate([[0.9, 0.8], rng.uniform(-1.5, 0.6, n - 2)])
+        M = (Q * lam) @ Q.T
+        ev = np.linalg.eigvals(M)
+
+        def mk():
+            return LinearOperator((n, n), matvec=lambda v: M @ v,
+                                  dtype=complex), n
+        init = rng.standard_normal(n) + 0j
+        return mk, n, init, float(np.max(ev.real))
+
+    def _run(self, spectral_shift, alpha):
+        mk, n, init, lead = self._op()
+        lam, _vec, info = sc._solve_leading(
+            mk, n, "iteration", init_vec=init, alpha=alpha, max_iter=5000,
+            convergence_tol=1e-9, spectral_shift=spectral_shift)
+        return lam, info, lead
+
+    def test_auto_shift_ignores_alpha(self):
+        lam_a, info_a, lead = self._run("auto", 0.5)
+        lam_0, info_0, _ = self._run("auto", 0.0)
+        self.assertTrue(info_a["converged"])
+        self.assertAlmostEqual(lam_a, lead, delta=1e-7)
+        self.assertEqual(info_a["n_iter"], info_0["n_iter"])
+        self.assertEqual(info_a["alpha_applied"], 0.0)
+
+    def test_explicit_shift_ignores_alpha(self):
+        lam_a, info_a, lead = self._run(2.0, 0.5)
+        _lam, info_0, _ = self._run(2.0, 0.0)
+        self.assertTrue(info_a["converged"])
+        self.assertAlmostEqual(lam_a, lead, delta=1e-7)
+        self.assertEqual(info_a["n_iter"], info_0["n_iter"])
+
+    def test_unshifted_iteration_keeps_alpha(self):
+        mk, n, _init, _lead = self._op()
+        d = np.array([1.0, 0.6, 0.3, 0.1] + [0.05] * 6, complex)
+
+        def mkd():
+            return LinearOperator((10, 10), matvec=lambda v: d * v,
+                                  dtype=complex), 10
+        init = np.ones(10, complex)
+        runs = {}
+        for alpha in (0.5, 0.0):
+            lam, _v, info = sc._solve_leading(
+                mkd, 10, "iteration", init_vec=init, alpha=alpha,
+                max_iter=5000, convergence_tol=1e-9, spectral_shift=None)
+            self.assertTrue(info["converged"])
+            self.assertAlmostEqual(lam, 1.0, delta=1e-7)
+            runs[alpha] = info
+        self.assertEqual(runs[0.5]["alpha_applied"], 0.5)
+        self.assertGreater(runs[0.5]["n_iter"], runs[0.0]["n_iter"])
 
 
 if __name__ == "__main__":

@@ -827,7 +827,8 @@ bond 分解頂点によるペアリング固有値
   "both"``\ を設定します。\ ``longitudinal_bond_channels = true``\ と
   ``IterationMax >= 1``\ が必要です。同じ入力ファイルの
   ``[eliashberg]``\ テーブル（省略可能）でソルバーを設定します
-  （各キーは\ ``hwave_sc``\ と全く同じデフォルト値を取ります）。
+  （各キーは\ ``hwave_sc``\ と全く同じデフォルト値を取ります。
+  ``solver_mode``\ の既定はどちらも\ ``"eigenvalue"``\ です）。
   ``pairing_type``\ はここでは拒否されます（チャネルは
   ``longitudinal_bond_pairing``\ で選択されます）。\ ``gpu`` /
   ``gpu_required`` / ``bond_channels`` / ``chi0q_mode`` / ``frequency`` /
@@ -1152,7 +1153,17 @@ green"``\ が記録されます（収束した計算では代わりに\ ``state 
 なく、SCF ループが辿っていた軌跡の診断値として扱ってください。
 ``eigenvalue_bond_<type>.dat``\ を読み込むパイプラインでは、値を
 利用する前に\ ``# scf_converged=true``\ のヘッダー行（または npz の
-``scf_converged``\ キー）を確認してください。
+``scf_converged``\ キー）を確認してください。あわせて
+``# eigen_converged=true``\ 行（\ ``eigen_converged``\ キー）も確認してください（ここでは
+空白なしで書かれ、\ ``hwave_sc``\ の静的な\ ``eigenvalue.dat``\ では空白ありで書かれる
+ので、空白に寛容な方法で比較してください）。
+``solver_mode = "iteration"``\ で収束しないべき乗反復は、固有値の代わりに
+``NaN``\ と\ ``eigen_converged = false``\ を書き出します。実行内ペアリングの既定
+``solver_mode = "eigenvalue"``\ が\ ``NaN``\ を報告するのは、密行列フォールバックには
+大きすぎる演算子で実部最大の求解に失敗したときだけです。
+以前の版で当時の実行内既定（\ ``"iteration"``\ ）を使い、ログに
+``Failed to converge``\ が出ていた結果は、斥力的オンサイトモードの符号なし2周期値
+:math:`|\lambda_-|(1-\alpha)/(1+\alpha)`\ を報告しているため、再計算してください。
 
 
 サンプル 2: 2軌道Hubbardモデル

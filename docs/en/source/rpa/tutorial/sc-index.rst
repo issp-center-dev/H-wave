@@ -148,8 +148,13 @@ The file contains the following sections:
 
 This section controls the Eliashberg solver. Key parameters:
 
-- ``solver_mode``: ``"iteration"`` (self-consistent power iteration),
-  ``"eigenvalue"`` (Arnoldi eigenvalue analysis), or ``"both"``.
+- ``solver_mode``: ``"eigenvalue"`` (Arnoldi eigenvalue analysis; the
+  default -- of ``hwave_sc`` since this version, and of the in-process FLEX
+  bond pairing step, ``[mode.param] longitudinal_bond_pairing``),
+  ``"iteration"`` (self-consistent power iteration; opt-in, to follow one
+  symmetry sector deliberately), or ``"both"``. The power iteration runs
+  with ``spectral_shift = "auto"`` unless told otherwise, and reports an
+  eigenvalue only when it converged; see :ref:`sc_eigen_convergence`.
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
   susceptibilities from a FLEX run (required for ``frequency = "dynamic"``
@@ -263,7 +268,17 @@ This section controls the Eliashberg solver. Key parameters:
   :ref:`sc_spin_orbital_dynamic`).
 - ``pairing_type``: ``"singlet"`` or ``"triplet"``. Not set in spin-orbital
   mode, where the gap is one spin-orbital matrix (see :ref:`sc_spin_orbital`).
-- ``init_gap``: Initial gap symmetry for iteration.
+- ``init_gap``: Initial gap symmetry for iteration. The power iteration
+  stays in the lattice-symmetry sector of this seed and reports the largest
+  real part *of that sector* (see :ref:`sc_eigen_convergence`): set it to
+  the form factor of the symmetry you want to follow (``"d_x2y2"`` for a
+  :math:`d_{x^2-y^2}` singlet, ``"p_x"``/``"p_y"`` for a triplet, ...), or
+  use ``solver_mode = "eigenvalue"``, which is seed-independent, when the
+  leading symmetry is not known in advance. A form factor that is itself an
+  exact eigenvector of the kernel (possible on small or highly symmetric
+  lattices) gives ``NaN`` with the iteration, because the iteration then
+  cannot search its sector (see :ref:`sc_eigen_convergence`); use another
+  form factor, ``"random"``, or the eigenvalue solver.
   Options include ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`),
   ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`), ``"random"``, etc.
   The full set of valid form factors is
@@ -277,15 +292,33 @@ This section controls the Eliashberg solver. Key parameters:
   ``"p_y"``/``"p_z"`` for the triplet channel, and ``"d_y2z2"`` — which has
   opposite-sign anti-nodes at :math:`(\pi,0)` and :math:`(0,\pi)`, unlike the
   nodal ``"d_yz"`` that vanishes there — for the in-plane :math:`d`-wave.
-- ``max_iter``: Maximum number of self-consistent iterations.
-- ``alpha``: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).
+- ``max_iter``: Maximum number of self-consistent iterations (default
+  ``1000``). A power iteration that reaches it without converging reports no
+  eigenvalue (``NaN`` with ``eigen_converged = false``, see
+  :ref:`sc_eigen_convergence`). The shifted iteration (the default
+  ``spectral_shift = "auto"``) converges more slowly when the leading
+  eigenvalue is close to the next one relative to the spectral radius; raise
+  ``max_iter`` or use ``solver_mode = "eigenvalue"`` then.
+- ``alpha``: Mixing parameter of the power iteration (0 = no mixing, 1 = full
+  mixing of old solution). It is applied only without a spectral shift
+  (``spectral_shift = "none"``). With a shift (``"auto"``, the iteration's
+  default, or a number) it is not applied: the mixing acts as a second
+  shift and only slows the run (about twice as many steps at
+  ``alpha = 0.5``).
 - ``convergence_tol``: Convergence criterion on the gap function.
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
-  On the dynamic path this now controls only how many eigenvalues are listed,
-  not which one is reported as leading: when the kernel conserves the channel's
-  even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
-  solve restricted to that sector (see ``spectral_shift`` below), whose
-  largest-real eigenvalue does not depend on ``num_eigenvalues``.
+  It controls only how many eigenvalues are listed, not which one is
+  reported as leading. On the dynamic path, when the kernel conserves the
+  channel's even-frequency sector, the leading eigenvalue is taken from a
+  symmetry-valid solve restricted to that sector (see ``spectral_shift``
+  below). On the static non-spin-orbital path, when the kernel commutes with
+  parity, it is taken from a solve on the channel's parity sector; a
+  successful sector solve prepends that leader as one row to the global
+  eigenpairs, which follow parity-reordered (channel parity first) and not
+  merged -- normally ``num_eigenvalues`` of them, fewer when the operator
+  dimension limits the count (at most the dimension minus 2), so the leader's
+  state may appear twice. In both cases the leading largest-real
+  eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
 - ``spin_free_tol``: absolute tolerance, in energy units, of the
@@ -328,16 +361,33 @@ This section controls the Eliashberg solver. Key parameters:
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain
   ``"arnoldi"`` method -- use ``spectral_shift`` there instead.
-- ``spectral_shift`` (``eigenvalue_method = "arnoldi"`` only): a positive number,
-  or ``"auto"``. The default ARPACK selection (``which='LM'``) returns the
+- ``spectral_shift`` (used by the Arnoldi eigenvalue solver,
+  ``eigenvalue_method = "arnoldi"``; and by the power iteration,
+  ``solver_mode = "iteration"`` / ``"both"``): a positive number, ``"auto"``, or
+  ``"none"``. **Default:** ``"auto"`` for the power iteration
+  (``solver_mode = "iteration"``, and the iteration leg of ``"both"``); no
+  shift for the eigenvalue solver. ``"none"`` switches the shift off for
+  both (the unshifted power iteration of earlier versions, which follows the
+  eigenvalue of largest *magnitude* and cannot converge when that eigenvalue
+  is negative). The plain ARPACK selection (``which='LM'``) returns the
   eigenvalues of largest *magnitude*; far from a pairing instability, a small
   positive (attractive) leading eigenvalue can be masked by much larger negative
-  (repulsive) eigenvalues, so the reported leading value comes out negative and
-  unphysical. Setting ``spectral_shift`` makes the solver request the eigenvalue
-  of largest *real* part (``which='LR'``; the physical SC eigenvalue,
+  (repulsive) eigenvalues. Without ``spectral_shift`` the solver checks whether
+  the returned set can contain the largest real part (its largest real part
+  must not be below its smallest magnitude) and otherwise re-solves for it
+  (``eigenvalue_selection = "LR_retry"``). Setting ``spectral_shift`` makes
+  the solver request the eigenvalue of largest *real* part directly
+  (``which='LR'``; the physical SC eigenvalue,
   :math:`\lambda \to 1` at :math:`T_c`) on the shifted operator
   :math:`A + \sigma I`; the shift is subtracted internally, so the eigenvalues
-  you receive/save are the true unshifted ones. Use ``"auto"`` to set
+  you receive/save are the true unshifted ones. In the power iteration the
+  shift moves the whole spectrum into the right half-plane so that the
+  largest-real-part eigenvalue becomes the dominant one; ``"auto"`` sets
+  :math:`\sigma = 1.05\,\rho` from a short power estimate of the spectral
+  radius :math:`\rho`. For a strongly complex spectrum (eigenvalues with
+  :math:`|\mathrm{Im}\,\lambda|` comparable to :math:`\rho`) a shift of that
+  size does not guarantee the largest real part dominates; use
+  ``solver_mode = "eigenvalue"`` there. Use ``"auto"`` to set
   :math:`\sigma` from the spectral radius automatically, or give an explicit
   positive :math:`\sigma` larger than the *absolute value* of the most negative
   eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
@@ -506,9 +556,16 @@ An eigenvalue :math:`\lambda > 1` (positive) indicates a superconducting instabi
 at the given temperature. Negative eigenvalues correspond to sign-changing gap symmetries
 but do not indicate SC instability.
 
-The eigenpairs are ordered so that those with the **channel parity** come first
-(even for singlet, odd for triplet): the leading one (index 0) is the physical
-solution and matches the self-consistent iteration result. Eigenvalues tagged
+Row 0 of the table is the reported leader of the requested channel, and it
+agrees with a converged self-consistent iteration started in the same
+symmetry. On the static non-spin-orbital path with a parity-commuting kernel
+a successful parity-sector solve (see :ref:`sc_eigen_convergence`) puts the
+reported leader in row 0 (``match`` 1), and the following rows are the same
+global eigenpairs, parity-reordered and not merged -- normally
+``num_eigenvalues`` rows, fewer when the operator dimension limits the count
+-- so the leader may appear twice; when the sector solve fails, no row is
+prepended. The global eigenpairs are listed with those of the **channel
+parity** (even for singlet, odd for triplet) first. Eigenvalues tagged
 ``[opposite-parity sector]`` belong to the other parity sector; for a given
 spin channel they are forbidden by the Pauli principle and do **not** represent
 a physical instability (see the note on parity below). The last column of
@@ -621,17 +678,347 @@ The eigenvalues of the linearized Eliashberg equation:
 .. code-block:: text
 
     # Iteration eigenvalue
+    # iteration_converged = true
+    # solver_mode='both' with spectral_shift='auto': ... (abridged)
     9.61078331e-01
+    # eigen_converged = true
+    # leading value: the largest real part of the 'singlet' parity sector, ...
+    # leading_eigenvalue = 9.61078596e-01 -3.64174908e-12
     # Eigenvalue analysis
     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
        0  9.61078596e-01 -3.64174908e-12  9.61078596e-01 1
        1  8.37896272e-01 -3.65082177e-12  8.37896272e-01 1
        ...
 
-The trailing ``match`` column is ``1`` when the eigenvector has the channel's
+(``solver_mode = "both"``: the scalar under ``# Iteration eigenvalue`` is the
+iteration's value; the reported leader is the ``# leading_eigenvalue`` line,
+i.e. row 0 of the table.) The ``# leading_eigenvalue = <Re> <Im>`` line uses
+the static file's ``key = value`` style with spaces; ``hwave_tsweep`` reads it
+first and falls back to row 0 for files without it (dynamic files, older
+outputs). The trailing ``match`` column is ``1`` when the eigenvector has the channel's
 parity (a physical singlet/triplet gap) and ``0`` for a spurious opposite-parity
 mode (see the parity note above). Older output files without this column are
-read unchanged.
+read unchanged. The ``# eigen_converged = <true|false>`` line follows the
+first header line; see :ref:`sc_eigen_convergence`.
+
+.. _sc_eigen_convergence:
+
+Eigen-solver convergence (``eigen_converged``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every solver path -- static and dynamic ``hwave_sc``, the bond entries
+(``bond_channels = true``, and the in-process FLEX pairing step), the IR
+basis and the spin-orbital solvers -- reports the leading eigenvalue under one
+contract.
+
+**What is reported.**
+
+- **The largest real part** of the kernel's spectrum (the physical pairing
+  eigenvalue, :math:`\lambda \to 1` at :math:`T_c`), not the largest
+  magnitude. The eigenvalue solver (``solver_mode = "eigenvalue"``) re-solves
+  for it when its largest-magnitude set cannot contain it
+  (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve fails (does
+  not converge, stops with another ARPACK error, or returns non-finite
+  eigenvalues) -- the first largest-magnitude solve, the shift-invert
+  preliminary or solve, or the largest-real-part (re-)solve with its auto
+  shift probe -- an operator of dimension at most 2000 is diagonalized
+  densely (``"dense-LR"``); a larger one reports ``NaN`` with
+  ``eigen_converged = false`` and ``eigenvalue_selection = "not-converged"``
+  -- the largest-magnitude value is never passed off as the leading one. The
+  scale probe of the dynamic projected channel solve has its own contract:
+  it has no dense fallback, so a failed probe reports ``NaN`` /
+  ``"not-converged"`` at any dimension; the one exception is a kernel that
+  is exactly zero (ARPACK's "starting vector is zero" error, confirmed by
+  three independent probes whose images are exactly zero), which is solved
+  as such. On
+  the static non-spin-orbital path with a parity-commuting kernel a failed
+  global solve only empties the listing: the leader still comes from the
+  parity-sector solve. A seeded run (``seed_eigenvector``) follows its continuation branch by
+  design.
+- **The requested channel** (``pairing_type``). On the static
+  non-spin-orbital path, when the kernel commutes with parity (the
+  centrosymmetric case):
+
+  *How the leader is obtained.* The reported leader and its gap always come
+  from a separate solve on the channel's parity sector, in that sector's
+  own coordinates, with the same largest-real-part rules -- whatever the
+  global eigen-analysis set holds (it may contain a channel eigenpair of
+  large magnitude but not the channel's leader). The sector solve is a
+  largest-real-part Arnoldi solve that honours ``spectral_shift``; with
+  ``eigenvalue_method = "subspace"`` or a shift-invert method, only the
+  global table uses that method.
+
+  *How it is recorded.* The leader is written as row 0 of the table of
+  ``eigenvalue.dat`` (``match`` 1) and as the machine-readable line
+  ``# leading_eigenvalue = <Re> <Im>``; the ``# leading value: ...`` comment
+  line says where it comes from. The global eigenpairs follow with their
+  ``match`` column, parity-reordered (channel parity first) and not merged:
+  normally ``num_eigenvalues`` rows, fewer when the operator dimension
+  limits the count, so the leader's state appears again when the global set
+  contains it. When the sector solve fails, no row is prepended.
+
+  When the
+  kernel does not commute with parity, the sector cannot be solved on its
+  own: the leader is the computed eigenpair that is dominantly of the
+  requested parity, or ``NaN`` with ``eigen_converged = false`` if there is
+  none -- never an opposite-parity value. The dynamic solvers select within
+  the channel as described in :ref:`sc_dynamic_channels` (an unseeded
+  eigenvalue run whose computed eigenpairs include none of the channel
+  reports ``NaN``), and the
+  spin-orbital solvers work on the antisymmetric space.
+- **A power iteration reports a value only when it converged.** The value is
+  the *signed* Rayleigh quotient
+  :math:`\langle\phi|K\phi\rangle/\langle\phi|\phi\rangle` of the converged
+  iterate (validated by its residual), equal to the eigenvalue solver's
+  result to the iteration's tolerance -- never the unsigned norm of the
+  iterate. The stopping rule takes the contraction rate into account: the
+  remaining distance to the fixed point is estimated as
+  ``diff / (1 - rate)`` from the last few iterate differences, and the run
+  stops only when that estimate is below ``convergence_tol`` (a difference
+  that is not shrinking -- a slow drift -- never stops it). A residual
+  check scaled by the kernel's spectral radius, not by the value being
+  checked, rejects Rayleigh values that are not eigenvalues; a value beyond
+  the spectral radius is never reported.
+- **The initial gap must be able to search its sector.** If ``init_gap``
+  (after the channel's parity projection) is an exact eigenvector of the
+  kernel (residual below ``1e-8`` of the spectral radius) or is annihilated
+  by it, the power iteration can never leave that mode and cannot tell
+  whether another mode of the same symmetry has a larger real part. It is
+  not perturbed (a perturbation would leave the lattice-symmetry sector of
+  ``init_gap``); the run reports ``NaN`` with ``eigen_converged = false``
+  and the WARNING "the initial gap is an eigenvector of the kernel
+  (lambda = ...); the power iteration cannot search its symmetry sector".
+  Use ``solver_mode = "eigenvalue"`` or a different ``init_gap`` (one that
+  mixes several modes of the symmetry, e.g. ``"random"``, or a form factor
+  that is not an exact eigenvector). A converged vector that the kernel
+  annihilates is not a pairing eigenvalue either and is reported as ``NaN``.
+- **When the power iteration does not converge** -- it reached ``max_iter``,
+  or the converged vector failed the residual check -- the eigenvalue is
+  written as ``NaN`` and ``eigen_converged = false`` is recorded. Where it
+  is recorded:
+
+  * static ``eigenvalue.dat``: the line ``# eigen_converged = false`` (with
+    spaces around ``=``);
+  * dynamic ``eigenvalue.dat`` (on-site, bond and spin-orbital) and the
+    in-process ``eigenvalue_bond_<type>.dat``: the line
+    ``# eigen_converged=false`` (no spaces), and the token
+    ``eigen_converged=false`` in the first line of the dynamic ``gap.dat``;
+  * the npz key ``eigen_converged`` of ``gap_dynamic.npz``,
+    ``eliashberg_bond_<type>.npz`` and the spin-orbital ``gap.npz``;
+  * the in-process FLEX pairing step: ``pairing_<type>_eigen_converged``
+    next to ``pairing_<type>_eigenvalue``.
+
+  A converged run records ``true`` in the same places. Because the static
+  and dynamic text files differ in spacing, test the line with a
+  whitespace-tolerant check: take the text after ``eigen_converged``, strip
+  ``=`` and blanks, and compare with ``true``/``false``.
+- **What the WARNING and the written gap mean.** The WARNING states why no
+  value was reported, and a comment line in ``eigenvalue.dat`` repeats it.
+  The gap written with a ``NaN`` is the last iterate and **not an
+  eigenvector**. When ``max_iter`` ran out while the iterate was still
+  converging, the WARNING gives the estimated number of steps needed (from
+  the observed convergence rate); when it was not converging at all, it says
+  so -- a leading eigenvalue that is itself complex (a complex-conjugate
+  pair) can never be reached by a power iteration, and ends in ``NaN`` at
+  ``max_iter`` whatever its value. If the iterate was then in a
+  sign-alternating two-cycle, the WARNING says so: the dominant eigenvalue of
+  the iterated operator is negative. This only happens without a sufficient
+  shift (``spectral_shift = "none"`` or a small explicit one); the run is
+  not stopped early on it, because a tiny component of a positive dominant
+  mode may still be growing. Use ``solver_mode = "eigenvalue"`` in these
+  cases.
+
+**Defaults and why.** ``hwave_sc`` and the in-process FLEX bond pairing
+step both default to ``solver_mode = "eigenvalue"`` (``hwave_sc``'s default
+was ``"iteration"`` before this version). The ARPACK solver searches the
+whole spectrum for the largest real part and needs no shift, no seed and no
+iteration budget. The power iteration is kept as an opt-in. When used, it
+runs with ``spectral_shift = "auto"`` by default: without a shift it follows
+the eigenvalue of largest *magnitude*, which for a repulsive interaction is
+a negative mode, so it either never converges or converges to the wrong
+mode. The shift :math:`\sigma \approx 1.05\,\rho` (:math:`\rho` the
+spectral radius) makes the largest real part dominant, at the cost of a
+slower iteration when the leading eigenvalue is close to the next one
+compared with :math:`\rho` (roughly
+:math:`(\lambda_1+\sigma)/(\lambda_1-\lambda_2)\,\ln(1/\mathrm{tol})` steps;
+``alpha`` is not applied on top of a shift).
+
+**What the power iteration guarantees.** A value it reports with
+``eigen_converged = true`` is the largest real part of the kernel *within
+the symmetry sector of its initial gap*, to the stated tolerance -- except
+when a mode with a larger real part is present in the seed only at a tiny
+level and grows slowly (a small gap, a large shift, or a strongly
+non-normal kernel): no finite number of steps can exclude such a
+component. The way to hit this is a seed that is already close to an
+eigenvector of a *non-leading* mode (but not an exact one): on randomized
+test kernels, 4--6 % of the runs started from such near-eigenvector seeds
+(residuals between 1e-10 and 1e-1) converged to the seed's mode instead of
+the largest real part at ``convergence_tol = 1e-5`` (8--9 % at ``1e-3``).
+Near-eigenvector seeds of a non-leading mode are the main risk; from generic
+seeds a wrong value is rare and limited to a nearly degenerate pair or a
+slowly growing component -- for example the second member of a nearly
+degenerate pair, within about ``10 * convergence_tol`` of the leader.
+Whenever the iteration cannot certify its value by the rules above (exact
+eigenvector seed, no convergence by ``max_iter``, failed residual check), it
+reports ``NaN``.
+
+**Iteration or eigenvalue solver?** Use ``solver_mode = "eigenvalue"`` (the
+default) for production values of :math:`\lambda` and for :math:`T_c` scans
+(``hwave_tsweep`` requires it). It searches the whole spectrum. The power
+iteration finds the largest real part **only within the symmetry sector of
+its initial gap** (``init_gap``): a mode of another lattice symmetry is never
+reached from that seed, and an ``init_gap`` that is itself an eigenvector
+gives ``NaN`` (see above). Example: on the static test model of
+``tests/sc/legacy_golden`` -- one orbital on a 4x4 square lattice with
+nearest-neighbour hopping 1 and a diagonal hopping 0.5 along (1, 1), on-site
+``U = 4``, half filling, ``T = 1``, ``Nmat = 128``, singlet channel -- the
+default ``init_gap = "cos"`` makes the iteration converge to 0.17551, while
+the eigenvalue solver reports 0.23771, the singlet leader of another lattice
+symmetry. Use the iteration to follow one symmetry deliberately: set
+``init_gap`` to that symmetry's form factor (``"d_x2y2"``, ``"p_x"``, ...;
+see ``init_gap`` above), and check its result against ``solver_mode =
+"both"`` or ``"eigenvalue"`` once. Only the channel parity is re-projected
+at every step; for a kernel with the lattice's point-group symmetry, the
+point-group symmetry of ``init_gap`` is also preserved in exact arithmetic,
+but round-off can seed another irreducible representation, which then grows
+if its eigenvalue is larger. In practice the seed's symmetry decides: on a
+two-orbital 32x32 model
+the default s-like seed (``"cos"``) has no overlap with the
+:math:`d_{x^2-y^2}`-like singlet leader 36.82, so the iteration converged to
+34.108, the second eigenvalue of the even (singlet) parity; started from
+``init_gap = "d_x2y2"`` it gives 36.82.
+
+**Exit status.** The ``hwave_sc`` command exits with status ``3`` when the
+reported leading eigenvalue is ``NaN`` -- after writing every output. One
+``hwave_sc`` run solves exactly one pairing channel (``pairing_type``), so
+the status refers to that channel. With the default ``solver_mode =
+"eigenvalue"`` the status is ``3`` only when an ARPACK solve (the first
+largest-magnitude solve or the largest-real-part solve) failed on an
+operator too large for the dense fallback, or no eigenpair of the channel
+could be obtained (for the dynamic solver: no computed eigenpair of the
+channel, ``sector_selection = "none"``, in an unseeded run). With
+``solver_mode = "iteration"`` it is
+``3`` whenever the iteration could not certify a value. With ``solver_mode
+= "both"`` the reported value, ``eigen_converged`` and the exit status
+follow the eigenvalue analysis (its leading eigenvector is the written
+gap); the iteration's own verdict is recorded as ``# iteration_converged =
+<true|false>`` in its block, and a non-converged iteration alone does not
+change the exit status. ``hwave_tsweep`` treats a rung whose leading
+eigenvalue is ``NaN`` (or that records ``eigen_converged = false``) as an
+Eliashberg error and does not chain its gap as the next rung's seed. To
+solve singlet and triplet, run ``hwave_sc`` once per channel and test each
+status. The ``hwave`` command of a FLEX run with the in-process pairing step
+keeps exit status ``0`` whatever the pairing result -- the FLEX results are
+valid -- even when one or both requested channels
+(``longitudinal_bond_pairing = "both"``) did not converge: each channel then
+records its own ``eigen_converged`` and logs its WARNING, and a pipeline
+must test ``eigen_converged`` per channel.
+
+**Blocks of the static** ``eigenvalue.dat`` **per solver_mode** (as written
+by this version):
+
+- ``"eigenvalue"`` (the default): ``# Iteration eigenvalue`` (kept for
+  compatibility; the value under it is the eigenvalue analysis' leader),
+  ``# eigen_converged = ...``, on the static non-spin-orbital path a
+  ``# leading value: ...`` line naming the channel's parity-sector solve,
+  the value (the leader from the eigenvalue analysis), ``# leading_eigenvalue = <Re> <Im>``, then
+  ``# Eigenvalue analysis`` and the spectrum table (row 0 = the leader).
+- ``"iteration"``: ``# Iteration eigenvalue``, ``# eigen_converged = ...``,
+  comment lines describing the value (shift, convergence), the value. No
+  spectrum table.
+- ``"both"``: ``# Iteration eigenvalue``, ``# iteration_converged = ...``,
+  the iteration's comment lines and value, then ``# eigen_converged = ...``
+  (the eigenvalue analysis'), the ``# leading value: ...`` line,
+  ``# leading_eigenvalue = <Re> <Im>``, ``# Eigenvalue analysis`` and the
+  spectrum table (row 0 = the leader). With bond channels, the
+  ``lambda_rayleigh_gap_source`` provenance line says which gap
+  ``lambda_rayleigh`` was evaluated at.
+
+The dynamic ``eigenvalue.dat`` files (on-site, bond, spin-orbital) and
+``eigenvalue_bond_<type>.dat`` have one layout for every solver_mode:
+``# Dynamic Eliashberg leading eigenvalue``, ``# eigen_converged=...``,
+further ``#`` header and comment lines, the leading value, and the spectrum
+table only for the eigenvalue solver.
+
+.. important::
+
+   **Migration and default changes**
+
+   Earlier versions reported the *unsigned norm* of the last power iterate as
+   the eigenvalue even when the iteration did not converge. On a
+   repulsive-dominant kernel -- the singlet channel of the repulsive Hubbard
+   model, whose largest-magnitude eigenvalue is a negative on-site s-wave
+   mode -- the unshifted damped iteration falls into a sign-alternating
+   two-cycle and wrote :math:`|\lambda_-|\,(1-\alpha)/(1+\alpha)` (one third
+   of the negative mode's magnitude at the default ``alpha = 0.5``) with the
+   repulsive mode as the gap.
+
+   **Affected results.** Runs with ``solver_mode = "iteration"`` -- before
+   this version the default of ``hwave_sc`` and of the in-process FLEX bond
+   pairing step, so every input without an explicit ``solver_mode`` -- and
+   no ``spectral_shift``. Indicators in old output files: no
+   ``eigen_converged`` entry at all (every output written before this
+   version); a log line ``Failed to converge after N iterations`` (with
+   ``N = max_iter``); a gap whose on-site (``R = 0``) component is large and
+   does not decay at high Matsubara frequency, or whose sign pattern is that
+   of the repulsive s-wave mode; and a value close to one third of the
+   magnitude of the most negative eigenvalue (compare with an ``solver_mode
+   = "eigenvalue"`` run with ``num_eigenvalues`` large enough to list it).
+   Results from ``solver_mode = "eigenvalue"`` (or ``"both"``, whose
+   eigenvalue block is independent) are unaffected.
+
+   **What to rerun.** The ``hwave_sc`` step (or, for the in-process step,
+   the FLEX run with its ``[eliashberg]`` table) with ``solver_mode =
+   "eigenvalue"`` -- now the default, so rerunning an input that does not
+   set ``solver_mode`` is enough. The FLEX outputs themselves are not
+   affected and can be reused through ``hwave_sc`` (``bond_channels = true``
+   with ``frequency = "dynamic"`` for the bond kernel).
+
+   **Default change.** ``hwave_sc``'s default ``solver_mode`` is now
+   ``"eigenvalue"``. An input that relied on the old default and wants the
+   power iteration (to follow one symmetry from its ``init_gap``) must set
+   ``solver_mode = "iteration"`` explicitly. The static ``eigenvalue.dat``
+   keeps its ``# Iteration eigenvalue`` header line under every solver_mode
+   (see the block list above), so a script that reads the first value after
+   it keeps working; with the eigenvalue solver that value is now the
+   eigenvalue analysis' leader, and the ``# Eigenvalue analysis`` table
+   follows.
+
+   **Exit status 3.** ``hwave_sc`` now exits with status ``3`` when no
+   leading eigenvalue was obtained (see "Exit status" above); job scripts
+   that treat any non-zero status as a crash should check the written
+   outputs first.
+
+   **Mixing with a spectral shift.** ``alpha`` is no longer applied when a
+   spectral shift is active, including the power iteration's default
+   ``spectral_shift = "auto"``: the mixing only slowed the shifted iteration
+   (about twice as many steps). To get the ``alpha`` damping, set
+   ``spectral_shift = "none"``.
+
+   **Static table layout.** On the static non-spin-orbital path with a
+   parity-commuting kernel, the ``# Eigenvalue analysis`` table of
+   ``eigenvalue.dat`` starts with one extra row: row 0 is the reported
+   leader (``match`` 1), followed by the same global eigenpairs,
+   parity-reordered (channel parity first) and not merged -- normally
+   ``num_eigenvalues + 1`` rows in all, fewer when the operator dimension
+   limits the count -- so the leader may appear twice. Scripts that
+   assumed ``num_eigenvalues`` rows, or that row 0 is the first global
+   eigenpair, should read ``# leading_eigenvalue`` instead.
+
+   **Dynamic eigenvalue solver without a channel eigenpair.** Earlier
+   versions could report a value that is not a channel eigenvalue as the
+   leading eigenvalue of the dynamic eigenvalue solver when no computed
+   eigenpair passed the requested channel match (``sector_selection =
+   "none"``). Such a run now reports ``NaN`` with ``eigen_converged = false``
+   (unless seeded), and ``hwave_sc`` exits with status ``3``. Increase
+   ``num_eigenvalues``, or check that the kernel conserves the channel's
+   parity -- more eigenvalues do not help a parity-mixing kernel (see
+   :ref:`sc_dynamic_channels`).
+
+   **Python API.** ``hwave.sc.calc_eliashberg`` now returns the reported
+   leading eigenvalue on the static path as well (it returned ``None``
+   there before). The value can be ``NaN``: test it with ``math.isnan`` or
+   ``numpy.isnan``, not by truthiness or ``is None``.
 
 
 Physical interpretation
@@ -831,7 +1218,11 @@ mode writes:
    - ``T``: temperature.
    - ``pairing_type``: ``"singlet"`` or ``"triplet"``.
    - ``frequency``: ``"dynamic"``.
-   - ``eigenvalue``: the leading :math:`\lambda`.
+   - ``eigenvalue``: the leading :math:`\lambda` (``NaN`` when
+     ``eigen_converged`` is false).
+   - ``eigen_converged``: ``True`` when the eigen-solver converged; ``False``
+     when a power iteration did not (the eigenvalue is ``NaN`` and ``gap`` is
+     the last iterate, not an eigenvector). See :ref:`sc_eigen_convergence`.
    - ``axis_order``: ``"(orb1, orb2, kx, ky, kz, iomega)"``.
    - ``normalization``: the gauge convention -- the gap is L2-normalized over
      all components and its largest-magnitude component is rotated
@@ -856,7 +1247,8 @@ mode writes:
      ``"LM"`` (plain ``arnoldi``, largest magnitude), ``"LR"`` (``spectral_shift``
      set by the user, largest real part), ``"LR_retry"`` (the automatic
      largest-real re-solve when an unprojected ``"LM"`` set held no positive
-     channel eigenvalue), ``"dense-LR"`` (the tiny-operator dense largest-real
+     channel eigenvalue, or could not contain the largest real part),
+     ``"dense-LR"`` (the tiny-operator dense largest-real
      path), ``"shift-invert"``, or ``"iteration"`` (the power iteration). Also
      written as the ``# eigenvalue_selection: ...`` header line of
      ``eigenvalue.dat``.
@@ -866,7 +1258,8 @@ mode writes:
    frequency (index ``Nmat//2``), in the same column layout as the static
    ``gap.dat`` (``kx ky kz`` then ``Re``/``Im`` per orbital pair). Its first
    line is a ``#``-prefixed header carrying ``frequency=dynamic`` together with
-   the slice index and its :math:`\omega_n`.
+   the slice index and its :math:`\omega_n`, the eigenvalue and
+   ``eigen_converged=<true|false>``.
 
 Channel-parity selection
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -952,8 +1345,18 @@ the requested channel, and the weights say what it is instead.
    that sector (``sector_selection = "channel"``, issue #202); otherwise the
    computed eigenpairs are ordered, preferring the channel's even-frequency
    sector and falling back to its combined-parity sector only if no eigenpair
-   lies in it. There ``sector_selection`` names the stage that matched, which is
-   also what the ``match`` column of ``eigenvalue.dat`` is labelled with.
+   lies in it. For the eigenvalue solver, ``sector_selection`` records the
+   stage that matched, which also labels the ``match`` column of
+   ``eigenvalue.dat``. When no computed eigenpair passed the requested channel
+   match, even-frequency or combined-parity (``sector_selection = "none"``),
+   either all retained eigenpairs are of the other channel or the kernel
+   mixes parity, and no channel-certified leader exists: an unseeded run
+   reports ``NaN`` with ``eigen_converged = false`` (exit status ``3``) and a
+   WARNING naming the cause. Increase ``num_eigenvalues``, or check that the
+   kernel conserves the channel's parity (more eigenvalues do not help a
+   parity-mixing kernel). A seeded continuation (``seed_eigenvector``)
+   keeps the value of the branch it follows, with a WARNING that this value is
+   not certified for the channel.
 
 .. note::
 
@@ -1637,7 +2040,11 @@ each off-site row acts on the bond it was declared on.
   ``bond_memory_cap_gb`` (default 8 GB on this path) caps the estimated
   peak memory.
   ``bond_diagnostics = true`` adds the character analysis of the leading
-  state to ``eigenvalue.dat``. ``bond_precondition_atol`` /
+  state to ``eigenvalue.dat``; its degeneracy
+  (``bond_diagnostics_leading_cluster``) is read off the spectrum of the
+  channel's parity-sector solve when the leader came from it
+  (``bond_diagnostics_leading_cluster_source``), and is ``n/a`` when no
+  leader was obtained. ``bond_precondition_atol`` /
   ``bond_precondition_rtol`` / ``bond_precondition_dense_limit`` tune the
   Hermiticity check of the kernel.
 - **Outputs.** ``eigenvalue.dat`` carries the bond provenance (number of
@@ -2364,12 +2771,16 @@ Practical advice
   projection" above), whose dimension is about half of
   :math:`(2N)^2 N_k`; at most that many eigenvalues exist, and a
   ``num_eigenvalues`` at or above it returns all of them (the small reduced
-  operator is then diagonalized densely). Without ``spectral_shift`` the
-  Arnoldi solver selects by magnitude, so large repulsive (negative)
-  eigenvalues can mask the physical leading one: in the SU(2)-limit test
-  model ``num_eigenvalues = 4`` missed it and ``8`` found it. Request
-  enough eigenvalues, or set ``spectral_shift = "auto"`` (largest real
-  part), which found it already with ``num_eigenvalues = 1``.
+  operator is then diagonalized densely, keeping the eigenvalues of largest
+  real part). Without ``spectral_shift`` the Arnoldi solver selects by
+  magnitude, so large repulsive (negative) eigenvalues can mask the
+  physical leading one; when the returned set cannot contain the largest
+  real part (its largest real part is below its smallest magnitude) the
+  solver re-solves for it (:ref:`sc_eigen_convergence`). A set that holds
+  a positive eigenvalue above that bound is kept, so in the SU(2)-limit
+  test model ``num_eigenvalues = 4`` could still miss it where ``8`` found
+  it; ``spectral_shift = "auto"`` (largest real part) found it already
+  with ``num_eigenvalues = 1``.
 - The default ``init_gap = "cos"`` seed is singlet-structured
   (:math:`\phi(\mathbf{k}) \otimes i\sigma_y`). In a centrosymmetric model
   the power iteration cannot leave the parity sector of its seed, so it
@@ -2630,11 +3041,18 @@ spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
 **Largest-magnitude selection.** Without ``spectral_shift`` the Arnoldi
 solver selects the ``num_eigenvalues`` eigenvalues of largest magnitude. The
 repulsive (negative) dynamic eigenvalues grow with ``Nmat`` and can fill that
-set. As in the non-spin-orbital dynamic solver, when the leading eigenvalue
-of that set is negative (and no seed is given), the solver re-solves once
-with ``spectral_shift = "auto"`` (largest real part), logs a WARNING, writes
-``eigenvalue_selection: LR_retry`` and a note in ``eigenvalue.dat``. Set
-``spectral_shift = "auto"`` yourself to avoid the extra solve.
+set. As in the non-spin-orbital dynamic solver, when that set cannot contain
+the largest real part (its largest real part is below its smallest
+magnitude; in particular when its leading eigenvalue is negative) and no
+seed is given, the solver re-solves once with ``spectral_shift = "auto"``
+(largest real part), logs a WARNING, writes ``eigenvalue_selection:
+LR_retry`` and a note in ``eigenvalue.dat``. Set ``spectral_shift = "auto"``
+yourself to avoid the extra solve. When ``num_eigenvalues`` reaches the
+dimension of the antisymmetric space minus one, the reduced operator is
+diagonalized densely and the eigenvalues of largest real part are kept
+(``eigenvalue_selection: dense-LR``). The power iteration follows
+:ref:`sc_eigen_convergence` (``eigen_converged`` in ``eigenvalue.dat`` and
+``gap_dynamic.npz``).
 
 ``pauli_leakage`` measures how far the kernel maps antisymmetric gaps out of
 the antisymmetric space. It is the largest

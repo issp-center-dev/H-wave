@@ -393,15 +393,24 @@ of the pairing step never costs the FLEX results:
   it did not: the pairing step still runs on a non-converged FLEX solve
   (the cost is sunk), and this label, together with
   ``scf_converged = false``, marks the result as a diagnostic of the SCF
-  trajectory rather than a self-consistent pairing eigenvalue.
+  trajectory rather than a self-consistent pairing eigenvalue. Like every
+  dynamic gap archive it also carries ``eigen_converged``: ``False`` when a
+  power iteration (``solver_mode = "iteration"``) did not converge -- the
+  ``eigenvalue`` is then ``NaN`` and ``gap`` is the last iterate, not an
+  eigenvector.
 - ``gap_bond_<type>.dat`` is the same single-frequency text slice as
   ``gap.dat``.
 - ``eigenvalue_bond_<type>.dat`` is the same format as ``eigenvalue.dat``,
-  with header lines ``# bond_channels=true``,
+  with header lines ``# eigen_converged=<true|false>``,
+  ``# bond_channels=true``,
   ``# scf_converged=<true|false>``, ``# state=<...>``,
   ``# residency=<...>``, when computed ``# parity_leakage=<...>``, and the
   ``# gap_sector_weights ...`` / ``# sector_selection=...`` lines
-  described above.
+  described above. ``# eigen_converged=<true|false>`` has no spaces around
+  ``=``, while the static ``eigenvalue.dat`` writes
+  ``# eigen_converged = true``; a pipeline should test it
+  whitespace-tolerantly (take the text after ``eigen_converged``, strip
+  ``=`` and blanks).
 
 A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
 an eigensolver failure, a write failure) writes none of its three files;

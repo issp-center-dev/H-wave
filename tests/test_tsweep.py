@@ -77,14 +77,14 @@ def test_preflight_ok():
 
 
 def test_preflight_requires_eigenvalue_solver_mode():
-    # default solver_mode "iteration" writes no parity/index-0 block -> reject
+    # solver_mode "iteration" writes no parity/index-0 block -> reject
     base = _valid_base()
     base["eliashberg"]["solver_mode"] = "iteration"
     with pytest.raises(ValueError, match="solver_mode"):
         ts.preflight(base, {"run_eliashberg": True})
-    del base["eliashberg"]["solver_mode"]            # absent -> defaults iteration
-    with pytest.raises(ValueError, match="solver_mode"):
-        ts.preflight(base, {"run_eliashberg": True})
+    # absent -> the hwave_sc default, "eigenvalue": accepted
+    del base["eliashberg"]["solver_mode"]
+    ts.preflight(base, {"run_eliashberg": True})
     # FLEX-only ladders are unaffected
     ts.preflight(base, {"run_eliashberg": False})
 
@@ -277,6 +277,30 @@ def test_run_chains_seeds(monkeypatch, tmp_path):
     assert os.path.isabs(seed1) and "000_T0.01" in seed1 and seed1.endswith("gap_dynamic.npz")
     # summary file written under absolute output_dir
     assert os.path.exists(os.path.join(tmp_path, "sweep", "lambda_vs_T.dat"))
+
+
+def test_run_nan_leading_eigenpair_is_an_error_and_not_chained(monkeypatch,
+                                                             tmp_path):
+    """A NaN leading eigenpair (eigen_converged = false) is not a result: the
+    rung is an Eliashberg error and its placeholder gap is not chained as the
+    next rung's seed_eigenvector."""
+    calls = _install_fake_solvers(monkeypatch, tmp_path)
+    import hwave.sc as sc_mod
+    fake = sc_mod.calc_eliashberg
+
+    def nan_at_second(input_dict):
+        fake(input_dict)
+        if abs(input_dict["mode"]["param"]["T"] - 0.008) < 1e-12:
+            out = input_dict["file"]["output"]["path_to_output"]
+            with open(os.path.join(out, "eigenvalue.dat"), "w") as fw:
+                fw.write("# eigen_converged=false\n"
+                         "# index Re Im |ev| match\n0 nan nan nan 1\n")
+    monkeypatch.setattr("hwave.sc.calc_eliashberg", nan_at_second)
+    base = _cont_base(tmp_path, [0.01, 0.008, 0.006])
+    rows = ts.run(base, base_dir=str(tmp_path), keep_going=True)
+    assert [r["status"] for r in rows] == ["ok", "error", "ok"]
+    assert rows[1]["error_stage"] == "eliashberg"
+    assert "seed_eigenvector" not in calls["eli"][2]["eliashberg"]
 
 
 def test_run_error_stops_chain(monkeypatch, tmp_path):
