@@ -8,6 +8,8 @@ from unittest import mock
 import numpy as np
 
 from hwave.solver import fingerprint as fp
+from hwave.solver.so_records import compile_interaction
+from tests.so_bond_oracles import COMPILER_TABLES, closed_row
 
 try:
     import cupy
@@ -56,6 +58,45 @@ def _ref_array_digest(component, a):
     flat = a.reshape(-1)
     parts.append(b"".join(_c(z) for z in flat))
     return _ref_digest(component, parts)
+
+
+def _ref_header(component, version):
+    return _s("hwave-fp") + _i(version) + _s(component)
+
+
+def _ref_records_digest(records, version):
+    rows = sorted(
+        (str(r["type"]).encode("utf-8"), tuple(int(x) for x in r["modes"]),
+         tuple(int(x) for x in np.asarray(r["cells"]).reshape(-1)), complex(r["v"]))
+        for r in records)
+    h = hashlib.sha256()
+    h.update(_ref_header("interaction", version))
+    h.update(_i(len(rows)))
+    for ty, m, c, v in rows:
+        h.update(_s(ty.decode("utf-8")) + b"".join(_i(x) for x in m + c) + _c(v))
+    return h.hexdigest()
+
+
+def _ref_topology_digest(rows, version):
+    rows = sorted(tuple(int(x) for x in r) for r in np.asarray(rows).reshape(-1, 3))
+    h = hashlib.sha256()
+    h.update(_ref_header("topology", version))
+    h.update(_i(len(rows)))
+    for r in rows:
+        h.update(b"".join(_i(x) for x in r))
+    return h.hexdigest()
+
+
+def _plus_zero(r):
+    r = r.copy()
+    r["v"][0] = complex(r["v"][0].real + 0.0, r["v"][0].imag + 0.0)
+    return r
+
+
+def _plus_zero_shell(tables):
+    t = {k: dict(v) for k, v in tables.items()}
+    t["CoulombInter"].update(closed_row(3, 0, 1, 0.0))
+    return t
 
 
 def _rand(shape, seed=0):
@@ -264,6 +305,78 @@ class TestDigests(unittest.TestCase):
         g = _rand((1, 8, 6, 4, 4))
         self.assertEqual(fp.green_digest(cupy.asarray(g), "b_f_k_o_o_v1"),
                          fp.green_digest(g, "b_f_k_o_o_v1"))
+
+
+class TestInteractionDigests(unittest.TestCase):
+    def test_goldens(self):
+        c = compile_interaction(COMPILER_TABLES, 2)
+        self.assertEqual(fp.interaction_digest(c.records), _ref_records_digest(c.records, 2))
+        self.assertEqual(fp.topology_digest(c.declared_topology),
+                         _ref_topology_digest(c.declared_topology, 2))
+
+    def test_pure_array_golden(self):
+        from hwave.solver.so_records import RECORD_DTYPE
+        r = np.zeros(2, dtype=RECORD_DTYPE)
+        r["type"] = ["Hund", "CoulombIntra"]
+        r["modes"] = [[0, 1, 1, 0], [1, 1, 1, 1]]
+        r["cells"][0, 1] = [1, 0, 0]
+        r["v"] = [0.5 - 0.25j, 2.0]
+        self.assertEqual(fp.interaction_digest(r), _ref_records_digest(r, 2))
+        self.assertEqual(fp.topology_digest(np.array([[1, 0, 0], [-1, 0, 0], [0, 0, 0]])),
+                         _ref_topology_digest([[-1, 0, 0], [0, 0, 0], [1, 0, 0]], 2))
+
+    def test_order_and_unsorted_input(self):
+        c = compile_interaction(COMPILER_TABLES, 2)
+        self.assertEqual(fp.interaction_digest(c.records[::-1]), fp.interaction_digest(c.records))
+        rev = c.declared_topology[::-1].copy()
+        self.assertEqual(fp.topology_digest(rev), fp.topology_digest(c.declared_topology))
+
+    def test_shuffled_permutation(self):
+        c = compile_interaction(COMPILER_TABLES, 2)
+        rng = np.random.default_rng(1107)
+        pr = rng.permutation(len(c.records))
+        pt = rng.permutation(len(c.declared_topology))
+        self.assertFalse((pr == np.arange(len(pr))).all())
+        self.assertEqual(fp.interaction_digest(c.records[pr]), fp.interaction_digest(c.records))
+        self.assertEqual(fp.topology_digest(c.declared_topology[pt]),
+                         fp.topology_digest(c.declared_topology))
+
+    def test_signed_zero_against_reference(self):
+        c = compile_interaction(COMPILER_TABLES, 2)
+        for part in ("real", "imag"):
+            r = c.records.copy()
+            z = r["v"][0]
+            r["v"][0] = complex(-0.0, z.imag) if part == "real" else complex(z.real, -0.0)
+            self.assertTrue(np.signbit(getattr(r["v"][0], part)))
+            self.assertEqual(fp.interaction_digest(r), _ref_records_digest(r, 2))
+            self.assertEqual(fp.interaction_digest(r), fp.interaction_digest(_plus_zero(r)))
+
+    def test_non_finite_message_and_version(self):
+        c = compile_interaction(COMPILER_TABLES, 2)
+        self.assertNotEqual(fp.interaction_digest(c.records), _ref_records_digest(c.records, 1))
+        for bad_value in (complex(np.nan, 0.0), complex(np.inf, 0.0), complex(-np.inf, 0.0),
+                          complex(0.0, np.nan), complex(0.0, np.inf), complex(0.0, -np.inf)):
+            bad = c.records.copy()
+            bad["v"][3] = bad_value
+            self.assertFalse(np.isfinite(bad["v"][3]))
+            rec = bad[3]
+            key = (str(rec["type"]), tuple(int(x) for x in rec["modes"]),
+                   tuple(tuple(int(x) for x in row) for row in rec["cells"]))
+            with self.assertRaises(ValueError) as cm:
+                fp.interaction_digest(bad)
+            self.assertEqual(str(cm.exception), f"non-finite value in interaction entry {key}")
+
+    def test_zero_rows(self):
+        a = compile_interaction(COMPILER_TABLES, 2)
+        b = compile_interaction(_plus_zero_shell(COMPILER_TABLES), 2)
+        self.assertEqual(fp.interaction_digest(a.records), fp.interaction_digest(b.records))
+        self.assertNotEqual(fp.topology_digest(a.declared_topology),
+                            fp.topology_digest(b.declared_topology))
+
+    def test_version_one_unchanged(self):
+        self.assertEqual(fp.FINGERPRINT_VERSION, 1)
+        self.assertEqual(fp.INTERACTION_FINGERPRINT_VERSION, 2)
+        self.assertEqual(fp.digest("x", [b"ab"]), _ref_digest("x", [b"ab"]))
 
 
 if __name__ == "__main__":

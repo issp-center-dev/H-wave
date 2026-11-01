@@ -1411,7 +1411,7 @@ class Interaction:
     def spinful_exchange(self):
         """Spinful exchange content (issue #137), materialized on demand.
 
-        The spinful general solve resums chi = [1 - chi0 W]^-1 chi0 with
+        The spinful general solve resums chi = [1 + chi0 W]^-1 chi0 with
         ONE vertex tensor; the physically complete first order is the
         ANTISYMMETRIZED bare particle-hole vertex Gamma = D + X, where X
         is the crossed (exchange) wiring of the same interaction.
