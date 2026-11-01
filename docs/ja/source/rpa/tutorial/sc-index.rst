@@ -683,8 +683,8 @@ Arnoldi固有値解析は複数の固有値を検出します。
   :math:`T_c`\ で\ :math:`\lambda \to 1`\ ）であり、絶対値最大のものではありません。
   固有値ソルバー（\ ``solver_mode = "eigenvalue"``\ ）は、絶対値最大の集合がそれを
   含みえないときに解き直します（\ ``eigenvalue_selection = "LR_retry"``\ ）。
-  ARPACK の求解（最初の絶対値最大の求解、shift-invert の予備求解、実部最大の
-  再求解、動的な射影求解のスケール推定）が失敗した場合（収束しない、他の ARPACK
+  ARPACK の求解（最初の絶対値最大の求解、shift-invert の予備求解または本求解、
+  実部最大の（再）求解、動的な射影求解のスケール推定）が失敗した場合（収束しない、他の ARPACK
   エラーで停止する、または有限でない固有値を返す場合）、次元 2000 以下の演算子は
   密行列として対角化し（\ ``"dense-LR"``\ ）、それより大きい演算子では\ ``NaN``\ 、
   ``eigen_converged = false``\ 、\ ``eigenvalue_selection = "not-converged"``\ を

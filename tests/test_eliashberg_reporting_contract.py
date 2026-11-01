@@ -970,17 +970,92 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
         return (lambda: (LinearOperator((n, n), matvec=lambda v: 0 * v,
                                         dtype=complex), n)), n
 
-    def test_zero_operator_unshifted_and_shift_invert(self):
+    CASES = (("arnoldi", None), ("arnoldi", "auto"),
+             ("shift-invert-gmres", None))
+
+    def test_zero_operator(self):
+        """A zero operator never raises. (ARPACK's own reaction is version
+        dependent: error -9 "starting vector is zero" in recent scipy, a
+        round-off or non-finite which='LM' set in older ones.) Below the
+        dense limit the value is 0; above it, 0 or NaN "not-converged"."""
         mk, n = self._zero()
-        for method, shift in (("arnoldi", None), ("arnoldi", "auto"),
-                              ("shift-invert-gmres", None)):
+        for method, shift in self.CASES:
             kw = {} if shift is None else {"spectral_shift": shift}
-            with self.subTest(method=method, shift=shift, side="dense"):
+            for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                with self.subTest(method=method, shift=shift,
+                                  dense_max=dense_max), \
+                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                          dense_max):
+                    lam, vec, info = sc._solve_leading(
+                        mk, n, method, num_eigenvalues=4, **kw)
+                    self.assertTrue(np.all(np.isfinite(vec)))
+                    if np.isnan(lam):
+                        self.assertEqual(dense_max, 1)
+                        self.assertEqual(info["selection"], "not-converged")
+                    else:
+                        self.assertLess(abs(lam), 1e-12)
+
+    def test_arpack_error_minus_9(self):
+        """ARPACK error -9 on every which='LM' call (the first solve, the
+        auto shift's probe, the shift-invert preliminary): dense-LR below
+        the limit, NaN "not-converged" above it."""
+        import scipy.sparse.linalg as spl
+        mk, n = self._zero()
+        real_eigs = sc.eigs
+
+        def eigs(A, k=6, which="LM", **kw):
+            if which == "LM":
+                raise spl.ArpackError(-9)
+            return real_eigs(A, k=k, which=which, **kw)
+        for method, shift in self.CASES:
+            kw = {} if shift is None else {"spectral_shift": shift}
+            with self.subTest(method=method, shift=shift, side="dense"), \
+                    mock.patch.object(sc, "eigs", eigs):
                 lam, _v, info = sc._solve_leading(mk, n, method,
                                                   num_eigenvalues=4, **kw)
                 self.assertEqual(lam, 0.0)
                 self.assertEqual(info["selection"], "dense-LR")
             with self.subTest(method=method, shift=shift, side="above"), \
+                    mock.patch.object(sc, "eigs", eigs), \
+                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                lam, vec, info = sc._solve_leading(mk, n, method,
+                                                   num_eigenvalues=4, **kw)
+                self.assertTrue(np.isnan(lam))
+                self.assertEqual(info["selection"], "not-converged")
+                self.assertTrue(np.all(np.isfinite(vec)))
+
+    def test_non_finite_shift_invert_and_lr_results(self):
+        """A shift-invert or largest-real-part solve that returns non-finite
+        eigenvalues is a failed solve, not a "shift-invert"/"LR" result."""
+        from scipy.sparse.linalg import aslinearoperator
+        n = self.N
+        M = np.diag(np.linspace(-1.0, 1.0, n)).astype(complex)
+
+        def mk():
+            return aslinearoperator(M), n
+        real_si = sc._eigs_shift_invert
+        real_eigs = sc.eigs
+
+        def si(*a, **k):
+            vals, vecs = real_si(*a, **k)
+            return np.full_like(vals, np.nan), vecs
+
+        def eigs(A, k=6, which="LM", **kw):
+            vals, vecs = real_eigs(A, k=k, which=which, **kw)
+            if which == "LR":
+                vals = np.full_like(vals, np.inf)
+            return vals, vecs
+        for method, kw, patch in (
+                ("shift-invert-gmres", {}, mock.patch.object(
+                    sc, "_eigs_shift_invert", si)),
+                ("arnoldi", {"spectral_shift": "auto"}, mock.patch.object(
+                    sc, "eigs", eigs))):
+            with self.subTest(method=method, side="dense"), patch:
+                lam, _v, info = sc._solve_leading(mk, n, method,
+                                                  num_eigenvalues=4, **kw)
+                self.assertAlmostEqual(lam, 1.0, delta=1e-12)
+                self.assertEqual(info["selection"], "dense-LR")
+            with self.subTest(method=method, side="above"), patch, \
                     mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
                 lam, vec, info = sc._solve_leading(mk, n, method,
                                                    num_eigenvalues=4, **kw)

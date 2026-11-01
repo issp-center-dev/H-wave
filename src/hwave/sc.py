@@ -7783,6 +7783,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                       dtype=A.dtype)
         vals_lr, vecs_lr = eigs(A_sh, k=max_ev, which='LR',
                                 v0=_arpack_start(A_sh, seed_vec))
+        if not np.all(np.isfinite(vals_lr)):
+            raise _NonFiniteEigenvalues("non-finite eigenvalues returned")
         return vals_lr - sig, vecs_lr
 
     def _dense_largest_real():
@@ -7808,7 +7810,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         try:
             v, w = _largest_real_solve(shift_option)
             return v, w, None, {}
-        except (ArpackError, _ShiftProbeFailed) as exc:
+        except (ArpackError, _ShiftProbeFailed, _NonFiniteEigenvalues) as exc:
             what = ("the spectral-radius probe (which='LM') of the auto "
                     "spectral_shift" if isinstance(exc, _ShiftProbeFailed)
                     else "the largest-real-part solve (which='LR')")
@@ -7953,11 +7955,22 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     sigma_shift = None
         if selection_label is None:
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
-            vals, vecs = _eigs_shift_invert(
-                A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
-                seed_vec=seed_vec
-            )
-            selection_label = "shift-invert"
+            from scipy.sparse.linalg import ArpackError
+            try:
+                vals, vecs = _eigs_shift_invert(
+                    A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
+                    seed_vec=seed_vec
+                )
+                if not np.all(np.isfinite(vals)):
+                    # e.g. a singular K - sigma*I (a null kernel with a zero
+                    # target): no eigenvalue, the failed-solve contract
+                    raise _NonFiniteEigenvalues(
+                        "non-finite eigenvalues returned")
+                selection_label = "shift-invert"
+            except (ArpackError, _NonFiniteEigenvalues) as exc:
+                vals, vecs, selection_label, _rec = _failed_solve(
+                    exc, "the shift-invert solve")
+                retry_record = {"shift_invert_failed": True}
 
     # With a seed eigenvector, track the branch that overlaps it (eigenvector
     # continuation); otherwise order by largest real part (the physical SC
