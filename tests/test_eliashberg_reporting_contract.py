@@ -1088,5 +1088,66 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
                     self.assertTrue(np.all(np.isfinite(vec)))
 
 
+class TestRound15Contracts(unittest.TestCase):
+    """The auto shift's radius probe returning non-finite eigenvalues is a
+    failed solve; the null-kernel exemption needs exactly zero images."""
+
+    def test_auto_shift_probe_non_finite(self):
+        from scipy.sparse.linalg import aslinearoperator
+        n = 30
+        M = np.diag(np.linspace(-1.0, 1.0, n)).astype(complex)
+
+        def mk():
+            return aslinearoperator(M), n
+        real_eigs = sc.eigs
+        for bad in (np.nan, np.inf):
+            def eigs(A, k=6, which="LM", **kw):
+                vals, vecs = real_eigs(A, k=k, which=which, **kw)
+                if which == "LM":
+                    vals = np.full_like(vals, bad)
+                return vals, vecs
+            with self.subTest(bad=bad, side="dense"), \
+                    mock.patch.object(sc, "eigs", eigs):
+                lam, _v, info = sc._solve_leading(
+                    mk, n, "arnoldi", num_eigenvalues=4,
+                    spectral_shift="auto")
+                self.assertAlmostEqual(lam, 1.0, delta=1e-12)
+                self.assertEqual(info["selection"], "dense-LR")
+            with self.subTest(bad=bad, side="above"), \
+                    mock.patch.object(sc, "eigs", eigs), \
+                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                lam, vec, info = sc._solve_leading(
+                    mk, n, "arnoldi", num_eigenvalues=4,
+                    spectral_shift="auto")
+                self.assertTrue(np.isnan(lam))
+                self.assertEqual(info["selection"], "not-converged")
+                self.assertTrue(np.all(np.isfinite(vec)))
+
+    def _forced_minus_9(self, matvec, shape):
+        import scipy.sparse.linalg as spl
+
+        def eigs(*a, **k):
+            raise spl.ArpackError(-9)
+        with mock.patch.object(spl, "eigs", eigs):
+            return _run_dynamic(matvec, shape)
+
+    def test_exact_zero_kernel_is_exempt(self):
+        shape = (1, 1, 4, 1, 1, 4)
+        out, info = self._forced_minus_9(
+            lambda x: np.zeros_like(np.asarray(x).ravel()), shape)
+        # (the shifted largest-real solve leaves ~1e-14 of round-off)
+        self.assertLess(abs(out[0]), 1e-12)
+        self.assertIs(info["eigen_converged"], True)
+        self.assertEqual(out[8], "LR_projected")
+
+    def test_tiny_nonzero_kernel_is_not_exempt(self):
+        shape = (1, 1, 4, 1, 1, 4)
+        out, info = self._forced_minus_9(
+            lambda x: 1.0e-300 * np.asarray(x).ravel(), shape)
+        self.assertTrue(np.isnan(out[0]))
+        self.assertIs(info["eigen_converged"], False)
+        self.assertEqual(out[8], "not-converged")
+
+
 if __name__ == "__main__":
     unittest.main()

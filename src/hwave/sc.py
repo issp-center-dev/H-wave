@@ -107,18 +107,15 @@ class _NonFiniteEigenvalues(ArithmeticError):
     solve that did not converge."""
 
 
-# Independent probes that establish a NULL operator (every image exactly
-# zero up to round-off) before ARPACK error -9 ("starting vector is zero")
-# is read as "the operator is zero". They use their own seed, so an
-# operator that happens to annihilate the deterministic ARPACK start vector
-# is not mistaken for a null one. A bound of 16 machine epsilons relative to
-# each probe's norm is the round-off of evaluating an operator whose entries
-# are all zero (or cancel exactly); any kernel with an eigenvalue resolvable
-# in double precision against O(1) pairing eigenvalues lifts at least one
-# of three generic probes far above it.
+# Independent probes that establish a NULL operator before ARPACK error -9
+# ("starting vector is zero") is read as "the operator is zero": every image
+# of _NULL_PROBE_COUNT random vectors must be EXACTLY zero, elementwise. They
+# use their own seed, so an operator that happens to annihilate the
+# deterministic ARPACK start vector is not mistaken for a null one, and no
+# tolerance is allowed: a tiny but nonzero operator is not exempt (it is
+# reported as a failed solve, NaN "not-converged").
 _NULL_PROBE_SEED = 917253
 _NULL_PROBE_COUNT = 3
-_NULL_PROBE_RTOL = 16.0 * np.finfo(float).eps
 
 
 def _arpack_error_code(exc):
@@ -131,15 +128,12 @@ def _arpack_error_code(exc):
 
 def _operator_is_null(A, n):
     """True when ``A`` maps _NULL_PROBE_COUNT independent random vectors (a
-    seeded generator of its own) to zero within _NULL_PROBE_RTOL of their
-    norms."""
+    seeded generator of its own) to exactly zero, elementwise."""
     rng = np.random.default_rng(_NULL_PROBE_SEED)
     for _ in range(_NULL_PROBE_COUNT):
         x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
         y = np.asarray(A.matvec(x)).ravel()
-        if (not np.all(np.isfinite(y))
-                or float(np.linalg.norm(y))
-                > _NULL_PROBE_RTOL * float(np.linalg.norm(x))):
+        if np.any(y != 0):
             return False
     return True
 
@@ -7769,6 +7763,12 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     # any other ARPACK error (e.g. -9 on a null operator):
                     # no radius, handled like a failed solve
                     raise _ShiftProbeFailed(exc) from exc
+                if not np.all(np.isfinite(vals_pre)):
+                    # a NaN/Inf radius cannot size the shift: a failed
+                    # probe, handled like a failed solve (not the overflow
+                    # error below, which is for a finite but huge radius)
+                    raise _ShiftProbeFailed(_NonFiniteEigenvalues(
+                        "the probe returned non-finite eigenvalues"))
                 sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
             else:
                 sig = 1.0
@@ -7834,9 +7834,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             "arnoldi: %s did not converge (%s) "
             "and the operator (dimension %d > %d) is too large to "
             "diagonalize densely: no leading eigenvalue is reported (NaN, "
-            "eigen_converged = false). Set an explicit spectral_shift or "
-            "raise num_eigenvalues.", what, exc, vec_size,
-            _DENSE_FALLBACK_MAX)
+            "eigen_converged = false).%s", what, exc, vec_size,
+            _DENSE_FALLBACK_MAX,
+            "" if solver_mode.startswith("shift-invert") else
+            " Set an explicit spectral_shift or raise num_eigenvalues.")
         # finite placeholder vectors (NOT eigenvectors; the NaN
         # eigenvalues say so): the which='LM' vectors, which every
         # downstream symmetry check accepts (they lie in the operator's

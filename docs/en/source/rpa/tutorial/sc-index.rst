@@ -720,11 +720,17 @@ contract.
   (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve fails (does
   not converge, stops with another ARPACK error, or returns non-finite
   eigenvalues) -- the first largest-magnitude solve, the shift-invert
-  preliminary or solve, the largest-real-part (re-)solve, or the scale
-  probe of the dynamic projected solve -- an operator of dimension at most 2000 is
-  diagonalized densely (``"dense-LR"``); a larger one reports ``NaN`` with
+  preliminary or solve, or the largest-real-part (re-)solve with its auto
+  shift probe -- an operator of dimension at most 2000 is diagonalized
+  densely (``"dense-LR"``); a larger one reports ``NaN`` with
   ``eigen_converged = false`` and ``eigenvalue_selection = "not-converged"``
-  -- the largest-magnitude value is never passed off as the leading one. On
+  -- the largest-magnitude value is never passed off as the leading one. The
+  scale probe of the dynamic projected channel solve has its own contract:
+  it has no dense fallback, so a failed probe reports ``NaN`` /
+  ``"not-converged"`` at any dimension; the one exception is a kernel that
+  is exactly zero (ARPACK's "starting vector is zero" error, confirmed by
+  three independent probes whose images are exactly zero), which is solved
+  as such. On
   the static non-spin-orbital path with a parity-commuting kernel a failed
   global solve only empties the listing: the leader still comes from the
   parity-sector solve. A seeded run (``seed_eigenvector``) follows its continuation branch by
