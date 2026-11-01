@@ -2,8 +2,10 @@
 outputs must not change (spec 5.3), stored under
 tests/eliashberg_dynamic_golden/.
 
-The ``iteration`` fixtures remain the values recorded from the pre-refactor
-code. The ``eigenvalue`` and ``both`` no-shift fixtures were regenerated once
+The ``iteration`` fixtures keep the iterate (gap) recorded from the
+pre-refactor code; their eigenvalue members were re-recorded once when a
+non-converged power iteration stopped reporting its iterate norm (now NaN with
+``eigen_converged = false``; neither fixture converges in 50 steps). The ``eigenvalue`` and ``both`` no-shift fixtures were regenerated once
 for issue #202: on this degenerate 2x2x1 grid the plain which='LM' set holds no
 positive channel eigenvalue, so the solver now re-solves for the largest real
 part (``eigenvalue_selection = "LR_retry"``) -- the pre-#202 goldens there were
@@ -21,7 +23,13 @@ import numpy as np
 from tests.test_eliashberg_dynamic import _write_flex_fixture
 
 _GOLDEN = os.path.join("tests", "eliashberg_dynamic_golden")
-_CASES = (("iteration", None), ("iteration", 0.5), ("eigenvalue", None), ("both", None))
+# "none": the unshifted power iteration (an absent spectral_shift now means
+# "auto" for the iteration), so the iteration fixtures keep their iterate
+_CASES = (("iteration", "none"), ("iteration", 0.5), ("eigenvalue", None), ("both", None))
+
+
+def _tag(mode, shift):
+    return "{}_{}".format(mode, "noshift" if shift in (None, "none") else "shift")
 
 
 def _run(tmp, solver_mode, spectral_shift):
@@ -73,7 +81,7 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     punct = "()[]{},;:"
 
     _NEW_HEADERS = ("# gap_sector_weights", "# sector_selection",
-                    "# eigenvalue_selection")
+                    "# eigenvalue_selection", "# eigen_converged")
     # the per-eigenvalue match column is now NAMED by the sector that matched;
     # the golden files carry the old unqualified label. Map the new labels back
     # so the label may differ but every ROW must still agree.
@@ -90,6 +98,9 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
                 continue
             for label in _MATCH_LABELS:
                 ln = ln.replace(label, "match(1=channel-parity)")
+            # the gap.dat header token is new too (checked on the npz)
+            ln = ln.replace("  eigen_converged=true", "").replace(
+                "  eigen_converged=false", "")
             out.append(ln)
         return "\n".join(out)
 
@@ -109,6 +120,10 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
         except ValueError:
             case.assertEqual(x, y, tag)
             continue
+        if np.isnan(fx) or np.isnan(fy):            # "nan" / "NaN,": both
+            case.assertTrue(np.isnan(fx) and np.isnan(fy),
+                            "{}: {} != {}".format(tag, x, y))
+            continue
         case.assertTrue(abs(fx - fy) <= rtol * max(1.0, abs(fy)),
                         "{}: {} != {}".format(tag, x, y))
 
@@ -117,7 +132,8 @@ def _assert_member_close(a, b, tag):
     """Bitwise for non-float members, ``allclose`` for float / complex ones
     (round-off of the platform's BLAS / FFT, not of the refactor)."""
     if a.dtype.kind in "fc":
-        np.testing.assert_allclose(a, b, rtol=1e-10, atol=1e-13, err_msg=tag)
+        np.testing.assert_allclose(a, b, rtol=1e-10, atol=1e-13, err_msg=tag,
+                                   equal_nan=True)
     else:
         np.testing.assert_array_equal(a, b, err_msg=tag)
 
@@ -127,7 +143,7 @@ class TestDynamicGolden(unittest.TestCase):
         if not os.path.isdir(_GOLDEN):
             self.skipTest("golden directory missing; record it with RECORD_GOLDEN=1")
         for mode, shift in _CASES:
-            tag = "{}_{}".format(mode, "noshift" if shift is None else "shift")
+            tag = _tag(mode, shift)
             tmp = tempfile.mkdtemp()
             try:
                 _run(tmp, mode, shift)
@@ -152,6 +168,13 @@ class TestDynamicGolden(unittest.TestCase):
                 # Every case now records which selection criterion produced the
                 # leading eigenvalue (issue #202).
                 self.assertIn("eigenvalue_selection", a, tag)
+                # neither iteration fixture converges in 50 steps on this
+                # random archive: no eigenvalue (NaN), flagged; the ARPACK
+                # cases converge
+                self.assertIn("eigen_converged", a, tag)
+                self.assertEqual(bool(a["eigen_converged"]), mode != "iteration", tag)
+                self.assertEqual(bool(np.isnan(float(a["eigenvalue"]))),
+                                 mode == "iteration", tag)
                 # These fixtures conserve neither parity, so the iteration
                 # cases run unprojected; and on a 2x2x1 one-orbital grid the
                 # channel sector equals the combined-parity sector, so the
@@ -378,10 +401,58 @@ class TestEigenDriverUnits(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestSecondaryRetryFailure(unittest.TestCase):
+    """The dynamic solver's own second solve (a plain which='LM' set with no
+    positive channel eigenvalue is re-solved with spectral_shift = "auto")
+    can fail above the dense-fallback size: the run then reports NaN,
+    eigen_converged = false and eigenvalue_selection = "not-converged", and
+    no note claiming the second solve produced the values."""
+
+    def test_failed_retry_is_not_labelled_lr_retry(self):
+        from unittest import mock
+        import hwave.sc as sc
+        import scipy.sparse.linalg as spl
+        real_leading = sc._solve_leading
+        real_eigs = sc.eigs
+        calls = []
+
+        def leading(*a, **kw):
+            calls.append(kw.get("spectral_shift"))
+            lam, vec, info = real_leading(*a, **kw)
+            if kw.get("spectral_shift") is None and len(calls) == 1:
+                self.assertTrue(np.isfinite(lam))
+                # a which='LM' set whose leading eigenvalue is negative
+                info = dict(info, selection="LM",
+                            eigenvalues=-np.abs(np.asarray(info["eigenvalues"])))
+            return lam, vec, info
+
+        def eigs(A, k=6, which="LM", **kw):
+            # only the dynamic solver's own second solve fails
+            if which == "LR" and len(calls) >= 2:
+                raise spl.ArpackNoConvergence("forced", np.array([]),
+                                              np.array([]))
+            return real_eigs(A, k=k, which=which, **kw)
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        with mock.patch.object(sc, "_solve_leading", leading), \
+                mock.patch.object(sc, "eigs", eigs), \
+                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            _run(tmp, "eigenvalue", None)
+        self.assertEqual(calls, [None, "auto"])
+        txt = open(os.path.join(tmp, "eigenvalue.dat")).read()
+        self.assertIn("eigen_converged=false", txt.replace(" ", ""))
+        self.assertIn("not-converged", txt)
+        self.assertNotIn("come from a second solve", txt)
+        z = np.load(os.path.join(tmp, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+        self.assertIs(bool(z["eigen_converged"]), False)
+        self.assertTrue(np.isnan(float(z["eigenvalue"])))
+
+
 if __name__ == "__main__":
     if os.environ.get("RECORD_GOLDEN") == "1":
         for mode, shift in _CASES:
-            tag = "{}_{}".format(mode, "noshift" if shift is None else "shift")
+            tag = _tag(mode, shift)
             dst = os.path.join(_GOLDEN, tag)
             os.makedirs(dst, exist_ok=True)
             tmp = tempfile.mkdtemp()

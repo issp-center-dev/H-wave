@@ -1,8 +1,9 @@
 # Dynamic Eliashberg leading eigenvalue
+# eigen_converged=true
 # gap_sector_weights even_k_even_w=0.589021 odd_k_even_w=0.000000 even_k_odd_w=0.410979 odd_k_odd_w=0.000000
 # sector_selection=none
 # eigenvalue_selection: LR_retry
-# eigenvalue selection: which='LM' with num_eigenvalues=4 returned no positive 'singlet' eigenvalue (Re(lambda) = 10.33); the values below come from a second solve with spectral_shift='auto' (largest real part)
+# eigenvalue selection: which='LM' with num_eigenvalues=4 could not contain the largest real part (largest Re(lambda) found = 10.33 < smallest |lambda| found = 42.41); the values below come from a second solve with spectral_shift='auto' (largest real part)
 3.69964543e+01
 # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
    0  3.69964543e+01  3.03181771e+00  3.71204735e+01 0

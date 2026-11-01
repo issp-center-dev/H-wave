@@ -651,7 +651,9 @@ def _write_geom_transfer_coulomb(input_dir, norb=1):
 def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     """End-to-end smoke: solve_dynamic runs on a tiny generated FLEX fixture
     and returns a finite leading eigenvalue. (Full static-limit / dense-oracle
-    acceptance is Task 7.)"""
+    acceptance is Task 7.) The ARPACK solver is used: on this random
+    fixture no power iteration converges, and a non-converged iteration
+    reports NaN (``test_outputs_written``)."""
     import os
     from hwave.solver import eliashberg_dynamic as ed
     input_dir = str(tmp_path / "input")
@@ -670,12 +672,14 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
                     "CoulombIntra": "coulombintra.dat"}},
                  "output": {"path_to_output": output_dir}},
         "eliashberg": {"chi0q_mode": "flex", "frequency": "dynamic",
-                       "solver_mode": "iteration", "max_iter": 50},
+                       "solver_mode": "eigenvalue", "num_eigenvalues": 4},
     }
     lam = ed.solve_dynamic(inp)
     assert np.isfinite(lam)
     assert os.path.exists(os.path.join(output_dir, "eigenvalue.dat"))
     assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
+    assert bool(np.load(os.path.join(output_dir, "gap_dynamic.npz"))
+                ["eigen_converged"]) is True
 
 
 def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
@@ -716,16 +720,12 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
 
 
 def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
-    """Review fix I-2: on the dynamic solver_mode='iteration' path,
-    spectral_shift changes what the eigenvalue.dat number MEANS, and that
-    change must be labelled in the output file itself (mirroring
-    sc.calc_eliashberg's static eigenvalue_note), not left silent.
-
-    ``||(K + sigma I) v|| - sigma`` is the SIGNED eigenvalue of K only once
-    the iterate is an eigenvector of K; this fixture stops at max_iter=50
-    without converging, so the honest label is the shifted iterate-norm
-    ESTIMATE -- claiming "the SIGNED eigenvalue" there is exactly the
-    mislabelling ``_validate_shifted_eigenvalue`` exists to prevent."""
+    """Review fix I-2 and the non-convergence contract: on the dynamic
+    solver_mode='iteration' path the eigenvalue.dat file itself must say what
+    its number is. This fixture does not converge in max_iter=50 steps -- with
+    the default spectral_shift ("auto") or without one ("none") -- so the
+    number is NaN, ``eigen_converged=false`` is recorded, and the note says
+    it is NOT an eigenvalue; it never claims a VALIDATED signed eigenvalue."""
     import os
     from hwave.solver import eliashberg_dynamic as ed
     input_dir = str(tmp_path / "input")
@@ -747,28 +747,22 @@ def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
                        "solver_mode": "iteration", "max_iter": 50},
     }
 
-    # Without spectral_shift, no signed-eigenvalue note is written (the
-    # unshifted path is the historical unsigned-iterate-norm behavior).
-    ed.solve_dynamic(base_config)
-    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
-        content_unshifted = f.read()
-    assert "SIGNED eigenvalue" not in content_unshifted
-
-    # With spectral_shift active, the reported number's meaning changes and
-    # that change must be labelled in the file itself (same output directory,
-    # so the run overwrites eigenvalue.dat; the FLEX fixture files it reads
-    # are untouched by the previous run). This run does NOT converge, so the
-    # Rayleigh check cannot validate an eigenvalue and the label must say so.
-    shifted_config = dict(base_config)
-    shifted_config["eliashberg"] = dict(base_config["eliashberg"])
-    shifted_config["eliashberg"]["spectral_shift"] = "auto"
-    ed.solve_dynamic(shifted_config)
-    with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
-        content_shifted = f.read()
-    assert "spectral_shift" in content_shifted
-    assert "NOT an eigenvalue" in content_shifted
-    assert "SHIFTED ITERATE-NORM ESTIMATE" in content_shifted
-    assert "VALIDATED" not in content_shifted
+    for shift, label in ((None, "spectral_shift='auto'"),
+                         ("none", "no spectral_shift")):
+        config = dict(base_config)
+        config["eliashberg"] = dict(base_config["eliashberg"])
+        if shift is not None:
+            config["eliashberg"]["spectral_shift"] = shift
+        lam = ed.solve_dynamic(config)
+        assert np.isnan(lam)
+        with open(os.path.join(output_dir, "eigenvalue.dat")) as f:
+            content = f.read()
+        assert "# eigen_converged=false" in content
+        assert label in content
+        assert "NOT an eigenvalue" in content
+        assert "VALIDATED" not in content
+        values = [l for l in content.splitlines() if not l.startswith("#")]
+        assert np.isnan(float(values[0]))
 
 
 def test_kernel_cupy_matches_numpy():
@@ -808,8 +802,10 @@ def test_kernel_cupy_matches_numpy():
 
 
 def _dynamic_input_dict(input_dir, output_dir, nmat, extra_eliashberg=None):
+    # ARPACK: on this random fixture no power iteration converges (it would
+    # report NaN), and these tests compare finite eigenvalues
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
-           "solver_mode": "iteration", "max_iter": 50}
+           "solver_mode": "eigenvalue", "num_eigenvalues": 4}
     if extra_eliashberg:
         eli.update(extra_eliashberg)
     return {
@@ -1149,7 +1145,9 @@ def test_outputs_written(tmp_path):
                        "solver_mode": "iteration", "max_iter": 50},
     }
     lam = ed.solve_dynamic(inp)
-    assert np.isfinite(lam)
+    # no power iteration converges on this random fixture: the run reports
+    # NaN and says so in every output (the gap is the last iterate)
+    assert np.isnan(lam)
 
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
     assert set(npz.files) == {
@@ -1157,10 +1155,12 @@ def test_outputs_written(tmp_path):
         "eigenvalue", "axis_order", "normalization",
         "momentum_convention", "gap_sector_weights",
         "gap_sector_labels", "sector_selection",
-        "eigenvalue_selection"}, \
+        "eigenvalue_selection", "eigen_converged"}, \
         "unexpected gap_dynamic.npz key set: {}".format(sorted(npz.files))
     # the iteration path records its selection criterion (issue #202)
     assert str(npz["eigenvalue_selection"]) == "iteration"
+    assert bool(npz["eigen_converged"]) is False
+    assert np.isnan(float(npz["eigenvalue"]))
     # this synthetic archive does not conserve either parity, so the iteration
     # runs unprojected -- and says so
     assert str(npz["sector_selection"]) == "none"
@@ -1185,6 +1185,7 @@ def test_outputs_written(tmp_path):
         first = fh.readline()
     assert first.startswith("#")
     assert "frequency=dynamic" in first
+    assert "eigen_converged=false" in first
 
 
 # ---------------------------------------------------------------------------
@@ -1230,7 +1231,8 @@ def _eliashberg_input(input_dir, output_dir, T, Nmat, cell_shape, **eli):
                                            "CoulombIntra": "coulombintra.dat"}},
                  "output": {"path_to_output": output_dir}},
         "eliashberg": {"chi0q_mode": "flex", "pairing_type": "singlet",
-                       "solver_mode": "iteration", "max_iter": 300},
+                       "solver_mode": "iteration", "max_iter": 300,
+                       "spectral_shift": "none"},
     }
     inp["eliashberg"].update(eli)
     return inp
@@ -1288,6 +1290,16 @@ def test_end_to_end_dynamic_matches_static_symmetry(tmp_path):
     converges in well under a second at these sizes; this is the smallest grid
     that keeps a genuine k-structured gap (an anisotropic s-wave here, values
     ~0.97..1.0 over k) rather than a perfectly flat one.
+
+    WHICH mode is compared: the unshifted power iteration (spectral_shift =
+    "none"). The dominant eigenvalue of this repulsive kernel is NEGATIVE
+    (static -0.93, the on-site s-wave mode), so both iterations stop on the
+    sign-alternating two-cycle and report NaN with eigen_converged = false;
+    the gap they write is the cycling iterate, i.e. the eigenvector of that
+    dominant repulsive mode. The test therefore compares the DOMINANT mode of
+    the static and dynamic kernels (the physical leading eigenvalues are
+    nearly degenerate extended-s / d-wave modes on this tiny grid and are
+    selected differently by the two kernels, so they are not comparable here).
 
     Gap-symmetry invariant (robustness vs. rigor):
 
@@ -1349,11 +1361,13 @@ def test_end_to_end_dynamic_matches_static_symmetry(tmp_path):
     # --- Step 4: DYNAMIC Eliashberg on the SAME real FLEX output ---
     lam_dynamic = sc.calc_eliashberg(_eliashberg_input(
         input_dir, output_dir, T, Nmat, cell_shape, frequency="dynamic"))
-    assert np.isfinite(lam_dynamic)
+    # the two-cycle of the negative dominant mode: no eigenvalue is reported
+    assert np.isnan(lam_dynamic)
     assert os.path.exists(os.path.join(output_dir, "gap.dat"))
     assert os.path.exists(os.path.join(output_dir, "gap_dynamic.npz"))
 
     npz = np.load(os.path.join(output_dir, "gap_dynamic.npz"))
+    assert bool(npz["eigen_converged"]) is False
     gap_dyn = npz["gap"]                        # (1, 1, Nx, Ny, Nz, nmat)
     assert gap_dyn.shape == (1, 1, 4, 4, 1, Nmat)
     assert str(npz["frequency"]) == "dynamic"
@@ -2317,10 +2331,27 @@ def _write_static_dominated_flex(outdir, C0, Nx=4, Ny=4, Nz=1, nmat=256,
 
 def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
                           ir_wmax=10.0):
+    """The DOMINANT (largest-magnitude) eigenvalue of the dynamic kernel.
+
+    The flat component of this fixture makes that eigenvalue large and
+    negative, so the unshifted power iteration (spectral_shift = "none")
+    stops on the sign-alternating two-cycle and reports NaN; the signed
+    Rayleigh quotient of the cycling iterate -- the dominant eigenvalue the
+    issue #203 comparison is about -- is read from the driver's record."""
+    from unittest import mock
+    import hwave.sc as sc
     from hwave.solver import eliashberg_dynamic as ed
+    records = []
+    real = sc._solve_leading
+
+    def spy(*a, **k):
+        out = real(*a, **k)
+        records.append(out[2])
+        return out
+
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
            "pairing_type": "singlet", "solver_mode": "iteration",
-           "num_eigenvalues": 1, "max_iter": 200}
+           "num_eigenvalues": 1, "max_iter": 200, "spectral_shift": "none"}
     if basis != "uniform":
         eli["matsubara_basis"] = basis
         eli["ir_wmax"] = ir_wmax
@@ -2335,7 +2366,13 @@ def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
                         "CoulombIntra": "coulombintra.dat"}},
                     "output": {"path_to_output": outdir}},
            "eliashberg": eli}
-    return ed.solve_dynamic(inp)
+    with mock.patch.object(sc, "_solve_leading", spy):
+        lam = ed.solve_dynamic(inp)
+    info = records[-1]
+    if info.get("two_cycle"):
+        assert np.isnan(lam)
+        return info["cycle_eigenvalue"]
+    return lam
 
 
 def test_ir_keep_static_chi_matches_uniform_for_large_flat_component(tmp_path):
@@ -2370,3 +2407,26 @@ def test_ir_keep_static_chi_matches_uniform_for_large_flat_component(tmp_path):
     assert abs(lam_ir_nokeep - lam_u) / abs(lam_u) > 0.2, \
         "dropping the static component should be wrong: nokeep={} u={}".format(
             lam_ir_nokeep, lam_u)
+
+
+def test_tsweep_parser_reads_the_dynamic_leader(tmp_path):
+    """hwave_tsweep's parser on a dynamic on-site eigenvalue.dat: the parsed
+    value and row 0 equal the solver's returned leader."""
+    import os
+    from hwave import tsweep
+    from hwave.solver import eliashberg_dynamic as ed
+    input_dir = str(tmp_path / "input")
+    output_dir = str(tmp_path / "output")
+    os.makedirs(output_dir, exist_ok=True)
+    _write_geom_transfer_coulomb(input_dir, norb=1)
+    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2,
+                            Nz=1)
+    lam = ed.solve_dynamic(_dynamic_input_dict(input_dir, output_dir,
+                                               m["nmat"]))
+    path = os.path.join(output_dir, "eigenvalue.dat")
+    re, _im, _match = tsweep.parse_leading_eig(path)
+    assert abs(re - lam) <= 1e-7 * max(1.0, abs(lam))
+    rows = [l.split() for l in open(path)
+            if l.strip() and not l.startswith("#") and len(l.split()) >= 4]
+    assert int(rows[0][0]) == 0
+    assert abs(float(rows[0][1]) - lam) <= 1e-7 * max(1.0, abs(lam))

@@ -303,8 +303,11 @@ class TestTransModOracle(unittest.TestCase):
 
         lam, lam_ref, lam_bare = _leading(res), _leading(ref), _leading(bare)
         self.assertAlmostEqual(lam, lam_ref, delta=1e-10)
-        # the field must matter, or the oracle proves nothing
-        self.assertGreater(abs(lam - lam_bare), 1e-2)
+        # the field must matter, or the oracle proves nothing. (The two-orbital
+        # leading eigenvalue is now the largest REAL part -- the which='LM'
+        # set of 4 held only repulsive modes -- and moves by 4.7e-3 with the
+        # field: far above the 1e-10 agreement asserted above.)
+        self.assertGreater(abs(lam - lam_bare), 1e-3)
 
         band = res["prepared"]
         self.assertIsNotNone(band)

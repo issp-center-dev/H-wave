@@ -334,7 +334,8 @@ def check_so_config(input_dict):
             "{}: [eliashberg] eigenvalue_method = {!r} is not supported; only "
             "\"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" (or remove the "
             "key).".format(_SO_WHAT, method))
-    solver_mode = eli.get("solver_mode", "iteration")
+    from hwave.sc import DEFAULT_SOLVER_MODE
+    solver_mode = eli.get("solver_mode", DEFAULT_SOLVER_MODE)
     if solver_mode not in ("iteration", "eigenvalue", "both"):
         raise ValueError(
             "{}: [eliashberg] solver_mode = {!r} is not supported; use "

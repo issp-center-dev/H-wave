@@ -444,7 +444,7 @@ class TestPairingControls(unittest.TestCase):
         c = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual((c.solver_mode, c.eigenvalue_method, c.num_eigenvalues, c.max_iter, c.alpha,
                           c.convergence_tol, c.matsubara_basis, c.ir_tol, c.ir_fit_tol, c.fft_workers),
-                         ("iteration", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.5, 1))
+                         ("eigenvalue", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.5, 1))
         self.assertIsNone(c.init_gap); self.assertIsNone(c.bond_memory_cap_gb); self.assertFalse(c.ir_keep_static_chi)
         c2 = PairingControls.from_param({"matsubara_basis": "IR", "ir_fit_tol": 0, "num_eigenvalues": 3,
                                          "ir_keep_static_chi": "true"}, pairing_types=("singlet", "triplet"))
@@ -580,8 +580,13 @@ class TestParityLeakageTolerance(unittest.TestCase):
         """The lower edge of the warning band: a leakage below ``0.1 * tol`` is
         accepted SILENTLY, so the warning of the sibling case above is a signal
         and not something every accepted run emits."""
-        with self.assertNoLogs("qlms.eliashberg_dynamic", level="WARNING"):
+        from tests.approx_util import _caplog
+        # (the 5-step iteration on this random operator does not converge and
+        # says so; only the parity-leakage warning band is under test here)
+        with _caplog("WARNING", logger="qlms.eliashberg_dynamic") as records:
             out = self._run(parity_leakage_tol=100.0 * self.leak)
+        self.assertFalse([r.message for r in records
+                          if "parity" in r.message.lower()], records)
         self.assertAlmostEqual(out[5], self.leak)
 
     def test_default_tolerance_is_1e_minus_8(self):
@@ -1394,23 +1399,30 @@ class TestInProcess(unittest.TestCase):
                                           "even_k_odd_w", "odd_k_odd_w"])
                 w = dict(zip(labels, np.asarray(d["gap_sector_weights"], dtype=float)))
                 self.assertAlmostEqual(sum(w.values()), 1.0, places=9)
-                # this two-orbital kernel conserves only the combined parity,
-                # so the iteration is NOT restricted to the channel's
-                # even-frequency sector: its leading eigenvector lies in the
-                # combined-parity sector of the channel (even-frequency or
-                # odd-frequency part of it), and the recorded weights say
-                # which.
+                # the leading eigenvector lies in the combined-parity sector of
+                # the channel (its even-frequency or odd-frequency part), and
+                # the recorded weights say which. The in-process default is
+                # the ARPACK solver (solver_mode = "eigenvalue"), whose
+                # eigenpair matching records the stage it matched with: the
+                # channel's even-frequency sector when such an eigenpair is
+                # found, else the combined-parity sector.
                 own = (("even_k_even_w", "odd_k_odd_w") if eta == "singlet"
                        else ("odd_k_even_w", "even_k_odd_w"))
                 self.assertGreater(w[own[0]] + w[own[1]], 0.999, (eta, w))
-                self.assertEqual(str(d["sector_selection"]),
-                                 "combined_parity", eta)
+                sel = str(d["sector_selection"])
+                self.assertIn(sel, ("channel", "combined_parity"), eta)
+                if sel == "channel":
+                    self.assertGreater(w[own[0]], 0.999, (eta, w))
+                self.assertIs(bool(d["eigen_converged"]), True, eta)
+                self.assertTrue(np.isfinite(float(d["eigenvalue"])), eta)
+            self.assertIs(gi["pairing_{}_eigen_converged".format(eta)], True)
             with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:
                 txt = f.read()
             self.assertIn("scf_converged=", txt)
             self.assertIn("state=", txt)
             self.assertIn("# gap_sector_weights even_k_even_w=", txt)
-            self.assertIn("# sector_selection=combined_parity", txt)
+            self.assertIn("# sector_selection={}".format(sel), txt)
+            self.assertIn("# eigen_converged=true", txt)
             self.assertTrue(os.path.exists(os.path.join(self.tmp, "gap_bond_{}.dat".format(eta))))
             for stem in ("eliashberg_bond_{}.tmp.npz", "gap_bond_{}.tmp.dat",
                          "eigenvalue_bond_{}.tmp.dat"):
