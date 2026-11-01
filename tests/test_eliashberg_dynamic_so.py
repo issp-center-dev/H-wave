@@ -1066,5 +1066,27 @@ class TestSecondaryRetryFailure(_FlexFixture):
         self.assertIs(bool(z["eigen_converged"]), False)
 
 
+class TestFirstArnoldiSolveFailure(_FlexFixture):
+    """The unshifted which='LM' solve of the spin-orbital dynamic entry fails
+    above the dense-fallback size: NaN, eigen_converged = false and
+    eigenvalue_selection = "not-converged", without an exception."""
+
+    def test_nan_and_label(self):
+        from tests.test_eliashberg_reporting_contract import _failing_first_lm
+        out = self._out("lmfail")
+        inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
+                       nmat=_NMAT_E2E, out=out)
+        p1, p2, _state = _failing_first_lm()
+        with _quiet(), p1, p2:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isnan(lam))
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigen_converged=false", txt)
+        self.assertIn("# eigenvalue_selection: not-converged", txt)
+        z = np.load(os.path.join(out, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+        self.assertIs(bool(z["eigen_converged"]), False)
+
+
 if __name__ == "__main__":
     unittest.main()

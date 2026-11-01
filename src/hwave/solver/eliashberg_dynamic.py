@@ -491,11 +491,50 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
     k_pre = min(6, vec_size - 2)
     rho = 1.0
     if k_pre >= 1:
+        from scipy.sparse.linalg import ArpackError
+        probe_error = None
         try:
             pre_vals, _ = eigs(A0, k=k_pre, which='LM', v0=sc._arpack_start(A0))
             rho = float(np.max(np.abs(pre_vals)))
-        except Exception:
-            rho = 1.0
+        except ArpackError as exc:
+            # ARPACK also stops (error -9, "starting vector is zero") on a
+            # kernel that annihilates its start vector: a null kernel has
+            # scale 0, which the unit penalty below handles. Any other
+            # failure, non-convergence included, leaves the scale unknown.
+            v_try = sc._arpack_start(A0)
+            if float(np.linalg.norm(A0.matvec(v_try))) == 0.0:
+                rho = 0.0
+            else:
+                rho = float("nan")
+                probe_error = exc
+        if not np.isfinite(rho):
+            # Without the kernel's scale the complement penalty is unsized: a
+            # channel spectrum entirely below it would report the synthetic
+            # complement eigenvalue. Report no eigenvalue instead (the NaN
+            # sentinel of a failed solve; run_leading_eigenproblem writes
+            # eigen_converged = false).
+            logger.warning(
+                "projected channel solve: the which='LM' probe of the kernel "
+                "scale %s, so the complement penalty cannot be sized; no "
+                "leading eigenvalue is reported (NaN, eigen_converged = "
+                "false). Set an explicit spectral_shift or raise "
+                "num_eigenvalues.",
+                "did not converge ({})".format(probe_error)
+                if probe_error is not None else "is not finite")
+            k_keep = max(1, min(int(num_eigenvalues), vec_size - 2))
+            rng_ph = np.random.default_rng(sc._SEED_ADMIX_SEED)
+            w = np.empty((vec_size, k_keep), dtype=complex)
+            for j in range(k_keep):
+                x = (rng_ph.standard_normal(vec_size)
+                     + 1j * rng_ph.standard_normal(vec_size))
+                x = np.asarray(_project_parity_dynamic(
+                    x.reshape(gap_shape), pairing_type)).ravel()
+                w[:, j] = x / max(np.linalg.norm(x), 1.0e-300)
+            v = np.full(k_keep, np.nan + 0j)
+            return (v[0], w[:, 0],
+                    {"eigenvalues": v, "eigenvectors": w,
+                     "sigma_shift": None, "selection": "not-converged",
+                     "lm_solve_failed": True})
     if not np.isfinite(rho) or rho <= 0.0:
         rho = 1.0
     penalty = 4.0 * rho + 1.0
@@ -1848,7 +1887,12 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                         eigenvalues_all, vecs_all, gap_shape, pairing_type)
                 eigenvalue = eigenvalues_all[0]
                 sigma_flat = vecs_all[:, 0]
-            eigenvalue_selection = "LR_projected"
+            # a failed projected solve keeps its "not-converged" label
+            eigenvalue_selection = (
+                "not-converged"
+                if info.get("selection") == "not-converged"
+                or not np.isfinite(float(np.real(eigenvalue)))
+                else "LR_projected")
         else:
             # Unprojected solve: the general multi-orbital case (the kernel does
             # not conserve the channel) or a seeded / shift-invert run. Here the

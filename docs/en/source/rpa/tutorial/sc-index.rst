@@ -717,11 +717,16 @@ contract.
   eigenvalue, :math:`\lambda \to 1` at :math:`T_c`), not the largest
   magnitude. The eigenvalue solver (``solver_mode = "eigenvalue"``) re-solves
   for it when its largest-magnitude set cannot contain it
-  (``eigenvalue_selection = "LR_retry"``). If that ARPACK solve itself does
-  not converge, an operator of dimension at most 2000 is diagonalized densely
-  (``"dense-LR"``); a larger one reports ``NaN`` with ``eigen_converged =
-  false`` -- the largest-magnitude value is never passed off as the leading
-  one. A seeded run (``seed_eigenvector``) follows its continuation branch by
+  (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve does not
+  converge -- the first largest-magnitude solve, the shift-invert
+  preliminary, the largest-real-part re-solve, or the scale probe of the
+  dynamic projected solve -- an operator of dimension at most 2000 is
+  diagonalized densely (``"dense-LR"``); a larger one reports ``NaN`` with
+  ``eigen_converged = false`` and ``eigenvalue_selection = "not-converged"``
+  -- the largest-magnitude value is never passed off as the leading one. On
+  the static non-spin-orbital path with a parity-commuting kernel a failed
+  global solve only empties the listing: the leader still comes from the
+  parity-sector solve. A seeded run (``seed_eigenvector``) follows its continuation branch by
   design.
 - **The requested channel** (``pairing_type``). On the static
   non-spin-orbital path, when the kernel commutes with parity (the
@@ -878,9 +883,10 @@ the default s-like seed (``"cos"``) has no overlap with the
 reported leading eigenvalue is ``NaN`` -- after writing every output. One
 ``hwave_sc`` run solves exactly one pairing channel (``pairing_type``), so
 the status refers to that channel. With the default ``solver_mode =
-"eigenvalue"`` the status is ``3`` only when the largest-real-part solve
-failed on an operator too large for the dense fallback, or no eigenpair of
-the channel could be obtained. With ``solver_mode = "iteration"`` it is
+"eigenvalue"`` the status is ``3`` only when an ARPACK solve (the first
+largest-magnitude solve or the largest-real-part solve) failed on an
+operator too large for the dense fallback, or no eigenpair of the channel
+could be obtained. With ``solver_mode = "iteration"`` it is
 ``3`` whenever the iteration could not certify a value. With ``solver_mode
 = "both"`` the reported value, ``eigen_converged`` and the exit status
 follow the eigenvalue analysis (its leading eigenvector is the written

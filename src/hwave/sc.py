@@ -7315,8 +7315,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         K, i.e. the negative dominant eigenvalue), and ``spectral_shift``
         (the sigma actually applied) only when a shift was requested. The
         eigenvalue family's dict may also carry ``lm_max_real`` /
-        ``lm_min_abs`` (the bound that triggered the re-solve) and
-        ``lr_retry_failed``.
+        ``lm_min_abs`` (the bound that triggered the re-solve),
+        ``lr_retry_failed``, and ``lm_solve_failed`` (the unshifted or
+        preliminary which='LM' solve did not converge; the selection is then
+        ``"dense-LR"`` or the NaN sentinel ``"not-converged"``).
     """
     # Validate spectral_shift up front -- before any branch, including the
     # iteration loop and the small-dense early return -- so an invalid value or
@@ -7699,6 +7701,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         max_ev, solver_mode))
 
     retry_record = {}
+    selection_label = None
 
     def _largest_real_solve(shift_option):
         """``eigs(A + sigma*I, which='LR')`` with sigma subtracted back."""
@@ -7763,42 +7766,51 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             what = ("the spectral-radius probe (which='LM') of the auto "
                     "spectral_shift" if isinstance(exc, _ShiftProbeFailed)
                     else "the largest-real-part solve (which='LR')")
-            if vec_size <= _DENSE_FALLBACK_MAX:
-                logger.warning(
-                    "arnoldi: %s did not converge (%s); the operator "
-                    "(dimension %d <= %d) is diagonalized densely instead.",
-                    what, exc, vec_size, _DENSE_FALLBACK_MAX)
-                v, w = _dense_largest_real()
-                return v, w, "dense-LR", {"lr_retry_failed": True}
+            return _failed_solve(exc, what, lm=lm)
+
+    def _failed_solve(exc, what, lm=None):
+        """The contract after an ARPACK solve did not converge: a dense
+        eigendecomposition (largest real parts first) for vec_size <=
+        _DENSE_FALLBACK_MAX, else NaN eigenvalues with finite placeholder
+        vectors and the label "not-converged".
+        Returns ``(vals, vecs, label, record)``."""
+        from scipy.sparse.linalg import ArpackNoConvergence
+        if vec_size <= _DENSE_FALLBACK_MAX:
             logger.warning(
-                "arnoldi: %s did not converge (%s) "
-                "and the operator (dimension %d > %d) is too large to "
-                "diagonalize densely: no leading eigenvalue is reported (NaN, "
-                "eigen_converged = false). Set an explicit spectral_shift or "
-                "raise num_eigenvalues.", what, exc, vec_size,
-                _DENSE_FALLBACK_MAX)
-            # finite placeholder vectors (NOT eigenvectors; the NaN
-            # eigenvalues say so): the which='LM' vectors, which every
-            # downstream symmetry check accepts (they lie in the operator's
-            # space -- for the spin-orbital solvers, the antisymmetric one)
-            partial = getattr(exc, "eigenvectors", None)
-            if lm is not None:
-                w = lm[1]
-            elif (partial is not None and np.ndim(partial) == 2
-                  and partial.shape[0] == vec_size and partial.shape[1] > 0
-                  and np.all(np.isfinite(partial))):
-                # the partially converged vectors of the failed solve
-                w = np.asarray(partial)
-            else:
-                try:
-                    _, w = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A))
-                except ArpackNoConvergence:
-                    rng_ph = np.random.default_rng(_SEED_ADMIX_SEED)
-                    w = (rng_ph.standard_normal((vec_size, max_ev))
-                         + 1j * rng_ph.standard_normal((vec_size, max_ev)))
-                    w /= np.linalg.norm(w, axis=0)
-            v = np.full(w.shape[1], np.nan + 0j)
-            return v, w, "not-converged", {"lr_retry_failed": True}
+                "arnoldi: %s did not converge (%s); the operator "
+                "(dimension %d <= %d) is diagonalized densely instead.",
+                what, exc, vec_size, _DENSE_FALLBACK_MAX)
+            v, w = _dense_largest_real()
+            return v, w, "dense-LR", {"lr_retry_failed": True}
+        logger.warning(
+            "arnoldi: %s did not converge (%s) "
+            "and the operator (dimension %d > %d) is too large to "
+            "diagonalize densely: no leading eigenvalue is reported (NaN, "
+            "eigen_converged = false). Set an explicit spectral_shift or "
+            "raise num_eigenvalues.", what, exc, vec_size,
+            _DENSE_FALLBACK_MAX)
+        # finite placeholder vectors (NOT eigenvectors; the NaN
+        # eigenvalues say so): the which='LM' vectors, which every
+        # downstream symmetry check accepts (they lie in the operator's
+        # space -- for the spin-orbital solvers, the antisymmetric one)
+        partial = getattr(exc, "eigenvectors", None)
+        if lm is not None:
+            w = lm[1]
+        elif (partial is not None and np.ndim(partial) == 2
+              and partial.shape[0] == vec_size and partial.shape[1] > 0
+              and np.all(np.isfinite(partial))):
+            # the partially converged vectors of the failed solve
+            w = np.asarray(partial)
+        else:
+            try:
+                _, w = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A))
+            except ArpackNoConvergence:
+                rng_ph = np.random.default_rng(_SEED_ADMIX_SEED)
+                w = (rng_ph.standard_normal((vec_size, max_ev))
+                     + 1j * rng_ph.standard_normal((vec_size, max_ev)))
+                w /= np.linalg.norm(w, axis=0)
+        v = np.full(w.shape[1], np.nan + 0j)
+        return v, w, "not-converged", {"lr_retry_failed": True}
 
     if solver_mode == "arnoldi":
         if spectral_shift is not None:
@@ -7818,8 +7830,18 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 spectral_shift)
             selection_label = fallback or "LR"
         else:
-            vals, vecs = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A, seed_vec))
-            selection_label = "LM"
+            from scipy.sparse.linalg import ArpackNoConvergence
+            try:
+                vals, vecs = eigs(A, k=max_ev, which='LM',
+                                  v0=_arpack_start(A, seed_vec))
+                selection_label = "LM"
+            except ArpackNoConvergence as exc:
+                # the unshifted solve itself did not converge: the same
+                # contract as a failed largest-real-part solve (dense
+                # fallback, else NaN "not-converged"), never an exception
+                vals, vecs, selection_label, _rec = _failed_solve(
+                    exc, "the unshifted solve (which='LM')")
+                retry_record = {"lm_solve_failed": True}
             # The LM set holds every eigenvalue of magnitude above the
             # smallest one it contains, m = min |lambda_i|; any eigenvalue
             # outside it has real part <= m. So the largest real part FOUND
@@ -7829,7 +7851,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             # largest-real eigenvalue may be missing: re-solve for the
             # largest real part. A seeded run tracks its continuation branch
             # on purpose and is left alone.
-            if seed_vec is None and len(vals):
+            if selection_label == "LM" and seed_vec is None and len(vals):
                 re_max = float(np.max(vals.real))
                 m_min = float(np.min(np.abs(vals)))
                 tol_c = 1.0e-10 * max(1.0, float(np.max(np.abs(vals))))
@@ -7862,14 +7884,26 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = 0.0
             else:
                 logger.info("Estimating shift with preliminary Arnoldi...")
-                vals_pre, _ = eigs(A, k=k_pre, which='LM', v0=_arpack_start(A))
-                sigma_shift = _shift_from_eigenvalues(vals_pre)
+                from scipy.sparse.linalg import ArpackNoConvergence
+                try:
+                    vals_pre, _ = eigs(A, k=k_pre, which='LM',
+                                       v0=_arpack_start(A))
+                    sigma_shift = _shift_from_eigenvalues(vals_pre)
+                except ArpackNoConvergence as exc:
+                    # no target for the shift-invert solve: the same
+                    # contract as a failed solve (dense fallback, else NaN)
+                    vals, vecs, selection_label, _rec = _failed_solve(
+                        exc, "the preliminary which='LM' solve that sets "
+                             "the shift-invert target")
+                    retry_record = {"lm_solve_failed": True}
+                    sigma_shift = None
+        if selection_label is None:
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
-        vals, vecs = _eigs_shift_invert(
-            A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
-            seed_vec=seed_vec
-        )
-        selection_label = "shift-invert"
+            vals, vecs = _eigs_shift_invert(
+                A, vec_size, max_ev, solver_mode, sigma=sigma_shift,
+                seed_vec=seed_vec
+            )
+            selection_label = "shift-invert"
 
     # With a seed eigenvector, track the branch that overlaps it (eigenvector
     # continuation); otherwise order by largest real part (the physical SC
@@ -10230,6 +10264,16 @@ def calc_eliashberg(input_dict):
             if not channel_found:
                 eigen_leg_ok = False
             elif analysis_note is not None:
+                # a failed global solve (its NaN sentinel, placeholder
+                # vectors) lists nothing; the sector solve's leader stands
+                listed = np.isfinite(np.asarray(eigenvalues_eig))
+                if not np.all(listed):
+                    logger.warning(
+                        "The global eigen-analysis set could not be "
+                        "computed; the table lists only the '%s' leader of "
+                        "the parity-sector solve.", parity_channel)
+                    eigenvalues_eig = np.asarray(eigenvalues_eig)[listed]
+                    eigenvectors_eig = np.asarray(eigenvectors_eig)[listed]
                 eigenvalues_eig, eigenvectors_eig = _listing_with_leader(
                     eigenvalues_eig, eigenvectors_eig, channel_lead,
                     channel_lead_gap)

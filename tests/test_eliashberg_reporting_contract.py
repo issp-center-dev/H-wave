@@ -700,5 +700,169 @@ class TestStaticTableAtTheDimensionCap(unittest.TestCase):
                     self.assertTrue(any(abs(x - v) < 1e-8 for x in values), v)
 
 
+def _failing_first_lm(fail_lr=False):
+    """Patches: the FIRST which='LM' ARPACK call of sc (the global solve) raises
+    ArpackNoConvergence (later ones run), optionally every which='LR' call
+    too, and the dense fallback is unavailable."""
+    import scipy.sparse.linalg as spl
+    real_eigs = sc.eigs
+    state = {"lm": 0}
+
+    def eigs(A, k=6, which="LM", **kw):
+        if which == "LM":
+            state["lm"] += 1
+            if state["lm"] == 1:
+                raise spl.ArpackNoConvergence("forced", np.array([]),
+                                              np.array([]))
+        if which == "LR" and fail_lr:
+            raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
+        return real_eigs(A, k=k, which=which, **kw)
+    return (mock.patch.object(sc, "eigs", eigs),
+            mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1), state)
+
+
+def _dyn_channel_kernel(channel_vals, other_val, shape=(1, 1, 4, 1, 1, 4)):
+    """A dynamic kernel that conserves the singlet channel's even-frequency
+    sector: eigenvalues ``channel_vals`` (then the last one repeated) there,
+    ``other_val`` on its complement."""
+    from hwave.solver import eliashberg_dynamic as ed
+    n = int(np.prod(shape))
+    I = np.eye(n, dtype=complex)
+    P = np.column_stack([ed._project_parity_dynamic(
+        I[:, j].reshape(shape), "singlet").ravel() for j in range(n)])
+    U, s, _ = np.linalg.svd(P)
+    r = int((s > 1e-8).sum())
+    B, C = U[:, :r], U[:, r:]
+    lam = list(channel_vals) + [channel_vals[-1]] * (r - len(channel_vals))
+    M = B @ np.diag(lam) @ B.conj().T + other_val * (C @ C.conj().T)
+    return M, shape
+
+
+def _run_dynamic(M, shape, **eli):
+    from hwave.solver import eliashberg_dynamic as ed
+    info = {}
+    phi0 = ed._project_seed_dynamic(np.ones(shape, complex), "singlet")
+    eli = dict({"solver_mode": "eigenvalue", "num_eigenvalues": 2}, **eli)
+    out = ed.run_leading_eigenproblem(
+        lambda x: M @ np.asarray(x).ravel(), shape, eli, "singlet", phi0=phi0,
+        seed_vec=None, use_ir=False, axF=None, nmat=shape[-1], info_out=info)
+    return out, info
+
+
+class TestProjectedScaleProbeFailure(unittest.TestCase):
+    """The projected dynamic solve sizes its complement penalty from a
+    which='LM' probe of the kernel. When that probe fails, the penalty has
+    no scale: a channel spectrum entirely below the default penalty would
+    report the synthetic complement value. The run reports NaN instead."""
+
+    def test_probe_failure_gives_nan(self):
+        import scipy.sparse.linalg as spl
+        M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
+
+        def eigs(*a, **k):
+            raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
+        with mock.patch.object(spl, "eigs", eigs):
+            out, info = _run_dynamic(M, shape)
+        lam, sector_selection, selection = out[0], out[7], out[8]
+        self.assertTrue(np.isnan(lam))
+        self.assertIs(info["eigen_converged"], False)
+        self.assertEqual(selection, "not-converged")
+
+    def test_probe_success_reports_the_channel_leader(self):
+        M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
+        out, info = _run_dynamic(M, shape)
+        self.assertAlmostEqual(out[0], -10.0, delta=1e-8)
+        self.assertIs(info["eigen_converged"], True)
+        self.assertEqual(out[8], "LR_projected")
+
+
+class TestProjectedSolveFailureLabel(unittest.TestCase):
+    """A failed projected largest-real-part solve is labelled
+    "not-converged", not "LR_projected"."""
+
+    def test_label(self):
+        import scipy.sparse.linalg as spl
+        M, shape = _dyn_channel_kernel([0.7, 0.3], -0.2)
+        real_eigs = sc.eigs
+
+        def eigs(A, k=6, which="LM", **kw):
+            if which == "LR":
+                raise spl.ArpackNoConvergence("forced", np.array([]),
+                                              np.array([]))
+            return real_eigs(A, k=k, which=which, **kw)
+        with mock.patch.object(sc, "eigs", eigs), \
+                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            out, info = _run_dynamic(M, shape)
+        self.assertTrue(np.isnan(out[0]))
+        self.assertIs(info["eigen_converged"], False)
+        self.assertEqual(out[8], "not-converged")
+
+
+class TestFirstArnoldiSolveFailure(unittest.TestCase):
+    """The unshifted which='LM' solve itself can fail to converge. Above the
+    dense-fallback size the run reports NaN with eigen_converged = false and
+    eigenvalue_selection "not-converged" instead of raising; on the static
+    non-spin-orbital path with a parity-commuting kernel the leader still
+    comes from the parity-sector solve."""
+
+    def test_static_sector_leader_survives(self):
+        t = TestChannelLeaderFromTheSectorSolve()
+        t.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t.tmp, ignore_errors=True)
+        M = t._kernel([-10.0, 5.0], [100.0])
+        p1, p2, state = _failing_first_lm()
+        with p1, p2:
+            lam, text = t._run(M, solver_mode="eigenvalue", num_eigenvalues=2)
+        self.assertGreaterEqual(state["lm"], 2)
+        self.assertAlmostEqual(lam, 5.0, delta=1e-9)
+        self.assertIn("# eigen_converged = true", text)
+        rows = [l.split() for l in text.splitlines()
+                if l.strip() and not l.startswith("#") and len(l.split()) == 5]
+        # the failed global listing contributes no rows; the leader remains
+        self.assertEqual(len(rows), 1)
+        self.assertAlmostEqual(float(rows[0][1]), 5.0, delta=1e-9)
+
+    def test_static_non_commuting_gives_nan(self):
+        t = TestChannelLeaderFromTheSectorSolve()
+        t.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, t.tmp, ignore_errors=True)
+        M = t._kernel([0.9, 0.2], [0.5], leak=0.05)
+        p1, p2, _state = _failing_first_lm()
+        with p1, p2:
+            lam, text = t._run(M, solver_mode="eigenvalue", num_eigenvalues=4)
+        self.assertTrue(np.isnan(lam))
+        self.assertIn("# eigen_converged = false", text)
+
+    def test_dynamic_unprojected(self):
+        from tests.test_eliashberg_dynamic_refactor import _run as run_dyn
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        p1, p2, _state = _failing_first_lm()
+        with p1, p2:
+            run_dyn(tmp, "eigenvalue", None)
+        txt = open(os.path.join(tmp, "eigenvalue.dat")).read()
+        self.assertIn("eigen_converged=false", txt.replace(" ", ""))
+        z = np.load(os.path.join(tmp, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+        self.assertIs(bool(z["eigen_converged"]), False)
+        self.assertTrue(np.isnan(float(z["eigenvalue"])))
+
+    def test_static_spin_orbital(self):
+        from tests.test_sc_spin_orbital import _write_model, _input, _quiet
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        files = _write_model(d, so=True)
+        inp = _input(d, files, True,
+                     {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                      "num_eigenvalues": 4}, out="lmfail")
+        p1, p2, _state = _failing_first_lm()
+        with _quiet(), p1, p2:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isnan(lam))
+        out = inp["file"]["output"]["path_to_output"]
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigen_converged = false", txt)
+
+
 if __name__ == "__main__":
     unittest.main()
