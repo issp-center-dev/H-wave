@@ -649,7 +649,8 @@ that has no effect under the current settings.
   dressed ``chi_s``, ``chi_c`` the self-energy used (the in-process
   counterpart of ``[eliashberg] bond_channels`` below). The solver controls
   are read from the ``[eliashberg]`` table of the SAME input file (optional;
-  every key defaults to the value ``hwave_sc`` uses; ``pairing_type`` is
+  every key defaults to the value ``hwave_sc`` uses (``solver_mode =
+  "eigenvalue"`` included); ``pairing_type`` is
   refused there -- the channel(s) are selected by this key instead; ``gpu``
   follows the FLEX solve). Results: ``eliashberg_bond_<type>.npz``,
   ``gap_bond_<type>.dat``, ``eigenvalue_bond_<type>.dat`` per requested
@@ -1183,10 +1184,20 @@ memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
 ``longitudinal_bond_pairing`` to something other than ``"none"``, an
 ``[eliashberg]`` table in the SAME input file is optional and configures
 the pairing step at the end of the FLEX solve; every key of the general
-table not listed as post-processing-only above (``solver_mode``,
-``num_eigenvalues``, ``max_iter``, ``alpha``, ``convergence_tol``,
+table not listed as post-processing-only above (``num_eigenvalues``,
+``max_iter``, ``alpha``, ``convergence_tol``, ``spectral_shift``,
 ``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_keep_static_chi``,
-``fft_workers``, ...) defaults exactly as it does for ``hwave_sc``.
+``fft_workers``, ``solver_mode``, ...) defaults exactly as it does for
+``hwave_sc``; the default ``solver_mode`` of both is ``"eigenvalue"`` (the
+singlet kernel of a repulsive model has a negative dominant eigenvalue,
+which defeats an unshifted power iteration). A power iteration
+(``solver_mode = "iteration"``, opt-in) that does not converge records
+``eigen_converged = false`` and ``NaN`` for the eigenvalue (see the
+Eliashberg tutorial's "Eigen-solver convergence" section); the FLEX run
+itself still exits normally. In ``eigenvalue_bond_<type>.dat`` the line is
+written ``# eigen_converged=<true|false>`` (no spaces; the static
+``eigenvalue.dat`` uses ``# eigen_converged = ...``), so test it
+whitespace-tolerantly.
 ``pairing_type`` is refused (the channel(s) are selected by
 ``longitudinal_bond_pairing`` instead); ``gpu`` / ``gpu_required`` are
 ignored (the kernel runs on the FLEX solve's own backend); ``bond_channels``,
