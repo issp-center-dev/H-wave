@@ -497,12 +497,14 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
             pre_vals, _ = eigs(A0, k=k_pre, which='LM', v0=sc._arpack_start(A0))
             rho = float(np.max(np.abs(pre_vals)))
         except ArpackError as exc:
-            # ARPACK also stops (error -9, "starting vector is zero") on a
-            # kernel that annihilates its start vector: a null kernel has
-            # scale 0, which the unit penalty below handles. Any other
+            # ARPACK stops with error -9 ("starting vector is zero") on a null
+            # kernel, whose scale 0 the unit penalty below handles. The
+            # exemption needs that code AND independent random probes that
+            # find the operator null (sc._operator_is_null): a nonzero kernel
+            # can annihilate the deterministic start vector. Any other
             # failure, non-convergence included, leaves the scale unknown.
-            v_try = sc._arpack_start(A0)
-            if float(np.linalg.norm(A0.matvec(v_try))) == 0.0:
+            if (sc._arpack_error_code(exc) == -9
+                    and sc._operator_is_null(A0, vec_size)):
                 rho = 0.0
             else:
                 rho = float("nan")
@@ -517,9 +519,8 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
                 "projected channel solve: the which='LM' probe of the kernel "
                 "scale %s, so the complement penalty cannot be sized; no "
                 "leading eigenvalue is reported (NaN, eigen_converged = "
-                "false). Set an explicit spectral_shift or raise "
-                "num_eigenvalues.",
-                "did not converge ({})".format(probe_error)
+                "false).",
+                "failed ({})".format(probe_error)
                 if probe_error is not None else "is not finite")
             k_keep = max(1, min(int(num_eigenvalues), vec_size - 2))
             rng_ph = np.random.default_rng(sc._SEED_ADMIX_SEED)

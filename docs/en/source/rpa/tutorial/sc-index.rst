@@ -717,8 +717,9 @@ contract.
   eigenvalue, :math:`\lambda \to 1` at :math:`T_c`), not the largest
   magnitude. The eigenvalue solver (``solver_mode = "eigenvalue"``) re-solves
   for it when its largest-magnitude set cannot contain it
-  (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve does not
-  converge -- the first largest-magnitude solve, the shift-invert
+  (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve fails (does
+  not converge, stops with another ARPACK error, or returns non-finite
+  eigenvalues) -- the first largest-magnitude solve, the shift-invert
   preliminary, the largest-real-part re-solve, or the scale probe of the
   dynamic projected solve -- an operator of dimension at most 2000 is
   diagonalized densely (``"dense-LR"``); a larger one reports ``NaN`` with

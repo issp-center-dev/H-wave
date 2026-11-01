@@ -101,6 +101,48 @@ _COLLAPSE_REL = 1.0e-10
 # it the leading eigenvalue is NaN.
 _DENSE_FALLBACK_MAX = 2000
 
+
+class _NonFiniteEigenvalues(ArithmeticError):
+    """An ARPACK call returned NaN or infinite eigenvalues; treated like a
+    solve that did not converge."""
+
+
+# Independent probes that establish a NULL operator (every image exactly
+# zero up to round-off) before ARPACK error -9 ("starting vector is zero")
+# is read as "the operator is zero". They use their own seed, so an
+# operator that happens to annihilate the deterministic ARPACK start vector
+# is not mistaken for a null one. A bound of 16 machine epsilons relative to
+# each probe's norm is the round-off of evaluating an operator whose entries
+# are all zero (or cancel exactly); any kernel with an eigenvalue resolvable
+# in double precision against O(1) pairing eigenvalues lifts at least one
+# of three generic probes far above it.
+_NULL_PROBE_SEED = 917253
+_NULL_PROBE_COUNT = 3
+_NULL_PROBE_RTOL = 16.0 * np.finfo(float).eps
+
+
+def _arpack_error_code(exc):
+    """The ARPACK ``info`` code of a scipy ``ArpackError`` (parsed from its
+    message "ARPACK error <code>: ..."), or None."""
+    import re
+    m = re.match(r"ARPACK error (-?\d+)", str(exc))
+    return int(m.group(1)) if m else None
+
+
+def _operator_is_null(A, n):
+    """True when ``A`` maps _NULL_PROBE_COUNT independent random vectors (a
+    seeded generator of its own) to zero within _NULL_PROBE_RTOL of their
+    norms."""
+    rng = np.random.default_rng(_NULL_PROBE_SEED)
+    for _ in range(_NULL_PROBE_COUNT):
+        x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+        y = np.asarray(A.matvec(x)).ravel()
+        if (not np.all(np.isfinite(y))
+                or float(np.linalg.norm(y))
+                > _NULL_PROBE_RTOL * float(np.linalg.norm(x))):
+            return False
+    return True
+
 # Default [eliashberg] solver_mode of hwave_sc (static, dynamic, spin-orbital
 # and the bond file entry) and of the in-process FLEX bond pairing step. Both
 # are the ARPACK eigenvalue solver: it searches the whole spectrum for the
@@ -7707,7 +7749,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         """``eigs(A + sigma*I, which='LR')`` with sigma subtracted back."""
         from scipy.sparse.linalg import LinearOperator as _LinOp
         if isinstance(shift_option, str):  # "auto"
-            from scipy.sparse.linalg import ArpackNoConvergence
+            from scipy.sparse.linalg import ArpackError, ArpackNoConvergence
             k_pre = min(6, vec_size - 2)
             if k_pre >= 1:
                 try:
@@ -7723,6 +7765,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                         "(which='LM') did not fully converge (%s); the %d "
                         "converged eigenvalues set the shift.", exc,
                         vals_pre.size)
+                except ArpackError as exc:
+                    # any other ARPACK error (e.g. -9 on a null operator):
+                    # no radius, handled like a failed solve
+                    raise _ShiftProbeFailed(exc) from exc
                 sig = float(np.max(np.abs(vals_pre))) * 1.5 + 1.0e-6
             else:
                 sig = 1.0
@@ -7758,11 +7804,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         eigenvalues (the vectors of ``lm`` when given) -- never the
         largest-magnitude set as if it were the largest real part.
         Returns ``(vals, vecs, label_suffix_or_None, record)``."""
-        from scipy.sparse.linalg import ArpackNoConvergence
+        from scipy.sparse.linalg import ArpackError
         try:
             v, w = _largest_real_solve(shift_option)
             return v, w, None, {}
-        except (ArpackNoConvergence, _ShiftProbeFailed) as exc:
+        except (ArpackError, _ShiftProbeFailed) as exc:
             what = ("the spectral-radius probe (which='LM') of the auto "
                     "spectral_shift" if isinstance(exc, _ShiftProbeFailed)
                     else "the largest-real-part solve (which='LR')")
@@ -7774,7 +7820,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         _DENSE_FALLBACK_MAX, else NaN eigenvalues with finite placeholder
         vectors and the label "not-converged".
         Returns ``(vals, vecs, label, record)``."""
-        from scipy.sparse.linalg import ArpackNoConvergence
+        from scipy.sparse.linalg import ArpackError
         if vec_size <= _DENSE_FALLBACK_MAX:
             logger.warning(
                 "arnoldi: %s did not converge (%s); the operator "
@@ -7804,7 +7850,9 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         else:
             try:
                 _, w = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A))
-            except ArpackNoConvergence:
+                if not np.all(np.isfinite(w)):
+                    raise _NonFiniteEigenvalues("non-finite vectors")
+            except (ArpackError, _NonFiniteEigenvalues):
                 rng_ph = np.random.default_rng(_SEED_ADMIX_SEED)
                 w = (rng_ph.standard_normal((vec_size, max_ev))
                      + 1j * rng_ph.standard_normal((vec_size, max_ev)))
@@ -7830,12 +7878,15 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 spectral_shift)
             selection_label = fallback or "LR"
         else:
-            from scipy.sparse.linalg import ArpackNoConvergence
+            from scipy.sparse.linalg import ArpackError
             try:
                 vals, vecs = eigs(A, k=max_ev, which='LM',
                                   v0=_arpack_start(A, seed_vec))
+                if not np.all(np.isfinite(vals)):
+                    raise _NonFiniteEigenvalues(
+                        "non-finite eigenvalues returned")
                 selection_label = "LM"
-            except ArpackNoConvergence as exc:
+            except (ArpackError, _NonFiniteEigenvalues) as exc:
                 # the unshifted solve itself did not converge: the same
                 # contract as a failed largest-real-part solve (dense
                 # fallback, else NaN "not-converged"), never an exception
@@ -7884,12 +7935,15 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 sigma_shift = 0.0
             else:
                 logger.info("Estimating shift with preliminary Arnoldi...")
-                from scipy.sparse.linalg import ArpackNoConvergence
+                from scipy.sparse.linalg import ArpackError
                 try:
                     vals_pre, _ = eigs(A, k=k_pre, which='LM',
                                        v0=_arpack_start(A))
+                    if not np.all(np.isfinite(vals_pre)):
+                        raise _NonFiniteEigenvalues(
+                            "non-finite eigenvalues returned")
                     sigma_shift = _shift_from_eigenvalues(vals_pre)
-                except ArpackNoConvergence as exc:
+                except (ArpackError, _NonFiniteEigenvalues) as exc:
                     # no target for the shift-invert solve: the same
                     # contract as a failed solve (dense fallback, else NaN)
                     vals, vecs, selection_label, _rec = _failed_solve(
