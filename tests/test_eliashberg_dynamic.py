@@ -896,14 +896,15 @@ def test_solve_dynamic_gpu_end_to_end_matches_cpu(tmp_path):
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
     _write_geom_transfer_coulomb(input_dir, norb=1)
-    m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1,
-                            Nx=2, Ny=2, Nz=1)
+    # a channel-conserving archive: the run has a channel leader to compare
+    m = _write_symmetric_flex_fixture(tmp_path / "output", nmat=8)
 
     lam_cpu = ed.solve_dynamic(
         _dynamic_input_dict(input_dir, output_dir, m["nmat"]))
     lam_gpu = ed.solve_dynamic(
         _dynamic_input_dict(input_dir, output_dir, m["nmat"],
                             extra_eliashberg={"gpu": True}))
+    assert np.isfinite(lam_cpu)
     assert np.isclose(lam_gpu, lam_cpu, atol=1e-10)
 
 
