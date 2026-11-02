@@ -1066,6 +1066,41 @@ class TestSecondaryRetryFailure(_FlexFixture):
         self.assertIs(bool(z["eigen_converged"]), False)
 
 
+class TestNullOperatorLabel(_FlexFixture):
+    """An exactly zero spin-orbital dynamic kernel (ARPACK error -9 confirmed
+    by independent probes) reports lambda = 0, converged, with
+    eigenvalue_selection = "null-operator", above the dense limit."""
+
+    def test_zero_kernel(self):
+        from scipy.sparse.linalg import LinearOperator
+        from tests.test_eliashberg_reporting_contract import \
+            _forced_arpack_error
+        real_make = dso.make_operator
+
+        def zero_make(*a, **kw):
+            A, basis = real_make(*a, **kw)
+            n = A.shape[0]
+            Z = LinearOperator((n, n), matvec=lambda v: np.zeros_like(
+                np.asarray(v).ravel()), dtype=complex)
+            return Z, basis
+        out = self._out("null")
+        inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
+                       nmat=_NMAT_E2E, out=out)
+        with _quiet(), mock.patch.object(dso, "make_operator", zero_make), \
+                _forced_arpack_error(-9), \
+                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            lam = sc.calc_eliashberg(inp)
+        self.assertEqual(lam, 0.0)
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigen_converged=true", txt)
+        self.assertIn("# eigenvalue_selection: null-operator", txt)
+        z = np.load(os.path.join(out, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "null-operator")
+        self.assertIs(bool(z["eigen_converged"]), True)
+        self.assertTrue(np.all(np.isfinite(z["gap"])))
+        self.assertLess(dso.antisymmetry_residual(z["gap"]), 1e-12)
+
+
 class TestFirstArnoldiSolveFailure(_FlexFixture):
     """The unshifted which='LM' solve of the spin-orbital dynamic entry fails
     above the dense-fallback size: NaN, eigen_converged = false and

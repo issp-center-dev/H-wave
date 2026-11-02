@@ -12,6 +12,7 @@
 * hwave_tsweep does not accept a NaN leading eigenpair as a result nor chain
   its gap as a seed.
 """
+import contextlib
 import os
 import shutil
 import tempfile
@@ -750,40 +751,83 @@ def _run_dynamic(M, shape, **eli):
     return out, info
 
 
-class TestProjectedScaleProbeFailure(unittest.TestCase):
-    """The projected dynamic solve sizes its complement penalty from a
-    which='LM' probe of the kernel. When that probe fails, the penalty has
-    no scale: a channel spectrum entirely below the default penalty would
-    report the synthetic complement value. The run reports NaN instead."""
+def _in_channel_sector(tc, gap, shape, pairing_type="singlet"):
+    """The gap is finite, nonzero and lies in the channel's even-frequency
+    sector."""
+    from hwave.solver import eliashberg_dynamic as ed
+    g = np.asarray(gap).ravel()
+    tc.assertTrue(np.all(np.isfinite(g)))
+    tc.assertGreater(np.linalg.norm(g), 0.0)
+    np.testing.assert_allclose(
+        ed._project_parity_dynamic(g.reshape(shape), pairing_type).ravel(),
+        g, atol=1e-10 * np.linalg.norm(g))
 
-    def test_probe_failure_gives_nan(self):
-        import scipy.sparse.linalg as spl
-        M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
 
-        def eigs(*a, **k):
-            raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
-        with mock.patch.object(spl, "eigs", eigs):
-            out, info = _run_dynamic(M, shape)
-        lam, sector_selection, selection = out[0], out[7], out[8]
-        self.assertTrue(np.isnan(lam))
-        self.assertIs(info["eigen_converged"], False)
-        self.assertEqual(selection, "not-converged")
+def _all_eigs_failing(kind):
+    """An ``eigs`` replacement for which every call fails: ARPACK
+    non-convergence, another ARPACK error, or non-finite eigenvalues."""
+    import scipy.sparse.linalg as spl
 
-    def test_probe_success_reports_the_channel_leader(self):
+    def eigs(A, k=6, **kw):
+        if kind == "no-convergence":
+            raise spl.ArpackNoConvergence("forced", np.array([]),
+                                          np.array([]))
+        if kind == "arpack-error":
+            raise spl.ArpackError(-3)
+        return (np.full(k, np.nan, complex),
+                np.full((A.shape[0], k), np.nan, complex))
+    return eigs
+
+
+class TestProjectedSolveFailureContract(unittest.TestCase):
+    """The projected dynamic solve runs the shared driver on the channel
+    sector's own coordinates, with no preliminary solve of its own. When its
+    ARPACK solves fail, the sector operator is diagonalized densely up to
+    _DENSE_FALLBACK_MAX; above it the run reports NaN with eigen_converged =
+    false, the label "not-converged" and a finite placeholder gap in the
+    channel sector -- never the largest-magnitude value as the leader."""
+
+    KINDS = ("no-convergence", "arpack-error", "non-finite")
+
+    def test_reports_the_channel_leader(self):
         M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
         out, info = _run_dynamic(M, shape)
         self.assertAlmostEqual(out[0], -10.0, delta=1e-8)
         self.assertIs(info["eigen_converged"], True)
         self.assertEqual(out[8], "LR_projected")
 
+    def test_failed_solve_is_diagonalized_densely(self):
+        M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
+        for kind in self.KINDS:
+            with self.subTest(kind=kind), \
+                    mock.patch.object(sc, "eigs", _all_eigs_failing(kind)):
+                out, info = _run_dynamic(M, shape)
+            self.assertAlmostEqual(out[0], -10.0, delta=1e-10)
+            self.assertIs(info["eigen_converged"], True)
+            self.assertEqual(out[8], "LR_projected")
+            _in_channel_sector(self, out[1], shape)
 
-class TestProjectedSolveFailureLabel(unittest.TestCase):
-    """A failed projected largest-real-part solve is labelled
-    "not-converged", not "LR_projected"."""
+    def test_failed_solve_above_the_dense_limit_gives_nan(self):
+        for vals, other in (([-10.0, -12.0], 0.5), ([0.7, 0.3], -0.2)):
+            M, shape = _dyn_channel_kernel(vals, other)
+            for kind in self.KINDS:
+                with self.subTest(vals=vals, kind=kind), \
+                        mock.patch.object(sc, "eigs",
+                                          _all_eigs_failing(kind)), \
+                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                    out, info = _run_dynamic(M, shape)
+                self.assertTrue(np.isnan(out[0]))
+                self.assertIs(info["eigen_converged"], False)
+                self.assertEqual(out[8], "not-converged")
+                _in_channel_sector(self, out[1], shape)
 
-    def test_label(self):
+    def test_failed_largest_real_re_solve(self):
+        """The which='LM' set converges but cannot contain the largest real
+        part (channel {-10, -12, ..., 0.1}-like spectra put it far below), and
+        the re-solve for it fails: dense up to the limit, NaN above."""
         import scipy.sparse.linalg as spl
-        M, shape = _dyn_channel_kernel([0.7, 0.3], -0.2)
+        M, shape = _dyn_channel_kernel([0.1, -10.0, -12.0, -11.0, -13.0],
+                                       0.5)
         real_eigs = sc.eigs
 
         def eigs(A, k=6, which="LM", **kw):
@@ -791,12 +835,265 @@ class TestProjectedSolveFailureLabel(unittest.TestCase):
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
+        with mock.patch.object(sc, "eigs", eigs):
+            out, info = _run_dynamic(M, shape)
+        self.assertAlmostEqual(out[0], 0.1, delta=1e-10)
+        self.assertEqual(out[8], "LR_projected")
         with mock.patch.object(sc, "eigs", eigs), \
                 mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
             out, info = _run_dynamic(M, shape)
         self.assertTrue(np.isnan(out[0]))
         self.assertIs(info["eigen_converged"], False)
         self.assertEqual(out[8], "not-converged")
+        _in_channel_sector(self, out[1], shape)
+
+    def test_zero_kernel(self):
+        """An exactly zero kernel reports lambda = 0, converged, with a
+        finite gap in the channel sector -- below and above the dense limit,
+        whether ARPACK returns zeros or stops with error -9 ("starting vector
+        is zero"; version dependent, so it is also forced here)."""
+        import scipy.sparse.linalg as spl
+        shape = (1, 1, 4, 1, 1, 4)
+        n = int(np.prod(shape))
+
+        def minus_9(A, k=6, **kw):
+            raise spl.ArpackError(-9)
+        for forced in (False, True):
+            for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                patches = [mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                             dense_max)]
+                if forced:
+                    patches.append(mock.patch.object(sc, "eigs", minus_9))
+                with self.subTest(forced=forced, dense_max=dense_max), \
+                        patches[0], (patches[1] if forced
+                                     else contextlib.nullcontext()):
+                    out, info = _run_dynamic(np.zeros((n, n), complex),
+                                             shape)
+                    self.assertEqual(out[0], 0.0)
+                    self.assertIs(info["eigen_converged"], True)
+                    self.assertEqual(out[8], "LR_projected")
+                    _in_channel_sector(self, out[1], shape)
+                    if forced:
+                        self.assertIn("the kernel is exactly zero on the "
+                                      "'singlet' channel sector", out[4])
+
+
+def _zero_op(n):
+    from scipy.sparse.linalg import LinearOperator
+    return LinearOperator((n, n), matvec=lambda v: np.zeros_like(
+        np.asarray(v).ravel()), dtype=complex)
+
+
+def _forced_arpack_error(code):
+    import scipy.sparse.linalg as spl
+
+    def eigs(A, k=6, **kw):
+        raise spl.ArpackError(code)
+    return mock.patch.object(sc, "eigs", eigs)
+
+
+class TestExactlyZeroOperator(unittest.TestCase):
+    """ARPACK error -9 ("starting vector is zero") on an operator that maps
+    three independent random vectors to exactly zero means the operator is
+    zero: every eigenvalue is 0, reported with the selection
+    "null-operator" and finite vectors, at any dimension. Any other error,
+    and -9 on an operator that is not exactly zero, keeps the dense-or-NaN
+    contract."""
+
+    def test_shared_driver_every_method(self):
+        n = 40
+        for method, shift in (("arnoldi", None), ("arnoldi", "auto"),
+                              ("shift-invert-gmres", None)):
+            kw = {} if shift is None else {"spectral_shift": shift}
+            for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                with self.subTest(method=method, shift=shift,
+                                  dense_max=dense_max), \
+                        _forced_arpack_error(-9), \
+                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                          dense_max):
+                    lam, vec, info = sc._solve_leading(
+                        lambda: (_zero_op(n), n), n, method,
+                        num_eigenvalues=4, **kw)
+                    self.assertEqual(lam, 0.0)
+                    self.assertEqual(info["selection"], "null-operator")
+                    self.assertIs(info.get("null_operator"), True)
+                    vals = np.asarray(info["eigenvalues"])
+                    self.assertTrue(np.all(vals == 0.0))
+                    vecs = np.asarray(info["eigenvectors"])
+                    self.assertEqual(vecs.shape[0], n)
+                    self.assertTrue(np.all(np.isfinite(vecs)))
+                    np.testing.assert_allclose(
+                        np.linalg.norm(vecs, axis=0), 1.0, atol=1e-12)
+
+    def test_nonzero_operators_keep_the_failed_solve_contract(self):
+        """-9 on a NONZERO operator that annihilates the deterministic ARPACK
+        start vector, and on a tiny 1e-300 * I, is a failed solve: dense up
+        to the limit, NaN "not-converged" above it."""
+        from scipy.sparse.linalg import LinearOperator, aslinearoperator
+        n = 30
+        D = np.diag(np.linspace(-1.0, 2.0, n)).astype(complex)
+        s = np.asarray(sc._arpack_start(aslinearoperator(D))).ravel()
+        M = D - np.outer(D @ s, s.conj()) / np.vdot(s, s)
+        self.assertLess(np.linalg.norm(M @ s), 1e-12 * np.linalg.norm(M))
+        lead_M = float(np.max(np.linalg.eigvals(M).real))
+        cases = (("start-annihilating", M, lead_M),
+                 ("tiny", 1.0e-300 * np.eye(n, dtype=complex), 1.0e-300))
+        for name, mat, lead in cases:
+            for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                with self.subTest(name=name, dense_max=dense_max), \
+                        _forced_arpack_error(-9), \
+                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                          dense_max):
+                    A = LinearOperator((n, n), matvec=lambda v, m=mat: m @ v,
+                                       dtype=complex)
+                    lam, vec, info = sc._solve_leading(
+                        lambda: (A, n), n, "arnoldi", num_eigenvalues=4)
+                    self.assertTrue(np.all(np.isfinite(vec)))
+                    if dense_max > 1:
+                        self.assertEqual(info["selection"], "dense-LR")
+                        self.assertAlmostEqual(float(np.real(lam)), lead,
+                                               delta=1e-12)
+                    else:
+                        self.assertTrue(np.isnan(lam))
+                        self.assertEqual(info["selection"], "not-converged")
+
+    def test_unprojected_dynamic_run_reports_the_failed_case(self):
+        """An unprojected dynamic run (shift-invert) on a zero kernel: the
+        placeholder vectors carry no channel parity, so the run reports NaN
+        with eigen_converged = false -- labelled "not-converged", never
+        "null-operator" next to a NaN."""
+        shape = (1, 1, 4, 1, 1, 4)
+        for forced in (False, True):
+            with self.subTest(forced=forced), \
+                    (_forced_arpack_error(-9) if forced
+                     else contextlib.nullcontext()):
+                out, info = _run_dynamic(
+                    lambda x: np.zeros_like(np.asarray(x).ravel()), shape,
+                    eigenvalue_method="shift-invert-gmres")
+                self.assertTrue(np.isnan(out[0]))
+                self.assertIs(info["eigen_converged"], False)
+                self.assertEqual(out[7], "none")
+                self.assertEqual(out[8], "not-converged")
+
+    def test_seeded_dynamic_run_reports_an_uncertified_zero(self):
+        """A seeded (continuation) run on a zero kernel keeps the solve's
+        value 0 with eigen_converged = true, the label "null-operator" and
+        sector_selection "none" (an uncertified continuation, as for any
+        seeded run without a channel match)."""
+        from hwave.solver import eliashberg_dynamic as ed
+        shape = (1, 1, 4, 1, 1, 4)
+        phi0 = ed._project_seed_dynamic(np.ones(shape, complex), "singlet")
+        seed = phi0.ravel() / np.linalg.norm(phi0)
+        for forced in (False, True):
+            with self.subTest(forced=forced), \
+                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1), \
+                    (_forced_arpack_error(-9) if forced
+                     else contextlib.nullcontext()):
+                info = {}
+                out = ed.run_leading_eigenproblem(
+                    lambda x: np.zeros_like(np.asarray(x).ravel()), shape,
+                    {"solver_mode": "eigenvalue", "num_eigenvalues": 2},
+                    "singlet", phi0=phi0, seed_vec=seed, use_ir=False,
+                    axF=None, nmat=shape[-1], info_out=info)
+                self.assertEqual(out[0], 0.0)
+                self.assertIs(info["eigen_converged"], True)
+                self.assertEqual(out[7], "none")
+                self.assertEqual(out[8], "null-operator")
+
+    def test_nan_operator_is_a_failed_solve(self):
+        """An operator that returns NaN has no eigendecomposition: the NaN
+        sentinel "not-converged" with finite vectors, below the dense limit
+        (where the dense fallback cannot diagonalize it either) and above
+        it, and on the tiny dense path. ARPACK's answer for such an operator
+        (non-finite eigenvalues and vectors) is supplied by a stand-in, so
+        LAPACK is never handed NaN and prints nothing."""
+        from scipy.sparse.linalg import LinearOperator
+
+        def nan_eigs(A, k=6, **kw):
+            calls.append(1)
+            return (np.full(k, np.nan + 0j),
+                    np.full((A.shape[0], k), np.nan + 0j))
+        calls = []
+        stand_in = mock.patch.object(sc, "eigs", nan_eigs)
+        stand_in.start()
+        self.addCleanup(stand_in.stop)
+        for n in (2, 30):
+            op = LinearOperator((n, n), matvec=lambda v: np.full(
+                np.asarray(v).ravel().shape, np.nan + 0j), dtype=complex)
+            for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                for shift in (None, "auto"):
+                    kw = {} if shift is None else {"spectral_shift": shift}
+                    with self.subTest(n=n, dense_max=dense_max, shift=shift), \
+                            mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                              dense_max):
+                        lam, vec, info = sc._solve_leading(
+                            lambda: (op, n), n, "arnoldi", num_eigenvalues=4,
+                            **kw)
+                        self.assertTrue(np.isnan(lam))
+                        self.assertEqual(info["selection"], "not-converged")
+                        self.assertTrue(np.all(np.isfinite(vec)))
+                        self.assertGreater(np.linalg.norm(vec), 0.0)
+        # one ARPACK pass per n = 30 solve (the which='LM' solve or the auto
+        # shift's probe), none for the placeholders, none on the tiny path
+        self.assertEqual(len(calls), 4)
+
+    def test_other_error_on_a_zero_operator_is_a_failed_solve(self):
+        n = 30
+        with _forced_arpack_error(-3), \
+                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            lam, vec, info = sc._solve_leading(
+                lambda: (_zero_op(n), n), n, "arnoldi", num_eigenvalues=4)
+        self.assertTrue(np.isnan(lam))
+        self.assertEqual(info["selection"], "not-converged")
+
+    def test_projected_dynamic_above_the_dense_limit(self):
+        """Unforced, at a reduced dimension above _DENSE_FALLBACK_MAX."""
+        from hwave.solver import eliashberg_dynamic as ed
+        shape = (1, 1, 16, 16, 1, 32)
+        _f, _r, dim = ed._channel_sector_basis(shape, "singlet")
+        self.assertGreater(dim, sc._DENSE_FALLBACK_MAX)
+        out, info = _run_dynamic(
+            lambda x: np.zeros_like(np.asarray(x).ravel()), shape)
+        self.assertEqual(out[0], 0.0)
+        self.assertIs(info["eigen_converged"], True)
+        self.assertEqual(out[8], "LR_projected")
+        _in_channel_sector(self, out[1], shape)
+
+    def test_static_unprojected_and_sector_above_the_dense_limit(self):
+        shape = (1, 1, 64, 64, 1)
+        n = int(np.prod(shape))
+        op = (_zero_op(n), n)
+        vals, gaps = sc._solve_eigenvalue(None, None, 1, 64, 64, 1,
+                                          num_eigenvalues=4, operator=op)
+        self.assertTrue(np.all(np.asarray(vals) == 0.0))
+        self.assertTrue(np.all(np.isfinite(gaps)))
+        _f, _r, dim = sc._parity_sector_basis(shape, "singlet")
+        self.assertGreater(dim, sc._DENSE_FALLBACK_MAX)
+        _v, _g, lead, lead_gap, found, _note, _sv = sc._channel_eigenpairs(
+            vals, gaps, op, shape, "singlet", 4)
+        self.assertTrue(found)
+        self.assertEqual(lead, 0.0)
+        self.assertTrue(np.all(np.isfinite(lead_gap)))
+        self.assertTrue(sc._is_gap_parity(lead_gap, "singlet"))
+
+    def test_spin_orbital_above_the_dense_limit(self):
+        shape = (2, 2, 32, 32, 1)
+        basis = sc._SOAntisymmetricBasis(shape)
+        self.assertGreater(basis.dim, sc._DENSE_FALLBACK_MAX)
+        n = int(np.prod(shape))
+        for forced in (False, True):
+            with self.subTest(forced=forced), \
+                    (_forced_arpack_error(-9) if forced
+                     else contextlib.nullcontext()):
+                info = {}
+                vals, gaps = sc._so_solve_eigenvalue(
+                    _zero_op(n), basis, 4, "arnoldi", info_out=info)
+                self.assertTrue(np.all(np.asarray(vals) == 0.0))
+                if forced:
+                    self.assertEqual(info["selection"], "null-operator")
+                for g in gaps:
+                    self.assertTrue(np.all(np.isfinite(g)))
+                    self.assertGreater(np.linalg.norm(g), 0.0)
 
 
 class TestFirstArnoldiSolveFailure(unittest.TestCase):
@@ -929,97 +1226,6 @@ class TestDynamicNoChannelEigenpair(unittest.TestCase):
         self.assertIn("not certified", msg)
 
 
-def _start_annihilating_kernel(shape=(1, 1, 4, 1, 1, 4)):
-    """A NONZERO dynamic kernel that conserves the singlet channel sector
-    (channel eigenvalues {-10, -12}, complement 0.5) and annihilates the
-    deterministic ARPACK start vector s: each sector block is multiplied by
-    the projector off s's component in that sector, so K s = 0 while the
-    sectors stay invariant. (The channel then also has the eigenvalue 0,
-    along s's channel component: a channel-conserving kernel cannot
-    annihilate a vector with a channel component otherwise.)"""
-    from hwave.solver import eliashberg_dynamic as ed
-    from scipy.sparse.linalg import aslinearoperator
-    M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5, shape)
-    n = M.shape[0]
-    s = np.asarray(sc._arpack_start(aslinearoperator(M))).ravel()
-    I = np.eye(n, dtype=complex)
-    P = np.column_stack([ed._project_parity_dynamic(
-        I[:, j].reshape(shape), "singlet").ravel() for j in range(n)])
-    out = M.copy()
-    for Q in (P, I - P):
-        u = Q @ s
-        u = u / np.linalg.norm(u)
-        out = out - (M @ Q) @ np.outer(u, u.conj())
-    assert np.linalg.norm(out @ s) < 1e-10 and np.linalg.norm(out) > 1.0
-    s_hat = s / np.linalg.norm(s)
-
-    def matvec(x):
-        # exactly zero on the start vector's direction, as a kernel
-        # assembled from exact zeros there would give
-        x = np.asarray(x).ravel()
-        if np.linalg.norm(x - s_hat * np.vdot(s_hat, x)) \
-                <= 1e-12 * np.linalg.norm(x):
-            return np.zeros_like(x)
-        return out @ x
-    assert not np.any(matvec(s))
-    return matvec, shape
-
-
-class TestProjectedProbeNullKernelRule(unittest.TestCase):
-    """The null-kernel exemption of the projected solve's scale probe holds
-    only for ARPACK error -9 AND an operator that independent random probes
-    show to be null; anything else is a failed probe (NaN)."""
-
-    def _forced(self, info_code, M, shape):
-        import scipy.sparse.linalg as spl
-
-        def eigs(*a, **k):
-            raise spl.ArpackError(info_code)
-        with mock.patch.object(spl, "eigs", eigs):
-            return _run_dynamic(M, shape)
-
-    def test_other_arpack_error_with_annihilated_start(self):
-        M, shape = _start_annihilating_kernel()
-        out, info = self._forced(-3, M, shape)
-        self.assertTrue(np.isnan(out[0]))
-        self.assertIs(info["eigen_converged"], False)
-        self.assertEqual(out[8], "not-converged")
-
-    def test_error_minus_9_on_a_nonzero_kernel(self):
-        """The deterministic start lies in the kernel's nullspace, but the
-        kernel is not null: never the synthetic complement value."""
-        M, shape = _start_annihilating_kernel()
-        out, info = self._forced(-9, M, shape)
-        self.assertTrue(np.isnan(out[0]))
-        self.assertIs(info["eigen_converged"], False)
-        self.assertEqual(out[8], "not-converged")
-
-    def test_true_zero_kernel(self):
-        shape = (1, 1, 4, 1, 1, 4)
-        n = int(np.prod(shape))
-        for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
-            with self.subTest(dense_max=dense_max), \
-                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", dense_max):
-                out, info = _run_dynamic(np.zeros((n, n), complex), shape)
-                self.assertAlmostEqual(out[0], 0.0, delta=1e-12)
-                self.assertIs(info["eigen_converged"], True)
-                self.assertEqual(out[8], "LR_projected")
-
-    def test_non_finite_probe(self):
-        import scipy.sparse.linalg as spl
-        M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
-        n = M.shape[0]
-        for bad in (np.nan, np.inf):
-            with self.subTest(bad=bad):
-                def eigs(A, k=6, **kw):
-                    return np.full(k, bad, complex), np.zeros((n, k), complex)
-                with mock.patch.object(spl, "eigs", eigs):
-                    out, info = _run_dynamic(M, shape)
-                self.assertTrue(np.isnan(out[0]))
-                self.assertIs(info["eigen_converged"], False)
-                self.assertEqual(out[8], "not-converged")
-
-
 class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
     """Every ARPACK error of the unshifted which='LM' solve and of the
     shift-invert preliminary (not only non-convergence) follows the failed-
@@ -1061,10 +1267,17 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
 
     def test_arpack_error_minus_9(self):
         """ARPACK error -9 on every which='LM' call (the first solve, the
-        auto shift's probe, the shift-invert preliminary): dense-LR below
-        the limit, NaN "not-converged" above it."""
+        auto shift's probe, the shift-invert preliminary) of a NONZERO
+        operator: dense-LR below the limit, NaN "not-converged" above it.
+        (On an exactly zero operator -9 means "zero operator", see
+        TestExactlyZeroOperator.)"""
         import scipy.sparse.linalg as spl
-        mk, n = self._zero()
+        from scipy.sparse.linalg import aslinearoperator
+        n = self.N
+        M = np.diag(np.linspace(-1.0, 0.5, n)).astype(complex)
+
+        def mk():
+            return aslinearoperator(M), n
         real_eigs = sc.eigs
 
         def eigs(A, k=6, which="LM", **kw):
@@ -1077,7 +1290,7 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
                     mock.patch.object(sc, "eigs", eigs):
                 lam, _v, info = sc._solve_leading(mk, n, method,
                                                   num_eigenvalues=4, **kw)
-                self.assertEqual(lam, 0.0)
+                self.assertAlmostEqual(float(np.real(lam)), 0.5, delta=1e-12)
                 self.assertEqual(info["selection"], "dense-LR")
             with self.subTest(method=method, shift=shift, side="above"), \
                     mock.patch.object(sc, "eigs", eigs), \
@@ -1154,7 +1367,7 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
 
 class TestRound15Contracts(unittest.TestCase):
     """The auto shift's radius probe returning non-finite eigenvalues is a
-    failed solve; the null-kernel exemption needs exactly zero images."""
+    failed solve."""
 
     def test_auto_shift_probe_non_finite(self):
         from scipy.sparse.linalg import aslinearoperator
@@ -1186,31 +1399,6 @@ class TestRound15Contracts(unittest.TestCase):
                 self.assertTrue(np.isnan(lam))
                 self.assertEqual(info["selection"], "not-converged")
                 self.assertTrue(np.all(np.isfinite(vec)))
-
-    def _forced_minus_9(self, matvec, shape):
-        import scipy.sparse.linalg as spl
-
-        def eigs(*a, **k):
-            raise spl.ArpackError(-9)
-        with mock.patch.object(spl, "eigs", eigs):
-            return _run_dynamic(matvec, shape)
-
-    def test_exact_zero_kernel_is_exempt(self):
-        shape = (1, 1, 4, 1, 1, 4)
-        out, info = self._forced_minus_9(
-            lambda x: np.zeros_like(np.asarray(x).ravel()), shape)
-        # (the shifted largest-real solve leaves ~1e-14 of round-off)
-        self.assertLess(abs(out[0]), 1e-12)
-        self.assertIs(info["eigen_converged"], True)
-        self.assertEqual(out[8], "LR_projected")
-
-    def test_tiny_nonzero_kernel_is_not_exempt(self):
-        shape = (1, 1, 4, 1, 1, 4)
-        out, info = self._forced_minus_9(
-            lambda x: 1.0e-300 * np.asarray(x).ravel(), shape)
-        self.assertTrue(np.isnan(out[0]))
-        self.assertIs(info["eigen_converged"], False)
-        self.assertEqual(out[8], "not-converged")
 
 
 if __name__ == "__main__":

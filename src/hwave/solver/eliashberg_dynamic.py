@@ -456,8 +456,88 @@ def _channel_projection_is_valid(channel_leakage, parity_leakage_tol):
     return channel_leakage is not None and channel_leakage <= parity_leakage_tol
 
 
-def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
-                             pairing_type, num_eigenvalues):
+def _channel_sector_basis(gap_shape, pairing_type):
+    """Orthonormal coordinates of the channel's even-frequency sector.
+
+    The momentum/orbital flip ``Pk`` (``_reverse_k_and_orbital_dynamic``)
+    and the frequency flip ``Pw`` (``_reverse_w_dynamic``) are commuting
+    involutions of the flat gap index, so the index set splits into orbits
+    ``{i, Pk i, Pw i, Pk Pw i}`` of one, two or four elements. On each orbit
+    the channel projector ``P`` (``_project_parity_dynamic``) has rank at most
+    one: ``P e_g`` is ``+-P e_r`` for every ``g`` of the orbit of ``r``. One
+    coordinate per orbit, ``q_r = P e_r / ||P e_r||`` with ``r`` the smallest
+    index of the orbit, therefore gives an orthonormal basis of the sector
+    (distinct orbits have disjoint supports); orbits that ``P`` annihilates
+    (a self-paired index of the wrong sign, e.g. ``k = -k`` for the triplet)
+    carry no coordinate. With ``Q = [q_r]``: ``Q^H Q = I`` and ``Q Q^H = P``.
+
+    The sector has about a quarter of the full dimension; the static analogue
+    is ``sc._parity_sector_basis``.
+
+    Returns
+    -------
+    to_full, to_reduced, dim
+        ``to_full(c) = Q c`` (flat, full size), ``to_reduced(v) = Q^H v``,
+        and the sector dimension (0 when the sector is empty on this grid).
+        Q is real and stored as one signed coefficient and one column index
+        per flat entry, so both maps are a single gather or scatter (no
+        projector application per call).
+    """
+    n = int(np.prod(gap_shape))
+    flat = np.arange(n)
+    idx = flat.reshape(gap_shape)
+    pk = np.ascontiguousarray(_reverse_k_and_orbital_dynamic(idx)).ravel()
+    pw = np.ascontiguousarray(_reverse_w_dynamic(idx)).ravel()
+    rep_of = np.minimum(np.minimum(flat, pk), np.minimum(pw, pk[pw]))
+    reps = np.unique(rep_of)
+
+    # P applied to the sum of the representatives' unit vectors: the orbits
+    # are disjoint, so entry j of the result is entry j of P e_r for the
+    # representative r of j's orbit, and the squared norm of each P e_r is
+    # the sum over its own orbit
+    e = np.zeros(n)
+    e[reps] = 1.0
+    pe = np.asarray(_project_parity_dynamic(e.reshape(gap_shape),
+                                            pairing_type)).ravel()
+    norm2 = np.zeros(n)
+    np.add.at(norm2, rep_of, pe ** 2)
+    weight = np.sqrt(norm2[reps])
+    keep = weight > 1.0e-12          # the weights are 0 or >= 1/2 exactly
+    reps, weight = reps[keep], weight[keep]
+    dim = int(reps.size)
+
+    # Q as a signed gather/scatter: entry j of the column of j's orbit is
+    # coef[j] = (P e_r)[j] / ||P e_r||, and slot[j] is that column's index.
+    # Entries of dropped orbits get coef 0 (P e_r vanishes there exactly).
+    col_of_rep = np.full(n, -1, dtype=np.intp)
+    col_of_rep[reps] = np.arange(dim, dtype=np.intp)
+    slot = col_of_rep[rep_of]
+    inside = slot >= 0
+    coef = np.zeros(n)
+    coef[inside] = pe[inside] / weight[slot[inside]]
+    slot[~inside] = 0
+    if dim == 0:
+        coef[:] = 0.0
+
+    def to_full(c):
+        c = np.asarray(c).ravel()
+        if dim == 0:
+            return np.zeros(n, dtype=complex)
+        return coef * c[slot]
+
+    def to_reduced(v):
+        v = np.asarray(v).ravel()
+        if dim == 0:
+            return np.zeros(0, dtype=complex)
+        return (np.bincount(slot, weights=coef * v.real, minlength=dim)
+                + 1j * np.bincount(slot, weights=coef * v.imag,
+                                   minlength=dim))
+
+    return to_full, to_reduced, dim
+
+
+def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
+                             num_eigenvalues, spectral_shift=None):
     """Largest-real eigenpair of the kernel restricted to the channel sector.
 
     Issue #202: a plain ``which='LM'`` ARPACK set asks for the eigenvalues of
@@ -466,105 +546,113 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
     masked by larger-real opposite-sector modes and fall beyond the requested
     ``num_eigenvalues`` -- making the reported value depend on that count. When
     the sector is a valid invariant subspace (see
-    ``_channel_projection_is_valid``) we instead solve the projected operator
-    ``P K P`` with the channel projector ``P`` (``_project_parity_dynamic``, the
-    even-frequency projector of PR #211), whose spectrum on the sector is
-    exactly the channel's, and select the largest real part -- which is
-    ``num_eigenvalues``-independent.
+    ``_channel_projection_is_valid``) the kernel is instead solved on that
+    sector alone, whose spectrum is exactly the channel's, and the largest
+    real part is selected -- which is ``num_eigenvalues``-independent.
 
-    The orthogonal complement (everything ``P`` annihilates) is mapped to a
-    large NEGATIVE eigenvalue rather than left at zero, so the null space cannot
-    win the largest-real selection and mask a repulsive-dominant sector whose
-    own leading eigenvalue is negative; the reported value is then the least
-    repulsive channel eigenvalue, not a spurious zero.
+    The solve runs in the sector's own orthonormal coordinates
+    (``_channel_sector_basis``, issue #318): the reduced operator
+    ``Q^H K Q`` has about a quarter of the full dimension and no complement,
+    so nothing outside the channel can win the selection and a repulsive
+    channel reports its least repulsive eigenvalue. It goes through the shared
+    driver ``sc._solve_leading`` (plain Arnoldi; the user's
+    ``spectral_shift`` when one is set), so the reporting contract is the one
+    of every other Eliashberg solve: a which='LM' set that cannot contain the
+    largest real part is re-solved for it, a failed ARPACK solve falls back to
+    a dense diagonalization of the reduced operator up to
+    ``sc._DENSE_FALLBACK_MAX``, and otherwise reports NaN with the selection
+    ``"not-converged"``.
+
+    The listing (``info["eigenvalues"]``) is therefore the
+    ``num_eigenvalues`` largest-MAGNITUDE eigenvalues of the sector, ordered
+    by real part, as on the static sector solve -- or its largest-real set
+    when a ``spectral_shift`` is given or the driver re-solved for the largest
+    real part. Before issue #318 it was always the largest-real set.
+
+    ``matvec`` applies the kernel to a flat full-size vector of length
+    ``vec_size``.
 
     Returns the same ``(eigenvalue, eigenvector, info)`` triple as
-    ``sc._solve_leading`` (with the complement eigenvalues subtracted back out
-    of range), so the caller reorders and gauge-fixes it exactly as the
-    unprojected result.
+    ``sc._solve_leading``, with the eigenvectors (``info["eigenvectors"]``,
+    columns) lifted back to the full flat gap space, so the caller reorders and
+    gauge-fixes it exactly as the unprojected result.
     """
     import hwave.sc as sc
-    from scipy.sparse.linalg import LinearOperator, eigs
+    from scipy.sparse.linalg import LinearOperator
 
-    # scale of the full kernel, to size the complement penalty relative to the
-    # sector spectrum (a cheap preliminary, like the auto-shift estimate)
-    A0, _ = make_operator()
-    k_pre = min(6, vec_size - 2)
-    rho = 1.0
-    if k_pre >= 1:
-        from scipy.sparse.linalg import ArpackError
-        probe_error = None
-        try:
-            pre_vals, _ = eigs(A0, k=k_pre, which='LM', v0=sc._arpack_start(A0))
-            rho = float(np.max(np.abs(pre_vals)))
-        except ArpackError as exc:
-            # ARPACK stops with error -9 ("starting vector is zero") on a null
-            # kernel, whose scale 0 the unit penalty below handles. The
-            # exemption needs that code AND independent random probes that
-            # find the operator null (sc._operator_is_null): a nonzero kernel
-            # can annihilate the deterministic start vector. Any other
-            # failure, non-convergence included, leaves the scale unknown.
-            if (sc._arpack_error_code(exc) == -9
-                    and sc._operator_is_null(A0, vec_size)):
-                rho = 0.0
-            else:
-                rho = float("nan")
-                probe_error = exc
-        if not np.isfinite(rho):
-            # Without the kernel's scale the complement penalty is unsized: a
-            # channel spectrum entirely below it would report the synthetic
-            # complement eigenvalue. Report no eigenvalue instead (the NaN
-            # sentinel of a failed solve; run_leading_eigenproblem writes
-            # eigen_converged = false).
-            logger.warning(
-                "projected channel solve: the which='LM' probe of the kernel "
-                "scale %s, so the complement penalty cannot be sized; no "
-                "leading eigenvalue is reported (NaN, eigen_converged = "
-                "false).",
-                "failed ({})".format(probe_error)
-                if probe_error is not None else "is not finite")
-            k_keep = max(1, min(int(num_eigenvalues), vec_size - 2))
-            rng_ph = np.random.default_rng(sc._SEED_ADMIX_SEED)
-            w = np.empty((vec_size, k_keep), dtype=complex)
-            for j in range(k_keep):
-                x = (rng_ph.standard_normal(vec_size)
-                     + 1j * rng_ph.standard_normal(vec_size))
-                x = np.asarray(_project_parity_dynamic(
-                    x.reshape(gap_shape), pairing_type)).ravel()
-                w[:, j] = x / max(np.linalg.norm(x), 1.0e-300)
-            v = np.full(k_keep, np.nan + 0j)
-            return (v[0], w[:, 0],
-                    {"eigenvalues": v, "eigenvectors": w,
-                     "sigma_shift": None, "selection": "not-converged",
-                     "lm_solve_failed": True})
-    if not np.isfinite(rho) or rho <= 0.0:
-        rho = 1.0
-    penalty = 4.0 * rho + 1.0
+    to_full, to_reduced, dim = _channel_sector_basis(gap_shape, pairing_type)
+    if dim == 0:
+        # unreachable behind _channel_projection_is_valid, which requires a
+        # nonempty sector
+        raise ValueError(
+            "the '{}' channel sector is empty on this grid".format(
+                pairing_type))
 
-    def _P(flat):
-        return _project_parity_dynamic(
-            np.asarray(flat).reshape(gap_shape), pairing_type).ravel()
+    def reduced_matvec(c):
+        return to_reduced(np.asarray(matvec(to_full(c))).ravel())
 
-    def projected_matvec(v):
-        v = np.asarray(v).ravel()
-        pv = _P(v)
-        kpv = _P(np.asarray(matvec(pv)).ravel())
-        return kpv - penalty * (v - pv)
+    def make_reduced():
+        return (LinearOperator((dim, dim), matvec=reduced_matvec,
+                               dtype=complex), dim)
 
-    def make_projected():
-        return (LinearOperator((vec_size, vec_size), matvec=projected_matvec,
-                               dtype=complex),
-                vec_size)
+    logger.info("projected channel solve on the '%s' sector coordinates "
+                "(dimension %d of %d)", pairing_type, dim, vec_size)
+    # warn_negative_leading=False: the shared driver certifies the largest
+    # real part itself (the LM bound and its re-solve), and in a sector a
+    # negative leader is the channel's own (repulsive) answer
+    eigenvalue, cvec, info = sc._solve_leading(
+        make_reduced, dim, "arnoldi", num_eigenvalues=num_eigenvalues,
+        spectral_shift=spectral_shift, seed_vec=None,
+        warn_negative_leading=False)
+    cvecs = info.get("eigenvectors")
+    if cvecs is not None:
+        cvecs = np.asarray(cvecs)
+        if cvecs.ndim == 1:
+            cvecs = cvecs[:, None]
+        info["eigenvectors"] = np.column_stack(
+            [to_full(cvecs[:, j]) for j in range(cvecs.shape[1])])
+    return eigenvalue, to_full(cvec), info
 
-    # An explicit spectral shift large enough that A + sigma I has an
-    # all-positive-real spectrum (sector eigenvalues >= -rho, complement
-    # -penalty), so ARPACK's which='LR' iteration is well conditioned; it is
-    # subtracted back inside _solve_leading. The tiny-operator dense path
-    # ignores the shift and orders by real part directly, which is equivalent.
-    sigma = 2.0 * penalty + rho + 1.0
-    return sc._solve_leading(
-        make_projected, vec_size, "arnoldi",
-        num_eigenvalues=num_eigenvalues, spectral_shift=sigma, seed_vec=None)
+
+def _projected_listing_note(info, n_rows, pairing_type, spectral_shift):
+    """The ``eigenvalue.dat`` comment line naming the eigenvalue set the
+    projected channel solve listed (``info`` from
+    ``_solve_channel_projected``), or None when there is no listing.
+
+    The plain solve lists the sector's largest-MAGNITUDE set (which='LM');
+    with a user ``spectral_shift``, after the shared driver's re-solve, or
+    from a dense diagonalization, the rows are the sector's largest REAL
+    parts instead. The reported leader is the largest real part either
+    way."""
+    if not n_rows:
+        return None
+    selection = info.get("selection")
+    head = "eigenvalue listing: the {} ".format(n_rows)
+    sector = "eigenvalues of the '{}' channel sector".format(pairing_type)
+    if selection == "LM":
+        return (head + "largest-magnitude " + sector + " (which='LM'), "
+                "ordered by real part; their largest real part is at least "
+                "their smallest magnitude, so it is the sector's largest real "
+                "part")
+    if selection == "LR":
+        return (head + "largest-real-part " + sector + " (spectral_shift = "
+                "{} applied)".format(spectral_shift))
+    if selection == "LR_retry":
+        return (head + "largest-real-part " + sector + ", re-solved with "
+                "spectral_shift='auto': the which='LM' set could not contain "
+                "the largest real part (largest Re(lambda) found = {:.4g} < "
+                "smallest |lambda| found = {:.4g})".format(
+                    info.get("lm_max_real", float("nan")),
+                    info.get("lm_min_abs", float("nan"))))
+    if selection == "dense-LR":
+        return (head + "largest-real-part " + sector + " (dense "
+                "diagonalization of the sector)")
+    if selection == "null-operator":
+        return ("eigenvalue listing: the kernel is exactly zero on the '{}' "
+                "channel sector (ARPACK error -9, confirmed by independent "
+                "probes): every eigenvalue is 0; the {} rows are 0 with "
+                "orthonormal placeholder vectors".format(pairing_type, n_rows))
+    return None
 
 
 def estimate_memory_bytes(norb, Nk, nmat):
@@ -1886,11 +1974,14 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 channel_leak, parity_leakage_tol)
 
         if channel_valid:
-            # Projected solve: P K P restricted to the channel sector, largest
-            # real part. sector_selection is the channel by construction.
+            # Projected solve: the kernel on the channel sector's own
+            # coordinates, largest real part (certified by the shared driver);
+            # the listing is the sector's which='LM' set (or its which='LR'
+            # set with a user spectral_shift or after the driver's re-solve).
+            # sector_selection is the channel by construction.
             eigenvalue, sigma_flat, info = _solve_channel_projected(
-                make_operator, matvec, vec_size, gap_shape, pairing_type,
-                num_eigenvalues)
+                matvec, vec_size, gap_shape, pairing_type, num_eigenvalues,
+                spectral_shift=user_spectral_shift)
             eigenvalues_all = info.get("eigenvalues")
             vecs_all = info.get("eigenvectors")
             if eigenvalues_all is not None and vecs_all is not None:
@@ -1905,6 +1996,17 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 if info.get("selection") == "not-converged"
                 or not np.isfinite(float(np.real(eigenvalue)))
                 else "LR_projected")
+            # what the rows of the listing are: the label stays
+            # "LR_projected" whichever set the sector solve returned
+            if eigenvalue_selection == "LR_projected":
+                listing_note = _projected_listing_note(
+                    info, 0 if eigenvalues_all is None
+                    else len(eigenvalues_all), pairing_type,
+                    user_spectral_shift)
+                if listing_note:
+                    eigenvalue_note = (
+                        listing_note if not eigenvalue_note
+                        else eigenvalue_note + "\n" + listing_note)
         else:
             # Unprojected solve: the general multi-orbital case (the kernel does
             # not conserve the channel) or a seeded / shift-invert run. Here the
@@ -2041,6 +2143,12 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 "nor its combined-parity match; its value is reported as the "
                 "continuation's, but it is not certified for the channel.",
                 logger_label, pairing_type)
+    if no_channel_pair and eigenvalue_selection == "null-operator":
+        # the solve found the zero operator, but its placeholder vectors carry
+        # no channel parity, so nothing certified for the channel is
+        # reported: label the run as the failed case, never "null-operator"
+        # next to a NaN
+        eigenvalue_selection = "not-converged"
     lam = float(np.real(eigenvalue))
     if solver_mode != "iteration" and not np.isfinite(lam):
         # the eigenvalue solver's largest-real-part solve failed on an

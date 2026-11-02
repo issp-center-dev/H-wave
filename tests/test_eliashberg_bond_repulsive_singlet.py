@@ -190,10 +190,30 @@ class TestRepulsiveHubbardSinglet(unittest.TestCase):
         self.assertAlmostEqual(overlap, 1.0, delta=1.0e-8)
         sb = _spectrum(os.path.join(self.bond_out, "eigenvalue_bond_singlet.dat"))
         sn = _spectrum(os.path.join(self.sc_out, "eigenvalue.dat"))
-        # in-process default num_eigenvalues = 10, hwave_sc asked for 4: the
-        # largest-real (projected) solve makes the top 4 identical
+        # in-process default num_eigenvalues = 10, hwave_sc asked for 4. Both
+        # are projected solves of the same channel-sector operator, and each
+        # listing is that operator's which='LM' set (the num_eigenvalues
+        # largest MAGNITUDES, ordered by real part; the leader lies in both
+        # sets, so neither re-solved for the largest real part). The 4
+        # largest magnitudes are the first 4 of the 10 largest, so hwave_sc's
+        # listing equals the 4 largest-magnitude rows of the in-process one --
+        # provided ranks 4 and 5 are not (near) tied in magnitude, which
+        # would make the boundary of the set ambiguous.
         self.assertEqual((len(sb), len(sn)), (10, 4))
-        np.testing.assert_allclose(sb[:4].real, sn.real, rtol=0, atol=1.0e-8)
+        mags = np.sort(np.abs(sb))[::-1]
+        self.assertGreater(mags[3] - mags[4], 1.0e-3)
+        top4 = sb[np.argsort(-np.abs(sb))[:4]]
+        # compared as complex values, as an unordered set: each hwave_sc row
+        # is matched to its nearest in-process row, one to one
+        unmatched = list(top4)
+        for z in sn:
+            j = int(np.argmin([abs(z - u) for u in unmatched]))
+            self.assertLess(abs(z - unmatched[j]), 1.0e-8, (z, unmatched))
+            unmatched.pop(j)
+        # the leader (row 0) is the largest real part in both listings, and
+        # the same complex value
+        self.assertLess(abs(sb[0] - sn[0]), 1.0e-8)
+        self.assertEqual(float(np.max(sb.real)), sb[0].real)
 
     def test_a_the_dominant_eigenvalue_is_the_negative_onsite_mode(self):
         """The premise of the defect: |lambda_-| > lambda_leading with
