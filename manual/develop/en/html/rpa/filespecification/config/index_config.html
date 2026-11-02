@@ -654,7 +654,8 @@ frequency-resolved pairing vertex built from the same <code class="docutils lite
 dressed <code class="docutils literal notranslate"><span class="pre">chi_s</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_c</span></code> the self-energy used (the in-process
 counterpart of <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span></code> below). The solver controls
 are read from the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table of the SAME input file (optional;
-every key defaults to the value <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses; <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is
+every key defaults to the value <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code> included); <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is
 refused there – the channel(s) are selected by this key instead; <code class="docutils literal notranslate"><span class="pre">gpu</span></code>
 follows the FLEX solve). Results: <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>,
 <code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> per requested
@@ -1131,10 +1132,20 @@ run is not lost to a pairing-step allocation failure after the fact.</p>
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> to something other than <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>, an
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table in the SAME input file is optional and configures
 the pairing step at the end of the FLEX solve; every key of the general
-table not listed as post-processing-only above (<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>,
-<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, <code class="docutils literal notranslate"><span class="pre">max_iter</span></code>, <code class="docutils literal notranslate"><span class="pre">alpha</span></code>, <code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>,
+table not listed as post-processing-only above (<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>,
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>, <code class="docutils literal notranslate"><span class="pre">alpha</span></code>, <code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>,
 <code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>, <code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>,
-<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>, …) defaults exactly as it does for <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.
+<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>, <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>, …) defaults exactly as it does for
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; the default <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code> of both is <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (the
+singlet kernel of a repulsive model has a negative dominant eigenvalue,
+which defeats an unshifted power iteration). A power iteration
+(<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>, opt-in) that does not converge records
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> and <code class="docutils literal notranslate"><span class="pre">NaN</span></code> for the eigenvalue (see the
+Eliashberg tutorial’s “Eigen-solver convergence” section); the FLEX run
+itself still exits normally. In <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> the line is
+written <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code> (no spaces; the static
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> uses <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>), so test it
+whitespace-tolerantly.
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is refused (the channel(s) are selected by
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> instead); <code class="docutils literal notranslate"><span class="pre">gpu</span></code> / <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> are
 ignored (the kernel runs on the FLEX solve’s own backend); <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>,

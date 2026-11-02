@@ -575,7 +575,8 @@ Eliashberg 方程式を解きます（下記の<code class="docutils literal not
 のインプロセス版に相当します）。ソルバーの制御パラメータは同じ
 入力ファイルの<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブルから読み込まれます
 （省略可能。省略したキーは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と同じデフォルト値を
-取ります。<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>はここでは拒否されます -- チャネルは
+取ります（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>を含む）。
+<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>はここでは拒否されます -- チャネルは
 代わりにこのキーで選択されます。<code class="docutils literal notranslate"><span class="pre">gpu</span></code>は FLEX の計算に
 従います）。結果は<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>・
 <code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>
@@ -972,11 +973,19 @@ IR 基底にフィットさせた際の、成分ごとの相対残差の拒否�
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>を<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>以外にすると、同じ
 入力ファイルの<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブルは省略可能で、FLEX の
 計算の最後の対形成ステップを設定します。上記で「後処理のみ」と
-記していない一般的なテーブルの各キー（<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>・
-<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>・<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>・<code class="docutils literal notranslate"><span class="pre">alpha</span></code>・
-<code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>・<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・
+記していない一般的なテーブルの各キー（<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>・
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>・<code class="docutils literal notranslate"><span class="pre">alpha</span></code>・<code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>・
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>・<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_tol</span></code>・
 <code class="docutils literal notranslate"><span class="pre">ir_wmax</span></code>・<code class="docutils literal notranslate"><span class="pre">ir_keep_static_chi</span></code>・<code class="docutils literal notranslate"><span class="pre">fft_workers</span></code>など）は
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります。<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります。<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>の既定も
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と同じ<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>です（斥力的な模型の一重項カーネルは負の
+支配的固有値を持ち、シフトなしのべき乗反復を破綻させるため）。収束しない
+べき乗反復（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>、オプトイン）は<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>と
+固有値<code class="docutils literal notranslate"><span class="pre">NaN</span></code>を記録します（Eliashberg チュートリアルの「固有値ソルバーの
+収束」節を参照）。その場合も FLEX の実行自体は正常に終了します。
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>ではこの行は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code>
+（空白なし。静的な<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>）と書かれる
+ので、空白に寛容な方法で判定してください。<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>
 は拒否されます（チャネルは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>で
 選択されます）。<code class="docutils literal notranslate"><span class="pre">gpu</span></code> / <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code>は無視されます
 （カーネルは FLEX 計算自身のバックエンドで動作します）。

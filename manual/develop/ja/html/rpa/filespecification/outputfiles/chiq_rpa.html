@@ -384,15 +384,23 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <span class="pre">green&quot;</span></code>）を持ちます。対形成ステップは FLEX の計算が収束
 しなくても実行されます（コストはすでに払われているため）。この
 ラベルは<code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>とともに、結果が自己無撞着な
-対形成固有値ではなく SCF の軌跡上の診断値であることを示します。</p></li>
+対形成固有値ではなく SCF の軌跡上の診断値であることを示します。
+すべての動的ギャップアーカイブと同様に<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>も持ちます。
+べき乗反復（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>）が収束しなかったときは
+<code class="docutils literal notranslate"><span class="pre">False</span></code>で、このとき<code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>は<code class="docutils literal notranslate"><span class="pre">NaN</span></code>、<code class="docutils literal notranslate"><span class="pre">gap</span></code>は最後の反復
+ベクトルであり固有ベクトルではありません。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と同じ単一周波数の
 テキストスライスです。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>は<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>と同じ
-形式で、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・
+形式で、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された場合は<code class="docutils literal notranslate"><span class="pre">#</span>
 <span class="pre">parity_leakage=&lt;...&gt;</span></code>、および上記の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">...</span></code>
-と<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>のヘッダー行を持ちます。</p></li>
+と<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>のヘッダー行を持ちます。
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code>は<code class="docutils literal notranslate"><span class="pre">=</span></code>の前後に空白がなく、静的な
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>では<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">true</span></code>と書かれるため、パイプラインは
+空白に寛容な方法（<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>の後の文字列から<code class="docutils literal notranslate"><span class="pre">=</span></code>と空白を取り除く）
+で判定してください。</p></li>
 </ul>
 <p>失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

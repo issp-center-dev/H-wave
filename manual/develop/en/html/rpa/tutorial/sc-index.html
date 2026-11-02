@@ -198,8 +198,13 @@ and <span class="math notranslate nohighlight">\(\chi(\mathbf{q})\)</span>.</p><
 <h4><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> section<a class="headerlink" href="#eliashberg-section" title="Link to this heading">¶</a></h4>
 <p>This section controls the Eliashberg solver. Key parameters:</p>
 <ul>
-<li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (self-consistent power iteration),
-<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi eigenvalue analysis), or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (Arnoldi eigenvalue analysis; the
+default – of <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> since this version, and of the in-process FLEX
+bond pairing step, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_pairing</span></code>),
+<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (self-consistent power iteration; opt-in, to follow one
+symmetry sector deliberately), or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>. The power iteration runs
+with <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> unless told otherwise, and reports an
+eigenvalue only when it converged; see <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> reads <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> from the RPA output
 file; <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> computes it internally; <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> reads the dressed
 susceptibilities from a FLEX run (required for <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>
@@ -309,7 +314,17 @@ in spin-orbital mode, which also accepts <code class="docutils literal notransla
 <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>. Not set in spin-orbital
 mode, where the gap is one spin-orbital matrix (see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>).</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: Initial gap symmetry for iteration.
+<li><p><code class="docutils literal notranslate"><span class="pre">init_gap</span></code>: Initial gap symmetry for iteration. The power iteration
+stays in the lattice-symmetry sector of this seed and reports the largest
+real part <em>of that sector</em> (see <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>): set it to
+the form factor of the symmetry you want to follow (<code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> for a
+<span class="math notranslate nohighlight">\(d_{x^2-y^2}\)</span> singlet, <code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code> for a triplet, …), or
+use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>, which is seed-independent, when the
+leading symmetry is not known in advance. A form factor that is itself an
+exact eigenvector of the kernel (possible on small or highly symmetric
+lattices) gives <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with the iteration, because the iteration then
+cannot search its sector (see <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>); use another
+form factor, <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>, or the eigenvalue solver.
 Options include <code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos(k_x+k_y+k_z)\)</span>),
 <code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code> (<span class="math notranslate nohighlight">\(\cos k_x - \cos k_y\)</span>), <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>, etc.
 The full set of valid form factors is
@@ -323,15 +338,33 @@ For a quasi-two-dimensional cell <code class="docutils literal notranslate"><spa
 <code class="docutils literal notranslate"><span class="pre">&quot;p_y&quot;</span></code>/<code class="docutils literal notranslate"><span class="pre">&quot;p_z&quot;</span></code> for the triplet channel, and <code class="docutils literal notranslate"><span class="pre">&quot;d_y2z2&quot;</span></code> — which has
 opposite-sign anti-nodes at <span class="math notranslate nohighlight">\((\pi,0)\)</span> and <span class="math notranslate nohighlight">\((0,\pi)\)</span>, unlike the
 nodal <code class="docutils literal notranslate"><span class="pre">&quot;d_yz&quot;</span></code> that vanishes there — for the in-plane <span class="math notranslate nohighlight">\(d\)</span>-wave.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: Maximum number of self-consistent iterations.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>: Maximum number of self-consistent iterations (default
+<code class="docutils literal notranslate"><span class="pre">1000</span></code>). A power iteration that reaches it without converging reports no
+eigenvalue (<code class="docutils literal notranslate"><span class="pre">NaN</span></code> with <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>, see
+<a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>). The shifted iteration (the default
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>) converges more slowly when the leading
+eigenvalue is close to the next one relative to the spectral radius; raise
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code> or use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> then.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">alpha</span></code>: Mixing parameter of the power iteration (0 = no mixing, 1 = full
+mixing of old solution). It is applied only without a spectral shift
+(<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>). With a shift (<code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>, the iteration’s
+default, or a number) it is not applied: the mixing acts as a second
+shift and only slows the run (about twice as many steps at
+<code class="docutils literal notranslate"><span class="pre">alpha</span> <span class="pre">=</span> <span class="pre">0.5</span></code>).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code>: Convergence criterion on the gap function.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>: Number of eigenvalues to compute in eigenvalue mode.
-On the dynamic path this now controls only how many eigenvalues are listed,
-not which one is reported as leading: when the kernel conserves the channel’s
-even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
-solve restricted to that sector (see <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> below), whose
-largest-real eigenvalue does not depend on <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>.</p></li>
+It controls only how many eigenvalues are listed, not which one is
+reported as leading. On the dynamic path, when the kernel conserves the
+channel’s even-frequency sector, the leading eigenvalue is taken from a
+symmetry-valid solve restricted to that sector (see <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
+below). On the static non-spin-orbital path, when the kernel commutes with
+parity, it is taken from a solve on the channel’s parity sector; a
+successful sector solve prepends that leader as one row to the global
+eigenpairs, which follow parity-reordered (channel parity first) and not
+merged – normally <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> of them, fewer when the operator
+dimension limits the count (at most the dimension minus 2), so the leader’s
+state may appear twice. In both cases the leading largest-real
+eigenvalue does not depend on <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (default), <code class="docutils literal notranslate"><span class="pre">&quot;subspace&quot;</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-gmres&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-bicgstab&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert-lgmres&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spin_free_tol</span></code>: absolute tolerance, in energy units, of the
@@ -374,16 +407,33 @@ results computed before the correction existed.</p></li>
 <span class="math notranslate nohighlight">\(\sigma\)</span> for the shift-invert eigensolver; eigenvalues near
 <span class="math notranslate nohighlight">\(\sigma\)</span> are found first. Ignored (with a warning) for the plain
 <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> method – use <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> there instead.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> (<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code> only): a positive number,
-or <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>. The default ARPACK selection (<code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>) returns the
+<li><p><code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> (used by the Arnoldi eigenvalue solver,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>; and by the power iteration,
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>): a positive number, <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>. <strong>Default:</strong> <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> for the power iteration
+(<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>, and the iteration leg of <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>); no
+shift for the eigenvalue solver. <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> switches the shift off for
+both (the unshifted power iteration of earlier versions, which follows the
+eigenvalue of largest <em>magnitude</em> and cannot converge when that eigenvalue
+is negative). The plain ARPACK selection (<code class="docutils literal notranslate"><span class="pre">which='LM'</span></code>) returns the
 eigenvalues of largest <em>magnitude</em>; far from a pairing instability, a small
 positive (attractive) leading eigenvalue can be masked by much larger negative
-(repulsive) eigenvalues, so the reported leading value comes out negative and
-unphysical. Setting <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> makes the solver request the eigenvalue
-of largest <em>real</em> part (<code class="docutils literal notranslate"><span class="pre">which='LR'</span></code>; the physical SC eigenvalue,
+(repulsive) eigenvalues. Without <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> the solver checks whether
+the returned set can contain the largest real part (its largest real part
+must not be below its smallest magnitude) and otherwise re-solves for it
+(<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;LR_retry&quot;</span></code>). Setting <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> makes
+the solver request the eigenvalue of largest <em>real</em> part directly
+(<code class="docutils literal notranslate"><span class="pre">which='LR'</span></code>; the physical SC eigenvalue,
 <span class="math notranslate nohighlight">\(\lambda \to 1\)</span> at <span class="math notranslate nohighlight">\(T_c\)</span>) on the shifted operator
 <span class="math notranslate nohighlight">\(A + \sigma I\)</span>; the shift is subtracted internally, so the eigenvalues
-you receive/save are the true unshifted ones. Use <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> to set
+you receive/save are the true unshifted ones. In the power iteration the
+shift moves the whole spectrum into the right half-plane so that the
+largest-real-part eigenvalue becomes the dominant one; <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> sets
+<span class="math notranslate nohighlight">\(\sigma = 1.05\,\rho\)</span> from a short power estimate of the spectral
+radius <span class="math notranslate nohighlight">\(\rho\)</span>. For a strongly complex spectrum (eigenvalues with
+<span class="math notranslate nohighlight">\(|\mathrm{Im}\,\lambda|\)</span> comparable to <span class="math notranslate nohighlight">\(\rho\)</span>) a shift of that
+size does not guarantee the largest real part dominates; use
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> there. Use <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> to set
 <span class="math notranslate nohighlight">\(\sigma\)</span> from the spectral radius automatically, or give an explicit
 positive <span class="math notranslate nohighlight">\(\sigma\)</span> larger than the <em>absolute value</em> of the most negative
 eigenvalue (so <span class="math notranslate nohighlight">\(A + \sigma I\)</span> has an all-positive-real spectrum).
@@ -577,9 +627,16 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 <p>An eigenvalue <span class="math notranslate nohighlight">\(\lambda &gt; 1\)</span> (positive) indicates a superconducting instability
 at the given temperature. Negative eigenvalues correspond to sign-changing gap symmetries
 but do not indicate SC instability.</p>
-<p>The eigenpairs are ordered so that those with the <strong>channel parity</strong> come first
-(even for singlet, odd for triplet): the leading one (index 0) is the physical
-solution and matches the self-consistent iteration result. Eigenvalues tagged
+<p>Row 0 of the table is the reported leader of the requested channel, and it
+agrees with a converged self-consistent iteration started in the same
+symmetry. On the static non-spin-orbital path with a parity-commuting kernel
+a successful parity-sector solve (see <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>) puts the
+reported leader in row 0 (<code class="docutils literal notranslate"><span class="pre">match</span></code> 1), and the following rows are the same
+global eigenpairs, parity-reordered and not merged – normally
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> rows, fewer when the operator dimension limits the count
+– so the leader may appear twice; when the sector solve fails, no row is
+prepended. The global eigenpairs are listed with those of the <strong>channel
+parity</strong> (even for singlet, odd for triplet) first. Eigenvalues tagged
 <code class="docutils literal notranslate"><span class="pre">[opposite-parity</span> <span class="pre">sector]</span></code> belong to the other parity sector; for a given
 spin channel they are forbidden by the Pauli principle and do <strong>not</strong> represent
 a physical instability (see the note on parity below). The last column of
@@ -674,7 +731,12 @@ Each line contains:</p>
 <span id="sc-eigenvalue-dat"></span><h3><code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code><a class="headerlink" href="#eigenvalue-dat" title="Link to this heading">¶</a></h3>
 <p>The eigenvalues of the linearized Eliashberg equation:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span># Iteration eigenvalue
+# iteration_converged = true
+# solver_mode='both' with spectral_shift='auto': ... (abridged)
 9.61078331e-01
+# eigen_converged = true
+# leading value: the largest real part of the 'singlet' parity sector, ...
+# leading_eigenvalue = 9.61078596e-01 -3.64174908e-12
 # Eigenvalue analysis
 # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
    0  9.61078596e-01 -3.64174908e-12  9.61078596e-01 1
@@ -682,10 +744,317 @@ Each line contains:</p>
    ...
 </pre></div>
 </div>
-<p>The trailing <code class="docutils literal notranslate"><span class="pre">match</span></code> column is <code class="docutils literal notranslate"><span class="pre">1</span></code> when the eigenvector has the channel’s
+<p>(<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;both&quot;</span></code>: the scalar under <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Iteration</span> <span class="pre">eigenvalue</span></code> is the
+iteration’s value; the reported leader is the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span></code> line,
+i.e. row 0 of the table.) The <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span> <span class="pre">=</span> <span class="pre">&lt;Re&gt;</span> <span class="pre">&lt;Im&gt;</span></code> line uses
+the static file’s <code class="docutils literal notranslate"><span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code> style with spaces; <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> reads it
+first and falls back to row 0 for files without it (dynamic files, older
+outputs). The trailing <code class="docutils literal notranslate"><span class="pre">match</span></code> column is <code class="docutils literal notranslate"><span class="pre">1</span></code> when the eigenvector has the channel’s
 parity (a physical singlet/triplet gap) and <code class="docutils literal notranslate"><span class="pre">0</span></code> for a spurious opposite-parity
 mode (see the parity note above). Older output files without this column are
-read unchanged.</p>
+read unchanged. The <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">&lt;true|false&gt;</span></code> line follows the
+first header line; see <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>.</p>
+</section>
+<section id="eigen-solver-convergence-eigen-converged">
+<span id="sc-eigen-convergence"></span><h3>Eigen-solver convergence (<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>)<a class="headerlink" href="#eigen-solver-convergence-eigen-converged" title="Link to this heading">¶</a></h3>
+<p>Every solver path – static and dynamic <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, the bond entries
+(<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, and the in-process FLEX pairing step), the IR
+basis and the spin-orbital solvers – reports the leading eigenvalue under one
+contract.</p>
+<p><strong>What is reported.</strong></p>
+<ul>
+<li><p><strong>The largest real part</strong> of the kernel’s spectrum (the physical pairing
+eigenvalue, <span class="math notranslate nohighlight">\(\lambda \to 1\)</span> at <span class="math notranslate nohighlight">\(T_c\)</span>), not the largest
+magnitude. The eigenvalue solver (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>) re-solves
+for it when its largest-magnitude set cannot contain it
+(<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;LR_retry&quot;</span></code>). If an ARPACK solve fails (does
+not converge, stops with another ARPACK error, or returns non-finite
+eigenvalues) – the first largest-magnitude solve, the shift-invert
+preliminary or solve, or the largest-real-part (re-)solve with its auto
+shift probe – an operator of dimension at most 2000 is diagonalized
+densely (<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>); a larger one reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> and <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;not-converged&quot;</span></code>
+– the largest-magnitude value is never passed off as the leading one. The
+scale probe of the dynamic projected channel solve has its own contract:
+it has no dense fallback, so a failed probe reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> /
+<code class="docutils literal notranslate"><span class="pre">&quot;not-converged&quot;</span></code> at any dimension; the one exception is a kernel that
+is exactly zero (ARPACK’s “starting vector is zero” error, confirmed by
+three independent probes whose images are exactly zero), which is solved
+as such. On
+the static non-spin-orbital path with a parity-commuting kernel a failed
+global solve only empties the listing: the leader still comes from the
+parity-sector solve. A seeded run (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>) follows its continuation branch by
+design.</p></li>
+<li><p><strong>The requested channel</strong> (<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>). On the static
+non-spin-orbital path, when the kernel commutes with parity (the
+centrosymmetric case):</p>
+<p><em>How the leader is obtained.</em> The reported leader and its gap always come
+from a separate solve on the channel’s parity sector, in that sector’s
+own coordinates, with the same largest-real-part rules – whatever the
+global eigen-analysis set holds (it may contain a channel eigenpair of
+large magnitude but not the channel’s leader). The sector solve is a
+largest-real-part Arnoldi solve that honours <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>; with
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;subspace&quot;</span></code> or a shift-invert method, only the
+global table uses that method.</p>
+<p><em>How it is recorded.</em> The leader is written as row 0 of the table of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (<code class="docutils literal notranslate"><span class="pre">match</span></code> 1) and as the machine-readable line
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span> <span class="pre">=</span> <span class="pre">&lt;Re&gt;</span> <span class="pre">&lt;Im&gt;</span></code>; the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading</span> <span class="pre">value:</span> <span class="pre">...</span></code> comment
+line says where it comes from. The global eigenpairs follow with their
+<code class="docutils literal notranslate"><span class="pre">match</span></code> column, parity-reordered (channel parity first) and not merged:
+normally <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> rows, fewer when the operator dimension
+limits the count, so the leader’s state appears again when the global set
+contains it. When the sector solve fails, no row is prepended.</p>
+<p>When the
+kernel does not commute with parity, the sector cannot be solved on its
+own: the leader is the computed eigenpair that is dominantly of the
+requested parity, or <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> if there is
+none – never an opposite-parity value. The dynamic solvers select within
+the channel as described in <a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">Pairing channels of the dynamic solver</span></a> (an unseeded
+eigenvalue run whose computed eigenpairs include none of the channel
+reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code>), and the
+spin-orbital solvers work on the antisymmetric space.</p>
+</li>
+<li><p><strong>A power iteration reports a value only when it converged.</strong> The value is
+the <em>signed</em> Rayleigh quotient
+<span class="math notranslate nohighlight">\(\langle\phi|K\phi\rangle/\langle\phi|\phi\rangle\)</span> of the converged
+iterate (validated by its residual), equal to the eigenvalue solver’s
+result to the iteration’s tolerance – never the unsigned norm of the
+iterate. The stopping rule takes the contraction rate into account: the
+remaining distance to the fixed point is estimated as
+<code class="docutils literal notranslate"><span class="pre">diff</span> <span class="pre">/</span> <span class="pre">(1</span> <span class="pre">-</span> <span class="pre">rate)</span></code> from the last few iterate differences, and the run
+stops only when that estimate is below <code class="docutils literal notranslate"><span class="pre">convergence_tol</span></code> (a difference
+that is not shrinking – a slow drift – never stops it). A residual
+check scaled by the kernel’s spectral radius, not by the value being
+checked, rejects Rayleigh values that are not eigenvalues; a value beyond
+the spectral radius is never reported.</p></li>
+<li><p><strong>The initial gap must be able to search its sector.</strong> If <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>
+(after the channel’s parity projection) is an exact eigenvector of the
+kernel (residual below <code class="docutils literal notranslate"><span class="pre">1e-8</span></code> of the spectral radius) or is annihilated
+by it, the power iteration can never leave that mode and cannot tell
+whether another mode of the same symmetry has a larger real part. It is
+not perturbed (a perturbation would leave the lattice-symmetry sector of
+<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>); the run reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>
+and the WARNING “the initial gap is an eigenvector of the kernel
+(lambda = …); the power iteration cannot search its symmetry sector”.
+Use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> or a different <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> (one that
+mixes several modes of the symmetry, e.g. <code class="docutils literal notranslate"><span class="pre">&quot;random&quot;</span></code>, or a form factor
+that is not an exact eigenvector). A converged vector that the kernel
+annihilates is not a pairing eigenvalue either and is reported as <code class="docutils literal notranslate"><span class="pre">NaN</span></code>.</p></li>
+<li><p><strong>When the power iteration does not converge</strong> – it reached <code class="docutils literal notranslate"><span class="pre">max_iter</span></code>,
+or the converged vector failed the residual check – the eigenvalue is
+written as <code class="docutils literal notranslate"><span class="pre">NaN</span></code> and <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> is recorded. Where it
+is recorded:</p>
+<ul class="simple">
+<li><p>static <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>: the line <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> (with
+spaces around <code class="docutils literal notranslate"><span class="pre">=</span></code>);</p></li>
+<li><p>dynamic <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (on-site, bond and spin-orbital) and the
+in-process <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>: the line
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=false</span></code> (no spaces), and the token
+<code class="docutils literal notranslate"><span class="pre">eigen_converged=false</span></code> in the first line of the dynamic <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>;</p></li>
+<li><p>the npz key <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> of <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code> and the spin-orbital <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>;</p></li>
+<li><p>the in-process FLEX pairing step: <code class="docutils literal notranslate"><span class="pre">pairing_&lt;type&gt;_eigen_converged</span></code>
+next to <code class="docutils literal notranslate"><span class="pre">pairing_&lt;type&gt;_eigenvalue</span></code>.</p></li>
+</ul>
+<p>A converged run records <code class="docutils literal notranslate"><span class="pre">true</span></code> in the same places. Because the static
+and dynamic text files differ in spacing, test the line with a
+whitespace-tolerant check: take the text after <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>, strip
+<code class="docutils literal notranslate"><span class="pre">=</span></code> and blanks, and compare with <code class="docutils literal notranslate"><span class="pre">true</span></code>/<code class="docutils literal notranslate"><span class="pre">false</span></code>.</p>
+</li>
+<li><p><strong>What the WARNING and the written gap mean.</strong> The WARNING states why no
+value was reported, and a comment line in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> repeats it.
+The gap written with a <code class="docutils literal notranslate"><span class="pre">NaN</span></code> is the last iterate and <strong>not an
+eigenvector</strong>. When <code class="docutils literal notranslate"><span class="pre">max_iter</span></code> ran out while the iterate was still
+converging, the WARNING gives the estimated number of steps needed (from
+the observed convergence rate); when it was not converging at all, it says
+so – a leading eigenvalue that is itself complex (a complex-conjugate
+pair) can never be reached by a power iteration, and ends in <code class="docutils literal notranslate"><span class="pre">NaN</span></code> at
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code> whatever its value. If the iterate was then in a
+sign-alternating two-cycle, the WARNING says so: the dominant eigenvalue of
+the iterated operator is negative. This only happens without a sufficient
+shift (<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code> or a small explicit one); the run is
+not stopped early on it, because a tiny component of a positive dominant
+mode may still be growing. Use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> in these
+cases.</p></li>
+</ul>
+<p><strong>Defaults and why.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> and the in-process FLEX bond pairing
+step both default to <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>’s default
+was <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> before this version). The ARPACK solver searches the
+whole spectrum for the largest real part and needs no shift, no seed and no
+iteration budget. The power iteration is kept as an opt-in. When used, it
+runs with <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> by default: without a shift it follows
+the eigenvalue of largest <em>magnitude</em>, which for a repulsive interaction is
+a negative mode, so it either never converges or converges to the wrong
+mode. The shift <span class="math notranslate nohighlight">\(\sigma \approx 1.05\,\rho\)</span> (<span class="math notranslate nohighlight">\(\rho\)</span> the
+spectral radius) makes the largest real part dominant, at the cost of a
+slower iteration when the leading eigenvalue is close to the next one
+compared with <span class="math notranslate nohighlight">\(\rho\)</span> (roughly
+<span class="math notranslate nohighlight">\((\lambda_1+\sigma)/(\lambda_1-\lambda_2)\,\ln(1/\mathrm{tol})\)</span> steps;
+<code class="docutils literal notranslate"><span class="pre">alpha</span></code> is not applied on top of a shift).</p>
+<p><strong>What the power iteration guarantees.</strong> A value it reports with
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">true</span></code> is the largest real part of the kernel <em>within
+the symmetry sector of its initial gap</em>, to the stated tolerance – except
+when a mode with a larger real part is present in the seed only at a tiny
+level and grows slowly (a small gap, a large shift, or a strongly
+non-normal kernel): no finite number of steps can exclude such a
+component. The way to hit this is a seed that is already close to an
+eigenvector of a <em>non-leading</em> mode (but not an exact one): on randomized
+test kernels, 4–6 % of the runs started from such near-eigenvector seeds
+(residuals between 1e-10 and 1e-1) converged to the seed’s mode instead of
+the largest real part at <code class="docutils literal notranslate"><span class="pre">convergence_tol</span> <span class="pre">=</span> <span class="pre">1e-5</span></code> (8–9 % at <code class="docutils literal notranslate"><span class="pre">1e-3</span></code>).
+Near-eigenvector seeds of a non-leading mode are the main risk; from generic
+seeds a wrong value is rare and limited to a nearly degenerate pair or a
+slowly growing component – for example the second member of a nearly
+degenerate pair, within about <code class="docutils literal notranslate"><span class="pre">10</span> <span class="pre">*</span> <span class="pre">convergence_tol</span></code> of the leader.
+Whenever the iteration cannot certify its value by the rules above (exact
+eigenvector seed, no convergence by <code class="docutils literal notranslate"><span class="pre">max_iter</span></code>, failed residual check), it
+reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code>.</p>
+<p><strong>Iteration or eigenvalue solver?</strong> Use <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> (the
+default) for production values of <span class="math notranslate nohighlight">\(\lambda\)</span> and for <span class="math notranslate nohighlight">\(T_c\)</span> scans
+(<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> requires it). It searches the whole spectrum. The power
+iteration finds the largest real part <strong>only within the symmetry sector of
+its initial gap</strong> (<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>): a mode of another lattice symmetry is never
+reached from that seed, and an <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> that is itself an eigenvector
+gives <code class="docutils literal notranslate"><span class="pre">NaN</span></code> (see above). Example: on the static test model of
+<code class="docutils literal notranslate"><span class="pre">tests/sc/legacy_golden</span></code> – one orbital on a 4x4 square lattice with
+nearest-neighbour hopping 1 and a diagonal hopping 0.5 along (1, 1), on-site
+<code class="docutils literal notranslate"><span class="pre">U</span> <span class="pre">=</span> <span class="pre">4</span></code>, half filling, <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">1</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">128</span></code>, singlet channel – the
+default <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;cos&quot;</span></code> makes the iteration converge to 0.17551, while
+the eigenvalue solver reports 0.23771, the singlet leader of another lattice
+symmetry. Use the iteration to follow one symmetry deliberately: set
+<code class="docutils literal notranslate"><span class="pre">init_gap</span></code> to that symmetry’s form factor (<code class="docutils literal notranslate"><span class="pre">&quot;d_x2y2&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;p_x&quot;</span></code>, …;
+see <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> above), and check its result against <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;both&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> once. Only the channel parity is re-projected
+at every step; for a kernel with the lattice’s point-group symmetry, the
+point-group symmetry of <code class="docutils literal notranslate"><span class="pre">init_gap</span></code> is also preserved in exact arithmetic,
+but round-off can seed another irreducible representation, which then grows
+if its eigenvalue is larger. In practice the seed’s symmetry decides: on a
+two-orbital 32x32 model
+the default s-like seed (<code class="docutils literal notranslate"><span class="pre">&quot;cos&quot;</span></code>) has no overlap with the
+<span class="math notranslate nohighlight">\(d_{x^2-y^2}\)</span>-like singlet leader 36.82, so the iteration converged to
+34.108, the second eigenvalue of the even (singlet) parity; started from
+<code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;d_x2y2&quot;</span></code> it gives 36.82.</p>
+<p><strong>Exit status.</strong> The <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> command exits with status <code class="docutils literal notranslate"><span class="pre">3</span></code> when the
+reported leading eigenvalue is <code class="docutils literal notranslate"><span class="pre">NaN</span></code> – after writing every output. One
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> run solves exactly one pairing channel (<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>), so
+the status refers to that channel. With the default <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code> the status is <code class="docutils literal notranslate"><span class="pre">3</span></code> only when an ARPACK solve (the first
+largest-magnitude solve or the largest-real-part solve) failed on an
+operator too large for the dense fallback, or no eigenpair of the channel
+could be obtained (for the dynamic solver: no computed eigenpair of the
+channel, <code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>, in an unseeded run). With
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> it is
+<code class="docutils literal notranslate"><span class="pre">3</span></code> whenever the iteration could not certify a value. With <code class="docutils literal notranslate"><span class="pre">solver_mode</span>
+<span class="pre">=</span> <span class="pre">&quot;both&quot;</span></code> the reported value, <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> and the exit status
+follow the eigenvalue analysis (its leading eigenvector is the written
+gap); the iteration’s own verdict is recorded as <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">iteration_converged</span> <span class="pre">=</span>
+<span class="pre">&lt;true|false&gt;</span></code> in its block, and a non-converged iteration alone does not
+change the exit status. <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> treats a rung whose leading
+eigenvalue is <code class="docutils literal notranslate"><span class="pre">NaN</span></code> (or that records <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>) as an
+Eliashberg error and does not chain its gap as the next rung’s seed. To
+solve singlet and triplet, run <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> once per channel and test each
+status. The <code class="docutils literal notranslate"><span class="pre">hwave</span></code> command of a FLEX run with the in-process pairing step
+keeps exit status <code class="docutils literal notranslate"><span class="pre">0</span></code> whatever the pairing result – the FLEX results are
+valid – even when one or both requested channels
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span> <span class="pre">=</span> <span class="pre">&quot;both&quot;</span></code>) did not converge: each channel then
+records its own <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> and logs its WARNING, and a pipeline
+must test <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> per channel.</p>
+<p><strong>Blocks of the static</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> <strong>per solver_mode</strong> (as written
+by this version):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> (the default): <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Iteration</span> <span class="pre">eigenvalue</span></code> (kept for
+compatibility; the value under it is the eigenvalue analysis’ leader),
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>, on the static non-spin-orbital path a
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading</span> <span class="pre">value:</span> <span class="pre">...</span></code> line naming the channel’s parity-sector solve,
+the value (the leader from the eigenvalue analysis), <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span> <span class="pre">=</span> <span class="pre">&lt;Re&gt;</span> <span class="pre">&lt;Im&gt;</span></code>, then
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Eigenvalue</span> <span class="pre">analysis</span></code> and the spectrum table (row 0 = the leader).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Iteration</span> <span class="pre">eigenvalue</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>,
+comment lines describing the value (shift, convergence), the value. No
+spectrum table.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Iteration</span> <span class="pre">eigenvalue</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">iteration_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>,
+the iteration’s comment lines and value, then <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">...</span></code>
+(the eigenvalue analysis’), the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading</span> <span class="pre">value:</span> <span class="pre">...</span></code> line,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span> <span class="pre">=</span> <span class="pre">&lt;Re&gt;</span> <span class="pre">&lt;Im&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Eigenvalue</span> <span class="pre">analysis</span></code> and the
+spectrum table (row 0 = the leader). With bond channels, the
+<code class="docutils literal notranslate"><span class="pre">lambda_rayleigh_gap_source</span></code> provenance line says which gap
+<code class="docutils literal notranslate"><span class="pre">lambda_rayleigh</span></code> was evaluated at.</p></li>
+</ul>
+<p>The dynamic <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> files (on-site, bond, spin-orbital) and
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> have one layout for every solver_mode:
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Dynamic</span> <span class="pre">Eliashberg</span> <span class="pre">leading</span> <span class="pre">eigenvalue</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=...</span></code>,
+further <code class="docutils literal notranslate"><span class="pre">#</span></code> header and comment lines, the leading value, and the spectrum
+table only for the eigenvalue solver.</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p><strong>Migration and default changes</strong></p>
+<p>Earlier versions reported the <em>unsigned norm</em> of the last power iterate as
+the eigenvalue even when the iteration did not converge. On a
+repulsive-dominant kernel – the singlet channel of the repulsive Hubbard
+model, whose largest-magnitude eigenvalue is a negative on-site s-wave
+mode – the unshifted damped iteration falls into a sign-alternating
+two-cycle and wrote <span class="math notranslate nohighlight">\(|\lambda_-|\,(1-\alpha)/(1+\alpha)\)</span> (one third
+of the negative mode’s magnitude at the default <code class="docutils literal notranslate"><span class="pre">alpha</span> <span class="pre">=</span> <span class="pre">0.5</span></code>) with the
+repulsive mode as the gap.</p>
+<p><strong>Affected results.</strong> Runs with <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> – before
+this version the default of <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> and of the in-process FLEX bond
+pairing step, so every input without an explicit <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code> – and
+no <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>. Indicators in old output files: no
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> entry at all (every output written before this
+version); a log line <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">converge</span> <span class="pre">after</span> <span class="pre">N</span> <span class="pre">iterations</span></code> (with
+<code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">=</span> <span class="pre">max_iter</span></code>); a gap whose on-site (<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>) component is large and
+does not decay at high Matsubara frequency, or whose sign pattern is that
+of the repulsive s-wave mode; and a value close to one third of the
+magnitude of the most negative eigenvalue (compare with an <code class="docutils literal notranslate"><span class="pre">solver_mode</span>
+<span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> run with <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> large enough to list it).
+Results from <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> (or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>, whose
+eigenvalue block is independent) are unaffected.</p>
+<p><strong>What to rerun.</strong> The <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> step (or, for the in-process step,
+the FLEX run with its <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table) with <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code> – now the default, so rerunning an input that does not
+set <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code> is enough. The FLEX outputs themselves are not
+affected and can be reused through <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> for the bond kernel).</p>
+<p><strong>Default change.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>’s default <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code> is now
+<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>. An input that relied on the old default and wants the
+power iteration (to follow one symmetry from its <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>) must set
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> explicitly. The static <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>
+keeps its <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Iteration</span> <span class="pre">eigenvalue</span></code> header line under every solver_mode
+(see the block list above), so a script that reads the first value after
+it keeps working; with the eigenvalue solver that value is now the
+eigenvalue analysis’ leader, and the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Eigenvalue</span> <span class="pre">analysis</span></code> table
+follows.</p>
+<p><strong>Exit status 3.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> now exits with status <code class="docutils literal notranslate"><span class="pre">3</span></code> when no
+leading eigenvalue was obtained (see “Exit status” above); job scripts
+that treat any non-zero status as a crash should check the written
+outputs first.</p>
+<p><strong>Mixing with a spectral shift.</strong> <code class="docutils literal notranslate"><span class="pre">alpha</span></code> is no longer applied when a
+spectral shift is active, including the power iteration’s default
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>: the mixing only slowed the shifted iteration
+(about twice as many steps). To get the <code class="docutils literal notranslate"><span class="pre">alpha</span></code> damping, set
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>.</p>
+<p><strong>Static table layout.</strong> On the static non-spin-orbital path with a
+parity-commuting kernel, the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">Eigenvalue</span> <span class="pre">analysis</span></code> table of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> starts with one extra row: row 0 is the reported
+leader (<code class="docutils literal notranslate"><span class="pre">match</span></code> 1), followed by the same global eigenpairs,
+parity-reordered (channel parity first) and not merged – normally
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">+</span> <span class="pre">1</span></code> rows in all, fewer when the operator dimension
+limits the count – so the leader may appear twice. Scripts that
+assumed <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> rows, or that row 0 is the first global
+eigenpair, should read <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">leading_eigenvalue</span></code> instead.</p>
+<p><strong>Dynamic eigenvalue solver without a channel eigenpair.</strong> Earlier
+versions could report a value that is not a channel eigenvalue as the
+leading eigenvalue of the dynamic eigenvalue solver when no computed
+eigenpair passed the requested channel match (<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span>
+<span class="pre">&quot;none&quot;</span></code>). Such a run now reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>
+(unless seeded), and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> exits with status <code class="docutils literal notranslate"><span class="pre">3</span></code>. Increase
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, or check that the kernel conserves the channel’s
+parity – more eigenvalues do not help a parity-mixing kernel (see
+<a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">Pairing channels of the dynamic solver</span></a>).</p>
+<p><strong>Python API.</strong> <code class="docutils literal notranslate"><span class="pre">hwave.sc.calc_eliashberg</span></code> now returns the reported
+leading eigenvalue on the static path as well (it returned <code class="docutils literal notranslate"><span class="pre">None</span></code>
+there before). The value can be <code class="docutils literal notranslate"><span class="pre">NaN</span></code>: test it with <code class="docutils literal notranslate"><span class="pre">math.isnan</span></code> or
+<code class="docutils literal notranslate"><span class="pre">numpy.isnan</span></code>, not by truthiness or <code class="docutils literal notranslate"><span class="pre">is</span> <span class="pre">None</span></code>.</p>
+</div>
 </section>
 </section>
 <section id="physical-interpretation">
@@ -866,7 +1235,11 @@ mode writes:</p>
 <li><p><code class="docutils literal notranslate"><span class="pre">T</span></code>: temperature.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;singlet&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;triplet&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: the leading <span class="math notranslate nohighlight">\(\lambda\)</span>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code>: the leading <span class="math notranslate nohighlight">\(\lambda\)</span> (<code class="docutils literal notranslate"><span class="pre">NaN</span></code> when
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> is false).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>: <code class="docutils literal notranslate"><span class="pre">True</span></code> when the eigen-solver converged; <code class="docutils literal notranslate"><span class="pre">False</span></code>
+when a power iteration did not (the eigenvalue is <code class="docutils literal notranslate"><span class="pre">NaN</span></code> and <code class="docutils literal notranslate"><span class="pre">gap</span></code> is
+the last iterate, not an eigenvector). See <a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">axis_order</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;(orb1,</span> <span class="pre">orb2,</span> <span class="pre">kx,</span> <span class="pre">ky,</span> <span class="pre">kz,</span> <span class="pre">iomega)&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">normalization</span></code>: the gauge convention – the gap is L2-normalized over
 all components and its largest-magnitude component is rotated
@@ -891,7 +1264,8 @@ to a conserved channel sector, the num_eigenvalues-independent criterion),
 <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> (plain <code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>, largest magnitude), <code class="docutils literal notranslate"><span class="pre">&quot;LR&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
 set by the user, largest real part), <code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code> (the automatic
 largest-real re-solve when an unprojected <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> set held no positive
-channel eigenvalue), <code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code> (the tiny-operator dense largest-real
+channel eigenvalue, or could not contain the largest real part),
+<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code> (the tiny-operator dense largest-real
 path), <code class="docutils literal notranslate"><span class="pre">&quot;shift-invert&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code> (the power iteration). Also
 written as the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue_selection:</span> <span class="pre">...</span></code> header line of
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>.</p></li>
@@ -901,7 +1275,8 @@ written as the <code class="docutils literal notranslate"><span class="pre">#</s
 frequency (index <code class="docutils literal notranslate"><span class="pre">Nmat//2</span></code>), in the same column layout as the static
 <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> (<code class="docutils literal notranslate"><span class="pre">kx</span> <span class="pre">ky</span> <span class="pre">kz</span></code> then <code class="docutils literal notranslate"><span class="pre">Re</span></code>/<code class="docutils literal notranslate"><span class="pre">Im</span></code> per orbital pair). Its first
 line is a <code class="docutils literal notranslate"><span class="pre">#</span></code>-prefixed header carrying <code class="docutils literal notranslate"><span class="pre">frequency=dynamic</span></code> together with
-the slice index and its <span class="math notranslate nohighlight">\(\omega_n\)</span>.</p>
+the slice index and its <span class="math notranslate nohighlight">\(\omega_n\)</span>, the eigenvalue and
+<code class="docutils literal notranslate"><span class="pre">eigen_converged=&lt;true|false&gt;</span></code>.</p>
 </dd>
 </dl>
 </section>
@@ -980,8 +1355,18 @@ even-frequency sector the leading eigenpair comes from a solve restricted to
 that sector (<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;channel&quot;</span></code>, issue #202); otherwise the
 computed eigenpairs are ordered, preferring the channel’s even-frequency
 sector and falling back to its combined-parity sector only if no eigenpair
-lies in it. There <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> names the stage that matched, which is
-also what the <code class="docutils literal notranslate"><span class="pre">match</span></code> column of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> is labelled with.</p>
+lies in it. For the eigenvalue solver, <code class="docutils literal notranslate"><span class="pre">sector_selection</span></code> records the
+stage that matched, which also labels the <code class="docutils literal notranslate"><span class="pre">match</span></code> column of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. When no computed eigenpair passed the requested channel
+match, even-frequency or combined-parity (<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>),
+either all retained eigenpairs are of the other channel or the kernel
+mixes parity, and no channel-certified leader exists: an unseeded run
+reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> (exit status <code class="docutils literal notranslate"><span class="pre">3</span></code>) and a
+WARNING naming the cause. Increase <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, or check that the
+kernel conserves the channel’s parity (more eigenvalues do not help a
+parity-mixing kernel). A seeded continuation (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>)
+keeps the value of the branch it follows, with a WARNING that this value is
+not certified for the channel.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
@@ -1621,7 +2006,11 @@ drop a declared nonzero coefficient (declared-zero shells may be cut).
 <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> (default 8 GB on this path) caps the estimated
 peak memory.
 <code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span> <span class="pre">=</span> <span class="pre">true</span></code> adds the character analysis of the leading
-state to <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. <code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code> /
+state to <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>; its degeneracy
+(<code class="docutils literal notranslate"><span class="pre">bond_diagnostics_leading_cluster</span></code>) is read off the spectrum of the
+channel’s parity-sector solve when the leader came from it
+(<code class="docutils literal notranslate"><span class="pre">bond_diagnostics_leading_cluster_source</span></code>), and is <code class="docutils literal notranslate"><span class="pre">n/a</span></code> when no
+leader was obtained. <code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code> /
 <code class="docutils literal notranslate"><span class="pre">bond_precondition_rtol</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_precondition_dense_limit</span></code> tune the
 Hermiticity check of the kernel.</p></li>
 <li><p><strong>Outputs.</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> carries the bond provenance (number of
@@ -2362,12 +2751,16 @@ before.</p>
 projection” above), whose dimension is about half of
 <span class="math notranslate nohighlight">\((2N)^2 N_k\)</span>; at most that many eigenvalues exist, and a
 <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> at or above it returns all of them (the small reduced
-operator is then diagonalized densely). Without <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> the
-Arnoldi solver selects by magnitude, so large repulsive (negative)
-eigenvalues can mask the physical leading one: in the SU(2)-limit test
-model <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">4</span></code> missed it and <code class="docutils literal notranslate"><span class="pre">8</span></code> found it. Request
-enough eigenvalues, or set <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real
-part), which found it already with <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">1</span></code>.</p></li>
+operator is then diagonalized densely, keeping the eigenvalues of largest
+real part). Without <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> the Arnoldi solver selects by
+magnitude, so large repulsive (negative) eigenvalues can mask the
+physical leading one; when the returned set cannot contain the largest
+real part (its largest real part is below its smallest magnitude) the
+solver re-solves for it (<a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a>). A set that holds
+a positive eigenvalue above that bound is kept, so in the SU(2)-limit
+test model <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">4</span></code> could still miss it where <code class="docutils literal notranslate"><span class="pre">8</span></code> found
+it; <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real part) found it already
+with <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span> <span class="pre">=</span> <span class="pre">1</span></code>.</p></li>
 <li><p>The default <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;cos&quot;</span></code> seed is singlet-structured
 (<span class="math notranslate nohighlight">\(\phi(\mathbf{k}) \otimes i\sigma_y\)</span>). In a centrosymmetric model
 the power iteration cannot leave the parity sector of its seed, so it
@@ -2629,11 +3022,18 @@ leading one is written, as <code class="docutils literal notranslate"><span clas
 <p><strong>Largest-magnitude selection.</strong> Without <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> the Arnoldi
 solver selects the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> eigenvalues of largest magnitude. The
 repulsive (negative) dynamic eigenvalues grow with <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and can fill that
-set. As in the non-spin-orbital dynamic solver, when the leading eigenvalue
-of that set is negative (and no seed is given), the solver re-solves once
-with <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real part), logs a WARNING, writes
-<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection:</span> <span class="pre">LR_retry</span></code> and a note in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Set
-<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> yourself to avoid the extra solve.</p>
+set. As in the non-spin-orbital dynamic solver, when that set cannot contain
+the largest real part (its largest real part is below its smallest
+magnitude; in particular when its leading eigenvalue is negative) and no
+seed is given, the solver re-solves once with <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>
+(largest real part), logs a WARNING, writes <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection:</span>
+<span class="pre">LR_retry</span></code> and a note in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Set <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>
+yourself to avoid the extra solve. When <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> reaches the
+dimension of the antisymmetric space minus one, the reduced operator is
+diagonalized densely and the eigenvalues of largest real part are kept
+(<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection:</span> <span class="pre">dense-LR</span></code>). The power iteration follows
+<a class="reference internal" href="#sc-eigen-convergence"><span class="std std-ref">Eigen-solver convergence (eigen_converged)</span></a> (<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> and
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>).</p>
 <p><code class="docutils literal notranslate"><span class="pre">pauli_leakage</span></code> measures how far the kernel maps antisymmetric gaps out of
 the antisymmetric space. It is the largest
 <span class="math notranslate nohighlight">\(\|\mathrm{sym}(K E c)\| / \|K E c\|\)</span> over three fixed random probes.

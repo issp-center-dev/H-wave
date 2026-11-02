@@ -393,15 +393,24 @@ the FLEX solve converged, or <code class="docutils literal notranslate"><span cl
 it did not: the pairing step still runs on a non-converged FLEX solve
 (the cost is sunk), and this label, together with
 <code class="docutils literal notranslate"><span class="pre">scf_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>, marks the result as a diagnostic of the SCF
-trajectory rather than a self-consistent pairing eigenvalue.</p></li>
+trajectory rather than a self-consistent pairing eigenvalue. Like every
+dynamic gap archive it also carries <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>: <code class="docutils literal notranslate"><span class="pre">False</span></code> when a
+power iteration (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>) did not converge – the
+<code class="docutils literal notranslate"><span class="pre">eigenvalue</span></code> is then <code class="docutils literal notranslate"><span class="pre">NaN</span></code> and <code class="docutils literal notranslate"><span class="pre">gap</span></code> is the last iterate, not an
+eigenvector.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gap_bond_&lt;type&gt;.dat</span></code> is the same single-frequency text slice as
 <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> is the same format as <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>,
-with header lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>,
+with header lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>,
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>, when computed <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>, and the
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">...</span></code> / <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> lines
-described above.</p></li>
+described above. <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code> has no spaces around
+<code class="docutils literal notranslate"><span class="pre">=</span></code>, while the static <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> writes
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">true</span></code>; a pipeline should test it
+whitespace-tolerantly (take the text after <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>, strip
+<code class="docutils literal notranslate"><span class="pre">=</span></code> and blanks).</p></li>
 </ul>
 <p>A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
 an eigensolver failure, a write failure) writes none of its three files;

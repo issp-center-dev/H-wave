@@ -890,7 +890,8 @@ uniform Matsubara grid:</p>
 <span class="pre">&quot;both&quot;</span></code> in the FLEX input. Requires <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
 <span class="pre">true</span></code> and <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">&gt;=</span> <span class="pre">1</span></code>. An optional <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table in
 the SAME input file configures the solver (every key defaults exactly as
-it does for <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>); <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is refused there (the
+it does for <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; <code class="docutils literal notranslate"><span class="pre">solver_mode</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> in
+both); <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> is refused there (the
 channel is chosen by <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>), and <code class="docutils literal notranslate"><span class="pre">gpu</span></code> /
 <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code> / <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> / <code class="docutils literal notranslate"><span class="pre">frequency</span></code> /
 <code class="docutils literal notranslate"><span class="pre">flex_bond_archive</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> are ignored
@@ -1201,7 +1202,17 @@ result as a diagnostic of the trajectory the SCF loop was following, not
 as a self-consistent pairing eigenvalue. A pipeline that reads
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code> should test the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=true</span></code>
 header line (or the <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> key of the npz) before using the
-number.</p>
+number – and the <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=true</span></code> line (<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> key;
+written without spaces here, with spaces in the static <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> of
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, so compare it whitespace-tolerantly):
+with <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> a power iteration that does not converge
+writes <code class="docutils literal notranslate"><span class="pre">NaN</span></code> and <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> instead of an eigenvalue. The
+in-process default <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code> reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> only when
+its largest-real-part solve fails on an operator too large for the dense
+fallback. Results of earlier versions that used the in-process default
+then (<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>) and logged <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">converge</span></code> reported the
+unsigned two-cycle value <span class="math notranslate nohighlight">\(|\lambda_-|(1-\alpha)/(1+\alpha)\)</span> of the
+repulsive on-site mode and should be recomputed.</p>
 </section>
 </section>
 </section>

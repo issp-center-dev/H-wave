@@ -821,7 +821,8 @@ k依存性はスピンゆらぎによる準粒子の散乱を反映しており�
 <span class="pre">&quot;both&quot;</span></code>を設定します。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">&gt;=</span> <span class="pre">1</span></code>が必要です。同じ入力ファイルの
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブル（省略可能）でソルバーを設定します
-（各キーは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります）。
+（各キーは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>と全く同じデフォルト値を取ります。
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>の既定はどちらも<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>です）。
 <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>はここでは拒否されます（チャネルは
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>で選択されます）。<code class="docutils literal notranslate"><span class="pre">gpu</span></code> /
 <code class="docutils literal notranslate"><span class="pre">gpu_required</span></code> / <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code> / <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> / <code class="docutils literal notranslate"><span class="pre">frequency</span></code> /
@@ -1146,7 +1147,17 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 なく、SCF ループが辿っていた軌跡の診断値として扱ってください。
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>を読み込むパイプラインでは、値を
 利用する前に<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=true</span></code>のヘッダー行（または npz の
-<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>キー）を確認してください。</p>
+<code class="docutils literal notranslate"><span class="pre">scf_converged</span></code>キー）を確認してください。あわせて
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=true</span></code>行（<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>キー）も確認してください（ここでは
+空白なしで書かれ、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の静的な<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>では空白ありで書かれる
+ので、空白に寛容な方法で比較してください）。
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>で収束しないべき乗反復は、固有値の代わりに
+<code class="docutils literal notranslate"><span class="pre">NaN</span></code>と<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>を書き出します。実行内ペアリングの既定
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>が<code class="docutils literal notranslate"><span class="pre">NaN</span></code>を報告するのは、密行列フォールバックには
+大きすぎる演算子で実部最大の求解に失敗したときだけです。
+以前の版で当時の実行内既定（<code class="docutils literal notranslate"><span class="pre">&quot;iteration&quot;</span></code>）を使い、ログに
+<code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">converge</span></code>が出ていた結果は、斥力的オンサイトモードの符号なし2周期値
+<span class="math notranslate nohighlight">\(|\lambda_-|(1-\alpha)/(1+\alpha)\)</span>を報告しているため、再計算してください。</p>
 </section>
 </section>
 </section>
