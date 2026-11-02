@@ -1002,6 +1002,10 @@ class TestIterationParityProjection(unittest.TestCase):
                 if is_even(v[:, i]) and abs(w[i]) > 1e-6]
         odd = [(w[i].real, v[:, i]) for i in order
                if not is_even(v[:, i]) and abs(w[i]) > 1e-6]
+        # sub-leading eigenvectors of each parity: a seed that IS an
+        # eigenvector of K (after its parity projection) cannot search its
+        # sector and is reported as NaN, so the seeds below mix in these
+        self._sub = (even[1][1], odd[1][1])
         return Vs_q, G2, norb, (Nx, Ny, Nz), even[0], odd[0]
 
     def test_seed_leaks_to_wrong_parity_without_projection(self):
@@ -1021,11 +1025,14 @@ class TestIterationParityProjection(unittest.TestCase):
 
     def test_projection_keeps_iteration_in_triplet_sector(self):
         """With pairing_type='triplet' the same seed converges to the ODD
-        eigenpair instead of leaking to the dominant even one."""
+        eigenpair instead of leaking to the dominant even one. (The seed also
+        carries a sub-leading odd mode: projected onto the triplet sector it
+        must not be an exact eigenvector of K.)"""
         Vs_q, G2, norb, (Nx, Ny, Nz), (le, ve), (lo, vo) = self._symmetric_kernel()
         ve = (ve / np.linalg.norm(ve)).reshape(norb, norb, Nx, Ny, Nz)
         vo = (vo / np.linalg.norm(vo)).reshape(norb, norb, Nx, Ny, Nz)
-        seed = vo + 0.1 * ve
+        vo2 = (self._sub[1] / np.linalg.norm(self._sub[1])).reshape(vo.shape)
+        seed = vo + 0.1 * ve + 0.1 * vo2
         gap, ev, conv, _ = _solve_iteration(
             None, Vs_q, G2, seed.copy(), norb,
             max_iter=300, alpha=0.0, tol=1e-9, pairing_type="triplet")
@@ -1034,9 +1041,12 @@ class TestIterationParityProjection(unittest.TestCase):
         self.assertTrue(_is_gap_parity(gap, "triplet"))
 
     def test_singlet_projection_is_noop_for_even_seed(self):
-        """Projection must not change a correctly-seeded singlet run."""
+        """Projection must not change a correctly-seeded singlet run. (The
+        even seed carries a sub-leading even mode, so it is not itself an
+        eigenvector of K.)"""
         Vs_q, G2, norb, (Nx, Ny, Nz), (le, ve), (lo, vo) = self._symmetric_kernel()
         ve = (ve / np.linalg.norm(ve)).reshape(norb, norb, Nx, Ny, Nz)
+        ve = ve + 0.1 * (self._sub[0] / np.linalg.norm(self._sub[0])).reshape(ve.shape)
         gap_p, ev_p, _, _ = _solve_iteration(
             None, Vs_q, G2, ve.copy(), norb,
             max_iter=300, alpha=0.0, tol=1e-12, pairing_type="singlet")
@@ -1806,10 +1816,13 @@ class TestSubspaceIteration(unittest.TestCase):
         """Test subspace iteration agrees with Arnoldi on the dominant eigenvalue."""
         Vs_q, G2, norb, Nx, Ny, Nz = self._setup_2orb_problem()
 
-        vals_arnoldi, _ = _solve_eigenvalue(
-            Vs_q, G2, norb, Nx, Ny, Nz,
-            num_eigenvalues=3, method="arnoldi"
-        )
+        # the dominant-MAGNITUDE eigenvalues straight from ARPACK: the solver's
+        # arnoldi path reports the largest REAL part (it re-solves when the
+        # which='LM' set cannot contain it), while subspace iteration
+        # converges to the dominant-magnitude subspace
+        from scipy.sparse.linalg import eigs
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        vals_arnoldi = eigs(A, k=3, which="LM", return_eigenvectors=False)
         vals_subspace, _ = _solve_subspace_iteration(
             Vs_q, G2, norb, Nx, Ny, Nz,
             num_eigenvalues=3, max_iter=300, tol=1e-6
@@ -1828,12 +1841,13 @@ class TestSubspaceIteration(unittest.TestCase):
         """Test shifted BiCG spectrum scanning."""
         Vs_q, G2, norb, Nx, Ny, Nz = self._setup_2orb_problem()
 
-        # First get reference from Arnoldi
-        vals_ref, _ = _solve_eigenvalue(
-            Vs_q, G2, norb, Nx, Ny, Nz,
-            num_eigenvalues=3, method="arnoldi"
-        )
-        max_ev = vals_ref[0].real
+        # First get reference from Arnoldi: the dominant-magnitude
+        # eigenvalue (the solver's arnoldi path reports the largest real
+        # part, which is ~0 on this repulsive kernel)
+        from scipy.sparse.linalg import eigs
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        vals_ref = eigs(A, k=3, which="LM", return_eigenvectors=False)
+        max_ev = vals_ref[np.argmax(np.abs(vals_ref))].real
 
         # Scan near the largest eigenvalue
         sigma_list = [max_ev * 0.9, max_ev * 0.5]
@@ -3310,10 +3324,14 @@ class TestKanamoriInteraction(unittest.TestCase):
         sigma_init = _initialize_gap("cos", norb, params["kx"], params["ky"],
                                      params["kz"])
 
+        # spectral_shift "auto" (the configuration default of the
+        # iteration): the dominant eigenvalue of this kernel is negative, so
+        # the unshifted iteration would stop on a two-cycle and report NaN
         sigma_iter, ev_iter, converged, n_iter = _solve_iteration(
             green_kw, Vs_q, G2, sigma_init, norb,
-            max_iter=100, alpha=0.5, tol=1e-4)
+            max_iter=2000, alpha=0.5, tol=1e-4, spectral_shift="auto")
         self.assertEqual(sigma_iter.shape, (norb, norb, Nx, Ny, Nz))
+        self.assertTrue(converged)
         self.assertTrue(np.isfinite(ev_iter), "Eigenvalue should be finite")
 
         eigenvalues, _ = _solve_eigenvalue(
@@ -3321,6 +3339,15 @@ class TestKanamoriInteraction(unittest.TestCase):
         self.assertEqual(len(eigenvalues), 3)
         for ev in eigenvalues:
             self.assertTrue(np.isfinite(ev), "All eigenvalues should be finite")
+        # Regression: the which='LM' set of 3 holds only repulsive modes
+        # (down to -36.5) and ARPACK's largest-real-part re-solve does not
+        # converge on the cluster of eigenvalues near 0; the solver used to
+        # keep -36.457 as the leading value. It now diagonalizes the small
+        # operator (n = 64) densely and reports the largest real part.
+        A, n = _make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        dense = np.linalg.eigvals(A.matmat(np.eye(n, dtype=complex)))
+        self.assertAlmostEqual(eigenvalues[0].real, np.max(dense.real),
+                               delta=1e-9)
 
     def test_rpa_chi_from_sc_matrices_is_finite_on_rpa_solver_chi0q(self):
         """Smoke test: feed a REAL reduced chi0q from the RPA solver through

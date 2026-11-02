@@ -42,7 +42,15 @@ class PairingControls:
     bond_memory_cap_gb: object = None
 
     @classmethod
-    def from_param(cls, eli_param, *, pairing_types):
+    def from_param(cls, eli_param, *, pairing_types, default_solver_mode=None):
+        """``default_solver_mode`` is the ``solver_mode`` of an input that does
+        not set one: ``None`` means ``hwave.sc.DEFAULT_SOLVER_MODE`` (the
+        ``hwave_sc`` file entry, as the on-site solver); the in-process
+        pairing step of the FLEX run passes
+        ``hwave.sc.IN_PROCESS_DEFAULT_SOLVER_MODE``
+        (``FLEX._install_pairing_controls``)."""
+        if default_solver_mode is None:
+            from hwave.sc import DEFAULT_SOLVER_MODE as default_solver_mode
         p = dict(eli_param or {})
         for eta in pairing_types:
             if eta not in ("singlet", "triplet"):
@@ -96,7 +104,7 @@ class PairingControls:
                     return False
             raise ValueError("[eliashberg] {} must be a boolean, got {!r}".format(key, v))
 
-        sm = str(p.get("solver_mode", "iteration")).lower()
+        sm = str(p.get("solver_mode", default_solver_mode)).lower()
         if sm not in _SOLVER_MODES:
             raise ValueError("[eliashberg] solver_mode must be one of {}, got {!r}".format(_SOLVER_MODES, sm))
         mb = str(p.get("matsubara_basis", "uniform")).lower()
@@ -656,13 +664,15 @@ def solve_dynamic_bond(input_dict):
         logger.info("bond pairing kernel residency: %s", kernel.residency)
         phi0, seed_vec = _ed.build_seed(ctl.as_eli_param(), pairing_type, norb, kx, ky, kz,
                                         kernel.gap_shape, use_ir, axF, nmat)
+        eig_info = {}
         lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
             sector_weights, sector_selection, eigenvalue_selection = \
             _ed.run_leading_eigenproblem(
                 kernel.matvec, kernel.gap_shape, ctl.as_eli_param(), pairing_type, phi0=phi0,
                 seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
                 logger_label="bond pairing kernel", parity_leakage_policy="refuse",
-                parity_leakage_tol=ctl.resolved_parity_leakage_tol)
+                parity_leakage_tol=ctl.resolved_parity_leakage_tol, info_out=eig_info)
+        eigen_converged = bool(eig_info["eigen_converged"])
         residency_used = kernel.residency
 
     # --- outputs (the on-site dynamic file set plus the bond provenance) ----
@@ -677,7 +687,7 @@ def solve_dynamic_bond(input_dict):
         os.path.join(out_dir, eli_param.get("output_eigenvalue", "eigenvalue.dat")),
         lam, eigenvalues_all, eigenvalue_match, note, header_lines=head,
         sector_weights=sector_weights, selection=sector_selection,
-        eigenvalue_selection=eigenvalue_selection)
+        eigenvalue_selection=eigenvalue_selection, eigen_converged=eigen_converged)
     extra = {"bond_channels": True, "bond_delta_r": arch.delta_r, "bond_reverse": arch.reverse,
              "bond_archive": arch_path, "bond_residency": residency_used,
              "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, (Nx, Ny, Nz))}
@@ -690,7 +700,8 @@ def solve_dynamic_bond(input_dict):
                               gap_file=eli_param.get("output_gap", "gap.dat"),
                               extra_meta=extra, sector_weights=sector_weights,
                               selection=sector_selection,
-                              eigenvalue_selection=eigenvalue_selection)
+                              eigenvalue_selection=eigenvalue_selection,
+                              eigen_converged=eigen_converged)
     return lam
 
 
@@ -974,6 +985,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)
                 phi0, seed = _ed.build_seed(ctl.as_eli_param(), eta, norb, kx, ky, kz,
                                             K.gap_shape, use_ir, axF, nmat)
+                eig_info = {}
                 lam, gap_w, evs, match, note, leakage, sector_weights, \
                     sector_selection, eigenvalue_selection = \
                     _ed.run_leading_eigenproblem(
@@ -981,7 +993,9 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                         seed_vec=seed, use_ir=use_ir, axF=axF, nmat=nmat,
                         logger_label="bond pairing kernel ({})".format(eta),
                         parity_leakage_policy="refuse",
-                        parity_leakage_tol=ctl.resolved_parity_leakage_tol)
+                        parity_leakage_tol=ctl.resolved_parity_leakage_tol,
+                        info_out=eig_info)
+                eigen_converged = bool(eig_info["eigen_converged"])
                 meta = {"bond_channels": True,
                         "bond_delta_r": np.asarray(view.delta_r, dtype=np.int64),
                         "bond_reverse": np.asarray(view.reverse, dtype=np.int64),
@@ -997,7 +1011,10 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                             [float(sector_weights[label])
                              for label in _ed._SECTOR_LABELS]),
                         "gap_sector_labels": np.array(_ed._SECTOR_LABELS),
-                        "sector_selection": str(sector_selection)}
+                        "sector_selection": str(sector_selection),
+                        # False: the power iteration did not converge, the
+                        # eigenvalue is NaN and the gap is NOT an eigenvector
+                        "eigen_converged": eigen_converged}
                 if eigenvalue_selection is not None:
                     meta["eigenvalue_selection"] = str(eigenvalue_selection)
                 if leakage is not None:
@@ -1013,8 +1030,19 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 green_info["pairing_{}_gap".format(eta)] = gap_w
                 green_info["pairing_{}_meta".format(eta)] = meta
                 green_info["pairing_{}_note".format(eta)] = note
-                logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
-                            eta, float(lam), label_state)
+                green_info["pairing_{}_eigen_converged".format(eta)] = eigen_converged
+                if eigen_converged:
+                    logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
+                                eta, float(lam), label_state)
+                else:
+                    # the FLEX results are valid and the run's exit status is
+                    # not changed; only this channel's eigenvalue is missing
+                    logger.warning(
+                        "longitudinal_bond_pairing (%s): the eigen-solver did not converge; "
+                        "the eigenvalue is recorded as NaN with eigen_converged = false "
+                        "(the FLEX outputs are unaffected). Use [eliashberg] solver_mode = "
+                        "\"eigenvalue\" (the in-process default) or spectral_shift = \"auto\".",
+                        eta)
             except caught as exc:
                 fail((eta,), "kernel/solver", exc)
             finally:
@@ -1150,7 +1178,8 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                                                       meta["gap_sector_weights"])}
                     if "gap_sector_weights" in meta else None),
                 selection=meta.get("sector_selection"),
-                eigenvalue_selection=meta.get("eigenvalue_selection"))
+                eigenvalue_selection=meta.get("eigenvalue_selection"),
+                eigen_converged=meta.get("eigen_converged"))
         except Exception as exc:
             for t in tmps.values():
                 try:

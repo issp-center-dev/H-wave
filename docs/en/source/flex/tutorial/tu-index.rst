@@ -892,7 +892,8 @@ uniform Matsubara grid:
   "both"`` in the FLEX input. Requires ``longitudinal_bond_channels =
   true`` and ``IterationMax >= 1``. An optional ``[eliashberg]`` table in
   the SAME input file configures the solver (every key defaults exactly as
-  it does for ``hwave_sc``); ``pairing_type`` is refused there (the
+  it does for ``hwave_sc``; ``solver_mode`` defaults to ``"eigenvalue"`` in
+  both); ``pairing_type`` is refused there (the
   channel is chosen by ``longitudinal_bond_pairing``), and ``gpu`` /
   ``gpu_required`` / ``bond_channels`` / ``chi0q_mode`` / ``frequency`` /
   ``flex_bond_archive`` / ``bond_green`` / ``bond_max_shells`` are ignored
@@ -1201,7 +1202,17 @@ result as a diagnostic of the trajectory the SCF loop was following, not
 as a self-consistent pairing eigenvalue. A pipeline that reads
 ``eigenvalue_bond_<type>.dat`` should test the ``# scf_converged=true``
 header line (or the ``scf_converged`` key of the npz) before using the
-number.
+number -- and the ``# eigen_converged=true`` line (``eigen_converged`` key;
+written without spaces here, with spaces in the static ``eigenvalue.dat`` of
+``hwave_sc``, so compare it whitespace-tolerantly):
+with ``solver_mode = "iteration"`` a power iteration that does not converge
+writes ``NaN`` and ``eigen_converged = false`` instead of an eigenvalue. The
+in-process default ``solver_mode = "eigenvalue"`` reports ``NaN`` only when
+its largest-real-part solve fails on an operator too large for the dense
+fallback. Results of earlier versions that used the in-process default
+then (``"iteration"``) and logged ``Failed to converge`` reported the
+unsigned two-cycle value :math:`|\lambda_-|(1-\alpha)/(1+\alpha)` of the
+repulsive on-site mode and should be recomputed.
 
 
 Sample 2: Two-orbital Hubbard model

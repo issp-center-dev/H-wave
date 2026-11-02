@@ -192,10 +192,25 @@ def _run(inp):
                     provenance=kw.get("provenance"))
         return real(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw)
 
+    real_listing = sc._listing_with_leader
+
+    def spy_listing(*a, **kw):
+        # the non-spin-orbital static table is the reported channel leader
+        # (row 0) followed by the global set, which may list the leader's
+        # state again; the oracle counts multiplicities in the global set
+        seen["global"] = (np.asarray(a[0]), np.asarray(a[1]))
+        return real_listing(*a, **kw)
+
     with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy), \
             mock.patch.object(sc, "_reorder_eigenpairs_by_parity",
-                              side_effect=spy_reorder):
+                              side_effect=spy_reorder), \
+            mock.patch.object(sc, "_listing_with_leader",
+                              side_effect=spy_listing):
         sc.calc_eliashberg(inp)
+    if "global" in seen:
+        seen["evs"], seen["vecs"] = seen.pop("global")
+        if seen.get("match") is not None:
+            seen["match"] = np.asarray(seen["match"])[1:]
     return seen
 
 
@@ -1047,8 +1062,9 @@ class TestRepulsiveSpectralShift(_TmpDir):
     def test_small_explicit_shifts_on_a_repulsive_operator(self):
         """The spin-orbital solvers on a negative-definite random kernel
         (leading antisymmetric eigenvalue ~ -0.84): explicit shifts 0.01 and
-        0.3 -- far below |lambda_lead| -- and no shift (largest magnitude)
-        give the dense antisymmetric spectrum; the iteration from an
+        0.3 -- far below |lambda_lead| -- and no shift (largest magnitude,
+        re-solved for the largest real part) give the dense antisymmetric
+        spectrum; the iteration from an
         UNprojected seed converges to the leading eigenvalue for a shift
         that makes it dominant."""
         from scipy.sparse.linalg import aslinearoperator
@@ -1069,11 +1085,15 @@ class TestRepulsiveSpectralShift(_TmpDir):
                 np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
                 for g in gaps:
                     np.testing.assert_array_equal(g, -_reverse(g))
+        # without a shift the which='LM' set (all negative) cannot contain
+        # the largest real part, so the driver re-solves for it: the same
+        # dense leading eigenvalues as the shifted runs
         with _quiet():
-            vals, _ = sc._so_solve_eigenvalue(A, basis, 3, "arnoldi")
-        mag = dense[np.argsort(-np.abs(dense))][:3]
-        np.testing.assert_allclose(np.sort(vals.real), np.sort(mag.real),
-                                   rtol=0, atol=1e-9)
+            info = {}
+            vals, _ = sc._so_solve_eigenvalue(A, basis, 3, "arnoldi",
+                                              info_out=info)
+        self.assertEqual(info["selection"], "LR_retry")
+        np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
         seed = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
         with _quiet():
             g, lam, conv, _ = sc._so_solve_iteration(
@@ -1087,9 +1107,9 @@ class TestRepulsiveSpectralShift(_TmpDir):
         """``dim = 5`` (shape (2, 2, 3, 1, 1): 12 entries, 2 self-paired):
         ``num_eigenvalues`` 3, 4, 5 and 7 return ``min(requested, dim)``
         eigenpairs -- none dropped at ARPACK's ``k < dim - 1`` limit --
-        selected by magnitude (no shift) or by real part (shift 0.3 or
-        "auto"), equal to the dense restricted spectrum and ordered by real
-        part."""
+        selected by magnitude (no shift, ARPACK branch) or by real part (shift
+        0.3 or "auto", and the dense branch always), equal to the dense
+        restricted spectrum and ordered by real part."""
         from scipy.sparse.linalg import aslinearoperator
         shape = (2, 2, 3, 1, 1)
         n = int(np.prod(shape))
@@ -1109,7 +1129,10 @@ class TestRepulsiveSpectralShift(_TmpDir):
                     k = min(req, 5)
                     self.assertEqual(len(vals), k)
                     self.assertEqual(gaps.shape, (k,) + shape)
-                    key = (-dense.real if shift is not None
+                    # the dense branch (req >= dim - 1) holds the complete
+                    # spectrum and always keeps the largest real parts; the
+                    # unshifted ARPACK branch keeps its (certified) LM set
+                    key = (-dense.real if (shift is not None or req >= 4)
                            else -np.abs(dense))
                     want = dense[np.argsort(key)][:k]
                     want = want[np.argsort(-want.real)]
@@ -2198,6 +2221,31 @@ class TestSpinDecomposition(unittest.TestCase):
             so_pairing.so_spin_decomposition(np.zeros((3, 3, 2)), 2)
         w = so_pairing.so_spin_decomposition(np.zeros((ND, ND, 2)), NP)
         self.assertTrue(all(np.isnan(v) for v in w.values()))
+
+
+class TestLargestRealFailureSentinel(_TmpDir):
+    """Static spin-orbital entry: a failed largest-real-part solve above the
+    dense fallback size writes NaN with eigen_converged = false and a
+    placeholder gap, instead of raising in the antisymmetry check."""
+
+    def test_nan_and_flag_written(self):
+        from tests.test_eliashberg_dynamic_so import _failing_largest_real
+        files = _write_model(self.d, so=True)
+        for shift in (5.0, "auto"):
+            with self.subTest(spectral_shift=shift):
+                inp = _input(self.d, files, True,
+                             {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
+                              "num_eigenvalues": 4, "spectral_shift": shift},
+                             out="lrfail_{}".format(shift))
+                p1, p2 = _failing_largest_real()
+                with _quiet(), p1, p2:
+                    lam = sc.calc_eliashberg(inp)
+                self.assertTrue(np.isnan(lam))
+                out = inp["file"]["output"]["path_to_output"]
+                txt = open(os.path.join(out, "eigenvalue.dat")).read()
+                self.assertIn("# eigen_converged = false", txt)
+                gap = np.load(os.path.join(out, "gap.npz"))["gap"]
+                self.assertTrue(np.all(np.isfinite(gap)))
 
 
 class TestOutputs(_TmpDir):

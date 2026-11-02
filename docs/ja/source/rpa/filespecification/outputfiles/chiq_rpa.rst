@@ -387,14 +387,22 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   しなくても実行されます（コストはすでに払われているため）。この
   ラベルは\ ``scf_converged = false``\ とともに、結果が自己無撞着な
   対形成固有値ではなく SCF の軌跡上の診断値であることを示します。
+  すべての動的ギャップアーカイブと同様に\ ``eigen_converged``\ も持ちます。
+  べき乗反復（\ ``solver_mode = "iteration"``\ ）が収束しなかったときは
+  ``False``\ で、このとき\ ``eigenvalue``\ は\ ``NaN``\ 、\ ``gap``\ は最後の反復
+  ベクトルであり固有ベクトルではありません。
 - ``gap_bond_<type>.dat``\ は\ ``gap.dat``\ と同じ単一周波数の
   テキストスライスです。
 - ``eigenvalue_bond_<type>.dat``\ は\ ``eigenvalue.dat``\ と同じ
-  形式で、\ ``# bond_channels=true``\ ・
+  形式で、\ ``# eigen_converged=<true|false>``\ ・\ ``# bond_channels=true``\ ・
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
   と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
+  ``# eigen_converged=<true|false>``\ は\ ``=``\ の前後に空白がなく、静的な
+  ``eigenvalue.dat``\ では\ ``# eigen_converged = true``\ と書かれるため、パイプラインは
+  空白に寛容な方法（\ ``eigen_converged``\ の後の文字列から\ ``=``\ と空白を取り除く）
+  で判定してください。
 
 失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

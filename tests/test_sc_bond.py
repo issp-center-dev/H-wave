@@ -337,7 +337,34 @@ class TestS5Guards(_ApproxTestCase):
         _write_w90(ci, 2, [((1, 0, 0), (0, 1), 0.25), ((-1, 0, 0), (1, 0), 0.25)])
         inp = _two_orbital_input(self.tmp_path, ci, bond_channels=True)
         sc.calc_eliashberg(inp)
-        self.assertTrue(np.isfinite(_leading_eigenvalue(self.tmp_path)))
+        # the fixture's 5 power-iteration steps cannot converge: no value
+        self.assertTrue(np.isnan(_leading_eigenvalue(self.tmp_path)))
+
+    def test_multi_orbital_annihilated_seed_is_not_a_converged_zero(self):
+        """Regression: the default seed of this two-orbital bond kernel is
+        annihilated by it (||K v0|| / ||v0|| ~ 1e-19). Under the auto shift
+        it is then an eigenvector of K + sigma*I, and the iteration used to
+        stop at step 1 reporting lambda = 2.9e-36 as a converged eigenvalue
+        (the largest real part is the ARPACK value 0.0040535926). Such a seed
+        cannot search its sector: NaN, eigen_converged = false, and the
+        warning names the cause."""
+        ci = os.path.join(self.tmp_path, "ci2.dat")
+        _write_w90(ci, 2, [((1, 0, 0), (0, 1), 0.25), ((-1, 0, 0), (1, 0), 0.25)])
+        out_it = os.path.join(self.tmp_path, "it")
+        out_ev = os.path.join(self.tmp_path, "ev")
+        inp = _two_orbital_input(out_it, ci, bond_channels=True)
+        inp["eliashberg"].update(max_iter=6000, convergence_tol=1e-8)
+        with _caplog(logging.WARNING) as records:
+            lam_it = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isnan(lam_it))
+        self.assertIn("initial gap is annihilated",
+                      " ".join(r.getMessage() for r in records))
+        with open(os.path.join(out_it, "eigenvalue.dat")) as fh:
+            self.assertIn("# eigen_converged = false", fh.read())
+        inp = _two_orbital_input(out_ev, ci, bond_channels=True)
+        inp["eliashberg"].update(solver_mode="eigenvalue", num_eigenvalues=6)
+        lam_ev = sc.calc_eliashberg(inp)
+        self.assertAlmostEqual(lam_ev, 0.0040535926, delta=1e-9)
 
     def test_guard_complex_coulomb_inter(self):
         """(c) bond_channels=true + a non-real CoulombInter entry -> error."""
@@ -894,10 +921,14 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         _write_w90(ci, 1, _nn_entries(0.0))
         d_off = os.path.join(self.tmp_path, "off")
         d_on = os.path.join(self.tmp_path, "on")
+        # the ARPACK solver: the iteration fixture (max_iter = 40) does not
+        # converge on this repulsive kernel and would report NaN
         sc.calc_eliashberg(_base_input(d_off, coulomb_inter=ci,
-                                       bond_channels=False))
+                                       bond_channels=False,
+                                       solver_mode="eigenvalue"))
         sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
-                                       bond_channels=True, bond_coeff_tail=0.0))
+                                       bond_channels=True, bond_coeff_tail=0.0,
+                                       solver_mode="eigenvalue"))
         lam_off = _leading_eigenvalue(d_off)
         lam_on = _leading_eigenvalue(d_on)
         self.assertApprox(lam_off, lam_on, rel=1.0e-7)
@@ -925,9 +956,11 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         d_off = os.path.join(self.tmp_path, "off")
         d_on = os.path.join(self.tmp_path, "on")
         sc.calc_eliashberg(_base_input(d_off, coulomb_inter=ci,
-                                       bond_channels=False))
+                                       bond_channels=False,
+                                       solver_mode="eigenvalue"))
         sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
-                                       bond_channels=True, bond_coeff_tail=0.0))
+                                       bond_channels=True, bond_coeff_tail=0.0,
+                                       solver_mode="eigenvalue"))
         self.assertGreater(
             abs(_leading_eigenvalue(d_on) - _leading_eigenvalue(d_off)), 1e-3)
 
@@ -1891,81 +1924,70 @@ class TestIterationModeLambdaProvenance(_ApproxTestCase):
         self.addCleanup(shutil.rmtree, self.tmp_path, ignore_errors=True)
 
     def test_iteration_mode_lambda_is_flagged_against_lambda_rayleigh(self):
-        """C1: on a repulsive-dominant bond kernel the power iterate's norm
-        (positive, unconverged) and the signed Rayleigh quotient
-        ``lambda_rayleigh`` (negative) land in the SAME file. The artifact must
-        record which solver mode produced the number and whether it converged, the
-        run must warn, and the file must say in words that the iteration value is
-        an unsigned iterate norm."""
+        """C1, under the convergence contract: on a repulsive-dominant bond
+        kernel the UNSHIFTED power iterate (spectral_shift = "none") settles
+        into a sign-alternating two-cycle. The run must stop, write NO
+        eigenvalue (NaN, eigen_converged = false) -- earlier versions wrote the
+        positive iterate norm here -- record the mode and the convergence flag
+        next to the signed ``lambda_rayleigh``, warn, and say so in words."""
         ci = os.path.join(self.tmp_path, "ci.dat")
         _write_w90(ci, 1, _nn_entries(0.5))
         d_on = os.path.join(self.tmp_path, "on")
         with _caplog(logging.WARNING) as records:
             sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
                                            bond_channels=True,
-                                           solver_mode="iteration"))
+                                           solver_mode="iteration",
+                                           spectral_shift="none"))
         path = os.path.join(d_on, "eigenvalue.dat")
         vals = _provenance_keys(path)
 
         # (a) provenance records the mode and the convergence flag
         self.assertEqual(vals["lambda_rayleigh_solver_mode"], "iteration")
         self.assertEqual(vals["lambda_rayleigh_converged"], "False")
-
-        # the situation this guards against really occurs on this kernel: the two
-        # numbers in the file have OPPOSITE signs
         lam_rayleigh = float(vals["lambda_rayleigh"])
         lam_iter = _leading_eigenvalue(d_on)
-        self.assertTrue(lam_rayleigh < 0.0 < lam_iter)
+        self.assertTrue(np.isnan(lam_iter))
 
-        # ... and an INDEPENDENT computation of the same kernel says which of the
-        # two is the physical eigenvalue: run the identical input through
-        # solver_mode="eigenvalue" and take its dominant (largest-|.|) eigenvalue.
+        # an INDEPENDENT computation of the same kernel: its dominant
+        # (largest-|.|) eigenvalue is negative, and the cycling iterate is its
+        # eigenvector, so lambda_rayleigh reproduces it
         d_ev = os.path.join(self.tmp_path, "ev")
         sc.calc_eliashberg(_base_input(d_ev, coulomb_inter=ci,
                                        bond_channels=True,
                                        solver_mode="eigenvalue",
-                                       num_eigenvalues=10))
-        # (the eigenvalue-mode file carries BOTH a single-column scalar row and the
-        # multi-column spectrum, so it is parsed row by row rather than by loadtxt)
+                                       num_eigenvalues=10, spectral_shift="none"))
         spectrum = [[float(x) for x in l.split()]
                     for l in open(os.path.join(d_ev, "eigenvalue.dat"))
                     if l.strip() and not l.startswith("#")]
         spectrum = np.array([r for r in spectrum if len(r) >= 4])
         dominant = spectrum[np.argmax(spectrum[:, 3]), 1]      # Re at max |ev|
         self.assertLess(dominant, 0.0)
-        # the SIGNED Rayleigh quotient reproduces it (the power iterate's DIRECTION
-        # does converge; only its reported norm is unsigned) ...
         self.assertApprox(lam_rayleigh, dominant, rel=1e-6)
-        # ... while the iteration-mode number in the file does not, in magnitude or
-        # in sign -- exactly the confusion the warning and the note exist for.
-        self.assertGreater(abs(lam_iter - abs(dominant)), 1.0)
+        # the physical (largest-real) eigenvalue the eigenvalue mode reports
+        # is a different, positive mode
+        self.assertGreater(float(spectrum[0, 1]), 0.0)
 
-        # (b) a warning names both quantities and recommends the eigenvalue mode
+        # (b) a warning says why and recommends the remedies
         msgs = " ".join(r.getMessage() for r in records)
-        self.assertIn("lambda_rayleigh", msgs)
-        self.assertIn("unsigned", msgs.lower())
+        self.assertIn("two-cycle", msgs)
         self.assertTrue("solver_mode" in msgs and "eigenvalue" in msgs)
+        self.assertIn("spectral_shift", msgs)
 
-        # (c) the artifact itself distinguishes the two numbers
+        # (c) the artifact itself says there is no eigenvalue
         lines = open(path).read().splitlines()
         idx = lines.index("# Iteration eigenvalue")
+        self.assertEqual(lines[idx + 1], "# eigen_converged = false")
         note = " ".join(l for l in lines[idx + 1:] if l.startswith("#")).lower()
-        self.assertIn("unsigned", note)
+        self.assertIn("not an eigenvalue", note)
         self.assertIn("lambda_rayleigh", note)
-        self.assertIn("did not converge", note)
-        # ... and the numeric row keeps its documented place and shape: the file
-        #     holds EXACTLY ONE non-comment line, it sits inside the
-        #     "# Iteration eigenvalue" block (after the note, with no further
-        #     numeric row), it has a single column, and that column is the value
-        #     `_leading_eigenvalue` (and every downstream reader) picks up.
+        self.assertIn("two-cycle", note)
         numeric = [(i, l) for i, l in enumerate(lines)
                    if l.strip() and not l.startswith("#")]
         self.assertEqual(len(numeric), 1)
         row_idx, row = numeric[0]
-        self.assertGreater(row_idx, idx)           # after "# Iteration eigenvalue"
-        self.assertTrue(all(lines[j].startswith("#") for j in range(idx + 1, row_idx)))
+        self.assertGreater(row_idx, idx)
         self.assertEqual(len(row.split()), 1)
-        self.assertEqual(float(row), lam_iter)
+        self.assertTrue(np.isnan(float(row)))
 
     def test_iteration_with_spectral_shift_converges_and_matches_eigenvalue_mode(self):
         """The payoff of the power-iteration spectral shift: the repulsive-dominant
@@ -2011,6 +2033,31 @@ class TestIterationModeLambdaProvenance(_ApproxTestCase):
         #     converged run -- the value really is a signed eigenvalue
         msgs = " ".join(r.getMessage() for r in records)
         self.assertNotIn("unsigned", msgs.lower())
+
+    def test_both_mode_attributes_lambda_to_the_eigenvalue_result(self):
+        """solver_mode = "both" with a non-converging iteration (5 steps) and
+        a good eigenvalue analysis: the written gap is the eigenvalue
+        analysis' eigenvector, so lambda_rayleigh, its convergence flag and
+        the consistency check refer to that result -- not to the iteration,
+        whose gap differs."""
+        ci = os.path.join(self.tmp_path, "ci.dat")
+        _write_w90(ci, 1, _nn_entries(0.5))
+        d_on = os.path.join(self.tmp_path, "both")
+        with _caplog(logging.WARNING) as records:
+            lam = sc.calc_eliashberg(_base_input(d_on, coulomb_inter=ci,
+                                                 bond_channels=True,
+                                                 solver_mode="both",
+                                                 num_eigenvalues=6,
+                                                 max_iter=5))
+        vals = _provenance_keys(os.path.join(d_on, "eigenvalue.dat"))
+        self.assertTrue(np.isfinite(lam))
+        self.assertEqual(vals["lambda_rayleigh_gap_source"],
+                         "eigenvalue analysis")
+        self.assertEqual(vals["lambda_rayleigh_converged"], "True")
+        self.assertApprox(float(vals["lambda_rayleigh"]), lam, rel=1e-6)
+        msgs = " ".join(r.getMessage() for r in records)
+        self.assertNotIn("symmetrized-kernel Rayleigh quotient at the same "
+                         "gap is", msgs)
 
     def test_eigenvalue_mode_provenance_marks_convergence_not_applicable(self):
         """C1: with ``solver_mode='eigenvalue'`` there is no power iterate, so the
@@ -2662,15 +2709,23 @@ class TestBondDiagnostics(_ApproxTestCase):
         self.assertGreater(sum(fractions.values()), 1.0e-3)
 
         # (ii) degeneracy clustering of the computed eigenvalues; every eigenpair
-        #      is in exactly one cluster
+        #      is in exactly one cluster (the table is the reported leader
+        #      plus num_eigenvalues = 6 global rows)
         clusters = eval(prov["bond_diagnostics_eigenvalue_clusters"])  # noqa: S307
-        self.assertEqual(sorted(i for c in clusters for i in c), list(range(6)))
+        self.assertEqual(sorted(i for c in clusters for i in c), list(range(7)))
         # the reported "leading" cluster is the one containing ROW 0 -- the
         # eigenpair the run actually returns after the channel-parity promotion --
         # not simply the largest-Re-lambda cluster
         leading = eval(prov["bond_diagnostics_leading_cluster"])        # noqa: S307
         self.assertIn(0, leading)
-        self.assertIn(leading, clusters)
+        # indices refer to the spectrum the leader came from: the channel's
+        # parity-sector spectrum when the sector solve produced it
+        if (prov.get("bond_diagnostics_leading_cluster_source")
+                == "channel parity-sector spectrum"):
+            self.assertIn(leading, eval(  # noqa: S307
+                prov["bond_diagnostics_sector_eigenvalue_clusters"]))
+        else:
+            self.assertIn(leading, clusters)
         self.assertEqual(int(prov["bond_diagnostics_leading_cluster_size"]),
                          len(leading))
         self.assertGreater(float(prov["bond_diagnostics_deg_tol"]), 0.0)

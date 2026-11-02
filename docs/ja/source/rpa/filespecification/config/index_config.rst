@@ -573,7 +573,8 @@ TOML形式
   のインプロセス版に相当します）。ソルバーの制御パラメータは同じ
   入力ファイルの\ ``[eliashberg]``\ テーブルから読み込まれます
   （省略可能。省略したキーは\ ``hwave_sc``\ と同じデフォルト値を
-  取ります。\ ``pairing_type``\ はここでは拒否されます -- チャネルは
+  取ります（\ ``solver_mode = "eigenvalue"``\ を含む）。
+  ``pairing_type``\ はここでは拒否されます -- チャネルは
   代わりにこのキーで選択されます。\ ``gpu``\ は FLEX の計算に
   従います）。結果は\ ``eliashberg_bond_<type>.npz``\ ・
   ``gap_bond_<type>.dat``\ ・\ ``eigenvalue_bond_<type>.dat``
@@ -1031,11 +1032,19 @@ TOML形式
 ``longitudinal_bond_pairing``\ を\ ``"none"``\ 以外にすると、同じ
 入力ファイルの\ ``[eliashberg]``\ テーブルは省略可能で、FLEX の
 計算の最後の対形成ステップを設定します。上記で「後処理のみ」と
-記していない一般的なテーブルの各キー（``solver_mode``\ ・
-``num_eigenvalues``\ ・\ ``max_iter``\ ・\ ``alpha``\ ・
-``convergence_tol``\ ・\ ``matsubara_basis``\ ・\ ``ir_tol``\ ・
+記していない一般的なテーブルの各キー（``num_eigenvalues``\ ・
+``max_iter``\ ・\ ``alpha``\ ・\ ``convergence_tol``\ ・
+``spectral_shift``\ ・\ ``matsubara_basis``\ ・\ ``ir_tol``\ ・
 ``ir_wmax``\ ・\ ``ir_keep_static_chi``\ ・\ ``fft_workers``\ など）は
-``hwave_sc``\ と全く同じデフォルト値を取ります。\ ``pairing_type``
+``hwave_sc``\ と全く同じデフォルト値を取ります。\ ``solver_mode``\ の既定も
+``hwave_sc``\ と同じ\ ``"eigenvalue"``\ です（斥力的な模型の一重項カーネルは負の
+支配的固有値を持ち、シフトなしのべき乗反復を破綻させるため）。収束しない
+べき乗反復（\ ``solver_mode = "iteration"``\ 、オプトイン）は\ ``eigen_converged = false``\ と
+固有値\ ``NaN``\ を記録します（Eliashberg チュートリアルの「固有値ソルバーの
+収束」節を参照）。その場合も FLEX の実行自体は正常に終了します。
+``eigenvalue_bond_<type>.dat``\ ではこの行は\ ``# eigen_converged=<true|false>``
+（空白なし。静的な\ ``eigenvalue.dat``\ は\ ``# eigen_converged = ...``\ ）と書かれる
+ので、空白に寛容な方法で判定してください。\ ``pairing_type``
 は拒否されます（チャネルは\ ``longitudinal_bond_pairing``\ で
 選択されます）。\ ``gpu`` / ``gpu_required``\ は無視されます
 （カーネルは FLEX 計算自身のバックエンドで動作します）。

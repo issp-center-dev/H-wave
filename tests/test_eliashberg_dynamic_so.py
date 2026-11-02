@@ -301,6 +301,21 @@ class TestStaticLimit(unittest.TestCase):
 _NMAT_E2E = 8
 
 
+def _failing_largest_real():
+    """Patches making ARPACK's which='LR' solve fail and the dense fallback
+    unavailable (its size limit below every operator), so the eigenvalue
+    solver must report its NaN sentinel."""
+    import scipy.sparse.linalg as spl
+    real_eigs = sc.eigs
+
+    def eigs(A, k=6, which="LM", **kw):
+        if which == "LR":
+            raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
+        return real_eigs(A, k=k, which=which, **kw)
+    return (mock.patch.object(sc, "eigs", eigs),
+            mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1))
+
+
 def _run(inp, spy_solve=True):
     """``calc_eliashberg`` with the operator, basis and eigenpairs captured."""
     cap = {}
@@ -513,6 +528,81 @@ class TestCalcMode(_FlexFixture):
         self.assertIn("# eigenvalue_selection: iteration", txt)
 
 
+class TestLargestRealFailureSentinel(_FlexFixture):
+    """The NaN sentinel of a failed largest-real-part solve (above the dense
+    fallback size) reaches the public entry: outputs written, NaN,
+    eigen_converged = false, no exception from the antisymmetry check."""
+
+    def test_nan_and_flag_written(self):
+        for shift in (5.0, "auto"):
+            with self.subTest(spectral_shift=shift):
+                out = self._out("lrfail_{}".format(shift))
+                inp = S._input(self.d, self.files, True,
+                               _dyn_eli(chi0q_mode="calc", spectral_shift=shift),
+                               nmat=_NMAT_E2E, out=out)
+                p1, p2 = _failing_largest_real()
+                with _quiet(), p1, p2:
+                    lam = sc.calc_eliashberg(inp)
+                self.assertTrue(np.isnan(lam))
+                txt = open(os.path.join(out, "eigenvalue.dat")).read()
+                self.assertIn("# eigen_converged=false", txt)
+                self.assertIn("# eigenvalue_selection: not-converged", txt)
+                z = np.load(os.path.join(out, "gap_dynamic.npz"))
+                self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+                self.assertIs(bool(z["eigen_converged"]), False)
+                self.assertTrue(np.all(np.isfinite(z["gap"])))
+                self.assertLess(dso.antisymmetry_residual(z["gap"]), 1e-12)
+
+
+class TestTsweepParserOnSpinOrbitalFiles(_FlexFixture):
+
+    def test_parsed_value_is_the_returned_leader(self):
+        from hwave import tsweep
+        out = self._out("tsweep_so")
+        inp = S._input(self.d, self.files, True,
+                       _dyn_eli(chi0q_mode="calc", spectral_shift="auto"),
+                       nmat=_NMAT_E2E, out=out)
+        with _quiet():
+            lam = sc.calc_eliashberg(inp)
+        path = os.path.join(out, "eigenvalue.dat")
+        re, _im, match = tsweep.parse_leading_eig(path)
+        self.assertAlmostEqual(re, lam, delta=1e-7 * max(1.0, abs(lam)))
+        rows = [l.split() for l in open(path)
+                if l.strip() and not l.startswith("#") and len(l.split()) >= 4]
+        self.assertEqual(int(rows[0][0]), 0)
+        self.assertAlmostEqual(float(rows[0][1]), lam,
+                               delta=1e-7 * max(1.0, abs(lam)))
+        self.assertEqual(match, 1)
+
+
+class TestSeededFailureLabel(_FlexFixture):
+
+    def test_seeded_failed_solve_is_labelled_not_converged(self):
+        """A seeded run whose largest-real-part solve fails reports
+        eigenvalue_selection exactly "not-converged" (not with the seed
+        suffix), in eigenvalue.dat and in gap_dynamic.npz."""
+        out1 = self._out("seedsrc")
+        S_in = S._input(self.d, self.files, True,
+                        _dyn_eli(chi0q_mode="calc", spectral_shift="auto"),
+                        nmat=_NMAT_E2E, out=out1)
+        with _quiet():
+            sc.calc_eliashberg(S_in)
+        seed = os.path.join(out1, "gap_dynamic.npz")
+        out = self._out("seedfail")
+        inp = S._input(self.d, self.files, True,
+                       _dyn_eli(chi0q_mode="calc", spectral_shift=5.0,
+                                seed_eigenvector=seed),
+                       nmat=_NMAT_E2E, out=out)
+        p1, p2 = _failing_largest_real()
+        with _quiet(), p1, p2:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isnan(lam))
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigenvalue_selection: not-converged\n", txt)
+        z = np.load(os.path.join(out, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+
+
 class TestLMRetry(_FlexFixture):
     """which='LM' without a shift can miss the physical leading eigenvalue
     when large repulsive eigenvalues (which grow with Nmat) fill the
@@ -550,10 +640,11 @@ class TestLMRetry(_FlexFixture):
         self._check(cap, out, float(lr.real.max()))
 
     def test_retry_at_num_eigenvalues_dim_minus_one(self):
-        """At num_eigenvalues = dim - 1 the dense branch keeps only the dim - 1
-        largest-magnitude eigenpairs: spectrum [-10, -9, -8, +1] (dim = 4,
-        num_eigenvalues = 3) returns only negative values, and the retry must
-        still report +1."""
+        """At num_eigenvalues = dim - 1 the dense branch used to keep only the
+        dim - 1 largest-magnitude eigenpairs: spectrum [-10, -9, -8, +1]
+        (dim = 4, num_eigenvalues = 3) returned only negative values. It now
+        keeps the dim - 1 largest REAL parts of the complete dense spectrum,
+        so +1 is reported directly, labelled dense-LR (no retry needed)."""
         from scipy.sparse.linalg import LinearOperator
         rng = np.random.default_rng(8)
         Q, _ = np.linalg.qr(rng.standard_normal((4, 4)))
@@ -579,7 +670,7 @@ class TestLMRetry(_FlexFixture):
                 lam = sc.calc_eliashberg(inp)
         self.assertAlmostEqual(lam, 1.0, places=10)
         txt = open(os.path.join(out, "eigenvalue.dat")).read()
-        self.assertIn("# eigenvalue_selection: LR_retry", txt)
+        self.assertIn("# eigenvalue_selection: dense-LR", txt)
 
     @heavy
     def test_retry_matches_the_dense_reduced_spectrum(self):
@@ -928,6 +1019,73 @@ class TestGPU(unittest.TestCase):
                            nmat=_NMAT_E2E, out="o_{}".format(gpu))
             lam[gpu] = _run(inp)["vals"]
         np.testing.assert_allclose(lam[True], lam[False], rtol=1e-10)
+
+
+class TestSecondaryRetryFailure(_FlexFixture):
+    """The spin-orbital dynamic solver's own second solve (spectral_shift =
+    "auto" after a which='LM' set with a negative leading eigenvalue) fails
+    above the dense-fallback size: NaN, eigen_converged = false and
+    eigenvalue_selection = "not-converged", in the text and the npz."""
+
+    def test_failed_retry_is_not_labelled_lr_retry(self):
+        import scipy.sparse.linalg as spl
+        real_solve = sc._so_solve_eigenvalue
+        real_eigs = sc.eigs
+        calls = []
+
+        def solve(A, basis, *a, **kw):
+            calls.append(kw.get("spectral_shift"))
+            vals, vecs = real_solve(A, basis, *a, **kw)
+            if len(calls) == 1:
+                self.assertTrue(np.all(np.isfinite(vals)))
+                if kw.get("info_out") is not None:
+                    kw["info_out"]["selection"] = "LM"
+                vals = -np.abs(np.asarray(vals))
+            return vals, vecs
+
+        def eigs(A, k=6, which="LM", **kw):
+            if which == "LR" and len(calls) >= 2:
+                raise spl.ArpackNoConvergence("forced", np.array([]),
+                                              np.array([]))
+            return real_eigs(A, k=k, which=which, **kw)
+        out = self._out("retryfail")
+        inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
+                       nmat=_NMAT_E2E, out=out)
+        with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", solve), \
+                mock.patch.object(sc, "eigs", eigs), \
+                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            lam = sc.calc_eliashberg(inp)
+        self.assertEqual(calls, [None, "auto"])
+        self.assertTrue(np.isnan(lam))
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigen_converged=false", txt)
+        self.assertIn("# eigenvalue_selection: not-converged", txt)
+        self.assertNotIn("come from a second solve", txt)
+        z = np.load(os.path.join(out, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+        self.assertIs(bool(z["eigen_converged"]), False)
+
+
+class TestFirstArnoldiSolveFailure(_FlexFixture):
+    """The unshifted which='LM' solve of the spin-orbital dynamic entry fails
+    above the dense-fallback size: NaN, eigen_converged = false and
+    eigenvalue_selection = "not-converged", without an exception."""
+
+    def test_nan_and_label(self):
+        from tests.test_eliashberg_reporting_contract import _failing_first_lm
+        out = self._out("lmfail")
+        inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
+                       nmat=_NMAT_E2E, out=out)
+        p1, p2, _state = _failing_first_lm()
+        with _quiet(), p1, p2:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isnan(lam))
+        txt = open(os.path.join(out, "eigenvalue.dat")).read()
+        self.assertIn("# eigen_converged=false", txt)
+        self.assertIn("# eigenvalue_selection: not-converged", txt)
+        z = np.load(os.path.join(out, "gap_dynamic.npz"))
+        self.assertEqual(str(z["eigenvalue_selection"]), "not-converged")
+        self.assertIs(bool(z["eigen_converged"]), False)
 
 
 if __name__ == "__main__":

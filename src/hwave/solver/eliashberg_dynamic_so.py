@@ -429,7 +429,8 @@ def _fmt_weights(labels, w):
 def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
                   eigenvalues, eigen_weights, match, norb_phys, T, kx, ky, kz,
                   eigenvalue_selection, leakage, note=None, extra_prov=None,
-                  sz_residual=None, sz_weights=None, provenance_members=None):
+                  sz_residual=None, sz_weights=None, provenance_members=None,
+                  eigen_converged=None):
     """Write ``eigenvalue.dat``, ``gap.dat`` and ``gap_dynamic.npz`` in the
     spin-orbital schema of the static solver (#269) plus the frequency
     content (see the user guide).
@@ -442,7 +443,11 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
 
     ``provenance_members`` (#88, ``fingerprint.so_provenance_members`` of this
     run's band and the Green function and state its kernel used) go into the
-    archive, and their scalar members into ``eigenvalue.dat``."""
+    archive, and their scalar members into ``eigenvalue.dat``.
+
+    ``eigen_converged`` (bool, optional) is written as the npz key and as an
+    ``# eigen_converged=<true|false>`` line; false means the power iteration
+    did not converge (``lam`` is NaN, the gap is not an eigenvector)."""
     import hwave.sc as sc
     from hwave.solver import so_pairing, spin_orbital
     os.makedirs(output_dir, exist_ok=True)
@@ -482,6 +487,9 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
     prov.update(sc._so_provenance_lines(provenance_members))
     with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
+        if eigen_converged is not None:
+            fw.write("# eigen_converged={}\n".format(
+                str(bool(eigen_converged)).lower()))
         for key in sorted(prov):
             fw.write("# {} = {}\n".format(key, prov[key]))
         fw.write("# eigenvalue_selection: {}\n".format(eigenvalue_selection))
@@ -520,6 +528,8 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
         "eigenvalue_selection": str(eigenvalue_selection),
         "pauli_leakage": float(leakage),
     }
+    if eigen_converged is not None:
+        record["eigen_converged"] = bool(eigen_converged)
     if eigenvalues is not None:
         ew = np.asarray(eigen_weights)
         record.update({
@@ -600,10 +610,14 @@ def solve_dynamic_so(input_dict):
             "[mode] enable_spin_orbital = true with frequency = \"dynamic\" "
             "requires an even, positive [mode.param] Nmat; got {}".format(nmat))
     chi0q_mode = eli.get("chi0q_mode")
-    solver_mode = eli.get("solver_mode", "iteration")
+    solver_mode = eli.get("solver_mode", sc.DEFAULT_SOLVER_MODE)
     num_eigenvalues = int(eli.get("num_eigenvalues", 10))
     eigenvalue_method = eli.get("eigenvalue_method", "arnoldi")
-    spectral_shift = eli.get("spectral_shift")
+    # an absent spectral_shift means "auto" for the power iteration and no
+    # shift for the eigenvalue solver; "none" means no shift for both
+    spectral_shift = sc._resolve_spectral_shift(
+        eli.get("spectral_shift"),
+        "iteration" if solver_mode == "iteration" else "eigenvalue")
     init_gap_mode = eli.get("init_gap", DEFAULT_INIT_GAP)
     fft_workers = eli.get("fft_workers", 1)
     for key in ("ir_wmax", "ir_tol", "ir_keep_static_chi"):
@@ -791,10 +805,19 @@ def solve_dynamic_so(input_dict):
         logger.info("Iteration result: eigenvalue = %.6f, converged = %s, n_iter = "
                     "%d", lam, converged, n_iter)
         selection = "iteration"
-        if spectral_shift is not None:
+        eigen_converged = bool(converged)
+        if spectral_shift is not None or not eigen_converged:
+            # the SIGNED (validated) eigenvalue, or NaN and why
             note = sc._shifted_eigenvalue_note(
-                "iteration", spectral_shift, converged, n_iter, info,
+                "iteration", spectral_shift, eigen_converged, n_iter, info,
                 kernel_label="dynamic kernel")
+        if not eigen_converged:
+            logger.warning(
+                "Spin-orbital dynamic Eliashberg: the power iteration did not "
+                "converge; the eigenvalue is written as NaN with "
+                "eigen_converged = false and the gap is the last iterate, NOT "
+                "an eigenvector. Use solver_mode = \"eigenvalue\" or "
+                "spectral_shift = \"auto\".")
         gap_w = _fix_gauge(gap)
         if not antisymmetry_residual(gap_w) <= sc._SO_ANTISYM_TOL:
             raise ValueError(
@@ -807,13 +830,31 @@ def solve_dynamic_so(input_dict):
             logger.warning(
                 "Dynamic solver_mode='both' runs the eigenvalue leg only; the "
                 "power-iteration cross-check is skipped.")
+        eigen_converged = True
         seed_red = basis.to_reduced(seed_full) if seed_full is not None else None
+        sel_info = {}
         vals, vecs = sc._so_solve_eigenvalue(
             A, basis, num_eigenvalues, eigenvalue_method,
             sigma_shift=eli.get("sigma_shift"), spectral_shift=spectral_shift,
-            seed_vec=seed_red, map_back=False)
+            seed_vec=seed_red, map_back=False, info_out=sel_info)
         selection = "LR" if spectral_shift is not None else "LM"
-        if seed_red is not None:
+        if sel_info.get("selection") == "not-converged":
+            # the NaN sentinel of a failed largest-real-part solve
+            selection = "not-converged"
+        elif sel_info.get("selection") == "LR_retry":
+            # the shared driver already re-solved for the largest real part
+            # (its LM set could not contain it)
+            selection = "LR_retry"
+            note = ("eigenvalue selection: the which='LM' set with "
+                    "num_eigenvalues={} could not contain the largest real "
+                    "part; the values below come from a second solve with "
+                    "spectral_shift='auto' (largest real part)"
+                    .format(num_eigenvalues))
+        elif sel_info.get("selection") == "dense-LR" and spectral_shift is None:
+            # the complete dense spectrum, selected by the largest real part
+            selection = "dense-LR"
+        if seed_red is not None and selection != "not-converged":
+            # (a failed solve is labelled "not-converged" whatever the seed)
             selection += "_seed_overlap"
         # As in the non-spin-orbital dynamic solver: a plain which='LM' set
         # (no spectral_shift, no seed, and not every eigenpair returned)
@@ -839,18 +880,28 @@ def solve_dynamic_so(input_dict):
                     "the extra solve",
                     "Spin-orbital dynamic Eliashberg", num_eigenvalues,
                     "fermion-antisymmetric", leading_re)
+                retry_info = {}
                 vals, vecs = sc._so_solve_eigenvalue(
                     A, basis, num_eigenvalues, eigenvalue_method,
                     sigma_shift=eli.get("sigma_shift"), spectral_shift="auto",
-                    seed_vec=None, map_back=False)
-                selection = "LR_retry"
-                note = (
-                    "eigenvalue selection: which='LM' with "
-                    "num_eigenvalues={} returned no positive '{}' "
-                    "eigenvalue (Re(lambda) = {:.4g}); the values below "
-                    "come from a second solve with spectral_shift='auto' "
-                    "(largest real part)".format(
-                        num_eigenvalues, "fermion-antisymmetric", leading_re))
+                    seed_vec=None, map_back=False, info_out=retry_info)
+                retry_selection = retry_info.get("selection")
+                vals_retry = np.asarray(vals)
+                if (retry_selection == "not-converged" or not vals_retry.size
+                        or not np.isfinite(float(np.real(vals_retry[0])))):
+                    # the NaN sentinel of a failed largest-real-part solve
+                    selection = "not-converged"
+                else:
+                    selection = ("LR_retry" if retry_selection == "LR"
+                                 else retry_selection)
+                    note = (
+                        "eigenvalue selection: which='LM' with "
+                        "num_eigenvalues={} returned no positive '{}' "
+                        "eigenvalue (Re(lambda) = {:.4g}); the values below "
+                        "come from a second solve with spectral_shift='auto' "
+                        "(largest real part)".format(
+                            num_eigenvalues, "fermion-antisymmetric",
+                            leading_re))
         rows, match, sz_weights = [], [], []
         gap_w = None
         for i in range(len(vals)):
@@ -865,6 +916,9 @@ def solve_dynamic_so(input_dict):
         sc._so_check_antisymmetric_eigenpairs(vals, match)
         eigenvalues_eig, eig_weights = np.asarray(vals), np.array(rows)
         lam = float(np.real(vals[0]))
+        # NaN only when the largest-real-part solve failed on an operator
+        # too large for the dense fallback (sc._solve_leading)
+        eigen_converged = bool(np.isfinite(lam))
         for i, ev in enumerate(vals):
             logger.info("  %3d: %.6f%+.6fi (|ev| = %.6f)", i, ev.real, ev.imag,
                         abs(ev))
@@ -882,7 +936,7 @@ def solve_dynamic_so(input_dict):
         norb_phys=norb_phys, T=T, kx=kx, ky=ky, kz=kz,
         eigenvalue_selection=selection, leakage=leakage, note=note,
         extra_prov=extra, sz_residual=sz_residual, sz_weights=sz_weights,
-        provenance_members=so_members)
+        provenance_members=so_members, eigen_converged=eigen_converged)
     logger.info("leading gap: spin weights %s; frequency parity %s",
                 _fmt_weights(so_pairing.SPIN_COMPONENTS, w["spin"]),
                 _fmt_weights(FREQUENCY_PARITY_LABELS, w["parity"]))
