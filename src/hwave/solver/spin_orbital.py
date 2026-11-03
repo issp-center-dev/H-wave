@@ -182,6 +182,31 @@ def spin_resolved_transfer_format(param_ham):
     return formats.get("transfer")
 
 
+def _spin_resolved_name_tag(param_ham, fmt):
+    files = getattr(param_ham, "source_files", None) or {}
+    return files.get("transfer", "Transfer"), "{}/{}".format(*fmt)
+
+
+def check_spin_resolved_clash(param_ham, enable_spin_orbital):
+    """Refuse a spin-resolved (9-column) Transfer together with spin-orbital
+    mode: the format carries its own spin columns and physical orbital
+    indices (Geometry ``norb`` = physical count), while spin-orbital mode
+    folds the spin into interleaved indices and reads the Geometry ``norb``
+    as the spin-orbital count. A solver that consumes the spin-resolved
+    table (UHFk, issue #323) calls this alone; one that does not yet calls
+    :func:`reject_spin_resolved_transfer`, which includes it."""
+    fmt = spin_resolved_transfer_format(param_ham)
+    if fmt is None or not enable_spin_orbital:
+        return
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
+    raise ValueError(
+        "{}: the spin-resolved Transfer format ({}) carries its own spin "
+        "columns and physical orbital indices, which contradicts "
+        "[mode] enable_spin_orbital = true (interleaved spin-orbital "
+        "indices, Geometry norb = 2 * physical). Use one or the other."
+        .format(name, tag))
+
+
 def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     """Refuse a spin-resolved (9-column) Transfer table a solver does not
     consume yet, and -- always -- its combination with spin-orbital mode.
@@ -212,16 +237,8 @@ def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     fmt = spin_resolved_transfer_format(param_ham)
     if fmt is None:
         return
-    files = getattr(param_ham, "source_files", None) or {}
-    name = files.get("transfer", "Transfer")
-    tag = "{}/{}".format(*fmt)
-    if enable_spin_orbital:
-        raise ValueError(
-            "{}: the spin-resolved Transfer format ({}) carries its own spin "
-            "columns and physical orbital indices, which contradicts "
-            "[mode] enable_spin_orbital = true (interleaved spin-orbital "
-            "indices, Geometry norb = 2 * physical). Use one or the other."
-            .format(name, tag))
+    check_spin_resolved_clash(param_ham, enable_spin_orbital)
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
     raise ValueError(
         "{}: the spin-resolved Transfer format ({}) is not yet consumed by "
         "the {} solver (issue #323). Write the Transfer in the 7-column "

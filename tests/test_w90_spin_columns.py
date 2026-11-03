@@ -185,16 +185,27 @@ class TestInputReaderAndSolverRefusal(unittest.TestCase):
     def _uhfk(self, enable_spin_orbital=False):
         import hwave.solver.uhfk as uhfk_module
         param = {'Ncond': 1, 'T': 0.5, 'CellShape': [4, 1, 1],
+                 'SubShape': [1, 1, 1],
                  'IterationMax': 1, 'EPS': 8, 'Mix': 0.5, 'RndSeed': 1}
         info_mode = {'mode': 'UHFk', 'param': param,
                      'enable_spin_orbital': enable_spin_orbital}
         return uhfk_module.UHFk(self._input().get_param("ham"),
                                 {"print_level": 0, "print_step": 100}, info_mode)
 
-    def test_uhfk_refuses_until_enabled(self):
+    def test_uhfk_consumes_spin_resolved_table(self):
+        import numpy as np
         _write_chain(self.d, _SPIN_CHAIN)
-        with self.assertRaisesRegex(ValueError, "not yet consumed by the UHFk"):
-            self._uhfk()
+        solver = self._uhfk()
+        self.assertTrue(solver.spin_resolved_transfer)
+        solver._make_ham_trans()
+        # both spins carry the same -t chain: T(k) = -2 cos k on each spin
+        self.assertEqual(solver.ham_trans.shape, (4, 2, 2))
+        k = 2 * np.pi * np.arange(4) / 4
+        np.testing.assert_allclose(solver.ham_trans[:, 0, 0], -2 * np.cos(k),
+                                   atol=1e-12)
+        np.testing.assert_allclose(solver.ham_trans[:, 1, 1], -2 * np.cos(k),
+                                   atol=1e-12)
+        np.testing.assert_allclose(solver.ham_trans[:, 0, 1], 0.0, atol=1e-12)
 
     def test_uhfk_refuses_clash_with_enable_spin_orbital(self):
         _write_chain(self.d, _SPIN_CHAIN)
